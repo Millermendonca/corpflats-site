@@ -28989,7 +28989,49 @@ function enrichReservationPayments(r) {
   const hasClaimedPixTxId = r.payments.some(p => p && p.txId && p.txId === r.pixTxId);
   const hasClaimedMpId = r.payments.some(p => p && p.mpPaymentId && p.mpPaymentId === r.mpPaymentId);
 
-  return r.payments.map(p => {
+  let targetPixIndex = -1;
+  if (r.pixEndToEndId || r.pixTxId) {
+    if (!hasClaimedPixE2E || !hasClaimedPixTxId) {
+      for (let i = r.payments.length - 1; i >= 0; i--) {
+        const p = r.payments[i];
+        if (!p) continue;
+        const method = String(p.method || "").toLowerCase();
+        const isOta = method === "booking" || method === "airbnb";
+        const isPix = method === "pix" || /pix/i.test(method);
+        if (!isOta && isPix) {
+          if (r.paidAt && p.date && (String(p.date).trim() === String(r.paidAt).trim() || String(p.date).startsWith(String(r.paidAt).slice(0, 10)))) {
+            targetPixIndex = i;
+            break;
+          }
+          if (targetPixIndex === -1) {
+            targetPixIndex = i;
+          }
+        }
+      }
+    }
+  }
+
+  let targetCardIndex = -1;
+  if (r.mpPaymentId && !hasClaimedMpId) {
+    for (let i = r.payments.length - 1; i >= 0; i--) {
+      const p = r.payments[i];
+      if (!p) continue;
+      const method = String(p.method || "").toLowerCase();
+      const isOta = method === "booking" || method === "airbnb";
+      const isCard = /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(method);
+      if (!isOta && isCard) {
+        if (r.paidAt && p.date && (String(p.date).trim() === String(r.paidAt).trim() || String(p.date).startsWith(String(r.paidAt).slice(0, 10)))) {
+          targetCardIndex = i;
+          break;
+        }
+        if (targetCardIndex === -1) {
+          targetCardIndex = i;
+        }
+      }
+    }
+  }
+
+  return r.payments.map((p, idx) => {
     if (!p) return p;
     const method = String(p.method || "").toLowerCase();
     const isOta = method === "booking" || method === "airbnb";
@@ -29004,7 +29046,7 @@ function enrichReservationPayments(r) {
       delete enriched.pixTxId;
       delete enriched.mpPaymentId;
     } else {
-      if (isPix) {
+      if (isPix && idx === targetPixIndex) {
         if (!enriched.endToEndId && r.pixEndToEndId && !hasClaimedPixE2E) {
           enriched.endToEndId = r.pixEndToEndId;
         }
@@ -29012,7 +29054,7 @@ function enrichReservationPayments(r) {
           enriched.txId = r.pixTxId;
         }
       }
-      if (isCard) {
+      if (isCard && idx === targetCardIndex) {
         if (!enriched.mpPaymentId && r.mpPaymentId && !hasClaimedMpId) {
           enriched.mpPaymentId = r.mpPaymentId;
         }
@@ -53331,7 +53373,7 @@ async function confirmReservationPayment(r, {
       r.payments.push({
         ...payRecord,
         amount: Math.round((cumulativePaid - existingSum) * 100) / 100,
-        notes: isCard ? `Complemento Cartão via ${source}` : `Complemento PIX via ${source}`
+        notes: isCard ? `Complemento Cartão via ${source}` : (isPix ? `Complemento PIX via ${source}` : `Complemento via ${source}`)
       });
     }
   }

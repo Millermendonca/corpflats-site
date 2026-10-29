@@ -252,34 +252,60 @@ function getPaymentTitle(
   payment: any,
   index: number,
   totalPayments: number,
-  packages: StayPackageGroup[]
+  packages: StayPackageGroup[],
+  allPayments?: any[]
 ): string {
   const prefix = totalPayments > 1 ? `${index + 1}º Pagamento • ` : ""
-  const amt = Number(payment?.amount || 0)
+  const paymentsList = Array.isArray(allPayments) && allPayments.length > 0 ? allPayments : [payment]
 
-  // 1. Prioritize package at the matching index if amounts match
-  let matchedPkg: StayPackageGroup | undefined
-  if (packages[index] && Math.abs(packages[index].totalAmount - amt) < 0.5) {
-    matchedPkg = packages[index]
+  // Casamento global determinístico entre pagamentos e pacotes de estadia
+  const claimedPackageIds = new Set<string>()
+  const matchedPackages: (StayPackageGroup | null)[] = new Array(paymentsList.length).fill(null)
+
+  // Passagem 1: Prioriza índice correspondente se os valores baterem
+  for (let i = 0; i < paymentsList.length; i++) {
+    const p = paymentsList[i]
+    const amt = Number(p?.amount || 0)
+    const pkg = packages[i]
+    if (pkg && !claimedPackageIds.has(pkg.id) && Math.abs(pkg.totalAmount - amt) < 0.5) {
+      matchedPackages[i] = pkg
+      claimedPackageIds.add(pkg.id)
+    }
   }
 
-  // 2. Otherwise find a package by amount
-  if (!matchedPkg) {
-    matchedPkg = packages.find(pkg => Math.abs(pkg.totalAmount - amt) < 0.5)
+  // Passagem 2: Casa qualquer pagamento remanescente com pacote não reivindicado de mesmo valor
+  for (let i = 0; i < paymentsList.length; i++) {
+    if (matchedPackages[i]) continue
+    const p = paymentsList[i]
+    const amt = Number(p?.amount || 0)
+    const pkg = packages.find(pk => !claimedPackageIds.has(pk.id) && Math.abs(pk.totalAmount - amt) < 0.5)
+    if (pkg) {
+      matchedPackages[i] = pkg
+      claimedPackageIds.add(pkg.id)
+    }
   }
 
-  // 3. Fallback when package count equals payment count
-  if (!matchedPkg && packages.length === totalPayments && packages[index]) {
-    matchedPkg = packages[index]
+  // Passagem 3: Quando a contagem de pacotes for igual à de pagamentos, associa posicionalmente
+  if (packages.length === paymentsList.length) {
+    for (let i = 0; i < paymentsList.length; i++) {
+      if (matchedPackages[i]) continue
+      const pkg = packages[i]
+      if (pkg && !claimedPackageIds.has(pkg.id)) {
+        matchedPackages[i] = pkg
+        claimedPackageIds.add(pkg.id)
+      }
+    }
   }
+
+  const matchedPkg = (index >= 0 && index < matchedPackages.length) ? matchedPackages[index] : null
 
   if (matchedPkg) {
-    if (matchedPkg.id === "pkg_0" && (index === 0 || packages.length === 1)) {
+    if (matchedPkg.id === "pkg_0") {
       const chargeText = matchedPkg.chargesSum > 0
         ? ` + ${matchedPkg.chargesDescription || "Taxa de Limpeza"}`
         : ""
       return `${prefix}Reserva Inicial (${matchedPkg.nightsCount} diária${matchedPkg.nightsCount > 1 ? "s" : ""}${chargeText} — ${matchedPkg.channelLabel})`
-    } else if (matchedPkg.id !== "pkg_0") {
+    } else {
       const extraLabel = matchedPkg.nightsCount > 1
         ? `${matchedPkg.nightsCount} Diárias Extras`
         : "1 Diária Extra"
@@ -287,7 +313,7 @@ function getPaymentTitle(
     }
   }
 
-  // Installment / partial payments on a single package
+  // Parcelamento ou pagamentos parciais de pacote único
   if (packages.length === 1 && totalPayments > 1) {
     const pkg0 = packages[0]
     const noteLower = String(payment?.notes || "").toLowerCase()
@@ -1512,7 +1538,7 @@ export default function GuestPortal() {
     textLines.push("")
     textLines.push(`💳 DETALHAMENTO FINANCEIRO & LIQUIDAÇÃO:`)
     paymentsList.forEach((p: any, idx: number) => {
-      const title = getPaymentTitle(p, idx, paymentsList.length, packages)
+      const title = getPaymentTitle(p, idx, paymentsList.length, packages, paymentsList)
       const method = formatPaymentMethodDisplay(p.method, p.notes)
       const dateStr = formatPaymentDateTime(p.date)
       const isOtaPayment = /booking|airbnb/i.test(p.method || "")
@@ -2027,7 +2053,7 @@ export default function GuestPortal() {
       <div class="section-heading">4. Detalhamento Financeiro & Liquidação (${paymentsList.length} ${paymentsList.length > 1 ? "Transações Liquidadas" : "Transação Liquidada"})</div>
       <div style="display: grid; gap: 10px;">
         ${paymentsList.map((p: any, idx: number) => {
-          const title = getPaymentTitle(p, idx, paymentsList.length, packages)
+          const title = getPaymentTitle(p, idx, paymentsList.length, packages, paymentsList)
           const method = formatPaymentMethodDisplay(p.method, p.notes)
           const dateStr = formatPaymentDateTime(p.date)
           const isOtaPayment = /booking|airbnb/i.test(p.method || "")
@@ -3297,7 +3323,7 @@ export default function GuestPortal() {
                 </div>
               </div>
 
-              {resolvedPayments.length > 1 ? (
+              {stayPackages.length > 1 || resolvedPayments.length > 1 ? (
                 <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col items-start gap-3 text-xs text-emerald-900">
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 w-full">
                     <div className="flex items-center gap-2">
@@ -3306,7 +3332,9 @@ export default function GuestPortal() {
                         <span className="font-bold block text-sm">Reserva 100% Confirmada & Liquidada!</span>
                         <span className="text-emerald-800 text-xs">
                           {stayPackages.length > 1
-                            ? `Liquidado em ${resolvedPayments.length} pagamentos (${stayPackages.map(p => `${p.channelLabel}: R$ ${p.totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`).join(" + ")})`
+                            ? (resolvedPayments.length > 1
+                                ? `Liquidado em ${resolvedPayments.length} pagamentos (${stayPackages.map(p => `${p.channelLabel}: R$ ${p.totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`).join(" + ")})`
+                                : `Liquidado em 1 pagamento (${stayPackages.map(p => `${p.channelLabel}: R$ ${p.totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`).join(" + ")})`)
                             : `Liquidado em ${resolvedPayments.length} pagamentos (${resolvedPayments.map((p: any, i: number) => `${i + 1}º: R$ ${Number(p.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`).join(" + ")})`}
                         </span>
                       </div>
@@ -3320,7 +3348,7 @@ export default function GuestPortal() {
 
                   <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-emerald-200/60">
                     {resolvedPayments.map((p: any, idx: number) => {
-                      const title = getPaymentTitle(p, idx, resolvedPayments.length, stayPackages)
+                      const title = getPaymentTitle(p, idx, resolvedPayments.length, stayPackages, resolvedPayments)
                       const method = formatPaymentMethodDisplay(p.method, p.notes)
                       const dateStr = formatPaymentDateTime(p.date)
                       return (
@@ -5543,7 +5571,7 @@ export default function GuestPortal() {
 
               <div className="space-y-2.5">
                 {resolvedPayments.map((p: any, idx: number) => {
-                  const title = getPaymentTitle(p, idx, resolvedPayments.length, stayPackages)
+                  const title = getPaymentTitle(p, idx, resolvedPayments.length, stayPackages, resolvedPayments)
                   const method = formatPaymentMethodDisplay(p.method, p.notes)
                   const dateStr = formatPaymentDateTime(p.date)
                   const isOtaPayment = /booking|airbnb/i.test(p.method || "")
