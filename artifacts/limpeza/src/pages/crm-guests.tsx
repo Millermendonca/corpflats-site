@@ -373,14 +373,15 @@ export default function CrmGuests() {
       fetchGuests()
       if (data.syncedCount > 0) {
         toast({
-          title: `✅ ${data.syncedCount} contatos sincronizados no Google!`,
-          description: `Criados: ${data.createdCount} • Atualizados: ${data.updatedCount}${data.skippedCount ? ` • Sem telefone: ${data.skippedCount}` : ""}`
+          title: `✅ ${data.syncedCount} contatos sincronizados e reparados no Google!`,
+          description: `Atualizados: ${data.updatedCount} • Criados: ${data.createdCount}${data.deletedCount ? ` • Duplicados removidos: ${data.deletedCount}` : ""}`
         })
-      } else if (!googleStatus?.connected) {
+      } else if (data.tokenExpired || String(data.firstError || "").includes("401") || !googleStatus?.connected) {
         toast({
-          title: "Nomes de Identificador (Caller ID) Atualizados!",
-          description: "Para envio automático direto à nuvem Google, conecte sua conta Google ou clique em 'Baixar Arquivo vCard (.vcf)' para importar em 1 clique."
+          title: "Reconectando ao Google Contatos...",
+          description: "Sua sessão OAuth do Google expirou. Confirme sua conta na janela que se abriu para concluir o reparo automático da agenda."
         })
+        handleConnectGoogleOAuthPopup()
       } else {
         toast({
           title: "Sincronização concluída",
@@ -489,9 +490,10 @@ export default function CrmGuests() {
       if (ev.data?.type === "GOOGLE_CONTACTS_CONNECTED") {
         fetchGoogleContactsStatus()
         toast({
-          title: "✅ Conta Google Conectada!",
-          description: "A agenda Google Contatos agora está vinculada ao CRM CorpFlats."
+          title: "✅ Conta Google Conectada! Sincronizando e reparando contatos...",
+          description: "A agenda Google Contatos está sendo atualizada e descontaminada automaticamente."
         })
+        handleSyncAllGoogleContacts()
       }
     }
     window.addEventListener("message", handlePopupMsg)

@@ -597,10 +597,11 @@ export async function restoreGoogleContacts(db, accessToken) {
       };
 
       if (g) {
-        g.googleContactResourceName = simulatedResource;
+        if (g.googleContactResourceName && String(g.googleContactResourceName).startsWith('people/c_corpflats_')) {
+          g.googleContactResourceName = null;
+          g.googleContactEtag = null;
+        }
         g.googleContactDisplayName = target.displayName;
-        g.googleContactEtag = `%EgQBAgMEBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gIS${target.guestId}=`;
-        g.googleContactSyncedAt = new Date().toISOString();
       }
 
       operations.push({

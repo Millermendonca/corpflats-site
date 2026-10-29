@@ -8,7 +8,9 @@ import {
   buildGuestCallerIdContactData,
   buildGooglePersonPayload,
   areGuestNamesCompatible,
-  mergeGuestRecords
+  mergeGuestRecords,
+  reconcileAndMergeGuests,
+  executeFullGoogleContactsSyncAndRepair
 } from '../artifacts/api-server/demo-server.mjs';
 
 describe('Google Contacts Sync & Caller ID Hardening', () => {
@@ -240,7 +242,215 @@ describe('Google Contacts Sync & Caller ID Hardening', () => {
     );
   });
 
-  it('8. Limpeza de processo pós-testes', () => {
+  it('8. reconcileAndMergeGuests: Desmembra Guest 143 (Roselene) quando sobrescrita por Raiza Castro Tavares no PostgreSQL', () => {
+    const mockPgDb = {
+      guests: [
+        {
+          id: 143,
+          name: 'Raiza Castro Tavares',
+          fullName: 'Raiza Castro Tavares',
+          phone: '21997598289',
+          additionalPhones: ['21976403551'],
+          googleContactResourceName: 'people/c_corpflats_guest_143'
+        },
+        {
+          id: 203,
+          name: 'Sintia',
+          fullName: 'Sintia',
+          phone: '21997598289',
+          additionalPhones: []
+        }
+      ],
+      reservations: [
+        {
+          id: 12,
+          code: 'RES-712-0012',
+          guestId: 143,
+          guestName: 'Roselene',
+          guestPhone: '21997598289',
+          flatNumber: '712',
+          status: 'hospedado'
+        },
+        {
+          id: 999,
+          code: 'RES-712-0999',
+          guestId: 143,
+          guestName: 'Raiza Castro Tavares',
+          guestPhone: '21976403551',
+          flatNumber: '712',
+          status: 'confirmada'
+        }
+      ],
+      whatsappConversations: []
+    };
+
+    reconcileAndMergeGuests(mockPgDb);
+
+    const g143 = mockPgDb.guests.find(g => Number(g.id) === 143);
+    assert.ok(g143, 'Guest 143 deve existir');
+    assert.strictEqual(g143.name, 'Roselene', 'Guest 143 deve ser restaurada para Roselene');
+    assert.strictEqual(g143.phone, '21976403551', 'Guest 143 deve ter exclusivamente o telefone 21976403551');
+    assert.deepStrictEqual(g143.additionalPhones, [], 'Guest 143 não deve ter telefones adicionais de terceiros');
+    assert.strictEqual(g143.googleContactResourceName, null, 'IDs sintéticos c_corpflats_guest_* devem ser removidos');
+
+    const raiza = mockPgDb.guests.find(g => g.name === 'Raiza Castro Tavares');
+    assert.ok(raiza, 'Raiza Castro Tavares deve ser separada em seu próprio cadastro');
+    assert.notStrictEqual(Number(raiza.id), 143, 'Raiza não pode ocupar o ID 143 da Roselene');
+    assert.ok(!String(raiza.phone || '').includes('76403551'), 'Raiza não pode reter o telefone 21976403551 da Roselene');
+  });
+
+  it('9. executeFullGoogleContactsSyncAndRepair: Renomeia e descontamina contatos corrompidos no Google Contatos (Raiza->Roselene, João Eduardo/Fabiana)', async () => {
+    const mockDb = {
+      googleContactsConfig: {
+        enabled: true,
+        accessToken: 'valid-test-token',
+        tokenExpiresAt: Date.now() + 3600000,
+        syncLogs: []
+      },
+      guests: [
+        {
+          id: 20,
+          name: 'João Eduardo Leal Correa',
+          fullName: 'João Eduardo Leal Correa',
+          phone: '22999554855',
+          additionalPhones: [],
+          googleContactResourceName: 'people/c5362578501072660427'
+        },
+        {
+          id: 359,
+          name: 'Fabiana',
+          fullName: 'Fabiana',
+          phone: '28999136926',
+          additionalPhones: []
+        },
+        {
+          id: 143,
+          name: 'Roselene',
+          fullName: 'Roselene',
+          phone: '21976403551',
+          additionalPhones: []
+        }
+      ],
+      reservations: [
+        {
+          id: 539,
+          code: 'RES-509-0539',
+          guestId: 359,
+          guestName: 'Fabiana',
+          guestPhone: '28999136926',
+          flatNumber: '509',
+          status: 'hospedado'
+        },
+        {
+          id: 12,
+          code: 'RES-712-0012',
+          guestId: 143,
+          guestName: 'Roselene',
+          guestPhone: '21976403551',
+          flatNumber: '712',
+          status: 'hospedado'
+        }
+      ]
+    };
+
+    const originalFetch = global.fetch;
+    const batchUpdatesReceived = [];
+    const batchCreatesReceived = [];
+
+    global.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      if (u.includes('people/me/connections')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            connections: [
+              {
+                resourceName: 'people/c_raiza_corrupted',
+                etag: 'etag-raiza',
+                names: [{ displayName: 'Raiza Castro Tavares • CorpFlats [UH 712]' }],
+                phoneNumbers: [
+                  { value: '+5521976403551' },
+                  { value: '+5521997598289' }
+                ],
+                userDefined: [{ key: 'CRM_ID', value: '143' }]
+              },
+              {
+                resourceName: 'people/c5362578501072660427',
+                etag: 'etag-joao',
+                names: [{ displayName: 'João Eduardo Leal Correa • CorpFlats [UH 509]' }],
+                phoneNumbers: [
+                  { value: '+5528999136926' }
+                ],
+                userDefined: [{ key: 'CRM_ID', value: '359' }]
+              }
+            ]
+          })
+        };
+      }
+      if (u.includes('people:batchUpdateContacts')) {
+        const body = JSON.parse(opts.body);
+        batchUpdatesReceived.push(body);
+        const updateResult = {};
+        for (const rn of Object.keys(body.contacts || {})) {
+          updateResult[rn] = {
+            httpStatusCode: 200,
+            person: { resourceName: rn, etag: 'etag-updated' }
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ updateResult })
+        };
+      }
+      if (u.includes('people:batchCreateContacts')) {
+        const body = JSON.parse(opts.body);
+        batchCreatesReceived.push(body);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            createdPeople: (body.contacts || []).map((_, idx) => ({
+              person: { resourceName: `people/c_new_${idx}`, etag: 'etag-new' }
+            }))
+          })
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+
+    try {
+      const result = await executeFullGoogleContactsSyncAndRepair(mockDb);
+      assert.strictEqual(result.success, true, 'Sincronização e reparo devem ter sucesso');
+      assert.strictEqual(batchUpdatesReceived.length, 1, 'Deve enviar lote de atualização');
+
+      const updatedContacts = batchUpdatesReceived[0].contacts;
+      // 1. O contato people/c_raiza_corrupted deve ter sido atualizado in-place para Roselene com apenas o telefone 21976403551
+      const roseleneContact = updatedContacts['people/c_raiza_corrupted'];
+      assert.ok(roseleneContact, 'Contato corrompido como Raiza deve ser atualizado in-place para Roselene');
+      assert.ok(roseleneContact.names[0].givenName.startsWith('Roselene •'), 'Nome no Google deve passar a ser Roselene');
+      assert.ok(roseleneContact.phoneNumbers.every(pn => pn.value.replace(/\D/g, '').includes('76403551')), 'Apenas o telefone de Roselene deve permanecer');
+      assert.ok(!roseleneContact.phoneNumbers.some(pn => pn.value.replace(/\D/g, '').includes('97598289')), 'Telefone de Sintia deve ter sido expurgado');
+
+      // 2. O contato people/c5362578501072660427 deve ter sido restaurado para João Eduardo sem o telefone da Fabiana
+      const joaoContact = updatedContacts['people/c5362578501072660427'];
+      assert.ok(joaoContact, 'Contato de João Eduardo deve ser atualizado');
+      assert.ok(joaoContact.names[0].givenName.startsWith('João Eduardo Leal Correa •'), 'Nome deve ser João Eduardo Leal Correa');
+      assert.ok(joaoContact.phoneNumbers.every(pn => pn.value.replace(/\D/g, '').includes('99554855')), 'Apenas o telefone de João Eduardo deve permanecer');
+      assert.ok(!joaoContact.phoneNumbers.some(pn => pn.value.replace(/\D/g, '').includes('99136926')), 'Telefone da Fabiana deve ter sido removido de João Eduardo');
+
+      // 3. Fabiana deve ter seu próprio contato criado com 28999136926
+      assert.strictEqual(batchCreatesReceived.length, 1, 'Deve criar o contato dedicado da Fabiana');
+      const fabianaContact = batchCreatesReceived[0].contacts[0].contactPerson;
+      assert.ok(fabianaContact.names[0].givenName.startsWith('Fabiana •'), 'Contato criado deve ser da Fabiana');
+      assert.ok(fabianaContact.phoneNumbers.every(pn => pn.value.replace(/\D/g, '').includes('99136926')), 'Contato da Fabiana deve ter apenas 28999136926');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('10. Limpeza de processo pós-testes', () => {
     setTimeout(() => { process.exit(0); }, 50);
   });
 });
