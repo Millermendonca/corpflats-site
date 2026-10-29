@@ -9766,7 +9766,7 @@ function isPlaceholderOrEmptyGuestName(str) {
   return false;
 }
 
-export function areGuestNamesCompatible(nameA, nameB) {
+export function areGuestNamesCompatible(nameA, nameB, options = {}) {
   if (isSystemOrServiceOrderGuestName(nameA) || isSystemOrServiceOrderGuestName(nameB)) return false;
   if (isPlaceholderOrEmptyGuestName(nameA) || isPlaceholderOrEmptyGuestName(nameB)) return true;
   const normA = normalizeName(nameA).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -9780,7 +9780,11 @@ export function areGuestNamesCompatible(nameA, nameB) {
   const firstA = tokensA[0];
   const firstB = tokensB[0];
   if (firstA !== firstB) return false;
-  if (tokensA.length === 1 || tokensB.length === 1) return true;
+  if (tokensA.length === 1 && tokensB.length === 1) return true;
+  if (tokensA.length === 1 || tokensB.length === 1) {
+    if (options && options.strictSingleToken) return false;
+    return true;
+  }
   const restA = new Set(tokensA.slice(1));
   return tokensB.slice(1).some(t => restA.has(t));
 }
@@ -9818,8 +9822,9 @@ const isGenericPelincaStreet = (val) => isGenericPelincaAddr(val);
 const isGenericPelincaBairro = (val) => !val || /^pelinca$/i.test(String(val).trim());
 const isGenericPelincaCep = (val) => !val || String(val).replace(/\D/g, "") === "28035000";
 
-function mergeGuestRecords(target, source) {
+export function mergeGuestRecords(target, source, database) {
   if (!target || !source) return;
+  const targetDb = database || (typeof db !== "undefined" ? db : null);
   const targetPrimaryName = target.fullName || target.name || "";
   const sourcePrimaryName = source.fullName || source.name || source.guestName || source.tomadorNome || "";
   if (!areGuestNamesCompatible(targetPrimaryName, sourcePrimaryName)) return;
@@ -9828,13 +9833,45 @@ function mergeGuestRecords(target, source) {
   const srcFull = source.fullName || source.name || "";
   const srcName = source.name || source.fullName || "";
 
+  const stopWords = new Set(["de", "da", "do", "dos", "das", "e", "jr", "junior", "filho", "neto", "sobrinho", "sr", "sra", "dr", "dra"]);
+  const normTarget = normalizeName(targetPrimaryName).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  const normSource = normalizeName(sourcePrimaryName).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  const targetTokens = normTarget.split(/\s+/).filter(t => t.length >= 2 && !stopWords.has(t));
+  const sourceTokens = normSource.split(/\s+/).filter(t => t.length >= 2 && !stopWords.has(t));
+
+  const targetDoc = normalizeDoc(target.document || target.documentNumber);
+  const sourceDoc = normalizeDoc(source.document || source.documentNumber || source.cpf || source.tomadorCpfCnpj);
+  const srcPhoneRaw = source.phone || source.phoneNumber || source.guestPhone || source.tomadorTelefone || "";
+  const targetPhone = normalizePhone(target.phone);
+  const sourcePhone = normalizePhone(srcPhoneRaw);
+  const targetEmail = String(target.email || "").trim().toLowerCase();
+  const sourceEmail = String(source.email || source.guestEmail || source.tomadorEmail || "").trim().toLowerCase();
+
+  const isTargetSingleToken = targetTokens.length === 1;
+  const isSourceSingleToken = sourceTokens.length === 1;
+  const hasSingleToken = isTargetSingleToken || isSourceSingleToken;
+
+  // Single-token names require strict verification: if there is any identity conflict (different phones, docs, or emails), do not merge
+  if (hasSingleToken && !(isTargetSingleToken && isSourceSingleToken)) {
+    const hasPhoneConflict = Boolean(targetPhone && sourcePhone && !phonesMatch(targetPhone, sourcePhone));
+    const hasDocConflict = Boolean(targetDoc && sourceDoc && targetDoc !== sourceDoc);
+    const hasEmailConflict = Boolean(targetEmail && sourceEmail && targetEmail !== sourceEmail);
+    if (hasPhoneConflict || hasDocConflict || hasEmailConflict) {
+      return;
+    }
+  }
+
   if (!target.fullName && srcFull && !isSystemOrServiceOrderGuestName(srcFull)) target.fullName = srcFull;
   if (!target.name && srcName && !isSystemOrServiceOrderGuestName(srcName)) target.name = srcName;
   if (isRealName(source.fullName) && (!isRealName(target.fullName) || source.fullName.length > target.fullName.length)) {
-    target.fullName = source.fullName;
+    if (targetTokens.length <= 1 || sourceTokens.length <= 1 || areGuestNamesCompatible(target.fullName, source.fullName)) {
+      target.fullName = source.fullName;
+    }
   }
   if (isRealName(source.name) && (!isRealName(target.name) || source.name.length > target.name.length)) {
-    target.name = source.name;
+    if (targetTokens.length <= 1 || sourceTokens.length <= 1 || areGuestNamesCompatible(target.name, source.name)) {
+      target.name = source.name;
+    }
   }
 
   if (!target.docType && source.docType) target.docType = source.docType;
@@ -9844,7 +9881,6 @@ function mergeGuestRecords(target, source) {
   if (!target.documentNumber && target.document) target.documentNumber = target.document;
 
   const isTargetMiller = Number(target.id) === 33 || normalizeName(target.fullName || target.name).includes("miller");
-  const srcPhoneRaw = source.phone || source.phoneNumber || source.guestPhone || source.tomadorTelefone || "";
   if (srcPhoneRaw && normalizePhone(srcPhoneRaw).length >= 8) {
     if (!isTargetMiller && phonesMatch(srcPhoneRaw, "22998505276")) {
       // Do not contaminate non-Miller guests with Miller's admin phone
@@ -9855,9 +9891,19 @@ function mergeGuestRecords(target, source) {
         target.phone = srcPhoneRaw;
       }
     } else {
-      if (!Array.isArray(target.additionalPhones)) target.additionalPhones = [];
-      if (!target.additionalPhones.some(ap => phonesMatch(ap, srcPhoneRaw))) {
-        target.additionalPhones.push(srcPhoneRaw);
+      // Do NOT push srcPhoneRaw into target.additionalPhones if srcPhoneRaw belongs to another known distinct guest
+      const belongsToOtherGuest = Array.isArray(targetDb?.guests) && targetDb.guests.some(other =>
+        other &&
+        other.id !== target.id &&
+        other.phone &&
+        phonesMatch(other.phone, srcPhoneRaw) &&
+        !areGuestNamesCompatible(targetPrimaryName, other.fullName || other.name)
+      );
+      if (!belongsToOtherGuest) {
+        if (!Array.isArray(target.additionalPhones)) target.additionalPhones = [];
+        if (!target.additionalPhones.some(ap => phonesMatch(ap, srcPhoneRaw))) {
+          target.additionalPhones.push(srcPhoneRaw);
+        }
       }
     }
   }
@@ -9866,7 +9912,16 @@ function mergeGuestRecords(target, source) {
     for (const ap of source.additionalPhones) {
       if (!isTargetMiller && phonesMatch(ap, "22998505276")) continue;
       if (ap && normalizePhone(ap).length >= 8 && !phonesMatch(target.phone, ap) && !target.additionalPhones.some(x => phonesMatch(x, ap))) {
-        target.additionalPhones.push(ap);
+        const belongsToOtherGuest = Array.isArray(targetDb?.guests) && targetDb.guests.some(other =>
+          other &&
+          other.id !== target.id &&
+          other.phone &&
+          phonesMatch(other.phone, ap) &&
+          !areGuestNamesCompatible(targetPrimaryName, other.fullName || other.name)
+        );
+        if (!belongsToOtherGuest) {
+          target.additionalPhones.push(ap);
+        }
       }
     }
   }
@@ -33613,7 +33668,7 @@ export function expandBrazilianPhoneVariants(rawPhonesList) {
     // Número internacional não-brasileiro (começa com + e não é +55)
     if (str.startsWith("+") && !digits.startsWith("55")) {
       addVar(`+${digits}`, true);
-      suffixKeys.add(digits.slice(-8));
+      suffixKeys.add(digits);
       continue;
     }
 
@@ -33631,7 +33686,7 @@ export function expandBrazilianPhoneVariants(rawPhonesList) {
       const ddd = digits.slice(0, 2);
       const local9 = digits.slice(2); // 9 dígitos (ex: 998887766)
       const local8 = local9.startsWith("9") ? local9.slice(1) : local9.slice(-8);
-      suffixKeys.add(local8);
+      suffixKeys.add(`${ddd}${local9}`);
       suffixKeys.add(`${ddd}${local8}`);
       // 1) E.164 com 9º dígito (+55DD9XXXXXXXX) -> Chamadas de celular e WhatsApp DDD 11-28
       addVar(`+55${ddd}${local9}`, true);
@@ -33642,12 +33697,12 @@ export function expandBrazilianPhoneVariants(rawPhonesList) {
     } else if (digits.length === 10) {
       const ddd = digits.slice(0, 2);
       const local8 = digits.slice(2); // 8 dígitos
-      suffixKeys.add(local8);
-      suffixKeys.add(`${ddd}${local8}`);
       const firstLocal = local8[0];
       // No Brasil, celulares têm inicial 6, 7, 8 ou 9; fixos têm inicial 2, 3, 4 ou 5
       if (["6", "7", "8", "9"].includes(firstLocal)) {
         const local9 = `9${local8}`;
+        suffixKeys.add(`${ddd}${local9}`);
+        suffixKeys.add(`${ddd}${local8}`);
         // 1) E.164 com o 9º dígito restaurado (+55DD9XXXXXXXX)
         addVar(`+55${ddd}${local9}`, true);
         // 2) E.164 sem o 9º dígito (+55DDXXXXXXXX)
@@ -33656,12 +33711,18 @@ export function expandBrazilianPhoneVariants(rawPhonesList) {
         addVar(`(${ddd}) ${local9.slice(0, 5)}-${local9.slice(5)}`, false);
       } else {
         // Telefone fixo
+        suffixKeys.add(`${ddd}${local8}`);
         addVar(`+55${ddd}${local8}`, true);
         addVar(`(${ddd}) ${local8.slice(0, 4)}-${local8.slice(4)}`, false);
       }
     } else {
       addVar(`+55${digits}`, true);
-      suffixKeys.add(digits.slice(-8));
+      if (digits.length >= 10) {
+        suffixKeys.add(digits.slice(-11));
+        suffixKeys.add(digits.slice(-10));
+      } else {
+        suffixKeys.add(digits);
+      }
     }
   }
 
@@ -33731,13 +33792,10 @@ export function buildGuestCallerIdContactData(database, guest) {
     );
   };
 
-  // Coleta TODOS os telefones conhecidos deste cliente (reserva ativa, cadastro CRM, reservas anteriores e WhatsApp)
+  // Coleta telefones pertencentes ESTRITAMENTE a este hóspede (cadastro CRM, additionalPhones verificados e reservas com mesmo titular)
   const rawPhonesCandidateList = [];
-  if (rawPhone) {
+  if (rawPhone && !isPhoneOwnedByIncompatibleGuest(rawPhone)) {
     rawPhonesCandidateList.push(rawPhone);
-  }
-  if ((activeRes?.guestPhone || activeRes?.phone) && !isPhoneOwnedByIncompatibleGuest(activeRes.guestPhone || activeRes.phone)) {
-    rawPhonesCandidateList.push(activeRes.guestPhone || activeRes.phone);
   }
   if (Array.isArray(g.additionalPhones)) {
     for (const ap of g.additionalPhones) {
@@ -33748,16 +33806,8 @@ export function buildGuestCallerIdContactData(database, guest) {
   }
   for (const r of sortedRes) {
     const rp = r.guestPhone || r.phone;
-    if (rp && !isPhoneOwnedByIncompatibleGuest(rp)) rawPhonesCandidateList.push(rp);
-    if (Array.isArray(r.guests)) {
-      for (const rg of r.guests) {
-        if (!rg?.phone || isPhoneOwnedByIncompatibleGuest(rg.phone)) continue;
-        const rgDoc = String(rg.cpf || rg.document || "").replace(/\D/g, "");
-        const rgName = normalizeName(rg.name || "");
-        if (((cleanDoc && rgDoc === cleanDoc) || (guestNameNorm && guestNameTokenCount >= 2 && rgName === guestNameNorm)) && areGuestNamesCompatible(fullName, rg.name)) {
-          rawPhonesCandidateList.push(rg.phone);
-        }
-      }
+    if (rp && areGuestNamesCompatible(r.guestName, fullName) && !isPhoneOwnedByIncompatibleGuest(rp)) {
+      rawPhonesCandidateList.push(rp);
     }
   }
 
@@ -33989,7 +34039,7 @@ async function getValidGoogleContactsAccessToken(database) {
   return cfg.accessToken || null;
 }
 
-function buildGooglePersonPayload(contactData, guestId) {
+export function buildGooglePersonPayload(contactData, guestId) {
   const phoneEntries = (Array.isArray(contactData.phoneVariants) && contactData.phoneVariants.length > 0)
     ? contactData.phoneVariants.map(val => ({ value: val, type: "mobile" }))
     : [{ value: contactData.e164Phone, type: "mobile" }];
@@ -34080,7 +34130,10 @@ export async function syncSingleGuestToGoogleContacts(database, guest, options =
   try {
     if (!resourceName && contactData.phoneDigits.length >= 8) {
       try {
-        const searchUrl = `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(contactData.phoneDigits.slice(-8))}&readMask=names,phoneNumbers,userDefined,metadata`;
+        const searchPhoneQuery = contactData.phoneDigits.length >= 10
+          ? contactData.phoneDigits.slice(-11)
+          : contactData.phoneDigits;
+        const searchUrl = `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(searchPhoneQuery)}&readMask=names,phoneNumbers,userDefined,metadata`;
         const searchRes = await fetch(searchUrl, {
           headers: { Authorization: `Bearer ${accessToken}` }
         });
@@ -34095,12 +34148,11 @@ export async function syncSingleGuestToGoogleContacts(database, guest, options =
             if (ownedByOtherInDb) return false;
             const crmIdUd = (p.userDefined || []).find(ud => (ud.key === "CRM_ID" || ud.key === "CorpFlatsGuestId") && ud.value);
             if (crmIdUd && String(crmIdUd.value) !== String(guest.id)) return false;
-            const pRawName = p.names?.[0]?.unstructuredName || p.names?.[0]?.givenName || p.names?.[0]?.displayName || "";
+            const pRawName = p.names?.[0]?.displayName || p.names?.[0]?.unstructuredName || [p.names?.[0]?.givenName, p.names?.[0]?.familyName].filter(Boolean).join(" ") || "";
             const pPersonName = String(pRawName).split("•")[0].trim();
             if (pPersonName && !areGuestNamesCompatible(contactData.fullName, pPersonName)) return false;
             return (p.phoneNumbers || []).some(pn => {
-              const pDigits = String(pn.value || pn.canonicalForm || "").replace(/\D/g, "");
-              return pDigits && contactData.phoneDigits && pDigits.slice(-8) === contactData.phoneDigits.slice(-8);
+              return pn.value && phonesMatch(pn.value, contactData.e164Phone);
             });
           });
           if (found?.person?.resourceName) {
@@ -34112,53 +34164,68 @@ export async function syncSingleGuestToGoogleContacts(database, guest, options =
     }
 
     if (resourceName) {
-      const getRes = await fetch(`https://people.googleapis.com/v1/${resourceName}?personFields=names,metadata`, {
+      const getRes = await fetch(`https://people.googleapis.com/v1/${resourceName}?personFields=names,userDefined,metadata`, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       if (getRes.ok) {
         const existingPerson = await getRes.json();
-        etag = existingPerson.etag || etag;
-        const updateRes = await fetch(
-          `https://people.googleapis.com/v1/${resourceName}:updateContact?updatePersonFields=${updateFields}`,
-          {
-            method: "PATCH",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              ...personPayload,
-              etag
-            })
-          }
-        );
-        if (updateRes.ok) {
-          const updatedPerson = await updateRes.json();
-          guest.googleContactResourceName = updatedPerson.resourceName || resourceName;
-          guest.googleContactEtag = updatedPerson.etag || etag;
-          guest.googleContactSyncedAt = new Date().toISOString();
-          guest.googleContactDisplayName = contactData.displayName;
-          action = "updated";
+        const existingCrmIdUd = (existingPerson.userDefined || []).find(ud => (ud.key === "CRM_ID" || ud.key === "CorpFlatsGuestId") && ud.value);
+        const existingRawName = existingPerson.names?.[0]?.displayName || existingPerson.names?.[0]?.unstructuredName || [existingPerson.names?.[0]?.givenName, existingPerson.names?.[0]?.familyName].filter(Boolean).join(" ") || "";
+        const existingPersonName = String(existingRawName).split("•")[0].trim();
 
-          cfg.lastSyncAt = guest.googleContactSyncedAt;
-          cfg.syncLogs.unshift({
-            timestamp: guest.googleContactSyncedAt,
-            guestId: guest.id,
-            guestName: contactData.fullName,
-            displayName: contactData.displayName,
-            phone: contactData.e164Phone,
-            action: "updated",
-            status: "success"
-          });
-          if (cfg.syncLogs.length > 40) cfg.syncLogs.length = 40;
-          if (!options.skipSave) saveDatabase();
-          return {
-            success: true,
-            action,
-            resourceName: guest.googleContactResourceName,
-            displayName: contactData.displayName,
-            contactData
-          };
+        const isCrmIdConflict = Boolean(existingCrmIdUd && String(existingCrmIdUd.value) !== String(guest.id));
+        const isNameConflict = Boolean(existingPersonName && !areGuestNamesCompatible(contactData.fullName, existingPersonName));
+
+        if (isCrmIdConflict || isNameConflict) {
+          // DO NOT overwrite that person's contact or inject phone numbers!
+          guest.googleContactResourceName = null;
+          guest.googleContactEtag = null;
+          resourceName = "";
+          etag = "";
+        } else {
+          etag = existingPerson.etag || etag;
+          const updateRes = await fetch(
+            `https://people.googleapis.com/v1/${resourceName}:updateContact?updatePersonFields=${updateFields}`,
+            {
+              method: "PATCH",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                ...personPayload,
+                etag
+              })
+            }
+          );
+          if (updateRes.ok) {
+            const updatedPerson = await updateRes.json();
+            guest.googleContactResourceName = updatedPerson.resourceName || resourceName;
+            guest.googleContactEtag = updatedPerson.etag || etag;
+            guest.googleContactSyncedAt = new Date().toISOString();
+            guest.googleContactDisplayName = contactData.displayName;
+            action = "updated";
+
+            cfg.lastSyncAt = guest.googleContactSyncedAt;
+            cfg.syncLogs.unshift({
+              timestamp: guest.googleContactSyncedAt,
+              guestId: guest.id,
+              guestName: contactData.fullName,
+              displayName: contactData.displayName,
+              phone: contactData.e164Phone,
+              action: "updated",
+              status: "success"
+            });
+            if (cfg.syncLogs.length > 40) cfg.syncLogs.length = 40;
+            if (!options.skipSave) saveDatabase();
+            return {
+              success: true,
+              action,
+              resourceName: guest.googleContactResourceName,
+              displayName: contactData.displayName,
+              contactData
+            };
+          }
         }
       } else if (getRes.status === 404) {
         resourceName = "";
@@ -34537,20 +34604,21 @@ app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
   // 1. Faz UMA ÚNICA leitura da agenda Google (evitando limite de quota de searchContacts)
   const existingByResource = new Map();
   const existingByCrmId = new Map();
-  const existingByPhoneSuffix = new Map();
+  const existingByPhone = new Map();
 
   try {
     let pageToken = "";
     for (let page = 0; page < 3; page++) {
-      const connUrl = `https://people.googleapis.com/v1/people/me/connections?personFields=names,phoneNumbers,userDefined,metadata&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
-      const connRes = await fetch(connUrl, {
+      const connUrl = `https://people.googleapis.com/v1/people:searchContacts?query=&readMask=names,phoneNumbers,userDefined,metadata`;
+      const connectionsUrl = `https://people.googleapis.com/v1/people/me/connections?personFields=names,phoneNumbers,userDefined,metadata&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
+      const connRes = await fetch(connectionsUrl, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       if (!connRes.ok) break;
       const connData = await connRes.json();
       for (const p of (connData.connections || [])) {
         if (!p?.resourceName) continue;
-        const rawContactName = p.names?.[0]?.unstructuredName || p.names?.[0]?.givenName || p.names?.[0]?.displayName || "";
+        const rawContactName = p.names?.[0]?.displayName || p.names?.[0]?.unstructuredName || [p.names?.[0]?.givenName, p.names?.[0]?.familyName].filter(Boolean).join(" ") || "";
         const contactPersonName = String(rawContactName).split("•")[0].trim();
         const crmIdUd = (p.userDefined || []).find(ud => (ud.key === "CRM_ID" || ud.key === "CorpFlatsGuestId") && ud.value);
         const entry = {
@@ -34566,15 +34634,24 @@ app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
         for (const pn of (p.phoneNumbers || [])) {
           const digits = String(pn.value || pn.canonicalForm || "").replace(/\D/g, "");
           if (digits.length >= 8) {
-            existingByPhoneSuffix.set(digits.slice(-8), entry);
-            if (digits.length >= 9) {
-              existingByPhoneSuffix.set(digits.slice(-9), entry);
-            }
-            if (digits.length >= 10) {
-              const norm = normalizePhone(digits);
-              if (norm.length >= 10) {
-                existingByPhoneSuffix.set(`${norm.slice(0, 2)}${norm.slice(-8)}`, entry);
+            const norm = normalizePhone(digits);
+            if (norm.length === 11) {
+              const ddd = norm.slice(0, 2);
+              const local9 = norm.slice(2);
+              const local8 = local9.startsWith("9") ? local9.slice(1) : local9.slice(-8);
+              existingByPhone.set(`${ddd}${local9}`, entry);
+              existingByPhone.set(`${ddd}${local8}`, entry);
+            } else if (norm.length === 10) {
+              const ddd = norm.slice(0, 2);
+              const local8 = norm.slice(2);
+              existingByPhone.set(`${ddd}${local8}`, entry);
+              if (["6", "7", "8", "9"].includes(local8[0])) {
+                existingByPhone.set(`${ddd}9${local8}`, entry);
               }
+            } else if (digits.length >= 10) {
+              existingByPhone.set(digits, entry);
+              existingByPhone.set(digits.slice(-11), entry);
+              existingByPhone.set(digits.slice(-10), entry);
             }
           }
         }
@@ -34618,6 +34695,13 @@ app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
 
   for (const g of allGuests) {
     const contactData = buildGuestCallerIdContactData(db, g);
+    if (g.googleContactResourceName) {
+      const prevEntry = existingByResource.get(g.googleContactResourceName);
+      if (prevEntry && !isEntryCompatibleWithGuest(prevEntry, g, contactData)) {
+        g.googleContactResourceName = null;
+        g.googleContactEtag = null;
+      }
+    }
     if (g.googleContactDisplayName) {
       const prevPerson = String(g.googleContactDisplayName).split("•")[0].trim();
       if (prevPerson && !areGuestNamesCompatible(contactData.fullName, prevPerson)) {
@@ -34632,16 +34716,15 @@ app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
       continue;
     }
 
-    const phoneKey8 = contactData.phoneDigits.slice(-8);
-    const phoneKey9 = contactData.phoneDigits.slice(-9);
+    const fullPhoneKey = contactData.phoneDigits.length >= 10 ? contactData.phoneDigits.slice(-11) : contactData.phoneDigits;
     const personPayload = buildGooglePersonPayload(contactData, g.id);
 
     const candidates = [
       g.googleContactResourceName ? existingByResource.get(g.googleContactResourceName) : null,
       existingByCrmId.get(String(g.id)),
-      existingByPhoneSuffix.get(phoneKey9),
-      existingByPhoneSuffix.get(phoneKey8),
-      ...(Array.isArray(contactData.phoneSuffixKeys) ? contactData.phoneSuffixKeys.map(sk => existingByPhoneSuffix.get(sk)) : [])
+      ...(Array.isArray(contactData.phoneSuffixKeys) ? contactData.phoneSuffixKeys.map(sk => existingByPhone.get(sk)) : []),
+      existingByPhone.get(fullPhoneKey),
+      existingByPhone.get(contactData.phoneDigits)
     ].filter(Boolean);
 
     const matchedExisting = candidates.find(cand => isEntryCompatibleWithGuest(cand, g, contactData)) || null;
@@ -34661,8 +34744,13 @@ app.post("/api/pms/guests/google-contacts/sync-all", async (req, res) => {
         g.googleContactSyncedAt = new Date().toISOString();
       }
     } else {
-      if (!seenPhonesInBatch.has(phoneKey8)) {
-        seenPhonesInBatch.add(phoneKey8);
+      if (!seenPhonesInBatch.has(fullPhoneKey)) {
+        seenPhonesInBatch.add(fullPhoneKey);
+        if (Array.isArray(contactData.phoneSuffixKeys)) {
+          for (const sk of contactData.phoneSuffixKeys) {
+            seenPhonesInBatch.add(sk);
+          }
+        }
         toCreate.push({
           guest: g,
           contactData,
