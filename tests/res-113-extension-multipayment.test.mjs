@@ -140,6 +140,34 @@ const pendingPayBtn = pendingButtons.find(b => b.id === "btn_pagar");
 assert.ok(pendingPayBtn, "Botão pagar deve estar presente");
 assert.equal(pendingPayBtn.label, "💳 Ver Detalhes & Pagar", "Rótulo deve ser '💳 Ver Detalhes & Pagar' quando há saldo pendente");
 
+// 5b. Teste Crítico: Reserva OTA com saldo pendente (R$ 150) mas com paymentStatus='pago_total' residual no registro
+const mockPendingWithPagoTotalStatus = {
+  ...mockPendingReservation,
+  paymentStatus: "pago_total" // status residual comum em OTAs importadas antes da extensão
+};
+const pendingOtaText = resolveWhatsAppTags(
+  tplDef.message,
+  mockPendingWithPagoTotalStatus,
+  mockDb,
+  "https://corpflats.com.br",
+  "guest",
+  tplDef
+);
+assert.ok(pendingOtaText.includes("Situação do Pagamento: *Pago Parcialmente (Saldo de diária adicional em aberto)*"), "Mesmo com paymentStatus='pago_total' no registro, se há saldo pendente deve constar Parcial");
+assert.ok(!pendingOtaText.includes("Pago Integralmente"), "NÃO deve constar Pago Integralmente quando há R$ 150 pendentes");
+assert.ok(pendingOtaText.includes("Saldo Pendente da Diária Adicional"), "Deve exibir bloco de saldo pendente");
+assert.ok(pendingOtaText.includes("PIX Copia e Cola"), "Deve exibir PIX Copia e Cola");
+
+const pendingOtaButtons = renderTemplateButtons(
+  tplDef.buttons,
+  mockPendingWithPagoTotalStatus,
+  mockDb,
+  "https://corpflats.com.br",
+  "guest",
+  tplDef
+);
+assert.ok(pendingOtaButtons.some(b => b.id === "btn_pix"), "Botão PIX DEVE estar presente quando há saldo pendente, mesmo com status pago_total residual");
+
 // 6. Testes do Cálculo de Quitação na Edição (PUT) para OTA e Canais Diretos
 function simulatePutPaymentResolution(reservation, reqBody) {
   const r = { ...reservation };
@@ -151,6 +179,7 @@ function simulatePutPaymentResolution(reservation, reqBody) {
 
   const putChanLower = String(r.channel || "").toLowerCase();
   const putIsOta = putChanLower.includes("booking") || putChanLower.includes("airbnb");
+  const isB2b = putChanLower === "b2b" || putChanLower.includes("b2b") || Boolean(r.b2bReservationNumber);
   const currentTot = Number(reqBody.totalAmount !== undefined ? reqBody.totalAmount : r.totalAmount) || 0;
   r.totalAmount = currentTot;
 
@@ -165,13 +194,43 @@ function simulatePutPaymentResolution(reservation, reqBody) {
     Number(r.amountPaid) || 0,
     existingPaymentsSum
   ) * 100) / 100;
-  const isFullyPaidOnPut = (reqBody.paymentStatus === "pago_total" || reqBody.paymentStatus === "pago") ||
-    (currentTot > 0 && totalPaymentsReceived >= currentTot - 0.01);
 
-  let hasOtaPartialPendingExtension = false;
-  if (putIsOta) {
+  const hasDirectDailyRateInOta = Array.isArray(r.dailyRates) && r.dailyRates.some(d => {
+    const dc = String(d?.channel || "").toLowerCase();
+    return dc && !dc.includes("booking") && !dc.includes("airbnb") && !dc.includes("b2b");
+  });
+  const addedDirectRatesSum = Number(reqBody.addedDirectRatesSum || 0);
+  const nightsChangedOnEdit = Boolean(reqBody.nightsChangedOnEdit);
+  const newNightsCount = Number(reqBody.newNightsCount || 0);
+  const oldNightsCount = Number(reqBody.oldNightsCount || 0);
+
+  const isFullyPaidByPayments = currentTot > 0 && totalPaymentsReceived >= currentTot - 0.01;
+  const isFullyPaidOnPut = isFullyPaidByPayments || (
+    (reqBody.paymentStatus === "pago_total" || reqBody.paymentStatus === "pago") &&
+    !hasDirectDailyRateInOta &&
+    addedDirectRatesSum <= 0 &&
+    !(nightsChangedOnEdit && newNightsCount > oldNightsCount && totalPaymentsReceived < currentTot - 0.01)
+  );
+
+  if (isFullyPaidByPayments) {
+    r.paymentStatus = "pago_total";
+    r.paidAmount = Math.max(currentTot, totalPaymentsReceived);
+  }
+
+  if (isB2b) {
+    if (r.b2bRatePolicy) {
+      const commPct = r.b2bCommissionPct !== undefined && r.b2bCommissionPct !== null
+        ? Number(r.b2bCommissionPct)
+        : (r.b2bRatePolicy === "COMISSIONADA" ? 12 : 0);
+      r.b2bCommissionPct = commPct;
+      r.b2bCommissionAmount = Number((((Number(r.totalAmount) || 0) * commPct) / 100).toFixed(2));
+      r.b2bNetAmount = Number(((Number(r.totalAmount) || 0) - r.b2bCommissionAmount).toFixed(2));
+    }
+    r.pixCopiaECola = "";
+    r.pixChargedAmount = 0;
+  } else if (putIsOta) {
     const otaMethod = putChanLower.includes("booking") ? "booking" : "airbnb";
-    hasOtaPartialPendingExtension = Boolean(
+    const hasOtaPartialPendingExtension = Boolean(
       !isFullyPaidOnPut &&
       currentTot > 0 &&
       totalPaymentsReceived < currentTot - 0.01
@@ -288,5 +347,68 @@ const resOtaRealPending = simulatePutPaymentResolution({
 
 assert.equal(resOtaRealPending.paymentStatus, "sinal_pago", "Extensão sem quitação deve assumir sinal_pago");
 assert.equal(resOtaRealPending.paidAmount, 650.40, "paidAmount preserva valor pago anteriormente");
+
+// 6f. Extensão onde formulário do PMS envia paymentStatus="pago_total" (status anterior) com acréscimo de noites mas pagamentos não cobrem
+const resOtaExtNightsUnpaid = simulatePutPaymentResolution({
+  id: 524,
+  channel: "booking",
+  totalAmount: 650.40,
+  paidAmount: 650.40,
+  paymentStatus: "pago_total",
+  payments: [
+    { id: "pay_1", amount: 650.40, method: "booking" }
+  ]
+}, {
+  totalAmount: 800.40,
+  paymentStatus: "pago_total",
+  nightsChangedOnEdit: true,
+  oldNightsCount: 4,
+  newNightsCount: 5
+});
+
+assert.equal(resOtaExtNightsUnpaid.paymentStatus, "sinal_pago", "Extensão de noites não quitada não pode virar pago_total mesmo com paymentStatus pré-preenchido");
+assert.equal(resOtaExtNightsUnpaid.paidAmount, 650.40, "paidAmount não deve ser inflado sem pagamento real");
+
+// 6g. Open Issues Ledger [R2-1]: Extensão de reserva corporativa B2B faturada com comissão (12%)
+const resB2bExtended = simulatePutPaymentResolution({
+  id: 406,
+  code: "B2B-25057926",
+  channel: "b2b",
+  b2bReservationNumber: "25057926",
+  b2bPaymentType: "FATURADO",
+  b2bRatePolicy: "COMISSIONADA",
+  b2bCommissionPct: 12,
+  b2bCommissionAmount: 108.00,
+  b2bNetAmount: 792.00,
+  totalAmount: 900.00,
+  paidAmount: 0,
+  paymentStatus: "pendente",
+  payments: []
+}, {
+  totalAmount: 1500.00,
+  nightsChangedOnEdit: true,
+  oldNightsCount: 3,
+  newNightsCount: 5
+});
+
+assert.equal(resB2bExtended.totalAmount, 1500.00, "Novo total da reserva B2B deve ser 1500.00");
+assert.equal(resB2bExtended.b2bCommissionAmount, 180.00, "Comissão B2B de 12% deve ser recalculada para 180.00");
+assert.equal(resB2bExtended.b2bNetAmount, 1320.00, "Valor líquido B2B deve ser recalculado para 1320.00");
+assert.equal(resB2bExtended.pixCopiaECola, "", "PIX Copia e Cola deve ser limpo para B2B faturado");
+
+// 6h. Reserva B2B que recebe quitação integral via pagamento registrado
+const resB2bPaidInFull = simulatePutPaymentResolution({
+  id: 406,
+  channel: "b2b",
+  b2bReservationNumber: "25057926",
+  totalAmount: 1500.00,
+  paymentStatus: "pendente",
+  payments: []
+}, {
+  totalAmount: 1500.00,
+  payments: [{ id: "pay_b2b_settle", amount: 1500.00, method: "pix" }]
+});
+assert.equal(resB2bPaidInFull.paymentStatus, "pago_total", "Reserva B2B quitada por pagamento real deve ser pago_total");
+assert.equal(resB2bPaidInFull.paidAmount, 1500.00, "paidAmount da B2B quitada deve ser 1500.00");
 
 console.log("✔ Todos os testes pontuais de extensão, múltiplos pagamentos e casos de borda passaram com 100% de sucesso!");

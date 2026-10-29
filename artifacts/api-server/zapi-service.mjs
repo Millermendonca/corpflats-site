@@ -3289,10 +3289,6 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const pixKey = db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47.964.813/0001-65";
   const titularPix = "CorpFlats Ltda (Banco Inter)";
 
-  const isOta = chanLower.includes("booking") || chanLower.includes("airbnb") || chanLower.includes("b2b");
-  const hasPartialPendingExtension = (reservation.paymentStatus === "sinal_pago" || reservation.paymentStatus === "parcial") && pendingAmount > 0.01;
-  const isPaid = !hasPartialPendingExtension && (pendingAmount <= 0.01 || isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount - 0.01 && totalAmount > 0));
-
   const isAdditionalStayTemplate = Boolean(
     templateId === "tpl_additional_daily_pending" ||
     triggerEvent === "additional_daily_pending" ||
@@ -3301,6 +3297,15 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       text.includes("Saldo Pendente da Diária Adicional")
     ))
   );
+
+  const isOta = chanLower.includes("booking") || chanLower.includes("airbnb") || chanLower.includes("b2b");
+  const hasPartialPendingExtension = (
+    reservation.paymentStatus === "sinal_pago" ||
+    reservation.paymentStatus === "parcial" ||
+    (paidAmount > 0 && pendingAmount > 0.01) ||
+    (isAdditionalStayTemplate && pendingAmount > 0.01)
+  );
+  const isPaid = !hasPartialPendingExtension && (pendingAmount <= 0.01 || isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount - 0.01 && totalAmount > 0));
 
   let paymentStatus = "Aguardando Pagamento";
   if (isPaid || pendingAmount <= 0.01) {
@@ -3635,9 +3640,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
   if (pendingAmount <= 0.01) {
     rendered = rendered
-      .replace(/💰\s*\*Saldo Pendente da Diária Adicional \/ Alteração:\*[\s\S]*?(?=Você também pode consultar|Você pode consultar|$)/gi, "")
-      .replace(/📋\s*\*PIX Copia e Cola[^\n]*\*[\s\S]*?(?=Você também pode consultar|Você pode consultar|$)/gi, "")
-      .replace(/Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX \(com desconto\) ou Cartão de Crédito em seu portal seguro para confirmar o acréscimo:/gi, "Você pode consultar os detalhes atualizados da sua estadia em seu portal seguro:")
+      .replace(/💰\s*\*?Saldo Pendente da Diária Adicional[^\n]*\*?:?[\s\S]*?(?=📋|Você (?:também )?pode consultar|$)/gi, "")
+      .replace(/📋\s*\*?PIX Copia e Cola[^\n]*\*?:?[\s\S]*?(?=Você (?:também )?pode consultar|$)/gi, "")
+      .replace(/Você (?:também )?pode consultar o extrato detalhado[\s\S]*?para confirmar o acréscimo:?/gi, "Você pode consultar os detalhes atualizados da sua estadia em seu portal seguro:")
       .replace(/\n{3,}/g, "\n\n");
   }
   if (reservation._isPreReservationUpdate) {
@@ -4153,7 +4158,11 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     paymentsSumVal
   ) * 100) / 100;
   const pendingAmountVal = Math.max(0, Math.round((totalAmountVal - paidAmountVal) * 100) / 100);
-  const isFullyPaidVal = (pendingAmountVal <= 0.01 && (totalAmountVal > 0 || paidAmountVal > 0)) || reservation?.paymentStatus === "pago_total" || reservation?.paymentStatus === "pago";
+  const isFullyPaidVal = pendingAmountVal <= 0.01 && (
+    (totalAmountVal > 0 || paidAmountVal > 0) ||
+    reservation?.paymentStatus === "pago_total" ||
+    reservation?.paymentStatus === "pago"
+  );
 
   if (isFullyPaidVal) {
     list = list.filter(b => {

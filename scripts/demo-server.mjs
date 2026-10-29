@@ -27491,17 +27491,27 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     Number(r.amountPaid) || 0,
     existingPaymentsSum
   ) * 100) / 100;
-  const isFullyPaidOnPut = (req.body.paymentStatus === "pago_total" || req.body.paymentStatus === "pago") ||
-    (currentTot > 0 && totalPaymentsReceived >= currentTot - 0.01);
+  const hasDirectDailyRateInOta = Array.isArray(r.dailyRates) && r.dailyRates.some(d => {
+    const dc = String(d?.channel || "").toLowerCase();
+    return dc && !dc.includes("booking") && !dc.includes("airbnb") && !dc.includes("b2b");
+  });
+
+  const isFullyPaidByPayments = currentTot > 0 && totalPaymentsReceived >= currentTot - 0.01;
+  const isFullyPaidOnPut = isFullyPaidByPayments || (
+    (req.body.paymentStatus === "pago_total" || req.body.paymentStatus === "pago") &&
+    !hasDirectDailyRateInOta &&
+    addedDirectRatesSum <= 0 &&
+    !(nightsChangedOnEdit && newNightsCount > oldNightsCount && totalPaymentsReceived < currentTot - 0.01)
+  );
+
+  if (isFullyPaidByPayments) {
+    r.paymentStatus = "pago_total";
+    r.paidAmount = Math.max(currentTot, totalPaymentsReceived);
+  }
 
   let hasOtaPartialPendingExtension = false;
   if (putIsOta) {
     const otaMethod = putChanLower.includes("booking") ? "booking" : "airbnb";
-
-    const hasDirectDailyRateInOta = Array.isArray(r.dailyRates) && r.dailyRates.some(d => {
-      const dc = String(d?.channel || "").toLowerCase();
-      return dc && !dc.includes("booking") && !dc.includes("airbnb") && !dc.includes("b2b");
-    });
     const explicitPartialStatus = req.body.paymentStatus === "sinal_pago" || req.body.paymentStatus === "parcial";
     const explicitPartialPaidAmt = req.body.paidAmount !== undefined && Number(req.body.paidAmount) > 0 && Number(req.body.paidAmount) < currentTot - 0.01 && (hasDirectDailyRateInOta || explicitPartialStatus || addedOtaRatesSum === 0);
     const explicitPartialPaymentsList = explicitPaymentsSumOnPut !== null && explicitPaymentsSumOnPut > 0 && explicitPaymentsSumOnPut < currentTot - 0.01 && (hasDirectDailyRateInOta || explicitPartialStatus || (currentTot > oldTotalAmount + 0.01 && addedOtaRatesSum === 0));
@@ -27721,7 +27731,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       r.mpInitPoint = null;
       r.mpPreferenceId = null;
       r.mpChargedAmount = null;
-    } else if (updatedPendingAmt <= 0.01 || r.paymentStatus === "pago_total" || r.paymentStatus === "pago") {
+    } else if (updatedPendingAmt <= 0.01 || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || isB2bEdit) {
       r.pixCopiaECola = "";
       r.pixChargedAmount = 0;
       r.mpInitPoint = null;
