@@ -51,6 +51,215 @@ function WhatsAppIcon({ className = "w-5 h-5" }: { className?: string }) {
   )
 }
 
+function formatChannelName(channel?: string): string {
+  const c = String(channel || "").toLowerCase()
+  if (c.includes("booking")) return "Booking.com"
+  if (c.includes("airbnb")) return "Airbnb"
+  if (c.includes("whatsapp")) return "WhatsApp"
+  if (c.includes("site") || c.includes("direto")) return "Canal Direto"
+  if (c.includes("b2b") || c.includes("corp")) return "Corporativo B2B"
+  return channel ? (channel.charAt(0).toUpperCase() + channel.slice(1)) : "Canal Direto"
+}
+
+function formatPaymentMethodDisplay(method?: string, notes?: string): string {
+  const m = String(method || "").toLowerCase()
+  const n = String(notes || "").toLowerCase()
+  if (m === "booking") return "🌐 Booking.com (Canal Parceiro)"
+  if (m === "airbnb") return "🔴 Airbnb (Canal Parceiro)"
+  if (m.includes("pix")) return "⚡ PIX Instantâneo (Banco Inter)"
+  if (m.includes("cartao") || m.includes("card") || m.includes("credito")) {
+    if (m.includes("debito")) return "💳 Cartão de Débito"
+    if (n.includes("mercado pago") || m.includes("mercadopago")) return "💳 Cartão de Crédito (Mercado Pago)"
+    return "💳 Cartão de Crédito"
+  }
+  if (m.includes("debito")) return "💳 Cartão de Débito"
+  if (m.includes("whatsapp")) return "💬 WhatsApp / CorpFlats"
+  if (m.includes("faturado") || m.includes("b2b")) return "🏢 Faturado Corporativo (B2B)"
+  if (m.includes("dinheiro") || m.includes("cash")) return "💵 Dinheiro / Espécie"
+  return method ? (method.charAt(0).toUpperCase() + method.slice(1)) : "Pagamento Confirmado"
+}
+
+function formatPaymentDateTime(dateStr?: string): string {
+  if (!dateStr) return ""
+  try {
+    const normalized = String(dateStr).trim().replace(" ", "T")
+    const d = parseISO(normalized)
+    if (!isNaN(d.getTime())) {
+      const hasSeconds = normalized.length >= 19 && normalized.includes(":")
+      return format(d, hasSeconds ? "dd/MM/yyyy 'às' HH:mm:ss" : "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+    }
+  } catch {}
+  return String(dateStr)
+}
+
+interface StayPackageGroup {
+  id: string
+  title: string
+  channel: string
+  channelLabel: string
+  startDate: string
+  endDate: string
+  nightsCount: number
+  ratesSum: number
+  charges: Array<{ id?: string; type?: string; title: string; amount: number }>
+  chargesSum: number
+  totalAmount: number
+  rates: Array<{ date: string; rate: number; channel?: string; notes?: string }>
+  isExtra: boolean
+}
+
+function computeStayPackages(
+  dailyRates: any[] = [],
+  charges: any[] = [],
+  fallbackCleaningFee = 0,
+  fallbackChannel = "site",
+  checkinDate = "",
+  checkoutDate = "",
+  totalAmount = 0
+): StayPackageGroup[] {
+  const resolvedCharges = (Array.isArray(charges) && charges.length > 0)
+    ? charges.map(c => ({
+        id: c.id,
+        type: c.type || "other",
+        title: c.title || "Taxa",
+        amount: Number(c.amount) || 0
+      }))
+    : (fallbackCleaningFee > 0
+        ? [{ id: "cleaning", type: "cleaning", title: "Taxa de Limpeza", amount: Number(fallbackCleaningFee) }]
+        : [])
+
+  const chargesTotal = resolvedCharges.reduce((acc, c) => acc + c.amount, 0)
+
+  if (!Array.isArray(dailyRates) || dailyRates.length === 0) {
+    const nights = (checkinDate && checkoutDate)
+      ? Math.max(1, differenceInDays(parseISO(checkoutDate), parseISO(checkinDate)))
+      : 1
+    const channelLabel = formatChannelName(fallbackChannel)
+    return [
+      {
+        id: "pkg_0",
+        title: `Pacote Reserva Inicial (${channelLabel})`,
+        channel: fallbackChannel,
+        channelLabel,
+        startDate: checkinDate,
+        endDate: checkoutDate,
+        nightsCount: nights,
+        ratesSum: Math.max(0, totalAmount - chargesTotal),
+        charges: resolvedCharges,
+        chargesSum: chargesTotal,
+        totalAmount: totalAmount || (Math.max(0, totalAmount - chargesTotal) + chargesTotal),
+        rates: [],
+        isExtra: false
+      }
+    ]
+  }
+
+  const sortedRates = [...dailyRates].sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+  const groups: Array<{ rates: any[]; channel: string; isExtra: boolean }> = []
+  let currentGroup: { rates: any[]; channel: string; isExtra: boolean } | null = null
+
+  for (const dr of sortedRates) {
+    const ch = (dr.channel || fallbackChannel || "site").toLowerCase()
+    const isExtraNote = Boolean(dr.notes && /extra|prorroga/i.test(dr.notes))
+    const isWhatsappExtra = ch.includes("whatsapp")
+
+    if (!currentGroup) {
+      currentGroup = {
+        rates: [dr],
+        channel: ch,
+        isExtra: isExtraNote || isWhatsappExtra
+      }
+    } else {
+      const sameChannel = currentGroup.channel === ch
+      const sameExtra = currentGroup.isExtra === (isExtraNote || isWhatsappExtra)
+      if (sameChannel && sameExtra) {
+        currentGroup.rates.push(dr)
+      } else {
+        groups.push(currentGroup)
+        currentGroup = {
+          rates: [dr],
+          channel: ch,
+          isExtra: isExtraNote || isWhatsappExtra
+        }
+      }
+    }
+  }
+  if (currentGroup) {
+    groups.push(currentGroup)
+  }
+
+  return groups.map((g, idx) => {
+    const isFirst = idx === 0
+    const ratesSum = g.rates.reduce((acc, r) => acc + (Number(r.rate) || 0), 0)
+    const groupCharges = isFirst ? resolvedCharges : []
+    const groupChargesSum = groupCharges.reduce((acc, c) => acc + c.amount, 0)
+    const pkgTotal = Math.round((ratesSum + groupChargesSum) * 100) / 100
+
+    const channelLabel = formatChannelName(g.channel)
+    const startDate = g.rates[0]?.date || checkinDate
+    const lastRateDate = g.rates[g.rates.length - 1]?.date || startDate
+    let endDate = checkoutDate
+    try {
+      const d = parseISO(lastRateDate)
+      d.setDate(d.getDate() + 1)
+      endDate = format(d, "yyyy-MM-dd")
+    } catch {}
+
+    const nightsCount = g.rates.length
+    let title = ""
+    if (isFirst) {
+      title = `Pacote Reserva Inicial (${channelLabel})`
+    } else {
+      const isExtra = g.isExtra || g.channel.includes("whatsapp")
+      title = `${isExtra ? "Diária Extra / Prorrogação" : "Extensão de Estadia"} (Solicitada via ${channelLabel})`
+    }
+
+    return {
+      id: `pkg_${idx}`,
+      title,
+      channel: g.channel,
+      channelLabel,
+      startDate,
+      endDate,
+      nightsCount,
+      ratesSum,
+      charges: groupCharges,
+      chargesSum: groupChargesSum,
+      totalAmount: pkgTotal,
+      rates: g.rates,
+      isExtra: !isFirst && g.isExtra
+    }
+  })
+}
+
+function getPaymentTitle(
+  payment: any,
+  index: number,
+  totalPayments: number,
+  packages: StayPackageGroup[]
+): string {
+  const prefix = totalPayments > 1 ? `${index + 1}º Pagamento • ` : ""
+  let matchedPkg = packages.find(pkg => Math.abs(pkg.totalAmount - Number(payment.amount)) < 0.5)
+  if (!matchedPkg && packages[index]) {
+    matchedPkg = packages[index]
+  }
+
+  if (matchedPkg) {
+    if (matchedPkg.id === "pkg_0" || index === 0) {
+      const chargeText = matchedPkg.chargesSum > 0 ? " + Taxa de Limpeza" : ""
+      return `${prefix}Reserva Inicial (${matchedPkg.nightsCount} diária${matchedPkg.nightsCount > 1 ? "s" : ""}${chargeText} — ${matchedPkg.channelLabel})`
+    } else {
+      const extraLabel = matchedPkg.nightsCount > 1 ? `${matchedPkg.nightsCount} Diárias Extras` : "1 Diária Extra"
+      return `${prefix}${extraLabel} (Solicitada via ${matchedPkg.channelLabel})`
+    }
+  }
+
+  if (index === 0) {
+    return `${prefix}Reserva Inicial`
+  }
+  return `${prefix}Pagamento Adicional / Complemento`
+}
+
 export default function GuestPortal() {
   const [, params] = useRoute("/minha-reserva/:code")
   const [, paramsAlt] = useRoute("/portal-hospede/:code")
@@ -1171,6 +1380,37 @@ export default function GuestPortal() {
   const cardTotalAmount = hideFinancialForGuest ? 0 : (totalAmount !== rawTotalInPortal ? computeCardAmount(totalAmount) : (Number(reservation.cardTotalAmount) || computeCardAmount(totalAmount)))
   const cardPendingAmount = hideFinancialForGuest ? 0 : (totalAmount !== rawTotalInPortal ? computeCardAmount(pendingAmount) : (Number(reservation.cardPendingAmount) || computeCardAmount(pendingAmount)))
 
+  const stayPackages = useMemo(() => {
+    return computeStayPackages(
+      (reservation as any)?.dailyRates,
+      (reservation as any)?.charges,
+      (reservation as any)?.cleaningFee,
+      reservation?.channel,
+      reservation?.checkinDate,
+      reservation?.checkoutDate,
+      totalAmount
+    )
+  }, [(reservation as any)?.dailyRates, (reservation as any)?.charges, (reservation as any)?.cleaningFee, reservation?.channel, reservation?.checkinDate, reservation?.checkoutDate, totalAmount])
+
+  const resolvedPayments = useMemo(() => {
+    const rawPayments = (reservation as any)?.payments
+    if (Array.isArray(rawPayments) && rawPayments.length > 0) {
+      return rawPayments
+    }
+    return [
+      {
+        id: "pay_fallback",
+        amount: paidAmount,
+        method: reservation?.paymentMethod || reservation?.channel,
+        date: reservation?.paidAt || "",
+        endToEndId: isOta ? undefined : reservation?.pixEndToEndId,
+        txId: isOta ? undefined : reservation?.pixTxId,
+        mpPaymentId: isOta ? undefined : reservation?.mpPaymentId,
+        notes: "Pagamento integral"
+      }
+    ]
+  }, [(reservation as any)?.payments, paidAmount, reservation?.paymentMethod, reservation?.channel, reservation?.paidAt, isOta, reservation?.pixEndToEndId, reservation?.pixTxId, reservation?.mpPaymentId])
+
   const handleCopyPix = () => {
     if (!reservation.pixCopiaECola) return
     navigator.clipboard.writeText(reservation.pixCopiaECola)
@@ -1186,34 +1426,79 @@ export default function GuestPortal() {
   }
 
   const handleCopyReceipt = () => {
-    const methodLabel = isOta
-      ? (channelLower.includes("booking") ? "Booking.com (Canal Parceiro)" : "Airbnb (Canal Parceiro)")
-      : (isCardPayment
-          ? (isDebitCard ? "Cartão de Débito" : (reservation.mpPaymentId ? "Cartão de Crédito (Mercado Pago)" : "Cartão de Crédito"))
-          : "PIX Instantâneo (Banco Inter)")
-    const txLine = isCardPayment
-      ? (reservation.mpPaymentId ? `ID da Transação (Cartão): ${reservation.mpPaymentId}` : "")
-      : (reservation.pixEndToEndId ? `EndToEnd ID: ${reservation.pixEndToEndId}` : (reservation.pixTxId ? `TxID: ${reservation.pixTxId}` : ""))
-    const text = [
+    const packages = stayPackages
+    const paymentsList = resolvedPayments
+
+    const textLines = [
       `📄 RECIBO DE PAGAMENTO • CORPFLATS HOSPEDAGEM`,
       `Localizador: ${reservation.code}`,
       `Hóspede: ${guestName}`,
-      `Acomodação: Flat ${reservation.flatNumber}`,
-      `Período: ${checkinFormatted} até ${checkoutFormatted} (${nights} diária${nights > 1 ? "s" : ""})`,
-      `Forma de Liquidação: ${methodLabel}`,
-      `Valor Liquidado: R$ ${paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-      `Status: PAGO & QUITADO ✓`,
-      reservation.paidAt ? `Data do Pagamento: ${format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}` : "",
-      txLine,
-      `CorpFlats • CNPJ 47.964.813/0001-65 • Campos dos Goytacazes - RJ`
-    ].filter(Boolean).join("\n")
-    navigator.clipboard.writeText(text)
+      reservation.guestDocument ? `CPF / Documento: ${reservation.guestDocument}` : "",
+      reservation.guestPhone ? `Telefone / WhatsApp: ${formatPhoneDisplay(reservation.guestPhone)}` : "",
+      `Acomodação: Apartamento ${reservation.flatNumber} (${reservation.roomCategory || "Studio Executivo"})`,
+      `Período Contratado: ${checkinFormatted} até ${checkoutFormatted} (${nights} diária${nights > 1 ? "s" : ""})`,
+      "",
+      `📋 COMPOSIÇÃO DOS SERVIÇOS & DIÁRIAS:`
+    ]
+
+    packages.forEach(pkg => {
+      const chargeDesc = pkg.chargesSum > 0 ? ` + Taxa de Limpeza (R$ ${pkg.chargesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})` : ""
+      textLines.push(`• ${pkg.title}: ${pkg.nightsCount} diária${pkg.nightsCount > 1 ? "s" : ""} (${formatDate(pkg.startDate)} a ${formatDate(pkg.endDate)} — R$ ${pkg.ratesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}${chargeDesc}) = R$ ${pkg.totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`)
+    })
+
+    if (Array.isArray((reservation as any)?.dailyRates) && (reservation as any).dailyRates.length > 0) {
+      textLines.push("")
+      textLines.push(`🗓️ DETALHAMENTO DIA A DIA DAS DIÁRIAS & TAXAS:`)
+      ;(reservation as any).dailyRates.forEach((dr: any) => {
+        const chLabel = formatChannelName(dr.channel)
+        const note = dr.notes ? ` (${dr.notes})` : ""
+        textLines.push(`• ${formatDate(dr.date)}: R$ ${Number(dr.rate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} • ${chLabel}${note}`)
+      })
+      if (Array.isArray((reservation as any)?.charges) && (reservation as any).charges.length > 0) {
+        ;(reservation as any).charges.forEach((c: any) => {
+          textLines.push(`• ${c.title || "Taxa"}: R$ ${Number(c.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`)
+        })
+      } else if (Number((reservation as any)?.cleaningFee) > 0) {
+        textLines.push(`• Taxa de Limpeza: R$ ${Number((reservation as any).cleaningFee).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`)
+      }
+    }
+
+    textLines.push("")
+    textLines.push(`💳 DETALHAMENTO FINANCEIRO & LIQUIDAÇÃO:`)
+    paymentsList.forEach((p: any, idx: number) => {
+      const title = getPaymentTitle(p, idx, paymentsList.length, packages)
+      const method = formatPaymentMethodDisplay(p.method, p.notes)
+      const dateStr = formatPaymentDateTime(p.date)
+      const isOtaPayment = /booking|airbnb/i.test(p.method || "")
+
+      textLines.push(`[${title}]`)
+      textLines.push(`  Meio: ${method}`)
+      textLines.push(`  Valor: R$ ${Number(p.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`)
+      if (dateStr) textLines.push(`  Data/Hora: ${dateStr}`)
+      if (!isOtaPayment && p.endToEndId) {
+        textLines.push(`  End-to-End ID: ${p.endToEndId}`)
+      }
+      if (!isOtaPayment && p.txId && !p.endToEndId) {
+        textLines.push(`  TxID: ${p.txId}`)
+      }
+      if (!isOtaPayment && p.mpPaymentId) {
+        textLines.push(`  ID Mercado Pago: ${p.mpPaymentId}`)
+      }
+    })
+
+    textLines.push("")
+    textLines.push(`💰 TOTAL LIQUIDADO: R$ ${paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (Saldo Restante: R$ 0,00 • PAGO & QUITADO ✓)`)
+    textLines.push(`CorpFlats Hospedagens Ltda • CNPJ 47.964.813/0001-65 • Campos dos Goytacazes - RJ`)
+
+    navigator.clipboard.writeText(textLines.filter(line => line !== null && line !== undefined).join("\n"))
     setCopiedReceipt(true)
     setTimeout(() => setCopiedReceipt(false), 2500)
   }
 
   const handlePrintReceipt = () => {
     const emissionDate = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+    const packages = stayPackages
+    const paymentsList = resolvedPayments
     const paidAtFormatted = reservation?.paidAt 
       ? format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })
       : (isPaid ? format(new Date(), "dd/MM/yyyy", { locale: ptBR }) : "")
@@ -1614,8 +1899,61 @@ export default function GuestPortal() {
       </div>
     </div>
 
-    <div class="section-card" style="padding: 0; background: transparent; border: none;">
-      <div class="section-heading" style="margin-bottom: 8px;">3. Demonstrativo dos Serviços Contratados</div>
+    <div class="section-card">
+      <div class="section-heading">3. Demonstrativo da Composição da Estadia & Taxas</div>
+
+      <!-- Resumo dos Pacotes por Origem / Período -->
+      <div style="margin-bottom: 12px; display: grid; gap: 8px;">
+        ${packages.map(pkg => `
+          <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <strong style="color: #0f172a; font-size: 12.5px;">${pkg.title}</strong>
+              <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+                ${pkg.nightsCount} diária${pkg.nightsCount > 1 ? "s" : ""} (${formatDate(pkg.startDate)} a ${formatDate(pkg.endDate)} — R$ ${pkg.ratesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
+                ${pkg.chargesSum > 0 ? ` + Taxa de Limpeza (R$ ${pkg.chargesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})` : ""}
+              </div>
+            </div>
+            <div style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 800; font-size: 13px; color: #0f172a;">
+              R$ ${pkg.totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+
+      <!-- Detalhamento dia a dia das diárias e taxas -->
+      ${Array.isArray((reservation as any)?.dailyRates) && (reservation as any).dailyRates.length > 0 ? `
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th>Data / Item</th>
+            <th style="width: 140px;">Origem / Canal</th>
+            <th>Observação</th>
+            <th style="width: 110px;" class="text-right">Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${(reservation as any).dailyRates.map((dr: any) => `
+            <tr>
+              <td><strong>${formatDate(dr.date)}</strong> • Diária de Hospedagem</td>
+              <td>${formatChannelName(dr.channel)}</td>
+              <td style="color: #64748b; font-size: 11px;">${dr.notes || "—"}</td>
+              <td class="text-right font-mono"><strong>R$ ${Number(dr.rate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></td>
+            </tr>
+          `).join("")}
+          ${Array.isArray((reservation as any)?.charges) && (reservation as any).charges.length > 0 ? (reservation as any).charges.map((c: any) => `
+            <tr style="background: #f8fafc;">
+              <td colspan="3"><strong>${c.title || "Taxa"}</strong></td>
+              <td class="text-right font-mono"><strong>R$ ${Number(c.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></td>
+            </tr>
+          `).join("") : (Number((reservation as any)?.cleaningFee) > 0 ? `
+            <tr style="background: #f8fafc;">
+              <td colspan="3"><strong>Taxa de Limpeza</strong></td>
+              <td class="text-right font-mono"><strong>R$ ${Number((reservation as any).cleaningFee).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></td>
+            </tr>
+          ` : "")}
+        </tbody>
+      </table>
+      ` : `
       <table class="items-table">
         <thead>
           <tr>
@@ -1635,18 +1973,9 @@ export default function GuestPortal() {
               <strong>R$ ${paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
             </td>
           </tr>
-          ${hasBreakfast ? `
-          <tr>
-            <td>
-              <strong>Room Service & Café da Manhã Corporativo</strong><br>
-              <span style="font-size: 11px; color: #64748b;">Itens inclusos no plano de hospedagem</span>
-            </td>
-            <td style="text-align: center;">${nights} dia${nights > 1 ? "s" : ""}</td>
-            <td class="text-right font-mono" style="color: #047857; font-weight: 700;">Incluso</td>
-          </tr>
-          ` : ""}
         </tbody>
       </table>
+      `}
     </div>
 
     <div class="total-card">
@@ -1660,37 +1989,56 @@ export default function GuestPortal() {
     </div>
 
     <div class="section-card">
-      <div class="section-heading">4. Dados da Liquidação & Conciliação Bancária</div>
-      <div class="info-grid">
-        <div class="info-item">
-          <span class="info-label">Forma de Liquidação</span>
-          <span class="info-value">${paymentMethodText}</span>
-        </div>
-        ${paidAtFormatted ? `
-        <div class="info-item">
-          <span class="info-label">Data e Hora da Liquidação</span>
-          <span class="info-value">${paidAtFormatted}</span>
-        </div>
-        ` : ""}
+      <div class="section-heading">4. Detalhamento Financeiro & Liquidação (${paymentsList.length} ${paymentsList.length > 1 ? "Transações Liquidadas" : "Transação Liquidada"})</div>
+      <div style="display: grid; gap: 10px;">
+        ${paymentsList.map((p: any, idx: number) => {
+          const title = getPaymentTitle(p, idx, paymentsList.length, packages)
+          const method = formatPaymentMethodDisplay(p.method, p.notes)
+          const dateStr = formatPaymentDateTime(p.date)
+          const isOtaPayment = /booking|airbnb/i.test(p.method || "")
+
+          return `
+          <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px; margin-bottom: 8px;">
+              <strong style="color: #0f172a; font-size: 12px;">${title}</strong>
+              <span style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 800; font-size: 13px; color: #047857;">
+                R$ ${Number(p.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div class="info-grid">
+              <div class="info-item">
+                <span class="info-label">Meio de Liquidação</span>
+                <span class="info-value">${method}</span>
+              </div>
+              ${dateStr ? `
+              <div class="info-item">
+                <span class="info-label">Data e Hora do Pagamento</span>
+                <span class="info-value">${dateStr}</span>
+              </div>
+              ` : ""}
+            </div>
+            ${!isOtaPayment && p.endToEndId ? `
+            <div style="margin-top: 8px;">
+              <span class="audit-label">End-to-End ID (Banco Central do Brasil - SPI):</span>
+              <div class="audit-hash">${p.endToEndId}</div>
+            </div>
+            ` : ""}
+            ${!isOtaPayment && p.txId && !p.endToEndId ? `
+            <div style="margin-top: 8px;">
+              <span class="audit-label">Identificador de Transação (TxID Banco Inter):</span>
+              <div class="audit-hash">${p.txId}</div>
+            </div>
+            ` : ""}
+            ${!isOtaPayment && p.mpPaymentId ? `
+            <div style="margin-top: 8px;">
+              <span class="audit-label">Identificador de Transação (Mercado Pago):</span>
+              <div class="audit-hash">${p.mpPaymentId}</div>
+            </div>
+            ` : ""}
+          </div>
+          `
+        }).join("")}
       </div>
-      ${isCardPayment && reservation?.mpPaymentId ? `
-      <div style="margin-top: 10px;">
-        <span class="audit-label">Identificador de Transação (Cartão / Mercado Pago):</span>
-        <div class="audit-hash">${reservation.mpPaymentId}</div>
-      </div>
-      ` : ""}
-      ${!isCardPayment && reservation?.pixEndToEndId ? `
-      <div style="margin-top: 10px;">
-        <span class="audit-label">End-to-End ID (Banco Central do Brasil - SPI):</span>
-        <div class="audit-hash">${reservation.pixEndToEndId}</div>
-      </div>
-      ` : ""}
-      ${!isCardPayment && reservation?.pixTxId && !reservation?.pixEndToEndId ? `
-      <div style="margin-top: 10px;">
-        <span class="audit-label">Identificador de Transação (TxID Banco Inter):</span>
-        <div class="audit-hash">${reservation.pixTxId}</div>
-      </div>
-      ` : ""}
     </div>
 
     <div class="declaration">
@@ -2914,30 +3262,73 @@ export default function GuestPortal() {
                 </div>
               </div>
 
-              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-emerald-900">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <div>
-                    <span className="font-bold block text-sm">Reserva 100% Confirmada!</span>
-                    <span className="text-emerald-800 text-xs">
-                      {isOta 
-                        ? (channelLower.includes("booking") 
-                            ? "Liquidado diretamente via Booking.com." 
-                            : "Liquidado diretamente via Airbnb.")
-                        : (isCardPayment 
-                            ? (isDebitCard ? "Liquidado via Cartão de Débito." : (reservation.mpPaymentId ? "Liquidado via Cartão de Crédito (Mercado Pago)." : "Liquidado via Cartão de Crédito."))
-                            : (channelLower.includes("whatsapp") && !reservation.pixEndToEndId && !reservation.pixTxId
-                                ? "Liquidado e confirmado via WhatsApp (CorpFlats)." 
-                                : "Liquidado via PIX Banco Inter."))}
-                    </span>
+              {resolvedPayments.length > 1 ? (
+                <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col items-start gap-3 text-xs text-emerald-900">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 w-full">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div>
+                        <span className="font-bold block text-sm">Reserva 100% Confirmada & Liquidada!</span>
+                        <span className="text-emerald-800 text-xs">
+                          {`Liquidado em ${resolvedPayments.length} pagamentos (${stayPackages.map(p => `${p.channelLabel}: R$ ${p.totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`).join(" + ")})`}
+                        </span>
+                      </div>
+                    </div>
+                    {reservation.paidAt && (
+                      <span className="text-[11px] font-medium text-emerald-700 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200 shrink-0">
+                        Última baixa: {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-emerald-200/60">
+                    {resolvedPayments.map((p: any, idx: number) => {
+                      const title = getPaymentTitle(p, idx, resolvedPayments.length, stayPackages)
+                      const method = formatPaymentMethodDisplay(p.method, p.notes)
+                      const dateStr = formatPaymentDateTime(p.date)
+                      return (
+                        <div key={p.id || idx} className="p-2.5 bg-white/90 rounded-xl border border-emerald-200/80 text-[11px] space-y-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-bold text-slate-800 line-clamp-1">{title}</span>
+                            <span className="font-mono font-bold text-emerald-700 shrink-0">
+                              R$ {Number(p.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-slate-500 text-[10.5px]">
+                            <span>{method}</span>
+                            {dateStr && <span>{dateStr}</span>}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
-                {reservation.paidAt && (
-                  <span className="text-[11px] font-medium text-emerald-700 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200">
-                    {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
-                  </span>
-                )}
-              </div>
+              ) : (
+                <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-emerald-900">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <span className="font-bold block text-sm">Reserva 100% Confirmada!</span>
+                      <span className="text-emerald-800 text-xs">
+                        {isOta 
+                          ? (channelLower.includes("booking") 
+                              ? "Liquidado diretamente via Booking.com." 
+                              : "Liquidado diretamente via Airbnb.")
+                          : (isCardPayment 
+                              ? (isDebitCard ? "Liquidado via Cartão de Débito." : (reservation.mpPaymentId ? "Liquidado via Cartão de Crédito (Mercado Pago)." : "Liquidado via Cartão de Crédito."))
+                              : (channelLower.includes("whatsapp") && !reservation.pixEndToEndId && !reservation.pixTxId
+                                  ? "Liquidado e confirmado via WhatsApp (CorpFlats)." 
+                                  : "Liquidado via PIX Banco Inter."))}
+                      </span>
+                    </div>
+                  </div>
+                  {reservation.paidAt && (
+                    <span className="text-[11px] font-medium text-emerald-700 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200">
+                      {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                    </span>
+                  )}
+                </div>
+              )}
             </>
           )}
 
@@ -5029,55 +5420,152 @@ export default function GuestPortal() {
               </div>
             </div>
 
-            {/* Dados da Transação e Quitação */}
-            <div className="p-3.5 bg-slate-50/70 rounded-2xl border border-slate-100 space-y-2 text-xs">
+            {/* Composição da Estadia & Taxas por Origem / Período */}
+            <div className="p-3.5 bg-slate-50/70 rounded-2xl border border-slate-100 space-y-3 text-xs">
               <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block border-b border-slate-200/60 pb-1">
-                Detalhamento Financeiro & Liquidação
+                Composição da Estadia & Taxas
               </span>
-              <div className="flex flex-wrap justify-between gap-1">
-                <span className="text-slate-500">Forma de Liquidação:</span>
-                <span className="font-bold text-slate-900">
-                  {isOta 
-                    ? (channelLower.includes("booking") ? "🌐 Booking.com (Canal Parceiro)" : "🔴 Airbnb (Canal Parceiro)")
-                    : (isCardPayment
-                        ? (isDebitCard ? "💳 Cartão de Débito" : (reservation.mpPaymentId ? "💳 Cartão de Crédito (Mercado Pago)" : "💳 Cartão de Crédito"))
-                        : (reservation.pixEndToEndId || reservation.pixTxId 
-                            ? "⚡ PIX Instantâneo (Banco Inter)" 
-                            : (channelLower.includes("whatsapp") ? "💬 WhatsApp / CorpFlats" : "PIX Oficial Banco Inter")))}
+
+              {/* 1. Agrupamento por origem / período */}
+              <div className="space-y-2">
+                {stayPackages.map((pkg, idx) => (
+                  <div key={pkg.id || idx} className="p-2.5 bg-white rounded-xl border border-slate-200/80 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-slate-900 text-xs">
+                        {pkg.title}
+                      </span>
+                      <span className="font-mono font-bold text-slate-900 text-xs shrink-0">
+                        R$ {pkg.totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 leading-snug">
+                      {pkg.nightsCount} diária{pkg.nightsCount > 1 ? "s" : ""} ({formatDate(pkg.startDate)} a {formatDate(pkg.endDate)} — R$ {pkg.ratesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
+                      {pkg.chargesSum > 0 && ` + Taxa de Limpeza (R$ ${pkg.chargesSum.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 2. Detalhamento dia a dia das diárias e taxas */}
+              {Array.isArray((reservation as any)?.dailyRates) && (reservation as any).dailyRates.length > 0 && (
+                <div className="pt-2 border-t border-slate-200/60 space-y-1.5">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Detalhamento Dia a Dia ({(reservation as any).dailyRates.length} diárias + taxas)
+                  </span>
+                  <div className="divide-y divide-slate-100 rounded-xl bg-white border border-slate-200/70 overflow-hidden">
+                    {(reservation as any).dailyRates.map((dr: any, idx: number) => {
+                      const chLabel = formatChannelName(dr.channel)
+                      return (
+                        <div key={idx} className="flex items-center justify-between px-3 py-1.5 text-[11px]">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="font-mono font-semibold text-slate-700">{formatDate(dr.date)}:</span>
+                            <span className="text-slate-500 truncate">
+                              {chLabel}{dr.notes ? ` • ${dr.notes}` : ""}
+                            </span>
+                          </div>
+                          <span className="font-mono font-bold text-slate-800 shrink-0 ml-2">
+                            R$ {Number(dr.rate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      )
+                    })}
+                    {Array.isArray((reservation as any)?.charges) && (reservation as any).charges.length > 0 ? (
+                      (reservation as any).charges.map((c: any, idx: number) => (
+                        <div key={`charge_${idx}`} className="flex items-center justify-between px-3 py-1.5 text-[11px] bg-slate-50/50">
+                          <span className="text-slate-600 font-medium">{c.title || "Taxa"}</span>
+                          <span className="font-mono font-bold text-slate-800 shrink-0 ml-2">
+                            R$ {Number(c.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      Number((reservation as any)?.cleaningFee) > 0 ? (
+                        <div className="flex items-center justify-between px-3 py-1.5 text-[11px] bg-slate-50/50">
+                          <span className="text-slate-600 font-medium">Taxa de Limpeza</span>
+                          <span className="font-mono font-bold text-slate-800 shrink-0 ml-2">
+                            R$ {Number((reservation as any).cleaningFee).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      ) : null
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Detalhamento Financeiro & Liquidação em Cards Numerados */}
+            <div className="p-3.5 bg-slate-50/70 rounded-2xl border border-slate-100 space-y-3 text-xs">
+              <div className="flex items-center justify-between border-b border-slate-200/60 pb-1">
+                <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Detalhamento Financeiro & Liquidação
+                </span>
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  {resolvedPayments.length} {resolvedPayments.length > 1 ? "Transações Liquidadas" : "Transação Liquidada"}
                 </span>
               </div>
-              {reservation.paidAt && (
-                <div className="flex flex-wrap justify-between gap-1">
-                  <span className="text-slate-500">Data e Hora do Pagamento:</span>
-                  <span className="font-semibold text-slate-800">
-                    {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}
-                  </span>
-                </div>
-              )}
-              {isCardPayment && reservation.mpPaymentId && (
-                <div className="space-y-0.5 pt-1">
-                  <span className="text-[10px] text-slate-400 font-medium block">Identificador da Transação (Cartão / Mercado Pago):</span>
-                  <span className="font-mono text-[10.5px] text-sky-800 font-bold break-all block bg-white p-1.5 rounded-lg border border-slate-200/70 select-all">
-                    {reservation.mpPaymentId}
-                  </span>
-                </div>
-              )}
-              {!isCardPayment && reservation.pixEndToEndId && (
-                <div className="space-y-0.5 pt-1">
-                  <span className="text-[10px] text-slate-400 font-medium block">End-to-End ID (Banco Central):</span>
-                  <span className="font-mono text-[10.5px] text-emerald-800 font-bold break-all block bg-white p-1.5 rounded-lg border border-slate-200/70 select-all">
-                    {reservation.pixEndToEndId}
-                  </span>
-                </div>
-              )}
-              {!isCardPayment && reservation.pixTxId && !reservation.pixEndToEndId && (
-                <div className="space-y-0.5 pt-1">
-                  <span className="text-[10px] text-slate-400 font-medium block">Identificador TxID:</span>
-                  <span className="font-mono text-[10.5px] text-slate-700 font-bold break-all block bg-white p-1.5 rounded-lg border border-slate-200/70 select-all">
-                    {reservation.pixTxId}
-                  </span>
-                </div>
-              )}
+
+              <div className="space-y-2.5">
+                {resolvedPayments.map((p: any, idx: number) => {
+                  const title = getPaymentTitle(p, idx, resolvedPayments.length, stayPackages)
+                  const method = formatPaymentMethodDisplay(p.method, p.notes)
+                  const dateStr = formatPaymentDateTime(p.date)
+                  const isOtaPayment = /booking|airbnb/i.test(p.method || "")
+
+                  return (
+                    <div key={p.id || idx} className="p-3 bg-white rounded-xl border border-slate-200/80 shadow-2xs space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-1 border-b border-slate-100 pb-1.5">
+                        <span className="font-bold text-slate-900 text-xs">
+                          {title}
+                        </span>
+                        <span className="font-mono font-black text-emerald-700 text-xs">
+                          R$ {Number(p.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-medium block">Meio de Liquidação:</span>
+                          <span className="font-semibold text-slate-800">{method}</span>
+                        </div>
+                        {dateStr && (
+                          <div>
+                            <span className="text-[10px] text-slate-400 font-medium block">Data e Hora do Pagamento:</span>
+                            <span className="font-semibold text-slate-800">{dateStr}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Identificadores específicos deste pagamento */}
+                      {!isOtaPayment && p.endToEndId && (
+                        <div className="space-y-0.5 pt-1">
+                          <span className="text-[10px] text-slate-400 font-medium block">End-to-End ID (Banco Central - SPI):</span>
+                          <span className="font-mono text-[10.5px] text-emerald-800 font-bold break-all block bg-slate-50 p-1.5 rounded-lg border border-slate-200/70 select-all">
+                            {p.endToEndId}
+                          </span>
+                        </div>
+                      )}
+
+                      {!isOtaPayment && p.txId && !p.endToEndId && (
+                        <div className="space-y-0.5 pt-1">
+                          <span className="text-[10px] text-slate-400 font-medium block">Identificador TxID (Banco Inter):</span>
+                          <span className="font-mono text-[10.5px] text-slate-700 font-bold break-all block bg-slate-50 p-1.5 rounded-lg border border-slate-200/70 select-all">
+                            {p.txId}
+                          </span>
+                        </div>
+                      )}
+
+                      {!isOtaPayment && p.mpPaymentId && (
+                        <div className="space-y-0.5 pt-1">
+                          <span className="text-[10px] text-slate-400 font-medium block">Identificador da Transação (Mercado Pago):</span>
+                          <span className="font-mono text-[10.5px] text-sky-800 font-bold break-all block bg-slate-50 p-1.5 rounded-lg border border-slate-200/70 select-all">
+                            {p.mpPaymentId}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
 
             {/* Caixa de Valor Total Quitado */}

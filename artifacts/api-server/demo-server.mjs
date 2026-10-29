@@ -28983,6 +28983,34 @@ function ensureReservationCompositeTotal(r) {
   return Number(r.totalAmount) || 0;
 }
 
+function enrichReservationPayments(r) {
+  if (!r || !Array.isArray(r.payments)) return [];
+  return r.payments.map(p => {
+    if (!p) return p;
+    const method = String(p.method || "").toLowerCase();
+    const isOta = method === "booking" || method === "airbnb";
+    const isCard = /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(method);
+    const isPix = method === "pix" || (!isOta && !isCard);
+
+    const enriched = { ...p };
+    if (isOta) {
+      delete enriched.endToEndId;
+      delete enriched.txId;
+      delete enriched.pixEndToEndId;
+      delete enriched.pixTxId;
+    } else {
+      if (isPix) {
+        if (!enriched.endToEndId && r.pixEndToEndId) enriched.endToEndId = r.pixEndToEndId;
+        if (!enriched.txId && r.pixTxId) enriched.txId = r.pixTxId;
+      }
+      if (isCard) {
+        if (!enriched.mpPaymentId && r.mpPaymentId) enriched.mpPaymentId = r.mpPaymentId;
+      }
+    }
+    return enriched;
+  });
+}
+
 app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
@@ -29327,6 +29355,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       dailyRates: hideFinancialForGuest ? [] : (Array.isArray(r.dailyRates) ? r.dailyRates : []),
       cleaningFee: hideFinancialForGuest ? 0 : (Number(r.cleaningFee) || 0),
       charges: hideFinancialForGuest ? [] : (Array.isArray(r.charges) ? r.charges : []),
+      payments: hideFinancialForGuest ? [] : enrichReservationPayments(r),
       totalAmount: hideFinancialForGuest ? 0 : resolvedTotal,
       paidAmount: hideFinancialForGuest ? 0 : resolvedPaid,
       cardTotalAmount: hideFinancialForGuest ? 0 : cardTotalAmount,
@@ -53266,6 +53295,12 @@ async function confirmReservationPayment(r, {
     amount: isComplementaryPayment ? valorPago : cumulativePaid,
     method: r.paymentMethod || (isCard ? "cartao_credito" : "pix"),
     date: r.paidAt,
+    ...(isCard
+      ? { mpPaymentId: mpPaymentId || r.mpPaymentId || undefined }
+      : {
+          endToEndId: endToEndId || r.pixEndToEndId || undefined,
+          txId: txId || r.pixTxId || undefined
+        }),
     notes: isCard
       ? `${isComplementaryPayment ? "Complemento " : ""}Cartão de Crédito confirmado via ${source}${r.mpPaymentId ? ` (ID: ${r.mpPaymentId})` : ""}`
       : `${isComplementaryPayment ? "Complemento " : ""}PIX confirmado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}`
@@ -53284,6 +53319,7 @@ async function confirmReservationPayment(r, {
       });
     }
   }
+  r.payments = enrichReservationPayments(r);
 
   // Identifica se era uma pré-reserva antes da alteração de status
   const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation || (db.whatsappHistory || []).some(h => {
