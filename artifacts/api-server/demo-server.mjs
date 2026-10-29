@@ -28985,12 +28985,16 @@ function ensureReservationCompositeTotal(r) {
 
 function enrichReservationPayments(r) {
   if (!r || !Array.isArray(r.payments)) return [];
+  const hasClaimedPixE2E = r.payments.some(p => p && p.endToEndId && p.endToEndId === r.pixEndToEndId);
+  const hasClaimedPixTxId = r.payments.some(p => p && p.txId && p.txId === r.pixTxId);
+  const hasClaimedMpId = r.payments.some(p => p && p.mpPaymentId && p.mpPaymentId === r.mpPaymentId);
+
   return r.payments.map(p => {
     if (!p) return p;
     const method = String(p.method || "").toLowerCase();
     const isOta = method === "booking" || method === "airbnb";
     const isCard = /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(method);
-    const isPix = method === "pix" || (!isOta && !isCard);
+    const isPix = method === "pix" || /pix/i.test(method);
 
     const enriched = { ...p };
     if (isOta) {
@@ -28998,13 +29002,20 @@ function enrichReservationPayments(r) {
       delete enriched.txId;
       delete enriched.pixEndToEndId;
       delete enriched.pixTxId;
+      delete enriched.mpPaymentId;
     } else {
       if (isPix) {
-        if (!enriched.endToEndId && r.pixEndToEndId) enriched.endToEndId = r.pixEndToEndId;
-        if (!enriched.txId && r.pixTxId) enriched.txId = r.pixTxId;
+        if (!enriched.endToEndId && r.pixEndToEndId && !hasClaimedPixE2E) {
+          enriched.endToEndId = r.pixEndToEndId;
+        }
+        if (!enriched.txId && r.pixTxId && !hasClaimedPixTxId) {
+          enriched.txId = r.pixTxId;
+        }
       }
       if (isCard) {
-        if (!enriched.mpPaymentId && r.mpPaymentId) enriched.mpPaymentId = r.mpPaymentId;
+        if (!enriched.mpPaymentId && r.mpPaymentId && !hasClaimedMpId) {
+          enriched.mpPaymentId = r.mpPaymentId;
+        }
       }
     }
     return enriched;
@@ -53290,20 +53301,25 @@ async function confirmReservationPayment(r, {
   }
 
   // Sincroniza r.payments para garantir consistência em relatórios e no PMS
+  const isPix = /pix/i.test(source) || /pix/i.test(r.paymentMethod || "") || (!isCard && (Boolean(endToEndId) || Boolean(txId)));
   const payRecord = {
-    id: isCard ? `pay_card_${Date.now()}` : `pay_pix_${Date.now()}`,
+    id: isCard ? `pay_card_${Date.now()}` : (isPix ? `pay_pix_${Date.now()}` : `pay_${Date.now()}`),
     amount: isComplementaryPayment ? valorPago : cumulativePaid,
-    method: r.paymentMethod || (isCard ? "cartao_credito" : "pix"),
+    method: r.paymentMethod || (isCard ? "cartao_credito" : (isPix ? "pix" : "outro")),
     date: r.paidAt,
     ...(isCard
       ? { mpPaymentId: mpPaymentId || r.mpPaymentId || undefined }
-      : {
-          endToEndId: endToEndId || r.pixEndToEndId || undefined,
-          txId: txId || r.pixTxId || undefined
-        }),
+      : (isPix
+          ? {
+              endToEndId: endToEndId || r.pixEndToEndId || undefined,
+              txId: txId || r.pixTxId || undefined
+            }
+          : {})),
     notes: isCard
       ? `${isComplementaryPayment ? "Complemento " : ""}Cartão de Crédito confirmado via ${source}${r.mpPaymentId ? ` (ID: ${r.mpPaymentId})` : ""}`
-      : `${isComplementaryPayment ? "Complemento " : ""}PIX confirmado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}`
+      : (isPix
+          ? `${isComplementaryPayment ? "Complemento " : ""}PIX confirmado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}`
+          : `${isComplementaryPayment ? "Complemento " : ""}Pagamento confirmado via ${source}`)
   };
   if (!Array.isArray(r.payments) || r.payments.length === 0) {
     r.payments = [{ ...payRecord, amount: cumulativePaid }];
