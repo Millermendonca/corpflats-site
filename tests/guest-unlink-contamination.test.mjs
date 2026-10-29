@@ -499,7 +499,180 @@ test("4. Incidente GUEST 145 (Leonardo Portugal Federici vs Leonardo Primo/Rodri
   assert.equal(g33.googleContactResourceName || null, null);
 });
 
-test("5. Frontend (pms-calendar.tsx) & Backend (PUT /api/pms/reservations/:id): desvincular hóspede não faz fallback para selectedRes.guestId", () => {
+test("5. Regressão Produção: RES-114-0525 / RES-408-0494 / RES-116-0019 ('Leonardo' 1 palavra com CPF/e-mail de Leonardo da Silva Rodrigues) não recontamina GUEST 145 (Leonardo Portugal Federici), acompanhantes de WhatsApp não entram em additionalPhones e Rodinei Siqueira Gonçalves é restaurado", () => {
+  const {
+    areGuestNamesCompatible,
+    isPlaceholderOrEmptyGuestName,
+    mergeGuestRecords,
+    reconcileAndMergeGuests
+  } = loadReconciliationSandbox();
+
+  // Emojis no nome não devem quebrar areGuestNamesCompatible
+  assert.equal(areGuestNamesCompatible("🏠 João Eduardo Leal Correa", "João Eduardo Leal Correa"), true);
+  // Nomes de Ordem de Serviço não devem ser tratados como placeholder vazio
+  assert.equal(isPlaceholderOrEmptyGuestName("Ordem de Serviço: Limpeza de filtro"), false);
+
+  // mergeGuestRecords com source sem id (ex: objeto sintético de reserva) não deve achar que sameGuestId === true
+  const targetGuest = { id: 145, name: "Leonardo Portugal Federici", fullName: "Leonardo Portugal Federici", phone: "28981141553", email: "" };
+  mergeGuestRecords(targetGuest, { name: "Francine", fullName: "Francine Almeida", email: "francine@test.com", document: "11122233344" });
+  assert.equal(targetGuest.name, "Leonardo Portugal Federici");
+  assert.equal(targetGuest.fullName, "Leonardo Portugal Federici");
+  assert.equal(targetGuest.email, "");
+
+  const mockDb = {
+    guests: [
+      {
+        id: 20,
+        guestCode: "HOSP-00020",
+        name: "João Eduardo Leal Correa",
+        fullName: "João Eduardo Leal Correa",
+        phone: "21970450660",
+        additionalPhones: ["5521970473174"],
+        notes: "Mesma reserva de João",
+        email: "joao.educorrea@gmail.com",
+        document: "02393056718"
+      },
+      {
+        id: 145,
+        guestCode: "HOSP-00145",
+        name: "Leonardo Portugal Federici",
+        fullName: "Leonardo da Silva Rodrigues",
+        phone: "28981141553",
+        additionalPhones: ["21992115153"],
+        email: "leodsrodriguesuber@gmail.com",
+        document: "10699917751",
+        documentNumber: "10699917751",
+        vehiclePlate: "RMP3E19"
+      },
+      {
+        id: 146,
+        guestCode: "HOSP-00146",
+        name: "Fabiano",
+        fullName: "Fabiano",
+        phone: "28981141553"
+      }
+    ],
+    reservations: [
+      {
+        id: 486,
+        code: "RES-605-0486",
+        flatNumber: "605",
+        status: "completed",
+        guestId: 20,
+        guestName: "João Eduardo Leal Correa",
+        guestPhone: "21970450660",
+        guestEmail: "joao.educorrea@gmail.com",
+        guestDocument: "02393056718",
+        guests: [
+          { index: 1, guestId: 20, name: "João Eduardo Leal Correa", phone: "21970450660", cpf: "02393056718" },
+          { index: 2, name: "Esposa Acompanhante", phone: "21970473174" }
+        ]
+      },
+      {
+        id: 544,
+        code: "RES-215-0544",
+        flatNumber: "215",
+        status: "in_house",
+        guestId: 145,
+        guestName: "Leonardo Portugal Federici",
+        guestPhone: "28981141553",
+        guests: [
+          { index: 1, guestId: 145, name: "Leonardo Portugal Federici", phone: "28981141553" }
+        ]
+      },
+      {
+        id: 525,
+        code: "RES-114-0525",
+        flatNumber: "114",
+        status: "completed",
+        guestId: 145,
+        guestCode: "HOSP-00145",
+        guestName: "Leonardo",
+        guestPhone: "21992115153",
+        guestEmail: "leodsrodriguesuber@gmail.com",
+        guestDocument: "10699917751",
+        vehiclePlate: "RMP3E19",
+        guests: [
+          {
+            index: 1,
+            guestId: 145,
+            name: "Leonardo da Silva Rodrigues",
+            phone: "21992115153",
+            email: "leodsrodriguesuber@gmail.com",
+            cpf: "10699917751"
+          }
+        ]
+      },
+      {
+        id: 216,
+        code: "RES-401-0216",
+        flatNumber: "401",
+        status: "completed",
+        guestId: 146,
+        guestName: "Rodinei",
+        guestPhone: "27999793259",
+        guestEmail: "rodineisg@hotmail.com",
+        guestDocument: "05626512714",
+        guests: [
+          {
+            index: 1,
+            guestId: 146,
+            name: "Rodinei Siqueira Gonçalves",
+            phone: "27999793259",
+            email: "rodineisg@hotmail.com",
+            cpf: "05626512714"
+          }
+        ]
+      }
+    ],
+    whatsappMessages: [
+      {
+        id: "msg_comp_1",
+        reservationId: 486,
+        phone: "5521970473174",
+        senderName: "Acompanhante"
+      }
+    ],
+    invoices: [],
+    guestAccounts: []
+  };
+
+  reconcileAndMergeGuests(mockDb);
+
+  const g20 = mockDb.guests.find(g => g.id === 20);
+  const g145 = mockDb.guests.find(g => g.id === 145);
+  const r525 = mockDb.reservations.find(r => r.id === 525);
+  const gLeoRodrigues = mockDb.guests.find(g => g.id !== 145 && String(g.document || "").replace(/\D/g, "") === "10699917751");
+  const gRodinei = mockDb.guests.find(g => String(g.document || "").replace(/\D/g, "") === "05626512714");
+
+  // GUEST 145 deve permanecer 100% despoluído após reconcileAndMergeGuests
+  assert.equal(g145.name, "Leonardo Portugal Federici");
+  assert.equal(g145.fullName, "Leonardo Portugal Federici");
+  assert.equal(g145.phone, "28981141553");
+  assert.deepEqual(Array.from(g145.additionalPhones || []), []);
+  assert.equal(g145.email, "");
+  assert.equal(g145.document, "");
+  assert.equal(g145.vehiclePlate, undefined);
+
+  // RES-114-0525 e Leonardo da Silva Rodrigues devem ter seu próprio registro CRM separado
+  assert.ok(gLeoRodrigues, "Leonardo da Silva Rodrigues deve ter ficha CRM própria e separada do GUEST 145");
+  assert.notEqual(r525.guestId, 145);
+  assert.equal(r525.guestId, gLeoRodrigues.id);
+  assert.equal(r525.guestName, "Leonardo da Silva Rodrigues");
+
+  // GUEST 20 não deve ter o telefone da acompanhante (21970473174) nem a nota contaminada
+  assert.deepEqual(Array.from(g20.additionalPhones || []), []);
+  assert.equal(g20.notes, "");
+
+  // Rodinei Siqueira Gonçalves deve estar restaurado com CPF, e-mail, telefone e Google Contact
+  assert.ok(gRodinei, "Rodinei Siqueira Gonçalves deve existir no CRM");
+  assert.equal(gRodinei.fullName, "Rodinei Siqueira Gonçalves");
+  assert.equal(gRodinei.phone, "27999793259");
+  assert.equal(gRodinei.email, "rodineisg@hotmail.com");
+  assert.equal(gRodinei.googleContactResourceName, "people/c8949956793977234769");
+});
+
+test("6. Frontend (pms-calendar.tsx) & Backend (PUT /api/pms/reservations/:id): desvincular hóspede não faz fallback para selectedRes.guestId", () => {
   assert.ok(
     calendarSrc.includes("export function areGuestNamesCompatibleUI"),
     "pms-calendar.tsx deve exportar areGuestNamesCompatibleUI"
@@ -517,3 +690,4 @@ test("5. Frontend (pms-calendar.tsx) & Backend (PUT /api/pms/reservations/:id): 
     "PUT /api/pms/reservations/:id deve detectar desvinculação/troca de hóspede e limpar dados residuais do hóspede anterior"
   );
 });
+
