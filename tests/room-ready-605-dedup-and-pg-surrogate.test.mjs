@@ -870,6 +870,15 @@ test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_availa
             status: "pending",
             startedAt: null,
             finishedAt: null
+          },
+          {
+            flatId: 3,
+            flatNumber: "115",
+            status: "pending",
+            startedAt: null,
+            finishedAt: null,
+            workerNotifiedAvailable: true,
+            workerNotifiedAvailableAt: "2026-10-27T10:00:00.000Z"
           }
         ]
       }
@@ -880,7 +889,7 @@ test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_availa
     query: async () => ({
       rows: [
         {
-          id: 504,
+          id: 505,
           timestamp: "2026-10-28T23:45:00.000Z",
           action: "NOTIFICATION_SERVICE_ORDER",
           details: {
@@ -893,7 +902,7 @@ test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_availa
           }
         },
         {
-          id: 503,
+          id: 504,
           timestamp: "2026-10-27T14:11:29.398Z",
           action: "NOTIFICATION_SERVICE_ORDER",
           details: {
@@ -906,20 +915,50 @@ test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_availa
           }
         },
         {
-          id: 502,
+          id: 503,
           timestamp: "2026-10-27T10:00:00.000Z",
           action: "NOTIFICATION_SERVICE_ORDER",
           details: {
             metadata: {
               serviceOrderId: "so_generic_implicit",
               action: "worker_room_available",
-              flats: ["114"],
+              flats: ["114", "115"],
               workerPhone: "5522999990000"
             }
           }
         },
         {
+          id: 502,
+          timestamp: "2026-10-20T09:00:00.000Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_generic_implicit",
+              flatId: 3,
+              flatNumber: "115",
+              action: "start",
+              startedAt: "2026-10-20T09:00:00.000Z",
+              workerName: "Teste Antigo"
+            }
+          }
+        },
+        {
           id: 501,
+          timestamp: "2026-10-20T08:55:00.000Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_generic_implicit",
+              flatId: 3,
+              flatNumber: "115",
+              action: "entry_request",
+              entryRequestedAt: "2026-10-20T08:55:00.000Z",
+              workerName: "Teste Antigo"
+            }
+          }
+        },
+        {
+          id: 500,
           timestamp: "2026-10-20T09:00:00.000Z",
           action: "NOTIFICATION_SERVICE_ORDER",
           details: {
@@ -934,7 +973,7 @@ test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_availa
           }
         },
         {
-          id: 500,
+          id: 499,
           timestamp: "2026-10-14T02:22:00.201Z",
           action: "NOTIFICATION_SERVICE_ORDER",
           details: {
@@ -968,7 +1007,14 @@ test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_availa
   assert.equal(f114.startedAt, null);
   assert.equal(f114.resetAt, "2026-10-27T10:00:00.000Z");
 
-  // Part B: reconcileUniversalIntegrity heals Flat 313 when contaminated by an incoming snapshot or in-memory state
+  const f115 = db.serviceOrders[1].flats[1];
+  assert.equal(f115.status, "pending", "Pre-notified pending flat 115 must remain pending");
+  assert.equal(Boolean(f115.entryRequested), false, "Older entry_request before workerNotifiedAvailableAt must not pollute pending flat");
+  assert.equal(f115.workerName ?? null, null, "Older workerName before workerNotifiedAvailableAt must not pollute pending flat");
+  assert.equal(f115.resetAt, "2026-10-27T10:00:00.000Z", "resetAt must be recorded from effectiveResetAt");
+
+  // Part B: reconcileUniversalIntegrity heals Flat 313 when contaminated by an incoming snapshot or in-memory state,
+  // and scrubs execution fields when incResetIsNewer merges a pending flat over an in_progress flat
   f313.status = "in_progress";
   f313.startedAt = "2026-10-14T02:22:00.201Z";
   f313.estimatedFinishAt = "2026-10-14T04:22:00.201Z";
@@ -977,12 +1023,49 @@ test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_availa
   f313.delayNotified = true;
   delete f313.resetAt;
 
-  const changedInteg = reconcileUniversalIntegrity();
+  f114.status = "in_progress";
+  f114.startedAt = "2026-10-20T09:00:00.000Z";
+  f114.estimatedFinishAt = "2026-10-20T11:00:00.000Z";
+  f114.workerName = "Teste Antigo";
+  f114.entryRequested = true;
+  f114.entryRequestedAt = "2026-10-20T09:00:00.000Z";
+  f114.delayNotified = true;
+  delete f114.resetAt;
+
+  const changedInteg = reconcileUniversalIntegrity({
+    serviceOrders: [
+      {
+        id: "so_generic_implicit",
+        token: "tok_generic_implicit",
+        title: "Revisão Geral",
+        status: "active",
+        updatedAt: "2026-10-27T10:00:00.000Z",
+        flats: [
+          {
+            flatId: 2,
+            flatNumber: "114",
+            status: "pending",
+            startedAt: null,
+            finishedAt: null,
+            workerNotifiedAvailable: true,
+            workerNotifiedAvailableAt: "2026-10-27T10:00:00.000Z"
+          }
+        ]
+      }
+    ]
+  });
   assert.equal(changedInteg, true);
   assert.equal(f313.status, "pending", "reconcileUniversalIntegrity must heal Flat 313 back to pending");
   assert.equal(f313.startedAt, null);
   assert.equal(f313.workerName, null);
   assert.equal(f313.delayNotified, false);
+
+  const mergedF114 = db.serviceOrders[1].flats.find(f => f.flatNumber === "114");
+  assert.equal(mergedF114.status, "pending");
+  assert.equal(mergedF114.entryRequested, false, "incResetIsNewer must scrub entryRequested from curF");
+  assert.equal(mergedF114.entryRequestedAt, null, "incResetIsNewer must scrub entryRequestedAt from curF");
+  assert.equal(mergedF114.delayNotified, false, "incResetIsNewer must scrub delayNotified from curF");
+  assert.equal(mergedF114.resetAt, "2026-10-27T10:00:00.000Z", "incResetIsNewer must populate resetAt from workerNotifiedAvailableAt");
 
   // Part C: ensureServiceCatalogAndReconcileOrders heals Flat 313 if it is in_progress with startedAt < workerNotifiedAvailableAt
   f313.status = "in_progress";
@@ -997,6 +1080,18 @@ test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_availa
   assert.equal(f313.status, "pending", "ensureServiceCatalogAndReconcileOrders must heal Flat 313 back to pending");
   assert.equal(f313.startedAt, null);
   assert.equal(f313.estimatedFinishAt, null);
+
+  // Legitimate future start on Flat 313 (> workerNotifiedAvailableAt and > 2026-10-15) must NOT be reset
+  f313.status = "in_progress";
+  f313.startedAt = "2026-10-29T13:00:00.000Z";
+  f313.estimatedFinishAt = "2026-10-29T15:00:00.000Z";
+  f313.workerName = "Anderson Alvarenga";
+  f313.entryRequested = true;
+  f313.entryRequestedAt = "2026-10-29T13:00:00.000Z";
+  ensureServiceCatalogAndReconcileOrders();
+  reconcileUniversalIntegrity();
+  assert.equal(f313.status, "in_progress", "Future legitimate start on Flat 313 must not be reset");
+  assert.equal(f313.startedAt, "2026-10-29T13:00:00.000Z");
 
   // Part D: checkOverdueServiceFlats 24-hour temporal sanity guard
   const nowMs = Date.now();
@@ -1044,5 +1139,6 @@ test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_availa
   assert.equal(dispatchedNotifications[0].event, "overdue_alert");
   assert.ok(savedReasons.includes("check_overdue_service_flats"));
 });
+
 
 

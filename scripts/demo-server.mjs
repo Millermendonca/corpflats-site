@@ -5120,9 +5120,37 @@ export function reconcileUniversalIntegrity(incomingState = null) {
                 );
 
                 if (incResetIsNewer) {
-                  mergedFlats[eIdx] = { ...curF, ...incF };
+                  const nextF = { ...curF, ...incF };
+                  if (nextF.status === "pending") {
+                    nextF.startedAt = null;
+                    nextF.finishedAt = null;
+                    nextF.resetAt = incF.resetAt || incF.workerNotifiedAvailableAt || curF.resetAt || null;
+                    nextF.estimatedFinishAt = null;
+                    nextF.workerName = null;
+                    nextF.workerCpf = null;
+                    nextF.entryRequested = Boolean(incF.entryRequested);
+                    nextF.entryRequestedAt = incF.entryRequested ? (incF.entryRequestedAt || null) : null;
+                    nextF.delayNotified = false;
+                  }
+                  mergedFlats[eIdx] = nextF;
                   changed = true;
-                } else if (!curResetIsNewer) {
+                } else if (curResetIsNewer) {
+                  if (curF.status === "pending") {
+                    if (!curF.resetAt && curF.workerNotifiedAvailableAt) {
+                      curF.resetAt = curF.workerNotifiedAvailableAt;
+                      changed = true;
+                    }
+                    if (curF.startedAt || curF.estimatedFinishAt || curF.workerName || curF.workerCpf || curF.delayNotified) {
+                      curF.startedAt = null;
+                      curF.finishedAt = null;
+                      curF.estimatedFinishAt = null;
+                      curF.workerName = null;
+                      curF.workerCpf = null;
+                      curF.delayNotified = false;
+                      changed = true;
+                    }
+                  }
+                } else {
                   if (incRank > curRank) {
                     mergedFlats[eIdx] = { ...curF, ...incF };
                     changed = true;
@@ -5309,6 +5337,7 @@ export function reconcileUniversalIntegrity(incomingState = null) {
         f313.status !== "done" &&
         (
           (f313.startedAt && f313.startedAt <= "2026-10-15T00:00:00.000Z") ||
+          (f313.entryRequested && f313.entryRequestedAt && f313.entryRequestedAt <= "2026-10-15T00:00:00.000Z") ||
           (f313.status === "in_progress" && !f313.finishedAt && f313.workerNotifiedAvailableAt && (!f313.startedAt || f313.workerNotifiedAvailableAt > f313.startedAt))
         )
       ) {
@@ -7785,8 +7814,15 @@ export async function reconcileFromAuditLogs(db, pgPool) {
           );
           if (!f) continue;
           // Se o apartamento estava in_progress (sem finishedAt) com startedAt anterior ao aviso de quarto disponível,
+          // ou se estava pending com dados residuais de ciclo anterior (entryRequestedAt/startedAt < tsStr),
           // significa que sofreu reset implícito antes de voltar a ficar disponível (worker_room_available só dispara para status === 'pending').
-          if (f.status === "in_progress" && !f.finishedAt && f.startedAt && f.startedAt < tsStr) {
+          const hasStaleInProgress = f.status === "in_progress" && !f.finishedAt && (!f.startedAt || f.startedAt < tsStr);
+          const hasStalePendingEntry = f.status === "pending" && (
+            (f.startedAt && f.startedAt < tsStr) ||
+            (f.entryRequested && (!f.entryRequestedAt || f.entryRequestedAt < tsStr)) ||
+            Boolean(f.estimatedFinishAt || f.workerName || f.workerCpf || f.delayNotified)
+          );
+          if (hasStaleInProgress || hasStalePendingEntry) {
             f.status = "pending";
             f.startedAt = null;
             f.finishedAt = null;
@@ -7822,9 +7858,14 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       );
       if (!flat) continue;
 
+      const effectiveResetAt = [
+        flat.resetAt,
+        (flat.status === "pending" && flat.workerNotifiedAvailableAt) ? flat.workerNotifiedAvailableAt : null
+      ].filter(Boolean).sort().pop() || null;
+
       if (rawAction === "photos_uploaded") {
         const newUrls = Array.isArray(meta.photos) ? meta.photos.filter(Boolean) : [];
-        if (newUrls.length > 0 && (!flat.resetAt || tsStr > flat.resetAt)) {
+        if (newUrls.length > 0 && (!effectiveResetAt || tsStr > effectiveResetAt)) {
           const existingUp = Array.isArray(flat.uploadedPhotos) ? flat.uploadedPhotos : [];
           const combined = Array.from(new Set([...existingUp, ...newUrls]));
           if (combined.length !== existingUp.length) {
@@ -7844,7 +7885,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       } else if (rawAction === "entry_request") {
         if (
           (flat.status !== "done" || !flat.finishedAt || tsStr > flat.finishedAt) &&
-          (!flat.resetAt || tsStr > flat.resetAt)
+          (!effectiveResetAt || tsStr > effectiveResetAt)
         ) {
           if (!flat.entryRequested) {
             flat.entryRequested = true;
@@ -7856,10 +7897,6 @@ export async function reconcileFromAuditLogs(db, pgPool) {
         }
       } else if (rawAction === "start" || rawAction === "started") {
         const resolvedStartAt = meta.startedAt || tsStr;
-        const effectiveResetAt = [
-          flat.resetAt,
-          (flat.status === "pending" && flat.workerNotifiedAvailableAt) ? flat.workerNotifiedAvailableAt : null
-        ].filter(Boolean).sort().pop() || null;
         if (
           (!flat.finishedAt || resolvedStartAt > flat.finishedAt) &&
           (!effectiveResetAt || resolvedStartAt > effectiveResetAt)
@@ -7886,6 +7923,9 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             changed = true;
             affectedServiceOrders.add(order);
           }
+        } else if (effectiveResetAt && resolvedStartAt <= effectiveResetAt && (!flat.resetAt || flat.resetAt < effectiveResetAt)) {
+          flat.resetAt = effectiveResetAt;
+          changed = true;
         }
       } else if (rawAction === "delay") {
         // Somente aplica atualização de previsão se o apartamento estiver em andamento (nunca reabre um apartamento finalizado)
@@ -7909,7 +7949,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       } else if (rawAction === "finish" || rawAction === "finished" || rawAction === "admin_complete" || rawAction === "completed") {
         const resolvedFinishAt = meta.finishedAt || tsStr;
         const isSupersededByNewerStart = Boolean(flat.status === "in_progress" && flat.startedAt && flat.startedAt > resolvedFinishAt);
-        const isSupersededByNewerReset = Boolean(flat.resetAt && flat.resetAt > resolvedFinishAt);
+        const isSupersededByNewerReset = Boolean(effectiveResetAt && effectiveResetAt > resolvedFinishAt);
         if (!isSupersededByNewerStart && !isSupersededByNewerReset) {
           const fallbackUploadedPhotos = Array.isArray(flat.uploadedPhotos) && flat.uploadedPhotos.length > 0 ? flat.uploadedPhotos : null;
           const resolvedPhotos = (Array.isArray(meta.photos) && meta.photos.length > 0) ? meta.photos : fallbackUploadedPhotos;
@@ -7997,6 +8037,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
         f313.status !== "done" &&
         (
           (f313.startedAt && f313.startedAt <= "2026-10-15T00:00:00.000Z") ||
+          (f313.entryRequested && f313.entryRequestedAt && f313.entryRequestedAt <= "2026-10-15T00:00:00.000Z") ||
           (f313.status === "in_progress" && !f313.finishedAt && f313.workerNotifiedAvailableAt && (!f313.startedAt || f313.workerNotifiedAvailableAt > f313.startedAt))
         )
       ) {
@@ -19894,6 +19935,7 @@ export function ensureServiceCatalogAndReconcileOrders() {
         f313.status !== "done" &&
         (
           (f313.startedAt && f313.startedAt <= "2026-10-15T00:00:00.000Z") ||
+          (f313.entryRequested && f313.entryRequestedAt && f313.entryRequestedAt <= "2026-10-15T00:00:00.000Z") ||
           (f313.status === "in_progress" && !f313.finishedAt && f313.workerNotifiedAvailableAt && (!f313.startedAt || f313.workerNotifiedAvailableAt > f313.startedAt))
         )
       ) {
