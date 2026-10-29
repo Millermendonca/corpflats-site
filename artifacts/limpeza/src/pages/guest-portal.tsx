@@ -1460,19 +1460,17 @@ export default function GuestPortal() {
   const cardTotalAmount = hideFinancialForGuest ? 0 : (totalAmount !== rawTotalInPortal ? computeCardAmount(totalAmount) : (Number(reservation.cardTotalAmount) || computeCardAmount(totalAmount)))
   const cardPendingAmount = hideFinancialForGuest ? 0 : (totalAmount !== rawTotalInPortal ? computeCardAmount(pendingAmount) : (Number(reservation.cardPendingAmount) || computeCardAmount(pendingAmount)))
 
-  const stayPackages = useMemo(() => {
-    return computeStayPackages(
-      (reservation as any)?.dailyRates,
-      (reservation as any)?.charges,
-      (reservation as any)?.cleaningFee,
-      reservation?.channel,
-      reservation?.checkinDate,
-      reservation?.checkoutDate,
-      totalAmount
-    )
-  }, [(reservation as any)?.dailyRates, (reservation as any)?.charges, (reservation as any)?.cleaningFee, reservation?.channel, reservation?.checkinDate, reservation?.checkoutDate, totalAmount])
+  const stayPackages = computeStayPackages(
+    (reservation as any)?.dailyRates,
+    (reservation as any)?.charges,
+    (reservation as any)?.cleaningFee,
+    reservation?.channel,
+    reservation?.checkinDate,
+    reservation?.checkoutDate,
+    totalAmount
+  )
 
-  const resolvedPayments = useMemo(() => {
+  const resolvedPayments = (() => {
     const rawPayments = (reservation as any)?.payments
     if (Array.isArray(rawPayments) && rawPayments.length > 0) {
       return rawPayments
@@ -1491,7 +1489,7 @@ export default function GuestPortal() {
         notes: "Pagamento integral"
       }
     ]
-  }, [(reservation as any)?.payments, paidAmount, reservation?.paymentMethod, reservation?.channel, reservation?.paidAt, reservation?.pixEndToEndId, reservation?.pixTxId, reservation?.mpPaymentId])
+  })()
 
   const handleCopyPix = () => {
     if (!reservation.pixCopiaECola) return
