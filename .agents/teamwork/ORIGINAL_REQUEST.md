@@ -835,3 +835,55 @@ Integrity mode: development
 - [ ] Solicitar troca de roupa de cama e/ou banho no portal B2B agenda a solicitação sempre para o dia seguinte (`tomorrowStr`) e exibe o pedido no card de limpeza de Stayover daquela data.
 - [ ] Endpoints de "Não Perturbe" e solicitação de enxoval retornam erro `403` se chamados para reservas não-B2B (Booking, Airbnb, WhatsApp, Site).
 - [ ] O build do frontend (`npm run build` em `artifacts/limpeza`) compila sem erros e o teste pontual dedicado `tests/b2b-stayover-housekeeping.test.mjs` passa 100%.
+
+
+## 2026-10-29T03:22:00Z
+
+This is a single self-contained fix; keep it small and focused.
+
+Corrigir o cálculo de valor já pago e saldo pendente no fluxo de edição/extensão de reservas do sistema Guest-Flow-Manager (CorpFlats) quando há múltiplos pagamentos registrados (ou complemento PIX já quitado), ajustar o registro da reserva `RES-113-0524` no banco de dados se necessário e reenviar ao hóspede da `RES-113-0524` a mensagem de confirmação de alteração/extensão constando a reserva como 100% quitada (sem cobrança pendente ou PIX Copia e Cola).
+
+Working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager
+Integrity mode: development
+
+## Contexto do Problema (Reserva `RES-113-0524`)
+- Hóspede: Cassio Leonardo Bragança Freitas (Flat 113)
+- Período atualizado: `26/10/2026` até `31/10/2026` (5 diárias, sendo Check-out alterado de `30/10/2026` para `31/10/2026`)
+- Valor Total Anterior: `R$ 650,40` → Valor Total Atualizado: `R$ 800,40` (Diárias: `R$ 750,40` + Taxa de Limpeza: `R$ 50,00`)
+- Pagamentos Recebidos na reserva (2 lançamentos):
+  1. Booking.com: `R$ 650,40` (Quitação Total)
+  2. PIX: `R$ 150,00` (Quitação Total — Complemento PIX via Banco Inter confirmado em 28/10/2026 às 18:26:44, TxId `098365cd9c380e6d9672346c1ece18ea`)
+- O painel de edição da reserva exibe corretamente `TOTAL DA ESTADIA: R$ 800,40`, `TOTAL RECEBIDO: R$ 800,40`, `SALDO A PAGAR: R$ 0,00 (100% Quitado / Pago Integralmente)`.
+- Contudo, ao salvar a alteração/extensão da diária, a mensagem de WhatsApp enviada ao hóspede informou `Valor Já Pago: R$ 650,40`, `Situação do Pagamento: Pago Parcialmente (Saldo de diária adicional em aberto)` e gerou cobrança de saldo pendente (`R$ 157,50` no cartão / `R$ 150,00` no PIX com código Copia e Cola).
+
+## Requirements
+
+### R1. Cálculo Correto do Total Pago e Status de Quitação na Alteração/Extensão
+Ao processar a edição/extensão de uma reserva e montar a notificação de alteração de estadia (bem como na persistência dos campos de pagamento da reserva), o sistema deve considerar a soma real de todos os pagamentos válidos/recebidos (ex.: array `payments` / `amountPaid` atualizado) em comparação ao novo valor total (`totalPrice`). Quando o total recebido for maior ou igual ao valor total atualizado da reserva (`saldo <= 0`), o status deve ser reconhecido como integralmente quitado.
+
+### R2. Formatação da Mensagem de Alteração/Extensão para Reserva Quitada
+Quando uma reserva alterada/estendida já estiver 100% quitada (saldo pendente igual a zero):
+- Exibir a situação do pagamento como quitada (`Pago Integralmente` / sem saldo em aberto).
+- Exibir o `Valor Já Pago` atualizado correspondente ao total efetivamente recebido (ex.: `R$ 800,40`).
+- Não incluir na mensagem o bloco `💰 Saldo Pendente da Diária Adicional / Alteração`, nem `📋 PIX Copia e Cola`, nem instruções de pagamento de saldo residual.
+- Preservar o comportamento atual (exibição de saldo pendente e geração de PIX Copia e Cola da diferença) apenas quando realmente houver saldo a pagar (`novo total > total efetivamente recebido`).
+
+### R3. Regularização e Reenvio para a Reserva `RES-113-0524`
+Verificar o registro da reserva `RES-113-0524` no banco de dados para assegurar que os campos financeiros (`amountPaid`, `paymentStatus`, `payments`, `totalPrice`, datas de check-in/check-out `26/10/2026` a `31/10/2026`) estejam 100% consistentes como quitados (`R$ 800,40`), e disparar para o hóspede da reserva `RES-113-0524` a notificação atualizada de confirmação de alteração/extensão refletindo que a reserva já está integralmente paga.
+
+### R4. Restrições Operacionais, Build e Git (Regras Estritas do Repositório)
+- **Proibição de testes em lote**: NUNCA executar varreduras de testes (`tests/*.test.mjs` ou suítes globais) que disparem mensagens para outras reservas ou módulos. Qualquer verificação automatizada do cálculo/template deve ser estritamente isolada.
+- **Build de produção**: Caso arquivos em `artifacts/limpeza/src` sejam modificados, executar `npm run build` dentro de `artifacts/limpeza` e incluir os arquivos atualizados de `artifacts/limpeza/dist/` no commit.
+- **Git Push obrigatório**: Realizar `git commit` das alterações e executar imediatamente `git push` para a branch ativa no repositório remoto.
+
+## Acceptance Criteria
+
+### Lógica de Pagamento e Template de Mensagem
+- [ ] A função/endpoint responsável pela atualização de reserva e pelo envio da mensagem de alteração/extensão calcula o valor pago considerando todos os pagamentos recebidos (`R$ 650,40 + R$ 150,00 = R$ 800,40`), resultando em saldo pendente `R$ 0,00` quando o total recebido cobre o novo valor total.
+- [ ] Para uma reserva com saldo pendente `R$ 0,00`, o texto gerado para a mensagem de alteração informa `Valor Já Pago: R$ 800,40` e situação `Pago Integralmente`, sem conter os blocos `Saldo Pendente da Diária Adicional` ou `PIX Copia e Cola`.
+- [ ] Para uma reserva cujo novo valor total supere o total recebido (`saldo > 0`), o texto gerado continua incluindo normalmente o saldo pendente (Cartão e PIX) e o código PIX Copia e Cola.
+
+### Banco de Dados, Reenvio (`RES-113-0524`) e Deploy
+- [ ] No banco de dados, a reserva `RES-113-0524` encontra-se com `totalPrice` de `800.40`, total recebido/pago de `800.40` (2 lançamentos: `650.40` + `150.00`), check-out em `31/10/2026` e status de pagamento quitado.
+- [ ] A mensagem de confirmação de alteração/extensão corrigida (indicando pagamento integral de `R$ 800,40` e sem cobrança PIX) foi enviada com sucesso via WhatsApp ao hóspede da `RES-113-0524`.
+- [ ] Se houve alteração em `artifacts/limpeza/src`, `npm run build` em `artifacts/limpeza` concluiu sem erros e `git status` / `git push` confirmam que todas as alterações foram enviadas ao repositório remoto sem rodar suítes de testes globais.

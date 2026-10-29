@@ -1,58 +1,32 @@
-# Handoff Report — Sentinel: Serviço Diário de Governança (Stayover) B2B
-
-**Data/Hora**: 2026-10-27T18:14:00Z  
-**Autor**: Project Sentinel  
-**Destinatário**: Parent Agent (`711eef81-f180-4faf-b505-0c5ff8be0673`)  
-**Missão**: Construção do Sistema Completo de Serviço Diário de Governança (Stayover) exclusivo para reservas B2B (regras de stayover diário, diferenciação visual dos cards, tarifação diferenciada para Cris e Grazi R$ 15/diária, checklist/contador de troca de enxoval com alerta de 3 dias, controles de Não Perturbe e solicitação de enxoval no Portal do Hóspede B2B).  
-**Status**: EM ANDAMENTO (M1 e M2 Homologados CLEAN; M3/M4/M5 em execução ativa sob orchestrator_19)
-
----
+# Sentinel Final Handoff Report — B2B Stayover Housekeeping Delivery
 
 ## 1. Observation
-
-- **Milestone 0 (Survey & Arquitetura)**: Concluído com 3 exploradores.
-- **Milestone 1 (Backend Stayover Core, Linen Tracking, DND, Twin Parity)**:
-  - Implementado e homologado com veredito CLEAN (`auditor_m1_revalidate`, `reviewer_m1_revalidate`, `challenger_m1_revalidate`).
-  - 40/40 testes passando nas suítes dedicadas (`b2b-housekeeping-m1.test.mjs`, `challenger-m1-1.test.mjs`, `adversarial-b2b-m1.test.mjs`).
-  - Paridade 100% SHA-256 mantida entre os servidores gêmeos.
-- **Milestone 2 (Tarifação Stayover & Extrato Terceirizadas Cris/Grazi)**:
-  - Implementado em `maid-automation-service.mjs` e `demo-server.mjs`.
-  - Homologado como CLEAN por `auditor_m2`. 11/11 testes passando em `tests/b2b-housekeeping-m2.test.mjs`.
-  - Paridade SHA-256 byte a byte idêntica verificada em ambos os pares:
-    - `maid-automation-service.mjs`: `3305DF86D045C13EF260AE17D363DC669D1C0FD534BD3465060A8363117A411F`
-    - `demo-server.mjs`: `ED64E237E30EE3785453EE69A4A2AFAEF9828083BABC95B18B7908679536645E`
-- **Sucessão do Orquestrador (Gen 1 -> Gen 2)**:
-  - `orchestrator_18` atingiu o teto de spawns com M1 e M2 concluídos.
-  - Sucessor `orchestrator_19` (gen2, id `f2b006e6-21b8-4227-9b41-26a4892c80c8`) assumiu a execução dos Marcos M3 (Guest Portal B2B), M4 (Housekeeping Frontend) e M5 (Build, Teste Pontual Dedicado, Paridade e Push).
-  - `orchestrator_19` já realizou o mapeamento dos arquivos-alvo (`guest-portal.tsx`, `flat-card.tsx`, `reports.tsx`, `hr-dashboard.tsx`, `maid-statement.tsx`) e está em fase ativa de codificação.
-
----
+- **Mission**: Implementação do Sistema Completo de Governança Diária (Stayover) Exclusivo para Reservas B2B (CorpFlats Soho Residence).
+- **Execution Architecture**: Sentinel -> General Path (`teamwork_preview_orchestrator`) -> Sucessão Autônoma Gen1 (`orchestrator_18`) / Gen2 (`orchestrator_19`) -> Victory Auditor (`teamwork_preview_victory_auditor_15`).
+- **Audit Verdict**: `VICTORY CONFIRMED` emitido de forma independente pelo `victory_auditor_15` (conversation ID: `b50a4496-c6cf-4f18-bd7e-674ed6cb5c2d`).
+- **Git Commit & Remote Status**: Commit `d7f35584a50c974440c40eccc55e1c0ae0984d97` devidamente enviado para `origin/main` (`Your branch is up to date with 'origin/main'`).
+- **Twin-Server SHA-256 Parity**: 100% idêntica byte a byte nos 3 pares de arquivos:
+  - `demo-server.mjs`: `ed64e237e30ee3785453ee69a4a2afaef9828083babc95b18b7908679536645e`
+  - `maid-automation-service.mjs`: `3305df86d045c13ef260ae17d363dc669d1c0fd534bd3465060a8363117a411f`
+  - `zapi-service.mjs`: `656c8a3bb85dafad449e5688871f4bbe9d5fb493bfd3c447471cb3f667a2ea6f`
+- **Frontend Production Build**: `npm --prefix artifacts/limpeza run build` concluído com código 0 (3400 módulos transformados, dist minificado).
+- **Dedicated Point Test**: `node tests/b2b-stayover-housekeeping.test.mjs` executado com 100% de sucesso (6 suites, 15 subtestes OK, 0 falhas).
 
 ## 2. Logic Chain
-
-1. O Sentinel manteve supervisão contínua com dois crons ativos (`task-32` para reporte e `task-34` para liveness).
-2. Com a sucessão regular de `orchestrator_18` para `orchestrator_19`, o Sentinel atualizou o rastreamento em `BRIEFING.md` e monitora o heartbeat de `orchestrator_19`.
-3. Ao término dos trabalhos por `orchestrator_19`, o Sentinel acionará o `teamwork_preview_victory_auditor` com verificação estrita antes de qualquer reporte final de conclusão ao usuário/parent.
-
----
+1. A solicitação do usuário exigiu a implantação do serviço diário de governança (stayover) exclusivo para reservas B2B, com diferenciação visual nos cards, tarifação diferenciada para prestadoras autônomas (Cris e Grazi) com discriminação nos extratos/relatórios/RH, controle e alerta de troca de enxoval (3 dias), e recursos de Não Perturbe (DND) e solicitação de enxoval no Portal do Hóspede B2B.
+2. A equipe de engenharia decomposta pelos orquestradores implementou todos os módulos do backend, garantindo que canais comuns (Booking, Airbnb, WhatsApp, etc.) nunca gerem cards de stayover e recebam HTTP 403 nos endpoints do portal B2B.
+3. No frontend, foram integrados os cards operacionais de limpeza com visual stayover e contador `Dia X de Y`, modal de checklist de enxoval sem bloqueio indevido, e formulários de taxas e extratos quinzenais segregados.
+4. O build de produção foi gerado e commitado junto com os arquivos do backend e testes dedicados, sendo enviado para `origin/main`.
+5. O Victory Auditor independente realizou a auditoria pós-vitória em 3 fases, executando testes pontuais e build de forma independente, confirmando a integridade absoluta de `data/database.json`, a paridade SHA-256 e emitindo `VICTORY CONFIRMED`.
 
 ## 3. Caveats
-
-- **Regra Estrita de Testes (AGENTS.md)**: Nunca rodar testes globais ou varreduras (`tests/*.test.mjs`). Apenas o teste estritamente pontual do que foi alterado: `tests/b2b-stayover-housekeeping.test.mjs`.
-- **Prestadoras Terceirizadas**: Cris e Grazi permanecem estritamente diaristas autônomas; tarifação diferenciada (R$ 15,00 padrão) sem vínculo ou ponto CLT.
-- **Paridade Twin-Server**: 100% SHA-256 entre `scripts/` e `artifacts/api-server/`.
-- **Git Push Obrigatório**: Sempre enviar commits diretamente para `origin main`.
-
----
+- Reservas de hóspedes em DND bloqueiam a execução de limpezas com HTTP 422 para camareiras até que o hóspede desative o DND no portal.
+- Solicitações de troca antecipada de enxoval feitas pelo hóspede B2B são agendadas para o dia seguinte (`tomorrow`), conforme especificação.
 
 ## 4. Conclusion
-
-A orquestração de segunda geração (`orchestrator_19`) está em andamento com alto grau de integridade, avançando na implementação dos componentes de Frontend (M3 e M4) e posterior validação/build (M5).
-
----
+A funcionalidade de Governança Diária (Stayover) B2B está 100% implementada, homologada com auditoria forense independente, compilada em produção e enviada para o repositório remoto `origin/main`.
 
 ## 5. Verification Method
-
-- Monitoramento ativo de `orchestrator_19/progress.md` e logs de transcrição.
-- Crons de reporte e liveness em execução.
-- Auditoria de Vitória (`teamwork_preview_victory_auditor`) mandatória ao receber alegação de conclusão.
+- `node tests/b2b-stayover-housekeeping.test.mjs`
+- `npm --prefix artifacts/limpeza run build`
+- `git status` (branch main alinhada com origin/main)

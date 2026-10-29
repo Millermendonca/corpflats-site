@@ -1154,6 +1154,7 @@ Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_h
 • Total de Noites: *{{num_diarias}}*
 • Valor Total Atualizado: *{{valor_total}}*
 • Valor Já Pago: *{{valor_pago}}*
+• Situação do Pagamento: *{{status_pagamento}}*
 
 💰 *Saldo Pendente da Diária Adicional / Alteração:*
 • Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
@@ -3276,18 +3277,27 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   if (totalAmount > rawTotalInTags && reservation && typeof reservation === "object") {
     reservation.totalAmount = totalAmount;
   }
-  const paidAmount = Number(reservation.paidAmount) || 0;
-  const pendingAmount = Math.max(0, totalAmount - paidAmount);
+  const paymentsSumInTags = Array.isArray(reservation.payments) && reservation.payments.length > 0
+    ? reservation.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    : 0;
+  const paidAmount = Math.round(Math.max(
+    Number(reservation.paidAmount) || 0,
+    Number(reservation.amountPaid) || 0,
+    paymentsSumInTags
+  ) * 100) / 100;
+  const pendingAmount = Math.max(0, Math.round((totalAmount - paidAmount) * 100) / 100);
   const pixKey = db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47.964.813/0001-65";
   const titularPix = "CorpFlats Ltda (Banco Inter)";
 
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb") || chanLower.includes("b2b");
   const hasPartialPendingExtension = (reservation.paymentStatus === "sinal_pago" || reservation.paymentStatus === "parcial") && pendingAmount > 0.01;
-  const isPaid = !hasPartialPendingExtension && (isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount && totalAmount > 0));
+  const isPaid = !hasPartialPendingExtension && (pendingAmount <= 0.01 || isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount - 0.01 && totalAmount > 0));
 
   let paymentStatus = "Aguardando Pagamento";
-  if (isPaid) {
-    paymentStatus = "Confirmado / Pago (100%)";
+  if (isPaid || pendingAmount <= 0.01) {
+    paymentStatus = (templateId === "tpl_additional_daily_pending" || triggerEvent === "additional_daily_pending")
+      ? "Pago Integralmente"
+      : "Confirmado / Pago (100%)";
   } else if (hasPartialPendingExtension || (paidAmount > 0 && pendingAmount > 0)) {
     paymentStatus = "Pago Parcialmente (Saldo de diária adicional em aberto)";
   }
@@ -3362,7 +3372,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Código PIX Copia e Cola da transação integrada (Inter ou payload oficial).
   // Se o valor pendente mudou (ex: alteração de diárias/datas/valor) e o PIX Copia e Cola
   // salvo ainda reflete o valor antigo, regenera imediatamente com o novo valor pendente.
-  let pixCopiaECola = reservation.pixCopiaECola || "";
+  let pixCopiaECola = pendingAmount <= 0.01 ? "" : (reservation.pixCopiaECola || "");
   if (pendingAmount > 0 && isPixPayloadStaleForAmount(reservation, pendingAmount)) {
     pixCopiaECola = "";
   }
@@ -3611,6 +3621,16 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   };
 
   let rendered = text;
+  if ((templateId === "tpl_additional_daily_pending" || triggerEvent === "additional_daily_pending") && !rendered.includes("Situação do Pagamento:")) {
+    rendered = rendered.replace(/(•\s*\*?Valor Já Pago:\*?[^\n]*)/i, `$1\n• Situação do Pagamento: *{{status_pagamento}}*`);
+  }
+  if (pendingAmount <= 0.01) {
+    rendered = rendered
+      .replace(/💰\s*\*Saldo Pendente da Diária Adicional \/ Alteração:\*[\s\S]*?(?=Você também pode consultar|Você pode consultar|$)/gi, "")
+      .replace(/📋\s*\*PIX Copia e Cola[^\n]*\*[\s\S]*?(?=Você também pode consultar|Você pode consultar|$)/gi, "")
+      .replace(/Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX \(com desconto\) ou Cartão de Crédito em seu portal seguro para confirmar o acréscimo:/gi, "Você pode consultar os detalhes atualizados da sua estadia em seu portal seguro:")
+      .replace(/\n{3,}/g, "\n\n");
+  }
   if (reservation._isPreReservationUpdate) {
     rendered = rendered.replace(
       /Recebemos o pedido de \*Pré-Reserva\*/gi,
@@ -4111,6 +4131,40 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       }
       if (/pix|pagar|pagamento|quitar|fatura|cobran[cç]a/i.test(bLabel)) return false;
       return true;
+    });
+  }
+
+  const totalAmountVal = Number(reservation?.totalAmount) || 0;
+  const paymentsSumVal = Array.isArray(reservation?.payments) && reservation.payments.length > 0
+    ? reservation.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    : 0;
+  const paidAmountVal = Math.round(Math.max(
+    Number(reservation?.paidAmount) || 0,
+    Number(reservation?.amountPaid) || 0,
+    paymentsSumVal
+  ) * 100) / 100;
+  const pendingAmountVal = Math.max(0, Math.round((totalAmountVal - paidAmountVal) * 100) / 100);
+  const isFullyPaidVal = (pendingAmountVal <= 0.01 && totalAmountVal > 0) || reservation?.paymentStatus === "pago_total" || reservation?.paymentStatus === "pago";
+
+  if (isFullyPaidVal) {
+    list = list.filter(b => {
+      if (!b) return false;
+      const bId = String(b.id || "").toLowerCase();
+      const bLabel = String(b.label || "").toLowerCase();
+      if (bId === "btn_pix" || b.type === "COPY" || b.copyCode || /copiar\s*c[oó]digo\s*pix/i.test(bLabel)) {
+        return false;
+      }
+      return true;
+    });
+
+    list = list.map(b => {
+      if (b.id === "btn_pagar" || /ver\s*detalhes\s*&\s*pagar/i.test(String(b.label || ""))) {
+        return {
+          ...b,
+          label: "🏨 Ver Detalhes da Reserva"
+        };
+      }
+      return b;
     });
   }
 
@@ -6973,7 +7027,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_additional_daily_pending") {
           tpl.recipientTarget = "requester";
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{resumo_alteracoes}}")) {
+          if (!tpl.message.includes("{{status_pagamento}}") || tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{resumo_alteracoes}}")) {
             const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
             if (defAdd) {
               tpl.title = defAdd.title;

@@ -1,38 +1,36 @@
-# BRIEFING — 2026-10-27T15:56:30Z
+# BRIEFING — 2026-10-29T03:24:00Z
 
 ## Mission
-Implementar o sistema completo de Serviço Diário de Governança (Stayover) exclusivo para reservas B2B (Governança Diária B2B, diferenciação visual nos cards, tarifação diferenciada para Cris e Grazi, checklist/contador de troca de enxoval com alerta de 3 dias, controles de Não Perturbe e solicitação de troca no Portal do Hóspede B2B).
+Corrigir o cálculo de valor já pago e saldo pendente no fluxo de edição/extensão de reservas com múltiplos pagamentos, atualizar registro da reserva RES-113-0524 no banco de dados e reenviar mensagem WhatsApp de alteração confirmando quitação 100%.
 
 ## 🔒 My Identity
 - Archetype: sentinel
-- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork
-- Orchestrator: 5c8f06aa-a876-42b7-8e25-4f73f9a21590 (orchestrator_18)
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\sentinel
+- Orchestrator: 0dcd32ae-57cd-47f3-b949-a0be1ad0eb02 (swe_light_3)
 - Victory Auditor: [to be spawned on victory claim]
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
 - Victory Audit is MANDATORY before reporting completion
-- Route: General (teamwork_preview_orchestrator)
-- AGENTS.md rules: NUNCA rodar testes globais/varreduras. Apenas teste pontual: tests/b2b-stayover-housekeeping.test.mjs
-- Build de verificação em artifacts/limpeza (npm run build)
+- Route: SWE Light (teamwork_preview_swe)
+- AGENTS.md rules: NUNCA rodar testes globais/varreduras. Apenas teste estritamente pontual do que foi alterado
+- Build de verificação em artifacts/limpeza (npm run build) se houver alteração em src/
 - Sempre git push ao realizar commits
 - Twin-server parity SHA-256 entre scripts/ e artifacts/api-server/
-- Cris e Grazi permanecem prestadoras terceirizadas autônomas com taxas configuráveis para checkout e stayover
+- Limpeza de crons e subagents ao concluir
 
 ## User Context
-- **Last user request**: Implementar o sistema completo de Serviço Diário de Governança (Stayover) exclusivo para reservas B2B.
+- **Last user request**: Corrigir cálculo de valor pago e saldo pendente na edição/extensão de reservas com múltiplos pagamentos, regularizar RES-113-0524 no banco de dados e reenviar confirmação quitada via WhatsApp.
 - **Pending clarifications**: none
-- **Delivered results**: previous missions completed and confirmed; B2B Stayover orchestrator running.
+- **Delivered results**: none for current request
 
 ## Project Status
-- **Phase**: in progress (orchestrator_19 / gen2 running M5: test passed 100%, npm run build passed, pending git push and victory claim)
-- **Route**: General (teamwork_preview_orchestrator)
-- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_19
-- **Active Orchestrator ID**: f2b006e6-21b8-4227-9b41-26a4892c80c8
-- **Predecessor Orchestrator ID**: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
-- **Cron 1 (Progress Reporting)**: 134600f7-9fc8-4d15-9abb-b48708f01b66/task-32
-- **Cron 2 (Liveness Check)**: 134600f7-9fc8-4d15-9abb-b48708f01b66/task-34
-- **Victory Auditor ID**: [TBD]
+- **Phase**: in progress
+- **Route**: SWE Light (teamwork_preview_swe)
+- **SWE Directory**: .agents/teamwork/swe_light_3
+- **Active Orchestrator ID**: 0dcd32ae-57cd-47f3-b949-a0be1ad0eb02
+- **Cron 1 (Progress Reporting) ID**: 8f641169-8fd7-4773-8512-a00f0e88d152/task-32
+- **Cron 2 (Liveness Check) ID**: 8f641169-8fd7-4773-8512-a00f0e88d152/task-34
 
 ## Victory Audit Status
 - **Triggered**: no
@@ -40,5 +38,5 @@ Implementar o sistema completo de Serviço Diário de Governança (Stayover) exc
 - **Retry count**: 0
 
 ## Artifact Index
-- ORIGINAL_REQUEST.md — Authoritative user request
-- .agents/teamwork/sentinel/BRIEFING.md — Sentinel persistent briefing
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md — Authoritative user requirements
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\sentinel\BRIEFING.md — Sentinel persistent briefing

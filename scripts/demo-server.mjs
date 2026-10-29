@@ -27483,6 +27483,18 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   if (putIsOta) {
     const otaMethod = putChanLower.includes("booking") ? "booking" : "airbnb";
     const currentTot = Number(r.totalAmount) || 0;
+    const existingPaymentsSum = Array.isArray(r.payments) && r.payments.length > 0
+      ? r.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+      : 0;
+    const totalPaymentsReceived = Math.round(Math.max(
+      explicitPaymentsSumOnPut !== null ? explicitPaymentsSumOnPut : 0,
+      req.body.paidAmount !== undefined ? Number(req.body.paidAmount) : 0,
+      Number(r.paidAmount) || 0,
+      existingPaymentsSum
+    ) * 100) / 100;
+    const isFullyPaidOnPut = (req.body.paymentStatus === "pago_total" || req.body.paymentStatus === "pago") ||
+      (currentTot > 0 && totalPaymentsReceived >= currentTot - 0.01);
+
     const hasDirectDailyRateInOta = Array.isArray(r.dailyRates) && r.dailyRates.some(d => {
       const dc = String(d?.channel || "").toLowerCase();
       return dc && !dc.includes("booking") && !dc.includes("airbnb") && !dc.includes("b2b");
@@ -27491,6 +27503,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const explicitPartialPaidAmt = req.body.paidAmount !== undefined && Number(req.body.paidAmount) > 0 && Number(req.body.paidAmount) < currentTot - 0.01 && (hasDirectDailyRateInOta || explicitPartialStatus || addedOtaRatesSum === 0);
     const explicitPartialPaymentsList = explicitPaymentsSumOnPut !== null && explicitPaymentsSumOnPut > 0 && explicitPaymentsSumOnPut < currentTot - 0.01 && (hasDirectDailyRateInOta || explicitPartialStatus || (currentTot > oldTotalAmount + 0.01 && addedOtaRatesSum === 0));
     const extendedStayWithoutFullPayment = Boolean(
+      !isFullyPaidOnPut &&
       nightsChangedOnEdit &&
       newNightsCount > oldNightsCount &&
       oldPaidAmount > 0 &&
@@ -27501,6 +27514,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       (explicitPaymentsSumOnPut === null || explicitPaymentsSumOnPut <= oldPaidAmount + addedOtaRatesSum + 0.01)
     );
     const alreadyHadPartialExtension = Boolean(
+      !isFullyPaidOnPut &&
       (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") &&
       Number(r.paidAmount || 0) > 0 &&
       Number(r.paidAmount || 0) < currentTot - 0.01 &&
@@ -27509,14 +27523,17 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     );
 
     hasOtaPartialPendingExtension = Boolean(
+      !isFullyPaidOnPut &&
       currentTot > 0 &&
-      (hasDirectDailyRateInOta || explicitPartialStatus || explicitPartialPaidAmt || explicitPartialPaymentsList || extendedStayWithoutFullPayment || alreadyHadPartialExtension)
+      ((hasDirectDailyRateInOta && totalPaymentsReceived < currentTot - 0.01) || explicitPartialStatus || explicitPartialPaidAmt || explicitPartialPaymentsList || extendedStayWithoutFullPayment || alreadyHadPartialExtension)
     );
 
     if (hasOtaPartialPendingExtension) {
       let preservedOtaPaid = 0;
       const expectedOtaPaidWithAddedOta = Math.round((oldPaidAmount + addedOtaRatesSum) * 100) / 100;
-      if (explicitPaymentsSumOnPut !== null && explicitPaymentsSumOnPut > 0 && explicitPaymentsSumOnPut < currentTot - 0.01) {
+      if (totalPaymentsReceived > 0 && totalPaymentsReceived < currentTot - 0.01) {
+        preservedOtaPaid = totalPaymentsReceived;
+      } else if (explicitPaymentsSumOnPut !== null && explicitPaymentsSumOnPut > 0 && explicitPaymentsSumOnPut < currentTot - 0.01) {
         preservedOtaPaid = Math.max(explicitPaymentsSumOnPut, expectedOtaPaidWithAddedOta < currentTot - 0.01 ? expectedOtaPaidWithAddedOta : 0);
       } else if (explicitPartialPaidAmt) {
         preservedOtaPaid = Math.max(Number(req.body.paidAmount), expectedOtaPaidWithAddedOta < currentTot - 0.01 ? expectedOtaPaidWithAddedOta : 0);
@@ -27542,13 +27559,13 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         if (!r.paymentMethod || r.paymentMethod === otaMethod) {
           r.paymentMethod = "pix";
         }
-        if (!Array.isArray(r.payments) || r.payments.length === 0 || Math.abs(r.payments.reduce((a, p) => a + (Number(p.amount) || 0), 0) - preservedOtaPaid) > 0.01) {
+        if (!Array.isArray(r.payments) || r.payments.length === 0) {
           r.payments = [{
-            id: r.payments?.[0]?.id || `pay_${Date.now()}_ota`,
+            id: `pay_${Date.now()}_ota`,
             amount: preservedOtaPaid,
             method: otaMethod,
-            date: r.payments?.[0]?.date || new Date().toISOString(),
-            notes: r.payments?.[0]?.notes || (otaMethod === "booking" ? "Crédito original Booking.com" : "Crédito original Airbnb")
+            date: new Date().toISOString(),
+            notes: (otaMethod === "booking" ? "Crédito original Booking.com" : "Crédito original Airbnb")
           }];
         }
       } else {
@@ -27557,23 +27574,25 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
 
     if (!hasOtaPartialPendingExtension) {
-      if (!r.paymentMethod || r.paymentMethod === "pix") {
+      if (!r.paymentMethod) {
         r.paymentMethod = otaMethod;
       }
       if (req.body.paymentStatus === undefined || !r.paymentStatus || r.paymentStatus === "pendente" || r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") {
         r.paymentStatus = "pago_total";
       }
       if (currentTot > 0) {
-        r.paidAmount = currentTot;
+        r.paidAmount = Math.max(currentTot, totalPaymentsReceived);
       }
-      if (Array.isArray(r.payments) && (r.payments.length === 0 || (r.payments.length === 1 && (!r.payments[0].method || r.payments[0].method === "pix" || r.payments[0].method === otaMethod)))) {
+      if (!Array.isArray(r.payments) || r.payments.length === 0) {
         r.payments = [{
-          id: r.payments?.[0]?.id || `pay_${Date.now()}_ota`,
+          id: `pay_${Date.now()}_ota`,
           amount: currentTot,
           method: otaMethod,
-          date: r.payments?.[0]?.date || new Date().toISOString(),
-          notes: r.payments?.[0]?.notes || (otaMethod === "booking" ? "Pagamento integral Booking.com" : "Pagamento integral Airbnb")
+          date: new Date().toISOString(),
+          notes: (otaMethod === "booking" ? "Pagamento integral Booking.com" : "Pagamento integral Airbnb")
         }];
+      } else if (r.payments.length === 1 && (!r.payments[0].method || r.payments[0].method === otaMethod)) {
+        r.payments[0].amount = currentTot;
       }
     }
   } else {
@@ -27622,6 +27641,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       r.paidAmount = currentTot;
     }
   }
+
+  r.totalPrice = r.totalAmount;
+  r.amountPaid = r.paidAmount;
 
   // Comparação de alterações (diffReservationFields) SOMENTE após a normalização completa do pagamento
   const normalizedDiffPayload = {
@@ -27692,6 +27714,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         });
         r.pixChargedAmount = updatedPendingAmt;
       }
+      r.mpInitPoint = null;
+      r.mpPreferenceId = null;
+      r.mpChargedAmount = null;
+    } else if (updatedPendingAmt <= 0.01 || r.paymentStatus === "pago_total" || r.paymentStatus === "pago") {
+      r.pixCopiaECola = "";
+      r.pixChargedAmount = 0;
       r.mpInitPoint = null;
       r.mpPreferenceId = null;
       r.mpChargedAmount = null;
@@ -28396,7 +28424,21 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         diffs.push({ field: "totalAmount", label: "Valor Total", oldValue: fmtOldTot, newValue: fmtNewTot });
       }
     }
-    if ((r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") && pendingAmt > 0) {
+    if (pendingAmt <= 0.01) {
+      const existingPayDiff = diffs.find(d => d.field === "paymentStatus");
+      if (existingPayDiff) {
+        if (existingPayDiff.newValue && existingPayDiff.newValue.includes("Pago Parcialmente")) {
+          existingPayDiff.newValue = "Confirmado / Pago (100%)";
+        }
+      } else if (oldPendingAmount > 0.01) {
+        diffs.push({
+          field: "paymentStatus",
+          label: "Status do Pagamento",
+          oldValue: "Pago Parcialmente (Saldo de diária adicional em aberto)",
+          newValue: "Confirmado / Pago (100%)"
+        });
+      }
+    } else if ((r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") && pendingAmt > 0) {
       const existingPayDiff = diffs.find(d => d.field === "paymentStatus");
       if (existingPayDiff) {
         existingPayDiff.newValue = "Pago Parcialmente (Saldo de diária adicional em aberto)";
@@ -28464,7 +28506,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
         console.warn(`[WhatsApp Catch-Up] Erro ao disparar recuperação da régua para ${r.code}:`, err.message);
       });
-    } else if ((hadCheckoutExtension || hadPendingIncrease) && pendingAmt > 0 && !isPreReservationBlocked(r)) {
+    } else if ((hadCheckoutExtension || hadPendingIncrease) && !isPreReservationBlocked(r)) {
       console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente identificado na reserva ${r.code}. Disparando additional_daily_pending.`);
       const resvWithPendingChanges = {
         ...r,
