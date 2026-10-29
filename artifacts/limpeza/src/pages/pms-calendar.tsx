@@ -149,6 +149,17 @@ export function buildReservationDailyRates(
 }
 
 export function areGuestNamesCompatibleUI(nameA?: string | null, nameB?: string | null): boolean {
+  const isSystemName = (str?: string | null) => {
+    const s = String(str || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!s) return false;
+    return /^(ordem\s+de\s+servico\b|os\s*[-#]?\s*\d+|manutencao\b|governanca\b|camareira\b|recepcao\b|administracao\b|corp\s*flats\b|atendimento\b|suporte\b|sistema\b|bot\b|ia\b|notificacao\b|alerta\b|teste\s+os\b)/i.test(s);
+  };
+  if (isSystemName(nameA) || isSystemName(nameB)) return false;
   const isPlaceholder = (str?: string | null) => {
     const s = String(str || "").trim();
     if (!s || s.length < 2) return true;
@@ -166,17 +177,18 @@ export function areGuestNamesCompatibleUI(nameA?: string | null, nameB?: string 
   const a = norm(nameA);
   const b = norm(nameB);
   if (!a || !b) return true;
-  if (a === b || a.includes(b) || b.includes(a)) return true;
+  if (a === b) return true;
   const stopWords = new Set(["de", "da", "do", "das", "dos", "e"]);
   const tokensA = a.split(" ").filter(t => t.length > 1 && !stopWords.has(t));
   const tokensB = b.split(" ").filter(t => t.length > 1 && !stopWords.has(t));
   if (tokensA.length === 0 || tokensB.length === 0) return true;
   const firstA = tokensA[0];
   const firstB = tokensB[0];
-  if (firstA === firstB || (firstA.length >= 4 && firstB.length >= 4 && (firstA.startsWith(firstB) || firstB.startsWith(firstA)))) {
-    return true;
-  }
-  return false;
+  if (firstA !== firstB) return false;
+  if (tokensA.length === 1 || tokensB.length === 1) return true;
+  const surnamesA = new Set(tokensA.slice(1));
+  const surnamesB = tokensB.slice(1);
+  return surnamesB.some(t => surnamesA.has(t));
 }
 
 export default function PmsCalendar() {
