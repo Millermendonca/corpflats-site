@@ -37,6 +37,17 @@ function loadServerHelpersSandbox(initialDb = {}) {
     "function getActiveServiceFlatBlockRange(oflat, todayStr = getTodayStr())",
     "// POST /api/service-orders — Cria nova ordem de serviço (Admin)"
   );
+  const checkOverdueSlice = extractFunctionSlice(
+    "function checkOverdueServiceFlats()",
+    "// ── Flats Endpoints"
+  );
+  const ensureCatalogSlice = extractFunctionSlice(
+    "export function ensureServiceCatalogAndReconcileOrders()",
+    "// ── External Service Orders"
+  );
+
+  const dispatchedNotifications = [];
+  const savedReasons = [];
 
   const sandbox = {
     db: {
@@ -49,10 +60,23 @@ function loadServerHelpersSandbox(initialDb = {}) {
       faqItems: [],
       serviceOrders: [],
       serviceWorkers: [],
+      serviceCatalog: [],
+      flatDiaryEntries: [],
       roomBlocks: [],
       auditLogs: [],
       ...initialDb
     },
+    pgPool: null,
+    pgHydratedSuccessfully: true,
+    DEFAULT_SERVICE_CATALOG: [],
+    inferServiceTypeFromText: () => null,
+    saveDatabase: (reason) => savedReasons.push(reason || "default"),
+    dispatchServiceNotifications: (event, order, flat, worker) => {
+      dispatchedNotifications.push({ event, orderId: order?.id, flatNumber: flat?.flatNumber, worker });
+    },
+    checkAndNotifyAvailableServiceFlats: () => [],
+    dispatchedNotifications,
+    savedReasons,
     console,
     Date,
     Math,
@@ -80,7 +104,7 @@ function loadServerHelpersSandbox(initialDb = {}) {
 
   vm.createContext(sandbox);
   vm.runInContext(
-    `${sanitizeSlice}\n${syncRoomBlocksSlice}\n${reconcileUniversalSlice}\n${reconcileAuditSlice}\nthis.exports = { sanitizeSafeJsonString, sanitizeJsonSerialized, reconcileUniversalIntegrity, reconcileFromAuditLogs, syncServiceOrderRoomBlocks, db };`,
+    `${sanitizeSlice}\n${syncRoomBlocksSlice}\n${checkOverdueSlice}\n${ensureCatalogSlice}\n${reconcileUniversalSlice}\n${reconcileAuditSlice}\nthis.exports = { sanitizeSafeJsonString, sanitizeJsonSerialized, reconcileUniversalIntegrity, reconcileFromAuditLogs, syncServiceOrderRoomBlocks, checkOverdueServiceFlats, ensureServiceCatalogAndReconcileOrders, dispatchedNotifications, savedReasons, db };`,
     sandbox
   );
   return sandbox.exports;
@@ -796,4 +820,229 @@ test("7. Self-healing of R2 photos & cleaning flags for so_1791912503911_wzey5 (
   assert.equal(f1304.wasCleanWhenStarted, true);
   assert.equal(f1304.needsCleaning, true);
 });
+
+test("8. Flat 313 (so_1791912503911_wzey5) implicit reset via worker_room_available, 3-point self-healing, and 24h overdue alert guard", async () => {
+  // Part A: reconcileFromAuditLogs recognizes implicit reset when worker_room_available occurs after an unfinished start
+  // and heals Flat 313 in so_1791912503911_wzey5 even if a stale start from 2026-10-14 was replayed
+  const {
+    reconcileFromAuditLogs,
+    reconcileUniversalIntegrity,
+    ensureServiceCatalogAndReconcileOrders,
+    checkOverdueServiceFlats,
+    dispatchedNotifications,
+    savedReasons,
+    db
+  } = loadServerHelpersSandbox({
+    serviceOrders: [
+      {
+        id: "so_1791912503911_wzey5",
+        token: "dbae89b4cf74e3cf06e7f013",
+        title: "Higienização Ar Condicionado",
+        status: "active",
+        estimatedDurationHours: 2,
+        flats: [
+          {
+            flatId: 7,
+            flatNumber: "313",
+            status: "in_progress",
+            startedAt: "2026-10-14T02:22:00.201Z",
+            estimatedFinishAt: "2026-10-14T04:22:00.201Z",
+            workerName: "Miller Mendonça Pessanha",
+            entryRequested: true,
+            entryRequestedAt: "2026-10-14T02:22:00.201Z",
+            delayNotified: true,
+            finishedAt: null,
+            workerNotifiedAvailable: true,
+            workerNotifiedAvailableAt: "2026-10-27T14:11:29.398Z"
+          }
+        ]
+      },
+      {
+        id: "so_generic_implicit",
+        token: "tok_generic_implicit",
+        title: "Revisão Geral",
+        status: "active",
+        estimatedDurationHours: 2,
+        flats: [
+          {
+            flatId: 2,
+            flatNumber: "114",
+            status: "pending",
+            startedAt: null,
+            finishedAt: null
+          }
+        ]
+      }
+    ]
+  });
+
+  const mockPgPool = {
+    query: async () => ({
+      rows: [
+        {
+          id: 504,
+          timestamp: "2026-10-28T23:45:00.000Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_1791912503911_wzey5",
+              flatId: 7,
+              flatNumber: "313",
+              action: "overdue_alert"
+            }
+          }
+        },
+        {
+          id: 503,
+          timestamp: "2026-10-27T14:11:29.398Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_1791912503911_wzey5",
+              action: "worker_room_available",
+              flats: ["313"],
+              workerPhone: "5522999990000"
+            }
+          }
+        },
+        {
+          id: 502,
+          timestamp: "2026-10-27T10:00:00.000Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_generic_implicit",
+              action: "worker_room_available",
+              flats: ["114"],
+              workerPhone: "5522999990000"
+            }
+          }
+        },
+        {
+          id: 501,
+          timestamp: "2026-10-20T09:00:00.000Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_generic_implicit",
+              flatId: 2,
+              flatNumber: "114",
+              action: "start",
+              startedAt: "2026-10-20T09:00:00.000Z",
+              workerName: "Teste Antigo"
+            }
+          }
+        },
+        {
+          id: 500,
+          timestamp: "2026-10-14T02:22:00.201Z",
+          action: "NOTIFICATION_SERVICE_ORDER",
+          details: {
+            metadata: {
+              serviceOrderId: "so_1791912503911_wzey5",
+              flatId: 7,
+              flatNumber: "313",
+              action: "start",
+              startedAt: "2026-10-14T02:22:00.201Z",
+              estimatedFinishAt: "2026-10-14T04:22:00.201Z",
+              workerName: "Miller Mendonça Pessanha"
+            }
+          }
+        }
+      ]
+    })
+  };
+
+  await reconcileFromAuditLogs(db, mockPgPool);
+
+  const f313 = db.serviceOrders[0].flats[0];
+  assert.equal(f313.status, "pending", "Flat 313 must remain pending after audit log reconciliation");
+  assert.equal(f313.startedAt, null);
+  assert.equal(f313.estimatedFinishAt, null);
+  assert.equal(f313.workerName, null);
+  assert.equal(f313.entryRequested, false);
+  assert.equal(f313.delayNotified, false);
+
+  const f114 = db.serviceOrders[1].flats[0];
+  assert.equal(f114.status, "pending", "Generic flat 114 with worker_room_available after unfinished start must be implicitly reset to pending");
+  assert.equal(f114.startedAt, null);
+  assert.equal(f114.resetAt, "2026-10-27T10:00:00.000Z");
+
+  // Part B: reconcileUniversalIntegrity heals Flat 313 when contaminated by an incoming snapshot or in-memory state
+  f313.status = "in_progress";
+  f313.startedAt = "2026-10-14T02:22:00.201Z";
+  f313.estimatedFinishAt = "2026-10-14T04:22:00.201Z";
+  f313.workerName = "Miller Mendonça Pessanha";
+  f313.entryRequested = true;
+  f313.delayNotified = true;
+  delete f313.resetAt;
+
+  const changedInteg = reconcileUniversalIntegrity();
+  assert.equal(changedInteg, true);
+  assert.equal(f313.status, "pending", "reconcileUniversalIntegrity must heal Flat 313 back to pending");
+  assert.equal(f313.startedAt, null);
+  assert.equal(f313.workerName, null);
+  assert.equal(f313.delayNotified, false);
+
+  // Part C: ensureServiceCatalogAndReconcileOrders heals Flat 313 if it is in_progress with startedAt < workerNotifiedAvailableAt
+  f313.status = "in_progress";
+  f313.startedAt = "2026-10-14T02:22:00.201Z";
+  f313.estimatedFinishAt = "2026-10-14T04:22:00.201Z";
+  f313.workerName = "Miller Mendonça Pessanha";
+  f313.entryRequested = true;
+  f313.delayNotified = false;
+
+  const changedCat = ensureServiceCatalogAndReconcileOrders();
+  assert.equal(changedCat, true);
+  assert.equal(f313.status, "pending", "ensureServiceCatalogAndReconcileOrders must heal Flat 313 back to pending");
+  assert.equal(f313.startedAt, null);
+  assert.equal(f313.estimatedFinishAt, null);
+
+  // Part D: checkOverdueServiceFlats 24-hour temporal sanity guard
+  const nowMs = Date.now();
+  const expired14DaysAgoIso = new Date(nowMs - 14 * 24 * 3600 * 1000).toISOString();
+  const expired30MinsAgoIso = new Date(nowMs - 30 * 60 * 1000).toISOString();
+
+  db.serviceOrders.push({
+    id: "so_overdue_guard_test",
+    token: "tok_overdue_guard",
+    title: "Teste Guard 24h",
+    status: "active",
+    flats: [
+      {
+        flatId: 101,
+        flatNumber: "215",
+        status: "in_progress",
+        startedAt: expired14DaysAgoIso,
+        estimatedFinishAt: expired14DaysAgoIso,
+        delayNotified: false
+      },
+      {
+        flatId: 102,
+        flatNumber: "306",
+        status: "in_progress",
+        startedAt: expired30MinsAgoIso,
+        estimatedFinishAt: expired30MinsAgoIso,
+        delayNotified: false
+      }
+    ]
+  });
+
+  dispatchedNotifications.length = 0;
+  savedReasons.length = 0;
+
+  checkOverdueServiceFlats();
+
+  const guardOrder = db.serviceOrders.find(o => o.id === "so_overdue_guard_test");
+  const fOld = guardOrder.flats.find(f => f.flatNumber === "215");
+  const fRecent = guardOrder.flats.find(f => f.flatNumber === "306");
+
+  assert.equal(fOld.delayNotified, true, "Stale >24h overdue flat must be marked delayNotified=true silently");
+  assert.equal(fRecent.delayNotified, true, "Recent <=24h overdue flat must be marked delayNotified=true");
+  assert.equal(dispatchedNotifications.length, 1, "Only the recent (<=24h) overdue flat should trigger a WhatsApp/notification dispatch");
+  assert.equal(dispatchedNotifications[0].flatNumber, "306");
+  assert.equal(dispatchedNotifications[0].event, "overdue_alert");
+  assert.ok(savedReasons.includes("check_overdue_service_flats"));
+});
+
 

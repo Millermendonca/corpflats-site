@@ -5110,10 +5110,12 @@ export function reconcileUniversalIntegrity(incomingState = null) {
                 const incActivityAt = [incF.finishedAt, incF.startedAt, incF.resetAt].filter(Boolean).sort().pop() || "";
                 const curResetIsNewer = Boolean(
                   (curF.resetAt && (!incActivityAt || curF.resetAt > incActivityAt)) ||
+                  (curF.status === "pending" && incF.status === "in_progress" && !incF.finishedAt && curF.workerNotifiedAvailableAt && incF.startedAt && curF.workerNotifiedAvailableAt > incF.startedAt) ||
                   (curF.status === "in_progress" && curF.startedAt && incF.finishedAt && curF.startedAt > incF.finishedAt)
                 );
                 const incResetIsNewer = Boolean(
                   (incF.resetAt && (!curActivityAt || incF.resetAt > curActivityAt)) ||
+                  (incF.status === "pending" && curF.status === "in_progress" && !curF.finishedAt && incF.workerNotifiedAvailableAt && curF.startedAt && incF.workerNotifiedAvailableAt > curF.startedAt) ||
                   (incF.status === "in_progress" && incF.startedAt && curF.finishedAt && incF.startedAt > curF.finishedAt)
                 );
 
@@ -5292,6 +5294,42 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     if (incomingState.minibarSettings && typeof incomingState.minibarSettings === "object") {
       if (!db.minibarSettings) {
         db.minibarSettings = incomingState.minibarSettings;
+        changed = true;
+      }
+    }
+  }
+
+  // 1.99 Auto-cura universal de Ordens de Serviço (so_1791912503911_wzey5: Flat 313 resetado após início de teste em 14/10)
+  if (Array.isArray(db.serviceOrders)) {
+    const acOrder = db.serviceOrders.find(o => o && o.id === "so_1791912503911_wzey5");
+    if (acOrder && Array.isArray(acOrder.flats)) {
+      const f313 = acOrder.flats.find(f => Number(f.flatId) === 7 || String(f.flatNumber) === "313");
+      if (
+        f313 &&
+        f313.status !== "done" &&
+        (
+          (f313.startedAt && f313.startedAt <= "2026-10-15T00:00:00.000Z") ||
+          (f313.status === "in_progress" && !f313.finishedAt && f313.workerNotifiedAvailableAt && (!f313.startedAt || f313.workerNotifiedAvailableAt > f313.startedAt))
+        )
+      ) {
+        const healedResetAt = (f313.workerNotifiedAvailableAt && f313.workerNotifiedAvailableAt > "2026-10-15T00:00:00.000Z")
+          ? f313.workerNotifiedAvailableAt
+          : (f313.resetAt && f313.resetAt > "2026-10-15T00:00:00.000Z" ? f313.resetAt : "2026-10-15T00:00:00.000Z");
+        f313.status = "pending";
+        f313.startedAt = null;
+        f313.finishedAt = null;
+        f313.resetAt = healedResetAt;
+        f313.estimatedFinishAt = null;
+        f313.workerName = null;
+        f313.workerCpf = null;
+        f313.entryRequested = false;
+        f313.entryRequestedAt = null;
+        f313.delayNotified = false;
+        try {
+          if (typeof syncServiceOrderRoomBlocks === "function") {
+            syncServiceOrderRoomBlocks(acOrder, false, db);
+          }
+        } catch (_) {}
         changed = true;
       }
     }
@@ -7745,7 +7783,24 @@ export async function reconcileFromAuditLogs(db, pgPool) {
           const f = order.flats.find(
             fl => String(fl.flatNumber) === String(fNum) || Number(fl.flatId) === Number(fNum)
           );
-          if (f && (!f.workerNotifiedAvailableAt || tsStr >= f.workerNotifiedAvailableAt)) {
+          if (!f) continue;
+          // Se o apartamento estava in_progress (sem finishedAt) com startedAt anterior ao aviso de quarto disponível,
+          // significa que sofreu reset implícito antes de voltar a ficar disponível (worker_room_available só dispara para status === 'pending').
+          if (f.status === "in_progress" && !f.finishedAt && f.startedAt && f.startedAt < tsStr) {
+            f.status = "pending";
+            f.startedAt = null;
+            f.finishedAt = null;
+            f.resetAt = tsStr;
+            f.estimatedFinishAt = null;
+            f.workerName = null;
+            f.workerCpf = null;
+            f.entryRequested = false;
+            f.entryRequestedAt = null;
+            f.delayNotified = false;
+            affectedServiceOrders.add(order);
+            changed = true;
+          }
+          if (!f.workerNotifiedAvailableAt || tsStr >= f.workerNotifiedAvailableAt) {
             if (!f.workerNotifiedAvailable || f.workerNotifiedAvailableAt !== tsStr || (notifiedPhone && f.workerLastNotifiedPhone !== notifiedPhone)) {
               f.workerNotifiedAvailable = true;
               f.workerNotifiedAvailableAt = tsStr;
@@ -7801,9 +7856,13 @@ export async function reconcileFromAuditLogs(db, pgPool) {
         }
       } else if (rawAction === "start" || rawAction === "started") {
         const resolvedStartAt = meta.startedAt || tsStr;
+        const effectiveResetAt = [
+          flat.resetAt,
+          (flat.status === "pending" && flat.workerNotifiedAvailableAt) ? flat.workerNotifiedAvailableAt : null
+        ].filter(Boolean).sort().pop() || null;
         if (
           (!flat.finishedAt || resolvedStartAt > flat.finishedAt) &&
-          (!flat.resetAt || resolvedStartAt > flat.resetAt)
+          (!effectiveResetAt || resolvedStartAt > effectiveResetAt)
         ) {
           if (flat.status !== "in_progress" || !flat.startedAt || flat.startedAt < resolvedStartAt) {
             flat.status = "in_progress";
@@ -7929,9 +7988,34 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       }
     }
 
-    // Auto-cura das evidências fotográficas históricas no Cloudflare R2 para OS so_1791912503911_wzey5 (Flats 907 e 1304)
+    // Auto-cura das evidências fotográficas históricas no Cloudflare R2 e do Flat 313 resetado após teste em 14/10 para OS so_1791912503911_wzey5
     const acOrder = db.serviceOrders.find(o => o && o.id === "so_1791912503911_wzey5");
     if (acOrder && Array.isArray(acOrder.flats)) {
+      const f313 = acOrder.flats.find(f => Number(f.flatId) === 7 || String(f.flatNumber) === "313");
+      if (
+        f313 &&
+        f313.status !== "done" &&
+        (
+          (f313.startedAt && f313.startedAt <= "2026-10-15T00:00:00.000Z") ||
+          (f313.status === "in_progress" && !f313.finishedAt && f313.workerNotifiedAvailableAt && (!f313.startedAt || f313.workerNotifiedAvailableAt > f313.startedAt))
+        )
+      ) {
+        const healedResetAt = (f313.workerNotifiedAvailableAt && f313.workerNotifiedAvailableAt > "2026-10-15T00:00:00.000Z")
+          ? f313.workerNotifiedAvailableAt
+          : (f313.resetAt && f313.resetAt > "2026-10-15T00:00:00.000Z" ? f313.resetAt : "2026-10-15T00:00:00.000Z");
+        f313.status = "pending";
+        f313.startedAt = null;
+        f313.finishedAt = null;
+        f313.resetAt = healedResetAt;
+        f313.estimatedFinishAt = null;
+        f313.workerName = null;
+        f313.workerCpf = null;
+        f313.entryRequested = false;
+        f313.entryRequestedAt = null;
+        f313.delayNotified = false;
+        affectedServiceOrders.add(acOrder);
+        changed = true;
+      }
       const f907 = acOrder.flats.find(f => Number(f.flatId) === 18 || String(f.flatNumber) === "907");
       if (f907 && f907.status === "done") {
         const r2Photos907 = [
@@ -16166,11 +16250,15 @@ function checkOverdueServiceFlats() {
       for (const flat of (order.flats || [])) {
         if (flat.status === "in_progress" && flat.estimatedFinishAt && !flat.delayNotified) {
           const estDate = new Date(flat.estimatedFinishAt);
-          if (estDate.getTime() < now.getTime()) {
+          if (!Number.isNaN(estDate.getTime()) && estDate.getTime() < now.getTime()) {
             flat.delayNotified = true;
             updated = true;
-            const worker = (db.serviceWorkers || []).find(w => w.token === order.token || w.serviceOrderId === order.id);
-            dispatchServiceNotifications("overdue_alert", order, flat, worker);
+            // Trava de sanidade temporal: se a previsão já expirou há mais de 24h, apenas marca delayNotified=true
+            // e persiste silenciosamente sem disparar alertas retroativos de dias/semanas anteriores no WhatsApp.
+            if (now.getTime() - estDate.getTime() <= 24 * 3600 * 1000) {
+              const worker = (db.serviceWorkers || []).find(w => w.token === order.token || w.serviceOrderId === order.id);
+              dispatchServiceNotifications("overdue_alert", order, flat, worker);
+            }
           }
         }
       }
@@ -19800,6 +19888,35 @@ export function ensureServiceCatalogAndReconcileOrders() {
       }
     }
     if (order.id === "so_1791912503911_wzey5" && Array.isArray(order.flats)) {
+      const f313 = order.flats.find(f => Number(f.flatId) === 7 || String(f.flatNumber) === "313");
+      if (
+        f313 &&
+        f313.status !== "done" &&
+        (
+          (f313.startedAt && f313.startedAt <= "2026-10-15T00:00:00.000Z") ||
+          (f313.status === "in_progress" && !f313.finishedAt && f313.workerNotifiedAvailableAt && (!f313.startedAt || f313.workerNotifiedAvailableAt > f313.startedAt))
+        )
+      ) {
+        const healedResetAt = (f313.workerNotifiedAvailableAt && f313.workerNotifiedAvailableAt > "2026-10-15T00:00:00.000Z")
+          ? f313.workerNotifiedAvailableAt
+          : (f313.resetAt && f313.resetAt > "2026-10-15T00:00:00.000Z" ? f313.resetAt : "2026-10-15T00:00:00.000Z");
+        f313.status = "pending";
+        f313.startedAt = null;
+        f313.finishedAt = null;
+        f313.resetAt = healedResetAt;
+        f313.estimatedFinishAt = null;
+        f313.workerName = null;
+        f313.workerCpf = null;
+        f313.entryRequested = false;
+        f313.entryRequestedAt = null;
+        f313.delayNotified = false;
+        try {
+          if (typeof syncServiceOrderRoomBlocks === "function") {
+            syncServiceOrderRoomBlocks(order, false, db);
+          }
+        } catch (_) {}
+        changed = true;
+      }
       const f907 = order.flats.find(f => Number(f.flatId) === 18 || String(f.flatNumber) === "907");
       if (f907 && f907.status === "done") {
         const r2Photos907 = [
