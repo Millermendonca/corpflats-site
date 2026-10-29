@@ -285,12 +285,12 @@ function getPaymentTitle(
     }
   }
 
-  // Passagem 3: Quando a contagem de pacotes for igual à de pagamentos, associa posicionalmente
+  // Passagem 3: Quando a contagem de pacotes for igual à de pagamentos, associa com o pacote restante não reivindicado
   if (packages.length === paymentsList.length) {
     for (let i = 0; i < paymentsList.length; i++) {
       if (matchedPackages[i]) continue
-      const pkg = packages[i]
-      if (pkg && !claimedPackageIds.has(pkg.id)) {
+      const pkg = packages.find(pk => !claimedPackageIds.has(pk.id))
+      if (pkg) {
         matchedPackages[i] = pkg
         claimedPackageIds.add(pkg.id)
       }
@@ -309,8 +309,16 @@ function getPaymentTitle(
       const extraLabel = matchedPkg.nightsCount > 1
         ? `${matchedPkg.nightsCount} Diárias Extras`
         : "1 Diária Extra"
-      return `${prefix}${extraLabel} (Solicitada via ${matchedPkg.channelLabel})`
+      const requestLabel = matchedPkg.nightsCount > 1 ? "Solicitadas via" : "Solicitada via"
+      return `${prefix}${extraLabel} (${requestLabel} ${matchedPkg.channelLabel})`
     }
+  }
+
+  // Se houver apenas 1 pagamento cobrindo múltiplos pacotes
+  if (totalPayments === 1 && packages.length > 1) {
+    const extraNights = packages.slice(1).reduce((acc, p) => acc + p.nightsCount, 0)
+    const extraText = extraNights > 1 ? `${extraNights} Diárias Extras` : "1 Diária Extra"
+    return `Estadia Completa (Reserva Inicial + ${extraText})`
   }
 
   // Parcelamento ou pagamentos parciais de pacote único
@@ -1469,19 +1477,21 @@ export default function GuestPortal() {
     if (Array.isArray(rawPayments) && rawPayments.length > 0) {
       return rawPayments
     }
+    const fallbackMethod = String(reservation?.paymentMethod || reservation?.channel || "").toLowerCase()
+    const isFallbackOta = fallbackMethod === "booking" || fallbackMethod === "airbnb"
     return [
       {
         id: "pay_fallback",
         amount: paidAmount,
         method: reservation?.paymentMethod || reservation?.channel,
         date: reservation?.paidAt || "",
-        endToEndId: isOta ? undefined : reservation?.pixEndToEndId,
-        txId: isOta ? undefined : reservation?.pixTxId,
-        mpPaymentId: isOta ? undefined : reservation?.mpPaymentId,
+        endToEndId: isFallbackOta ? undefined : reservation?.pixEndToEndId,
+        txId: isFallbackOta ? undefined : reservation?.pixTxId,
+        mpPaymentId: isFallbackOta ? undefined : reservation?.mpPaymentId,
         notes: "Pagamento integral"
       }
     ]
-  }, [(reservation as any)?.payments, paidAmount, reservation?.paymentMethod, reservation?.channel, reservation?.paidAt, isOta, reservation?.pixEndToEndId, reservation?.pixTxId, reservation?.mpPaymentId])
+  }, [(reservation as any)?.payments, paidAmount, reservation?.paymentMethod, reservation?.channel, reservation?.paidAt, reservation?.pixEndToEndId, reservation?.pixTxId, reservation?.mpPaymentId])
 
   const handleCopyPix = () => {
     if (!reservation.pixCopiaECola) return
@@ -3341,7 +3351,7 @@ export default function GuestPortal() {
                     </div>
                     {reservation.paidAt && (
                       <span className="text-[11px] font-medium text-emerald-700 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200 shrink-0">
-                        Última baixa: {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                        Última baixa: {formatPaymentDateTime(reservation.paidAt)}
                       </span>
                     )}
                   </div>
@@ -3389,7 +3399,7 @@ export default function GuestPortal() {
                   </div>
                   {reservation.paidAt && (
                     <span className="text-[11px] font-medium text-emerald-700 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200">
-                      {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                      {formatPaymentDateTime(reservation.paidAt)}
                     </span>
                   )}
                 </div>

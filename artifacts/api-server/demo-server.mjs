@@ -28985,13 +28985,24 @@ function ensureReservationCompositeTotal(r) {
 
 function enrichReservationPayments(r) {
   if (!r || !Array.isArray(r.payments)) return [];
-  const hasClaimedPixE2E = r.payments.some(p => p && p.endToEndId && p.endToEndId === r.pixEndToEndId);
-  const hasClaimedPixTxId = r.payments.some(p => p && p.txId && p.txId === r.pixTxId);
-  const hasClaimedMpId = r.payments.some(p => p && p.mpPaymentId && p.mpPaymentId === r.mpPaymentId);
+  const needsPixE2E = Boolean(r.pixEndToEndId) && !r.payments.some(p => p && p.endToEndId && p.endToEndId === r.pixEndToEndId);
+  const needsPixTxId = Boolean(r.pixTxId) && !r.payments.some(p => p && p.txId && p.txId === r.pixTxId);
+  const needsMpId = Boolean(r.mpPaymentId) && !r.payments.some(p => p && p.mpPaymentId && p.mpPaymentId === r.mpPaymentId);
 
   let targetPixIndex = -1;
-  if (r.pixEndToEndId || r.pixTxId) {
-    if (!hasClaimedPixE2E || !hasClaimedPixTxId) {
+  if (needsPixE2E || needsPixTxId) {
+    const partialMatchIndex = r.payments.findIndex(p => {
+      if (!p) return false;
+      const method = String(p.method || "").toLowerCase();
+      const isOta = method === "booking" || method === "airbnb";
+      if (isOta) return false;
+      return (Boolean(r.pixEndToEndId) && p.endToEndId === r.pixEndToEndId) ||
+             (Boolean(r.pixTxId) && p.txId === r.pixTxId);
+    });
+
+    if (partialMatchIndex !== -1) {
+      targetPixIndex = partialMatchIndex;
+    } else {
       for (let i = r.payments.length - 1; i >= 0; i--) {
         const p = r.payments[i];
         if (!p) continue;
@@ -29012,7 +29023,7 @@ function enrichReservationPayments(r) {
   }
 
   let targetCardIndex = -1;
-  if (r.mpPaymentId && !hasClaimedMpId) {
+  if (needsMpId) {
     for (let i = r.payments.length - 1; i >= 0; i--) {
       const p = r.payments[i];
       if (!p) continue;
@@ -29047,15 +29058,15 @@ function enrichReservationPayments(r) {
       delete enriched.mpPaymentId;
     } else {
       if (isPix && idx === targetPixIndex) {
-        if (!enriched.endToEndId && r.pixEndToEndId && !hasClaimedPixE2E) {
+        if (!enriched.endToEndId && needsPixE2E) {
           enriched.endToEndId = r.pixEndToEndId;
         }
-        if (!enriched.txId && r.pixTxId && !hasClaimedPixTxId) {
+        if (!enriched.txId && needsPixTxId) {
           enriched.txId = r.pixTxId;
         }
       }
       if (isCard && idx === targetCardIndex) {
-        if (!enriched.mpPaymentId && r.mpPaymentId && !hasClaimedMpId) {
+        if (!enriched.mpPaymentId && needsMpId) {
           enriched.mpPaymentId = r.mpPaymentId;
         }
       }

@@ -475,4 +475,222 @@ const resOtaFeeIncrease = simulatePutPaymentResolution({
 assert.equal(resOtaFeeIncrease.paymentStatus, "sinal_pago", "Acréscimo de taxa em OTA sem cobertura da Booking deve assumir sinal_pago");
 assert.equal(resOtaFeeIncrease.paidAmount, 650.40, "paidAmount em OTA com taxa não deve inflar");
 
+// 7. Adversarial Test Cases (Review Round 3): Blindagem de enriquecimento e casamento de pacotes
+// 7a. Multi-PIX Identifier Unification (Identificadores pertencentes à mesma transação NÃO podem ser divididos entre pagamentos distintos)
+function enrichReservationPaymentsAdversarial(r) {
+  if (!r || !Array.isArray(r.payments)) return [];
+  const needsPixE2E = Boolean(r.pixEndToEndId) && !r.payments.some(p => p && p.endToEndId && p.endToEndId === r.pixEndToEndId);
+  const needsPixTxId = Boolean(r.pixTxId) && !r.payments.some(p => p && p.txId && p.txId === r.pixTxId);
+  const needsMpId = Boolean(r.mpPaymentId) && !r.payments.some(p => p && p.mpPaymentId && p.mpPaymentId === r.mpPaymentId);
+
+  let targetPixIndex = -1;
+  if (needsPixE2E || needsPixTxId) {
+    const partialMatchIndex = r.payments.findIndex(p => {
+      if (!p) return false;
+      const method = String(p.method || "").toLowerCase();
+      const isOta = method === "booking" || method === "airbnb";
+      if (isOta) return false;
+      return (Boolean(r.pixEndToEndId) && p.endToEndId === r.pixEndToEndId) ||
+             (Boolean(r.pixTxId) && p.txId === r.pixTxId);
+    });
+
+    if (partialMatchIndex !== -1) {
+      targetPixIndex = partialMatchIndex;
+    } else {
+      for (let i = r.payments.length - 1; i >= 0; i--) {
+        const p = r.payments[i];
+        if (!p) continue;
+        const method = String(p.method || "").toLowerCase();
+        const isOta = method === "booking" || method === "airbnb";
+        const isPix = method === "pix" || /pix/i.test(method);
+        if (!isOta && isPix) {
+          if (r.paidAt && p.date && (String(p.date).trim() === String(r.paidAt).trim() || String(p.date).startsWith(String(r.paidAt).slice(0, 10)))) {
+            targetPixIndex = i;
+            break;
+          }
+          if (targetPixIndex === -1) {
+            targetPixIndex = i;
+          }
+        }
+      }
+    }
+  }
+
+  let targetCardIndex = -1;
+  if (needsMpId) {
+    for (let i = r.payments.length - 1; i >= 0; i--) {
+      const p = r.payments[i];
+      if (!p) continue;
+      const method = String(p.method || "").toLowerCase();
+      const isOta = method === "booking" || method === "airbnb";
+      const isCard = /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(method);
+      if (!isOta && isCard) {
+        if (r.paidAt && p.date && (String(p.date).trim() === String(r.paidAt).trim() || String(p.date).startsWith(String(r.paidAt).slice(0, 10)))) {
+          targetCardIndex = i;
+          break;
+        }
+        if (targetCardIndex === -1) {
+          targetCardIndex = i;
+        }
+      }
+    }
+  }
+
+  return r.payments.map((p, idx) => {
+    if (!p) return p;
+    const method = String(p.method || "").toLowerCase();
+    const isOta = method === "booking" || method === "airbnb";
+    const isCard = /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite/i.test(method);
+    const isPix = method === "pix" || /pix/i.test(method);
+
+    const enriched = { ...p };
+    if (isOta) {
+      delete enriched.endToEndId;
+      delete enriched.txId;
+      delete enriched.pixEndToEndId;
+      delete enriched.pixTxId;
+      delete enriched.mpPaymentId;
+    } else {
+      if (isPix && idx === targetPixIndex) {
+        if (!enriched.endToEndId && needsPixE2E) {
+          enriched.endToEndId = r.pixEndToEndId;
+        }
+        if (!enriched.txId && needsPixTxId) {
+          enriched.txId = r.pixTxId;
+        }
+      }
+      if (isCard && idx === targetCardIndex) {
+        if (!enriched.mpPaymentId && needsMpId) {
+          enriched.mpPaymentId = r.mpPaymentId;
+        }
+      }
+    }
+    return enriched;
+  });
+}
+
+const resMultiPixUnification = {
+  pixEndToEndId: "E_ABC_SHARED",
+  pixTxId: "TX_ABC_SHARED",
+  payments: [
+    { id: "pay_0", method: "pix", amount: 100, endToEndId: "E_ABC_SHARED" }, // já possui E2E, sem txId
+    { id: "pay_1", method: "pix", amount: 50 } // novo pagamento PIX avulso
+  ]
+};
+const resMultiPixResult = enrichReservationPaymentsAdversarial(resMultiPixUnification);
+assert.equal(resMultiPixResult[0].endToEndId, "E_ABC_SHARED", "pay_0 preserva endToEndId");
+assert.equal(resMultiPixResult[0].txId, "TX_ABC_SHARED", "pay_0 deve receber txId unificado na mesma transação");
+assert.equal(resMultiPixResult[1].txId, undefined, "pay_1 NÃO deve ser poluído com txId de outra transação");
+assert.equal(resMultiPixResult[1].endToEndId, undefined, "pay_1 NÃO deve ser poluído com endToEndId");
+
+// 7b. Casamento Global em Passagem 3 quando pkg[i] já foi reivindicado
+function getPaymentTitleAdversarial(payment, index, totalPayments, packages, allPayments) {
+  const prefix = totalPayments > 1 ? `${index + 1}º Pagamento • ` : "";
+  const paymentsList = Array.isArray(allPayments) && allPayments.length > 0 ? allPayments : [payment];
+
+  const claimedPackageIds = new Set();
+  const matchedPackages = new Array(paymentsList.length).fill(null);
+
+  // Passagem 1: Prioriza índice correspondente se os valores baterem
+  for (let i = 0; i < paymentsList.length; i++) {
+    const p = paymentsList[i];
+    const amt = Number(p?.amount || 0);
+    const pkg = packages[i];
+    if (pkg && !claimedPackageIds.has(pkg.id) && Math.abs(pkg.totalAmount - amt) < 0.5) {
+      matchedPackages[i] = pkg;
+      claimedPackageIds.add(pkg.id);
+    }
+  }
+
+  // Passagem 2: Casa qualquer pagamento remanescente com pacote não reivindicado de mesmo valor
+  for (let i = 0; i < paymentsList.length; i++) {
+    if (matchedPackages[i]) continue;
+    const p = paymentsList[i];
+    const amt = Number(p?.amount || 0);
+    const pkg = packages.find(pk => !claimedPackageIds.has(pk.id) && Math.abs(pk.totalAmount - amt) < 0.5);
+    if (pkg) {
+      matchedPackages[i] = pkg;
+      claimedPackageIds.add(pkg.id);
+    }
+  }
+
+  // Passagem 3: Quando a contagem de pacotes for igual à de pagamentos, associa com o pacote restante não reivindicado
+  if (packages.length === paymentsList.length) {
+    for (let i = 0; i < paymentsList.length; i++) {
+      if (matchedPackages[i]) continue;
+      const pkg = packages.find(pk => !claimedPackageIds.has(pk.id));
+      if (pkg) {
+        matchedPackages[i] = pkg;
+        claimedPackageIds.add(pkg.id);
+      }
+    }
+  }
+
+  const matchedPkg = (index >= 0 && index < matchedPackages.length) ? matchedPackages[index] : null;
+
+  if (matchedPkg) {
+    if (matchedPkg.id === "pkg_0") {
+      const chargeText = matchedPkg.chargesSum > 0
+        ? ` + ${matchedPkg.chargesDescription || "Taxa de Limpeza"}`
+        : "";
+      return `${prefix}Reserva Inicial (${matchedPkg.nightsCount} diária${matchedPkg.nightsCount > 1 ? "s" : ""}${chargeText} — ${matchedPkg.channelLabel})`;
+    } else {
+      const extraLabel = matchedPkg.nightsCount > 1
+        ? `${matchedPkg.nightsCount} Diárias Extras`
+        : "1 Diária Extra";
+      const requestLabel = matchedPkg.nightsCount > 1 ? "Solicitadas via" : "Solicitada via";
+      return `${prefix}${extraLabel} (${requestLabel} ${matchedPkg.channelLabel})`;
+    }
+  }
+
+  // Se houver apenas 1 pagamento cobrindo múltiplos pacotes
+  if (totalPayments === 1 && packages.length > 1) {
+    const extraNights = packages.slice(1).reduce((acc, p) => acc + p.nightsCount, 0);
+    const extraText = extraNights > 1 ? `${extraNights} Diárias Extras` : "1 Diária Extra";
+    return `Estadia Completa (Reserva Inicial + ${extraText})`;
+  }
+
+  if (packages.length === 1 && totalPayments > 1) {
+    const pkg0 = packages[0];
+    const noteLower = String(payment?.notes || "").toLowerCase();
+    if (noteLower.includes("sinal") || noteLower.includes("entrada")) {
+      return `${prefix}Sinal / Entrada (${pkg0.channelLabel})`;
+    }
+    if (noteLower.includes("complemento") || noteLower.includes("saldo")) {
+      return `${prefix}Complemento de Saldo (${pkg0.channelLabel})`;
+    }
+    return `${prefix}Parcela ${index + 1} de ${totalPayments} (${pkg0.channelLabel})`;
+  }
+
+  if (index === 0) {
+    return `${prefix}Reserva Inicial`;
+  }
+  return `${prefix}Pagamento Adicional / Complemento`;
+}
+
+const advPkgs = [
+  { id: "pkg_0", totalAmount: 650.00, nightsCount: 4, channelLabel: "Booking.com", chargesSum: 50, chargesDescription: "Taxa de Limpeza" },
+  { id: "pkg_1", totalAmount: 150.00, nightsCount: 1, channelLabel: "WhatsApp" }
+];
+const advPayments = [
+  { amount: 150.00 }, // P0 casa com pkg_1 na passagem 2
+  { amount: 652.00 }  // P1 tem valor ligeiramente diferente (ex. taxa bancária) e deve casar com pkg_0 restante na passagem 3
+];
+const titleAdvP0 = getPaymentTitleAdversarial(advPayments[0], 0, 2, advPkgs, advPayments);
+const titleAdvP1 = getPaymentTitleAdversarial(advPayments[1], 1, 2, advPkgs, advPayments);
+assert.equal(titleAdvP0, "1º Pagamento • 1 Diária Extra (Solicitada via WhatsApp)", "P0 deve casar com diária extra");
+assert.equal(titleAdvP1, "2º Pagamento • Reserva Inicial (4 diárias + Taxa de Limpeza — Booking.com)", "P1 deve casar com pacote inicial não reivindicado em passagem 3");
+
+// 7c. Pagamento Único que cobre múltiplos pacotes
+const singlePayAdvTitle = getPaymentTitleAdversarial({ amount: 800.00 }, 0, 1, advPkgs, [{ amount: 800.00 }]);
+assert.equal(singlePayAdvTitle, "Estadia Completa (Reserva Inicial + 1 Diária Extra)", "Pagamento único de múltiplos pacotes deve identificar Estadia Completa");
+
+// 7d. Plural agreement para múltiplas diárias extras
+const multiExtraPkgs = [
+  { id: "pkg_0", totalAmount: 650.00, nightsCount: 4, channelLabel: "Booking.com", chargesSum: 50, chargesDescription: "Taxa de Limpeza" },
+  { id: "pkg_1", totalAmount: 300.00, nightsCount: 2, channelLabel: "WhatsApp" }
+];
+const multiExtraTitle = getPaymentTitleAdversarial({ amount: 300.00 }, 1, 2, multiExtraPkgs, [{ amount: 650.00 }, { amount: 300.00 }]);
+assert.equal(multiExtraTitle, "2º Pagamento • 2 Diárias Extras (Solicitadas via WhatsApp)", "Plural agreement deve usar 'Solicitadas via'");
+
 console.log("✔ Todos os testes pontuais de extensão, múltiplos pagamentos e casos de borda passaram com 100% de sucesso!");
