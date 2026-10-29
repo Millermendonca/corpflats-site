@@ -183,13 +183,72 @@ export default function BreakfastProduction() {
       if (res.ok) {
         setReminderModalOpen(false)
         alert("Mensagem padrão de lembrete salva com sucesso!")
-        fetchOrders()
+        fetchOrders({ silent: true })
       }
     } catch {
       alert("Erro ao salvar mensagem padrão de lembrete.")
     } finally {
       setSavingReminderTemplate(false)
     }
+  }
+
+  const captureScrollPositions = () => {
+    if (typeof window === "undefined") return () => {}
+    const winX = window.scrollX
+    const winY = window.scrollY
+    const mainEl = document.querySelector("main")
+    const mainTop = mainEl ? mainEl.scrollTop : null
+    const mainLeft = mainEl ? mainEl.scrollLeft : null
+
+    return () => {
+      const restore = () => {
+        if (mainEl && mainTop !== null) {
+          if (Math.abs(mainEl.scrollTop - mainTop) > 1) {
+            mainEl.scrollTop = mainTop
+          }
+          if (mainLeft !== null && Math.abs(mainEl.scrollLeft - mainLeft) > 1) {
+            mainEl.scrollLeft = mainLeft
+          }
+        }
+        if (Math.abs(window.scrollY - winY) > 1 || Math.abs(window.scrollX - winX) > 1) {
+          window.scrollTo(winX, winY)
+        }
+      }
+      restore()
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => {
+          restore()
+          requestAnimationFrame(restore)
+        })
+      }
+    }
+  }
+
+  const patchLocalOrder = (orderId: number, patch: Record<string, any>) => {
+    setData((prev: any) => {
+      if (!prev) return prev
+      const nextOrders = Array.isArray(prev.orders)
+        ? prev.orders.map((o: any) => (o.id === orderId ? { ...o, ...patch } : o))
+        : prev.orders
+      const nextTimeSlots = Array.isArray(prev.timeSlots)
+        ? prev.timeSlots.map((slot: any) => ({
+            ...slot,
+            orders: Array.isArray(slot.orders)
+              ? slot.orders.map((o: any) => (o.id === orderId ? { ...o, ...patch } : o))
+              : slot.orders
+          }))
+        : prev.timeSlots
+      return {
+        ...prev,
+        orders: nextOrders,
+        timeSlots: nextTimeSlots
+      }
+    })
+    setHistoryOrders((prev: any[]) =>
+      Array.isArray(prev)
+        ? prev.map((o: any) => (o.id === orderId ? { ...o, ...patch } : o))
+        : prev
+    )
   }
 
   const fetchStdConfig = async () => {
@@ -202,8 +261,12 @@ export default function BreakfastProduction() {
     } catch {}
   }
 
-  const fetchOrders = async () => {
-    setLoading(true)
+  const fetchOrders = async (options?: { silent?: boolean } | any) => {
+    const silent = Boolean(options && typeof options === "object" && "silent" in options && options.silent)
+    const restoreScroll = silent ? captureScrollPositions() : null
+    if (!silent) {
+      setLoading(true)
+    }
     try {
       const res = await fetch(`/api/breakfast/orders?date=${currentDate}`, { credentials: "include" })
       const json = await res.json()
@@ -212,7 +275,12 @@ export default function BreakfastProduction() {
         setReminderTemplate(json.reminderTemplate)
       }
     } finally {
-      setLoading(false)
+      if (!silent) {
+        setLoading(false)
+      }
+      if (restoreScroll) {
+        restoreScroll()
+      }
     }
   }
 
@@ -224,8 +292,12 @@ export default function BreakfastProduction() {
     } catch {}
   }
 
-  const fetchHistory = async () => {
-    setHistoryLoading(true)
+  const fetchHistory = async (options?: { silent?: boolean } | any) => {
+    const silent = Boolean(options && typeof options === "object" && "silent" in options && options.silent)
+    const restoreScroll = silent ? captureScrollPositions() : null
+    if (!silent) {
+      setHistoryLoading(true)
+    }
     try {
       const params = new URLSearchParams()
       if (historyStartDate) params.set("startDate", historyStartDate)
@@ -242,7 +314,12 @@ export default function BreakfastProduction() {
     } catch (err) {
       console.error("Erro ao buscar histórico:", err)
     } finally {
-      setHistoryLoading(false)
+      if (!silent) {
+        setHistoryLoading(false)
+      }
+      if (restoreScroll) {
+        restoreScroll()
+      }
     }
   }
 
@@ -284,6 +361,7 @@ export default function BreakfastProduction() {
 
   const handleReactivateOrder = async (order: any) => {
     if (!confirm(`Deseja reativar o pedido do Apt ${order.roomNumber} (${order.clientName})?`)) return
+    const restoreScroll = captureScrollPositions()
     try {
       const res = await fetch(`/api/breakfast/orders/${order.id}/status`, {
         method: "PATCH",
@@ -292,18 +370,22 @@ export default function BreakfastProduction() {
         credentials: "include"
       })
       if (res.ok) {
+        patchLocalOrder(order.id, { status: "pending", cancelReason: null })
+        restoreScroll()
         toast({
           title: "Pedido Reativado!",
           description: `O pedido do Apt ${order.roomNumber} voltou para a fila de produção ativa.`
         })
-        fetchOrders()
-        fetchHistory()
+        await fetchOrders({ silent: true })
+        await fetchHistory({ silent: true })
         if (mainTab === "insights") fetchInsights()
       } else {
         toast({ variant: "destructive", title: "Erro", description: "Não foi possível reativar o pedido." })
       }
     } catch {
       toast({ variant: "destructive", title: "Erro", description: "Falha de conexão com o servidor." })
+    } finally {
+      restoreScroll()
     }
   }
 
@@ -381,7 +463,7 @@ export default function BreakfastProduction() {
       if (res.ok) {
         setStdModalOpen(false)
         alert("Configuração do Pedido de Café da Manhã Padrão atualizada com sucesso!")
-        fetchOrders()
+        fetchOrders({ silent: true })
       }
     } finally {
       setSavingStdConfig(false)
@@ -389,15 +471,27 @@ export default function BreakfastProduction() {
   }
 
   const handleSetStatus = async (orderId: number, nextStatus: string) => {
+    const restoreScroll = captureScrollPositions()
+    patchLocalOrder(orderId, { status: nextStatus })
+    restoreScroll()
     try {
-      await fetch(`/api/breakfast/orders/${orderId}/status`, {
+      const res = await fetch(`/api/breakfast/orders/${orderId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
         credentials: "include"
       })
-      fetchOrders()
-    } catch {}
+      const json = await res.json().catch(() => ({}))
+      if (json?.order) {
+        patchLocalOrder(orderId, json.order)
+      }
+      await fetchOrders({ silent: true })
+      if (mainTab === "history") {
+        await fetchHistory({ silent: true })
+      }
+    } catch {} finally {
+      restoreScroll()
+    }
   }
 
   const handleToggleStatus = async (orderId: number, currentStatus: string) => {
@@ -406,6 +500,7 @@ export default function BreakfastProduction() {
   }
 
   const handleNotifyGuest = async (order: any, type: "in_production" | "on_the_way") => {
+    const restoreScroll = captureScrollPositions()
     const phone = (order.phone || "").replace(/\D/g, "")
     if (!phone) {
       toast({
@@ -413,11 +508,13 @@ export default function BreakfastProduction() {
         title: "Telefone não cadastrado",
         description: `O pedido do Apt ${order.roomNumber} (${order.clientName}) não possui WhatsApp válido cadastrado.`
       })
+      restoreScroll()
       return
     }
 
     const notifyKey = `${order.id}_${type}`
     setSendingNotify(prev => ({ ...prev, [notifyKey]: true }))
+    restoreScroll()
 
     const firstName = (order.clientName || "Hóspede").split(" ")[0]
     const defaultMsg = type === "in_production"
@@ -435,12 +532,28 @@ export default function BreakfastProduction() {
       })
       const json = await res.json().catch(() => ({}))
 
+      const nowIso = new Date().toISOString()
+      const optimisticPatch = json?.order
+        ? json.order
+        : type === "in_production"
+          ? {
+              status: order.status === "pending" ? "in_production" : order.status,
+              inProductionNotifiedAt: nowIso
+            }
+          : {
+              status: order.status !== "ready" && order.status !== "delivered" ? "ready" : order.status,
+              onTheWayNotifiedAt: nowIso
+            }
+
+      patchLocalOrder(order.id, optimisticPatch)
+      restoreScroll()
+
       if (res.ok && json.success && !json.simulated) {
         toast({
           title: type === "in_production" ? "🍳 Pedido em Produção Avisado!" : "🚀 Café a Caminho Avisado!",
           description: `Mensagem enviada via Z-API para ${order.clientName} (Apt ${order.roomNumber})!`
         })
-        fetchOrders()
+        await fetchOrders({ silent: true })
       } else {
         const waTarget = json.whatsappUrl || localFallbackUrl
         toast({
@@ -450,7 +563,7 @@ export default function BreakfastProduction() {
             : (json.error || "Z-API indisponível — abrindo WhatsApp Web automaticamente.")
         })
         window.open(waTarget, "_blank")
-        fetchOrders()
+        await fetchOrders({ silent: true })
       }
     } catch (err: any) {
       toast({
@@ -460,30 +573,40 @@ export default function BreakfastProduction() {
       window.open(localFallbackUrl, "_blank")
     } finally {
       setSendingNotify(prev => ({ ...prev, [notifyKey]: false }))
+      restoreScroll()
     }
   }
 
   const handleCancelOrDeleteOrder = async (order: any) => {
+    const restoreScroll = captureScrollPositions()
     if (order.status === "cancelled") {
       if (!confirm(`Deseja excluir o registro do pedido cancelado do Apt ${order.roomNumber} definitivamente?`)) return
       await fetch(`/api/breakfast/orders/${order.id}`, { method: "DELETE", credentials: "include" })
-      fetchOrders()
+      await fetchOrders({ silent: true })
+      if (mainTab === "history") await fetchHistory({ silent: true })
+      restoreScroll()
       return
     }
 
     const reason = prompt(`Informe o motivo do cancelamento para o Apt ${order.roomNumber} (ex: Hóspede avisou no WhatsApp / Saiu mais cedo / Não quer café hoje):`)
     if (reason === null) return
 
+    const cancelReasonText = reason.trim() ? `Cancelamento manual: ${reason.trim()}` : "Cancelado manualmente pela recepção / cozinha"
+    patchLocalOrder(order.id, { status: "cancelled", cancelReason: cancelReasonText })
+    restoreScroll()
+
     await fetch(`/api/breakfast/orders/${order.id}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ 
         status: "cancelled", 
-        cancelReason: reason.trim() ? `Cancelamento manual: ${reason.trim()}` : "Cancelado manualmente pela recepção / cozinha"
+        cancelReason: cancelReasonText
       }),
       credentials: "include"
     })
-    fetchOrders()
+    await fetchOrders({ silent: true })
+    if (mainTab === "history") await fetchHistory({ silent: true })
+    restoreScroll()
   }
 
   const handleOpenNewIngredient = () => {
@@ -604,7 +727,7 @@ export default function BreakfastProduction() {
       setManualName("")
       setManualPhone("")
       setManualNotes("")
-      fetchOrders()
+      fetchOrders({ silent: true })
     } finally {
       setSavingManual(false)
     }
@@ -1017,7 +1140,7 @@ export default function BreakfastProduction() {
             )}
 
             {/* Time Slots & Orders Grid */}
-            {loading ? (
+            {loading && !data ? (
               <div className="text-center py-12 text-xs text-muted-foreground">Carregando pedidos da cozinha...</div>
             ) : !data?.timeSlots || data.timeSlots.length === 0 ? (
               <Card className="border-dashed bg-muted/10 p-12 text-center rounded-2xl">
@@ -1631,7 +1754,7 @@ export default function BreakfastProduction() {
             </div>
 
             {/* Orders List */}
-            {historyLoading ? (
+            {historyLoading && historyOrders.length === 0 ? (
               <div className="text-center py-16 text-xs text-muted-foreground flex flex-col items-center justify-center gap-3">
                 <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
                 <span>Carregando histórico de pedidos...</span>
