@@ -103,6 +103,7 @@ const FlatXrayHub = lazyWithRetry(() => import('@/pages/flat-xray-hub'));
 const AnserveRestock = lazyWithRetry(() => import('@/pages/anserve-restock'));
 const AnserveDashboard = lazyWithRetry(() => import('@/pages/anserve-dashboard'));
 const MinibarAdmin = lazyWithRetry(() => import('@/pages/minibar-admin'));
+const MinibarInvoices = lazyWithRetry(() => import('@/pages/minibar-invoices'));
 const HrDashboard = lazyWithRetry(() => import('@/pages/hr-dashboard'));
 const PontoMobile = lazyWithRetry(() => import('@/pages/ponto-mobile'));
 
@@ -307,6 +308,9 @@ function Router() {
         {/* Minibar / Frigobar: Portais Anserve e Admin CorpFlats */}
         <Route path="/frigobar-reposicao" component={AnserveRestock} />
         <Route path="/anserve/reposicao" component={AnserveRestock} />
+        <AdminRoute path="/frigobar-notas" component={MinibarInvoices} moduleName="a Central de Emissão de Notas Fiscais do Frigobar" />
+        <AdminRoute path="/anserve/notas" component={MinibarInvoices} moduleName="a Central de Emissão de Notas Fiscais do Frigobar" />
+        <AdminRoute path="/notas-frigobar" component={MinibarInvoices} moduleName="a Central de Emissão de Notas Fiscais do Frigobar" />
         <AdminRoute path="/anserve" component={AnserveDashboard} moduleName="o Painel de Supervisão Anserve" />
         <AdminRoute path="/frigobar-gestao" component={AnserveDashboard} moduleName="o Painel de Gestão Anserve" />
         <AdminRoute path="/frigobar" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />

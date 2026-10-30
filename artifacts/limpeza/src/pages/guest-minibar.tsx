@@ -208,7 +208,8 @@ export default function GuestMinibar() {
   const [totalPaidAmount, setTotalPaidAmount] = useState<number>(0);
   const [confirmingCheckout, setConfirmingCheckout] = useState<boolean>(false);
   const [checkoutBannerSuccess, setCheckoutBannerSuccess] = useState<string | null>(null);
-  const [showReferenceCatalog, setShowReferenceCatalog] = useState<boolean>(false);
+  const [showReferenceCatalog, setShowReferenceCatalog] = useState<boolean>(true);
+  const [menuCategoryFilter, setMenuCategoryFilter] = useState<string>("todos");
 
   // Pagamento Parcial / Individual (3 Modos)
   const [partialMode, setPartialMode] = useState<PartialPaymentMode>("items");
@@ -1278,6 +1279,186 @@ export default function GuestMinibar() {
             </Card>
           </div>
 
+          {/* ── Cardápio Digital Bonitinho do Frigobar (Aberto por Padrão para Consulta a Qualquer Momento) ── */}
+          <Card className="bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/30 border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+            <button
+              type="button"
+              onClick={() => setShowReferenceCatalog((v) => !v)}
+              className="w-full p-4 sm:p-5 flex items-center justify-between text-left hover:bg-slate-800/30 transition-all"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5 text-cyan-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-sm sm:text-base font-black text-white">
+                      Cardápio Digital do Frigobar
+                    </h2>
+                    <Badge className="bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px]">
+                      {catalog.length} itens no flat
+                    </Badge>
+                  </div>
+                  <span className="text-[11px] text-slate-400 block mt-0.5">
+                    Consulte a qualquer momento os produtos disponíveis, quantidades padrão e valores
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-400 shrink-0">
+                <span className="hidden sm:inline">{showReferenceCatalog ? "Recolher" : "Ver Cardápio"}</span>
+                {showReferenceCatalog ? (
+                  <ChevronUp className="w-4 h-4 text-cyan-400" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-cyan-400" />
+                )}
+              </div>
+            </button>
+
+            {showReferenceCatalog && (
+              <div className="p-4 sm:p-5 pt-0 border-t border-slate-800/80 space-y-4">
+                {/* Pílulas de Filtro de Categoria do Cardápio */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-3 no-scrollbar">
+                  {[
+                    { id: "todos", label: "✨ Todos" },
+                    { id: "bebidas", label: "💧 Águas & Bebidas" },
+                    { id: "cervejas", label: "🍺 Cervejas" },
+                    { id: "snacks", label: "🍫 Snacks & Doces" },
+                    { id: "cortesias", label: "☕ Cafés & Cortesias" }
+                  ].map((cat) => {
+                    const active = menuCategoryFilter === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setMenuCategoryFilter(cat.id)}
+                        className={`px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap border transition-all ${
+                          active
+                            ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-500/20"
+                            : "bg-slate-950/80 text-slate-300 border-slate-800 hover:border-slate-700"
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Grade Visual do Cardápio */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {catalog
+                    .filter((prod) => {
+                      if (menuCategoryFilter === "todos") return true;
+                      const cat = String(prod.category || "").toLowerCase();
+                      const name = String(prod.name || "").toLowerCase();
+                      if (menuCategoryFilter === "cortesias") {
+                        return Boolean(prod.isCourtesy) || cat.includes("cafe") || name.includes("cápsula") || name.includes("capsula");
+                      }
+                      if (menuCategoryFilter === "cervejas") {
+                        return cat.includes("cerveja") || cat.includes("alcool") || name.includes("heineken") || name.includes("stella") || name.includes("corona") || name.includes("cerveja");
+                      }
+                      if (menuCategoryFilter === "snacks") {
+                        return cat.includes("snack") || cat.includes("doce") || cat.includes("comida") || cat.includes("bomboniere") || name.includes("chocolate") || name.includes("batata") || name.includes("castanha") || name.includes("amendoim") || name.includes("kitkat") || name.includes("pringles");
+                      }
+                      if (menuCategoryFilter === "bebidas") {
+                        return (
+                          !prod.isCourtesy &&
+                          !cat.includes("cerveja") &&
+                          !cat.includes("snack") &&
+                          !cat.includes("cafe") &&
+                          (cat.includes("agua") || cat.includes("bebida") || cat.includes("refrigerante") || cat.includes("suco") || cat.includes("energetico") || true)
+                        );
+                      }
+                      return true;
+                    })
+                    .map((prod) => {
+                      const nominalStandard = defaultStock[prod.id] ?? prod.defaultQuantity ?? 0;
+                      const isCourtesyItem = Boolean(prod.isCourtesy);
+                      const isCourtesyFree = Boolean(prod.isCourtesy && !courtesyConsumed);
+                      return (
+                        <div
+                          key={prod.id}
+                          className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
+                            isCourtesyItem
+                              ? "bg-gradient-to-br from-emerald-950/30 via-slate-950/90 to-slate-950/90 border-emerald-500/30 hover:border-emerald-500/50"
+                              : "bg-slate-950/85 border-slate-800/90 hover:border-cyan-500/40"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div
+                              className={`w-14 h-14 rounded-2xl border flex items-center justify-center shrink-0 overflow-hidden shadow-inner ${
+                                isCourtesyItem
+                                  ? "bg-emerald-950/60 border-emerald-700/50"
+                                  : "bg-slate-900 border-slate-700/80"
+                              }`}
+                            >
+                              {prod.imageUrl ? (
+                                <img
+                                  src={prod.imageUrl}
+                                  alt={prod.name}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    (e.target as HTMLElement).style.display = "none";
+                                  }}
+                                />
+                              ) : prod.category === "cafe" || prod.category === "cafe_capsulas" || isCourtesyItem ? (
+                                <Coffee className="w-6 h-6 text-amber-400" />
+                              ) : (
+                                <Refrigerator className="w-6 h-6 text-cyan-400" />
+                              )}
+                            </div>
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs sm:text-sm font-black text-white leading-tight">
+                                  {prod.name}
+                                </span>
+                                {isCourtesyItem && (
+                                  <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
+                                    🎁 Cortesia
+                                  </Badge>
+                                )}
+                              </div>
+                              {prod.description && (
+                                <p className="text-[11px] text-slate-400 line-clamp-1">
+                                  {prod.description}
+                                </p>
+                              )}
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-[10px] text-slate-300">
+                                  Padrão no flat: <strong className="text-white ml-1">{nominalStandard} un.</strong>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            {isCourtesyFree ? (
+                              <div className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-center">
+                                <span className="text-[10px] font-bold text-emerald-300 block uppercase">
+                                  1ª un. Grátis
+                                </span>
+                                <strong className="text-xs font-black text-emerald-400">
+                                  R$ 0,00
+                                </strong>
+                              </div>
+                            ) : (
+                              <div className="px-2.5 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-right">
+                                <span className="text-[9px] font-bold text-slate-400 block uppercase">
+                                  Valor un.
+                                </span>
+                                <strong className="text-sm font-black text-cyan-400 font-mono">
+                                  {formatBRL(prod.price)}
+                                </strong>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+          </Card>
+
           {/* ── Extrato de Consumo Lançado por Dia (Apenas Data DD/MM/AAAA, sem hora) ── */}
           <Card className="bg-slate-900 border-slate-800 rounded-3xl p-4 sm:p-5 space-y-4">
             <div className="flex items-center justify-between gap-2">
@@ -1609,75 +1790,6 @@ export default function GuestMinibar() {
               </div>
             </Card>
           )}
-
-          {/* ── Tabela Informativa de Preços e Quantidade Padrão do Frigobar (Somente Consulta) ── */}
-          <Card className="bg-slate-900/70 border-slate-800 rounded-2xl overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setShowReferenceCatalog((v) => !v)}
-              className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-800/40 transition-all"
-            >
-              <div className="flex items-center gap-2.5">
-                <Package className="w-4 h-4 text-cyan-400" />
-                <div>
-                  <span className="text-xs font-bold text-white block">
-                    Consultar Tabela de Preços e Quantidade Padrão do Flat
-                  </span>
-                  <span className="text-[11px] text-slate-400 block">
-                    Veja todos os itens disponíveis no frigobar e seus valores
-                  </span>
-                </div>
-              </div>
-              {showReferenceCatalog ? (
-                <ChevronUp className="w-4 h-4 text-slate-400" />
-              ) : (
-                <ChevronDown className="w-4 h-4 text-slate-400" />
-              )}
-            </button>
-
-            {showReferenceCatalog && (
-              <div className="p-4 pt-0 border-t border-slate-800/80 space-y-2.5 mt-2">
-                {catalog.map((prod) => {
-                  const nominalStandard = defaultStock[prod.id] ?? prod.defaultQuantity ?? 0;
-                  const isCourtesyFree = Boolean(prod.isCourtesy && !courtesyConsumed);
-                  return (
-                    <div
-                      key={prod.id}
-                      className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 overflow-hidden">
-                          {prod.imageUrl ? (
-                            <img
-                              src={prod.imageUrl}
-                              alt={prod.name}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                (e.target as HTMLElement).style.display = "none";
-                              }}
-                            />
-                          ) : prod.category === "cafe" || prod.category === "cafe_capsulas" ? (
-                            <Coffee className="w-5 h-5 text-amber-400" />
-                          ) : (
-                            <Refrigerator className="w-5 h-5 text-cyan-400" />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <span className="text-xs font-bold text-white block truncate">{prod.name}</span>
-                          <span className="text-[10px] text-slate-400 block">
-                            Padrão no flat: <strong>{nominalStandard} un.</strong>
-                          </span>
-                        </div>
-                      </div>
-                      <span className="text-xs font-black text-cyan-400 shrink-0">
-                        {isCourtesyFree ? "Cortesia 1x" : formatBRL(prod.price)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Card>
         </main>
 
         {/* ── Barra Fixa Inferior (Bloqueada antes do Check-out / Liberada após Check-out) ── */}

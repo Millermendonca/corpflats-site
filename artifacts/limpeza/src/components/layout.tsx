@@ -272,6 +272,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const isItemActive = (href: string) => {
     if (location === href) return true
     if (href === "/anserve" && (location === "/frigobar-gestao")) return true
+    if (href === "/frigobar-notas" && (location === "/anserve/notas" || location === "/notas-frigobar")) return true
     if (href === "/frigobar-reposicao" && (location === "/anserve/reposicao")) return true
     if (href === "/frigobar" && (location === "/minibar" || location === "/minibar-admin" || location === "/admin/frigobar")) return true
     if (href === "/reservas" && (location === "/relatorio-reservas" || location === "/relatorios-reservas" || location === "/pms-reports")) return false
@@ -371,8 +372,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
       title: "🧊 Frigobar & Anserve",
       items: [
         { href: "/frigobar", label: "Gestão de Frigobar (CorpFlats)", icon: Package, description: "Catálogo, gabarito por flat, QR Codes e extrato de repasse" },
-        { href: "/anserve", label: "Painel de Supervisão Anserve", icon: FileText, description: "Fila de NFs, emissão, anexo e conferência geral" },
-        { href: "/frigobar-reposicao", label: "Portal da Repositora", icon: Package, description: "Conferência rápida, apontamento de divergências e reposição" },
+        { href: "/anserve", label: "Painel de Supervisão Anserve", icon: FileText, description: "Supervisão geral, equipe, vendas e fechamento" },
+        { href: "/frigobar-notas", label: "Emissão de Notas Fiscais (Frigobar)", icon: FileText, description: "Tela exclusiva p/ emissão e anexo de Notas Fiscais do frigobar por flat" },
+        { href: "/frigobar-reposicao", label: "Portal da Repositora", icon: Package, description: "Conferência rápida, lançamento diário e reposição" },
         { href: "/frigobar-gestao", label: "Relatórios & Estoque Anserve", icon: BarChart3, description: "Métricas de saída, consumo de cortesias e auditoria" },
       ]
     },

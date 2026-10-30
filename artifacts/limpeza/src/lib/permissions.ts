@@ -97,7 +97,8 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     items: [
       { href: "/frigobar", label: "Gestão de Frigobar (CorpFlats)", description: "Catálogo, gabarito por flat, QR Codes e extrato de repasse" },
       { href: "/anserve", label: "Painel de Supervisão Anserve", description: "Fila de NFs, emissão, anexo e conferência geral" },
-      { href: "/frigobar-reposicao", label: "Portal da Repositora", description: "Conferência rápida, apontamento de divergências e reposição" },
+      { href: "/frigobar-notas", label: "Emissão de Notas Fiscais (Frigobar)", description: "Tela exclusiva p/ emissão e anexo de Notas Fiscais do frigobar por flat" },
+      { href: "/frigobar-reposicao", label: "Portal da Repositora", description: "Conferência rápida, lançamento diário e reposição" },
       { href: "/frigobar-gestao", label: "Relatórios & Estoque Anserve", description: "Métricas de saída, consumo de cortesias e auditoria" }
     ]
   },
@@ -154,8 +155,13 @@ export const ANSERVE_REPOSITORA_MODULES: string[] = [
   "/frigobar-reposicao"
 ];
 
+export const ANSERVE_FATURAMENTO_MODULES: string[] = [
+  "/frigobar-notas"
+];
+
 export const ANSERVE_GESTOR_MODULES: string[] = [
   "/anserve",
+  "/frigobar-notas",
   "/frigobar-reposicao",
   "/frigobar-gestao"
 ];
@@ -176,6 +182,8 @@ export function getDefaultModulesForRole(role?: string | null): string[] {
       return [...ADMIN_MODULES];
     case "anserve_gestor":
       return [...ANSERVE_GESTOR_MODULES];
+    case "anserve_faturamento":
+      return [...ANSERVE_FATURAMENTO_MODULES];
     case "anserve_repositora":
       return [...ANSERVE_REPOSITORA_MODULES];
     case "recepcao":
@@ -359,6 +367,8 @@ export const ROUTE_ALIASES: Record<string, string> = {
   // Frigobar & Anserve
   "/frigobar-gestao": "/anserve",
   "/anserve/reposicao": "/frigobar-reposicao",
+  "/anserve/notas": "/frigobar-notas",
+  "/notas-frigobar": "/frigobar-notas",
   "/admin/frigobar": "/frigobar",
   "/minibar-admin": "/frigobar",
   "/frigobar-admin": "/frigobar",
@@ -409,11 +419,14 @@ export function hasModuleAccess(
   }
 
   // Garante que perfis Admin/Dev sempre enxerguem os módulos de Frigobar & Anserve mesmo se allowedModules foi salvo antes da criação do módulo
-  const frigobarModules = ["/frigobar", "/anserve", "/frigobar-reposicao", "/frigobar-gestao"];
+  const frigobarModules = ["/frigobar", "/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"];
   if ((user.role === "dev" || user.role === "admin") && frigobarModules.includes(canonical)) {
     return true;
   }
-  if (user.role === "anserve_gestor" && ["/anserve", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)) {
+  if (user.role === "anserve_gestor" && ["/anserve", "/frigobar-notas", "/frigobar-reposicao", "/frigobar-gestao"].includes(canonical)) {
+    return true;
+  }
+  if (user.role === "anserve_faturamento" && canonical === "/frigobar-notas") {
     return true;
   }
   if (user.role === "anserve_repositora" && canonical === "/frigobar-reposicao") {

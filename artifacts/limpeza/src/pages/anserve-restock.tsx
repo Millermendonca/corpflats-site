@@ -528,6 +528,10 @@ export default function AnserveRestockPage() {
         }
       }
 
+      const isPostCheckout = Boolean(
+        semConsumoModalFlat.isCheckedOut || semConsumoModalFlat.status === "checkout_hoje"
+      );
+
       const res = await fetch("/api/minibar/inspections", {
         method: "POST",
         headers,
@@ -539,6 +543,7 @@ export default function AnserveRestockPage() {
           inspectorId: selectedRestockerId || user?.id || undefined,
           status: "conforme",
           isDailyLaunch: false,
+          isFinalCheckoutInspection: isPostCheckout,
           launchDate: getTodayYmdBr(),
           notes: semConsumoNotes,
           restockedItems
@@ -548,8 +553,12 @@ export default function AnserveRestockPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         toast({
-          title: "Passagem registrada com sucesso! ✅",
-          description: `Flat ${semConsumoModalFlat.flatNumber} conferido sem novo consumo pago.`
+          title: isPostCheckout
+            ? "Conferência Final Pós-Checkout Concluída! ✅"
+            : "Passagem registrada com sucesso! ✅",
+          description: data.whatsappSofiaAlertSent
+            ? `Cobrança do saldo pendente (R$ ${Number(data.statement?.pendingBalance || 0).toFixed(2)}) enviada automaticamente para o WhatsApp do hóspede!`
+            : `Flat ${semConsumoModalFlat.flatNumber} conferido (sem saldo pendente para cobrar no WhatsApp).`
         });
         setSemConsumoModalFlat(null);
         fetchData();
@@ -611,6 +620,10 @@ export default function AnserveRestockPage() {
         }
       }
 
+      const isPostCheckout = Boolean(
+        launchModalFlat.isCheckedOut || launchModalFlat.status === "checkout_hoje"
+      );
+
       const res = await fetch("/api/minibar/inspections", {
         method: "POST",
         headers,
@@ -622,6 +635,7 @@ export default function AnserveRestockPage() {
           inspectorId: selectedRestockerId || user?.id || undefined,
           status: "lancamento_diario",
           isDailyLaunch: true,
+          isFinalCheckoutInspection: isPostCheckout,
           launchDate: launchDateYmd || getTodayYmdBr(),
           consumedItems: consumedItemsList,
           photos: capturedPhotos,
@@ -633,9 +647,13 @@ export default function AnserveRestockPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         toast({
-          title: `Consumo do dia ${formatYmdToBr(launchDateYmd)} lançado! ✅`,
-          description: launchModalFlat.isCheckedOut
-            ? `R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)} lançado pós-checkout e link enviado ao WhatsApp do hóspede!`
+          title: isPostCheckout
+            ? "Conferência Final Pós-Checkout Concluída! ✅"
+            : `Consumo do dia ${formatYmdToBr(launchDateYmd)} lançado! ✅`,
+          description: data.whatsappSofiaAlertSent
+            ? data.postCheckoutNotificationType === "remaining_balance"
+              ? `Diferença do último dia lançada! Mensagem com o saldo restante (R$ ${Number(data.statement?.pendingBalance || 0).toFixed(2)}) enviada ao WhatsApp do hóspede!`
+              : `Total da estadia (R$ ${Number(data.statement?.pendingBalance || dailyLaunchCalculation.totalAmount).toFixed(2)}) enviado ao WhatsApp do hóspede com link de pagamento!`
             : `R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)} adicionado ao extrato do Flat ${launchModalFlat.flatNumber}.`
         });
         setLaunchModalFlat(null);

@@ -4257,7 +4257,7 @@ export default function GuestPortal() {
           </Card>
         )}
 
-        {/* ── Card: Frigobar & Autoatendimento no Flat ── */}
+        {/* ── Card: Cardápio Digital & Extrato do Frigobar no Flat ── */}
         <Card className="bg-gradient-to-b from-cyan-50/60 via-white to-cyan-50/30 border border-cyan-200/80 rounded-3xl p-5 sm:p-6 shadow-md space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cyan-200/60 pb-3.5">
             <div className="flex items-center gap-3">
@@ -4266,23 +4266,23 @@ export default function GuestPortal() {
               </div>
               <div>
                 <h2 className="text-base sm:text-lg font-black text-slate-900 leading-snug">
-                  Frigobar & Bebidas
+                  Cardápio & Extrato do Frigobar
                 </h2>
                 <span className="text-xs text-cyan-950/80 font-medium block mt-0.5">
-                  Água, refrigerantes, cervejas, snacks e café disponíveis no flat
+                  Consulte preços, cortesias e o extrato diário do seu flat a qualquer momento
                 </span>
               </div>
             </div>
             <div className="flex items-center self-start sm:self-auto">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-100/70 border border-cyan-200/70 text-cyan-900 text-xs font-bold shrink-0">
-                🧊 Autoatendimento 24h
+                🧊 Cardápio Digital 24h
               </span>
             </div>
           </div>
 
           <div className="text-xs text-slate-600 leading-relaxed space-y-2.5">
             <p>
-              Consuma livremente durante sua estadia. Selecione os itens consumidos para registrar e efetuar o pagamento instantâneo via PIX ou Cartão de Crédito.
+              Consulte a qualquer momento o <strong>cardápio completo com fotos e valores</strong> dos itens disponíveis no seu frigobar e acompanhe os lançamentos diários registrados pela nossa equipe. O pagamento (integral ou dividido entre hóspedes) fica liberado após o check-out.
             </p>
             <div className="p-3 bg-amber-50 border border-amber-200/80 rounded-2xl text-[11px] text-amber-900 flex items-start gap-2.5">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -4298,7 +4298,7 @@ export default function GuestPortal() {
               className="w-full h-auto min-h-12 py-3 px-5 bg-cyan-700 hover:bg-cyan-800 active:scale-[0.99] text-white font-bold text-xs sm:text-sm rounded-2xl shadow-sm inline-flex items-center justify-center gap-2.5 transition-all"
             >
               <Refrigerator className="w-5 h-5 shrink-0" />
-              <span>Acessar Frigobar do Flat {reservation.flatNumber}</span>
+              <span>Ver Cardápio & Extrato do Frigobar (Flat {reservation.flatNumber})</span>
               <ArrowRight className="w-5 h-5 shrink-0" />
             </Button>
           </div>

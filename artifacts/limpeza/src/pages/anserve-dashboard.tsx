@@ -208,6 +208,7 @@ export default function AnserveDashboardPage() {
   const [editingStaff, setEditingStaff] = useState<AnserveStaffMember | null>(null);
   const [sName, setSName] = useState("");
   const [sUsername, setSUsername] = useState("");
+  const [sRole, setSRole] = useState<"anserve_repositora" | "anserve_faturamento">("anserve_repositora");
   const [sPassword, setSPassword] = useState("");
   const [sWhatsapp, setSWhatsapp] = useState("");
   const [sPixKey, setSPixKey] = useState("");
@@ -545,6 +546,7 @@ export default function AnserveDashboardPage() {
     setEditingStaff(null);
     setSName("");
     setSUsername("");
+    setSRole("anserve_repositora");
     setSPassword("");
     setSWhatsapp("");
     setSPixKey("");
@@ -557,6 +559,7 @@ export default function AnserveDashboardPage() {
     setEditingStaff(member);
     setSName(member.name || member.username);
     setSUsername(member.username);
+    setSRole((member.role === "anserve_faturamento" ? "anserve_faturamento" : "anserve_repositora") as any);
     setSPassword("");
     setSWhatsapp(member.whatsapp || member.phone || "");
     setSPixKey(member.pixKey || "");
@@ -592,7 +595,7 @@ export default function AnserveDashboardPage() {
       const payload: any = {
         name: sName.trim(),
         username: sUsername.trim(),
-        role: "anserve_repositora",
+        role: sRole,
         whatsapp: sWhatsapp.trim(),
         phone: sWhatsapp.trim(),
         pixKey: sPixKey.trim(),
@@ -957,6 +960,17 @@ export default function AnserveDashboardPage() {
                 className="bg-transparent text-[11px] sm:text-xs font-mono outline-none min-w-0 flex-1 sm:flex-initial"
               />
             </div>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => {
+                window.location.href = "/frigobar-notas";
+              }}
+              className="rounded-xl text-xs font-bold h-9 w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white"
+            >
+              <FileText className="w-3.5 h-3.5 mr-1.5" />
+              Tela Exclusiva de Notas Fiscais
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -1960,6 +1974,18 @@ export default function AnserveDashboardPage() {
             </DialogHeader>
 
             <form onSubmit={handleSaveStaff} className="space-y-3.5 py-2 text-xs">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Função na Equipe *</Label>
+                <select
+                  value={sRole}
+                  onChange={e => setSRole(e.target.value as any)}
+                  className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-semibold"
+                >
+                  <option value="anserve_repositora">🧹 Repositora / Conferência nos Flats (/frigobar-reposicao)</option>
+                  <option value="anserve_faturamento">📄 Emissão de Notas Fiscais (/frigobar-notas)</option>
+                </select>
+              </div>
+
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold">Nome Completo *</Label>
                 <Input

@@ -993,6 +993,7 @@ export const ALL_CANONICAL_MODULES = [
   "/editor-site",
   "/frigobar",
   "/anserve",
+  "/frigobar-notas",
   "/frigobar-reposicao",
   // 6. 🛠️ Engenharia & Dev
   "/configuracoes",
@@ -1039,7 +1040,9 @@ export function getDefaultModulesForRole(role) {
     case "admin":
       return [...OPERATIONAL_MODULES];
     case "anserve_gestor":
-      return ["/anserve", "/frigobar-reposicao"];
+      return ["/anserve", "/frigobar-notas", "/frigobar-reposicao"];
+    case "anserve_faturamento":
+      return ["/frigobar-notas"];
     case "anserve_repositora":
       return ["/frigobar-reposicao"];
     case "recepcao":
@@ -1055,6 +1058,8 @@ export const ROUTE_ALIASES = {
   // Frigobar / Anserve
   "/frigobar-gestao": "/anserve",
   "/anserve/reposicao": "/frigobar-reposicao",
+  "/anserve/notas": "/frigobar-notas",
+  "/notas-frigobar": "/frigobar-notas",
 
   // Equipe / Usuários
   "/usuarios": "/equipe",
@@ -15976,6 +15981,10 @@ async function sendNewUserWelcomeCredentialsWhatsApp(userObj, plainPassword) {
       anserve_repositora: {
         label: "Repositora de Frigobar (Anserve)",
         url: `${serverBaseUrl}/frigobar-reposicao`
+      },
+      anserve_faturamento: {
+        label: "Emissão de Notas Fiscais — Frigobar (Anserve)",
+        url: `${serverBaseUrl}/frigobar-notas`
       },
       anserve_gestor: {
         label: "Gestor / Supervisor Anserve",
@@ -58623,10 +58632,27 @@ function isMinibarAdmin(user) {
   return user.role === "dev" || user.role === "admin" || user.role === "anserve_gestor";
 }
 
-// Helper: valida se usuário é equipe de frigobar (repositora, gestor, admin ou dev)
+// Helper: valida se usuário pode emitir e anexar Notas Fiscais do frigobar
+function isMinibarInvoiceIssuer(user) {
+  if (!user) return false;
+  return (
+    user.role === "dev" ||
+    user.role === "admin" ||
+    user.role === "anserve_gestor" ||
+    user.role === "anserve_faturamento"
+  );
+}
+
+// Helper: valida se usuário é equipe de frigobar (repositora, faturamento, gestor, admin ou dev)
 function isMinibarStaff(user) {
   if (!user) return false;
-  return user.role === "dev" || user.role === "admin" || user.role === "anserve_gestor" || user.role === "anserve_repositora";
+  return (
+    user.role === "dev" ||
+    user.role === "admin" ||
+    user.role === "anserve_gestor" ||
+    user.role === "anserve_faturamento" ||
+    user.role === "anserve_repositora"
+  );
 }
 
 // Helper: busca reserva ativa/recente para um flat
@@ -60823,8 +60849,8 @@ app.get("/api/minibar/orders/:id/status", async (req, res) => {
 app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
   try {
     const user = getAuthUser(req);
-    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
-      return res.status(403).json({ success: false, error: "Acesso restrito à supervisão e administração." });
+    if (process.env.NODE_ENV !== "test" && !isMinibarInvoiceIssuer(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao faturamento, supervisão e administração." });
     }
 
     const orderId = req.params.id;
@@ -60891,8 +60917,8 @@ app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
 app.post("/api/minibar/orders/:id/invoice/retry", async (req, res) => {
   try {
     const user = getAuthUser(req);
-    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
-      return res.status(403).json({ success: false, error: "Acesso restrito à supervisão e administração." });
+    if (process.env.NODE_ENV !== "test" && !isMinibarInvoiceIssuer(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao faturamento, supervisão e administração." });
     }
 
     const orderId = req.params.id;
@@ -60933,7 +60959,7 @@ app.post("/api/minibar/orders/:id/invoice/retry", async (req, res) => {
 app.get("/api/minibar/invoices/delivery-monitor", (req, res) => {
   try {
     const user = getAuthUser(req);
-    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
+    if (process.env.NODE_ENV !== "test" && !isMinibarInvoiceIssuer(user)) {
       return res.status(403).json({ success: false, error: "Acesso restrito." });
     }
 
@@ -61172,90 +61198,147 @@ app.post("/api/minibar/inspections", async (req, res) => {
 
         if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
         db.minibarOrders.push(pendingOrder);
+      }
+    }
 
-        // Verifica se a reserva já fez check-out:
-        // Se já fez check-out (ou se foi solicitado disparo / modo vistoria de saída), a Sofia envia o link de pagamento no WhatsApp!
-        const resCheckedOut = reservation
-          ? isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
-            Boolean(reservation.checkoutDone || reservation.actualCheckoutAt || reservation.earlyCheckoutReleasedAt)
-          : false;
+    const updatedStatement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
+    const isFinalCheckoutInspection = Boolean(req.body?.isFinalCheckoutInspection);
+    const resCheckedOut = reservation
+      ? isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
+        Boolean(
+          reservation.checkoutDone ||
+          reservation.actualCheckoutAt ||
+          reservation.earlyCheckoutReleasedAt ||
+          isFinalCheckoutInspection
+        )
+      : false;
 
-        const shouldNotifySofiaNow =
-          reservation &&
-          db.minibarSettings?.autoNotifySofiaOnDiscrepancy !== false &&
-          (bodyNotifySofia === true || resCheckedOut || (!isDailyLaunch && status === "divergencia"));
+    const totalPendingNow = Number(updatedStatement?.pendingBalance || 0);
+    const totalPaidPreviously = Number(updatedStatement?.totalPaidAmount || 0);
+    let postCheckoutNotificationType = "none_needed";
 
-        if (shouldNotifySofiaNow) {
-          const allGuestsInFlat = getReservationAllGuests(reservation);
-          const uniqueTargets = [];
-          const seenPhones = new Set();
+    // Regra Canônica Pós-Checkout:
+    // - Se pendingBalance <= 0: NÃO envia nenhuma mensagem de cobrança.
+    // - Se pendingBalance > 0 e totalPaidAmount === 0: envia o extrato completo por dia + valor total a pagar.
+    // - Se pendingBalance > 0 e totalPaidAmount > 0: informa o valor já pago antes e cobra apenas o saldo restante / divergência do último dia.
+    const shouldNotifySofiaNow =
+      Boolean(reservation) &&
+      db.minibarSettings?.autoNotifySofiaOnDiscrepancy !== false &&
+      (bodyNotifySofia === true || resCheckedOut || (!isDailyLaunch && status === "divergencia")) &&
+      totalPendingNow > 0;
 
-          for (const g of allGuestsInFlat) {
-            const cleanPh = String(g.phone || "").replace(/\D/g, "");
-            if (cleanPh.length >= 10 && !seenPhones.has(cleanPh)) {
-              seenPhones.add(cleanPh);
-              uniqueTargets.push(g);
-            }
+    if (shouldNotifySofiaNow) {
+      const allGuestsInFlat = getReservationAllGuests(reservation);
+      const uniqueTargets = [];
+      const seenPhones = new Set();
+
+      for (const g of allGuestsInFlat) {
+        const cleanPh = String(g.phone || "").replace(/\D/g, "");
+        if (cleanPh.length >= 10 && !seenPhones.has(cleanPh)) {
+          seenPhones.add(cleanPh);
+          uniqueTargets.push(g);
+        }
+      }
+
+      if (uniqueTargets.length === 0 && reservation.guestPhone) {
+        uniqueTargets.push({
+          name: reservation.guestName || "Hóspede",
+          firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
+          phone: reservation.guestPhone
+        });
+      }
+
+      const linkedOrderId = chargeOrderId || updatedStatement?.primaryPendingOrder?.id || "";
+      const ordQuery = linkedOrderId ? `?ord=${linkedOrderId}` : "";
+      const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
+      const multiGuestNote =
+        allGuestsInFlat.length > 1
+          ? `\n💡 *Nota para reservas compartilhadas:* Qualquer um dos hóspedes do Flat ${flatStr} pode acessar o link abaixo para realizar o pagamento integral ou parcial (selecionando seus itens, dividindo em partes iguais ou digitando um valor parcial, com emissão individual de Nota Fiscal)!\n`
+          : "";
+
+      const hasPriorPayment = totalPaidPreviously > 0;
+      postCheckoutNotificationType = hasPriorPayment ? "remaining_balance" : "full_total";
+
+      const dayBlocks = (updatedStatement?.dailyLaunches || [])
+        .map(day => {
+          const dayItems = (day.items || []).filter(
+            it => !it.isCourtesy && (Number(it.remainingQuantity ?? it.quantity) || 0) > 0
+          );
+          if (dayItems.length === 0) return null;
+          const lines = dayItems
+            .map(it => {
+              const q = Number(it.remainingQuantity ?? it.quantity) || 0;
+              const p = Number(it.remainingTotalPrice ?? it.totalPrice) || 0;
+              return `  • ${q}x ${it.productName} — R$ ${p.toFixed(2)}`;
+            })
+            .join("\n");
+          return `📅 *Consumo em ${day.dateBr}:*\n${lines}`;
+        })
+        .filter(Boolean)
+        .join("\n\n");
+
+      const fullStayListStr =
+        dayBlocks ||
+        discrepancyItems
+          .map(it => `• ${it.quantity}x ${it.productName} (${launchDateBr}) — R$ ${Number(it.totalPrice).toFixed(2)}`)
+          .join("\n");
+
+      const remainingItemsListStr =
+        (updatedStatement?.pendingLaunchedItems || []).length > 0
+          ? updatedStatement.pendingLaunchedItems
+              .map(
+                it =>
+                  `• ${it.remainingQuantity}x ${it.productName} (${it.launchDateBr}) — R$ ${Number(
+                    it.remainingTotalPrice
+                  ).toFixed(2)}`
+              )
+              .join("\n")
+          : fullStayListStr;
+
+      for (const targetG of uniqueTargets) {
+        const firstName = targetG.firstName || (targetG.name || "Hóspede").trim().split(" ")[0];
+        const sofiaMsg = hasPriorPayment
+          ? `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
+            `Nossa equipe concluiu a conferência final do frigobar após o seu check-out.\n` +
+            `✅ Já identificamos o pagamento anterior de *R$ ${totalPaidPreviously.toFixed(2)}*, porém restou o seguinte saldo referente ao consumo do último dia / conferência final:\n\n` +
+            `${remainingItemsListStr}\n\n` +
+            `💰 *Saldo restante para pagamento: R$ ${totalPendingNow.toFixed(2)}*\n` +
+            `${multiGuestNote}\n` +
+            `Para quitar o valor restante via PIX ou Cartão (com emissão da respectiva Nota Fiscal), acesse o link exclusivo abaixo:\n` +
+            `🔗 ${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar${ordQuery}\n\n` +
+            `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`
+          : `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
+            `Nossa equipe de governança concluiu a conferência final do consumo de frigobar do seu apartamento:\n\n` +
+            `${fullStayListStr}\n\n` +
+            `💰 *Saldo total pendente para pagamento: R$ ${totalPendingNow.toFixed(2)}*\n` +
+            `${multiGuestNote}\n` +
+            `Como o frigobar não pode ser faturado junto com a diária da hospedagem, você já pode efetuar o pagamento via PIX ou Cartão pelo link exclusivo abaixo:\n` +
+            `🔗 ${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar${ordQuery}\n\n` +
+            `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
+
+        try {
+          if (typeof sendZapiMessage === "function") {
+            const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
+            sendZapiMessage(zapiConfig, {
+              phone: targetG.phone,
+              message: sofiaMsg,
+              channelId: "guest",
+              triggerEvent: "minibar_discrepancy",
+              db
+            });
+            whatsappSofiaAlertSent = true;
+            notifiedPhones.push(targetG.phone);
           }
-
-          if (uniqueTargets.length === 0 && reservation.guestPhone) {
-            uniqueTargets.push({
-              name: reservation.guestName || "Hóspede",
-              firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
-              phone: reservation.guestPhone
+          if (typeof appendMessageToConversation === "function") {
+            appendMessageToConversation(db, {
+              phone: targetG.phone,
+              text: sofiaMsg,
+              type: "text",
+              sender: "Sofia (IA)"
             });
           }
-
-          const updatedStatement = buildReservationMinibarStatement(reservation, flatStr);
-          const totalPendingNow = updatedStatement.pendingBalance || discrepancyTotalAmount;
-
-          const itemsListStr = discrepancyItems
-            .map(it => `• ${it.quantity}x ${it.productName} (${launchDateBr}) — R$ ${Number(it.totalPrice).toFixed(2)}`)
-            .join("\n");
-
-          const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
-          const multiGuestNote =
-            allGuestsInFlat.length > 1
-              ? `\n💡 *Nota para reservas compartilhadas:* Qualquer um dos hóspedes do Flat ${flatStr} pode acessar o link abaixo para realizar o pagamento integral ou parcial (selecionando seus itens, dividindo em partes iguais ou digitando um valor parcial, com emissão individual de Nota Fiscal)!\n`
-              : "";
-
-          for (const targetG of uniqueTargets) {
-            const firstName = targetG.firstName || (targetG.name || "Hóspede").trim().split(" ")[0];
-            const sofiaMsg =
-              `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
-              `Nossa equipe de governança registrou o fechamento do consumo de frigobar do seu apartamento:\n` +
-              `${itemsListStr}\n\n` +
-              `*Saldo total pendente para pagamento: R$ ${Number(totalPendingNow).toFixed(2)}*\n` +
-              `${multiGuestNote}\n` +
-              `Como o frigobar não pode ser faturado junto com a diária da hospedagem, você já pode efetuar o pagamento via PIX ou Cartão pelo link exclusivo abaixo:\n` +
-              `🔗 ${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar?ord=${chargeOrderId}\n\n` +
-              `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
-
-            try {
-              if (typeof sendZapiMessage === "function") {
-                const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
-                sendZapiMessage(zapiConfig, {
-                  phone: targetG.phone,
-                  message: sofiaMsg,
-                  channelId: "guest",
-                  triggerEvent: "minibar_discrepancy",
-                  db
-                });
-                whatsappSofiaAlertSent = true;
-                notifiedPhones.push(targetG.phone);
-              }
-              if (typeof appendMessageToConversation === "function") {
-                appendMessageToConversation(db, {
-                  phone: targetG.phone,
-                  text: sofiaMsg,
-                  type: "text",
-                  sender: "Sofia (IA)"
-                });
-              }
-            } catch (sErr) {
-              console.warn("[Minibar Sofia Alert] Erro ao disparar mensagem:", sErr.message);
-            }
-          }
+        } catch (sErr) {
+          console.warn("[Minibar Sofia Alert] Erro ao disparar mensagem:", sErr.message);
         }
       }
     }
@@ -61273,6 +61356,10 @@ app.post("/api/minibar/inspections", async (req, res) => {
       inspectedAt: new Date().toISOString(),
       launchDate: launchDateStr,
       launchDateBr,
+      isFinalCheckoutInspection: Boolean(resCheckedOut),
+      postCheckoutNotificationType,
+      pendingBalanceAtInspection: totalPendingNow,
+      totalPaidAtInspection: totalPaidPreviously,
       status: hasDiscrepancy ? "divergencia" : "conforme",
       hasDiscrepancy,
       discrepancyPaid: false,
@@ -61285,7 +61372,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
       restockedPaidItemsTotalCost,
       photos: Array.isArray(photos) ? photos : [],
       notes: notes || "",
-      chargeOrderId,
+      chargeOrderId: chargeOrderId || updatedStatement?.primaryPendingOrder?.id || null,
       whatsappSofiaAlertSent,
       notifiedPhones,
       createdAt: new Date().toISOString(),
@@ -61296,16 +61383,15 @@ app.post("/api/minibar/inspections", async (req, res) => {
     db.minibarInspections.push(inspection);
     saveDatabase("minibar_inspection_recorded");
 
-    const updatedStatement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
-
     res.json({
       success: true,
       inspectionId: inspection.id,
       launchDate: launchDateStr,
       launchDateBr,
       hasDiscrepancy,
-      chargeOrderId,
+      chargeOrderId: inspection.chargeOrderId,
       whatsappSofiaAlertSent,
+      postCheckoutNotificationType,
       notifiedPhones,
       statement: updatedStatement,
       inspection
@@ -61449,23 +61535,230 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
   }
 });
 
+function enrichMinibarOrderForInvoiceScreen(order) {
+  if (!order) return null;
+  const reservation =
+    (db.reservations || []).find(
+      r =>
+        (order.reservationCode && r.code === order.reservationCode) ||
+        (order.reservationId && String(r.id) === String(order.reservationId))
+    ) || (order.flatNumber ? findActiveOrRecentReservationForFlat(order.flatNumber) : null);
+
+  const flatStr = String(order.flatNumber || reservation?.flatNumber || reservation?.flatId || "").trim();
+  const resCode = order.reservationCode || reservation?.code || "";
+  const statement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
+
+  const allPaidForReservation = (db.minibarOrders || [])
+    .filter(
+      o =>
+        o &&
+        o.paymentStatus === "pago" &&
+        Number(o.totalAmount) > 0 &&
+        ((resCode && o.reservationCode === resCode) ||
+          (reservation?.id && String(o.reservationId) === String(reservation.id)) ||
+          (!resCode && !reservation?.id && String(o.flatNumber) === flatStr))
+    )
+    .sort((a, b) => String(a.paidAt || a.createdAt || "").localeCompare(String(b.paidAt || b.createdAt || "")));
+
+  const orderSequenceIndex = Math.max(1, allPaidForReservation.findIndex(o => o.id === order.id) + 1);
+  const totalPaidOrdersInReservation = Math.max(1, allPaidForReservation.length);
+  const partialMode = order.partialMode || "full";
+  const isSeparatePayment =
+    totalPaidOrdersInReservation > 1 ||
+    partialMode === "items" ||
+    partialMode === "equal_split" ||
+    partialMode === "custom_amount" ||
+    Number(order.guestIndex || 1) > 1;
+
+  let partialModeLabel = "Pagamento Único Integral";
+  if (partialMode === "equal_split") {
+    partialModeLabel = "Divisão em Partes Iguais";
+  } else if (partialMode === "custom_amount") {
+    partialModeLabel = "Valor Parcial Livre em R$";
+  } else if (partialMode === "items") {
+    partialModeLabel = "Seleção Individual de Itens";
+  } else if (totalPaidOrdersInReservation > 1) {
+    partialModeLabel = `Pagamento Separado (${orderSequenceIndex}ª de ${totalPaidOrdersInReservation} NFs do Flat)`;
+  }
+
+  const siblingOrdersSummary = allPaidForReservation.map((so, idx) => ({
+    id: so.id,
+    sequence: idx + 1,
+    guestName: so.guestName || reservation?.guestName || "Hóspede",
+    guestIndex: so.guestIndex || 1,
+    guestRole: so.guestRole || (Number(so.guestIndex || 1) > 1 ? "acompanhante" : "titular"),
+    guestDocument: so.fiscalPreferences?.documentNumber || so.guestDocument || "",
+    totalAmount: Number(so.totalAmount || 0),
+    paidAt: so.paidAt || so.createdAt,
+    partialMode: so.partialMode || "full",
+    invoiceStatus: so.invoice?.status || "pendente",
+    invoiceNumber: so.invoice?.invoiceNumber || null,
+    invoiceFileUrl: so.invoice?.invoiceFileUrl || null
+  }));
+
+  // Datas de lançamento do consumo (DD/MM/AAAA)
+  const consumptionDatesSet = new Set();
+  if (order.launchDateBr) consumptionDatesSet.add(order.launchDateBr);
+  else if (order.launchDate) consumptionDatesSet.add(formatMinibarDateBr(order.launchDate));
+
+  for (const it of order.items || []) {
+    if (it.launchDateBr) consumptionDatesSet.add(it.launchDateBr);
+    else if (it.launchDate) consumptionDatesSet.add(formatMinibarDateBr(it.launchDate));
+  }
+  for (const sel of order.selectedLaunchItems || []) {
+    if (sel.launchDateBr) consumptionDatesSet.add(sel.launchDateBr);
+    else if (sel.launchDate) consumptionDatesSet.add(formatMinibarDateBr(sel.launchDate));
+  }
+  if (consumptionDatesSet.size === 0 && statement?.dailyLaunches?.length > 0) {
+    for (const dl of statement.dailyLaunches) {
+      if (dl.dateBr) consumptionDatesSet.add(dl.dateBr);
+    }
+  }
+  if (consumptionDatesSet.size === 0) {
+    const fallbackDate = formatMinibarDateBr(order.paidAt || order.createdAt || getBrasiliaNow().date);
+    if (fallbackDate) consumptionDatesSet.add(fallbackDate);
+  }
+  const consumptionDatesBr = Array.from(consumptionDatesSet);
+
+  // Dados fiscais prontos para emissão / colagem
+  const prefType = order.fiscalPreferences?.invoiceDescriptionType || "detailed";
+  let prefLabel = "1. Discriminar todos os itens consumidos";
+  if (prefType === "water") prefLabel = "2. Lançar tudo como 'Água'";
+  else if (prefType === "minibar_consumption") prefLabel = "3. Lançar tudo como 'Consumo de Frigobar'";
+
+  const amountBr = Number(order.totalAmount || 0).toFixed(2).replace(".", ",");
+  const paidItemsDesc = (order.items || [])
+    .filter(i => !i.isCourtesy && (Number(i.quantity) || 0) > 0)
+    .map(i => `${i.quantity}x ${i.productName || i.name} (R$ ${Number(i.totalPrice || 0).toFixed(2).replace(".", ",")})`)
+    .join(", ");
+
+  let readyToPasteDescription = "";
+  if (prefType === "water") {
+    readyToPasteDescription = `Consumo de Água Mineral - Flat ${flatStr} (${resCode || "Hospedagem"}) - Valor Total: R$ ${amountBr}`;
+  } else if (prefType === "minibar_consumption") {
+    readyToPasteDescription = `Consumo de Frigobar - Flat ${flatStr} (${resCode || "Hospedagem"}) - Valor Total: R$ ${amountBr}`;
+  } else {
+    readyToPasteDescription = `Consumo de Frigobar Flat ${flatStr} (${resCode || "Hospedagem"}) — Datas: ${consumptionDatesBr.join(", ")} — Itens: ${paidItemsDesc || "Consumo de Frigobar"} — Valor Total: R$ ${amountBr}`;
+  }
+
+  const docRaw = String(
+    order.fiscalPreferences?.documentNumber || order.guestDocument || reservation?.guestDocument || ""
+  ).replace(/\D/g, "");
+  const docType = docRaw.length > 11 || order.fiscalPreferences?.documentType === "cnpj" ? "CNPJ" : "CPF";
+
+  const payerName = order.guestName || reservation?.guestName || "Hóspede CorpFlats";
+  const payerEmail = order.fiscalPreferences?.email || order.guestEmail || reservation?.guestEmail || "";
+  const payerPhone = order.fiscalPreferences?.phone || order.guestPhone || reservation?.guestPhone || "";
+
+  return {
+    ...order,
+    flatNumber: flatStr,
+    reservationCode: resCode,
+    consumptionDatesBr,
+    dailyLaunches: statement?.dailyLaunches || [],
+    reservationTotalLaunchedAmount: statement?.totalLaunchedAmount ?? Number(order.totalAmount || 0),
+    reservationTotalPaidAmount: statement?.totalPaidAmount ?? Number(order.totalAmount || 0),
+    reservationPendingBalance: statement?.pendingBalance ?? 0,
+    isCheckedOut: statement?.isCheckedOut ?? false,
+    checkoutTime: statement?.checkoutTime ?? null,
+    checkInDateBr: reservation?.checkinDate ? formatMinibarDateBr(reservation.checkinDate) : "",
+    checkOutDateBr: reservation?.checkoutDate ? formatMinibarDateBr(reservation.checkoutDate) : "",
+    numGuestsInFlat: reservation ? Math.max(Number(reservation.numGuests || 1), getReservationAllGuests(reservation).length) : 1,
+    splitPaymentInfo: {
+      isSeparatePayment,
+      partialMode,
+      partialModeLabel,
+      orderSequenceIndex,
+      totalPaidOrdersInReservation,
+      guestIndex: Number(order.guestIndex || 1),
+      guestRole: order.guestRole || (Number(order.guestIndex || 1) > 1 ? "acompanhante" : "titular"),
+      siblingOrders: siblingOrdersSummary
+    },
+    fiscalSummary: {
+      payerName,
+      documentType: docType,
+      documentNumber: docRaw,
+      email: payerEmail,
+      phone: payerPhone,
+      invoiceDescriptionType: prefType,
+      invoiceDescriptionLabel: prefLabel,
+      readyToPasteDescription
+    }
+  };
+}
+
 app.get("/api/minibar/invoices/pending", (req, res) => {
   try {
     const user = getAuthUser(req);
-    if (process.env.NODE_ENV !== "test" && !isMinibarAdmin(user)) {
-      return res.status(403).json({ success: false, error: "Acesso restrito à supervisão e administração." });
+    if (process.env.NODE_ENV !== "test" && !isMinibarInvoiceIssuer(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao faturamento, supervisão e administração." });
     }
 
-    const pending = (db.minibarOrders || []).filter(o =>
-      o.paymentStatus === "pago" &&
-      o.totalAmount > 0 &&
-      (!o.invoice || o.invoice.status !== "anexada")
-    );
+    const pending = (db.minibarOrders || [])
+      .filter(
+        o =>
+          o &&
+          o.paymentStatus === "pago" &&
+          Number(o.totalAmount) > 0 &&
+          (!o.invoice || o.invoice.status !== "anexada")
+      )
+      .map(enrichMinibarOrderForInvoiceScreen)
+      .sort((a, b) => String(b.paidAt || b.createdAt || "").localeCompare(String(a.paidAt || a.createdAt || "")));
 
     res.json({
       success: true,
       count: pending.length,
       pendingInvoices: pending
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/minibar/invoices/hub", (req, res) => {
+  try {
+    const user = getAuthUser(req);
+    if (process.env.NODE_ENV !== "test" && !isMinibarInvoiceIssuer(user)) {
+      return res.status(403).json({ success: false, error: "Acesso restrito ao faturamento, supervisão e administração." });
+    }
+
+    const allPaidOrders = (db.minibarOrders || [])
+      .filter(o => o && o.paymentStatus === "pago" && Number(o.totalAmount) > 0)
+      .map(enrichMinibarOrderForInvoiceScreen)
+      .sort((a, b) => String(b.paidAt || b.createdAt || "").localeCompare(String(a.paidAt || a.createdAt || "")));
+
+    const pendingInvoices = allPaidOrders.filter(o => !o.invoice || o.invoice.status !== "anexada");
+    const issuedInvoices = allPaidOrders.filter(o => o.invoice && o.invoice.status === "anexada");
+    const separatePaymentsPendingCount = pendingInvoices.filter(o => o.splitPaymentInfo?.isSeparatePayment).length;
+    const failedDeliveries = issuedInvoices.filter(o => {
+      const m = o.invoice?.deliveryMonitor;
+      if (!m) return false;
+      return (
+        m.overallStatus === "falha" ||
+        m.overallStatus === "parcial" ||
+        m.overallStatus === "retentando" ||
+        m.whatsapp?.status === "falha" ||
+        m.email?.status === "falha"
+      );
+    });
+
+    res.json({
+      success: true,
+      stats: {
+        pendingCount: pendingInvoices.length,
+        pendingTotalAmount: Number(
+          pendingInvoices.reduce((s, o) => s + Number(o.totalAmount || 0), 0).toFixed(2)
+        ),
+        separatePaymentsPendingCount,
+        issuedCount: issuedInvoices.length,
+        issuedTotalAmount: Number(
+          issuedInvoices.reduce((s, o) => s + Number(o.totalAmount || 0), 0).toFixed(2)
+        ),
+        failedDeliveriesCount: failedDeliveries.length
+      },
+      pendingInvoices,
+      issuedInvoices,
+      failedDeliveries
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -62179,10 +62472,10 @@ app.get("/api/minibar/staff", (req, res) => {
         if (roleFilter && roleFilter !== "todos") {
           return u.role === roleFilter;
         }
-        return u.role === "anserve_repositora" || u.role === "anserve_gestor";
+        return u.role === "anserve_repositora" || u.role === "anserve_faturamento" || u.role === "anserve_gestor";
       }
-      // Gestor Anserve vê e gerencia exclusivamente as funcionárias de reposição (anserve_repositora)
-      return u.role === "anserve_repositora";
+      // Gestor Anserve vê e gerencia funcionárias de reposição e faturamento de NF
+      return u.role === "anserve_repositora" || u.role === "anserve_faturamento";
     });
 
     const staffList = staffUsers.map(u => {
@@ -62232,15 +62525,20 @@ app.post("/api/minibar/staff", (req, res) => {
       });
     }
 
-    // Trava de hierarquia: Gestor Anserve só pode criar anserve_repositora
-    if (!isCorpFlatsAdmin && role !== "anserve_repositora") {
+    // Trava de hierarquia: Gestor Anserve pode criar anserve_repositora ou anserve_faturamento
+    if (!isCorpFlatsAdmin && role !== "anserve_repositora" && role !== "anserve_faturamento") {
       return res.status(403).json({
         success: false,
-        error: "O gestor da Anserve pode cadastrar apenas funcionárias de reposição (anserve_repositora)."
+        error: "O gestor da Anserve pode cadastrar apenas funcionárias de reposição ou faturamento de NF."
       });
     }
 
-    const targetRole = isCorpFlatsAdmin && role === "anserve_gestor" ? "anserve_gestor" : "anserve_repositora";
+    const targetRole =
+      isCorpFlatsAdmin && role === "anserve_gestor"
+        ? "anserve_gestor"
+        : role === "anserve_faturamento"
+        ? "anserve_faturamento"
+        : "anserve_repositora";
 
     if ((db.users || []).some(u => u.username && u.username.toLowerCase() === String(username).trim().toLowerCase())) {
       return res.status(409).json({ success: false, error: "Já existe um usuário com este login (@usuário)." });
@@ -62314,13 +62612,18 @@ app.patch("/api/minibar/staff/:id", (req, res) => {
     }
 
     // Trava de segurança hierárquica
-    if (!isCorpFlatsAdmin && targetUser.role !== "anserve_repositora") {
+    if (!isCorpFlatsAdmin && targetUser.role !== "anserve_repositora" && targetUser.role !== "anserve_faturamento") {
       return res.status(403).json({
         success: false,
-        error: "O gestor da Anserve pode editar apenas funcionárias de reposição."
+        error: "O gestor da Anserve pode editar apenas funcionárias de reposição ou faturamento."
       });
     }
-    if (isCorpFlatsAdmin && targetUser.role !== "anserve_repositora" && targetUser.role !== "anserve_gestor") {
+    if (
+      isCorpFlatsAdmin &&
+      targetUser.role !== "anserve_repositora" &&
+      targetUser.role !== "anserve_faturamento" &&
+      targetUser.role !== "anserve_gestor"
+    ) {
       return res.status(403).json({
         success: false,
         error: "Use /api/admin/users para editar colaboradores de outros departamentos."
@@ -62343,13 +62646,13 @@ app.patch("/api/minibar/staff/:id", (req, res) => {
     }
 
     if (role !== undefined) {
-      if (!isCorpFlatsAdmin && role !== "anserve_repositora") {
+      if (!isCorpFlatsAdmin && role !== "anserve_repositora" && role !== "anserve_faturamento") {
         return res.status(403).json({
           success: false,
           error: "Apenas a administração da CorpFlats pode alterar o cargo para Gestor Anserve."
         });
       }
-      if (role === "anserve_repositora" || role === "anserve_gestor") {
+      if (role === "anserve_repositora" || role === "anserve_faturamento" || role === "anserve_gestor") {
         targetUser.role = role;
         targetUser.allowedModules = getDefaultModulesForRole(role);
       }
@@ -62415,13 +62718,18 @@ const handleResetMinibarStaffPassword = (req, res) => {
       return res.status(404).json({ success: false, error: "Colaborador não encontrado." });
     }
 
-    if (!isCorpFlatsAdmin && targetUser.role !== "anserve_repositora") {
+    if (!isCorpFlatsAdmin && targetUser.role !== "anserve_repositora" && targetUser.role !== "anserve_faturamento") {
       return res.status(403).json({
         success: false,
-        error: "O gestor da Anserve pode redefinir a senha apenas de funcionárias de reposição."
+        error: "O gestor da Anserve pode redefinir a senha apenas de funcionárias de reposição ou faturamento."
       });
     }
-    if (isCorpFlatsAdmin && targetUser.role !== "anserve_repositora" && targetUser.role !== "anserve_gestor") {
+    if (
+      isCorpFlatsAdmin &&
+      targetUser.role !== "anserve_repositora" &&
+      targetUser.role !== "anserve_faturamento" &&
+      targetUser.role !== "anserve_gestor"
+    ) {
       return res.status(403).json({
         success: false,
         error: "Colaborador fora do escopo Anserve."
@@ -62480,13 +62788,18 @@ app.delete("/api/minibar/staff/:id", (req, res) => {
       return res.status(404).json({ success: false, error: "Colaborador não encontrado." });
     }
 
-    if (!isCorpFlatsAdmin && targetUser.role !== "anserve_repositora") {
+    if (!isCorpFlatsAdmin && targetUser.role !== "anserve_repositora" && targetUser.role !== "anserve_faturamento") {
       return res.status(403).json({
         success: false,
-        error: "O gestor da Anserve pode excluir apenas funcionárias de reposição."
+        error: "O gestor da Anserve pode excluir apenas funcionárias de reposição ou faturamento."
       });
     }
-    if (isCorpFlatsAdmin && targetUser.role !== "anserve_repositora" && targetUser.role !== "anserve_gestor") {
+    if (
+      isCorpFlatsAdmin &&
+      targetUser.role !== "anserve_repositora" &&
+      targetUser.role !== "anserve_faturamento" &&
+      targetUser.role !== "anserve_gestor"
+    ) {
       return res.status(403).json({
         success: false,
         error: "Colaborador fora do escopo Anserve."
