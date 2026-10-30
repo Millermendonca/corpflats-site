@@ -8332,6 +8332,158 @@ export default function PmsCalendar() {
                   </Button>
                 </div>
 
+                {/* Seção Própria: Serviço de Café da Manhã */}
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Coffee className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                          Café da Manhã Incluso na Diária
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          Habilita link de cardápio e agendamento de café para este hóspede
+                        </span>
+                      </div>
+                    </div>
+                    <Switch checked={formIncludeBreakfast} onCheckedChange={setFormIncludeBreakfast} />
+                  </div>
+
+                  {formIncludeBreakfast && (
+                    <div className="pt-2 border-t border-amber-500/20 space-y-2 animate-in fade-in">
+                      <div className="text-[11px] text-muted-foreground">
+                        Link exclusivo para escolha de itens e horários pelo hóspede:
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          {...bindZapiClickOrHoldWaWeb({
+                            onClickZapi: async () => {
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
+                              const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
+                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
+                              await sendDirectZapiWithFallback({
+                                phone,
+                                message: msg,
+                                recipientName: guestName,
+                                reservationCode: String(resCode),
+                                flatNumber: String(flatNum),
+                                triggerEvent: "breakfast_link_manual",
+                                label: "Link do Café da Manhã",
+                                toast
+                              })
+                            },
+                            getWaUrl: () => {
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
+                              const phone = formGuestPhone || selectedRes?.guestPhone || ""
+                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
+                              return buildDirectWaWebUrl(phone, msg)
+                            },
+                            toast
+                          })}
+                          title="Clique rápido: enviar via Z-API • Segure por 2 segundos: abrir no WhatsApp Web"
+                          className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp (Z-API)
+                        </Button>
+
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
+                              navigator.clipboard.writeText(url)
+                              toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
+                            }}
+                            className="flex-1 h-8 text-xs font-bold gap-1.5 bg-background hover:bg-muted border-border"
+                          >
+                            <Copy className="w-3.5 h-3.5" /> Copiar Link
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `/cafe/${encodeURIComponent(String(resCode))}`
+                              window.open(url, "_blank")
+                            }}
+                            className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"
+                            title="Abrir página de pedidos"
+                          >
+                            Abrir ↗
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Configuração do Quarto para a Governança / Camareiras */}
+                <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <BedDouble className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <span>Preparação do Quarto para as Camareiras</span>
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 border-amber-300">
+                      Exibido no Card da Governança
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* 2 Camas de solteiro */}
+                    <button
+                      type="button"
+                      onClick={() => setFormTwinBeds(!formTwinBeds)}
+                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
+                        formTwinBeds 
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-xs" 
+                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-400"
+                      }`}
+                    >
+                      <span>🛏️ {formTwinBeds ? "2 Camas Solteiro" : "1 Cama Casal"}</span>
+                      {formTwinBeds ? <CheckCircle2 className="w-3.5 h-3.5" /> : <span className="text-[10px] text-muted-foreground font-semibold">Padrão</span>}
+                    </button>
+
+                    {/* Colchão extra */}
+                    <button
+                      type="button"
+                      onClick={() => setFormExtraMattress(!formExtraMattress)}
+                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
+                        formExtraMattress 
+                          ? "bg-purple-600 text-white border-purple-600 shadow-xs" 
+                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-purple-400"
+                      }`}
+                    >
+                      <span>➕ Colchão Extra</span>
+                      {formExtraMattress && <CheckCircle2 className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                      Nota / Recado para a Camareira (Exibida no Card de Limpeza no Check-in)
+                    </Label>
+                    <Input 
+                      value={formSpecialRequests}
+                      onChange={e => setFormSpecialRequests(e.target.value)}
+                      placeholder="Ex: Montar berço, kit bebê, toalhas extras, atenção especial ao ar-condicionado..."
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
                   <div className="space-y-1.5 min-w-0">
                     <div className="flex items-center justify-between">
@@ -8592,213 +8744,6 @@ export default function PmsCalendar() {
                     placeholder="Ex: Entregar chave extra, vaga de garagem G2-14 liberada..." 
                     className="text-xs border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/30"
                   />
-                </div>
-
-                {/* Veículo & Garagem (Disparo automático p/ garagem e portaria) */}
-                <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                      <Car className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      <span>Veículo & Garagem (Disparo Automático)</span>
-                    </span>
-                    <Badge variant="outline" className="text-[10px] bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 border-blue-300">
-                      Notifica PFB Estacionamento
-                    </Badge>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Placa</Label>
-                      <Input
-                        value={formVehiclePlate}
-                        onChange={e => setFormVehiclePlate(e.target.value.toUpperCase())}
-                        placeholder="ABC-1234"
-                        className="text-xs font-mono uppercase bg-white dark:bg-slate-900"
-                        maxLength={8}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Marca</Label>
-                      <Input
-                        value={formVehicleBrand}
-                        onChange={e => setFormVehicleBrand(e.target.value)}
-                        placeholder="Ex: Toyota"
-                        className="text-xs bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Modelo</Label>
-                      <Input
-                        value={formVehicleModel}
-                        onChange={e => setFormVehicleModel(e.target.value)}
-                        placeholder="Ex: Corolla"
-                        className="text-xs bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Cor</Label>
-                      <Input
-                        value={formVehicleColor}
-                        onChange={e => setFormVehicleColor(e.target.value)}
-                        placeholder="Ex: Preto"
-                        className="text-xs bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
-                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo diretamente para a garagem (<span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span>).
-                  </p>
-                </div>
-
-                {/* Configuração do Quarto para a Governança / Camareiras */}
-                <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                      <BedDouble className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                      <span>Preparação do Quarto para as Camareiras</span>
-                    </span>
-                    <Badge variant="outline" className="text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 border-amber-300">
-                      Exibido no Card da Governança
-                    </Badge>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    {/* 2 Camas de solteiro */}
-                    <button
-                      type="button"
-                      onClick={() => setFormTwinBeds(!formTwinBeds)}
-                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
-                        formTwinBeds 
-                          ? "bg-indigo-600 text-white border-indigo-600 shadow-xs" 
-                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-400"
-                      }`}
-                    >
-                      <span>🛏️ {formTwinBeds ? "2 Camas Solteiro" : "1 Cama Casal"}</span>
-                      {formTwinBeds ? <CheckCircle2 className="w-3.5 h-3.5" /> : <span className="text-[10px] text-muted-foreground font-semibold">Padrão</span>}
-                    </button>
-
-                    {/* Colchão extra */}
-                    <button
-                      type="button"
-                      onClick={() => setFormExtraMattress(!formExtraMattress)}
-                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
-                        formExtraMattress 
-                          ? "bg-purple-600 text-white border-purple-600 shadow-xs" 
-                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-purple-400"
-                      }`}
-                    >
-                      <span>➕ Colchão Extra</span>
-                      {formExtraMattress && <CheckCircle2 className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-
-                  <div className="space-y-1">
-                    <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                      Nota / Recado para a Camareira (Exibida no Card de Limpeza no Check-in)
-                    </Label>
-                    <Input 
-                      value={formSpecialRequests}
-                      onChange={e => setFormSpecialRequests(e.target.value)}
-                      placeholder="Ex: Montar berço, kit bebê, toalhas extras, atenção especial ao ar-condicionado..."
-                      className="text-xs"
-                    />
-                  </div>
-                </div>
-
-                {/* Seção Própria: Serviço de Café da Manhã */}
-                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Coffee className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                      <div>
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                          Café da Manhã Incluso na Diária
-                        </span>
-                        <span className="text-[11px] text-muted-foreground">
-                          Habilita link de cardápio e agendamento de café para este hóspede
-                        </span>
-                      </div>
-                    </div>
-                    <Switch checked={formIncludeBreakfast} onCheckedChange={setFormIncludeBreakfast} />
-                  </div>
-
-                  {formIncludeBreakfast && (
-                    <div className="pt-2 border-t border-amber-500/20 space-y-2 animate-in fade-in">
-                      <div className="text-[11px] text-muted-foreground">
-                        Link exclusivo para escolha de itens e horários pelo hóspede:
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          {...bindZapiClickOrHoldWaWeb({
-                            onClickZapi: async () => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
-                              const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
-                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
-                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
-                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
-                              await sendDirectZapiWithFallback({
-                                phone,
-                                message: msg,
-                                recipientName: guestName,
-                                reservationCode: String(resCode),
-                                flatNumber: String(flatNum),
-                                triggerEvent: "breakfast_link_manual",
-                                label: "Link do Café da Manhã",
-                                toast
-                              })
-                            },
-                            getWaUrl: () => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
-                              const phone = formGuestPhone || selectedRes?.guestPhone || ""
-                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
-                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
-                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
-                              return buildDirectWaWebUrl(phone, msg)
-                            },
-                            toast
-                          })}
-                          title="Clique rápido: enviar via Z-API • Segure por 2 segundos: abrir no WhatsApp Web"
-                          className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
-                        >
-                          <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp (Z-API)
-                        </Button>
-
-                        <div className="flex items-center gap-1.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
-                              navigator.clipboard.writeText(url)
-                              toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
-                            }}
-                            className="flex-1 h-8 text-xs font-bold gap-1.5 bg-background hover:bg-muted border-border"
-                          >
-                            <Copy className="w-3.5 h-3.5" /> Copiar Link
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `/cafe/${encodeURIComponent(String(resCode))}`
-                              window.open(url, "_blank")
-                            }}
-                            className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"
-                            title="Abrir página de pedidos"
-                          >
-                            Abrir ↗
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 {/* Banner de Check-out Antecipado & Ações Rápidas */}
@@ -9144,6 +9089,61 @@ export default function PmsCalendar() {
                     />
                   </div>
                 )}
+
+                {/* Veículo & Garagem (Disparo automático p/ garagem e portaria) */}
+                <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <Car className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>Veículo & Garagem (Disparo Automático)</span>
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 border-blue-300">
+                      Notifica PFB Estacionamento
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Placa</Label>
+                      <Input
+                        value={formVehiclePlate}
+                        onChange={e => setFormVehiclePlate(e.target.value.toUpperCase())}
+                        placeholder="ABC-1234"
+                        className="text-xs font-mono uppercase bg-white dark:bg-slate-900"
+                        maxLength={8}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Marca</Label>
+                      <Input
+                        value={formVehicleBrand}
+                        onChange={e => setFormVehicleBrand(e.target.value)}
+                        placeholder="Ex: Toyota"
+                        className="text-xs bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Modelo</Label>
+                      <Input
+                        value={formVehicleModel}
+                        onChange={e => setFormVehicleModel(e.target.value)}
+                        placeholder="Ex: Corolla"
+                        className="text-xs bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Cor</Label>
+                      <Input
+                        value={formVehicleColor}
+                        onChange={e => setFormVehicleColor(e.target.value)}
+                        placeholder="Ex: Preto"
+                        className="text-xs bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
+                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo diretamente para a garagem (<span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span>).
+                  </p>
+                </div>
               </div>
               )}
 
