@@ -97,7 +97,9 @@ export function buildReservationDailyRates(
   try {
     const d1 = parseISO(checkinStr);
     const d2 = parseISO(checkoutStr);
-    const nights = Math.max(1, differenceInDays(d2, d1));
+    if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return [];
+    const diff = differenceInDays(d2, d1);
+    const nights = Math.max(1, isNaN(diff) ? 1 : diff);
     const existingMap = new Map<string, DailyRateItem>();
     if (Array.isArray(existingRates)) {
       existingRates.forEach(r => {
@@ -3734,11 +3736,20 @@ export default function PmsCalendar() {
     return newTot;
   };
 
+  // Helper para validação e parsing seguro de datas evitando RangeError em digitação manual incompleta
+  const safeParseDate = (dateStr: string | null | undefined): Date | null => {
+    if (!dateStr || typeof dateStr !== "string" || dateStr.length < 10) return null;
+    const d = parseISO(dateStr);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
   // Sincronização centralizada de datas (via digitação manual ou calendário único)
   const handleDatesChange = (newCin: string, newCout: string) => {
     setFormCheckin(newCin);
     setFormCheckout(newCout);
-    if (newCin && newCout && newCin < newCout) {
+    const dCin = safeParseDate(newCin);
+    const dCout = safeParseDate(newCout);
+    if (dCin && dCout && dCin < dCout) {
       const updated = buildReservationDailyRates(newCin, newCout, Number(formDailyRate) || 250, formChannel, formDailyRates);
       setFormDailyRates(updated);
       syncCompositeTotalAndPaid(updated, formCharges, formChannel);
@@ -3747,7 +3758,9 @@ export default function PmsCalendar() {
 
   const handleCheckinChange = (val: string) => {
     setFormCheckin(val);
-    if (val && formCheckout && val < formCheckout) {
+    const dCin = safeParseDate(val);
+    const dCout = safeParseDate(formCheckout);
+    if (dCin && dCout && dCin < dCout) {
       const updated = buildReservationDailyRates(val, formCheckout, Number(formDailyRate) || 250, formChannel, formDailyRates);
       setFormDailyRates(updated);
       syncCompositeTotalAndPaid(updated, formCharges, formChannel);
@@ -3756,7 +3769,9 @@ export default function PmsCalendar() {
 
   const handleCheckoutChange = (val: string) => {
     setFormCheckout(val);
-    if (val && formCheckin && formCheckin < val) {
+    const dCin = safeParseDate(formCheckin);
+    const dCout = safeParseDate(val);
+    if (dCin && dCout && dCin < dCout) {
       const updated = buildReservationDailyRates(formCheckin, val, Number(formDailyRate) || 250, formChannel, formDailyRates);
       setFormDailyRates(updated);
       syncCompositeTotalAndPaid(updated, formCharges, formChannel);
@@ -6037,7 +6052,16 @@ export default function PmsCalendar() {
                 )}
 
                                 {/* 1º Bloco: Datas e Horários de Entrada (Check-in) e Saída (Check-out) com Calendário Range Picker Unificado */}
-                <Popover open={rangePickerOpen} onOpenChange={setRangePickerOpen}>
+                <Popover 
+                  open={rangePickerOpen} 
+                  onOpenChange={(open) => {
+                    setRangePickerOpen(open);
+                    if (!open) {
+                      setPickerRangeStart(null);
+                      setPickerHoverDate(null);
+                    }
+                  }}
+                >
                   <PopoverAnchor asChild>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
                       {/* Entrada / Check-in */}
@@ -6058,14 +6082,14 @@ export default function PmsCalendar() {
                                 value={formCheckin} 
                                 onChange={e => handleCheckinChange(e.target.value)} 
                                 required 
-                                className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
+                                className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:pointer-events-none [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
                               />
                               <button
                                 type="button"
                                 onClick={() => {
                                   setPickerRangeStart(null);
                                   setPickerHoverDate(null);
-                                  setPickerMonth(formCheckin ? parseISO(formCheckin) : new Date());
+                                  setPickerMonth(safeParseDate(formCheckin) || new Date());
                                   setRangePickerOpen(true);
                                 }}
                                 className="absolute right-1.5 z-10 p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 transition-colors cursor-pointer rounded pointer-events-auto"
@@ -6107,14 +6131,14 @@ export default function PmsCalendar() {
                                 value={formCheckout} 
                                 onChange={e => handleCheckoutChange(e.target.value)} 
                                 required 
-                                className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
+                                className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:pointer-events-none [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
                               />
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setPickerRangeStart(formCheckin || null);
+                                  setPickerRangeStart(null);
                                   setPickerHoverDate(null);
-                                  setPickerMonth(formCheckout ? parseISO(formCheckout) : (formCheckin ? parseISO(formCheckin) : new Date()));
+                                  setPickerMonth(safeParseDate(formCheckout) || safeParseDate(formCheckin) || new Date());
                                   setRangePickerOpen(true);
                                 }}
                                 className="absolute right-1.5 z-10 p-1 text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 transition-colors cursor-pointer rounded pointer-events-auto"
@@ -6137,6 +6161,14 @@ export default function PmsCalendar() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Aviso visual inline quando Check-out <= Check-in ao digitar */}
+                      {formCheckin && formCheckout && formCheckout <= formCheckin && (
+                        <div className="col-span-1 sm:col-span-2 text-[11px] text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/30 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold animate-in fade-in">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>A data de saída (check-out) deve ser posterior à data de entrada (check-in).</span>
+                        </div>
+                      )}
                     </div>
                   </PopoverAnchor>
 
@@ -6144,7 +6176,7 @@ export default function PmsCalendar() {
                     align="center" 
                     side="bottom" 
                     sideOffset={8}
-                    className="z-[70] w-[310px] sm:w-[330px] p-3 bg-popover border border-border shadow-2xl rounded-2xl animate-in fade-in-0 zoom-in-95"
+                    className="z-[70] w-[310px] sm:w-[330px] max-w-[calc(100vw-2rem)] p-3 bg-popover border border-border shadow-2xl rounded-2xl animate-in fade-in-0 zoom-in-95"
                   >
                     {/* Cabeçalho do Range Picker com navegação de mês */}
                     <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/60">
@@ -6211,18 +6243,28 @@ export default function PmsCalendar() {
                       const days = eachDayOfInterval({ start: mStart, end: mEnd });
                       const startDay = getDay(mStart);
 
+                      const validCin = safeParseDate(formCheckin);
+                      const validCout = safeParseDate(formCheckout);
+                      const hasValidPreExistingRange = Boolean(validCin && validCout && formCheckin < formCheckout);
+
+                      const effectiveStart = pickerRangeStart || (hasValidPreExistingRange ? formCheckin : null);
+                      const effectiveEnd = pickerRangeStart
+                        ? (pickerHoverDate && pickerHoverDate > pickerRangeStart ? pickerHoverDate : null)
+                        : (hasValidPreExistingRange ? formCheckout : null);
+
                       return (
-                        <div className="grid grid-cols-7 gap-1">
+                        <div 
+                          className="grid grid-cols-7 gap-1"
+                          onMouseLeave={() => setPickerHoverDate(null)}
+                        >
                           {Array.from({ length: startDay }).map((_, idx) => (
                             <div key={`blank-${idx}`} className="h-7 w-full" />
                           ))}
 
                           {days.map(d => {
                             const dStr = format(d, "yyyy-MM-dd");
-                            const effectiveStart = pickerRangeStart || formCheckin;
-                            const effectiveEnd = pickerRangeStart ? (pickerHoverDate || null) : formCheckout;
-                            const isStart = dStr === effectiveStart;
-                            const isEnd = dStr === effectiveEnd;
+                            const isStart = Boolean(effectiveStart && dStr === effectiveStart);
+                            const isEnd = Boolean(effectiveEnd && dStr === effectiveEnd);
                             const isBetween = Boolean(effectiveStart && effectiveEnd && effectiveStart < effectiveEnd && dStr > effectiveStart && dStr < effectiveEnd);
                             const isTodayDate = isToday(d);
 
@@ -6271,15 +6313,20 @@ export default function PmsCalendar() {
                     {/* Rodapé com Resumo de Diárias e Botão Fechar */}
                     <div className="pt-2 mt-2 border-t border-border/60 flex items-center justify-between text-xs">
                       <span className="text-[11px] text-muted-foreground">
-                        {formCheckin && formCheckout && formCheckin < formCheckout ? (
-                          <>
-                            <strong className="text-foreground font-bold">
-                              {differenceInCalendarDays(parseISO(formCheckout), parseISO(formCheckin))}
-                            </strong> {differenceInCalendarDays(parseISO(formCheckout), parseISO(formCheckin)) === 1 ? "diária" : "diárias"}
-                          </>
-                        ) : (
-                          "Selecione entrada e saída"
-                        )}
+                        {(() => {
+                          const validCin = safeParseDate(formCheckin);
+                          const validCout = safeParseDate(formCheckout);
+                          if (validCin && validCout && formCheckin < formCheckout) {
+                            const nights = differenceInCalendarDays(validCout, validCin);
+                            return (
+                              <>
+                                <strong className="text-foreground font-bold">{nights}</strong>{" "}
+                                {nights === 1 ? "diária" : "diárias"}
+                              </>
+                            );
+                          }
+                          return "Selecione entrada e saída";
+                        })()}
                       </span>
                       <Button
                         type="button"

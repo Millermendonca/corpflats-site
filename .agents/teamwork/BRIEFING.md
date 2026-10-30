@@ -1,43 +1,43 @@
-# BRIEFING — 2026-10-29T19:00:00Z
+# BRIEFING — 2026-10-30T21:54:00Z
 
 ## Mission
-Investigar e corrigir o bug de sincronização CRM-Google Contacts que mesclou telefones de hóspedes diferentes e sobrescreveu nomes, auditar todos os contatos afetados, desmembrar números e restaurar nomes fidedignos no CRM e no Google Contacts.
+Reordenar campos do modal de reserva no PMS calendar (pms-calendar.tsx) para fluxo operacional de atendimento (Entrada/Saída, Qtd Hóspedes, Dados Hóspede, Status, Resumo Financeiro) e implementar calendário único de período (Range Picker) com suporte a digitação manual.
 
 ## 🔒 My Identity
 - Archetype: sentinel
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\sentinel
-- Orchestrator: 77bac84a-2c7b-483b-8533-2e30a6efd40e (orchestrator_20, terminated)
-- Victory Auditor: e50ceb60-ba98-43cf-8f5a-e633ff20c296 (victory_auditor_19, terminated)
+- Orchestrator: 8e23cbfc-b7b5-4e87-8da7-fd5321b7bc29 (swe_light_5)
+- Victory Auditor: [to be spawned on victory claim]
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
 - Victory Audit is MANDATORY before reporting completion
-- Route: General (teamwork_preview_orchestrator)
+- Route: SWE Light (teamwork_preview_swe)
 - AGENTS.md rules: NUNCA rodar testes globais/varreduras. Apenas teste estritamente pontual do que foi alterado
 - Build de verificação em artifacts/limpeza (npm run build) se houver alteração em src/
 - Sempre git push ao realizar commits
 - Limpeza de crons e subagents ao concluir
 
 ## User Context
-- **Last user request**: Investigar causa raiz do bug de sincronização CRM -> Google Contacts, auditar todos os contatos afetados (incluindo Roselene 21976403551 e Fabiana 28999136926), corrigir a sincronização e restaurar os registros no CRM e Google Contacts.
+- **Last user request**: Reordenar os 5 blocos principais do modal de reserva em pms-calendar.tsx, adicionar range picker único preservando digitação manual, manter demais blocos e lógicas intactos, build e git push.
 - **Pending clarifications**: none
-- **Delivered results**: Entregue com 100% de sucesso. Causa raiz solucionada, código blindado contra colisões DDD, todos os registros corrompidos restaurados, Before/After documentado, e verificação independente aprovada com VICTORY CONFIRMED.
+- **Delivered results**: none
 
 ## Project Status
-- **Phase**: complete
-- **Route**: General (teamwork_preview_orchestrator)
-- **Orchestrator Directory**: .agents/teamwork/orchestrator_20
-- **Active Orchestrator ID**: [terminated]
+- **Phase**: in progress
+- **Route**: SWE Light (teamwork_preview_swe)
+- **Orchestrator Directory**: .agents/teamwork/swe_light_5
+- **Active Orchestrator ID**: 8e23cbfc-b7b5-4e87-8da7-fd5321b7bc29
+- **Cron 1 (Progress)**: task-31 (*/8 * * * *)
+- **Cron 2 (Liveness)**: task-34 (*/10 * * * *)
 
 ## Victory Audit Status
-- **Triggered**: yes
-- **Verdict**: VICTORY CONFIRMED
-- **Retry count**: 1
-- **Auditor Dir**: .agents/teamwork/victory_auditor_19
+- **Triggered**: no
+- **Verdict**: pending
+- **Retry count**: 0
+- **Auditor Dir**: [TBD]
 
 ## Artifact Index
 - c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md — Authoritative user requirements
 - c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\sentinel\BRIEFING.md — Sentinel persistent briefing
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_20\handoff.md — Orchestrator final handoff
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\google-contacts-audit-before-after.md — Before/After audit report
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\victory_auditor_19\handoff.md — Victory Auditor report
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\swe_light_5\DISPATCH.md — SWE Light dispatch specification

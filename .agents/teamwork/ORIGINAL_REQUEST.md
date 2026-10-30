@@ -927,3 +927,45 @@ Strictly follow the workspace's `AGENTS.md` rules:
 ### Operational & Git Compliance
 - [ ] Zero WhatsApp messages or global test suites (`tests/*.test.mjs`) were triggered during the work.
 - [ ] All code changes (and frontend build artifacts, if applicable) are committed and pushed to the remote git repository (`git status` is clean and up-to-date with `origin`).
+
+
+## 2026-10-30T21:50:59Z
+
+This is a single self-contained fix; keep it small and focused. Reordenar os campos do modal de criação/edição manual de reserva no calendário PMS (`artifacts/limpeza/src/pages/pms-calendar.tsx`) para seguir o fluxo operacional de atendimento (1º Datas de Check-in/Check-out, 2º Quantidade de Hóspedes, 3º Dados do Hóspede, 4º Status Pré-Reserva/Confirmada, 5º Resumo Financeiro da Hospedagem), mantendo todos os mecanismos, botões, nomes e comportamentos atuais intactos, e adicionar seleção de período (check-in e check-out no mesmo calendário popover) preservando a opção de digitar as datas manualmente.
+
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Integrity mode: development
+
+## Requirements
+
+### R1. Reordenação do fluxo no modal de Nova/Editar Reserva (`artifacts/limpeza/src/pages/pms-calendar.tsx`)
+Na aba principal (`Reserva`), logo após os banners informativos condicionais de topo, posicionar os 5 blocos principais exatamente nesta ordem:
+1. **Datas e Horários de Entrada (Check-in) e Saída (Check-out)**
+2. **Quantidade de Hóspedes na Reserva (1, 2 ou 3)**
+3. **Dados do Hóspede** (bloco "Quem está solicitando a reserva?" / busca CRM + Hóspede 1 Titular, Documento com Foto, Hóspedes 2 e 3)
+4. **Status & Confirmação da Reserva (Pré-Reserva ou Confirmada)**
+5. **Resumo Financeiro da Hospedagem** (card com resumo de valores e botão "Gerenciar Pagamentos & Diárias ➔", mantendo o sistema de abas exatamente como é hoje)
+
+Logo abaixo do 5º bloco (Resumo Financeiro da Hospedagem), posicionar todos os demais blocos operacionais existentes (Apartamento, Canal de Origem, Sugestão Quarto da Vez, Bloqueio de Flat, Alerta de Conflito/Overbooking, Early Check-in, Mensalista, Auto NFS-e, Aviso Portaria, Veículo/Garagem, Preparação p/ Camareiras, Café da Manhã Incluso, Check-out Antecipado, Observações Gerais e Disparar WhatsApp) sem alterar nenhum mecanismo, botão, nome ou funcionamento.
+
+### R2. Seleção de Check-in e Check-out em Calendário Único + Digitação Manual
+- Nos campos de **Entrada (Check-in)** e **Saída (Check-out)**, manter a possibilidade de digitar a data manualmente (ex.: `DD/MM/AAAA` ou input de data) em cada um dos dois campos e manter os campos de **Horário** de entrada e saída ao lado exatamente como hoje.
+- Ao clicar no ícone de calendário de qualquer um dos dois campos (Check-in ou Check-out), abrir um **único calendário interativo de período (Range Picker)** onde o **1º clique** define a data de Check-in e o **2º clique** define a data de Check-out, destacando o intervalo selecionado.
+- Sempre que as datas de Check-in e Check-out forem alteradas (seja clicando no calendário único ou digitando manualmente), disparar exatamente a mesma lógica existente de atualização de diárias (`buildReservationDailyRates` e `syncCompositeTotalAndPaid`) e sugestão de flat disponível (`fairShareResult`).
+
+### R3. Diretrizes de Build, Git e Testes (`AGENTS.md`)
+- Após concluir a alteração em `artifacts/limpeza/src/pages/pms-calendar.tsx`, executar `npm run build` na pasta `artifacts/limpeza` para verificar a compilação e atualizar `artifacts/limpeza/dist/`.
+- É terminantemente proibido rodar testes globais, varreduras ou testes de outros módulos (respeitar estritamente `AGENTS.md`).
+- Realizar `git commit` e `git push` das alterações (incluindo `artifacts/limpeza/dist/`).
+
+## Acceptance Criteria
+
+### Reordenação e Preservação de Funcionalidades
+- [ ] Na aba `Reserva` do modal de Nova/Editar Reserva em `artifacts/limpeza/src/pages/pms-calendar.tsx`, a ordem dos 5 primeiros blocos de preenchimento do formulário é estritamente: (1) Entrada Check-in & Saída Check-out, (2) Quantidade de Hóspedes na Reserva, (3) Quem solicita + Dados dos Hóspedes (Hóspedes 1, 2, 3 e Documento), (4) Status & Confirmação da Reserva (Pré-Reserva / Confirmada), (5) Resumo Financeiro da Hospedagem (com botão para a aba Pagamento).
+- [ ] Todos os demais blocos existentes (Apartamento, Canal de Origem, Quarto da Vez, Bloqueio de Flat, Alerta de Conflito, Early Check-in, Mensalista, Auto NFS-e, Aviso Portaria, Veículo/Garagem, Preparação p/ Camareiras, Café da Manhã, Check-out Antecipado, Observações Gerais e Disparar WhatsApp) permanecem presentes logo abaixo do Resumo Financeiro, com todos os seus botões, textos e lógicas funcionando sem alteração.
+
+### Calendário Único de Período + Digitação Manual
+- [ ] Clicar no ícone de calendário tanto no campo de Check-in quanto no de Check-out abre um único calendário de período (range) onde o 1º clique preenche a data de Check-in e o 2º clique preenche a data de Check-out.
+- [ ] O usuário continua podendo digitar manualmente a data de Check-in e a data de Check-out pelo teclado, bem como editar os horários de Check-in e Check-out.
+- [ ] Alterar as datas (via calendário único ou digitação) recalcula normalmente o array de diárias (`formDailyRates`) e o valor total composto.
+- [ ] `npm run build` em `artifacts/limpeza` compila com código de saída 0 sem erros.
