@@ -180,6 +180,12 @@ export function BookingFunnelModal({
         if (res.ok) {
           const data = await res.json()
           setAiInspectionResult(data)
+          const officialDocName = (data.canonicalGuestName || data.extractedName || "").trim()
+          if (officialDocName && data.identityMatches !== false && data.nameMatches !== false && data.reservationNameMatches !== false) {
+            if (data.nameAutoCorrected || !guestName.trim() || guestName.trim().split(/\s+/).length < officialDocName.split(/\s+/).length) {
+              setGuestName(officialDocName)
+            }
+          }
           if (data.isOfficialDocument === false) {
             setDocInspectionError("O arquivo enviado não foi identificado como um documento oficial de identificação com foto (RG, CNH, Passaporte). Por favor, anexe seu documento oficial.")
           } else if (data.isLegible === false) {

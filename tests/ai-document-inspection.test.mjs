@@ -11,6 +11,8 @@ import {
   comparePersonNames,
   compareCpfDigits,
   compareBirthDates,
+  formatOfficialPersonName,
+  shouldReplaceWithOfficialDocName,
   syncBidirectionalGuestProfile
 } from '../artifacts/api-server/demo-server.mjs';
 
@@ -403,7 +405,125 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.strictEqual(mockDb.reservations[0].guests[0].selfieUrl, sampleSelfieUrl, 'Slot 1 da reserva deve pré-carregar selfieUrl salva');
   });
 
-  it('19. Limpeza de processo pós-testes', () => {
+  it('19. Caso real RES-715: aceita homógrafo visual I/l ("IAGO" vs "lago") e variações de 1 letra, corrigindo automaticamente o nome da reserva', async () => {
+    // Homógrafo I/l direto em comparePersonNames
+    assert.strictEqual(
+      comparePersonNames('IAGO FERNANDES ZIOTO DE FREITAS', 'lago Fernandes Zioto De Freitas'),
+      true,
+      'Deve reconhecer "lago" (L minúsculo) como homógrafo visual de "IAGO"'
+    );
+    // Variação de 1 letra / grafia equivalente
+    assert.strictEqual(
+      comparePersonNames('MATHEUS PHILIPE SOUZA', 'Mateus Filipe Sousa'),
+      true,
+      'Deve aceitar variações ortográficas equivalentes (th/t, ph/f, z/s)'
+    );
+    assert.strictEqual(
+      comparePersonNames('LUCAS MENDONCA DA SILVA', 'Lukas Mendonca Silva'),
+      true,
+      'Deve aceitar diferença de 1 letra quando sobrenomes batem'
+    );
+
+    // Simula PDF de CNH Digital da reserva RES-715 (inclusive quando enviado sem extensão .pdf via fileName "documento_hospede")
+    const rawStreamIago = 'BT /F1 12 Tf (NOME: IAGO FERNANDES ZIOTO DE FREITAS) Tj (CPF: 162.555.437-06) Tj (DATA DE NASCIMENTO: 20/08/1996) Tj ET';
+    const compressedIago = zlib.deflateSync(Buffer.from(rawStreamIago, 'latin1'));
+    const pdfBufIago = Buffer.concat([
+      Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length ' + compressedIago.length + ' /Filter /FlateDecode >>\nstream\r\n', 'latin1'),
+      compressedIago,
+      Buffer.from('\r\nendstream\nendobj\n%%EOF', 'latin1')
+    ]);
+    // Sem prefixo application/pdf para testar detecção por magic bytes %PDF (JVBERi0)
+    const pdfBase64NoMime = pdfBufIago.toString('base64');
+
+    const res715 = await inspectDocumentWithAI({
+      fileBase64: pdfBase64NoMime,
+      fileName: 'documento_hospede',
+      providedName: 'lago Fernandes Zioto De Freitas',
+      providedCpf: '16255543706',
+      reservationName: 'lago Fernandes Zioto De Freitas',
+      reservationCpf: '16255543706',
+      providedBirthDate: '1996-08-20'
+    });
+
+    assert.strictEqual(res715.identityMatches, true, 'RES-715 deve aprovar identidade com sucesso');
+    assert.strictEqual(res715.nameMatches, true, 'nameMatches deve ser true para IAGO vs lago');
+    assert.strictEqual(res715.reservationNameMatches, true, 'reservationNameMatches deve ser true para IAGO vs lago');
+    assert.strictEqual(res715.cpfMatches, true);
+    assert.strictEqual(res715.canonicalGuestName, 'Iago Fernandes Zioto de Freitas', 'Deve retornar nome oficial formatado do documento');
+    assert.strictEqual(res715.nameAutoCorrected, true, 'Deve sinalizar que o nome foi autocorrigido pelo documento oficial');
+  });
+
+  it('20. Aceita reserva com apenas sobrenome, ordem invertida, nome composto parcial, sufixos/títulos e CPF 100% idêntico', () => {
+    // Apenas sobrenome na reserva
+    assert.strictEqual(comparePersonNames('RODRIGO DE ALMEIDA BRITO', 'Brito'), true);
+    assert.strictEqual(comparePersonNames('IAGO FERNANDES ZIOTO DE FREITAS', 'Freitas'), true);
+    // Ordem invertida ("Sobrenome Nome")
+    assert.strictEqual(comparePersonNames('FREDERICO COSTA', 'Costa Frederico'), true);
+    // Nome composto parcial (nome do meio + sobrenome)
+    assert.strictEqual(comparePersonNames('ANA CAROLINA TRAVASSOS', 'Carolina Travassos'), true);
+    // Sufixos agnáticos e títulos honoríficos (Jr, Filho, Neto, Dr)
+    assert.strictEqual(comparePersonNames('ROBERTO ALMEIDA SANTOS JUNIOR', 'Dr. Roberto Santos'), true);
+    assert.strictEqual(comparePersonNames('CARLOS EDUARDO SILVA', 'Carlos Silva Jr'), true);
+    assert.strictEqual(comparePersonNames('ANTONIO PEREIRA NETO', 'Antonio Pereira'), true);
+    // CPF 100% idêntico + prenome ou sobrenome compatível
+    assert.strictEqual(comparePersonNames('GUILHERME AUGUSTO NOGUEIRA', 'Guilherme', { cpfMatches: true }), true);
+
+    // Verifica que shouldReplaceWithOfficialDocName recomenda expandir/corrigir para o nome oficial completo do documento
+    assert.strictEqual(shouldReplaceWithOfficialDocName('Brito', 'RODRIGO DE ALMEIDA BRITO'), true);
+    assert.strictEqual(shouldReplaceWithOfficialDocName('lago Fernandes Zioto De Freitas', 'IAGO FERNANDES ZIOTO DE FREITAS'), true);
+    assert.strictEqual(formatOfficialPersonName('IAGO FERNANDES ZIOTO DE FREITAS'), 'Iago Fernandes Zioto de Freitas');
+  });
+
+  it('21. Rejeita nomes com flexão de gênero distinta (irmãos/cônjuges com mesmo sobrenome)', () => {
+    assert.strictEqual(comparePersonNames('PAULO DA SILVA', 'Paula da Silva'), false);
+    assert.strictEqual(comparePersonNames('GABRIEL OLIVEIRA', 'Gabriela Oliveira'), false);
+    assert.strictEqual(comparePersonNames('FERNANDO COSTA', 'Fernanda Costa'), false);
+    assert.strictEqual(comparePersonNames('CARLOS SOUZA', 'Carla Souza'), false);
+    // Mesmo se por erro digitassem o mesmo CPF, Paulo vs Paula não deve passar
+    assert.strictEqual(comparePersonNames('PAULO DA SILVA', 'Paula da Silva', { cpfMatches: true }), false);
+  });
+
+  it('22. syncBidirectionalGuestProfile preserva vínculo da reserva ao corrigir homógrafo I/l ou expandir sobrenome para nome completo', () => {
+    const mockDb = {
+      guests: [
+        {
+          id: 715,
+          guestCode: 'HOSP-00715',
+          name: 'lago Fernandes Zioto De Freitas',
+          fullName: 'lago Fernandes Zioto De Freitas',
+          document: '16255543706',
+          documentNumber: '16255543706',
+          phone: '22999887766'
+        }
+      ],
+      guestAccounts: [],
+      reservations: [
+        {
+          id: 7150,
+          code: 'RES-715',
+          guestId: 715,
+          guestName: 'lago Fernandes Zioto De Freitas',
+          guestDocument: '16255543706',
+          guestPhone: '22999887766',
+          guests: [
+            { index: 1, guestId: 715, name: 'lago Fernandes Zioto De Freitas', cpf: '16255543706' }
+          ]
+        }
+      ]
+    };
+
+    syncBidirectionalGuestProfile(mockDb, mockDb.guests[0], {
+      name: 'Iago Fernandes Zioto de Freitas',
+      document: '16255543706',
+      phone: '22999887766'
+    });
+
+    assert.strictEqual(mockDb.reservations[0].guestId, 715, 'Não deve desvincular guestId da reserva ao corrigir lago -> Iago');
+    assert.strictEqual(mockDb.reservations[0].guestName, 'Iago Fernandes Zioto de Freitas', 'Deve atualizar guestName na reserva');
+    assert.strictEqual(mockDb.reservations[0].guests[0].name, 'Iago Fernandes Zioto de Freitas', 'Deve atualizar slot 1 da reserva');
+  });
+
+  it('23. Limpeza de processo pós-testes', () => {
     setTimeout(() => { process.exit(0); }, 50);
   });
 });

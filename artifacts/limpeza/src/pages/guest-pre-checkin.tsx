@@ -212,6 +212,8 @@ export default function GuestPreCheckin() {
     reservationCpfMatches?: boolean | null
     birthDateMatches?: boolean | null
     identityMatches?: boolean
+    canonicalGuestName?: string
+    nameAutoCorrected?: boolean
     mismatchReasons?: string[]
     summary?: string
   } | null>(null)
@@ -1112,6 +1114,8 @@ export default function GuestPreCheckin() {
           providedCpf: document,
           reservationName: expectedResName,
           reservationCpf: expectedResCpf,
+          reservationCode: code || reservation?.code || "",
+          reservationId: reservation?.id || null,
           guestIndex: selectedGuestIndex,
           providedCity: city,
           providedAddress: address,
@@ -1137,8 +1141,22 @@ export default function GuestPreCheckin() {
         } else if (data.extractedCity && (!city || city.trim() === "")) {
           setCity(data.extractedCity)
         }
-        if (data.extractedName && (!fullName || fullName.trim() === "" || fullName.startsWith("Hóspede"))) {
-          setFullName(data.extractedName)
+        const officialDocName = (data.canonicalGuestName || data.extractedName || "").trim()
+        if (officialDocName && data.identityMatches !== false && data.nameMatches !== false && data.reservationNameMatches !== false) {
+          const shouldAutoUpdateName = Boolean(
+            data.nameAutoCorrected ||
+            !fullName ||
+            fullName.trim() === "" ||
+            fullName.startsWith("Hóspede") ||
+            fullName.trim().split(/\s+/).length < officialDocName.split(/\s+/).length
+          )
+          if (shouldAutoUpdateName) {
+            setFullName(officialDocName)
+            if (selectedGuestIndex === 1) {
+              setReservation((prev: any) => prev ? { ...prev, guestName: officialDocName } : prev)
+              setGuestList((prev: any[]) => Array.isArray(prev) ? prev.map((g: any) => Number(g.index) === 1 ? { ...g, name: officialDocName } : g) : prev)
+            }
+          }
         }
         if (data.extractedCpf && (!document || document.trim() === "")) {
           setDocument(data.extractedCpf)
@@ -3447,10 +3465,8 @@ export default function GuestPreCheckin() {
                         return
                       }
                     }
+                    setAiDocResult(null)
                     setStep(2)
-                    if (docPhoto) {
-                      runAiDocInspection(docPhoto, "documento_hospede")
-                    }
                   }}
                   className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl mt-4 gap-2 shadow-md"
                 >
@@ -3572,11 +3588,19 @@ export default function GuestPreCheckin() {
                           aiDocResult.nameMatches === false ||
                           aiDocResult.reservationNameMatches === false ||
                           aiDocResult.cpfMatches === false ||
-                          aiDocResult.reservationCpfMatches === false) && (
+                          aiDocResult.reservationCpfMatches === false ||
+                          aiDocResult.birthDateMatches === false) && (
                           <div className="p-3.5 bg-rose-50 border-2 border-rose-300 rounded-xl space-y-2 text-xs text-rose-950 shadow-2xs">
                             <div className="font-bold flex items-center gap-1.5 text-rose-800">
                               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                              <span>⚠️ Alerta Pericial: Divergência de Titularidade (Pessoa Diferente)</span>
+                              <span>
+                                {(aiDocResult.nameMatches === false ||
+                                  aiDocResult.reservationNameMatches === false ||
+                                  aiDocResult.cpfMatches === false ||
+                                  aiDocResult.reservationCpfMatches === false)
+                                  ? "⚠️ Alerta Pericial: Divergência de Titularidade (Pessoa Diferente)"
+                                  : "⚠️ Alerta Pericial: Divergência na Data de Nascimento"}
+                              </span>
                             </div>
                             {Array.isArray(aiDocResult.mismatchReasons) && aiDocResult.mismatchReasons.length > 0 ? (
                               <ul className="list-disc pl-4 space-y-1 text-[11px] text-rose-900 font-medium">

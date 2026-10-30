@@ -9906,20 +9906,29 @@ export function areGuestNamesCompatible(nameA, nameB, options = {}) {
   const normB = normalizeName(nameB).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
   if (!normA || !normB) return true;
   if (normA === normB) return true;
-  const stopWords = new Set(["de", "da", "do", "dos", "das", "e", "jr", "junior", "filho", "neto", "sobrinho", "sr", "sra", "dr", "dra"]);
+  const stopWords = new Set(["de", "da", "do", "dos", "das", "del", "di", "du", "e", "jr", "junior", "filho", "filha", "neto", "neta", "sobrinho", "sobrinha", "segundo", "terceiro", "ii", "iii", "iv", "sr", "sra", "srta", "dr", "dra", "prof", "eng"]);
   const tokensA = normA.split(/\s+/).filter(t => t.length >= 2 && !stopWords.has(t));
   const tokensB = normB.split(/\s+/).filter(t => t.length >= 2 && !stopWords.has(t));
   if (tokensA.length === 0 || tokensB.length === 0) return true;
+  const compatTokensMatch = (a, b) => {
+    if (a === b) return true;
+    if (a.length >= 3 && b.length >= 3 && a.replace(/l/g, "i") === b.replace(/l/g, "i")) return true;
+    return false;
+  };
   const firstA = tokensA[0];
   const firstB = tokensB[0];
-  if (firstA !== firstB) return false;
-  if (tokensA.length === 1 && tokensB.length === 1) return true;
+  if (tokensA.length === 1 && tokensB.length === 1) return compatTokensMatch(firstA, firstB);
   if (tokensA.length === 1 || tokensB.length === 1) {
     if (options && options.strictSingleToken) return false;
-    return true;
+    return tokensA.length === 1
+      ? tokensB.some(t => compatTokensMatch(firstA, t))
+      : tokensA.some(t => compatTokensMatch(firstB, t));
   }
-  const restA = new Set(tokensA.slice(1));
-  return tokensB.slice(1).some(t => restA.has(t));
+  const allAInB = tokensA.every(ta => tokensB.some(tb => compatTokensMatch(ta, tb)));
+  const allBInA = tokensB.every(tb => tokensA.some(ta => compatTokensMatch(tb, ta)));
+  if (allAInB || allBInA) return true;
+  if (!compatTokensMatch(firstA, firstB)) return false;
+  return tokensB.slice(1).some(tb => tokensA.slice(1).some(ta => compatTokensMatch(ta, tb)));
 }
 
 function normalizeDoc(doc) {
@@ -10258,6 +10267,64 @@ export function healContaminatedGuestAndReservationLinks(database) {
   if (!Array.isArray(currentDb.reservations)) currentDb.reservations = [];
   if (!Array.isArray(currentDb.guestAccounts)) currentDb.guestAccounts = [];
   let changed = false;
+
+  // 0. Autocorreção de homóglifos de OCR/digitação (ex: "lago Fernandes Zioto De Freitas" com 'l' minúsculo -> "Iago Fernandes Zioto De Freitas")
+  const fixLeadingHomoglyph = (str) => {
+    if (!str || typeof str !== "string") return str;
+    const trimmed = str.trim();
+    if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)\b/.test(trimmed)) {
+      return "I" + trimmed.slice(1);
+    }
+    return str;
+  };
+  for (const r of currentDb.reservations) {
+    if (!r) continue;
+    if (r.guestName) {
+      const fixed = fixLeadingHomoglyph(r.guestName);
+      if (fixed !== r.guestName) {
+        r.guestName = fixed;
+        changed = true;
+      }
+    }
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        if (rg && rg.name) {
+          const fixed = fixLeadingHomoglyph(rg.name);
+          if (fixed !== rg.name) {
+            rg.name = fixed;
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+  for (const g of currentDb.guests) {
+    if (!g) continue;
+    if (g.name) {
+      const fixed = fixLeadingHomoglyph(g.name);
+      if (fixed !== g.name) {
+        g.name = fixed;
+        changed = true;
+      }
+    }
+    if (g.fullName) {
+      const fixed = fixLeadingHomoglyph(g.fullName);
+      if (fixed !== g.fullName) {
+        g.fullName = fixed;
+        changed = true;
+      }
+    }
+  }
+  for (const acc of currentDb.guestAccounts) {
+    if (!acc) continue;
+    if (acc.name) {
+      const fixed = fixLeadingHomoglyph(acc.name);
+      if (fixed !== acc.name) {
+        acc.name = fixed;
+        changed = true;
+      }
+    }
+  }
 
   // 1. Autocorreção direcionada do incidente Flat 215 (Leonardo Portugal vs Francine)
   const francineAcc = currentDb.guestAccounts.find(a =>
@@ -12453,13 +12520,81 @@ async function callGeminiGenerateContent(apiKey, contents) {
 }
 
 // ── Helpers Periciais Determinísticos de Comparação de Identidade ────────────
-export function comparePersonNames(docName, expectedName) {
+export function formatOfficialPersonName(rawName) {
+  if (!rawName || typeof rawName !== "string") return "";
+  const cleaned = rawName.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  const lowerParticles = new Set(["de", "da", "do", "dos", "das", "e", "del", "di", "du"]);
+  const upperSuffixes = new Set(["ii", "iii", "iv"]);
+  const words = cleaned.split(" ");
+  return words
+    .map((word, index) => {
+      if (!word) return "";
+      let normalizedWord = word;
+      if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)$/i.test(word) && word[0] === "l") {
+        normalizedWord = "I" + word.slice(1);
+      }
+      const lower = normalizedWord.toLowerCase();
+      if (index > 0 && lowerParticles.has(lower)) {
+        return lower;
+      }
+      if (upperSuffixes.has(lower)) {
+        return lower.toUpperCase();
+      }
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+}
+
+export function shouldReplaceWithOfficialDocName(currentName, docExtractedName) {
+  if (!docExtractedName || typeof docExtractedName !== "string") return false;
+  const formattedDoc = formatOfficialPersonName(docExtractedName);
+  const docWords = formattedDoc.split(/\s+/).filter(Boolean);
+  if (docWords.length < 2) return false;
+
+  if (!currentName || typeof currentName !== "string") return true;
+  const cleanCur = currentName.replace(/\s+/g, " ").trim();
+  if (!cleanCur || /^h[oó]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?$/i.test(cleanCur)) return true;
+
+  const stopWords = new Set(["de", "da", "do", "dos", "das", "del", "di", "du", "e"]);
+  const tokenizeRaw = (str) =>
+    str
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 0 && !stopWords.has(t));
+
+  const curTokens = tokenizeRaw(cleanCur);
+  const docTokens = tokenizeRaw(formattedDoc);
+  if (curTokens.length === 0) return true;
+  if (docTokens.length > curTokens.length) return true;
+  if (curTokens.join(" ") !== docTokens.join(" ")) return true;
+  if (cleanCur[0] && cleanCur[0] !== cleanCur[0].toUpperCase()) return true;
+  if (cleanCur === cleanCur.toUpperCase() && cleanCur !== formattedDoc) return true;
+
+  return false;
+}
+
+export function comparePersonNames(docName, expectedName, options = {}) {
   if (!expectedName || typeof expectedName !== "string") return true;
   const cleanExp = expectedName.trim();
-  if (!cleanExp || /^h[oó]spede(\s*\d+)?$/i.test(cleanExp)) return true;
+  if (
+    !cleanExp ||
+    /^h[oó]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?$/i.test(cleanExp) ||
+    /^(a\s+definir.*|guest|cliente|sem\s+nome|whatsapp|desconhecido|unknown|\.+|-+)$/i.test(cleanExp)
+  ) {
+    return true;
+  }
   if (!docName || typeof docName !== "string" || !docName.trim()) return false;
 
-  const stopWords = new Set(["de", "da", "do", "dos", "das", "e"]);
+  const stopWords = new Set([
+    "de", "da", "do", "dos", "das", "del", "di", "du", "e",
+    "jr", "junior", "filho", "filha", "neto", "neta", "sobrinho", "sobrinha",
+    "segundo", "terceiro", "ii", "iii", "iv",
+    "sr", "sra", "srta", "dr", "dra", "prof", "eng", "pe", "pr"
+  ]);
   const tokenize = (str) =>
     str
       .normalize("NFD")
@@ -12476,29 +12611,113 @@ export function comparePersonNames(docName, expectedName) {
 
   if (docTokens.join(" ") === expTokens.join(" ")) return true;
 
-  const tokensMatch = (a, b) => {
-    if (a === b) return true;
-    if (a.length === 1 && b.startsWith(a)) return true;
-    if (b.length === 1 && a.startsWith(b)) return true;
-    if (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a))) return true;
+  const isGenderInflectionPair = (a, b) => {
+    if (a === b || a.length < 3 || b.length < 3) return false;
+    const stemA = a.slice(0, -1);
+    const stemB = b.slice(0, -1);
+    const lastA = a[a.length - 1];
+    const lastB = b[b.length - 1];
+    if (stemA === stemB && ((lastA === "o" && lastB === "a") || (lastA === "a" && lastB === "o"))) {
+      return true;
+    }
+    if (a + "a" === b || b + "a" === a) return true;
+    if ((a.endsWith("os") && a.slice(0, -2) + "a" === b) || (b.endsWith("os") && b.slice(0, -2) + "a" === a)) return true;
+    if ((a.endsWith("ao") && a.slice(0, -1) + "na" === b) || (b.endsWith("ao") && b.slice(0, -1) + "na" === a)) return true;
     return false;
   };
 
-  // O primeiro nome precisa ser compatível
-  if (!tokensMatch(docTokens[0], expTokens[0])) return false;
+  const normalizeOrthographic = (t) => {
+    if (!t || t.length < 3) return t;
+    return t
+      .replace(/ph/g, "f")
+      .replace(/th/g, "t")
+      .replace(/y/g, "i")
+      .replace(/w/g, "v")
+      .replace(/k/g, "c")
+      .replace(/ch/g, "x")
+      .replace(/z/g, "s")
+      .replace(/ss/g, "s")
+      .replace(/([a-z])\1+/g, "$1");
+  };
 
-  // Se apenas o primeiro nome foi informado na reserva/formulário, basta o primeiro nome bater
-  if (expTokens.length === 1 || docTokens.length === 1) return true;
+  const editDistance = (a, b) => {
+    if (a === b) return 0;
+    const la = a.length;
+    const lb = b.length;
+    if (Math.abs(la - lb) > 2) return Math.abs(la - lb);
+    const dp = Array.from({ length: la + 1 }, () => new Array(lb + 1).fill(0));
+    for (let i = 0; i <= la; i++) dp[i][0] = i;
+    for (let j = 0; j <= lb; j++) dp[0][j] = j;
+    for (let i = 1; i <= la; i++) {
+      for (let j = 1; j <= lb; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        dp[i][j] = Math.min(
+          dp[i - 1][j] + 1,
+          dp[i][j - 1] + 1,
+          dp[i - 1][j - 1] + cost
+        );
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+          dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + cost);
+        }
+      }
+    }
+    return dp[la][lb];
+  };
 
-  // Se todos os tokens de um nome estão contidos no outro (ex: "Miller Pessanha" vs "Miller Mendonça Pessanha")
-  const expAllInDoc = expTokens.every((et) => docTokens.some((dt) => tokensMatch(et, dt)));
-  const docAllInExp = docTokens.every((dt) => expTokens.some((et) => tokensMatch(dt, et)));
-  if (expAllInDoc || docAllInExp) return true;
+  const tokensMatch = (a, b, allowTypo = false) => {
+    if (a === b) return true;
+    if (isGenderInflectionPair(a, b)) return false;
+    if (a.length === 1 && b.startsWith(a)) return true;
+    if (b.length === 1 && a.startsWith(b)) return true;
+    if (a.length >= 3 && b.length >= 3 && (a.startsWith(b) || b.startsWith(a))) return true;
+    // Homóglifos visuais em fontes sans-serif (ex: 'Iago' vs 'lago' -> I maiúsculo vs l minúsculo)
+    if (a.length >= 3 && b.length >= 3 && a.replace(/l/g, "i") === b.replace(/l/g, "i")) return true;
+    // Equivalência ortográfica brasileira (ex: Thiago/Tiago, Matheus/Mateus, Souza/Sousa, Ziotto/Zioto)
+    if (a.length >= 3 && b.length >= 3 && normalizeOrthographic(a) === normalizeOrthographic(b)) return true;
+    // Tolerância a 1 letra de diferença (OCR / digitação) quando amparado por sobrenomes/CPF
+    if (allowTypo && a.length >= 4 && b.length >= 4) {
+      if (editDistance(a, b) <= 1) return true;
+      if (editDistance(normalizeOrthographic(a), normalizeOrthographic(b)) <= 1) return true;
+    }
+    return false;
+  };
 
-  // Verifica se o último sobrenome bate
-  const lastDoc = docTokens[docTokens.length - 1];
-  const lastExp = expTokens[expTokens.length - 1];
-  if (tokensMatch(lastDoc, lastExp)) return true;
+  // 1. Se todos os tokens da reserva/formulário estão contidos no documento (mesmo se for só sobrenome, nome composto parcial, invertido ou com Jr/Filho/Dr)
+  const expAllInDocStrict = expTokens.every((et) => docTokens.some((dt) => tokensMatch(et, dt, false)));
+  const docAllInExpStrict = docTokens.every((dt) => expTokens.some((et) => tokensMatch(dt, et, false)));
+  if (expAllInDocStrict || docAllInExpStrict) return true;
+
+  // 2. Se há pelo menos 1 token exato em comum e todos os demais tokens batem com tolerância de 1 letra de OCR/digitação
+  const hasStrictOverlap = expTokens.some((et) => docTokens.some((dt) => tokensMatch(et, dt, false)));
+  if (hasStrictOverlap && (expTokens.length >= 2 || docTokens.length >= 2)) {
+    const expAllInDocFuzzy = expTokens.every((et) => docTokens.some((dt) => tokensMatch(et, dt, true)));
+    const docAllInExpFuzzy = docTokens.every((dt) => expTokens.some((et) => tokensMatch(dt, et, true)));
+    if (expAllInDocFuzzy || docAllInExpFuzzy) return true;
+  }
+
+  // 3. Primeiro nome compatível + pelo menos um sobrenome compatível
+  if (tokensMatch(docTokens[0], expTokens[0], hasStrictOverlap)) {
+    if (expTokens.length === 1 || docTokens.length === 1) {
+      return tokensMatch(docTokens[0], expTokens[0], false);
+    }
+    const surnameMatches = expTokens.slice(1).some((et) => docTokens.slice(1).some((dt) => tokensMatch(et, dt, hasStrictOverlap)));
+    if (surnameMatches) return true;
+  }
+
+  // 4. Quando o CPF de 11 dígitos bate 100% + há prenome ou sobrenome compatível (ex: mudança de nome de casada/solteira ou abreviação na reserva)
+  if (options && options.cpfMatches) {
+    if (tokensMatch(docTokens[0], expTokens[0], true)) return true;
+    if (options.cpfMatchesReservation && expTokens.some((et) => docTokens.some((dt) => tokensMatch(et, dt, true)))) {
+      return true;
+    }
+    if (
+      !isGenderInflectionPair(docTokens[0], expTokens[0]) &&
+      expTokens.slice(1).some((et) => docTokens.slice(1).some((dt) => tokensMatch(et, dt, false))) &&
+      editDistance(docTokens[0], expTokens[0]) <= 2
+    ) {
+      return true;
+    }
+  }
 
   return false;
 }
@@ -12514,9 +12733,10 @@ export function compareCpfDigits(docCpf, expectedCpf) {
 export function normalizeBirthDateToIso(bStr) {
   if (!bStr || typeof bStr !== "string") return "";
   const trimmed = bStr.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  const m = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  const isoMatch = trimmed.match(/^(\d{4})[\/.-](\d{2})[\/.-](\d{2})$/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  const brMatch = trimmed.match(/^(\d{2})[\/.-](\d{2})[\/.-](\d{4})$/);
+  if (brMatch) return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
   return "";
 }
 
@@ -12711,25 +12931,9 @@ export async function inspectDocumentWithAI({
     const cleanExtCpf = String(extCpf || "").replace(/\D/g, "");
     const cleanExtBirth = String(extBirthDate || "").trim();
 
-    const providedNameMatchDet = cleanProvidedName
-      ? comparePersonNames(cleanExtName, cleanProvidedName)
-      : Boolean(cleanExtName.length > 0);
-    const reservationNameMatchDet = cleanReservationName
-      ? comparePersonNames(cleanExtName, cleanReservationName)
-      : true;
-    const formVsResNameMatch = (cleanProvidedName && cleanReservationName)
-      ? comparePersonNames(cleanProvidedName, cleanReservationName)
-      : true;
-
-    const finalReservationNameMatches = Boolean(reservationNameMatchDet && formVsResNameMatch);
-    const finalProvidedNameMatches = Boolean(
-      providedNameMatchDet && (aiNameMatches !== false || (cleanExtName && providedNameMatchDet))
-    );
-    const finalNameMatches = Boolean(finalProvidedNameMatches && finalReservationNameMatches);
-
     const providedCpfMatchDet = cleanProvidedCpf
       ? (cleanExtCpf.length === 11 && compareCpfDigits(cleanExtCpf, cleanProvidedCpf))
-      : (cleanExtCpf.length === 11);
+      : true;
     const reservationCpfMatchDet = cleanReservationCpf
       ? compareCpfDigits(cleanExtCpf || cleanProvidedCpf, cleanReservationCpf)
       : true;
@@ -12740,6 +12944,34 @@ export async function inspectDocumentWithAI({
     const finalCpfMatches = Boolean(
       providedCpfMatchDet && finalReservationCpfMatches && (aiCpfMatches !== false || (cleanExtCpf.length === 11 && providedCpfMatchDet))
     );
+
+    const cpfConfirmed100 = Boolean(
+      cleanExtCpf.length === 11 &&
+      finalCpfMatches &&
+      (cleanProvidedCpf.length === 11 || cleanReservationCpf.length === 11)
+    );
+    const cpfMatchesReservation = Boolean(
+      cleanExtCpf.length === 11 &&
+      cleanReservationCpf.length === 11 &&
+      compareCpfDigits(cleanExtCpf, cleanReservationCpf)
+    );
+    const nameCompareOpts = { cpfMatches: cpfConfirmed100, cpfMatchesReservation };
+
+    const providedNameMatchDet = cleanProvidedName
+      ? comparePersonNames(cleanExtName, cleanProvidedName, nameCompareOpts)
+      : Boolean(cleanExtName.length > 0);
+    const reservationNameMatchDet = cleanReservationName
+      ? comparePersonNames(cleanExtName, cleanReservationName, nameCompareOpts)
+      : true;
+    const formVsResNameMatch = (cleanProvidedName && cleanReservationName)
+      ? (Boolean(providedNameMatchDet && reservationNameMatchDet) || comparePersonNames(cleanProvidedName, cleanReservationName, nameCompareOpts))
+      : true;
+
+    const finalReservationNameMatches = Boolean(reservationNameMatchDet && formVsResNameMatch);
+    const finalProvidedNameMatches = Boolean(
+      providedNameMatchDet && (aiNameMatches !== false || (cleanExtName && providedNameMatchDet))
+    );
+    const finalNameMatches = Boolean(finalProvidedNameMatches && finalReservationNameMatches);
 
     const birthDateMatchDet = (effectiveBirthDate && cleanExtBirth)
       ? compareBirthDates(cleanExtBirth, effectiveBirthDate)
@@ -12788,10 +13020,20 @@ export async function inspectDocumentWithAI({
       finalBirthDateMatches
     );
 
+    const canonicalGuestName = cleanExtName ? formatOfficialPersonName(cleanExtName) : "";
+    const nameAutoCorrected = Boolean(
+      identityMatches &&
+      canonicalGuestName &&
+      ((cleanReservationName && shouldReplaceWithOfficialDocName(cleanReservationName, cleanExtName)) ||
+        (cleanProvidedName && shouldReplaceWithOfficialDocName(cleanProvidedName, cleanExtName)))
+    );
+
     return {
       cleanExtName,
       cleanExtCpf,
       cleanExtBirth,
+      canonicalGuestName,
+      nameAutoCorrected,
       providedNameMatches: finalProvidedNameMatches,
       reservationNameMatches: finalReservationNameMatches,
       nameMatches: finalNameMatches,
@@ -12811,6 +13053,8 @@ export async function inspectDocumentWithAI({
       isLegible: false,
       legibilityReason: "Nenhum arquivo de documento oficial foi enviado.",
       extractedName: "",
+      canonicalGuestName: "",
+      nameAutoCorrected: false,
       nameMatches: false,
       providedNameMatches: false,
       reservationName: cleanReservationName,
@@ -12864,7 +13108,7 @@ export async function inspectDocumentWithAI({
     } catch {}
   }
 
-  if (fileName && fileName.toLowerCase().endsWith(".pdf")) {
+  if ((fileName && fileName.toLowerCase().endsWith(".pdf")) || rawBase64.trim().startsWith("JVBERi0")) {
     mimeType = "application/pdf";
   }
 
@@ -12876,6 +13120,8 @@ export async function inspectDocumentWithAI({
       isLegible: false,
       legibilityReason: "Arquivo corrompido, cortado ou em branco. Por favor, envie uma foto nítida ou o PDF original do seu documento oficial.",
       extractedName: "",
+      canonicalGuestName: "",
+      nameAutoCorrected: false,
       nameMatches: false,
       providedNameMatches: false,
       reservationName: cleanReservationName,
@@ -12912,6 +13158,7 @@ export async function inspectDocumentWithAI({
       const chunks = [rawLatin, rawUtf8];
 
       if (rawLatin.includes("%PDF") || mimeType.includes("pdf")) {
+        mimeType = "application/pdf";
         const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
         let match;
         let count = 0;
@@ -12945,8 +13192,14 @@ export async function inspectDocumentWithAI({
 
       const nameMatch = combinedStreamText.match(/(?:Nome(?:\s+Completo|\s+Civil)?|Titular|Portador)\s*[:=-]\s*([A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú\s.'-]{3,70})/i);
       if (nameMatch && nameMatch[1]) {
-        const candName = nameMatch[1].split(/[\r\n()/<>]/)[0].trim();
-        if (candName.length >= 4 && !/^(cpf|rg|cnh|data|naturalidade|filiacao)$/i.test(candName)) {
+        const candName = nameMatch[1]
+          .split(/[\r\n()/<>]/)[0]
+          .replace(/\s+(?:CPF|RG|CNH|DATA\s+DE\s+NASCIMENTO|NASCIMENTO|FILIA[CÇ][AÃ]O|NATURALIDADE|DOC\.?\s*IDENTIDADE)\b[\s\S]*$/i, "")
+          .trim();
+        if (
+          candName.length >= 4 &&
+          !/^(cpf|rg|cnh|data|naturalidade|filiacao|serpro|icp-brasil|gov\.?br|assinatura\s+digital|republica\s+federativa|ministerio|secretaria|detran|denatran|senatran)$/i.test(candName)
+        ) {
           streamExtractedName = candName;
         }
       }
@@ -13009,7 +13262,7 @@ Diretrizes Estritas de Análise:
 1. 'isOfficialDocument': Confirme se o arquivo é de fato um documento oficial de identificação com foto (RG, CNH, CIN, Passaporte, Carteira de Trabalho física ou digital, Carteira de Ordem OAB/CRM/etc, DNI). Caso seja uma foto genérica, selfie sem documento, comprovante de residência, foto de paisagem ou objeto, defina 'isOfficialDocument': false e 'isLegible': false.
 2. 'isLegible': Verifique se as informações textuais do documento estão legíveis. Se a imagem estiver extremamente embaçada, escura, com reflexo que impeça a leitura do nome/CPF, ou cortada faltando os dados principais, defina 'isLegible': false e explique em 'legibilityReason' de maneira clara, educada e amigável em português (ex: "A foto do documento está muito escura ou embaçada, impossibilitando a leitura do nome e CPF. Por favor, anexe uma foto mais nítida e bem iluminada ou o PDF original.").
 3. 'extractedName': Extraia EXATAMENTE o nome completo que consta impresso no documento anexado. NUNCA copie o nome informado se o documento mostrar o nome de outra pessoa.
-4. 'nameMatches': Compare o nome extraído do documento com o nome informado e com o nome da reserva. Seja tolerante a acentos ou nomes do meio abreviados/omitidos (ex: "Miller Pessanha" vs "Miller Mendonça Pessanha" = true). Porém, se o documento pertencer a outra pessoa (nome ou sobrenome principal diferente), retorne false!
+4. 'nameMatches': Compare o nome extraído do documento com o nome informado e com o nome da reserva. Seja tolerante a acentos, nomes do meio abreviados/omitidos (ex: "Miller Pessanha" vs "Miller Mendonça Pessanha" = true), apenas sobrenome na reserva, ordem invertida, sufixos como Jr/Filho/Neto/Dr, ou homóglifos de digitação/OCR como "I" maiúsculo vs "l" minúsculo (ex: "Iago" vs "lago" = true) e 1 letra de diferença quando os sobrenomes/CPF conferem. Porém, se o documento pertencer a outra pessoa diferente, retorne false!
 5. 'extractedCpf': Extraia o número de CPF que consta impresso no documento (apenas os 11 dígitos).
 6. 'cpfMatches': Compare os dígitos extraídos do documento com o CPF informado. Se os dígitos coincidirem, retorne true; se pertencer a outro CPF, retorne false.
 7. 'extractedBirthDate': Extraia a data de nascimento que consta no documento no formato DD/MM/AAAA ou AAAA-MM-DD.
@@ -13069,12 +13322,19 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
           const isLegible = Boolean(parsed.isLegible !== false);
           const legReason = parsed.legibilityReason || (parsed.isLegible === false ? "Documento ilegível. Por favor, envie uma foto mais nítida ou o PDF original." : "");
 
+          const aiCpfDigits = String(parsed.extractedCpf || "").replace(/\D/g, "");
+          const validAiCpf = aiCpfDigits.length === 11 ? aiCpfDigits : "";
+          const validStreamCpf = String(streamExtractedCpf || "").replace(/\D/g, "").length === 11
+            ? String(streamExtractedCpf || "").replace(/\D/g, "")
+            : "";
+          const resolvedExtCpf = validAiCpf || validStreamCpf || (parsed.cpfMatches === false && aiCpfDigits.length > 0 ? aiCpfDigits : cleanProvidedCpf);
+
           const verdict = buildIdentityVerdict({
             isOfficialDoc: isOfficial,
             isLegibleDoc: isLegible,
             legibilityReasonStr: legReason,
             extName: parsed.extractedName || streamExtractedName || cleanProvidedName,
-            extCpf: parsed.extractedCpf || streamExtractedCpf || cleanProvidedCpf,
+            extCpf: resolvedExtCpf,
             extBirthDate: extBirth,
             aiNameMatches: parsed.nameMatches,
             aiCpfMatches: parsed.cpfMatches,
@@ -13093,6 +13353,8 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
             isLegible,
             legibilityReason: legReason,
             extractedName: verdict.cleanExtName,
+            canonicalGuestName: verdict.canonicalGuestName,
+            nameAutoCorrected: verdict.nameAutoCorrected,
             nameMatches: verdict.nameMatches,
             providedNameMatches: verdict.providedNameMatches,
             reservationName: cleanReservationName,
@@ -13125,11 +13387,17 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
   const isPotentiallyValidDoc = (isPdf || isImage) && rawBase64.length > 200;
   const legibilityReasonFallback = isPotentiallyValidDoc ? "" : "Documento ilegível ou formato não suportado. Por favor, envie imagem ou PDF válido.";
 
+  const fallbackCandidateName = streamExtractedName || (
+    /^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)\b/.test(cleanProvidedName)
+      ? formatOfficialPersonName(cleanProvidedName)
+      : cleanProvidedName
+  );
+
   const fallbackVerdict = buildIdentityVerdict({
     isOfficialDoc: isPotentiallyValidDoc,
     isLegibleDoc: isPotentiallyValidDoc,
     legibilityReasonStr: legibilityReasonFallback,
-    extName: streamExtractedName || cleanProvidedName,
+    extName: fallbackCandidateName,
     extCpf: streamExtractedCpf || cleanProvidedCpf,
     extBirthDate: streamExtractedBirthDate || effectiveBirthDate,
     aiNameMatches: undefined,
@@ -13151,6 +13419,8 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
     isLegible: isPotentiallyValidDoc,
     legibilityReason: legibilityReasonFallback,
     extractedName: fallbackVerdict.cleanExtName,
+    canonicalGuestName: fallbackVerdict.canonicalGuestName,
+    nameAutoCorrected: fallbackVerdict.nameAutoCorrected,
     nameMatches: fallbackVerdict.nameMatches,
     providedNameMatches: fallbackVerdict.providedNameMatches,
     reservationName: cleanReservationName,
@@ -13182,6 +13452,9 @@ app.post("/api/ai/inspect-document", async (req, res) => {
       providedCpf,
       reservationName,
       reservationCpf,
+      reservationCode,
+      reservationId,
+      code,
       guestIndex,
       providedCity,
       providedAddress,
@@ -13239,6 +13512,64 @@ app.post("/api/ai/inspect-document", async (req, res) => {
       cep,
       fileUrl
     });
+
+    // Autocorreção automática do nome na reserva pelo nome oficial do documento quando validado com sucesso
+    if (result && result.identityMatches && result.canonicalGuestName && Array.isArray(db?.reservations)) {
+      const targetCode = String(reservationCode || code || "").trim();
+      const targetId = Number(reservationId) || 0;
+      const cleanReqCpf = String(reservationCpf || providedCpf || declaredCpf || result.extractedCpf || "").replace(/\D/g, "");
+      const cleanReqResName = String(reservationName || "").trim().toLowerCase();
+      const gIdx = Number(guestIndex || 1);
+
+      let targetRes = null;
+      if (targetId || targetCode) {
+        targetRes = db.reservations.find(x => (targetId && Number(x.id) === targetId) || (targetCode && x.code === targetCode));
+      } else if (gIdx === 1 && (cleanReqCpf.length === 11 || cleanReqResName.length >= 3)) {
+        targetRes = db.reservations.find(x => {
+          if (!x || x.status === "cancelada") return false;
+          const xCpf = String(x.guestDocument || "").replace(/\D/g, "");
+          if (cleanReqCpf.length === 11 && xCpf === cleanReqCpf) return true;
+          if (cleanReqResName && String(x.guestName || "").trim().toLowerCase() === cleanReqResName) return true;
+          return false;
+        });
+      }
+
+      if (targetRes) {
+        let updatedDb = false;
+        if (gIdx === 1) {
+          if (shouldReplaceWithOfficialDocName(targetRes.guestName, result.extractedName)) {
+            result.previousReservationName = targetRes.guestName;
+            targetRes.guestName = result.canonicalGuestName;
+            result.reservationName = result.canonicalGuestName;
+            result.nameAutoCorrected = true;
+            updatedDb = true;
+          }
+          if (Array.isArray(targetRes.guests) && targetRes.guests[0] && shouldReplaceWithOfficialDocName(targetRes.guests[0].name, result.extractedName)) {
+            targetRes.guests[0].name = result.canonicalGuestName;
+            updatedDb = true;
+          }
+          if (targetRes.guestId && Array.isArray(db.guests)) {
+            const linkedGuest = db.guests.find(g => Number(g.id) === Number(targetRes.guestId));
+            if (linkedGuest && shouldReplaceWithOfficialDocName(linkedGuest.fullName || linkedGuest.name, result.extractedName)) {
+              linkedGuest.name = result.canonicalGuestName;
+              linkedGuest.fullName = result.canonicalGuestName;
+              updatedDb = true;
+            }
+          }
+        } else if (gIdx > 1 && Array.isArray(targetRes.guests)) {
+          const compSlot = targetRes.guests.find(g => Number(g.index) === gIdx);
+          if (compSlot && shouldReplaceWithOfficialDocName(compSlot.name, result.extractedName)) {
+            compSlot.name = result.canonicalGuestName;
+            result.nameAutoCorrected = true;
+            updatedDb = true;
+          }
+        }
+        if (updatedDb && typeof saveDatabase === "function") {
+          saveDatabase("ai_inspect_doc_autocorrect_name");
+        }
+      }
+    }
+
     res.json(result);
   } catch (err) {
     console.error("[POST /api/ai/inspect-document]", err);
@@ -39551,6 +39882,15 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
 
   if (!db.guests) db.guests = [];
 
+  // Autocorreção de homógrafo tipográfico (ex: "lago" -> "Iago") ou nome oficial validado por documento
+  if (typeof r.guestName === "string" && /^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)\b/.test(r.guestName.trim())) {
+    const fixedResName = r.guestName.trim().replace(/^l/, "I");
+    r.guestName = fixedResName;
+    if (r.guests?.[0] && typeof r.guests[0].name === "string") {
+      r.guests[0].name = fixedResName;
+    }
+  }
+
   // Tenta vincular o hóspede caso ainda não esteja vinculado por guestId
   let guest = (db.guests || []).find(g => g.id === r.guestId);
   const cleanResDoc = (r.guestDocument || "").replace(/\D/g, "");
@@ -39568,6 +39908,20 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
     if (guest) {
       r.guestId = guest.id;
       r.guestCode = guest.guestCode;
+    }
+  }
+
+  // Se já houver inspeção de documento validada na reserva ou na ficha do hóspede, garante o nome oficial completo do documento
+  const prevDocInspect = r.aiDocInspection || r.guests?.[0]?.aiDocInspection || guest?.aiDocInspection || null;
+  if (prevDocInspect && prevDocInspect.identityMatches !== false && prevDocInspect.nameMatches !== false && prevDocInspect.reservationNameMatches !== false) {
+    const officialFromDoc = formatOfficialPersonName(prevDocInspect.canonicalGuestName || prevDocInspect.extractedName || "");
+    if (officialFromDoc && shouldReplaceWithOfficialDocName(r.guestName, officialFromDoc) && comparePersonNames(officialFromDoc, r.guestName, { cpfMatches: true })) {
+      r.guestName = officialFromDoc;
+      if (r.guests?.[0]) r.guests[0].name = officialFromDoc;
+      if (guest && shouldReplaceWithOfficialDocName(guest.fullName || guest.name, officialFromDoc)) {
+        guest.name = officialFromDoc;
+        guest.fullName = officialFromDoc;
+      }
     }
   }
 
@@ -40205,7 +40559,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
 
   if (!db.guests) db.guests = [];
 
-  const validName = (fullName || (Number(guestIndex) === 1 ? r.guestName : `Hóspede ${guestIndex}`)).trim();
+  let validName = (fullName || (Number(guestIndex) === 1 ? r.guestName : `Hóspede ${guestIndex}`)).trim();
+  if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)\b/.test(validName)) {
+    validName = validName.replace(/^l/, "I");
+  }
   const cleanDoc = (document || "").replace(/\D/g, "");
   const cleanPhone = normalizePhone(phone || "");
   const cleanEmail = (email || "").trim().toLowerCase();
@@ -40331,6 +40688,13 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       ]);
     } catch (docAiErr) {
       console.warn("[POST /api/pms/pre-checkin] Erro/timeout na inspeção IA de documento:", docAiErr.message);
+    }
+  }
+
+  if (aiDocInspection && aiDocInspection.identityMatches !== false && aiDocInspection.nameMatches !== false && aiDocInspection.reservationNameMatches !== false) {
+    const officialDocName = formatOfficialPersonName(aiDocInspection.canonicalGuestName || aiDocInspection.extractedName || "");
+    if (officialDocName && shouldReplaceWithOfficialDocName(validName, officialDocName)) {
+      validName = officialDocName;
     }
   }
 
