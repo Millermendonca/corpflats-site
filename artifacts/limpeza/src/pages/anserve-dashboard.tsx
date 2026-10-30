@@ -1611,17 +1611,17 @@ export default function AnserveDashboardPage() {
                   <span className="text-muted-foreground">
                     Status de hoje ({checkoutSummary.todayStr}):{" "}
                     <strong className="text-emerald-600">
-                      {checkoutSummary.doneCount} check-outs já realizados
+                      {checkoutSummary.doneCount ?? checkoutSummary.checkedOutCount ?? 0} check-outs já realizados
                     </strong>{" "}
                     •{" "}
                     <strong className="text-amber-600">
-                      {checkoutSummary.pendingCount} previstos aguardando saída
+                      {checkoutSummary.pendingCount ?? 0} previstos aguardando saída
                     </strong>
                   </span>
-                  {checkoutSummary.doneCheckouts?.length > 0 && (
+                  {(checkoutSummary.doneCheckouts || checkoutSummary.checkedOutTodayList || []).length > 0 && (
                     <span className="text-[11px] font-mono text-foreground">
                       Liberados:{" "}
-                      {checkoutSummary.doneCheckouts
+                      {(checkoutSummary.doneCheckouts || checkoutSummary.checkedOutTodayList || [])
                         .map((c: any) => `Flat ${c.flatNumber} (${c.checkoutTime})`)
                         .join(", ")}
                     </span>

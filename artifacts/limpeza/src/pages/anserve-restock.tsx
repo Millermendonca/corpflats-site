@@ -845,70 +845,85 @@ export default function AnserveRestockPage() {
         </div>
 
         {/* Painel Ao Vivo: Resumo de Check-outs de Hoje (Mesmo Resumo Enviado ao WhatsApp de Trabalho) */}
-        {checkoutSummary && (
-          <Card className="rounded-3xl border-border bg-card p-4 sm:p-5 space-y-3 shadow-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-sky-500" />
-                <h2 className="text-xs sm:text-sm font-black text-foreground">
-                  Resumo de Check-outs de Hoje ({formatYmdToBr(checkoutSummary.todayStr)})
-                </h2>
-              </div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-bold">
-                  ✅ Já saíram: {checkoutSummary.doneCount}
-                </Badge>
-                <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px] font-bold">
-                  ⏳ Faltam sair hoje: {checkoutSummary.pendingCount}
-                </Badge>
-              </div>
-            </div>
+        {checkoutSummary && (() => {
+          const doneCheckoutsList = Array.isArray(checkoutSummary.doneCheckouts)
+            ? checkoutSummary.doneCheckouts
+            : Array.isArray((checkoutSummary as any).checkedOutTodayList)
+            ? (checkoutSummary as any).checkedOutTodayList
+            : [];
+          const pendingCheckoutsList = Array.isArray(checkoutSummary.pendingCheckouts)
+            ? checkoutSummary.pendingCheckouts
+            : Array.isArray((checkoutSummary as any).pendingCheckoutsTodayList)
+            ? (checkoutSummary as any).pendingCheckoutsTodayList
+            : [];
+          const doneCount = checkoutSummary.doneCount ?? (checkoutSummary as any).checkedOutCount ?? doneCheckoutsList.length;
+          const pendingCount = checkoutSummary.pendingCount ?? pendingCheckoutsList.length;
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              <div className="p-3 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-1.5">
-                <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-300 block">
-                  ✅ Flats que JÁ fizeram check-out hoje ({checkoutSummary.doneCount}):
-                </span>
-                {checkoutSummary.doneCheckouts.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground">Nenhum check-out concluído até o momento.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {checkoutSummary.doneCheckouts.map((c) => (
-                      <span
-                        key={`${c.flatNumber}-${c.reservationCode}`}
-                        className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-bold text-emerald-800 dark:text-emerald-200"
-                      >
-                        Flat {c.flatNumber} • às {c.checkoutTime} ({c.guestName.split(" ")[0]})
-                      </span>
-                    ))}
-                  </div>
-                )}
+          return (
+            <Card className="rounded-3xl border-border bg-card p-4 sm:p-5 space-y-3 shadow-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-sky-500" />
+                  <h2 className="text-xs sm:text-sm font-black text-foreground">
+                    Resumo de Check-outs de Hoje ({formatYmdToBr(checkoutSummary.todayStr)})
+                  </h2>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-bold">
+                    ✅ Já saíram: {doneCount}
+                  </Badge>
+                  <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px] font-bold">
+                    ⏳ Faltam sair hoje: {pendingCount}
+                  </Badge>
+                </div>
               </div>
 
-              <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-1.5">
-                <span className="text-[11px] font-black text-amber-700 dark:text-amber-300 block">
-                  ⏳ Flats que FALTAM fazer check-out hoje ({checkoutSummary.pendingCount}):
-                </span>
-                {checkoutSummary.pendingCheckouts.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground">
-                    Todos os check-outs previstos para hoje já foram concluídos!
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {checkoutSummary.pendingCheckouts.map((c) => (
-                      <span
-                        key={`${c.flatNumber}-${c.reservationCode}`}
-                        className="px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] font-bold text-amber-800 dark:text-amber-200"
-                      >
-                        Flat {c.flatNumber} ({c.guestName.split(" ")[0]})
-                      </span>
-                    ))}
-                  </div>
-                )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-1.5">
+                  <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-300 block">
+                    ✅ Flats que JÁ fizeram check-out hoje ({doneCount}):
+                  </span>
+                  {doneCheckoutsList.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground">Nenhum check-out concluído até o momento.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {doneCheckoutsList.map((c: any) => (
+                        <span
+                          key={`${c.flatNumber}-${c.reservationCode}`}
+                          className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-bold text-emerald-800 dark:text-emerald-200"
+                        >
+                          Flat {c.flatNumber} • às {c.checkoutTime} ({(c.guestName || "Hóspede").split(" ")[0]})
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-1.5">
+                  <span className="text-[11px] font-black text-amber-700 dark:text-amber-300 block">
+                    ⏳ Flats que FALTAM fazer check-out hoje ({pendingCount}):
+                  </span>
+                  {pendingCheckoutsList.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Todos os check-outs previstos para hoje já foram concluídos!
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {pendingCheckoutsList.map((c: any) => (
+                        <span
+                          key={`${c.flatNumber}-${c.reservationCode}`}
+                          className="px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] font-bold text-amber-800 dark:text-amber-200"
+                        >
+                          Flat {c.flatNumber} ({(c.guestName || "Hóspede").split(" ")[0]})
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          </Card>
-        )}
+            </Card>
+          );
+        })()}
 
         {/* Filter Pills & Search */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1079,10 +1094,10 @@ export default function AnserveRestockPage() {
                             >
                               <div className="flex items-center justify-between text-[10px] font-black text-sky-600 dark:text-sky-400">
                                 <span>📅 Dia {g.dateBr}</span>
-                                <span>R$ {g.totalDayAmount.toFixed(2)}</span>
+                                <span>R$ {Number(g.totalDayAmount || 0).toFixed(2)}</span>
                               </div>
                               <div className="flex flex-wrap gap-1">
-                                {g.items.map((it, idx) => (
+                                {(Array.isArray(g.items) ? g.items : []).map((it, idx) => (
                                   <span
                                     key={`${it.orderId}-${it.productId}-${idx}`}
                                     className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${

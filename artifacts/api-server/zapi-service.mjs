@@ -12491,10 +12491,14 @@ export function buildTodayCheckoutsSummaryForRestockers(db, todayOverride = null
   return {
     todayStr,
     todayBr: formatDateBrSimple(todayStr),
+    doneCount: checkedOutTodayList.length,
     checkedOutCount: checkedOutTodayList.length,
+    doneCheckouts: checkedOutTodayList,
     checkedOutTodayList,
     pendingCount: pendingCheckoutsTodayList.length,
-    pendingCheckoutsTodayList
+    pendingCheckouts: pendingCheckoutsTodayList,
+    pendingCheckoutsTodayList,
+    totalTodayCheckouts: checkedOutTodayList.length + pendingCheckoutsTodayList.length
   };
 }
 
