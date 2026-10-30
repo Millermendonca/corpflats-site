@@ -9927,8 +9927,16 @@ export function areGuestNamesCompatible(nameA, nameB, options = {}) {
   const allAInB = tokensA.every(ta => tokensB.some(tb => compatTokensMatch(ta, tb)));
   const allBInA = tokensB.every(tb => tokensA.some(ta => compatTokensMatch(tb, ta)));
   if (allAInB || allBInA) return true;
-  if (!compatTokensMatch(firstA, firstB)) return false;
-  return tokensB.slice(1).some(tb => tokensA.slice(1).some(ta => compatTokensMatch(ta, tb)));
+  if (compatTokensMatch(firstA, firstB)) {
+    return tokensB.slice(1).some(tb => tokensA.slice(1).some(ta => compatTokensMatch(ta, tb)));
+  }
+  if (tokensA.length >= 3 && compatTokensMatch(tokensA[1], firstB)) {
+    return tokensB.slice(1).some(tb => tokensA.slice(2).some(ta => compatTokensMatch(ta, tb)));
+  }
+  if (tokensB.length >= 3 && compatTokensMatch(tokensB[1], firstA)) {
+    return tokensA.slice(1).some(ta => tokensB.slice(2).some(tb => compatTokensMatch(ta, tb)));
+  }
+  return false;
 }
 
 function normalizeDoc(doc) {
@@ -10272,7 +10280,7 @@ export function healContaminatedGuestAndReservationLinks(database) {
   const fixLeadingHomoglyph = (str) => {
     if (!str || typeof str !== "string") return str;
     const trimmed = str.trim();
-    if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)\b/.test(trimmed)) {
+    if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|sadora|saac|smael|srael|ris|vone|caro|rene)\b/.test(trimmed)) {
       return "I" + trimmed.slice(1);
     }
     return str;
@@ -12531,7 +12539,7 @@ export function formatOfficialPersonName(rawName) {
     .map((word, index) => {
       if (!word) return "";
       let normalizedWord = word;
-      if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)$/i.test(word) && word[0] === "l") {
+      if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|sadora|saac|smael|srael|ris|vone|caro|rene)$/i.test(word) && word[0] === "l") {
         normalizedWord = "I" + word.slice(1);
       }
       const lower = normalizedWord.toLowerCase();
@@ -12541,7 +12549,7 @@ export function formatOfficialPersonName(rawName) {
       if (upperSuffixes.has(lower)) {
         return lower.toUpperCase();
       }
-      return lower.charAt(0).toUpperCase() + lower.slice(1);
+      return lower.replace(/(?:^|[-'])\p{L}/gu, (m) => m.toUpperCase());
     })
     .join(" ");
 }
@@ -12556,7 +12564,10 @@ export function shouldReplaceWithOfficialDocName(currentName, docExtractedName) 
   const cleanCur = currentName.replace(/\s+/g, " ").trim();
   if (!cleanCur || /^h[oó]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?$/i.test(cleanCur)) return true;
 
-  const stopWords = new Set(["de", "da", "do", "dos", "das", "del", "di", "du", "e"]);
+  const stopWords = new Set([
+    "de", "da", "do", "dos", "das", "del", "di", "du", "e",
+    "sr", "sra", "srta", "dr", "dra", "prof", "eng", "pe", "pr"
+  ]);
   const tokenizeRaw = (str) =>
     str
       .normalize("NFD")
@@ -12570,6 +12581,9 @@ export function shouldReplaceWithOfficialDocName(currentName, docExtractedName) 
   const docTokens = tokenizeRaw(formattedDoc);
   if (curTokens.length === 0) return true;
   if (docTokens.length > curTokens.length) return true;
+  if (docTokens.length < curTokens.length && docTokens.every((dt) => curTokens.includes(dt))) {
+    return false;
+  }
   if (curTokens.join(" ") !== docTokens.join(" ")) return true;
   if (cleanCur[0] && cleanCur[0] !== cleanCur[0].toUpperCase()) return true;
   if (cleanCur === cleanCur.toUpperCase() && cleanCur !== formattedDoc) return true;
@@ -12695,7 +12709,7 @@ export function comparePersonNames(docName, expectedName, options = {}) {
     if (expAllInDocFuzzy || docAllInExpFuzzy) return true;
   }
 
-  // 3. Primeiro nome compatível + pelo menos um sobrenome compatível
+  // 3. Primeiro nome (ou segundo prenome de nome composto) compatível + pelo menos um sobrenome compatível
   if (tokensMatch(docTokens[0], expTokens[0], hasStrictOverlap)) {
     if (expTokens.length === 1 || docTokens.length === 1) {
       return tokensMatch(docTokens[0], expTokens[0], false);
@@ -12703,15 +12717,32 @@ export function comparePersonNames(docName, expectedName, options = {}) {
     const surnameMatches = expTokens.slice(1).some((et) => docTokens.slice(1).some((dt) => tokensMatch(et, dt, hasStrictOverlap)));
     if (surnameMatches) return true;
   }
+  if (docTokens.length >= 3 && expTokens.length >= 2 && tokensMatch(docTokens[1], expTokens[0], hasStrictOverlap)) {
+    const surnameMatches = expTokens.slice(1).some((et) => docTokens.slice(2).some((dt) => tokensMatch(et, dt, hasStrictOverlap)));
+    if (surnameMatches) return true;
+  }
+  if (expTokens.length >= 3 && docTokens.length >= 2 && tokensMatch(expTokens[1], docTokens[0], hasStrictOverlap)) {
+    const surnameMatches = docTokens.slice(1).some((dt) => expTokens.slice(2).some((et) => tokensMatch(dt, et, hasStrictOverlap)));
+    if (surnameMatches) return true;
+  }
 
-  // 4. Quando o CPF de 11 dígitos bate 100% + há prenome ou sobrenome compatível (ex: mudança de nome de casada/solteira ou abreviação na reserva)
+  // 4. Quando o CPF de 11 dígitos bate 100% + há prenome compatível (ou único token de sobrenome com tolerância a 1 letra)
   if (options && options.cpfMatches) {
+    if (isGenderInflectionPair(docTokens[0], expTokens[0])) return false;
     if (tokensMatch(docTokens[0], expTokens[0], true)) return true;
-    if (options.cpfMatchesReservation && expTokens.some((et) => docTokens.some((dt) => tokensMatch(et, dt, true)))) {
+    if (
+      (docTokens.length >= 3 && tokensMatch(docTokens[1], expTokens[0], true)) ||
+      (expTokens.length >= 3 && tokensMatch(expTokens[1], docTokens[0], true))
+    ) {
       return true;
     }
     if (
-      !isGenderInflectionPair(docTokens[0], expTokens[0]) &&
+      (expTokens.length === 1 || docTokens.length === 1) &&
+      expTokens.some((et) => docTokens.some((dt) => tokensMatch(et, dt, true)))
+    ) {
+      return true;
+    }
+    if (
       expTokens.slice(1).some((et) => docTokens.slice(1).some((dt) => tokensMatch(et, dt, false))) &&
       editDistance(docTokens[0], expTokens[0]) <= 2
     ) {
@@ -13190,17 +13221,20 @@ export async function inspectDocumentWithAI({
         textStreamMentionsCampos = true;
       }
 
-      const nameMatch = combinedStreamText.match(/(?:Nome(?:\s+Completo|\s+Civil)?|Titular|Portador)\s*[:=-]\s*([A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú\s.'-]{3,70})/i);
-      if (nameMatch && nameMatch[1]) {
+      const nameRegex = /(?:Nome(?:\s+Completo|\s+Civil)?|Titular|Portador)\s*[:=-]\s*([A-ZÀ-Úa-zà-ú][A-ZÀ-Úa-zà-ú\s.'-]{3,80})/gi;
+      for (const nameMatch of combinedStreamText.matchAll(nameRegex)) {
+        if (!nameMatch || !nameMatch[1]) continue;
         const candName = nameMatch[1]
           .split(/[\r\n()/<>]/)[0]
-          .replace(/\s+(?:CPF|RG|CNH|DATA\s+DE\s+NASCIMENTO|NASCIMENTO|FILIA[CÇ][AÃ]O|NATURALIDADE|DOC\.?\s*IDENTIDADE)\b[\s\S]*$/i, "")
+          .replace(/\s+(?:CPF|RG|CNH|CIN|DNI|DATA(?:\s+DE)?\s+NASCIMENTO|NASCIMENTO|NASC\.?|FILIA[CÇ][AÃ]O|NATURALIDADE|NACIONALIDADE|DOC\.?\s*IDENTIDADE|IDENTIDADE|ASSINATURA(?:\s+DO\s+PORTADOR|\s+DO\s+TITULAR|\s+DIGITAL)?|SEXO|CATEGORIA|VALIDADE|EMISS[AÃ]O|REGISTRO|HABILITA[CÇ][AÃ]O|PERMISS[AÃ]O|LOCAL|ORG[AÃ]O(?:\s+EMISSOR|\s+EXPEDIDOR)?|PAI|M[AÃ]E)\b[\s\S]*$/i, "")
           .trim();
         if (
           candName.length >= 4 &&
-          !/^(cpf|rg|cnh|data|naturalidade|filiacao|serpro|icp-brasil|gov\.?br|assinatura\s+digital|republica\s+federativa|ministerio|secretaria|detran|denatran|senatran)$/i.test(candName)
+          candName.split(/\s+/).filter(Boolean).length >= 2 &&
+          !/\b(cpf|rg|cnh|data|naturalidade|nacionalidade|filiacao|serpro|serproacf|icp-brasil|icp|gov\.?br|assinatura|certificad[oa]|autoridade|republica|federativa|ministerio|secretaria|detran|denatran|senatran|instituto|departamento|policia|cartorio|servico\s+federal|receita\s+federal)\b/i.test(candName)
         ) {
           streamExtractedName = candName;
+          break;
         }
       }
 
@@ -13388,7 +13422,7 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
   const legibilityReasonFallback = isPotentiallyValidDoc ? "" : "Documento ilegível ou formato não suportado. Por favor, envie imagem ou PDF válido.";
 
   const fallbackCandidateName = streamExtractedName || (
-    /^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)\b/.test(cleanProvidedName)
+    /^l(ago|gor|uri|van|talo|lan|sabel|sabela|sadora|saac|smael|srael|ris|vone|caro|rene)\b/.test(cleanProvidedName)
       ? formatOfficialPersonName(cleanProvidedName)
       : cleanProvidedName
   );
@@ -39883,7 +39917,7 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
   if (!db.guests) db.guests = [];
 
   // Autocorreção de homógrafo tipográfico (ex: "lago" -> "Iago") ou nome oficial validado por documento
-  if (typeof r.guestName === "string" && /^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)\b/.test(r.guestName.trim())) {
+  if (typeof r.guestName === "string" && /^l(ago|gor|uri|van|talo|lan|sabel|sabela|sadora|saac|smael|srael|ris|vone|caro|rene)\b/.test(r.guestName.trim())) {
     const fixedResName = r.guestName.trim().replace(/^l/, "I");
     r.guestName = fixedResName;
     if (r.guests?.[0] && typeof r.guests[0].name === "string") {
@@ -39908,6 +39942,15 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
     if (guest) {
       r.guestId = guest.id;
       r.guestCode = guest.guestCode;
+    }
+  }
+
+  if (guest) {
+    if (typeof guest.name === "string" && /^l(ago|gor|uri|van|talo|lan|sabel|sabela|sadora|saac|smael|srael|ris|vone|caro|rene)\b/.test(guest.name.trim())) {
+      guest.name = guest.name.trim().replace(/^l/, "I");
+    }
+    if (typeof guest.fullName === "string" && /^l(ago|gor|uri|van|talo|lan|sabel|sabela|sadora|saac|smael|srael|ris|vone|caro|rene)\b/.test(guest.fullName.trim())) {
+      guest.fullName = guest.fullName.trim().replace(/^l/, "I");
     }
   }
 
@@ -40560,7 +40603,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   if (!db.guests) db.guests = [];
 
   let validName = (fullName || (Number(guestIndex) === 1 ? r.guestName : `Hóspede ${guestIndex}`)).trim();
-  if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|ris|ara|vone)\b/.test(validName)) {
+  if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|sadora|saac|smael|srael|ris|vone|caro|rene)\b/.test(validName)) {
     validName = validName.replace(/^l/, "I");
   }
   const cleanDoc = (document || "").replace(/\D/g, "");

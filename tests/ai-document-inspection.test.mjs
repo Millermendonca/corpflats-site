@@ -451,6 +451,27 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.strictEqual(res715.cpfMatches, true);
     assert.strictEqual(res715.canonicalGuestName, 'Iago Fernandes Zioto de Freitas', 'Deve retornar nome oficial formatado do documento');
     assert.strictEqual(res715.nameAutoCorrected, true, 'Deve sinalizar que o nome foi autocorrigido pelo documento oficial');
+
+    // Simula PDF multi-stream com cabeçalho ICP-Brasil/SERPROACF no 1º stream e rótulos NACIONALIDADE / ASSINATURA no 2º stream
+    const streamHeader = zlib.deflateSync(Buffer.from('BT (Titular: AUTORIDADE CERTIFICADORA SERPROACF) Tj (Nome: ICP-BRASIL) Tj ET', 'latin1'));
+    const streamBody = zlib.deflateSync(Buffer.from('BT (NOME: IAGO FERNANDES ZIOTO DE FREITAS NACIONALIDADE BRASILEIRA ASSINATURA DO PORTADOR) Tj (CPF: 162.555.437-06) Tj ET', 'latin1'));
+    const multiStreamPdf = Buffer.concat([
+      Buffer.from('%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\r\n', 'latin1'),
+      streamHeader,
+      Buffer.from('\r\nendstream\nendobj\n2 0 obj\n<< /Filter /FlateDecode >>\nstream\r\n', 'latin1'),
+      streamBody,
+      Buffer.from('\r\nendstream\nendobj\n%%EOF', 'latin1')
+    ]);
+    const resMultiStream = await inspectDocumentWithAI({
+      fileBase64: multiStreamPdf.toString('base64'),
+      fileName: 'cnh_digital.pdf',
+      providedName: 'Zioto',
+      providedCpf: '16255543706',
+      reservationName: 'Zioto',
+      reservationCpf: '16255543706'
+    });
+    assert.strictEqual(resMultiStream.identityMatches, true, 'Multi-stream PDF com header ICP-Brasil deve aprovar titular');
+    assert.strictEqual(resMultiStream.canonicalGuestName, 'Iago Fernandes Zioto de Freitas', 'Deve ignorar SERPROACF/ICP-BRASIL e limpar NACIONALIDADE/ASSINATURA');
   });
 
   it('20. Aceita reserva com apenas sobrenome, ordem invertida, nome composto parcial, sufixos/títulos e CPF 100% idêntico', () => {
@@ -459,28 +480,35 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.strictEqual(comparePersonNames('IAGO FERNANDES ZIOTO DE FREITAS', 'Freitas'), true);
     // Ordem invertida ("Sobrenome Nome")
     assert.strictEqual(comparePersonNames('FREDERICO COSTA', 'Costa Frederico'), true);
-    // Nome composto parcial (nome do meio + sobrenome)
+    // Nome composto parcial (nome do meio + sobrenome e adição de sobrenome de casada)
     assert.strictEqual(comparePersonNames('ANA CAROLINA TRAVASSOS', 'Carolina Travassos'), true);
+    assert.strictEqual(comparePersonNames('ANA CAROLINA FONSECA', 'Carolina Fonseca Silva'), true);
+    assert.strictEqual(comparePersonNames('ANA CAROLINA FONSECA', 'Carolina Silva', { cpfMatches: true }), true);
     // Sufixos agnáticos e títulos honoríficos (Jr, Filho, Neto, Dr)
     assert.strictEqual(comparePersonNames('ROBERTO ALMEIDA SANTOS JUNIOR', 'Dr. Roberto Santos'), true);
     assert.strictEqual(comparePersonNames('CARLOS EDUARDO SILVA', 'Carlos Silva Jr'), true);
     assert.strictEqual(comparePersonNames('ANTONIO PEREIRA NETO', 'Antonio Pereira'), true);
-    // CPF 100% idêntico + prenome ou sobrenome compatível
+    // CPF 100% idêntico + prenome ou único sobrenome compatível
     assert.strictEqual(comparePersonNames('GUILHERME AUGUSTO NOGUEIRA', 'Guilherme', { cpfMatches: true }), true);
+    assert.strictEqual(comparePersonNames('IAGO FERNANDES ZIOTO DE FREITAS', 'Ziotu', { cpfMatches: true }), true);
 
-    // Verifica que shouldReplaceWithOfficialDocName recomenda expandir/corrigir para o nome oficial completo do documento
+    // Verifica que shouldReplaceWithOfficialDocName recomenda expandir/corrigir para o nome oficial completo do documento sem truncar nomes já completos
     assert.strictEqual(shouldReplaceWithOfficialDocName('Brito', 'RODRIGO DE ALMEIDA BRITO'), true);
+    assert.strictEqual(shouldReplaceWithOfficialDocName('Dr. Roberto Santos', 'ROBERTO ALMEIDA SANTOS JUNIOR'), true);
     assert.strictEqual(shouldReplaceWithOfficialDocName('lago Fernandes Zioto De Freitas', 'IAGO FERNANDES ZIOTO DE FREITAS'), true);
+    assert.strictEqual(shouldReplaceWithOfficialDocName('Miller Mendonça Pessanha', 'MILLER PESSANHA'), false, 'Não deve truncar nome mais completo da reserva');
     assert.strictEqual(formatOfficialPersonName('IAGO FERNANDES ZIOTO DE FREITAS'), 'Iago Fernandes Zioto de Freitas');
+    assert.strictEqual(formatOfficialPersonName('lara mendes'), 'Lara Mendes', 'Não deve corromper o nome próprio Lara para Iara');
   });
 
-  it('21. Rejeita nomes com flexão de gênero distinta (irmãos/cônjuges com mesmo sobrenome)', () => {
+  it('21. Rejeita nomes com flexão de gênero distinta ou outro prenome (irmãos/cônjuges com mesmo sobrenome)', () => {
     assert.strictEqual(comparePersonNames('PAULO DA SILVA', 'Paula da Silva'), false);
     assert.strictEqual(comparePersonNames('GABRIEL OLIVEIRA', 'Gabriela Oliveira'), false);
     assert.strictEqual(comparePersonNames('FERNANDO COSTA', 'Fernanda Costa'), false);
     assert.strictEqual(comparePersonNames('CARLOS SOUZA', 'Carla Souza'), false);
-    // Mesmo se por erro digitassem o mesmo CPF, Paulo vs Paula não deve passar
-    assert.strictEqual(comparePersonNames('PAULO DA SILVA', 'Paula da Silva', { cpfMatches: true }), false);
+    // Mesmo se por erro digitassem o mesmo CPF na reserva e no formulário, Paulo vs Paula ou João vs Maria não devem passar
+    assert.strictEqual(comparePersonNames('PAULO DA SILVA', 'Paula da Silva', { cpfMatches: true, cpfMatchesReservation: true }), false);
+    assert.strictEqual(comparePersonNames('JOAO DA SILVA', 'Maria da Silva', { cpfMatches: true, cpfMatchesReservation: true }), false);
   });
 
   it('22. syncBidirectionalGuestProfile preserva vínculo da reserva ao corrigir homógrafo I/l ou expandir sobrenome para nome completo', () => {

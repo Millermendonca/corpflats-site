@@ -182,17 +182,36 @@ export function areGuestNamesCompatibleUI(nameA?: string | null, nameB?: string 
   const b = norm(nameB);
   if (!a || !b) return true;
   if (a === b) return true;
-  const stopWords = new Set(["de", "da", "do", "das", "dos", "e"]);
+  const stopWords = new Set(["de", "da", "do", "das", "dos", "del", "di", "du", "e", "jr", "junior", "filho", "filha", "neto", "neta", "sobrinho", "sobrinha", "segundo", "terceiro", "ii", "iii", "iv", "sr", "sra", "srta", "dr", "dra", "prof", "eng"]);
   const tokensA = a.split(" ").filter(t => t.length > 1 && !stopWords.has(t));
   const tokensB = b.split(" ").filter(t => t.length > 1 && !stopWords.has(t));
   if (tokensA.length === 0 || tokensB.length === 0) return true;
+  const compatTokensMatch = (ta: string, tb: string) => {
+    if (ta === tb) return true;
+    if (ta.length >= 3 && tb.length >= 3 && ta.replace(/l/g, "i") === tb.replace(/l/g, "i")) return true;
+    return false;
+  };
   const firstA = tokensA[0];
   const firstB = tokensB[0];
-  if (firstA !== firstB) return false;
-  if (tokensA.length === 1 || tokensB.length === 1) return true;
-  const surnamesA = new Set(tokensA.slice(1));
-  const surnamesB = tokensB.slice(1);
-  return surnamesB.some(t => surnamesA.has(t));
+  if (tokensA.length === 1 && tokensB.length === 1) return compatTokensMatch(firstA, firstB);
+  if (tokensA.length === 1 || tokensB.length === 1) {
+    return tokensA.length === 1
+      ? tokensB.some(t => compatTokensMatch(firstA, t))
+      : tokensA.some(t => compatTokensMatch(firstB, t));
+  }
+  const allAInB = tokensA.every(ta => tokensB.some(tb => compatTokensMatch(ta, tb)));
+  const allBInA = tokensB.every(tb => tokensA.some(ta => compatTokensMatch(tb, ta)));
+  if (allAInB || allBInA) return true;
+  if (compatTokensMatch(firstA, firstB)) {
+    return tokensB.slice(1).some(tb => tokensA.slice(1).some(ta => compatTokensMatch(ta, tb)));
+  }
+  if (tokensA.length >= 3 && compatTokensMatch(tokensA[1], firstB)) {
+    return tokensB.slice(1).some(tb => tokensA.slice(2).some(ta => compatTokensMatch(ta, tb)));
+  }
+  if (tokensB.length >= 3 && compatTokensMatch(tokensB[1], firstA)) {
+    return tokensA.slice(1).some(ta => tokensB.slice(2).some(tb => compatTokensMatch(ta, tb)));
+  }
+  return false;
 }
 
 // Helper exportado para validação e parsing seguro de datas com limitação de ano (2000-2100)
