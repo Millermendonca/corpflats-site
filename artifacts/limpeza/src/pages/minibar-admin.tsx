@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Shell } from "@/components/layout";
+import { MinibarEcosystemNav } from "@/components/minibar-ecosystem-nav";
 import { useGetMe } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -116,8 +117,12 @@ export default function MinibarAdminPage() {
   const { toast } = useToast();
 
   const [activeTab, setActiveTab] = useState<
-    "insights" | "catalogo" | "gabarito" | "equipe" | "qrcodes" | "extrato"
+    "insights" | "catalogo" | "equipe" | "extrato"
   >("insights");
+  const [insightsSubView, setInsightsSubView] = useState<
+    "visao_geral" | "produtos_flats" | "perfil_hospedes"
+  >("visao_geral");
+  const [catalogSubView, setCatalogSubView] = useState<"produtos" | "gabarito">("produtos");
 
   // Catalog State
   const [products, setProducts] = useState<MinibarProduct[]>([]);
@@ -174,7 +179,7 @@ export default function MinibarAdminPage() {
   const [sName, setSName] = useState("");
   const [sUsername, setSUsername] = useState("");
   const [sPassword, setSPassword] = useState("");
-  const [sRole, setSRole] = useState<"anserve_repositora" | "anserve_gestor">("anserve_repositora");
+  const [sRole, setSRole] = useState<"anserve_repositora" | "anserve_gestor" | "anserve_faturamento">("anserve_repositora");
   const [sWhatsapp, setSWhatsapp] = useState("");
   const [sPixKey, setSPixKey] = useState("");
   const [sPin, setSPin] = useState("");
@@ -619,8 +624,10 @@ export default function MinibarAdminPage() {
     }
   };
 
-  // Staff CRUD Handlers (Admin manages both Gestores and Repositoras)
-  const handleOpenCreateStaff = (defaultRole: "anserve_repositora" | "anserve_gestor" = "anserve_repositora") => {
+  // Staff CRUD Handlers (Admin manages Gestores, Repositoras and Emissão NF)
+  const handleOpenCreateStaff = (
+    defaultRole: "anserve_repositora" | "anserve_gestor" | "anserve_faturamento" = "anserve_repositora"
+  ) => {
     setEditingStaff(null);
     setSName("");
     setSUsername("");
@@ -638,7 +645,13 @@ export default function MinibarAdminPage() {
     setSName(member.name || member.username);
     setSUsername(member.username);
     setSPassword("");
-    setSRole(member.role === "anserve_gestor" ? "anserve_gestor" : "anserve_repositora");
+    setSRole(
+      member.role === "anserve_gestor"
+        ? "anserve_gestor"
+        : member.role === "anserve_faturamento"
+        ? "anserve_faturamento"
+        : "anserve_repositora"
+    );
     setSWhatsapp(member.whatsapp || member.phone || "");
     setSPixKey(member.pixKey || "");
     setSPin(member.pin || "");
@@ -930,24 +943,26 @@ export default function MinibarAdminPage() {
         }
       `}</style>
 
-      <div className="w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 space-y-4 sm:space-y-6 pb-28 min-w-0 overflow-x-hidden print:hidden">
+      <div className="w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 space-y-4 sm:space-y-5 pb-28 min-w-0 overflow-x-hidden print:hidden">
+        <MinibarEcosystemNav currentScreen="admin" />
+
         {/* Header */}
         <div className="w-full min-w-0 bg-card border border-border p-4 sm:p-6 rounded-3xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start sm:items-center gap-3 min-w-0">
             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0">
-              <Package className="w-5 h-5 sm:w-6 sm:h-6" />
+              <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-base sm:text-xl md:text-2xl font-black text-foreground leading-tight break-words">
-                  Central Estratégica de Frigobar (CorpFlats)
+                  Central Estratégica & Cardápio (CorpFlats)
                 </h1>
                 <Badge className="bg-primary/15 text-primary border-primary/30 text-[10px] font-bold">
                   Diretoria & Inteligência 360°
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                Insights exclusivos de consumo, gestão completa da Anserve (gestores e repositoras), catálogo, gabarito, QR Codes e repasse.
+                Insights exclusivos da diretoria, cardápio e estoque padrão dos flats, controle total da equipe Anserve e repasse financeiro.
               </p>
             </div>
           </div>
@@ -983,7 +998,7 @@ export default function MinibarAdminPage() {
           </div>
         </div>
 
-        {/* Monitoramento Automático de Entrega de Notas Fiscais (WhatsApp + E-mail) */}
+        {/* Alerta de Falha de Entrega de NF (Aparece apenas quando há falha pendente) */}
         {deliveryMonitor &&
           ((deliveryMonitor.failedInvoices?.length || 0) > 0 ||
             (deliveryMonitor.retryingInvoices?.length || 0) > 0) && (
@@ -1064,98 +1079,125 @@ export default function MinibarAdminPage() {
             </Card>
           )}
 
-        {/* Tabs */}
+        {/* 4 Abas Principais Bem Divididas */}
         <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="w-full min-w-0 space-y-4">
-          <TabsList className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border grid grid-cols-2 sm:flex sm:flex-wrap h-auto gap-1.5">
-            <TabsTrigger value="insights" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              <span className="truncate">Insights 360°</span>
-              <Badge className="hidden sm:inline-flex bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] py-0 px-1.5 shrink-0">
-                Só Admin
-              </Badge>
+          <TabsList className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border grid grid-cols-2 lg:grid-cols-4 h-auto gap-1.5">
+            <TabsTrigger value="insights" className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 w-full">
+              <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+              <span className="truncate">1. Insights & Relatórios</span>
             </TabsTrigger>
 
-            <TabsTrigger value="catalogo" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <Package className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span className="truncate">Catálogo & Cortesias</span>
+            <TabsTrigger value="catalogo" className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 w-full">
+              <Package className="w-4 h-4 text-primary shrink-0" />
+              <span className="truncate">2. Cardápio & Estoque Padrão</span>
             </TabsTrigger>
 
-            <TabsTrigger value="gabarito" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <Sliders className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-              <span className="truncate">Gabarito por Flat</span>
+            <TabsTrigger value="equipe" className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 w-full">
+              <Users className="w-4 h-4 text-teal-600 shrink-0" />
+              <span className="truncate">3. Equipe & Acessos Anserve</span>
             </TabsTrigger>
 
-            <TabsTrigger value="equipe" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <Users className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-              <span className="truncate">Equipe Anserve</span>
-            </TabsTrigger>
-
-            <TabsTrigger value="qrcodes" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <QrCode className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-              <span className="truncate">QR Codes A6</span>
-            </TabsTrigger>
-
-            <TabsTrigger value="extrato" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span className="truncate">Extrato Repasse</span>
+            <TabsTrigger value="extrato" className="rounded-xl text-xs font-bold px-3 py-2.5 flex items-center justify-center gap-2 w-full">
+              <DollarSign className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="truncate">4. Repasse & QR Codes A6</span>
             </TabsTrigger>
           </TabsList>
 
-          {/* TAB 1: CENTRAL DE INSIGHTS & INTELIGÊNCIA 360° (EXCLUSIVA ADMIN CORPFLATS) */}
+          {/* ABA 1: INSIGHTS & RELATÓRIOS (COM SUB-FILTROS LIMPOS) */}
           <TabsContent value="insights" className="w-full min-w-0 space-y-5">
-            {/* Banner Exclusivo */}
-            <div className="w-full min-w-0 bg-gradient-to-r from-indigo-950/90 via-slate-900 to-teal-950/90 text-white p-4 sm:p-5 rounded-3xl border border-indigo-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md">
-              <div className="space-y-1.5 min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge className="bg-amber-400 text-slate-950 font-black text-[10px] shrink-0">
-                    🔒 EXCLUSIVO DIRETORIA CORPFLATS
-                  </Badge>
-                  <span className="text-[11px] sm:text-xs text-indigo-200 font-semibold">
-                    Oculto para Gestores e Repositoras da Anserve
-                  </span>
+            {/* Banner + Sub-filtros de Visualização */}
+            <div className="w-full min-w-0 bg-gradient-to-r from-indigo-950/90 via-slate-900 to-teal-950/90 text-white p-4 sm:p-5 rounded-3xl border border-indigo-500/30 space-y-4 shadow-md">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge className="bg-amber-400 text-slate-950 font-black text-[10px] shrink-0">
+                      🔒 EXCLUSIVO DIRETORIA CORPFLATS
+                    </Badge>
+                    <span className="text-[11px] text-indigo-200 font-semibold">
+                      Visão analítica 360° (oculta para a Anserve)
+                    </span>
+                  </div>
+                  <h2 className="text-base sm:text-lg font-black leading-snug">
+                    Inteligência de Consumo, Rentabilidade e Perfil do Hóspede
+                  </h2>
                 </div>
-                <h2 className="text-base sm:text-lg font-black leading-snug">
-                  Inteligência Comportamental, Demográfica e Rentabilidade do Frigobar
-                </h2>
-                <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
-                  Cruzamento automático de vendas com origem geográfica (FNRH/CRM), canal de reserva (Booking/Airbnb/Direto), perfil de reembolso corporativo, horários de pico, curva ABC e recuperação via IA Sofia.
-                </p>
+
+                <div className="flex flex-wrap gap-2 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleExportProductMatrixCsv}
+                    className="rounded-xl text-xs font-bold h-8 gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    CSV Curva ABC
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleExportFlatsRankingCsv}
+                    className="rounded-xl text-xs font-bold h-8 gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    CSV Flats
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleExportDemographicsCsv}
+                    className="rounded-xl text-xs font-bold h-8 gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    CSV Estados
+                  </Button>
+                </div>
               </div>
-              <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 w-full md:w-auto shrink-0">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={handleExportDemographicsCsv}
-                  className="rounded-xl text-xs font-bold h-8 gap-1.5 w-full sm:w-auto"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  CSV Demografia
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={handleExportProductMatrixCsv}
-                  className="rounded-xl text-xs font-bold h-8 gap-1.5 w-full sm:w-auto"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  CSV Curva ABC
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={handleExportFlatsRankingCsv}
-                  className="rounded-xl text-xs font-bold h-8 gap-1.5 w-full sm:w-auto"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  CSV Flats
-                </Button>
+
+              {/* Sub-Abas de Insights para não empilhar tudo numa página gigante */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-white/10">
+                {[
+                  {
+                    id: "visao_geral" as const,
+                    label: "✨ Visão Geral & Temporalidade",
+                    desc: "KPIs executivos, descobertas, dias e horários"
+                  },
+                  {
+                    id: "produtos_flats" as const,
+                    label: "🏆 Ranking de Produtos & Flats",
+                    desc: "Curva ABC, margem de lucro, combos e ranking das 19 UHs"
+                  },
+                  {
+                    id: "perfil_hospedes" as const,
+                    label: "🌎 Perfil dos Hóspedes & Fiscal",
+                    desc: "Estados (UF), cidades, canal OTA e preferência de NF"
+                  }
+                ].map((sub) => {
+                  const active = insightsSubView === sub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => setInsightsSubView(sub.id)}
+                      className={`p-3 rounded-2xl text-left border transition-all ${
+                        active
+                          ? "bg-white text-slate-950 border-white shadow-md"
+                          : "bg-slate-900/70 text-slate-200 border-white/15 hover:bg-slate-800/80"
+                      }`}
+                    >
+                      <span className="text-xs font-black block">{sub.label}</span>
+                      <span className={`text-[10px] block mt-0.5 ${active ? "text-slate-600" : "text-slate-400"}`}>
+                        {sub.desc}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* 6 Executive KPIs */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
+            {/* 6 Executive KPIs (Sempre visíveis no topo da aba Insights) */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
               <Card className="rounded-2xl border border-border bg-card p-4 space-y-1">
-                <span className="text-[11px] text-muted-foreground font-semibold">Receita Bruta</span>
+                <span className="text-[11px] text-muted-foreground font-semibold">Receita Bruta Paga</span>
                 <div className="text-lg font-black text-foreground">
                   R$ {Number(insightsData?.kpis?.totalRevenue || 0).toFixed(2)}
                 </div>
@@ -1165,7 +1207,7 @@ export default function MinibarAdminPage() {
               </Card>
 
               <Card className="rounded-2xl border border-border bg-card p-4 space-y-1">
-                <span className="text-[11px] text-muted-foreground font-semibold">Margem /Spread Bruto</span>
+                <span className="text-[11px] text-muted-foreground font-semibold">Margem / Spread Bruto</span>
                 <div className="text-lg font-black text-emerald-600">
                   R$ {Number(insightsData?.kpis?.netProfit || 0).toFixed(2)}
                 </div>
@@ -1180,7 +1222,7 @@ export default function MinibarAdminPage() {
                   R$ {Number(insightsData?.kpis?.averageTicket || 0).toFixed(2)}
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
-                  {insightsData?.kpis?.totalUnitsSold || 0} itens vendidos
+                  {insightsData?.kpis?.totalUnitsSold || 0} unidades vendidas
                 </span>
               </Card>
 
@@ -1193,720 +1235,740 @@ export default function MinibarAdminPage() {
                   {insightsData?.kpis?.courtesyUnitsTotal || 0} cortesias entregues
                 </span>
               </Card>
-
-              <Card className="rounded-2xl border border-border bg-card p-4 space-y-1">
-                <span className="text-[11px] text-muted-foreground font-semibold">Autodeclaração Hóspede</span>
-                <div className="text-lg font-black text-teal-600">
-                  {insightsData?.lossAndRecovery?.honestyRatePct ?? 100}%
-                </div>
-                <span className="text-[10px] text-muted-foreground block">
-                  Sem precisar de cobrança
-                </span>
-              </Card>
-
-              <Card className="rounded-2xl border border-border bg-card p-4 space-y-1">
-                <span className="text-[11px] text-muted-foreground font-semibold">Recuperação Sofia IA</span>
-                <div className="text-lg font-black text-amber-600">
-                  {insightsData?.kpis?.discrepancyRecoveryRatePct ?? 100}%
-                </div>
-                <span className="text-[10px] text-muted-foreground block">
-                  R$ {Number(insightsData?.lossAndRecovery?.recoveredAmount || 0).toFixed(2)} recuperados
-                </span>
-              </Card>
             </div>
 
-            {/* Mural de Descobertas & Curiosidades Automáticas */}
-            {Array.isArray(insightsData?.curiosities) && insightsData.curiosities.length > 0 && (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-500" />
-                  <h3 className="text-sm font-black text-foreground">
-                    Descobertas & Curiosidades Inteligentes do Seu Público
-                  </h3>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                  {insightsData.curiosities.map((c: any) => (
-                    <Card
-                      key={c.id}
-                      className="rounded-3xl border border-border bg-card p-4 space-y-2 shadow-xs hover:border-primary/40 transition-all"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                          <span className="text-base">{c.icon}</span>
-                          {c.category}
-                        </span>
-                        <Badge variant="secondary" className="text-[10px] font-bold">
-                          {c.metricBadge}
-                        </Badge>
+            {/* SUB-VISÃO 1: VISÃO GERAL, DESCOBERTAS & TEMPORALIDADE */}
+            {insightsSubView === "visao_geral" && (
+              <div className="space-y-5">
+                {Array.isArray(insightsData?.curiosities) && insightsData.curiosities.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-amber-500" />
+                      <h3 className="text-sm font-black text-foreground">
+                        Descobertas & Curiosidades Inteligentes do Seu Público
+                      </h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                      {insightsData.curiosities.map((c: any) => (
+                        <Card
+                          key={c.id}
+                          className="rounded-3xl border border-border bg-card p-4 space-y-2 shadow-xs hover:border-primary/40 transition-all"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                              <span className="text-base">{c.icon}</span>
+                              {c.category}
+                            </span>
+                            <Badge variant="secondary" className="text-[10px] font-bold">
+                              {c.metricBadge}
+                            </Badge>
+                          </div>
+                          <h4 className="text-xs font-black text-foreground leading-snug">{c.title}</h4>
+                          <p className="text-[11px] text-muted-foreground leading-relaxed">{c.description}</p>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 w-full min-w-0">
+                  <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <span>Consumo por Dia da Semana</span>
+                    </h3>
+                    <div className="space-y-2">
+                      {(insightsData?.temporal?.byDayOfWeek || []).map((d: any) => (
+                        <div
+                          key={d.day}
+                          className="flex items-center justify-between p-2 rounded-xl bg-muted/30 border border-border/60 text-xs"
+                        >
+                          <div>
+                            <strong className="text-foreground">{d.day}</strong>
+                            <span className="text-[10px] text-muted-foreground block">
+                              Top: {d.topCategory}
+                            </span>
+                          </div>
+                          <div className="text-right font-mono">
+                            <strong className="text-emerald-600 block">R$ {Number(d.revenue).toFixed(2)}</strong>
+                            <span className="text-[10px] text-muted-foreground">{d.units} un.</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+
+                  <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span>Faixa de Horário dos Pagamentos/Lançamentos</span>
+                    </h3>
+                    <div className="space-y-2.5">
+                      {(insightsData?.temporal?.byHourSlot || []).map((h: any) => (
+                        <div
+                          key={h.id}
+                          className="p-3 rounded-2xl bg-muted/30 border border-border/60 flex items-center justify-between text-xs"
+                        >
+                          <div>
+                            <strong className="text-foreground block">{h.label}</strong>
+                            <span className="text-[10px] text-muted-foreground">
+                              Preferência: {h.topCategory}
+                            </span>
+                          </div>
+                          <div className="text-right font-mono">
+                            <strong className="text-foreground block">R$ {Number(h.revenue).toFixed(2)}</strong>
+                            <span className="text-[10px] text-muted-foreground">{h.ordersCount} pedidos</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+
+                  <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
+                    <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                      <span>Duração da Estadia & Ocupação</span>
+                    </h3>
+                    <div className="space-y-2">
+                      {(insightsData?.stayProfile?.byStayLength || []).map((b: any) => (
+                        <div
+                          key={b.id}
+                          className="p-2.5 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between text-xs"
+                        >
+                          <div>
+                            <strong className="text-foreground block">{b.label}</strong>
+                            <span className="text-[10px] text-muted-foreground">
+                              Ticket: R$ {Number(b.averageTicket).toFixed(2)} • Top: {b.topCategory}
+                            </span>
+                          </div>
+                          <strong className="font-mono text-emerald-600">R$ {Number(b.revenue).toFixed(2)}</strong>
+                        </div>
+                      ))}
+                      <div className="border-t border-border pt-2 space-y-2">
+                        {(insightsData?.stayProfile?.byGuestCount || []).map((g: any) => (
+                          <div
+                            key={g.id}
+                            className="p-2.5 rounded-xl bg-primary/5 border border-primary/20 flex items-center justify-between text-xs"
+                          >
+                            <div>
+                              <strong className="text-foreground block">{g.label}</strong>
+                              <span className="text-[10px] text-muted-foreground">
+                                Ticket: R$ {Number(g.averageTicket).toFixed(2)}
+                              </span>
+                            </div>
+                            <strong className="font-mono text-primary">R$ {Number(g.revenue).toFixed(2)}</strong>
+                          </div>
+                        ))}
                       </div>
-                      <h4 className="text-xs font-black text-foreground leading-snug">{c.title}</h4>
-                      <p className="text-[11px] text-muted-foreground leading-relaxed">{c.description}</p>
-                    </Card>
-                  ))}
+                    </div>
+                  </Card>
                 </div>
               </div>
             )}
 
-            {/* 1. GEOGRAFIA & DEMOGRAFIA: POR ESTADO (UF) E CIDADE */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full min-w-0">
-              <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
-                <CardHeader className="p-4 border-b border-border bg-card">
-                  <CardTitle className="text-sm font-black flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-indigo-600 shrink-0" />
-                    <span>Consumo por Estado de Origem (UF)</span>
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    O que cada estado mais consome e qual o ticket médio regional
-                  </CardDescription>
-                </CardHeader>
-                <div className="w-full overflow-x-auto">
-                  <table className="w-full min-w-[520px] text-xs text-left">
-                    <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
-                      <tr>
-                        <th className="p-3">UF</th>
-                        <th className="p-3 text-center">Pedidos</th>
-                        <th className="p-3">Categoria Nº 1</th>
-                        <th className="p-3">Produto Favorito</th>
-                        <th className="p-3 text-right">Ticket Médio</th>
-                        <th className="p-3 text-right">Receita</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {(insightsData?.byState || []).length === 0 ? (
+            {/* SUB-VISÃO 2: RANKING DE PRODUTOS (CURVA ABC), COMBOS & FLATS */}
+            {insightsSubView === "produtos_flats" && (
+              <div className="space-y-5">
+                <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+                  <CardHeader className="p-4 border-b border-border bg-card flex flex-row items-center justify-between">
+                    <div>
+                      <CardTitle className="text-sm font-black flex items-center gap-2">
+                        <ShoppingBag className="w-4 h-4 text-primary shrink-0" />
+                        <span>Matriz Curva ABC, Margem de Lucro & Diagnóstico de Giro do Cardápio</span>
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        Identifique os produtos campeões (Classe A), os de maior margem e os itens com baixo giro
+                      </CardDescription>
+                    </div>
+                  </CardHeader>
+                  <div className="w-full overflow-x-auto">
+                    <table className="w-full min-w-[680px] text-xs text-left">
+                      <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                         <tr>
-                          <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                            Sem dados demográficos no período.
-                          </td>
+                          <th className="p-3">Curva</th>
+                          <th className="p-3">Produto</th>
+                          <th className="p-3">Categoria</th>
+                          <th className="p-3 text-center">Saídas</th>
+                          <th className="p-3 text-right">Receita Bruta</th>
+                          <th className="p-3 text-right">Custo Anserve</th>
+                          <th className="p-3 text-right">Margem Bruta</th>
+                          <th className="p-3">Diagnóstico</th>
                         </tr>
-                      ) : (
-                        (insightsData?.byState || []).map((st: any) => (
-                          <tr key={st.state} className="hover:bg-muted/20">
-                            <td className="p-3 font-black text-indigo-600">{st.state}</td>
-                            <td className="p-3 text-center font-mono">{st.ordersCount}</td>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {(insightsData?.productMatrix || []).map((p: any) => (
+                          <tr key={p.productId} className="hover:bg-muted/20">
                             <td className="p-3">
-                              <Badge variant="outline" className="text-[10px] font-bold">
-                                {st.topCategory}
+                              <Badge
+                                className={
+                                  p.abcClass === "A"
+                                    ? "bg-emerald-500 text-white font-black text-[10px]"
+                                    : p.abcClass === "B"
+                                    ? "bg-sky-500 text-white font-black text-[10px]"
+                                    : "bg-slate-400 text-white font-black text-[10px]"
+                                }
+                              >
+                                Classe {p.abcClass}
                               </Badge>
                             </td>
-                            <td className="p-3 font-semibold text-foreground">{st.topProduct}</td>
-                            <td className="p-3 text-right font-mono">R$ {Number(st.averageTicket).toFixed(2)}</td>
+                            <td className="p-3 font-bold text-foreground">{p.name}</td>
+                            <td className="p-3 text-muted-foreground">{p.category}</td>
+                            <td className="p-3 text-center font-mono font-bold">{p.unitsSold} un.</td>
+                            <td className="p-3 text-right font-mono font-bold">
+                              R$ {Number(p.revenue).toFixed(2)} ({p.shareOfRevenuePct}%)
+                            </td>
+                            <td className="p-3 text-right font-mono text-muted-foreground">
+                              R$ {Number(p.totalCost).toFixed(2)}
+                            </td>
                             <td className="p-3 text-right font-mono font-black text-emerald-600">
-                              R$ {Number(st.revenue).toFixed(2)} ({st.sharePct}%)
+                              R$ {Number(p.netProfit).toFixed(2)} ({p.marginPct}%)
+                            </td>
+                            <td className="p-3">
+                              <Badge
+                                variant="outline"
+                                className={
+                                  p.unitsSold === 0
+                                    ? "border-rose-500/40 text-rose-600 text-[10px]"
+                                    : p.abcClass === "A"
+                                    ? "border-emerald-500/40 text-emerald-600 text-[10px]"
+                                    : "text-[10px]"
+                                }
+                              >
+                                {p.statusTag}
+                              </Badge>
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
 
-              <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
-                <CardHeader className="p-4 border-b border-border bg-card">
-                  <CardTitle className="text-sm font-black flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-sky-600 shrink-0" />
-                    <span>Top Cidades Emissoras de Hóspedes</span>
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Preferência de produto por município de residência do hóspede
-                  </CardDescription>
-                </CardHeader>
-                <div className="w-full overflow-x-auto">
-                  <table className="w-full min-w-[440px] text-xs text-left">
-                    <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
-                      <tr>
-                        <th className="p-3">Cidade (UF)</th>
-                        <th className="p-3 text-center">Unidades</th>
-                        <th className="p-3">Item Mais Consumido</th>
-                        <th className="p-3 text-right">Total Gasto</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {(insightsData?.byCity || []).length === 0 ? (
+                {Array.isArray(insightsData?.marketBasketPairs) && insightsData.marketBasketPairs.length > 0 && (
+                  <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
+                    <div>
+                      <h3 className="text-sm font-black text-foreground">
+                        🤝 Cesta de Compras — Produtos Mais Consumidos Juntos na Mesma Estadia
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Combinações mais frequentes registradas nos flats
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                      {insightsData.marketBasketPairs.map((pair: any) => (
+                        <div
+                          key={pair.pair}
+                          className="p-3.5 rounded-2xl bg-muted/30 border border-border space-y-1.5 text-xs"
+                        >
+                          <div className="flex items-center justify-between">
+                            <Badge className="bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30 text-[10px] font-bold">
+                              {pair.coOccurrences}x juntos ({pair.shareOfOrdersPct}%)
+                            </Badge>
+                          </div>
+                          <div className="font-black text-foreground">{pair.pair}</div>
+                          <p className="text-[10px] text-muted-foreground">{pair.suggestion}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+
+                <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+                  <CardHeader className="p-4 border-b border-border bg-card">
+                    <CardTitle className="text-sm font-black flex items-center gap-2">
+                      <Award className="w-4 h-4 text-amber-500 shrink-0" />
+                      <span>Ranking de Performance de Frigobar por Flat (19 UHs)</span>
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Faturamento, volume vendido, custo de cortesias e produto mais consumido em cada flat
+                    </CardDescription>
+                  </CardHeader>
+                  <div className="w-full overflow-x-auto max-h-96">
+                    <table className="w-full min-w-[580px] text-xs text-left">
+                      <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border sticky top-0">
                         <tr>
-                          <td colSpan={4} className="p-6 text-center text-muted-foreground">
-                            Sem dados de cidades no período.
-                          </td>
+                          <th className="p-3">Flat</th>
+                          <th className="p-3 text-center">Pedidos</th>
+                          <th className="p-3 text-center">Unidades</th>
+                          <th className="p-3">Produto Campeão</th>
+                          <th className="p-3 text-right">Custo Cortesias</th>
+                          <th className="p-3 text-right">Receita Total</th>
                         </tr>
-                      ) : (
-                        (insightsData?.byCity || []).map((c: any) => (
-                          <tr key={c.cityLabel} className="hover:bg-muted/20">
-                            <td className="p-3 font-bold text-foreground">{c.cityLabel}</td>
-                            <td className="p-3 text-center font-mono">{c.units} un.</td>
-                            <td className="p-3 text-muted-foreground font-semibold">{c.topProduct}</td>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {(insightsData?.byFlat || []).map((f: any) => (
+                          <tr key={f.flatNumber} className="hover:bg-muted/20">
+                            <td className="p-3 font-black text-foreground">Flat {f.flatNumber}</td>
+                            <td className="p-3 text-center font-mono">{f.ordersCount}</td>
+                            <td className="p-3 text-center font-mono">{f.unitsSold} un.</td>
+                            <td className="p-3 font-semibold text-primary">{f.topProduct}</td>
+                            <td className="p-3 text-right font-mono text-sky-600">
+                              R$ {Number(f.courtesyCost).toFixed(2)}
+                            </td>
                             <td className="p-3 text-right font-mono font-black text-emerald-600">
-                              R$ {Number(c.revenue).toFixed(2)}
+                              R$ {Number(f.revenue).toFixed(2)}
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* SUB-VISÃO 3: PERFIL DOS HÓSPEDES (UF / CIDADES / CANAL OTA) & PREFERÊNCIA FISCAL */}
+            {insightsSubView === "perfil_hospedes" && (
+              <div className="space-y-5">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full min-w-0">
+                  <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+                    <CardHeader className="p-4 border-b border-border bg-card">
+                      <CardTitle className="text-sm font-black flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span>Consumo por Estado de Origem (UF)</span>
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        O que cada estado mais consome e qual o ticket médio regional
+                      </CardDescription>
+                    </CardHeader>
+                    <div className="w-full overflow-x-auto">
+                      <table className="w-full min-w-[520px] text-xs text-left">
+                        <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
+                          <tr>
+                            <th className="p-3">UF</th>
+                            <th className="p-3 text-center">Pedidos</th>
+                            <th className="p-3">Categoria Nº 1</th>
+                            <th className="p-3">Produto Favorito</th>
+                            <th className="p-3 text-right">Ticket Médio</th>
+                            <th className="p-3 text-right">Receita</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {(insightsData?.byState || []).length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                                Sem dados demográficos no período.
+                              </td>
+                            </tr>
+                          ) : (
+                            (insightsData?.byState || []).map((st: any) => (
+                              <tr key={st.state} className="hover:bg-muted/20">
+                                <td className="p-3 font-black text-indigo-600">{st.state}</td>
+                                <td className="p-3 text-center font-mono">{st.ordersCount}</td>
+                                <td className="p-3">
+                                  <Badge variant="outline" className="text-[10px] font-bold">
+                                    {st.topCategory}
+                                  </Badge>
+                                </td>
+                                <td className="p-3 font-semibold text-foreground">{st.topProduct}</td>
+                                <td className="p-3 text-right font-mono">R$ {Number(st.averageTicket).toFixed(2)}</td>
+                                <td className="p-3 text-right font-mono font-black text-emerald-600">
+                                  R$ {Number(st.revenue).toFixed(2)} ({st.sharePct}%)
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+
+                  <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+                    <CardHeader className="p-4 border-b border-border bg-card">
+                      <CardTitle className="text-sm font-black flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-sky-600 shrink-0" />
+                        <span>Top Cidades Emissoras de Hóspedes</span>
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        Preferência de produto por município de residência do hóspede
+                      </CardDescription>
+                    </CardHeader>
+                    <div className="w-full overflow-x-auto">
+                      <table className="w-full min-w-[440px] text-xs text-left">
+                        <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
+                          <tr>
+                            <th className="p-3">Cidade (UF)</th>
+                            <th className="p-3 text-center">Unidades</th>
+                            <th className="p-3">Item Mais Consumido</th>
+                            <th className="p-3 text-right">Total Gasto</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {(insightsData?.byCity || []).length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="p-6 text-center text-muted-foreground">
+                                Sem dados de cidades no período.
+                              </td>
+                            </tr>
+                          ) : (
+                            (insightsData?.byCity || []).map((c: any) => (
+                              <tr key={c.cityLabel} className="hover:bg-muted/20">
+                                <td className="p-3 font-bold text-foreground">{c.cityLabel}</td>
+                                <td className="p-3 text-center font-mono">{c.units} un.</td>
+                                <td className="p-3 text-muted-foreground font-semibold">{c.topProduct}</td>
+                                <td className="p-3 text-right font-mono font-black text-emerald-600">
+                                  R$ {Number(c.revenue).toFixed(2)}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
                 </div>
-              </Card>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full min-w-0">
+                  <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
+                    <CardHeader className="p-4 border-b border-border bg-card">
+                      <CardTitle className="text-sm font-black flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Consumo por Canal da Reserva (Direto vs. Booking vs. Airbnb)</span>
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        Qual canal traz o hóspede que mais consome frigobar
+                      </CardDescription>
+                    </CardHeader>
+                    <div className="w-full overflow-x-auto">
+                      <table className="w-full min-w-[460px] text-xs text-left">
+                        <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
+                          <tr>
+                            <th className="p-3">Canal de Origem</th>
+                            <th className="p-3 text-center">Pedidos</th>
+                            <th className="p-3">Categoria Líder</th>
+                            <th className="p-3 text-right">Ticket Médio</th>
+                            <th className="p-3 text-right">Receita</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {(insightsData?.byChannel || []).map((ch: any) => (
+                            <tr key={ch.channel} className="hover:bg-muted/20">
+                              <td className="p-3 font-bold text-foreground">{ch.channel}</td>
+                              <td className="p-3 text-center font-mono">{ch.ordersCount}</td>
+                              <td className="p-3">{ch.topCategory}</td>
+                              <td className="p-3 text-right font-mono">R$ {Number(ch.averageTicket).toFixed(2)}</td>
+                              <td className="p-3 text-right font-mono font-black text-emerald-600">
+                                R$ {Number(ch.revenue).toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+
+                  <Card className="rounded-3xl border border-border p-4 space-y-4 w-full min-w-0">
+                    <div>
+                      <h3 className="text-sm font-black text-foreground flex items-center gap-2">
+                        <Briefcase className="w-4 h-4 text-sky-600 shrink-0" />
+                        <span>Raio-X de Reembolso Corporativo & Preferência Fiscal</span>
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Como os hóspedes pedem a descrição na Nota Fiscal e o que realmente consomem em cada opção
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {["water", "minibar_consumption", "detailed"].map(key => {
+                        const item = insightsData?.corporateVsLeisure?.fiscalPreferences?.[key];
+                        return (
+                          <div key={key} className="p-3.5 rounded-2xl bg-muted/40 border border-border space-y-1">
+                            <span className="text-[10px] font-bold text-muted-foreground block">
+                              {item?.label || key}
+                            </span>
+                            <div className="text-base font-black text-foreground">
+                              R$ {Number(item?.revenue || 0).toFixed(2)}
+                            </div>
+                            <span className="text-[11px] font-semibold text-primary block">
+                              {item?.count || 0} pedidos
+                            </span>
+                            <span className="text-[10px] text-muted-foreground block pt-1 border-t border-border/60">
+                              Mais consumido real: <strong className="text-foreground">{item?.topRealProduct || "N/A"}</strong>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <div className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="text-[10px] text-muted-foreground block">Nota em CPF (Pessoa Física)</span>
+                          <strong className="text-sm font-black">
+                            {insightsData?.corporateVsLeisure?.documentTypes?.cpf?.count || 0} pedidos
+                          </strong>
+                        </div>
+                        <span className="font-mono text-xs font-bold text-emerald-600 shrink-0">
+                          R$ {Number(insightsData?.corporateVsLeisure?.documentTypes?.cpf?.revenue || 0).toFixed(2)}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="text-[10px] text-muted-foreground block">Nota em CNPJ (Empresa)</span>
+                          <strong className="text-sm font-black">
+                            {insightsData?.corporateVsLeisure?.documentTypes?.cnpj?.count || 0} pedidos
+                          </strong>
+                        </div>
+                        <span className="font-mono text-xs font-bold text-sky-600 shrink-0">
+                          R$ {Number(insightsData?.corporateVsLeisure?.documentTypes?.cnpj?.revenue || 0).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  </Card>
+                </div>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* ABA 2: CARDÁPIO & ESTOQUE PADRÃO (UNIFICANDO CATÁLOGO DE PREÇOS + GABARITO POR FLAT) */}
+          <TabsContent value="catalogo" className="w-full min-w-0 space-y-5">
+            {/* Seletor de Sub-visão: Produtos & Preços vs Quantidade Padrão no Flat */}
+            <div className="bg-card border border-border p-3 sm:p-4 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCatalogSubView("produtos")}
+                  className={`px-4 py-2 rounded-2xl text-xs font-black transition-all flex items-center gap-2 ${
+                    catalogSubView === "produtos"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "bg-muted/60 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Package className="w-4 h-4" />
+                  <span>Produtos, Preços & Cortesias ({products.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCatalogSubView("gabarito")}
+                  className={`px-4 py-2 rounded-2xl text-xs font-black transition-all flex items-center gap-2 ${
+                    catalogSubView === "gabarito"
+                      ? "bg-sky-600 text-white shadow-sm"
+                      : "bg-muted/60 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Sliders className="w-4 h-4" />
+                  <span>Quantidade Padrão por Flat (Gabarito)</span>
+                </button>
+              </div>
+
+              {catalogSubView === "produtos" && (
+                <Button
+                  size="sm"
+                  onClick={() => handleOpenProductModal()}
+                  className="rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 h-9"
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1.5" />
+                  Novo Produto no Cardápio
+                </Button>
+              )}
             </div>
 
-            {/* 2. CANAL DE RESERVA (OTA vs DIRETO) & REEMBOLSO CORPORATIVO (NOTA FISCAL) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full min-w-0">
-              <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
-                <CardHeader className="p-4 border-b border-border bg-card">
-                  <CardTitle className="text-sm font-black flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>Consumo por Canal da Reserva (Direto vs. Booking vs. Airbnb)</span>
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Qual canal traz o hóspede que mais consome frigobar e qual dá mais divergência
-                  </CardDescription>
-                </CardHeader>
-                <div className="w-full overflow-x-auto">
-                  <table className="w-full min-w-[520px] text-xs text-left">
-                    <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
-                      <tr>
-                        <th className="p-3">Canal de Origem</th>
-                        <th className="p-3 text-center">Pedidos</th>
-                        <th className="p-3">Categoria Líder</th>
-                        <th className="p-3 text-center">Divergências</th>
-                        <th className="p-3 text-right">Ticket Médio</th>
-                        <th className="p-3 text-right">Receita</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {(insightsData?.byChannel || []).map((ch: any) => (
-                        <tr key={ch.channel} className="hover:bg-muted/20">
-                          <td className="p-3 font-bold text-foreground">{ch.channel}</td>
-                          <td className="p-3 text-center font-mono">{ch.ordersCount}</td>
-                          <td className="p-3">{ch.topCategory}</td>
-                          <td className="p-3 text-center font-mono text-amber-600">{ch.discrepancies}</td>
-                          <td className="p-3 text-right font-mono">R$ {Number(ch.averageTicket).toFixed(2)}</td>
-                          <td className="p-3 text-right font-mono font-black text-emerald-600">
-                            R$ {Number(ch.revenue).toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
+            {catalogSubView === "produtos" ? (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant={selectedCategory === "todas" ? "default" : "outline"}
+                      onClick={() => setSelectedCategory("todas")}
+                      className="h-8 rounded-xl text-xs font-bold"
+                    >
+                      Todas as Categorias
+                    </Button>
+                    {CATEGORIES.map(cat => (
+                      <Button
+                        key={cat}
+                        size="sm"
+                        variant={selectedCategory === cat ? "default" : "outline"}
+                        onClick={() => setSelectedCategory(cat)}
+                        className="h-8 rounded-xl text-xs font-bold"
+                      >
+                        {cat}
+                      </Button>
+                    ))}
+                  </div>
 
-              <Card className="rounded-3xl border border-border p-4 space-y-4 w-full min-w-0">
-                <div>
-                  <h3 className="text-sm font-black text-foreground flex items-center gap-2">
-                    <Briefcase className="w-4 h-4 text-sky-600 shrink-0" />
-                    <span>Raio-X de Reembolso Corporativo & Preferência Fiscal</span>
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    Como os hóspedes pedem a descrição na Nota Fiscal e o que realmente consomem em cada opção
-                  </p>
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      placeholder="Buscar produto..."
+                      value={productSearch}
+                      onChange={e => setProductSearch(e.target.value)}
+                      className="h-8 pl-9 text-xs rounded-xl"
+                    />
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {["water", "minibar_consumption", "detailed"].map(key => {
-                    const item = insightsData?.corporateVsLeisure?.fiscalPreferences?.[key];
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full min-w-0">
+                  {filteredProducts.map(p => {
+                    const stdQty = stockQuantities[p.id] ?? p.defaultQuantity ?? 0;
                     return (
-                      <div key={key} className="p-3.5 rounded-2xl bg-muted/40 border border-border space-y-1">
-                        <span className="text-[10px] font-bold text-muted-foreground block">
-                          {item?.label || key}
-                        </span>
-                        <div className="text-base font-black text-foreground">
-                          R$ {Number(item?.revenue || 0).toFixed(2)}
+                      <Card key={p.id} className="rounded-3xl border border-border bg-card p-4 space-y-3 shadow-xs w-full min-w-0">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            {p.imageUrl ? (
+                              <img src={p.imageUrl} alt={p.name} className="w-12 h-12 rounded-2xl object-cover shrink-0" />
+                            ) : (
+                              <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-black text-sm shrink-0">
+                                🧊
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <strong className="text-sm font-bold text-foreground break-words">{p.name}</strong>
+                                {p.isCourtesy && (
+                                  <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 text-[9px] font-bold">
+                                    Cortesia Free
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-muted-foreground block">
+                                {p.category} • Padrão no flat: <strong>{stdQty} un.</strong>
+                              </span>
+                            </div>
+                          </div>
+
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => handleOpenProductModal(p)}
+                            className="h-8 w-8 rounded-xl text-muted-foreground hover:text-foreground shrink-0"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </Button>
                         </div>
-                        <span className="text-[11px] font-semibold text-primary block">
-                          {item?.count || 0} pedidos
-                        </span>
-                        <span className="text-[10px] text-muted-foreground block pt-1 border-t border-border/60">
-                          Mais consumido real: <strong className="text-foreground">{item?.topRealProduct || "N/A"}</strong>
-                        </span>
+
+                        {p.description && <p className="text-xs text-muted-foreground line-clamp-2">{p.description}</p>}
+
+                        <div className="flex items-center justify-between pt-2 border-t border-border text-xs">
+                          <div>
+                            <span className="text-[10px] text-muted-foreground block">Venda no Cardápio:</span>
+                            <strong className="text-sm font-black text-emerald-600">
+                              R$ {Number(p.price).toFixed(2)}
+                            </strong>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="text-[10px] text-muted-foreground block">Custo Repasse Anserve:</span>
+                            <span className="text-xs font-mono font-semibold text-muted-foreground">
+                              R$ {Number(p.cost || 0).toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-card border border-border p-4 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full min-w-0">
+                  <div className="space-y-0.5 min-w-0">
+                    <h3 className="text-sm font-bold text-foreground">Configuração da Quantidade Padrão no Flat (Gabarito)</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Defina quantas unidades de cada item devem constar no frigobar abastecido (globalmente ou personalizado para um flat específico).
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                    <span className="text-xs font-bold text-muted-foreground">Aplicar em:</span>
+                    <select
+                      value={selectedFlatForStock}
+                      onChange={e => handleSelectFlatForStock(e.target.value)}
+                      className="h-9 text-xs rounded-xl border border-input bg-background px-3 font-bold flex-1 sm:flex-initial min-w-0"
+                    >
+                      <option value="global">🌐 Padrão Global (Todos os 19 Flats)</option>
+                      {SOHO_FLATS.map(f => (
+                        <option key={f} value={f}>
+                          Flat {f} (Personalizado)
+                        </option>
+                      ))}
+                    </select>
+
+                    <Button
+                      size="sm"
+                      onClick={handleSaveDefaultStock}
+                      disabled={savingStock}
+                      className="rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white h-9 w-full sm:w-auto"
+                    >
+                      {savingStock ? "Salvando..." : "Salvar Gabarito"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 w-full min-w-0">
+                  {products.map(prod => {
+                    const qty = stockQuantities[prod.id] || 0;
+                    return (
+                      <div
+                        key={prod.id}
+                        className="p-3.5 rounded-2xl bg-card border border-border flex items-center justify-between gap-3 shadow-xs w-full min-w-0"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {prod.imageUrl ? (
+                            <img src={prod.imageUrl} alt={prod.name} className="w-9 h-9 rounded-xl object-cover shrink-0" />
+                          ) : (
+                            <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
+                              🧊
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="font-bold text-xs text-foreground truncate">{prod.name}</div>
+                            <span className="text-[10px] text-muted-foreground block truncate">{prod.category}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            disabled={qty === 0}
+                            onClick={() =>
+                              setStockQuantities(prev => ({
+                                ...prev,
+                                [prod.id]: Math.max(0, qty - 1)
+                              }))
+                            }
+                            className="h-7 w-7 rounded-lg"
+                          >
+                            -
+                          </Button>
+                          <span className="w-6 text-center font-bold text-xs font-mono">{qty}</span>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            onClick={() =>
+                              setStockQuantities(prev => ({
+                                ...prev,
+                                [prod.id]: qty + 1
+                              }))
+                            }
+                            className="h-7 w-7 rounded-lg"
+                          >
+                            +
+                          </Button>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <span className="text-[10px] text-muted-foreground block">Nota em CPF (Pessoa Física)</span>
-                      <strong className="text-sm font-black">
-                        {insightsData?.corporateVsLeisure?.documentTypes?.cpf?.count || 0} pedidos
-                      </strong>
-                    </div>
-                    <span className="font-mono text-xs font-bold text-emerald-600 shrink-0">
-                      R$ {Number(insightsData?.corporateVsLeisure?.documentTypes?.cpf?.revenue || 0).toFixed(2)}
-                    </span>
-                  </div>
-
-                  <div className="p-3 rounded-2xl bg-card border border-border flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <span className="text-[10px] text-muted-foreground block">Nota em CNPJ (Empresa)</span>
-                      <strong className="text-sm font-black">
-                        {insightsData?.corporateVsLeisure?.documentTypes?.cnpj?.count || 0} pedidos
-                      </strong>
-                    </div>
-                    <span className="font-mono text-xs font-bold text-sky-600 shrink-0">
-                      R$ {Number(insightsData?.corporateVsLeisure?.documentTypes?.cnpj?.revenue || 0).toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-              </Card>
-            </div>
-
-            {/* 3. TEMPORALIDADE (DIA DA SEMANA & HORÁRIO) E PERFIL DE ESTADIA */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 w-full min-w-0">
-              <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
-                <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-primary shrink-0" />
-                  <span>Consumo por Dia da Semana</span>
-                </h3>
-                <div className="space-y-2">
-                  {(insightsData?.temporal?.byDayOfWeek || []).map((d: any) => (
-                    <div
-                      key={d.day}
-                      className="flex items-center justify-between p-2 rounded-xl bg-muted/30 border border-border/60 text-xs"
-                    >
-                      <div>
-                        <strong className="text-foreground">{d.day}</strong>
-                        <span className="text-[10px] text-muted-foreground block">
-                          Top: {d.topCategory}
-                        </span>
-                      </div>
-                      <div className="text-right font-mono">
-                        <strong className="text-emerald-600 block">R$ {Number(d.revenue).toFixed(2)}</strong>
-                        <span className="text-[10px] text-muted-foreground">{d.units} un.</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-
-              <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
-                <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                  <span>Faixa de Horário do Consumo</span>
-                </h3>
-                <div className="space-y-2.5">
-                  {(insightsData?.temporal?.byHourSlot || []).map((h: any) => (
-                    <div
-                      key={h.id}
-                      className="p-3 rounded-2xl bg-muted/30 border border-border/60 flex items-center justify-between text-xs"
-                    >
-                      <div>
-                        <strong className="text-foreground block">{h.label}</strong>
-                        <span className="text-[10px] text-muted-foreground">
-                          Preferência: {h.topCategory}
-                        </span>
-                      </div>
-                      <div className="text-right font-mono">
-                        <strong className="text-foreground block">R$ {Number(h.revenue).toFixed(2)}</strong>
-                        <span className="text-[10px] text-muted-foreground">{h.ordersCount} pedidos</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-
-              <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
-                <h3 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                  <span>Duração da Estadia & Ocupação</span>
-                </h3>
-                <div className="space-y-2">
-                  {(insightsData?.stayProfile?.byStayLength || []).map((b: any) => (
-                    <div
-                      key={b.id}
-                      className="p-2.5 rounded-xl bg-muted/30 border border-border/60 flex items-center justify-between text-xs"
-                    >
-                      <div>
-                        <strong className="text-foreground block">{b.label}</strong>
-                        <span className="text-[10px] text-muted-foreground">
-                          Ticket: R$ {Number(b.averageTicket).toFixed(2)} • Top: {b.topCategory}
-                        </span>
-                      </div>
-                      <strong className="font-mono text-emerald-600">R$ {Number(b.revenue).toFixed(2)}</strong>
-                    </div>
-                  ))}
-                  <div className="border-t border-border pt-2 space-y-2">
-                    {(insightsData?.stayProfile?.byGuestCount || []).map((g: any) => (
-                      <div
-                        key={g.id}
-                        className="p-2.5 rounded-xl bg-primary/5 border border-primary/20 flex items-center justify-between text-xs"
-                      >
-                        <div>
-                          <strong className="text-foreground block">{g.label}</strong>
-                          <span className="text-[10px] text-muted-foreground">
-                            Ticket: R$ {Number(g.averageTicket).toFixed(2)}
-                          </span>
-                        </div>
-                        <strong className="font-mono text-primary">R$ {Number(g.revenue).toFixed(2)}</strong>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </Card>
-            </div>
-
-            {/* 4. CURVA ABC DE PRODUTOS, MARGEM DE LUCRO & CESTA DE COMPRAS */}
-            <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
-              <CardHeader className="p-4 border-b border-border bg-card flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm font-black flex items-center gap-2">
-                    <ShoppingBag className="w-4 h-4 text-primary shrink-0" />
-                    <span>Matriz Curva ABC, Margem de Lucro & Diagnóstico de Giro do Catálogo</span>
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Identifique os produtos campeões (Classe A), os de maior margem e os itens encalhados para substituir no frigobar
-                  </CardDescription>
-                </div>
-              </CardHeader>
-              <div className="w-full overflow-x-auto">
-                <table className="w-full min-w-[680px] text-xs text-left">
-                  <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
-                    <tr>
-                      <th className="p-3">Curva</th>
-                      <th className="p-3">Produto</th>
-                      <th className="p-3">Categoria</th>
-                      <th className="p-3 text-center">Saídas</th>
-                      <th className="p-3 text-right">Receita Bruta</th>
-                      <th className="p-3 text-right">Custo Anserve</th>
-                      <th className="p-3 text-right">Margem Bruta</th>
-                      <th className="p-3">Diagnóstico</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {(insightsData?.productMatrix || []).map((p: any) => (
-                      <tr key={p.productId} className="hover:bg-muted/20">
-                        <td className="p-3">
-                          <Badge
-                            className={
-                              p.abcClass === "A"
-                                ? "bg-emerald-500 text-white font-black text-[10px]"
-                                : p.abcClass === "B"
-                                ? "bg-sky-500 text-white font-black text-[10px]"
-                                : "bg-slate-400 text-white font-black text-[10px]"
-                            }
-                          >
-                            Classe {p.abcClass}
-                          </Badge>
-                        </td>
-                        <td className="p-3 font-bold text-foreground">{p.name}</td>
-                        <td className="p-3 text-muted-foreground">{p.category}</td>
-                        <td className="p-3 text-center font-mono font-bold">{p.unitsSold} un.</td>
-                        <td className="p-3 text-right font-mono font-bold">
-                          R$ {Number(p.revenue).toFixed(2)} ({p.shareOfRevenuePct}%)
-                        </td>
-                        <td className="p-3 text-right font-mono text-muted-foreground">
-                          R$ {Number(p.totalCost).toFixed(2)}
-                        </td>
-                        <td className="p-3 text-right font-mono font-black text-emerald-600">
-                          R$ {Number(p.netProfit).toFixed(2)} ({p.marginPct}%)
-                        </td>
-                        <td className="p-3">
-                          <Badge
-                            variant="outline"
-                            className={
-                              p.unitsSold === 0
-                                ? "border-rose-500/40 text-rose-600 text-[10px]"
-                                : p.abcClass === "A"
-                                ? "border-emerald-500/40 text-emerald-600 text-[10px]"
-                                : "text-[10px]"
-                            }
-                          >
-                            {p.statusTag}
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </div>
-            </Card>
-
-            {/* Cesta de Compras (Market Basket) */}
-            {Array.isArray(insightsData?.marketBasketPairs) && insightsData.marketBasketPairs.length > 0 && (
-              <Card className="rounded-3xl border border-border p-4 space-y-3 w-full min-w-0">
-                <div>
-                  <h3 className="text-sm font-black text-foreground">
-                    🤝 Cesta de Compras — Produtos Mais Consumidos Juntos na Mesma Estadia
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    Descubra quais combinações os hóspedes mais fazem ao abrir o frigobar
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {insightsData.marketBasketPairs.map((pair: any) => (
-                    <div
-                      key={pair.pair}
-                      className="p-3.5 rounded-2xl bg-muted/30 border border-border space-y-1.5 text-xs"
-                    >
-                      <div className="flex items-center justify-between">
-                        <Badge className="bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30 text-[10px] font-bold">
-                          {pair.coOccurrences}x juntos ({pair.shareOfOrdersPct}%)
-                        </Badge>
-                      </div>
-                      <div className="font-black text-foreground">{pair.pair}</div>
-                      <p className="text-[10px] text-muted-foreground">{pair.suggestion}</p>
-                    </div>
-                  ))}
-                </div>
-              </Card>
             )}
-
-            {/* 5. RANKING DE PERFORMANCE POR FLAT */}
-            <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
-              <CardHeader className="p-4 border-b border-border bg-card">
-                <CardTitle className="text-sm font-black flex items-center gap-2">
-                  <Award className="w-4 h-4 text-amber-500 shrink-0" />
-                  <span>Ranking de Performance de Frigobar por Flat (19 UHs)</span>
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Faturamento, ticket médio, taxa de divergência nas conferências e item campeão de cada flat
-                </CardDescription>
-              </CardHeader>
-              <div className="w-full overflow-x-auto max-h-96">
-                <table className="w-full min-w-[600px] text-xs text-left">
-                  <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border sticky top-0">
-                    <tr>
-                      <th className="p-3">Flat</th>
-                      <th className="p-3 text-center">Pedidos</th>
-                      <th className="p-3 text-center">Unidades</th>
-                      <th className="p-3">Produto Campeão</th>
-                      <th className="p-3 text-center">Divergências</th>
-                      <th className="p-3 text-right">Custo Cortesias</th>
-                      <th className="p-3 text-right">Receita Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {(insightsData?.byFlat || []).map((f: any) => (
-                      <tr key={f.flatNumber} className="hover:bg-muted/20">
-                        <td className="p-3 font-black text-foreground">Flat {f.flatNumber}</td>
-                        <td className="p-3 text-center font-mono">{f.ordersCount}</td>
-                        <td className="p-3 text-center font-mono">{f.unitsSold} un.</td>
-                        <td className="p-3 font-semibold text-primary">{f.topProduct}</td>
-                        <td className="p-3 text-center font-mono">
-                          {f.discrepancyCount} ({f.discrepancyRatePct}%)
-                        </td>
-                        <td className="p-3 text-right font-mono text-sky-600">
-                          R$ {Number(f.courtesyCost).toFixed(2)}
-                        </td>
-                        <td className="p-3 text-right font-mono font-black text-emerald-600">
-                          R$ {Number(f.revenue).toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
           </TabsContent>
 
-          {/* TAB 2: CATÁLOGO */}
-          <TabsContent value="catalogo" className="w-full min-w-0 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Button
-                  size="sm"
-                  variant={selectedCategory === "todas" ? "default" : "outline"}
-                  onClick={() => setSelectedCategory("todas")}
-                  className="h-8 rounded-xl text-xs font-bold"
-                >
-                  Todas as Categorias
-                </Button>
-                {CATEGORIES.map(cat => (
-                  <Button
-                    key={cat}
-                    size="sm"
-                    variant={selectedCategory === cat ? "default" : "outline"}
-                    onClick={() => setSelectedCategory(cat)}
-                    className="h-8 rounded-xl text-xs font-bold"
-                  >
-                    {cat}
-                  </Button>
-                ))}
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
-                <div className="relative w-full sm:w-64">
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar produto..."
-                    value={productSearch}
-                    onChange={e => setProductSearch(e.target.value)}
-                    className="h-8 pl-9 text-xs rounded-xl"
-                  />
-                </div>
-
-                <Button
-                  size="sm"
-                  onClick={() => handleOpenProductModal()}
-                  className="rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 h-8 shrink-0 w-full sm:w-auto"
-                >
-                  <Plus className="w-3.5 h-3.5 mr-1" />
-                  Novo Produto
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full min-w-0">
-              {filteredProducts.map(p => (
-                <Card key={p.id} className="rounded-3xl border border-border bg-card p-4 space-y-3 shadow-xs w-full min-w-0">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      {p.imageUrl ? (
-                        <img src={p.imageUrl} alt={p.name} className="w-12 h-12 rounded-2xl object-cover shrink-0" />
-                      ) : (
-                        <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-black text-sm shrink-0">
-                          🧊
-                        </div>
-                      )}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <strong className="text-sm font-bold text-foreground break-words">{p.name}</strong>
-                          {p.isCourtesy && (
-                            <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 text-[9px] font-bold">
-                              Cortesia Free
-                            </Badge>
-                          )}
-                        </div>
-                        <span className="text-[11px] text-muted-foreground block">{p.category}</span>
-                      </div>
-                    </div>
-
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => handleOpenProductModal(p)}
-                      className="h-8 w-8 rounded-xl text-muted-foreground hover:text-foreground shrink-0"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-
-                  {p.description && <p className="text-xs text-muted-foreground line-clamp-2">{p.description}</p>}
-
-                  <div className="flex items-center justify-between pt-2 border-t border-border text-xs">
-                    <div>
-                      <span className="text-[10px] text-muted-foreground block">Venda ao Hóspede:</span>
-                      <strong className="text-sm font-black text-emerald-600">
-                        R$ {Number(p.price).toFixed(2)}
-                      </strong>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="text-[10px] text-muted-foreground block">Custo Repasse Anserve:</span>
-                      <span className="text-xs font-mono font-semibold text-muted-foreground">
-                        R$ {Number(p.cost || 0).toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          </TabsContent>
-
-          {/* TAB 3: GABARITO POR FLAT */}
-          <TabsContent value="gabarito" className="w-full min-w-0 space-y-4">
-            <div className="bg-card border border-border p-4 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full min-w-0">
-              <div className="space-y-0.5 min-w-0">
-                <h3 className="text-sm font-bold text-foreground">Configuração do Gabarito Nominal do Frigobar</h3>
-                <p className="text-xs text-muted-foreground">
-                  Ajuste a quantidade padrão de cada item que deve constar no frigobar abastecido.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                <span className="text-xs font-bold text-muted-foreground">Aplicar em:</span>
-                <select
-                  value={selectedFlatForStock}
-                  onChange={e => handleSelectFlatForStock(e.target.value)}
-                  className="h-8 text-xs rounded-xl border border-input bg-background px-3 font-bold flex-1 sm:flex-initial min-w-0"
-                >
-                  <option value="global">🌐 Padrão Global (Todos os Flats)</option>
-                  {SOHO_FLATS.map(f => (
-                    <option key={f} value={f}>
-                      Flat {f} (Personalizado)
-                    </option>
-                  ))}
-                </select>
-
-                <Button
-                  size="sm"
-                  onClick={handleSaveDefaultStock}
-                  disabled={savingStock}
-                  className="rounded-xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 h-8 w-full sm:w-auto"
-                >
-                  {savingStock ? "Salvando..." : "Salvar Gabarito"}
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 w-full min-w-0">
-              {products.map(prod => {
-                const qty = stockQuantities[prod.id] || 0;
-                return (
-                  <div
-                    key={prod.id}
-                    className="p-3.5 rounded-2xl bg-card border border-border flex items-center justify-between gap-3 shadow-xs w-full min-w-0"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      {prod.imageUrl ? (
-                        <img src={prod.imageUrl} alt={prod.name} className="w-9 h-9 rounded-xl object-cover shrink-0" />
-                      ) : (
-                        <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0">
-                          🧊
-                        </div>
-                      )}
-                      <div className="min-w-0">
-                        <div className="font-bold text-xs text-foreground truncate">{prod.name}</div>
-                        <span className="text-[10px] text-muted-foreground block truncate">{prod.category}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="outline"
-                        disabled={qty === 0}
-                        onClick={() =>
-                          setStockQuantities(prev => ({
-                            ...prev,
-                            [prod.id]: Math.max(0, qty - 1)
-                          }))
-                        }
-                        className="h-7 w-7 rounded-lg"
-                      >
-                        -
-                      </Button>
-                      <span className="w-6 text-center font-bold text-xs font-mono">{qty}</span>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="outline"
-                        onClick={() =>
-                          setStockQuantities(prev => ({
-                            ...prev,
-                            [prod.id]: qty + 1
-                          }))
-                        }
-                        className="h-7 w-7 rounded-lg"
-                      >
-                        +
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </TabsContent>
-
-          {/* TAB 4: GESTÃO COMPLETA DE EQUIPE ANSERVE (GESTORES + FUNCIONÁRIAS) */}
+          {/* ABA 3: EQUIPE & ACESSOS ANSERVE (GESTORES, REPOSITORAS, FATURAMENTO & WHATSAPP DE TRABALHO) */}
           <TabsContent value="equipe" className="w-full min-w-0 space-y-5">
             <div className="bg-card border border-border p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full min-w-0">
               <div className="space-y-1 min-w-0">
                 <h3 className="text-sm sm:text-base font-black text-foreground flex items-center gap-2">
                   <Users className="w-5 h-5 text-teal-600 shrink-0" />
-                  <span>Gestão Geral da Equipe Anserve (Supervisores & Repositoras)</span>
+                  <span>Gestão Geral da Equipe Anserve (Gestores, Repositoras & Faturamento NF)</span>
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Como administrador da CorpFlats, você tem controle total sobre os Gestores da Anserve e todas as Funcionárias de Reposição.
+                  Gerencie todos os logins da operação Anserve. Ao cadastrar com WhatsApp, o colaborador recebe automaticamente o link direto, login e senha inicial.
                 </p>
               </div>
 
@@ -1918,7 +1980,16 @@ export default function MinibarAdminPage() {
                   className="rounded-xl text-xs font-bold h-9 gap-1.5 border-teal-500/40 text-teal-700 dark:text-teal-300 w-full sm:w-auto"
                 >
                   <ShieldCheck className="w-4 h-4" />
-                  <span>Novo Gestor Anserve</span>
+                  <span>Novo Gestor</span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleOpenCreateStaff("anserve_faturamento")}
+                  className="rounded-xl text-xs font-bold h-9 gap-1.5 border-indigo-500/40 text-indigo-700 dark:text-indigo-300 w-full sm:w-auto"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Novo Emissor NF</span>
                 </Button>
                 <Button
                   size="sm"
@@ -1926,91 +1997,25 @@ export default function MinibarAdminPage() {
                   className="rounded-xl text-xs font-bold h-9 gap-1.5 bg-primary text-primary-foreground w-full sm:w-auto"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span>Nova Funcionária (Repositora)</span>
+                  <span>Nova Repositora</span>
                 </Button>
               </div>
             </div>
-
-            {/* WhatsApp Exclusivo de Trabalho das Repositoras (Avisos de Check-out e Resumo Diário) */}
-            <Card className="rounded-3xl border border-teal-500/30 bg-teal-500/5 p-4 sm:p-5 space-y-4 w-full min-w-0">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div className="space-y-1 flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Phone className="w-4 h-4 text-teal-600 shrink-0" />
-                    <h4 className="text-xs sm:text-sm font-black text-foreground">
-                      WhatsApp Exclusivo de Trabalho das Repositoras (Avisos de Check-out)
-                    </h4>
-                    <Badge className="bg-teal-600 text-white text-[10px]">Celular de Trabalho</Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Cadastre o número do WhatsApp do celular de trabalho das repositoras. Ao fazerem o <strong>1º login do dia</strong>, elas recebem o resumo dos flats já liberados (com horário) e quantos faltam sair. Além disso, <strong>a cada novo check-out</strong>, este número recebe o alerta imediato + resumo atualizado.
-                  </p>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
-                  <Input
-                    placeholder="Ex: 11999999999"
-                    value={restockerWorkWhatsapp}
-                    onChange={e => setRestockerWorkWhatsapp(e.target.value)}
-                    className="h-9 w-full sm:w-48 text-xs font-mono rounded-xl bg-background"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleSaveRestockerWorkWhatsapp}
-                    disabled={savingWorkWhatsapp}
-                    className="h-9 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white"
-                  >
-                    {savingWorkWhatsapp ? "Salvando..." : "Salvar WhatsApp"}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={handleSendTestCheckoutSummary}
-                    disabled={sendingTestSummary || !restockerWorkWhatsapp.trim()}
-                    className="h-9 rounded-xl text-xs font-bold border-teal-500/40 text-teal-700 dark:text-teal-300"
-                  >
-                    <Send className="w-3.5 h-3.5 mr-1.5" />
-                    {sendingTestSummary ? "Enviando..." : "Enviar Resumo Agora"}
-                  </Button>
-                </div>
-              </div>
-
-              {checkoutSummary && (
-                <div className="pt-2 border-t border-teal-500/20 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span className="text-muted-foreground">
-                    Status de hoje ({checkoutSummary.todayStr}):{" "}
-                    <strong className="text-emerald-600">
-                      {checkoutSummary.doneCount ?? checkoutSummary.checkedOutCount ?? 0} check-outs já realizados
-                    </strong>{" "}
-                    •{" "}
-                    <strong className="text-amber-600">
-                      {checkoutSummary.pendingCount ?? 0} previstos aguardando saída
-                    </strong>
-                  </span>
-                  {(checkoutSummary.doneCheckouts || checkoutSummary.checkedOutTodayList || []).length > 0 && (
-                    <span className="text-[11px] font-mono text-foreground">
-                      Liberados:{" "}
-                      {(checkoutSummary.doneCheckouts || checkoutSummary.checkedOutTodayList || [])
-                        .map((c: any) => `Flat ${c.flatNumber} (${c.checkoutTime})`)
-                        .join(", ")}
-                    </span>
-                  )}
-                </div>
-              )}
-            </Card>
 
             <div className="flex flex-wrap items-center gap-2">
               {[
                 { key: "todos", label: `Todos (${staffList.length})` },
                 {
                   key: "anserve_gestor",
-                  label: `Gestores Anserve (${staffList.filter(s => s.role === "anserve_gestor").length})`
+                  label: `Gestores (${staffList.filter(s => s.role === "anserve_gestor").length})`
                 },
                 {
                   key: "anserve_repositora",
                   label: `Repositoras (${staffList.filter(s => s.role === "anserve_repositora").length})`
+                },
+                {
+                  key: "anserve_faturamento",
+                  label: `Emissão de NF (${staffList.filter(s => s.role === "anserve_faturamento").length})`
                 }
               ].map(f => (
                 <Button
@@ -2034,7 +2039,7 @@ export default function MinibarAdminPage() {
                       <th className="p-3.5">Cargo / Perfil</th>
                       <th className="p-3.5">WhatsApp & PIN</th>
                       <th className="p-3.5 text-center">Status</th>
-                      <th className="p-3.5 text-center">Vistorias</th>
+                      <th className="p-3.5 text-center">Passagens</th>
                       <th className="p-3.5 text-center">Itens Repostos</th>
                       <th className="p-3.5 text-right">Ações</th>
                     </tr>
@@ -2051,11 +2056,15 @@ export default function MinibarAdminPage() {
                           <td className="p-3.5">
                             {member.role === "anserve_gestor" ? (
                               <Badge className="bg-teal-500/15 text-teal-700 border-teal-500/30 text-[10px] font-bold">
-                                Gestor / Supervisor Anserve
+                                👔 Gestor Anserve
+                              </Badge>
+                            ) : member.role === "anserve_faturamento" ? (
+                              <Badge className="bg-indigo-500/15 text-indigo-700 border-indigo-500/30 text-[10px] font-bold">
+                                📄 Emissão de NF
                               </Badge>
                             ) : (
                               <Badge className="bg-sky-500/15 text-sky-700 border-sky-500/30 text-[10px] font-bold">
-                                Funcionária Repositora
+                                🧹 Repositora
                               </Badge>
                             )}
                           </td>
@@ -2091,7 +2100,7 @@ export default function MinibarAdminPage() {
                                 className="h-7 px-2 rounded-lg text-[11px] font-bold text-primary"
                               >
                                 <Eye className="w-3.5 h-3.5 mr-1" />
-                                Relatório
+                                Histórico
                               </Button>
                               <Button
                                 size="icon"
@@ -2130,129 +2139,172 @@ export default function MinibarAdminPage() {
                 </table>
               </div>
             </Card>
+
+            {/* Celular de Trabalho das Repositoras */}
+            <Card className="rounded-3xl border border-teal-500/30 bg-teal-500/5 p-4 sm:p-5 space-y-4 w-full min-w-0">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Phone className="w-4 h-4 text-teal-600 shrink-0" />
+                    <h4 className="text-xs sm:text-sm font-black text-foreground">
+                      WhatsApp Exclusivo de Trabalho das Repositoras (Avisos de Check-out)
+                    </h4>
+                    <Badge className="bg-teal-600 text-white text-[10px]">Celular de Trabalho</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Cadastre o número do WhatsApp do celular de trabalho das repositoras. Recebe o resumo no <strong>1º login do dia</strong> e alertas automáticos <strong>a cada novo check-out</strong>.
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+                  <Input
+                    placeholder="Ex: 11999999999"
+                    value={restockerWorkWhatsapp}
+                    onChange={e => setRestockerWorkWhatsapp(e.target.value)}
+                    className="h-9 w-full sm:w-48 text-xs font-mono rounded-xl bg-background"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleSaveRestockerWorkWhatsapp}
+                    disabled={savingWorkWhatsapp}
+                    className="h-9 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white"
+                  >
+                    {savingWorkWhatsapp ? "Salvando..." : "Salvar WhatsApp"}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSendTestCheckoutSummary}
+                    disabled={sendingTestSummary || !restockerWorkWhatsapp.trim()}
+                    className="h-9 rounded-xl text-xs font-bold border-teal-500/40 text-teal-700 dark:text-teal-300"
+                  >
+                    <Send className="w-3.5 h-3.5 mr-1.5" />
+                    {sendingTestSummary ? "Enviando..." : "Testar Resumo Agora"}
+                  </Button>
+                </div>
+              </div>
+            </Card>
           </TabsContent>
 
-          {/* TAB 5: GERADOR DE QR CODES A6 */}
-          <TabsContent value="qrcodes" className="space-y-4">
-            <div className="bg-card border border-border p-4 md:p-6 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <h3 className="text-base font-black text-foreground flex items-center gap-2">
-                  <QrCode className="w-5 h-5 text-indigo-600" />
-                  <span>Displays de Acrílico A6 por Flat (Flats Soho)</span>
+          {/* ABA 4: REPASSE & QR CODES A6 */}
+          <TabsContent value="extrato" className="space-y-6">
+            {/* Bloco 1: Extrato CorpFlats <-> Anserve */}
+            {settlementData && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-black text-foreground flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-emerald-600" />
+                  <span>Fechamento Financeiro de Repasse (CorpFlats ↔ Anserve)</span>
                 </h3>
-                <p className="text-xs text-muted-foreground">
-                  Cada cartão aponta diretamente para a URL pública do respectivo flat. Imprima em papel couché ou adesivo para displays de balcão.
-                </p>
-              </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+                    <span className="text-[11px] text-muted-foreground font-semibold">Total Faturamento Bruto</span>
+                    <div className="text-xl font-black text-foreground">
+                      R$ {Number(settlementData.totalOrdersAmount || 0).toFixed(2)}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
+                      {settlementData.ordersCount || 0} pedidos pagos
+                    </span>
+                  </Card>
 
-              <div className="flex items-center gap-2">
+                  <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+                    <span className="text-[11px] text-muted-foreground font-semibold">Taxas Financeiras Retidas</span>
+                    <div className="text-xl font-black text-red-600 dark:text-red-400">
+                      - R${" "}
+                      {Number(
+                        settlementData.totalFees || (settlementData.cardFees || 0) + (settlementData.pixFees || 0) || 0
+                      ).toFixed(2)}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">Mercado Pago + PIX Inter</span>
+                  </Card>
+
+                  <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+                    <span className="text-[11px] text-muted-foreground font-semibold">Comissão CorpFlats</span>
+                    <div className="text-xl font-black text-amber-600 dark:text-amber-400">
+                      - R$ {Number(settlementData.commissionCorpFlats || 0).toFixed(2)}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">Retenção acordada de intermediação</span>
+                  </Card>
+
+                  <Card className="rounded-3xl border border-emerald-500/40 bg-emerald-500/10 p-4 space-y-1 shadow-md shadow-emerald-500/5">
+                    <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-bold uppercase tracking-wide">
+                      Repasse Líquido à Anserve
+                    </span>
+                    <div className="text-2xl font-black text-emerald-700 dark:text-emerald-300">
+                      R$ {Number(settlementData.netPayableToAnserve || 0).toFixed(2)}
+                    </div>
+                    <span className="text-[10px] text-emerald-800/80 dark:text-emerald-300/80 block">
+                      + R$ {Number(settlementData.courtesyRestockCost || 0).toFixed(2)} reembolsados em cortesias
+                    </span>
+                  </Card>
+                </div>
+              </div>
+            )}
+
+            {/* Bloco 2: Displays de Acrílico A6 com QR Code por Flat */}
+            <div className="space-y-4 pt-2 border-t border-border">
+              <div className="bg-card border border-border p-4 md:p-5 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm sm:text-base font-black text-foreground flex items-center gap-2">
+                    <QrCode className="w-5 h-5 text-indigo-600" />
+                    <span>Displays de Acrílico A6 por Flat (Cardápio Digital & Extrato)</span>
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Cada cartão aponta diretamente para o Cardápio Digital e Extrato do respectivo flat. Imprima em formato A6 para os displays de balcão.
+                  </p>
+                </div>
+
                 <Button
                   size="sm"
                   onClick={handlePrintAllQrCodes}
-                  className="rounded-2xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white h-9 px-4 shadow-sm"
+                  className="rounded-2xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white h-9 px-4 shadow-sm shrink-0"
                 >
                   <Printer className="w-4 h-4 mr-1.5" />
-                  Imprimir Todos (A6)
+                  Imprimir Todos os Displays (A6)
                 </Button>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {SOHO_FLATS.map(flatNumber => {
-                const targetUrl = `${qrOriginUrl}/frigobar/flat/${flatNumber}`;
-                const qrImgSrc = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(targetUrl)}`;
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {SOHO_FLATS.map(flatNumber => {
+                  const targetUrl = `${qrOriginUrl}/frigobar/flat/${flatNumber}`;
+                  const qrImgSrc = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(targetUrl)}`;
 
-                return (
-                  <Card
-                    key={flatNumber}
-                    className="rounded-3xl border-2 border-border/80 bg-card p-5 text-center flex flex-col items-center justify-between shadow-xs hover:border-indigo-500/50 transition-all space-y-3"
-                  >
-                    <div className="space-y-0.5">
-                      <div className="text-[10px] font-black uppercase tracking-widest text-primary">
-                        CORPFLATS • SOHO RESIDENCE
-                      </div>
-                      <div className="text-xl font-black text-foreground">FLAT {flatNumber}</div>
-                    </div>
-
-                    <div className="p-3 bg-white rounded-2xl shadow-xs border border-slate-200">
-                      <img src={qrImgSrc} alt={`QR Code Flat ${flatNumber}`} className="w-36 h-36" />
-                    </div>
-
-                    <div className="space-y-1 text-[11px] text-muted-foreground">
-                      <p className="font-bold text-foreground">Frigobar Express no seu celular</p>
-                      <p className="text-[10px]">Aponte a câmera, confirme os 4 dígitos do telefone e aproveite!</p>
-                    </div>
-
-                    <div className="flex items-center justify-center gap-1.5 pt-1 text-[10px] font-bold text-muted-foreground">
-                      <Badge variant="outline" className="text-[9px] py-0 px-1 border-muted">
-                        PIX Inter
-                      </Badge>
-                      <Badge variant="outline" className="text-[9px] py-0 px-1 border-muted">
-                        Cartão Crédito
-                      </Badge>
-                    </div>
-
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => window.open(`/frigobar/flat/${flatNumber}`, "_blank")}
-                      className="w-full text-[11px] font-bold rounded-xl h-7 text-indigo-600 hover:text-indigo-700"
+                  return (
+                    <Card
+                      key={flatNumber}
+                      className="rounded-3xl border-2 border-border/80 bg-card p-5 text-center flex flex-col items-center justify-between shadow-xs hover:border-indigo-500/50 transition-all space-y-3"
                     >
-                      <ExternalLink className="w-3 h-3 mr-1" />
-                      Visualizar & Testar
-                    </Button>
-                  </Card>
-                );
-              })}
-            </div>
-          </TabsContent>
+                      <div className="space-y-0.5">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-primary">
+                          CORPFLATS • SOHO RESIDENCE
+                        </div>
+                        <div className="text-xl font-black text-foreground">FLAT {flatNumber}</div>
+                      </div>
 
-          {/* TAB 6: EXTRATO CORPFLATS ↔ ANSERVE */}
-          <TabsContent value="extrato" className="space-y-5">
-            {settlementData && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
-                  <span className="text-[11px] text-muted-foreground font-semibold">Total Faturamento Bruto</span>
-                  <div className="text-xl font-black text-foreground">
-                    R$ {Number(settlementData.totalOrdersAmount || 0).toFixed(2)}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground block">
-                    {settlementData.ordersCount || 0} pedidos pagos
-                  </span>
-                </Card>
+                      <div className="p-3 bg-white rounded-2xl shadow-xs border border-slate-200">
+                        <img src={qrImgSrc} alt={`QR Code Flat ${flatNumber}`} className="w-36 h-36" />
+                      </div>
 
-                <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
-                  <span className="text-[11px] text-muted-foreground font-semibold">Taxas Financeiras Retidas</span>
-                  <div className="text-xl font-black text-red-600 dark:text-red-400">
-                    - R${" "}
-                    {Number(
-                      settlementData.totalFees || (settlementData.cardFees || 0) + (settlementData.pixFees || 0) || 0
-                    ).toFixed(2)}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground block">Mercado Pago + PIX Inter</span>
-                </Card>
+                      <div className="space-y-1 text-[11px] text-muted-foreground">
+                        <p className="font-bold text-foreground">Cardápio Digital & Extrato</p>
+                        <p className="text-[10px]">Aponte a câmera para consultar preços e acompanhar seu consumo!</p>
+                      </div>
 
-                <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
-                  <span className="text-[11px] text-muted-foreground font-semibold">Comissão CorpFlats</span>
-                  <div className="text-xl font-black text-amber-600 dark:text-amber-400">
-                    - R$ {Number(settlementData.commissionCorpFlats || 0).toFixed(2)}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground block">Retenção acordada de intermediação</span>
-                </Card>
-
-                <Card className="rounded-3xl border border-emerald-500/40 bg-emerald-500/10 p-4 space-y-1 shadow-md shadow-emerald-500/5">
-                  <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-bold uppercase tracking-wide">
-                    Repasse Líquido à Anserve
-                  </span>
-                  <div className="text-2xl font-black text-emerald-700 dark:text-emerald-300">
-                    R$ {Number(settlementData.netPayableToAnserve || 0).toFixed(2)}
-                  </div>
-                  <span className="text-[10px] text-emerald-800/80 dark:text-emerald-300/80 block">
-                    + R$ {Number(settlementData.courtesyRestockCost || 0).toFixed(2)} reembolsados em cortesias
-                  </span>
-                </Card>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => window.open(`/frigobar/flat/${flatNumber}`, "_blank")}
+                        className="w-full text-[11px] font-bold rounded-xl h-7 text-indigo-600 hover:text-indigo-700"
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" />
+                        Visualizar & Testar
+                      </Button>
+                    </Card>
+                  );
+                })}
               </div>
-            )}
+            </div>
           </TabsContent>
         </Tabs>
 
@@ -2395,7 +2447,8 @@ export default function MinibarAdminPage() {
                   onChange={e => setSRole(e.target.value as any)}
                   className="w-full h-9 rounded-xl border border-input bg-background px-3 font-bold text-xs"
                 >
-                  <option value="anserve_repositora">🧹 Funcionária de Reposição & Conferência</option>
+                  <option value="anserve_repositora">🧹 Funcionária de Reposição & Conferência (/frigobar-reposicao)</option>
+                  <option value="anserve_faturamento">📄 Emissão de Notas Fiscais (/frigobar-notas)</option>
                   <option value="anserve_gestor">👔 Gestor / Supervisor Anserve (NFs, Vendas & Equipe)</option>
                 </select>
               </div>
@@ -2556,23 +2609,17 @@ export default function MinibarAdminPage() {
             </DialogHeader>
             {historyModalStaff && (
               <div className="space-y-4 text-xs">
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="p-3 rounded-2xl bg-muted/40 border border-border">
-                    <span className="text-[10px] text-muted-foreground block">Conferências</span>
+                    <span className="text-[10px] text-muted-foreground block">Passagens & Lançamentos</span>
                     <strong className="text-base font-black">
                       {historyModalStaff.productivity?.inspectionsCount || 0}
                     </strong>
                   </div>
                   <div className="p-3 rounded-2xl bg-muted/40 border border-border">
-                    <span className="text-[10px] text-muted-foreground block">Itens Repostos</span>
+                    <span className="text-[10px] text-muted-foreground block">Itens Lançados / Repostos</span>
                     <strong className="text-base font-black text-sky-600">
                       {historyModalStaff.productivity?.totalItemsRestockedQty || 0} un.
-                    </strong>
-                  </div>
-                  <div className="p-3 rounded-2xl bg-muted/40 border border-border">
-                    <span className="text-[10px] text-muted-foreground block">Divergências</span>
-                    <strong className="text-base font-black text-amber-600">
-                      R$ {Number(historyModalStaff.productivity?.discrepancyAmountDetected || 0).toFixed(2)}
                     </strong>
                   </div>
                 </div>

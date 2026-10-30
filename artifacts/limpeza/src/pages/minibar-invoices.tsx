@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Shell } from "@/components/layout";
+import { MinibarEcosystemNav } from "@/components/minibar-ecosystem-nav";
 import { useGetMe } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -403,7 +404,9 @@ export default function MinibarInvoicesPage() {
 
   return (
     <Shell>
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-6 space-y-6">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-5">
+        <MinibarEcosystemNav currentScreen="notas" pendingInvoicesCount={stats.pendingCount} />
+
         {/* Cabeçalho */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-5 sm:p-6 rounded-2xl shadow-lg border border-indigo-500/20">
           <div className="space-y-1.5">

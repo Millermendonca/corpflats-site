@@ -313,6 +313,7 @@ function Router() {
         <AdminRoute path="/notas-frigobar" component={MinibarInvoices} moduleName="a Central de Emissão de Notas Fiscais do Frigobar" />
         <AdminRoute path="/anserve" component={AnserveDashboard} moduleName="o Painel de Supervisão Anserve" />
         <AdminRoute path="/frigobar-gestao" component={AnserveDashboard} moduleName="o Painel de Gestão Anserve" />
+        <AdminRoute path="/frigobar-admin" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
         <AdminRoute path="/frigobar" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
         <AdminRoute path="/minibar-admin" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />
         <AdminRoute path="/admin/frigobar" component={MinibarAdmin} moduleName="a Gestão de Frigobar CorpFlats" />

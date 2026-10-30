@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Shell } from "@/components/layout";
+import { MinibarEcosystemNav } from "@/components/minibar-ecosystem-nav";
 import { useGetMe, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -17,7 +18,9 @@ import {
   Users,
   Check,
   X,
-  Clock
+  Clock,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -178,8 +181,9 @@ export default function AnserveRestockPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   // Filters
-  const [statusFilter, setStatusFilter] = useState<"todos" | "checkout_hoje" | "ocupado" | "livre">("todos");
+  const [statusFilter, setStatusFilter] = useState<"todos" | "checkout_hoje" | "ocupado" | "livre" | "pendentes_hoje" | "conferidos_hoje">("todos");
   const [searchQuery, setSearchQuery] = useState("");
+  const [expandedFlatHistory, setExpandedFlatHistory] = useState<Record<string, boolean>>({});
 
   // Modals state
   const [semConsumoModalFlat, setSemConsumoModalFlat] = useState<FlatStatusItem | null>(null);
@@ -404,20 +408,54 @@ export default function AnserveRestockPage() {
     setPinError(null);
   };
 
+  const todayYmd = useMemo(() => getTodayYmdBr(), []);
+
+  const isInspectedToday = (f: FlatStatusItem): boolean => {
+    if (f.lastInspection?.launchDate === todayYmd) return true;
+    if (f.lastInspection?.inspectedAt && f.lastInspection.inspectedAt.slice(0, 10) === todayYmd) return true;
+    if (Array.isArray(f.dailyLaunches) && f.dailyLaunches.some((g) => g.dateYmd === todayYmd)) return true;
+    return false;
+  };
+
   // Metrics calculation
   const stats = useMemo(() => {
     const total = flats.length;
     const checkoutHoje = flats.filter((f) => f.status === "checkout_hoje").length;
     const ocupados = flats.filter((f) => f.status === "ocupado").length;
     const livres = flats.filter((f) => f.status === "livre").length;
-    return { total, checkoutHoje, ocupados, livres };
-  }, [flats]);
+    const activeFlats = flats.filter((f) => f.status !== "livre");
+    const conferidosHoje = flats.filter((f) => isInspectedToday(f)).length;
+    const pendentesHoje = activeFlats.filter((f) => !isInspectedToday(f)).length;
+    return { total, checkoutHoje, ocupados, livres, conferidosHoje, pendentesHoje };
+  }, [flats, todayYmd]);
 
-  // Filtered flats list
+  // Filtered flats list sorted by daily work priority
   const filteredFlats = useMemo(() => {
+    const getPriorityRank = (f: FlatStatusItem): number => {
+      const doneToday = isInspectedToday(f);
+      // 0: Checked out today & awaiting final inspection
+      if (f.isCheckedOut && !doneToday) return 0;
+      // 1: Scheduled checkout today & not yet inspected today
+      if (f.status === "checkout_hoje" && !doneToday) return 1;
+      // 2: Occupied & awaiting daily pass today
+      if (f.status === "ocupado" && !doneToday) return 2;
+      // 3: Checked out today & already inspected today
+      if (f.isCheckedOut && doneToday) return 3;
+      // 4: Checkout today or Occupied & already inspected today
+      if ((f.status === "checkout_hoje" || f.status === "ocupado") && doneToday) return 4;
+      // 5: Vacant
+      return 5;
+    };
+
     return flats
       .filter((f) => {
-        if (statusFilter !== "todos" && f.status !== statusFilter) return false;
+        if (statusFilter === "pendentes_hoje") {
+          if (f.status === "livre" || isInspectedToday(f)) return false;
+        } else if (statusFilter === "conferidos_hoje") {
+          if (!isInspectedToday(f)) return false;
+        } else if (statusFilter !== "todos" && f.status !== statusFilter) {
+          return false;
+        }
 
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase().trim();
@@ -430,13 +468,12 @@ export default function AnserveRestockPage() {
         return true;
       })
       .sort((a, b) => {
-        const order = { checkout_hoje: 0, ocupado: 1, livre: 2 };
-        if (order[a.status] !== order[b.status]) {
-          return order[a.status] - order[b.status];
-        }
+        const rankA = getPriorityRank(a);
+        const rankB = getPriorityRank(b);
+        if (rankA !== rankB) return rankA - rankB;
         return Number(a.flatNumber) - Number(b.flatNumber);
       });
-  }, [flats, statusFilter, searchQuery]);
+  }, [flats, statusFilter, searchQuery, todayYmd]);
 
   // Photo capture
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -815,6 +852,8 @@ export default function AnserveRestockPage() {
   return (
     <Shell>
       <div className="max-w-6xl mx-auto px-4 py-4 md:py-6 space-y-5 pb-24">
+        <MinibarEcosystemNav currentScreen="reposicao" />
+
         {/* Top Header */}
         <div className="bg-card border border-border p-4 md:p-6 rounded-3xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -834,7 +873,7 @@ export default function AnserveRestockPage() {
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Lance diariamente os itens consumidos em cada flat. O hóspede acompanha por dia no portal e paga após o check-out.
+                Flats que já saíram hoje aparecem no topo para conferência final imediata.
               </p>
             </div>
           </div>
@@ -878,7 +917,7 @@ export default function AnserveRestockPage() {
           const pendingCount = checkoutSummary.pendingCount ?? pendingCheckoutsList.length;
 
           return (
-            <Card className="rounded-3xl border-border bg-card p-4 sm:p-5 space-y-3 shadow-xs">
+            <Card className="rounded-3xl border-border bg-card p-3.5 sm:p-4 space-y-2.5 shadow-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4 text-sky-500" />
@@ -896,49 +935,51 @@ export default function AnserveRestockPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                <div className="p-3 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-1.5">
-                  <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-300 block">
-                    ✅ Flats que JÁ fizeram check-out hoje ({doneCount}):
-                  </span>
-                  {doneCheckoutsList.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground">Nenhum check-out concluído até o momento.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {doneCheckoutsList.map((c: any) => (
-                        <span
-                          key={`${c.flatNumber}-${c.reservationCode}`}
-                          className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-bold text-emerald-800 dark:text-emerald-200"
-                        >
-                          Flat {c.flatNumber} • às {c.checkoutTime} ({(c.guestName || "Hóspede").split(" ")[0]})
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+              {(doneCheckoutsList.length > 0 || pendingCheckoutsList.length > 0) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+                  <div className="p-2.5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-1">
+                    <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-300 block">
+                      ✅ Já saíram hoje ({doneCount}):
+                    </span>
+                    {doneCheckoutsList.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground">Nenhum check-out concluído ainda.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {doneCheckoutsList.map((c: any) => (
+                          <span
+                            key={`${c.flatNumber}-${c.reservationCode}`}
+                            className="px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-bold text-emerald-800 dark:text-emerald-200"
+                          >
+                            Flat {c.flatNumber} • às {c.checkoutTime} ({(c.guestName || "Hóspede").split(" ")[0]})
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-                <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-1.5">
-                  <span className="text-[11px] font-black text-amber-700 dark:text-amber-300 block">
-                    ⏳ Flats que FALTAM fazer check-out hoje ({pendingCount}):
-                  </span>
-                  {pendingCheckoutsList.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground">
-                      Todos os check-outs previstos para hoje já foram concluídos!
-                    </p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {pendingCheckoutsList.map((c: any) => (
-                        <span
-                          key={`${c.flatNumber}-${c.reservationCode}`}
-                          className="px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] font-bold text-amber-800 dark:text-amber-200"
-                        >
-                          Flat {c.flatNumber} ({(c.guestName || "Hóspede").split(" ")[0]})
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <div className="p-2.5 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-1">
+                    <span className="text-[11px] font-black text-amber-700 dark:text-amber-300 block">
+                      ⏳ Faltam sair hoje ({pendingCount}):
+                    </span>
+                    {pendingCheckoutsList.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground">
+                        Todos os check-outs previstos para hoje já saíram!
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {pendingCheckoutsList.map((c: any) => (
+                          <span
+                            key={`${c.flatNumber}-${c.reservationCode}`}
+                            className="px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-[11px] font-bold text-amber-800 dark:text-amber-200"
+                          >
+                            Flat {c.flatNumber} ({(c.guestName || "Hóspede").split(" ")[0]})
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
             </Card>
           );
         })()}
@@ -953,6 +994,22 @@ export default function AnserveRestockPage() {
               className="h-8 rounded-xl text-xs font-bold"
             >
               Todos ({stats.total})
+            </Button>
+            <Button
+              size="sm"
+              variant={statusFilter === "pendentes_hoje" ? "default" : "outline"}
+              onClick={() => setStatusFilter("pendentes_hoje")}
+              className="h-8 rounded-xl text-xs font-bold border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
+            >
+              ⏳ Pendentes Hoje ({stats.pendentesHoje})
+            </Button>
+            <Button
+              size="sm"
+              variant={statusFilter === "conferidos_hoje" ? "default" : "outline"}
+              onClick={() => setStatusFilter("conferidos_hoje")}
+              className="h-8 rounded-xl text-xs font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+            >
+              ✓ Conferidos Hoje ({stats.conferidosHoje})
             </Button>
             <Button
               size="sm"
@@ -1005,7 +1062,7 @@ export default function AnserveRestockPage() {
             <p className="text-xs text-muted-foreground">Tente alterar os filtros ou o termo de busca.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {filteredFlats.map((flat) => {
               const isCheckout = flat.status === "checkout_hoje";
               const isOcupado = flat.status === "ocupado";
@@ -1013,32 +1070,36 @@ export default function AnserveRestockPage() {
               const dailyGroups = Array.isArray(flat.dailyLaunches) ? flat.dailyLaunches : [];
               const pendingVal = Number(flat.pendingBalance) || 0;
               const paidVal = Number(flat.totalPaidAmount || flat.declaredAmount) || 0;
+              const doneToday = isInspectedToday(flat);
+              const isExpanded = Boolean(expandedFlatHistory[flat.flatNumber]);
 
               return (
                 <Card
                   key={flat.flatNumber}
                   className={`rounded-3xl border transition-all duration-200 overflow-hidden ${
-                    flat.isCheckedOut
+                    flat.isCheckedOut && !doneToday
+                      ? "border-rose-500/60 bg-rose-500/5 shadow-md shadow-rose-500/10"
+                      : flat.isCheckedOut && doneToday
                       ? "border-emerald-500/40 bg-emerald-500/5"
                       : isCheckout
-                      ? "border-red-500/40 bg-red-500/5 shadow-md shadow-red-500/5"
+                      ? "border-red-500/40 bg-red-500/5 shadow-xs"
                       : isOcupado
                       ? "border-blue-500/20 bg-card hover:border-blue-500/40"
                       : "border-border bg-card"
                   }`}
                 >
-                  <CardHeader className="p-4 pb-2">
+                  <CardHeader className="p-3.5 pb-2">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-base font-black text-foreground">
                           Flat {flat.flatNumber}
                         </span>
                         {flat.isCheckedOut ? (
-                          <Badge className="bg-emerald-600 text-white border-none text-[10px] font-black">
-                            ✓ Saiu {flat.checkoutTime ? `às ${flat.checkoutTime}` : "Hoje"}
+                          <Badge className="bg-rose-600 text-white border-none text-[10px] font-black">
+                            🚨 Saiu {flat.checkoutTime ? `às ${flat.checkoutTime}` : "Hoje"}
                           </Badge>
                         ) : isCheckout ? (
-                          <Badge className="bg-red-600 text-white border-none text-[10px] font-black uppercase tracking-wider animate-pulse">
+                          <Badge className="bg-red-600 text-white border-none text-[10px] font-black uppercase tracking-wider">
                             Saída Hoje
                           </Badge>
                         ) : isOcupado ? (
@@ -1047,9 +1108,20 @@ export default function AnserveRestockPage() {
                           </Badge>
                         ) : (
                           <Badge className="bg-emerald-600/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 text-[10px] font-bold">
-                            Livre / Vago
+                            Livre
                           </Badge>
                         )}
+
+                        {/* Indicador claro se já foi conferido hoje */}
+                        {doneToday ? (
+                          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-black">
+                            ✓ Conferido Hoje
+                          </Badge>
+                        ) : !isLivre ? (
+                          <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30 text-[10px] font-bold">
+                            ⏳ Pendente Hoje
+                          </Badge>
+                        ) : null}
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0">
@@ -1069,7 +1141,7 @@ export default function AnserveRestockPage() {
                     {flat.currentReservation ? (
                       <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="font-bold text-foreground truncate max-w-[165px]">
+                          <span className="font-bold text-foreground truncate max-w-[175px]">
                             {flat.currentReservation.guestName}
                           </span>
                           {(flat.currentReservation.numGuests || 1) > 1 && (
@@ -1086,25 +1158,38 @@ export default function AnserveRestockPage() {
                     )}
                   </CardHeader>
 
-                  <CardContent className="p-4 pt-2 space-y-3">
-                    {/* Lançamentos Diários Registrados no Flat */}
-                    <div className="p-3 rounded-2xl bg-muted/40 border border-border text-xs space-y-2">
+                  <CardContent className="p-3.5 pt-1.5 space-y-2.5">
+                    {/* Resumo Compacto de Lançamentos da Estadia (Expansível no celular) */}
+                    <div className="p-2.5 rounded-2xl bg-muted/40 border border-border text-xs space-y-1.5">
                       <div className="flex items-center justify-between text-[11px]">
                         <span className="text-muted-foreground font-bold flex items-center gap-1">
                           <Calendar className="w-3 h-3 text-sky-500" />
-                          Consumo lançado na estadia:
+                          Consumo na estadia:
                         </span>
                         {dailyGroups.length > 0 ? (
-                          <span className="font-black text-foreground">
-                            R$ {Number(flat.totalLaunchedAmount || 0).toFixed(2)}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedFlatHistory((prev) => ({
+                                ...prev,
+                                [flat.flatNumber]: !prev[flat.flatNumber]
+                              }))
+                            }
+                            className="inline-flex items-center gap-1 font-black text-sky-600 dark:text-sky-400 hover:underline"
+                          >
+                            <span>R$ {Number(flat.totalLaunchedAmount || 0).toFixed(2)}</span>
+                            <span className="text-[10px] font-bold text-muted-foreground">
+                              ({dailyGroups.length} {dailyGroups.length === 1 ? "dia" : "dias"})
+                            </span>
+                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          </button>
                         ) : (
-                          <span className="text-muted-foreground">Nenhum lançamento</span>
+                          <span className="text-muted-foreground">Sem consumo lançado</span>
                         )}
                       </div>
 
-                      {dailyGroups.length > 0 && (
-                        <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                      {dailyGroups.length > 0 && isExpanded && (
+                        <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1 pt-1 border-t border-border/60">
                           {dailyGroups.map((g) => (
                             <div
                               key={g.dateYmd}
@@ -1134,7 +1219,7 @@ export default function AnserveRestockPage() {
                       )}
 
                       {flat.lastInspection && (
-                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/50">
+                        <div className="flex items-center justify-between text-[10px] pt-1 border-t border-border/50">
                           <span className="text-muted-foreground">Última passagem:</span>
                           <span className="font-bold text-emerald-600 dark:text-emerald-400">
                             ✓ {flat.lastInspection.launchDateBr ||
@@ -1142,13 +1227,14 @@ export default function AnserveRestockPage() {
                                 day: "2-digit",
                                 month: "2-digit"
                               })}
+                            {flat.lastInspection.inspectorName ? ` (${flat.lastInspection.inspectorName.split(" ")[0]})` : ""}
                           </span>
                         </div>
                       )}
                     </div>
 
                     {/* Botões de Ação da Repositora */}
-                    <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div className="grid grid-cols-2 gap-2">
                       <Button
                         size="sm"
                         onClick={() => handleOpenLaunchConsumo(flat)}

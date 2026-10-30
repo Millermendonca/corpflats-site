@@ -274,7 +274,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (href === "/anserve" && (location === "/frigobar-gestao")) return true
     if (href === "/frigobar-notas" && (location === "/anserve/notas" || location === "/notas-frigobar")) return true
     if (href === "/frigobar-reposicao" && (location === "/anserve/reposicao")) return true
-    if (href === "/frigobar" && (location === "/minibar" || location === "/minibar-admin" || location === "/admin/frigobar")) return true
+    if (href === "/frigobar" && (location === "/frigobar-admin" || location === "/minibar" || location === "/minibar-admin" || location === "/admin/frigobar")) return true
     if (href === "/reservas" && (location === "/relatorio-reservas" || location === "/relatorios-reservas" || location === "/pms-reports")) return false
     if (href === "/tarifas" && (location === "/precificacao-sebrae" || location === "/pricing-sebrae" || location === "/gestao-tarifas" || location === "/tabela-tarifas" || location === "/precos")) return true
     if (href === "/pagamentos" && (location === "/payments" || location === "/recebiveis" || location === "/taxas")) return true
@@ -371,11 +371,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
       id: "frigobar",
       title: "🧊 Frigobar & Anserve",
       items: [
-        { href: "/frigobar", label: "Gestão de Frigobar (CorpFlats)", icon: Package, description: "Catálogo, gabarito por flat, QR Codes e extrato de repasse" },
-        { href: "/anserve", label: "Painel de Supervisão Anserve", icon: FileText, description: "Supervisão geral, equipe, vendas e fechamento" },
-        { href: "/frigobar-notas", label: "Emissão de Notas Fiscais (Frigobar)", icon: FileText, description: "Tela exclusiva p/ emissão e anexo de Notas Fiscais do frigobar por flat" },
-        { href: "/frigobar-reposicao", label: "Portal da Repositora", icon: Package, description: "Conferência rápida, lançamento diário e reposição" },
-        { href: "/frigobar-gestao", label: "Relatórios & Estoque Anserve", icon: BarChart3, description: "Métricas de saída, consumo de cortesias e auditoria" },
+        { href: "/frigobar", label: "Estratégico & Cardápio (Admin)", icon: Sparkles, description: "Insights 360°, cardápio, estoque padrão, equipe e QR Codes" },
+        { href: "/anserve", label: "Painel do Gestor Anserve", icon: Building2, description: "Vendas, repasse líquido, equipe e histórico de lançamentos" },
+        { href: "/frigobar-notas", label: "Central de Notas Fiscais", icon: FileText, description: "Emissão e anexo de Notas Fiscais do frigobar por flat" },
+        { href: "/frigobar-reposicao", label: "App da Repositora", icon: Package, description: "Fila diária de check-outs, lançamento de consumo e reposição" },
       ]
     },
 

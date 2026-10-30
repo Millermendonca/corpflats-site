@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Shell } from "@/components/layout";
+import { MinibarEcosystemNav } from "@/components/minibar-ecosystem-nav";
 import { useGetMe } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -171,7 +172,7 @@ export default function AnserveDashboardPage() {
   const { data: user } = useGetMe();
   const { toast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<"nfs" | "vendas" | "equipe" | "estoque" | "extrato">("nfs");
+  const [activeTab, setActiveTab] = useState<"vendas" | "equipe" | "estoque">("vendas");
 
   // Data states
   const [pendingOrders, setPendingOrders] = useState<PendingInvoiceOrder[]>([]);
@@ -822,41 +823,33 @@ export default function AnserveDashboardPage() {
       return;
     }
     const headers = [
-      "Funcionária",
+      "Colaboradora",
       "Login",
+      "Função",
       "Status",
       "WhatsApp",
       "PIN Mobile",
-      "Total Vistorias",
-      "Vistorias Conformes",
-      "Divergências Apontadas",
-      "Taxa Conformidade (%)",
+      "Total de Passagens",
       "Flats Atendidos",
-      "Unidades Pagas Repostas",
+      "Unidades Pagas Lançadas/Repostas",
       "Cortesias Repostas",
       "Total Itens Repostos",
-      "Divergências Detectadas (R$)",
-      "Divergências Recuperadas (R$)",
-      "Última Conferência"
+      "Última Passagem"
     ];
     const rows = staffList.map(st => {
       const p = st.productivity;
       return [
         st.name,
         `@${st.username}`,
+        st.role === "anserve_faturamento" ? "Emissão de NF" : "Repositora",
         st.active ? "Ativa" : "Inativa",
         st.whatsapp || "-",
         st.pin || "Padrão",
         p?.inspectionsCount || 0,
-        p?.conformeCount || 0,
-        p?.discrepancyCount || 0,
-        String(p?.conformityRatePct ?? 100).replace(".", ","),
         p?.flatsVisitedCount || 0,
         p?.paidItemsRestockedQty || 0,
         p?.courtesyItemsRestockedQty || 0,
         p?.totalItemsRestockedQty || 0,
-        Number(p?.discrepancyAmountDetected || 0).toFixed(2).replace(".", ","),
-        Number(p?.discrepancyAmountRecovered || 0).toFixed(2).replace(".", ","),
         p?.lastInspectionAt ? new Date(p.lastInspectionAt).toLocaleString("pt-BR") : "Sem registro"
       ];
     });
@@ -921,8 +914,10 @@ export default function AnserveDashboardPage() {
 
   return (
     <Shell>
-      <div className="w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 space-y-4 sm:space-y-6 pb-28 min-w-0 overflow-x-hidden">
-        {/* Header */}
+      <div className="w-full max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 space-y-4 sm:space-y-5 pb-28 min-w-0 overflow-x-hidden">
+        <MinibarEcosystemNav currentScreen="anserve" pendingInvoicesCount={pendingOrders.length} />
+
+        {/* Header Limpo & Direto */}
         <div className="w-full min-w-0 bg-card border border-border p-4 sm:p-6 rounded-3xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start sm:items-center gap-3 min-w-0">
             <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
@@ -931,14 +926,14 @@ export default function AnserveDashboardPage() {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-base sm:text-xl md:text-2xl font-black text-foreground leading-tight break-words">
-                  Painel de Gestão & Supervisão Anserve
+                  Painel do Gestor Anserve
                 </h1>
                 <Badge className="bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/30 text-[10px] font-bold">
-                  Operação & Equipe
+                  Vendas, Repasse & Equipe
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                Fila de Notas Fiscais, relatório de vendas com exportação CSV, gestão de funcionárias de reposição e extrato de repasse.
+                Acompanhe o faturamento do período, o valor líquido de repasse, gerencie a equipe de repositoras e acesse a central exclusiva de Notas Fiscais.
               </p>
             </div>
           </div>
@@ -960,6 +955,7 @@ export default function AnserveDashboardPage() {
                 className="bg-transparent text-[11px] sm:text-xs font-mono outline-none min-w-0 flex-1 sm:flex-initial"
               />
             </div>
+
             <Button
               variant="default"
               size="sm"
@@ -969,8 +965,14 @@ export default function AnserveDashboardPage() {
               className="rounded-xl text-xs font-bold h-9 w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white"
             >
               <FileText className="w-3.5 h-3.5 mr-1.5" />
-              Tela Exclusiva de Notas Fiscais
+              <span>Central de Notas Fiscais</span>
+              {pendingOrders.length > 0 && (
+                <span className="ml-1.5 bg-amber-400 text-slate-950 text-[10px] font-black px-1.5 py-0.2 rounded-full">
+                  {pendingOrders.length}
+                </span>
+              )}
             </Button>
+
             <Button
               variant="outline"
               size="sm"
@@ -984,311 +986,156 @@ export default function AnserveDashboardPage() {
           </div>
         </div>
 
-        {/* Tabs Control */}
+        {/* 3 Abas Diretas e Organizadas */}
         <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="w-full min-w-0 space-y-4">
-          <TabsList className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border grid grid-cols-2 sm:flex sm:flex-wrap h-auto gap-1.5">
-            <TabsTrigger value="nfs" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span className="truncate">Notas Fiscais</span>
-              {pendingOrders.length > 0 && (
-                <span className="bg-amber-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0">
-                  {pendingOrders.length}
-                </span>
-              )}
+          <TabsList className="w-full bg-muted/50 p-1.5 rounded-2xl border border-border grid grid-cols-1 sm:grid-cols-3 h-auto gap-1.5">
+            <TabsTrigger value="vendas" className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 w-full">
+              <DollarSign className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>1. Vendas & Repasse (CSV)</span>
             </TabsTrigger>
 
-            <TabsTrigger value="vendas" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <BarChart3 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-              <span className="truncate">Vendas (CSV)</span>
-            </TabsTrigger>
-
-            <TabsTrigger value="equipe" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <Users className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-              <span className="truncate">Funcionárias</span>
+            <TabsTrigger value="equipe" className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 w-full">
+              <Users className="w-4 h-4 text-teal-600 shrink-0" />
+              <span>2. Equipe & WhatsApp de Trabalho</span>
               <Badge variant="secondary" className="text-[10px] py-0 px-1.5 shrink-0">
                 {staffList.length}
               </Badge>
             </TabsTrigger>
 
-            <TabsTrigger value="estoque" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0">
-              <Package className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-              <span className="truncate">Conferências</span>
-            </TabsTrigger>
-
-            <TabsTrigger value="extrato" className="rounded-xl text-[11px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-2 flex items-center justify-center gap-1.5 w-full sm:w-auto min-w-0 col-span-2 sm:col-span-1">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span className="truncate">Extrato de Repasse</span>
+            <TabsTrigger value="estoque" className="rounded-xl text-xs font-bold px-3.5 py-2.5 flex items-center justify-center gap-2 w-full">
+              <Package className="w-4 h-4 text-sky-600 shrink-0" />
+              <span>3. Histórico de Lançamentos</span>
             </TabsTrigger>
           </TabsList>
 
-          {/* TAB 1: FILA DE NOTAS FISCAIS PENDENTES & MONITOR DE ENTREGA */}
-          <TabsContent value="nfs" className="w-full min-w-0 space-y-4">
-            {/* Monitoramento de Entrega de Notas Fiscais (WhatsApp + E-mail) */}
-            {deliveryMonitor && (
-              <Card
-                className={`rounded-3xl border p-4 sm:p-5 space-y-3 ${
-                  (deliveryMonitor.failedInvoices?.length || 0) > 0
-                    ? "border-rose-500/50 bg-rose-500/5"
-                    : "border-emerald-500/30 bg-emerald-500/5"
-                }`}
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-2.5">
-                    {(deliveryMonitor.failedInvoices?.length || 0) > 0 ? (
-                      <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
-                    ) : (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                    )}
-                    <div>
-                      <h4 className="text-xs sm:text-sm font-black text-foreground">
-                        Monitor de Envio de Notas Fiscais (WhatsApp + E-mail)
-                      </h4>
-                      <p className="text-[11px] text-muted-foreground">
-                        O sistema monitora automaticamente cada envio, tenta novamente em caso de falha e alerta para correção ou reenvio manual.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30 font-bold">
-                      ✅ {deliveryMonitor.summary?.fullyDeliveredCount || 0} Entregues
-                    </Badge>
-                    {(deliveryMonitor.summary?.retryingCount || 0) > 0 && (
-                      <Badge className="bg-amber-500/15 text-amber-700 border-amber-500/30 font-bold">
-                        🔄 {deliveryMonitor.summary?.retryingCount} Retentando
-                      </Badge>
-                    )}
-                    {(deliveryMonitor.summary?.failedCount || 0) > 0 && (
-                      <Badge className="bg-rose-500/15 text-rose-700 border-rose-500/30 font-bold">
-                        ⚠️ {deliveryMonitor.summary?.failedCount} Com Falha
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-
-                {(deliveryMonitor.failedInvoices?.length > 0 || deliveryMonitor.retryingInvoices?.length > 0) && (
-                  <div className="space-y-2 pt-2 border-t border-border/60">
-                    {[...(deliveryMonitor.failedInvoices || []), ...(deliveryMonitor.retryingInvoices || [])].map(
-                      (item: any) => (
-                        <div
-                          key={item.id}
-                          className="p-3 rounded-2xl bg-card border border-rose-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-mono font-bold text-primary">{item.id}</span>
-                              <Badge variant="outline" className="text-[10px] font-bold">
-                                Flat {item.flatNumber}
-                              </Badge>
-                              <strong className="text-foreground">{item.guestName}</strong>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-3 text-[11px]">
-                              <span
-                                className={
-                                  item.deliveryMonitor?.whatsapp?.status === "sent"
-                                    ? "text-emerald-600 font-semibold"
-                                    : "text-rose-600 font-bold"
-                                }
-                              >
-                                📱 WhatsApp ({item.guestPhone || "s/ tel"}):{" "}
-                                {item.deliveryMonitor?.whatsapp?.status === "sent"
-                                  ? "Enviado ✓"
-                                  : `Falha (${item.deliveryMonitor?.whatsapp?.lastError || "Pendente"})`}
-                              </span>
-                              <span
-                                className={
-                                  item.deliveryMonitor?.email?.status === "sent"
-                                    ? "text-emerald-600 font-semibold"
-                                    : "text-rose-600 font-bold"
-                                }
-                              >
-                                ✉️ E-mail ({item.guestEmail || "s/ email"}):{" "}
-                                {item.deliveryMonitor?.email?.status === "sent"
-                                  ? "Enviado ✓"
-                                  : `Falha (${item.deliveryMonitor?.email?.lastError || "Pendente"})`}
-                              </span>
-                            </div>
-                          </div>
-
-                          <Button
-                            size="sm"
-                            onClick={() => handleOpenRetryModal(item)}
-                            className="rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white h-8 shrink-0"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-                            Corrigir Contato / Reenviar NF
-                          </Button>
-                        </div>
-                      )
-                    )}
-                  </div>
-                )}
-              </Card>
-            )}
-
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="space-y-0.5">
-                <h3 className="text-sm font-bold text-foreground">Pedidos Quitados Aguardando Nota Fiscal</h3>
-                <p className="text-xs text-muted-foreground">
-                  Anexe o arquivo (PDF ou foto) da NF. O sistema enviará automaticamente via WhatsApp e E-mail.
-                </p>
-              </div>
-
-              <div className="relative w-full sm:w-72">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Buscar por flat, hóspede ou CPF..."
-                  value={invoiceSearch}
-                  onChange={e => setInvoiceSearch(e.target.value)}
-                  className="h-8 pl-9 text-xs rounded-xl"
-                />
-              </div>
-            </div>
-
-            {loading ? (
-              <div className="h-64 bg-card border border-border rounded-3xl animate-pulse" />
-            ) : filteredOrders.length === 0 ? (
-              <div className="bg-card border border-border rounded-3xl p-10 text-center space-y-3">
-                <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto" />
-                <h3 className="text-sm font-bold text-foreground">Fila de Notas Fiscais em dia!</h3>
-                <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                  Não há pedidos de consumo de frigobar pendentes de anexo de nota fiscal no momento.
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-3">
-                {filteredOrders.map(ord => {
-                  const docNumber = ord.fiscalPreferences?.documentNumber || ord.guestDocument || "Não informado";
-                  const destEmail = ord.fiscalPreferences?.email || ord.guestEmail || "Sem e-mail cadastrado";
-                  const prefType = ord.fiscalPreferences?.invoiceDescriptionType || "detailed";
-                  const companyName = ord.fiscalPreferences?.companyName;
-
-                  return (
-                    <Card
-                      key={ord.id}
-                      className="rounded-3xl border border-border bg-card hover:border-border/80 transition-all shadow-xs"
-                    >
-                      <CardContent className="p-4 md:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div className="space-y-2 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-xs font-bold text-primary">{ord.id}</span>
-                            <Badge variant="outline" className="text-[11px] font-bold">
-                              Flat {ord.flatNumber}
-                            </Badge>
-                            <Badge variant="secondary" className="text-[10px] font-mono">
-                              {ord.reservationCode}
-                            </Badge>
-                            {renderPreferenceBadge(prefType)}
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-xs pt-1">
-                            <div>
-                              <span className="text-muted-foreground block text-[10px]">Hóspede:</span>
-                              <strong className="text-foreground">{ord.guestName}</strong>
-                              {companyName && (
-                                <span className="block text-[11px] text-muted-foreground truncate">
-                                  {companyName}
-                                </span>
-                              )}
-                            </div>
-
-                            <div>
-                              <span className="text-muted-foreground block text-[10px]">Documento p/ Emissão:</span>
-                              <strong className="font-mono text-foreground">{docNumber}</strong>
-                              <span className="block text-[11px] text-muted-foreground truncate">{destEmail}</span>
-                            </div>
-
-                            <div>
-                              <span className="text-muted-foreground block text-[10px]">Itens Consumidos:</span>
-                              <span className="text-foreground truncate block">
-                                {ord.items.map(it => `${it.quantity}x ${it.productName || it.productId}`).join(", ")}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between md:flex-col md:items-end gap-3 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-border">
-                          <div className="text-left md:text-right">
-                            <span className="text-[10px] text-muted-foreground block">Valor Total Pago:</span>
-                            <span className="text-base font-black text-emerald-600 dark:text-emerald-400">
-                              R$ {Number(ord.totalAmount).toFixed(2)}
-                            </span>
-                          </div>
-
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              setSelectedOrderForInvoice(ord);
-                              setInvoiceFileData(null);
-                              setInvoiceFileName("");
-                              setInvoiceNumberInput("");
-                            }}
-                            className="rounded-2xl text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
-                          >
-                            <Upload className="w-3.5 h-3.5 mr-1.5" />
-                            Anexar Nota Fiscal
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-          </TabsContent>
-
-          {/* TAB 2: RELATÓRIO RESUMIDO DE VENDAS & EXPORTAÇÃO CSV */}
+          {/* ABA 1: VENDAS, EXTRATO DE REPASSE & EXPORTAÇÃO CSV */}
           <TabsContent value="vendas" className="w-full min-w-0 space-y-5">
-            {/* Summary KPIs */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 w-full min-w-0">
-              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
+            {/* Resumo Executivo de Vendas + Repasse Líquido */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 w-full min-w-0">
+              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
                 <span className="text-[11px] text-muted-foreground font-semibold">Vendas Pagas no Período</span>
-                <div className="text-lg sm:text-xl font-black text-emerald-600">
-                  R$ {Number(reportsData?.salesSummary?.totalPaidRevenue || 0).toFixed(2)}
+                <div className="text-xl font-black text-emerald-600">
+                  R$ {Number(reportsData?.salesSummary?.totalPaidRevenue || settlement?.totalOrdersAmount || 0).toFixed(2)}
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
-                  {reportsData?.salesSummary?.totalOrdersPaid || 0} pedidos pagos
+                  {reportsData?.salesSummary?.totalOrdersPaid || settlement?.ordersCount || 0} pagamentos concluídos •{" "}
+                  {reportsData?.salesSummary?.totalUnitsSold || 0} itens vendidos
                 </span>
               </Card>
 
-              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
-                <span className="text-[11px] text-muted-foreground font-semibold">Unidades Vendidas</span>
-                <div className="text-lg sm:text-xl font-black text-foreground">
-                  {reportsData?.salesSummary?.totalUnitsSold || 0} un.
+              <Card className="rounded-3xl border border-emerald-500/40 bg-emerald-500/10 p-4 space-y-1 shadow-xs">
+                <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-bold uppercase tracking-wide">
+                  Líquido a Receber (Repasse Anserve)
+                </span>
+                <div className="text-2xl font-black text-emerald-700 dark:text-emerald-300">
+                  R$ {Number(settlement?.netPayableToAnserve || 0).toFixed(2)}
                 </div>
-                <span className="text-[10px] text-muted-foreground block">
-                  Ticket médio: R$ {Number(reportsData?.salesSummary?.averageTicket || 0).toFixed(2)}
+                <span className="text-[10px] text-emerald-800/80 dark:text-emerald-300/80 block">
+                  Já descontadas taxas (-R$ {Number(settlement?.totalFees || 0).toFixed(2)}) + cortesias (+R${" "}
+                  {Number(settlement?.courtesyRestockCost || 0).toFixed(2)})
                 </span>
               </Card>
 
-              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
-                <span className="text-[11px] text-muted-foreground font-semibold">PIX vs. Cartão</span>
-                <div className="text-xs sm:text-sm font-black text-foreground pt-1">
-                  PIX: R$ {Number(reportsData?.salesSummary?.byPaymentMethod?.pix || 0).toFixed(2)}
-                </div>
-                <span className="text-[10px] sm:text-[11px] text-muted-foreground block font-semibold">
-                  Cartão: R$ {Number(reportsData?.salesSummary?.byPaymentMethod?.credit_card || 0).toFixed(2)}
-                </span>
-              </Card>
-
-              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
-                <span className="text-[11px] text-muted-foreground font-semibold">Divergências em Aberto</span>
-                <div className="text-lg sm:text-xl font-black text-amber-600">
+              <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
+                <span className="text-[11px] text-muted-foreground font-semibold">Lançamentos Aguardando Pagamento</span>
+                <div className="text-xl font-black text-amber-600">
                   R$ {Number(reportsData?.salesSummary?.totalPendingRevenue || 0).toFixed(2)}
                 </div>
                 <span className="text-[10px] text-muted-foreground block">
-                  {reportsData?.salesSummary?.totalOrdersPending || 0} aguardando pagamento
+                  {reportsData?.salesSummary?.totalOrdersPending || 0} estadias com saldo a quitar no check-out
+                </span>
+              </Card>
+
+              <Card
+                onClick={() => {
+                  window.location.href = "/frigobar-notas";
+                }}
+                className="rounded-3xl border border-indigo-500/30 bg-indigo-500/5 hover:bg-indigo-500/10 cursor-pointer transition-all p-4 space-y-1"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-indigo-700 dark:text-indigo-300 font-bold">
+                    Notas Fiscais Pendentes
+                  </span>
+                  <ArrowUpRight className="w-4 h-4 text-indigo-600" />
+                </div>
+                <div className="text-xl font-black text-indigo-600 dark:text-indigo-400">
+                  {pendingOrders.length} {pendingOrders.length === 1 ? "pedido pago" : "pedidos pagos"}
+                </div>
+                <span className="text-[10px] text-indigo-600/80 dark:text-indigo-300/80 font-semibold block">
+                  Clique para abrir a Central Exclusiva de NF →
                 </span>
               </Card>
             </div>
 
-            {/* Filters & CSV Export Bar */}
+            {/* Detalhamento do Fechamento de Repasse */}
+            {settlement && (
+              <Card className="rounded-3xl border border-border bg-muted/20 p-4 sm:p-5 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-black text-foreground flex items-center gap-2">
+                      <DollarSign className="w-4 h-4 text-emerald-600" />
+                      <span>Demonstrativo do Extrato de Repasse (CorpFlats ↔ Anserve)</span>
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground">
+                      Cálculo automático: Total Pago − Taxas Gateway (Cartão 3,99% / PIX 0,99%) − Comissão CorpFlats + Reembolso de Cortesias Repostas
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-3 rounded-2xl bg-card border border-border">
+                    <span className="text-[10px] text-muted-foreground block">1. Vendas Brutas Pagas</span>
+                    <strong className="text-sm font-black text-foreground">
+                      R$ {Number(settlement.totalOrdersAmount || 0).toFixed(2)}
+                    </strong>
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">
+                      PIX: R$ {Number(reportsData?.salesSummary?.byPaymentMethod?.pix || 0).toFixed(2)} • Cartão: R${" "}
+                      {Number(reportsData?.salesSummary?.byPaymentMethod?.credit_card || 0).toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-card border border-border">
+                    <span className="text-[10px] text-muted-foreground block">2. Taxas Cartão / PIX</span>
+                    <strong className="text-sm font-black text-rose-600">
+                      - R$ {Number(settlement.totalFees || (settlement.cardFees + settlement.pixFees) || 0).toFixed(2)}
+                    </strong>
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">
+                      Mercado Pago & PIX Inter
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-card border border-border">
+                    <span className="text-[10px] text-muted-foreground block">3. Crédito de Cortesias</span>
+                    <strong className="text-sm font-black text-sky-600">
+                      + R$ {Number(settlement.courtesyRestockCost || 0).toFixed(2)}
+                    </strong>
+                    <span className="text-[10px] text-muted-foreground block mt-0.5">
+                      Nespresso + Boas-vindas
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30">
+                    <span className="text-[10px] text-emerald-700 dark:text-emerald-300 font-bold block">
+                      4. Saldo Líquido Anserve
+                    </span>
+                    <strong className="text-base font-black text-emerald-700 dark:text-emerald-300">
+                      R$ {Number(settlement.netPayableToAnserve || 0).toFixed(2)}
+                    </strong>
+                    <span className="text-[10px] text-emerald-700/80 dark:text-emerald-300/80 block mt-0.5">
+                      Valor final a transferir
+                    </span>
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {/* Barra de Filtros & Exportação CSV */}
             <Card className="rounded-3xl border border-border p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3 w-full min-w-0">
               <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <div className="relative w-full sm:w-64">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    placeholder="Filtrar pedido, flat, item..."
+                    placeholder="Filtrar pedido, flat, hóspede, item..."
                     value={salesSearch}
                     onChange={e => setSalesSearch(e.target.value)}
                     className="h-8 pl-9 text-xs rounded-xl"
@@ -1315,7 +1162,7 @@ export default function AnserveDashboardPage() {
                 >
                   <option value="todos">Todos os Status</option>
                   <option value="pago">Somente Pagos</option>
-                  <option value="pendente">Somente Pendentes</option>
+                  <option value="pendente">Somente Aguardando Pagamento</option>
                 </select>
               </div>
 
@@ -1340,13 +1187,13 @@ export default function AnserveDashboardPage() {
               </div>
             </Card>
 
-            {/* Sales Summary by Product */}
+            {/* Saída por Produto */}
             {Array.isArray(reportsData?.salesSummary?.byProduct) &&
               reportsData.salesSummary.byProduct.length > 0 && (
                 <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
                   <CardHeader className="p-4 border-b border-border bg-muted/20">
                     <CardTitle className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-                      Resumo de Saída por Produto (Vendas Pagas)
+                      Resumo de Saída por Produto (Vendas Pagas no Período)
                     </CardTitle>
                   </CardHeader>
                   <div className="w-full overflow-x-auto">
@@ -1378,15 +1225,15 @@ export default function AnserveDashboardPage() {
                 </Card>
               )}
 
-            {/* Orders Table */}
+            {/* Listagem de Vendas e Lançamentos */}
             <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
               <CardHeader className="p-4 border-b border-border bg-card flex flex-row items-center justify-between gap-2">
                 <div className="min-w-0">
                   <CardTitle className="text-sm font-black text-foreground">
-                    Listagem de Vendas do Frigobar
+                    Listagem Detalhada de Vendas & Consumos
                   </CardTitle>
                   <CardDescription className="text-xs">
-                    Histórico objetivo de vendas para controle e conciliação da Anserve
+                    Histórico de consumos lançados e pagamentos recebidos por flat
                   </CardDescription>
                 </div>
                 <Badge variant="outline" className="text-xs font-bold shrink-0">
@@ -1438,43 +1285,40 @@ export default function AnserveDashboardPage() {
                             {o.itemsSummary}
                           </td>
                           <td className="p-3.5">
-                            <div className="flex flex-col gap-1 items-start">
-                              <Badge
-                                className={
-                                  o.paymentStatus === "pago"
-                                    ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/30 text-[10px]"
-                                    : "bg-amber-500/15 text-amber-700 border-amber-500/30 text-[10px]"
-                                }
-                              >
-                                {o.paymentStatus === "pago" ? "Pago" : "Pendente"} (
-                                {o.paymentMethod === "pix"
-                                  ? "PIX"
-                                  : o.paymentMethod === "credit_card"
-                                  ? "Cartão"
-                                  : "Cobrança"}
-                                )
-                              </Badge>
-                            </div>
+                            <Badge
+                              className={
+                                o.paymentStatus === "pago"
+                                  ? "bg-emerald-500/15 text-emerald-700 border-emerald-500/30 text-[10px]"
+                                  : "bg-amber-500/15 text-amber-700 border-amber-500/30 text-[10px]"
+                              }
+                            >
+                              {o.paymentStatus === "pago" ? "✓ Pago" : "Aguardando"} (
+                              {o.paymentMethod === "pix"
+                                ? "PIX"
+                                : o.paymentMethod === "credit_card"
+                                ? "Cartão"
+                                : "Pós-Checkout"}
+                              )
+                            </Badge>
                           </td>
                           <td className="p-3.5">
                             {o.invoiceStatus === "anexada" ? (
-                              <div className="flex flex-col items-start gap-1">
-                                <Badge className="bg-sky-500/15 text-sky-700 border-sky-500/30 text-[10px]">
-                                  Emitida {o.invoiceNumber ? `#${o.invoiceNumber}` : ""}
-                                </Badge>
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenRetryModal(o)}
-                                  className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
-                                >
-                                  <RefreshCw className="w-2.5 h-2.5" />
-                                  Reenviar / Corrigir
-                                </button>
-                              </div>
-                            ) : (
-                              <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-500/40">
-                                Pendente NF
+                              <Badge className="bg-sky-500/15 text-sky-700 border-sky-500/30 text-[10px]">
+                                Emitida {o.invoiceNumber ? `#${o.invoiceNumber}` : ""}
                               </Badge>
+                            ) : o.paymentStatus === "pago" ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  window.location.href = "/frigobar-notas";
+                                }}
+                                className="text-[11px] font-bold text-indigo-600 hover:underline flex items-center gap-1"
+                              >
+                                <FileText className="w-3 h-3" />
+                                Emitir NF →
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground">Após pagamento</span>
                             )}
                           </td>
                           <td className="p-3.5 text-right font-mono font-black text-foreground">
@@ -1489,17 +1333,17 @@ export default function AnserveDashboardPage() {
             </Card>
           </TabsContent>
 
-          {/* TAB 3: GESTÃO DE FUNCIONÁRIAS & PRODUTIVIDADE ANSERVE */}
+          {/* ABA 2: EQUIPE & WHATSAPP DE TRABALHO */}
           <TabsContent value="equipe" className="w-full min-w-0 space-y-5">
-            {/* Top Action Bar */}
+            {/* Bloco A: Gestão da Equipe Anserve */}
             <div className="bg-card border border-border p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full min-w-0">
               <div className="space-y-1 min-w-0">
                 <h3 className="text-sm sm:text-base font-black text-foreground flex items-center gap-2">
                   <Users className="w-5 h-5 text-teal-600 shrink-0" />
-                  <span>Equipe de Reposição & Conferência (Anserve)</span>
+                  <span>Equipe Anserve (Repositoras & Emissão de NF)</span>
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Cadastre suas funcionárias, redefina senhas ou PINs de acesso rápido no celular e acompanhe a produtividade individual.
+                  Cadastre colaboradoras, escolha a função (Repositora nos Flats ou Emissão de NF), redefina senhas/PINs e envie o acesso automaticamente por WhatsApp.
                 </p>
               </div>
 
@@ -1519,154 +1363,34 @@ export default function AnserveDashboardPage() {
                   className="rounded-xl text-xs font-bold h-9 gap-1.5 bg-teal-600 hover:bg-teal-700 text-white w-full sm:w-auto"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span>Nova Funcionária</span>
+                  <span>Nova Colaboradora</span>
                 </Button>
               </div>
             </div>
 
-            {/* Productivity Summary Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 w-full min-w-0">
-              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
-                <span className="text-[11px] text-muted-foreground font-semibold">Funcionárias Cadastradas</span>
-                <div className="text-xl sm:text-2xl font-black text-foreground">{staffList.length}</div>
-                <span className="text-[10px] text-emerald-600 font-bold block">
-                  {staffList.filter(s => s.active !== false).length} ativas para vistoria
-                </span>
-              </Card>
-
-              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
-                <span className="text-[11px] text-muted-foreground font-semibold">Conferências no Período</span>
-                <div className="text-xl sm:text-2xl font-black text-teal-600">
-                  {reportsData?.productivitySummary?.totalInspections || 0}
-                </div>
-                <span className="text-[10px] text-muted-foreground block">
-                  {reportsData?.productivitySummary?.totalConforme || 0} conformes •{" "}
-                  {reportsData?.productivitySummary?.totalDiscrepancies || 0} com divergência
-                </span>
-              </Card>
-
-              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
-                <span className="text-[11px] text-muted-foreground font-semibold">Unidades Repostas</span>
-                <div className="text-xl sm:text-2xl font-black text-sky-600">
-                  {staffList.reduce((acc, s) => acc + (s.productivity?.totalItemsRestockedQty || 0), 0)} un.
-                </div>
-                <span className="text-[10px] text-muted-foreground block">
-                  {staffList.reduce((acc, s) => acc + (s.productivity?.paidItemsRestockedQty || 0), 0)} pagos +{" "}
-                  {staffList.reduce((acc, s) => acc + (s.productivity?.courtesyItemsRestockedQty || 0), 0)} cortesias
-                </span>
-              </Card>
-
-              <Card className="rounded-3xl border border-border bg-card p-3.5 sm:p-4 space-y-1 min-w-0">
-                <span className="text-[11px] text-muted-foreground font-semibold">Consumos Não Declarados Apurados</span>
-                <div className="text-xl sm:text-2xl font-black text-amber-600">
-                  R${" "}
-                  {staffList
-                    .reduce((acc, s) => acc + (s.productivity?.discrepancyAmountDetected || 0), 0)
-                    .toFixed(2)}
-                </div>
-                <span className="text-[10px] text-emerald-600 font-semibold block">
-                  R${" "}
-                  {staffList
-                    .reduce((acc, s) => acc + (s.productivity?.discrepancyAmountRecovered || 0), 0)
-                    .toFixed(2)}{" "}
-                  já pagos pelos hóspedes
-                </span>
-              </Card>
-            </div>
-
-            {/* WhatsApp Exclusivo de Trabalho das Repositoras (Avisos de Check-out e Resumo Diário) */}
-            <Card className="rounded-3xl border border-teal-500/30 bg-teal-500/5 p-4 sm:p-5 space-y-4 w-full min-w-0">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div className="space-y-1 flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Phone className="w-4 h-4 text-teal-600 shrink-0" />
-                    <h4 className="text-xs sm:text-sm font-black text-foreground">
-                      WhatsApp Exclusivo de Trabalho das Repositoras (Avisos de Check-out)
-                    </h4>
-                    <Badge className="bg-teal-600 text-white text-[10px]">Celular de Trabalho</Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Cadastre o número do WhatsApp que ficará no celular de trabalho das repositoras. Ao fazerem o <strong>1º login do dia</strong>, elas recebem o resumo dos flats já liberados (com horário) e quantos faltam sair. Além disso, <strong>a cada novo check-out</strong>, este número recebe o alerta imediato + resumo atualizado.
-                  </p>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
-                  <Input
-                    placeholder="Ex: 11999999999"
-                    value={restockerWorkWhatsapp}
-                    onChange={e => setRestockerWorkWhatsapp(e.target.value)}
-                    className="h-9 w-full sm:w-48 text-xs font-mono rounded-xl bg-background"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleSaveRestockerWorkWhatsapp}
-                    disabled={savingWorkWhatsapp}
-                    className="h-9 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white"
-                  >
-                    {savingWorkWhatsapp ? "Salvando..." : "Salvar WhatsApp"}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={handleSendTestCheckoutSummary}
-                    disabled={sendingTestSummary || !restockerWorkWhatsapp.trim()}
-                    className="h-9 rounded-xl text-xs font-bold border-teal-500/40 text-teal-700 dark:text-teal-300"
-                  >
-                    <Send className="w-3.5 h-3.5 mr-1.5" />
-                    {sendingTestSummary ? "Enviando..." : "Enviar Resumo Agora"}
-                  </Button>
-                </div>
-              </div>
-
-              {checkoutSummary && (
-                <div className="pt-2 border-t border-teal-500/20 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span className="text-muted-foreground">
-                    Status de hoje ({checkoutSummary.todayStr}):{" "}
-                    <strong className="text-emerald-600">
-                      {checkoutSummary.doneCount ?? checkoutSummary.checkedOutCount ?? 0} check-outs já realizados
-                    </strong>{" "}
-                    •{" "}
-                    <strong className="text-amber-600">
-                      {checkoutSummary.pendingCount ?? 0} previstos aguardando saída
-                    </strong>
-                  </span>
-                  {(checkoutSummary.doneCheckouts || checkoutSummary.checkedOutTodayList || []).length > 0 && (
-                    <span className="text-[11px] font-mono text-foreground">
-                      Liberados:{" "}
-                      {(checkoutSummary.doneCheckouts || checkoutSummary.checkedOutTodayList || [])
-                        .map((c: any) => `Flat ${c.flatNumber} (${c.checkoutTime})`)
-                        .join(", ")}
-                    </span>
-                  )}
-                </div>
-              )}
-            </Card>
-
-            {/* Staff & Productivity Table */}
+            {/* Tabela Limpa de Colaboradoras (Sem colunas antigas de divergência) */}
             <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
               <CardHeader className="p-4 border-b border-border bg-card">
                 <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
                   <Award className="w-4 h-4 text-teal-600 shrink-0" />
-                  <span>Quadro de Funcionárias & Desempenho Individual</span>
+                  <span>Quadro de Colaboradoras & Produtividade no Período</span>
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Gerencie acessos, senhas e acompanhe quantas conferências e reposições cada funcionária realizou no período
+                  Acompanhe os flats atendidos, itens lançados/repostos e gerencie credenciais em 1 clique
                 </CardDescription>
               </CardHeader>
 
               <div className="w-full overflow-x-auto">
-                <table className="w-full min-w-[740px] text-xs text-left">
+                <table className="w-full min-w-[700px] text-xs text-left">
                   <thead className="bg-muted/40 text-muted-foreground font-bold border-b border-border">
                     <tr>
-                      <th className="p-3.5">Funcionária</th>
+                      <th className="p-3.5">Colaboradora</th>
+                      <th className="p-3.5">Função</th>
                       <th className="p-3.5">WhatsApp & PIN</th>
                       <th className="p-3.5 text-center">Status</th>
-                      <th className="p-3.5 text-center">Conferências</th>
+                      <th className="p-3.5 text-center">Passagens nos Flats</th>
                       <th className="p-3.5 text-center">Itens Repostos</th>
-                      <th className="p-3.5 text-center">Divergências Apontadas</th>
-                      <th className="p-3.5">Última Atividade</th>
+                      <th className="p-3.5">Última Passagem</th>
                       <th className="p-3.5 text-right">Ações</th>
                     </tr>
                   </thead>
@@ -1674,7 +1398,7 @@ export default function AnserveDashboardPage() {
                     {staffList.length === 0 ? (
                       <tr>
                         <td colSpan={8} className="p-8 text-center text-muted-foreground">
-                          Nenhuma funcionária cadastrada ainda. Clique em "Nova Funcionária" para adicionar.
+                          Nenhuma colaboradora cadastrada ainda. Clique em "Nova Colaboradora" para adicionar.
                         </td>
                       </tr>
                     ) : (
@@ -1698,6 +1422,18 @@ export default function AnserveDashboardPage() {
                             </td>
 
                             <td className="p-3.5">
+                              {member.role === "anserve_faturamento" ? (
+                                <Badge className="bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/30 text-[10px] font-bold">
+                                  📄 Emissão de NF
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30 text-[10px] font-bold">
+                                  🧹 Repositora
+                                </Badge>
+                              )}
+                            </td>
+
+                            <td className="p-3.5">
                               <div className="space-y-0.5">
                                 {cleanPh ? (
                                   <a
@@ -1712,12 +1448,14 @@ export default function AnserveDashboardPage() {
                                 ) : (
                                   <span className="text-muted-foreground">Sem WhatsApp</span>
                                 )}
-                                <div className="text-[10px] text-muted-foreground">
-                                  PIN Mobile:{" "}
-                                  <strong className="font-mono text-foreground">
-                                    {member.pin || "1234 (Padrão)"}
-                                  </strong>
-                                </div>
+                                {member.role !== "anserve_faturamento" && (
+                                  <div className="text-[10px] text-muted-foreground">
+                                    PIN Mobile:{" "}
+                                    <strong className="font-mono text-foreground">
+                                      {member.pin || "1234 (Padrão)"}
+                                    </strong>
+                                  </div>
+                                )}
                               </div>
                             </td>
 
@@ -1751,15 +1489,6 @@ export default function AnserveDashboardPage() {
                               </div>
                             </td>
 
-                            <td className="p-3.5 text-center">
-                              <div className="font-bold text-amber-600">
-                                {p?.discrepancyCount || 0} apontamentos
-                              </div>
-                              <div className="text-[10px] text-muted-foreground">
-                                R$ {Number(p?.discrepancyAmountDetected || 0).toFixed(2)}
-                              </div>
-                            </td>
-
                             <td className="p-3.5 text-[11px] text-muted-foreground">
                               {p?.lastInspectionAt
                                 ? new Date(p.lastInspectionAt).toLocaleString("pt-BR")
@@ -1772,11 +1501,11 @@ export default function AnserveDashboardPage() {
                                   size="sm"
                                   variant="ghost"
                                   onClick={() => setHistoryModalStaff(member)}
-                                  title="Ver relatório e histórico de conferências desta funcionária"
+                                  title="Ver histórico de passagens desta colaboradora"
                                   className="h-7 px-2 rounded-lg text-[11px] font-bold text-teal-600"
                                 >
                                   <Eye className="w-3.5 h-3.5 mr-1" />
-                                  Relatório
+                                  Histórico
                                 </Button>
                                 <Button
                                   size="icon"
@@ -1804,7 +1533,7 @@ export default function AnserveDashboardPage() {
                                   size="icon"
                                   variant="ghost"
                                   onClick={() => handleDeleteStaff(member)}
-                                  title="Excluir funcionária"
+                                  title="Excluir colaboradora"
                                   className="h-7 w-7 rounded-lg text-rose-600"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -1819,22 +1548,69 @@ export default function AnserveDashboardPage() {
                 </table>
               </div>
             </Card>
+
+            {/* Bloco B: WhatsApp Exclusivo de Trabalho das Repositoras */}
+            <Card className="rounded-3xl border border-teal-500/30 bg-teal-500/5 p-4 sm:p-5 space-y-4 w-full min-w-0">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Phone className="w-4 h-4 text-teal-600 shrink-0" />
+                    <h4 className="text-xs sm:text-sm font-black text-foreground">
+                      Celular de Trabalho das Repositoras (Avisos Automáticos de Check-out)
+                    </h4>
+                    <Badge className="bg-teal-600 text-white text-[10px]">WhatsApp Dedicado</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Este número recebe o resumo de check-outs no <strong>1º login do dia</strong> e um aviso imediato <strong>sempre que um hóspede faz check-out</strong>, evitando mensagens no celular particular das funcionárias.
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+                  <Input
+                    placeholder="Ex: 11999999999"
+                    value={restockerWorkWhatsapp}
+                    onChange={e => setRestockerWorkWhatsapp(e.target.value)}
+                    className="h-9 w-full sm:w-48 text-xs font-mono rounded-xl bg-background"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleSaveRestockerWorkWhatsapp}
+                    disabled={savingWorkWhatsapp}
+                    className="h-9 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white"
+                  >
+                    {savingWorkWhatsapp ? "Salvando..." : "Salvar Número"}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSendTestCheckoutSummary}
+                    disabled={sendingTestSummary || !restockerWorkWhatsapp.trim()}
+                    className="h-9 rounded-xl text-xs font-bold border-teal-500/40 text-teal-700 dark:text-teal-300"
+                  >
+                    <Send className="w-3.5 h-3.5 mr-1.5" />
+                    {sendingTestSummary ? "Enviando..." : "Testar Resumo Agora"}
+                  </Button>
+                </div>
+              </div>
+            </Card>
           </TabsContent>
 
-          {/* TAB 4: VISÃO DE ESTOQUE E REPOSIÇÕES */}
+          {/* ABA 3: HISTÓRICO DE LANÇAMENTOS DIÁRIOS & PASSAGENS NOS FLATS */}
           <TabsContent value="estoque" className="w-full min-w-0 space-y-4">
             <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
               <CardHeader className="p-4 border-b border-border bg-card flex flex-row items-center justify-between gap-2">
                 <div className="min-w-0">
                   <CardTitle className="text-sm font-black text-foreground">
-                    Histórico de Conferências & Reposições Físicas nos Flats
+                    Histórico de Passagens Diárias & Lançamentos nos Flats
                   </CardTitle>
                   <CardDescription className="text-xs">
-                    Registro auditável de todas as vistorias feitas pelas repositoras no período selecionado
+                    Registro de todas as conferências diárias e finais pós-checkout feitas pelas repositoras no período
                   </CardDescription>
                 </div>
                 <Badge variant="outline" className="text-xs font-bold shrink-0">
-                  {(reportsData?.productivitySummary?.inspections || []).length} vistorias
+                  {(reportsData?.productivitySummary?.inspections || []).length} passagens
                 </Badge>
               </CardHeader>
 
@@ -1844,9 +1620,9 @@ export default function AnserveDashboardPage() {
                     <tr>
                       <th className="p-3.5">Data / Hora</th>
                       <th className="p-3.5">Flat</th>
-                      <th className="p-3.5">Funcionária</th>
-                      <th className="p-3.5">Status</th>
-                      <th className="p-3.5">Itens Repostos</th>
+                      <th className="p-3.5">Repositora</th>
+                      <th className="p-3.5">Resultado da Passagem</th>
+                      <th className="p-3.5">Itens Lançados / Repostos</th>
                       <th className="p-3.5">Observações</th>
                     </tr>
                   </thead>
@@ -1854,109 +1630,54 @@ export default function AnserveDashboardPage() {
                     {(reportsData?.productivitySummary?.inspections || []).length === 0 ? (
                       <tr>
                         <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                          Nenhuma conferência registrada no período.
+                          Nenhuma passagem registrada no período selecionado.
                         </td>
                       </tr>
                     ) : (
-                      (reportsData?.productivitySummary?.inspections || []).map((insp: any) => (
-                        <tr key={insp.id} className="hover:bg-muted/20">
-                          <td className="p-3.5 font-mono text-[11px]">
-                            {insp.inspectedAt ? new Date(insp.inspectedAt).toLocaleString("pt-BR") : "-"}
-                          </td>
-                          <td className="p-3.5">
-                            <Badge variant="outline" className="font-bold">
-                              Flat {insp.flatNumber}
-                            </Badge>
-                          </td>
-                          <td className="p-3.5 font-bold text-foreground">
-                            {insp.inspectorName || "Repositora Anserve"}
-                          </td>
-                          <td className="p-3.5">
-                            {insp.hasDiscrepancy || insp.status === "divergencia" ? (
-                              <Badge className="bg-amber-500/15 text-amber-700 border-amber-500/30 text-[10px]">
-                                Divergência (R$ {Number(insp.discrepancyTotalAmount || 0).toFixed(2)})
+                      (reportsData?.productivitySummary?.inspections || []).map((insp: any) => {
+                        const launchedVal = Number(insp.discrepancyTotalAmount || 0);
+                        return (
+                          <tr key={insp.id} className="hover:bg-muted/20">
+                            <td className="p-3.5 font-mono text-[11px]">
+                              {insp.inspectedAt ? new Date(insp.inspectedAt).toLocaleString("pt-BR") : "-"}
+                            </td>
+                            <td className="p-3.5">
+                              <Badge variant="outline" className="font-bold">
+                                Flat {insp.flatNumber}
                               </Badge>
-                            ) : (
-                              <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30 text-[10px]">
-                                Conforme
-                              </Badge>
-                            )}
-                          </td>
-                          <td className="p-3.5">
-                            {(insp.restockedItems || []).length > 0
-                              ? (insp.restockedItems || [])
-                                  .map((it: any) => `${it.quantity}x ${it.productName || it.productId}`)
-                                  .join(", ")
-                              : "Sem reposição"}
-                          </td>
-                          <td className="p-3.5 text-muted-foreground max-w-xs truncate">
-                            {insp.notes || "-"}
-                          </td>
-                        </tr>
-                      ))
+                            </td>
+                            <td className="p-3.5 font-bold text-foreground">
+                              {insp.inspectorName || "Repositora Anserve"}
+                            </td>
+                            <td className="p-3.5">
+                              {launchedVal > 0 || insp.status === "lancamento_diario" ? (
+                                <Badge className="bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30 text-[10px]">
+                                  Consumo Lançado {launchedVal > 0 ? `(R$ ${launchedVal.toFixed(2)})` : ""}
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-emerald-500/15 text-emerald-700 border-emerald-500/30 text-[10px]">
+                                  ✓ Passagem Sem Consumo
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="p-3.5">
+                              {(insp.restockedItems || []).length > 0
+                                ? (insp.restockedItems || [])
+                                    .map((it: any) => `${it.quantity}x ${it.productName || it.productId}`)
+                                    .join(", ")
+                                : "Sem reposição"}
+                            </td>
+                            <td className="p-3.5 text-muted-foreground max-w-xs truncate">
+                              {insp.notes || "-"}
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
               </div>
             </Card>
-          </TabsContent>
-
-          {/* TAB 5: EXTRATO DE REPASSE ANSERVE */}
-          <TabsContent value="extrato" className="space-y-5">
-            {settlement && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
-                  <span className="text-[11px] text-muted-foreground font-semibold">Total Vendido (Bruto)</span>
-                  <div className="text-xl font-black text-foreground">
-                    R$ {Number(settlement.totalOrdersAmount || 0).toFixed(2)}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground block">
-                    {settlement.ordersCount || 0} consumos pagos
-                  </span>
-                </Card>
-
-                <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
-                  <span className="text-[11px] text-muted-foreground font-semibold">Taxas de Cartão / PIX</span>
-                  <div className="text-xl font-black text-red-600 dark:text-red-400">
-                    - R$ {Number(settlement.totalFees || (settlement.cardFees + settlement.pixFees) || 0).toFixed(2)}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground block">
-                    Cartão 3.99% • PIX 0.99% Inter
-                  </span>
-                </Card>
-
-                <Card className="rounded-3xl border border-border bg-card p-4 space-y-1">
-                  <span className="text-[11px] text-muted-foreground font-semibold">Reembolso de Cortesias</span>
-                  <div className="text-xl font-black text-sky-600 dark:text-sky-400">
-                    + R$ {Number(settlement.courtesyRestockCost || 0).toFixed(2)}
-                  </div>
-                  <span className="text-[10px] text-muted-foreground block">
-                    Nespresso + Balas + Amendoim
-                  </span>
-                </Card>
-
-                <Card className="rounded-3xl border border-emerald-500/40 bg-emerald-500/10 p-4 space-y-1 shadow-md shadow-emerald-500/5">
-                  <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-bold uppercase tracking-wide">
-                    Líquido a Repassar (Anserve)
-                  </span>
-                  <div className="text-2xl font-black text-emerald-700 dark:text-emerald-300">
-                    R$ {Number(settlement.netPayableToAnserve || 0).toFixed(2)}
-                  </div>
-                  <span className="text-[10px] text-emerald-800/80 dark:text-emerald-300/80 block">
-                    Saldo líquido final a transferir
-                  </span>
-                </Card>
-              </div>
-            )}
-
-            <div className="p-4 rounded-3xl bg-muted/40 border border-border text-xs text-muted-foreground space-y-1">
-              <strong className="text-foreground">Fórmula de Fechamento CorpFlats ↔ Anserve:</strong>
-              <div>
-                <code>
-                  Repasse Líquido = Total Vendido - Taxas Gateway (Cartão 3.99% / PIX 0.99%) - Comissão CorpFlats + Crédito Cortesias Repostas
-                </code>
-              </div>
-            </div>
           </TabsContent>
         </Tabs>
 
@@ -2155,30 +1876,30 @@ export default function AnserveDashboardPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Modal: Relatório Individual de Conferências da Funcionária */}
+        {/* Modal: Relatório Individual de Passagens da Funcionária */}
         <Dialog open={Boolean(historyModalStaff)} onOpenChange={() => setHistoryModalStaff(null)}>
           <DialogContent className="sm:max-w-2xl rounded-3xl p-6 max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">
                 <Award className="w-5 h-5 text-teal-600" />
-                <span>Relatório Individual — {historyModalStaff?.name}</span>
+                <span>Histórico Individual — {historyModalStaff?.name}</span>
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Histórico de conferências, reposições e divergências apontadas por @{historyModalStaff?.username} no período.
+                Histórico de passagens diárias, lançamentos e reposições feitas por @{historyModalStaff?.username} no período.
               </DialogDescription>
             </DialogHeader>
 
             {historyModalStaff && (
               <div className="space-y-4 py-2 text-xs">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <div className="p-3 rounded-2xl bg-muted/40 border border-border">
-                    <span className="text-[10px] text-muted-foreground block">Conferências</span>
+                    <span className="text-[10px] text-muted-foreground block">Passagens Realizadas</span>
                     <strong className="text-base font-black">
                       {historyModalStaff.productivity?.inspectionsCount || 0}
                     </strong>
                   </div>
                   <div className="p-3 rounded-2xl bg-muted/40 border border-border">
-                    <span className="text-[10px] text-muted-foreground block">Flats Vistoriados</span>
+                    <span className="text-[10px] text-muted-foreground block">Flats Atendidos</span>
                     <strong className="text-base font-black">
                       {historyModalStaff.productivity?.flatsVisitedCount || 0}
                     </strong>
@@ -2189,12 +1910,6 @@ export default function AnserveDashboardPage() {
                       {historyModalStaff.productivity?.totalItemsRestockedQty || 0} un.
                     </strong>
                   </div>
-                  <div className="p-3 rounded-2xl bg-muted/40 border border-border">
-                    <span className="text-[10px] text-muted-foreground block">Divergências</span>
-                    <strong className="text-base font-black text-amber-600">
-                      R$ {Number(historyModalStaff.productivity?.discrepancyAmountDetected || 0).toFixed(2)}
-                    </strong>
-                  </div>
                 </div>
 
                 <div className="border border-border rounded-2xl overflow-hidden">
@@ -2203,42 +1918,45 @@ export default function AnserveDashboardPage() {
                       <tr>
                         <th className="p-2.5">Data/Hora</th>
                         <th className="p-2.5">Flat</th>
-                        <th className="p-2.5">Status</th>
-                        <th className="p-2.5">Reposição</th>
+                        <th className="p-2.5">Resultado</th>
+                        <th className="p-2.5">Itens Lançados / Repostos</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {(historyModalStaff.productivity?.recentInspections || []).length === 0 ? (
                         <tr>
                           <td colSpan={4} className="p-6 text-center text-muted-foreground">
-                            Nenhuma vistoria registrada para esta funcionária no período selecionado.
+                            Nenhuma passagem registrada para esta colaboradora no período selecionado.
                           </td>
                         </tr>
                       ) : (
-                        (historyModalStaff.productivity?.recentInspections || []).map((insp: any) => (
-                          <tr key={insp.id}>
-                            <td className="p-2.5 font-mono text-[11px]">
-                              {insp.inspectedAt ? new Date(insp.inspectedAt).toLocaleString("pt-BR") : "-"}
-                            </td>
-                            <td className="p-2.5 font-bold">Flat {insp.flatNumber}</td>
-                            <td className="p-2.5">
-                              {insp.hasDiscrepancy || insp.status === "divergencia" ? (
-                                <Badge className="bg-amber-500/15 text-amber-700 text-[10px]">
-                                  Divergência (R$ {Number(insp.discrepancyTotalAmount || 0).toFixed(2)})
-                                </Badge>
-                              ) : (
-                                <Badge className="bg-emerald-500/15 text-emerald-700 text-[10px]">
-                                  Conforme
-                                </Badge>
-                              )}
-                            </td>
-                            <td className="p-2.5">
-                              {(insp.restockedItems || [])
-                                .map((it: any) => `${it.quantity}x ${it.productName || it.productId}`)
-                                .join(", ") || "-"}
-                            </td>
-                          </tr>
-                        ))
+                        (historyModalStaff.productivity?.recentInspections || []).map((insp: any) => {
+                          const launchedVal = Number(insp.discrepancyTotalAmount || 0);
+                          return (
+                            <tr key={insp.id}>
+                              <td className="p-2.5 font-mono text-[11px]">
+                                {insp.inspectedAt ? new Date(insp.inspectedAt).toLocaleString("pt-BR") : "-"}
+                              </td>
+                              <td className="p-2.5 font-bold">Flat {insp.flatNumber}</td>
+                              <td className="p-2.5">
+                                {launchedVal > 0 || insp.status === "lancamento_diario" ? (
+                                  <Badge className="bg-sky-500/15 text-sky-700 text-[10px]">
+                                    Consumo Lançado {launchedVal > 0 ? `(R$ ${launchedVal.toFixed(2)})` : ""}
+                                  </Badge>
+                                ) : (
+                                  <Badge className="bg-emerald-500/15 text-emerald-700 text-[10px]">
+                                    ✓ Sem Consumo
+                                  </Badge>
+                                )}
+                              </td>
+                              <td className="p-2.5">
+                                {(insp.restockedItems || [])
+                                  .map((it: any) => `${it.quantity}x ${it.productName || it.productId}`)
+                                  .join(", ") || "-"}
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
