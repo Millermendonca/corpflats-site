@@ -1570,6 +1570,27 @@ export default function WhatsappAutomation() {
             setEditingHasAttachment(true)
             setEditingDocumentUrl(data.url)
             setEditingDocumentName(data.fileName)
+            const confirmIds = [
+              "tpl_new_reservation_direct",
+              "tpl_new_reservation_ota",
+              "tpl_payment_confirmed",
+              "tpl_sameday_reservation_instructions"
+            ]
+            const isConfirmGuide =
+              !currentTemplate?.id ||
+              confirmIds.includes(currentTemplate.id) ||
+              String(data.fileName || "").toLowerCase().includes("manual") ||
+              String(data.fileName || "").toLowerCase().includes("guia")
+            setCurrentTemplate(prev => prev ? { ...prev, hasAttachment: true, documentUrl: data.url, documentName: data.fileName } : prev)
+            setTemplates(prev => prev.map(t => {
+              if (t.id === currentTemplate?.id || (isConfirmGuide && confirmIds.includes(t.id))) {
+                return { ...t, hasAttachment: true, documentUrl: data.url, documentName: data.fileName }
+              }
+              return t
+            }))
+            if (isConfirmGuide) {
+              setConfig(prev => ({ ...prev, guestGuidePdfUrl: data.url, guestGuidePdfName: data.fileName }))
+            }
             toast({
               title: "✓ Arquivo PDF anexado!",
               description: `${data.fileName} carregado e configurado para disparo automático.`
@@ -1725,11 +1746,16 @@ export default function WhatsappAutomation() {
       })
 
       if (res.ok) {
+        const savedData = await res.json().catch(() => null)
         toast({ 
           title: "Template salvo com sucesso!", 
           description: `Régua atualizada com ${editingChannels.length} canal(is) configurado(s).` 
         })
-        setTemplates(prev => prev.map(t => t.id === updatedTemplate.id ? updatedTemplate : t))
+        if (savedData && Array.isArray(savedData.templates)) {
+          setTemplates(savedData.templates)
+        } else {
+          setTemplates(prev => prev.map(t => t.id === updatedTemplate.id ? updatedTemplate : t))
+        }
         setSavedTemplateMessages(prev => ({ ...prev, [updatedTemplate.id]: updatedTemplate.message }))
         setCurrentTemplate(updatedTemplate)
       } else {

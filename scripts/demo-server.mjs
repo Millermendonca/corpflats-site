@@ -513,8 +513,37 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
 app.use(serverMonitorMiddleware);
 
-app.use("/api/storage/files", express.static(UPLOADS_DIR));
-app.use("/storage/files", express.static(UPLOADS_DIR));
+const staticUploadsOpts = {
+  setHeaders: (res, filePath) => {
+    if (typeof filePath === "string" && filePath.toLowerCase().endsWith(".pdf")) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    }
+  }
+};
+app.use("/api/storage/files", express.static(UPLOADS_DIR, staticUploadsOpts), (req, res, next) => {
+  if (req.path && req.path.startsWith("/documents/") && req.path.toLowerCase().endsWith(".pdf")) {
+    const fallbackPdf = path.join(UPLOADS_DIR, "documents", "Manual_do_Hospede_CorpFlats.pdf");
+    if (fs.existsSync(fallbackPdf)) {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      return res.sendFile(fallbackPdf);
+    }
+  }
+  next();
+});
+app.use("/storage/files", express.static(UPLOADS_DIR, staticUploadsOpts), (req, res, next) => {
+  if (req.path && req.path.startsWith("/documents/") && req.path.toLowerCase().endsWith(".pdf")) {
+    const fallbackPdf = path.join(UPLOADS_DIR, "documents", "Manual_do_Hospede_CorpFlats.pdf");
+    if (fs.existsSync(fallbackPdf)) {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      return res.sendFile(fallbackPdf);
+    }
+  }
+  next();
+});
 app.get([
   "/Manual_do_Hospede_CorpFlats.pdf",
   "/Guia_do_Hospede.pdf",
@@ -525,6 +554,7 @@ app.get([
   const filePath = path.join(UPLOADS_DIR, "documents", "Manual_do_Hospede_CorpFlats.pdf");
   if (fs.existsSync(filePath)) {
     res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     return res.sendFile(filePath);
   }
   res.redirect("/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf");
@@ -9718,6 +9748,99 @@ async function _loadDatabaseImpl() {
           error: null,
           sentAt: res290.createdAt || "2026-09-28T06:14:08.736Z"
         });
+      }
+    }
+
+    // Persistência e restauração do PDF do Manual do Hóspede no PostgreSQL (sobrevive a redeploys/restarts no Render)
+    const STATIC_GUEST_MANUAL_UPDATED_AT = "2026-10-30T10:20:00.000Z";
+    globalThis.persistUploadedPdfToPg = async (uniqueFileName, cleanFileName, rawBase64, isGuestGuide = true) => {
+      if (!pgPool || !rawBase64) return;
+      try {
+        const blobId = isGuestGuide ? "whatsapp_guest_guide_pdf" : `whatsapp_pdf_${uniqueFileName}`;
+        const dataUrl = rawBase64.startsWith("data:") ? rawBase64 : `data:application/pdf;base64,${rawBase64}`;
+        await pgPool.query(
+          `INSERT INTO media_blobs (id, entity_type, entity_id, field_name, mime_type, data_url, created_at)
+           VALUES ($1, 'whatsapp_pdf', $2, $3, 'application/pdf', $4, NOW())
+           ON CONFLICT (id) DO UPDATE SET
+             entity_id = EXCLUDED.entity_id,
+             field_name = EXCLUDED.field_name,
+             data_url = EXCLUDED.data_url,
+             created_at = NOW()`,
+          [blobId, String(uniqueFileName), String(cleanFileName || "Manual_do_Hospede_CorpFlats.pdf"), dataUrl]
+        );
+        console.log(`[PostgreSQL] PDF '${cleanFileName}' (${uniqueFileName}) persistido em media_blobs.`);
+      } catch (pgPdfErr) {
+        console.warn("[PostgreSQL] Aviso ao persistir PDF em media_blobs:", pgPdfErr.message);
+      }
+    };
+
+    let restoredCustomGuideFromPg = false;
+    if (pgPool) {
+      try {
+        const pdfRes = await pgPool.query(
+          "SELECT entity_id, field_name, data_url, created_at FROM media_blobs WHERE id = 'whatsapp_guest_guide_pdf' LIMIT 1"
+        );
+        const row = pdfRes?.rows?.[0];
+        if (row && row.data_url && row.created_at && new Date(row.created_at).getTime() > new Date(STATIC_GUEST_MANUAL_UPDATED_AT).getTime()) {
+          const b64 = String(row.data_url).replace(/^data:[^;]+;base64,/, "");
+          const buf = Buffer.from(b64, "base64");
+          if (buf.length > 1024) {
+            const docsDir = path.join(UPLOADS_DIR, "documents");
+            await fs.promises.mkdir(docsDir, { recursive: true });
+            const targetUnique = row.entity_id || "Manual_do_Hospede_CorpFlats.pdf";
+            const targetClean = row.field_name || "Manual_do_Hospede_CorpFlats.pdf";
+            await fs.promises.writeFile(path.join(docsDir, targetUnique), buf);
+            await fs.promises.writeFile(path.join(docsDir, "Manual_do_Hospede_CorpFlats.pdf"), buf);
+            await fs.promises.writeFile(path.join(docsDir, "Guia_do_Hospede.pdf"), buf);
+            const restoredUrl = `/api/storage/files/documents/${targetUnique}`;
+            if (!db.zapiConfig) db.zapiConfig = {};
+            db.zapiConfig.guestGuidePdfUrl = restoredUrl;
+            db.zapiConfig.guestGuidePdfName = targetClean;
+            restoredCustomGuideFromPg = true;
+            console.log(`[PostgreSQL] PDF customizado do Manual do Hóspede restaurado em disco: ${targetUnique} (${buf.length} bytes).`);
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!restoredCustomGuideFromPg) {
+      const canonicalUrl = "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
+      const canonicalName = "Manual_do_Hospede_CorpFlats.pdf";
+      const confirmIds = [
+        "tpl_new_reservation_direct",
+        "tpl_new_reservation_ota",
+        "tpl_payment_confirmed",
+        "tpl_sameday_reservation_instructions"
+      ];
+      if (db.zapiConfig) {
+        const curUrl = db.zapiConfig.guestGuidePdfUrl;
+        const relCur = (typeof curUrl === "string" && curUrl.startsWith("/api/storage/files/"))
+          ? curUrl.replace(/^\/api\/storage\/files\//, "")
+          : "";
+        if (!curUrl || !relCur || !fs.existsSync(path.join(UPLOADS_DIR, relCur))) {
+          db.zapiConfig.guestGuidePdfUrl = canonicalUrl;
+          db.zapiConfig.guestGuidePdfName = canonicalName;
+        }
+      }
+      const activeUrl = db.zapiConfig?.guestGuidePdfUrl || canonicalUrl;
+      const activeName = db.zapiConfig?.guestGuidePdfName || canonicalName;
+      if (Array.isArray(db.whatsappTemplates)) {
+        for (const t of db.whatsappTemplates) {
+          if (t && confirmIds.includes(t.id)) {
+            t.hasAttachment = true;
+            t.documentUrl = activeUrl;
+            t.documentName = activeName;
+          }
+        }
+      }
+      if (Array.isArray(db.whatsappQuickMessages)) {
+        for (const qm of db.whatsappQuickMessages) {
+          if (qm && qm.id === "qm_guest_manual") {
+            qm.hasAttachment = true;
+            qm.documentUrl = activeUrl;
+            qm.documentName = activeName;
+          }
+        }
       }
     }
 

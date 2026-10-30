@@ -4309,8 +4309,20 @@ export async function sendZapiDocument(config, {
           finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
         }
       } else {
-        const pubBase = config.publicOrigin || "https://corpflats.com.br";
-        finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
+        const fallbackManualPath = path.join(DOCUMENTS_DIR, "Manual_do_Hospede_CorpFlats.pdf");
+        if (relPath.startsWith("documents/") && extension === "pdf" && fs.existsSync(fallbackManualPath)) {
+          try {
+            const fileBuf = fs.readFileSync(fallbackManualPath);
+            finalDocument = `data:application/pdf;base64,${fileBuf.toString("base64")}`;
+            console.log(`[Z-API Document] Arquivo '${relPath}' ausente no disco; usando Manual_do_Hospede_CorpFlats.pdf oficial (${fileBuf.length} bytes).`);
+          } catch (fbErr) {
+            const pubBase = config.publicOrigin || "https://corpflats.com.br";
+            finalDocument = `${pubBase.replace(/\/+$/, "")}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`;
+          }
+        } else {
+          const pubBase = config.publicOrigin || "https://corpflats.com.br";
+          finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
+        }
       }
     } else if (!document.startsWith("http://") && !document.startsWith("https://") && !document.startsWith("data:")) {
       const fullPath = path.join(DOCUMENTS_DIR, document);
@@ -6968,7 +6980,33 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         const [introTpl] = db.whatsappTemplates.splice(introIdx, 1);
         db.whatsappTemplates.unshift(introTpl);
       }
-            // Garante que templates existentes possuam a propriedade channels, recipientTarget e documentName inicializadas
+      const CONFIRMATION_GUIDE_TPL_IDS = [
+        "tpl_new_reservation_direct",
+        "tpl_new_reservation_ota",
+        "tpl_payment_confirmed",
+        "tpl_sameday_reservation_instructions"
+      ];
+      const isLocalDocValid = (url) => {
+        if (!url || typeof url !== "string") return false;
+        if (url.startsWith("/api/storage/files/")) {
+          const rel = url.replace(/^\/api\/storage\/files\//, "");
+          return fs.existsSync(path.join(UPLOADS_DIR, rel));
+        }
+        return true;
+      };
+      if (!isLocalDocValid(db?.zapiConfig?.guestGuidePdfUrl)) {
+        const customTplWithValidDoc = db.whatsappTemplates.find(
+          t => t && CONFIRMATION_GUIDE_TPL_IDS.includes(t.id) && t.documentUrl && t.documentUrl !== "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf" && isLocalDocValid(t.documentUrl)
+        );
+        if (customTplWithValidDoc && db?.zapiConfig) {
+          db.zapiConfig.guestGuidePdfUrl = customTplWithValidDoc.documentUrl;
+          db.zapiConfig.guestGuidePdfName = customTplWithValidDoc.documentName || "Manual_do_Hospede_CorpFlats.pdf";
+        } else if (db?.zapiConfig) {
+          db.zapiConfig.guestGuidePdfUrl = "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
+          db.zapiConfig.guestGuidePdfName = db.zapiConfig.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf";
+        }
+      }
+      // Garante que templates existentes possuam a propriedade channels, recipientTarget e documentName inicializadas
       for (const tpl of db.whatsappTemplates) {
         if (!tpl.recipientTarget || GUEST_ONLY_TEMPLATE_IDS.has(tpl.id)) {
           tpl.recipientTarget = "guest";
@@ -7278,6 +7316,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             qm.buttons = [];
           }
         }
+        if (qm.id === "qm_guest_manual") {
+          qm.hasAttachment = true;
+          qm.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
+          qm.documentName = db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf";
+        }
       }
     }
 
@@ -7293,6 +7336,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       let cleanedOldCount = 0;
       for (const item of db.whatsappQueue) {
         if (!item) continue;
+        if (item.documentUrl && typeof item.documentUrl === "string" && item.documentUrl.startsWith("/api/storage/files/")) {
+          const relQDoc = item.documentUrl.replace(/^\/api\/storage\/files\//, "");
+          if (!fs.existsSync(path.join(UPLOADS_DIR, relQDoc))) {
+            item.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
+            item.documentName = db?.zapiConfig?.guestGuidePdfName || item.documentName || "Manual_do_Hospede_CorpFlats.pdf";
+          }
+        }
         if (item.status === "scheduled" || item.status === "pending") {
           if (item.triggerEvent === "checkin_cleaning_delay" || item.templateId === "tpl_checkin_cleaning_delay") {
             item.status = "cancelled";
@@ -7488,8 +7538,35 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       modifiedTemplates = [incoming];
     }
 
+    const CONFIRMATION_SYNC_TPL_IDS = [
+      "tpl_new_reservation_direct",
+      "tpl_new_reservation_ota",
+      "tpl_payment_confirmed",
+      "tpl_sameday_reservation_instructions"
+    ];
+
     // Se o template teve canais configurados, cancela agendamentos futuros na fila de canais não permitidos
     for (const utpl of modifiedTemplates) {
+      if (utpl && utpl.id && CONFIRMATION_SYNC_TPL_IDS.includes(utpl.id) && utpl.documentUrl && db?.zapiConfig) {
+        db.zapiConfig.guestGuidePdfUrl = utpl.documentUrl;
+        db.zapiConfig.guestGuidePdfName = utpl.documentName || "Manual_do_Hospede_CorpFlats.pdf";
+        for (const t of (db.whatsappTemplates || [])) {
+          if (t && CONFIRMATION_SYNC_TPL_IDS.includes(t.id)) {
+            t.hasAttachment = true;
+            t.documentUrl = utpl.documentUrl;
+            t.documentName = utpl.documentName || "Manual_do_Hospede_CorpFlats.pdf";
+          }
+        }
+        if (Array.isArray(db.whatsappQuickMessages)) {
+          for (const qm of db.whatsappQuickMessages) {
+            if (qm && qm.id === "qm_guest_manual") {
+              qm.hasAttachment = true;
+              qm.documentUrl = utpl.documentUrl;
+              qm.documentName = utpl.documentName || "Manual_do_Hospede_CorpFlats.pdf";
+            }
+          }
+        }
+      }
       if (utpl && utpl.id && utpl.channels && Array.isArray(utpl.channels) && !utpl.channels.includes("all")) {
         for (const qItem of (db.whatsappQueue || [])) {
           if (qItem.templateId === utpl.id && qItem.status === "scheduled") {
@@ -7602,17 +7679,32 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
       }
       
-      // Atualiza também nas configurações gerais se for o manual do hóspede
+      // Atualiza também nas configurações gerais, arquivos estáticos oficiais e fila se for o manual do hóspede
       const CONFIRMATION_TPL_IDS = [
         "tpl_new_reservation_direct",
         "tpl_new_reservation_ota",
         "tpl_payment_confirmed",
         "tpl_sameday_reservation_instructions"
       ];
-      if (db?.zapiConfig && (CONFIRMATION_TPL_IDS.includes(templateId) || cleanFileName.toLowerCase().includes("manual") || cleanFileName.toLowerCase().includes("guia"))) {
-        db.zapiConfig.guestGuidePdfUrl = fileUrl;
-        db.zapiConfig.guestGuidePdfName = cleanFileName;
-        if (Array.isArray(db.whatsappTemplates)) {
+      const isGuestGuide =
+        !templateId ||
+        CONFIRMATION_TPL_IDS.includes(templateId) ||
+        templateId === "qm_guest_manual" ||
+        cleanFileName.toLowerCase().includes("manual") ||
+        cleanFileName.toLowerCase().includes("guia");
+
+      if (isGuestGuide) {
+        try {
+          fs.writeFileSync(path.join(DOCUMENTS_DIR, "Manual_do_Hospede_CorpFlats.pdf"), buffer);
+          fs.writeFileSync(path.join(DOCUMENTS_DIR, "Guia_do_Hospede.pdf"), buffer);
+        } catch (canonicalErr) {
+          console.warn("[WhatsApp] Aviso ao atualizar arquivos canônicos do manual:", canonicalErr.message);
+        }
+        if (db?.zapiConfig) {
+          db.zapiConfig.guestGuidePdfUrl = fileUrl;
+          db.zapiConfig.guestGuidePdfName = cleanFileName;
+        }
+        if (Array.isArray(db?.whatsappTemplates)) {
           for (const t of db.whatsappTemplates) {
             if (CONFIRMATION_TPL_IDS.includes(t.id)) {
               t.hasAttachment = true;
@@ -7621,6 +7713,27 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             }
           }
         }
+        if (Array.isArray(db?.whatsappQuickMessages)) {
+          for (const qm of db.whatsappQuickMessages) {
+            if (qm && qm.id === "qm_guest_manual") {
+              qm.hasAttachment = true;
+              qm.documentUrl = fileUrl;
+              qm.documentName = cleanFileName;
+            }
+          }
+        }
+        if (Array.isArray(db?.whatsappQueue)) {
+          for (const qItem of db.whatsappQueue) {
+            if (qItem && (qItem.status === "scheduled" || qItem.status === "pending") && (CONFIRMATION_TPL_IDS.includes(qItem.templateId) || qItem.hasAttachment)) {
+              qItem.documentUrl = fileUrl;
+              qItem.documentName = cleanFileName;
+            }
+          }
+        }
+      }
+
+      if (typeof globalThis.persistUploadedPdfToPg === "function") {
+        await globalThis.persistUploadedPdfToPg(uniqueFileName, cleanFileName, rawBase64, isGuestGuide);
       }
 
       saveDatabase();
