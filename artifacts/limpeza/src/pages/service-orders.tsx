@@ -1062,33 +1062,33 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
 
   const pageContent = (
       <TooltipProvider>
-        <div className={embedded ? "space-y-5 sm:space-y-6" : "max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 sm:pb-10 space-y-5 sm:space-y-6"}>
+        <div className={embedded ? "w-full min-w-0 max-w-full space-y-4 sm:space-y-6 overflow-x-hidden" : "w-full max-w-7xl min-w-0 mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-6 pb-24 sm:pb-10 space-y-4 sm:space-y-6 overflow-x-hidden"}>
           {/* Header principal da página */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5 border-b border-border/40 pb-4 sm:pb-5">
-            <div className="space-y-1">
-              <div className="flex items-start sm:items-center gap-3">
-                <div className="w-10 h-10 shrink-0 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-xs mt-0.5 sm:mt-0">
-                  <Wrench className="w-5 h-5 shrink-0" />
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-border/40 pb-3.5 sm:pb-5 min-w-0">
+            <div className="space-y-1 min-w-0">
+              <div className="flex items-start sm:items-center gap-2.5 sm:gap-3 min-w-0">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-xs mt-0.5 sm:mt-0">
+                  <Wrench className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground leading-tight">
+                  <h1 className="text-base sm:text-2xl font-bold tracking-tight text-foreground leading-tight break-words">
                     Campanhas & Serviços Externos (Terceirizados)
                   </h1>
-                  <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 leading-snug">
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 leading-snug break-words">
                     Gestão de higienização de A/C, dedetização, pintores e reformas com portal exclusivo e vínculo ao Raio-X dos Flats
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 w-full sm:w-auto shrink-0">
               <Button
                 variant={activeTab === "form" && !editingOrderId ? "secondary" : "default"}
                 onClick={() => {
                   resetFormToCreate();
                   setActiveTab("form");
                 }}
-                className="w-full sm:w-auto justify-center gap-2 font-medium shadow-xs"
+                className="w-full sm:w-auto h-9 sm:h-10 text-xs sm:text-sm justify-center gap-2 font-semibold shadow-xs rounded-xl"
               >
                 <Plus className="w-4 h-4 shrink-0" />
                 <span>Nova Ordem de Serviço</span>
@@ -1100,23 +1100,24 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
           <Tabs
             value={activeTab}
             onValueChange={(val) => setActiveTab(val as "list" | "form" | "tracking")}
-            className="w-full space-y-5 sm:space-y-6"
+            className="w-full min-w-0 space-y-4 sm:space-y-6"
           >
-            <TabsList className="grid grid-cols-3 w-full max-w-lg h-auto min-h-11 p-1 bg-muted/80 rounded-xl">
-              <TabsTrigger value="list" className="gap-1 sm:gap-2 text-[11px] sm:text-sm font-medium rounded-lg px-1.5 sm:px-3 py-1.5 truncate">
+            <TabsList className="grid grid-cols-3 w-full sm:max-w-lg h-auto min-h-10 sm:min-h-11 p-1 bg-muted/80 rounded-xl gap-1">
+              <TabsTrigger value="list" className="min-w-0 overflow-hidden gap-1 sm:gap-2 text-[11px] sm:text-sm font-semibold rounded-lg px-1 sm:px-3 py-1.5">
                 <FileText className="w-3.5 h-3.5 hidden sm:inline-block shrink-0" />
-                <span className="truncate">Lista de Serviços</span>
+                <span className="truncate">Lista</span>
+                <span className="hidden xs:inline truncate">de Serviços</span>
                 {orders.length > 0 && (
-                  <Badge variant="secondary" className="ml-0.5 sm:ml-1 px-1 sm:px-1.5 py-0 text-[9px] sm:text-[10px] font-semibold shrink-0">
+                  <Badge variant="secondary" className="ml-0.5 px-1 sm:px-1.5 py-0 text-[9px] sm:text-[10px] font-semibold shrink-0">
                     {orders.length}
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="form" className="gap-1 sm:gap-2 text-[11px] sm:text-sm font-medium rounded-lg px-1.5 sm:px-3 py-1.5 truncate">
+              <TabsTrigger value="form" className="min-w-0 overflow-hidden gap-1 sm:gap-2 text-[11px] sm:text-sm font-semibold rounded-lg px-1 sm:px-3 py-1.5">
                 <Edit className="w-3.5 h-3.5 hidden sm:inline-block shrink-0" />
                 <span className="truncate">{editingOrderId ? "Editar Ordem" : "Criar Ordem"}</span>
               </TabsTrigger>
-              <TabsTrigger value="tracking" className="gap-1 sm:gap-2 text-[11px] sm:text-sm font-medium rounded-lg px-1.5 sm:px-3 py-1.5 truncate">
+              <TabsTrigger value="tracking" className="min-w-0 overflow-hidden gap-1 sm:gap-2 text-[11px] sm:text-sm font-semibold rounded-lg px-1 sm:px-3 py-1.5">
                 <Layers className="w-3.5 h-3.5 hidden sm:inline-block shrink-0" />
                 <span className="truncate">Acompanhamento</span>
                 {progressData?.stats?.inProgress ? (
@@ -1128,21 +1129,21 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
             {/* ════════════════════════════════════════════════════════════════
                 ABA 1: LISTA DE ORDENS DE SERVIÇO
                ════════════════════════════════════════════════════════════════ */}
-            <TabsContent value="list" className="space-y-6 focus-visible:outline-none">
+            <TabsContent value="list" className="w-full min-w-0 space-y-5 sm:space-y-6 focus-visible:outline-none">
               {/* Barra de Filtros e Busca */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card p-3 rounded-2xl border shadow-xs">
-                <div className="relative flex-1">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 bg-card p-3 rounded-2xl border shadow-xs min-w-0">
+                <div className="relative flex-1 min-w-0">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     placeholder="Buscar por título ou token da ordem..."
                     value={listSearch}
                     onChange={(e) => setListSearch(e.target.value)}
-                    className="pl-9 h-9 text-sm"
+                    className="pl-9 h-9 text-xs sm:text-sm"
                   />
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 w-full sm:w-auto">
                   <Select value={listStatusFilter} onValueChange={setListStatusFilter}>
-                    <SelectTrigger className="w-36 h-9 text-xs">
+                    <SelectTrigger className="flex-1 sm:w-40 h-9 text-xs">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1157,7 +1158,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                     variant="outline"
                     size="sm"
                     onClick={() => refetchOrders()}
-                    className="h-9 px-2.5"
+                    className="h-9 px-2.5 shrink-0"
                     title="Atualizar lista"
                   >
                     <RefreshCw className="w-4 h-4" />
@@ -1212,7 +1213,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                     return (
                       <Card
                         key={order.id}
-                        className="rounded-2xl border bg-card shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden"
+                        className="rounded-2xl border bg-card shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden min-w-0"
                       >
                         <CardHeader className="pb-3 space-y-3">
                           <div className="flex items-start justify-between gap-2">
@@ -1307,12 +1308,12 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                           </div>
 
                           {/* Link do Portal do Prestador */}
-                          <div className="space-y-1.5 p-2.5 rounded-xl bg-muted/50 border text-xs">
+                          <div className="space-y-1.5 p-2.5 rounded-xl bg-muted/50 border text-xs min-w-0">
                             <span className="font-semibold text-foreground block">
                               Link de Acesso do Prestador:
                             </span>
-                            <div className="flex items-center gap-1.5">
-                              <code className="flex-1 bg-background px-2 py-1 rounded border text-[11px] font-mono text-muted-foreground truncate select-all">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <code className="flex-1 min-w-0 bg-background px-2 py-1 rounded border text-[11px] font-mono text-muted-foreground truncate select-all">
                                 {portalUrl}
                               </code>
                               <Tooltip>
@@ -1424,7 +1425,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
             {/* ════════════════════════════════════════════════════════════════
                 ABA 2: CRIAR / EDITAR ORDEM DE SERVIÇO
                ════════════════════════════════════════════════════════════════ */}
-            <TabsContent value="form" className="space-y-6 focus-visible:outline-none">
+            <TabsContent value="form" className="w-full min-w-0 space-y-6 focus-visible:outline-none">
               <Card className="rounded-2xl border shadow-xs overflow-hidden">
                 <CardHeader className="border-b p-4 sm:p-6 pb-4">
                   <div className="space-y-2">
@@ -2482,11 +2483,11 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
             {/* ════════════════════════════════════════════════════════════════
                 ABA 3: PAINEL DE ACOMPANHAMENTO EM TEMPO REAL
                ════════════════════════════════════════════════════════════════ */}
-            <TabsContent value="tracking" className="space-y-6 focus-visible:outline-none">
+            <TabsContent value="tracking" className="w-full min-w-0 space-y-5 sm:space-y-6 focus-visible:outline-none">
               {/* Barra Superior de Seleção e Polling */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card p-4 rounded-2xl border shadow-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1 min-w-0">
-                  <div className="space-y-1 w-full sm:w-auto shrink-0">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 bg-card p-3.5 sm:p-4 rounded-2xl border shadow-xs min-w-0">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3 flex-1 min-w-0">
+                  <div className="space-y-1 w-full sm:w-auto min-w-0">
                     <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">
                       Ordem Selecionada
                     </span>
@@ -2494,7 +2495,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                       value={effectiveTrackingOrderId}
                       onValueChange={(val) => setSelectedTrackingOrderId(val)}
                     >
-                      <SelectTrigger className="w-full sm:w-80 h-10 font-semibold text-sm">
+                      <SelectTrigger className="w-full sm:w-80 max-w-full min-w-0 h-10 font-semibold text-xs sm:text-sm [&>span]:truncate">
                         <SelectValue placeholder="Selecione a Ordem..." />
                       </SelectTrigger>
                       <SelectContent>
@@ -2508,15 +2509,15 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                   </div>
 
                   {progressData?.token && (
-                    <div className="flex items-center gap-1.5 w-full sm:w-auto pt-1 sm:pt-4">
+                    <div className="flex items-center gap-1.5 w-full sm:w-auto pt-0.5 sm:pt-4 min-w-0">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => copyPortalLink(progressData.token)}
-                        className="h-9 sm:h-8 text-xs gap-1.5 font-medium flex-1 sm:flex-initial"
+                        className="h-9 sm:h-8 text-xs gap-1.5 font-medium flex-1 sm:flex-initial min-w-0"
                       >
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copiar Link do Portal</span>
+                        <Copy className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">Copiar Link do Portal</span>
                       </Button>
                       <Button
                         variant="ghost"
@@ -2539,13 +2540,13 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                   )}
                 </div>
 
-                <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto border-t sm:border-t-0 pt-3 sm:pt-0">
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/60 px-3 py-1.5 rounded-lg">
+                <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 w-full sm:w-auto border-t sm:border-t-0 pt-2.5 sm:pt-0 min-w-0">
+                  <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-muted-foreground bg-muted/60 px-2.5 sm:px-3 py-1.5 rounded-lg min-w-0">
                     <span className="relative flex h-2 w-2 shrink-0">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </span>
-                    <span className="font-medium">Atualizando a cada 10s</span>
+                    <span className="font-medium truncate">Atualizando a cada 10s</span>
                   </div>
 
                   <Button
@@ -2577,57 +2578,57 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                   </CardContent>
                 </Card>
               ) : (
-                <div className="space-y-5">
+                <div className="space-y-4 sm:space-y-5 min-w-0">
                   {/* Cards de Métricas (KPIs) */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2.5 sm:gap-3.5">
                     {/* Total */}
-                    <Card className="rounded-xl border p-4 space-y-1">
-                      <span className="text-xs text-muted-foreground font-semibold">Total de Flats</span>
-                      <div className="text-2xl font-bold">{progressData.stats.total}</div>
+                    <Card className="rounded-xl border p-3 sm:p-4 space-y-1 min-w-0">
+                      <span className="text-xs text-muted-foreground font-semibold block truncate">Total de Flats</span>
+                      <div className="text-xl sm:text-2xl font-bold">{progressData.stats.total}</div>
                       <Progress value={progressData.stats.percentage} className="h-1.5 mt-2" />
                     </Card>
 
                     {/* Pendentes */}
-                    <Card className="rounded-xl border p-4 space-y-1">
-                      <span className="text-xs text-muted-foreground font-semibold">Pendentes</span>
-                      <div className="text-2xl font-bold text-slate-700 dark:text-slate-300">
+                    <Card className="rounded-xl border p-3 sm:p-4 space-y-1 min-w-0">
+                      <span className="text-xs text-muted-foreground font-semibold block truncate">Pendentes</span>
+                      <div className="text-xl sm:text-2xl font-bold text-slate-700 dark:text-slate-300">
                         {progressData.stats.pending}
                       </div>
-                      <span className="text-[11px] text-muted-foreground">Aguardando início</span>
+                      <span className="text-[11px] text-muted-foreground block truncate">Aguardando início</span>
                     </Card>
 
                     {/* Em Andamento */}
-                    <Card className="rounded-xl border p-4 space-y-1 bg-sky-500/5 border-sky-500/30">
-                      <span className="text-xs text-sky-700 dark:text-sky-300 font-semibold flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
-                        Em Andamento
+                    <Card className="rounded-xl border p-3 sm:p-4 space-y-1 min-w-0 bg-sky-500/5 border-sky-500/30">
+                      <span className="text-xs text-sky-700 dark:text-sky-300 font-semibold flex items-center gap-1.5 truncate">
+                        <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse shrink-0" />
+                        <span className="truncate">Em Andamento</span>
                       </span>
-                      <div className="text-2xl font-bold text-sky-700 dark:text-sky-300">
+                      <div className="text-xl sm:text-2xl font-bold text-sky-700 dark:text-sky-300">
                         {progressData.stats.inProgress}
                       </div>
-                      <span className="text-[11px] text-sky-600 dark:text-sky-400">Prestador no local</span>
+                      <span className="text-[11px] text-sky-600 dark:text-sky-400 block truncate">Prestador no local</span>
                     </Card>
 
                     {/* Finalizados */}
-                    <Card className="rounded-xl border p-4 space-y-1 bg-emerald-500/5 border-emerald-500/30">
-                      <span className="text-xs text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1.5">
-                        <Check className="w-3.5 h-3.5" />
-                        Finalizados
+                    <Card className="rounded-xl border p-3 sm:p-4 space-y-1 min-w-0 bg-emerald-500/5 border-emerald-500/30">
+                      <span className="text-xs text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1.5 truncate">
+                        <Check className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">Finalizados</span>
                       </span>
-                      <div className="text-2xl font-bold text-emerald-700 dark:text-emerald-300">
+                      <div className="text-xl sm:text-2xl font-bold text-emerald-700 dark:text-emerald-300">
                         {progressData.stats.done}
                       </div>
-                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400 block truncate">
                         {progressData.stats.percentage}% concluído
                       </span>
                     </Card>
 
                     {/* Prestador Identificado */}
-                    <Card className="rounded-xl border p-4 space-y-1.5 col-span-2 sm:col-span-4 lg:col-span-1 bg-muted/40">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-muted-foreground font-semibold flex items-center gap-1">
-                          <Users className="w-3.5 h-3.5 text-primary" />
-                          Prestador Responsável
+                    <Card className="rounded-xl border p-3 sm:p-4 space-y-1.5 col-span-2 sm:col-span-4 lg:col-span-1 bg-muted/40 min-w-0">
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <span className="text-xs text-muted-foreground font-semibold flex items-center gap-1 truncate">
+                          <Users className="w-3.5 h-3.5 text-primary shrink-0" />
+                          <span className="truncate">Prestador Responsável</span>
                         </span>
                         {progressData.worker?.mainWorker?.name && (
                           <Button
@@ -2640,7 +2641,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                 deleteAdminWorkerMutation.mutate({ orderId: progressData.orderId });
                               }
                             }}
-                            className="h-6 px-2 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10 rounded-md gap-1"
+                            className="h-6 px-2 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10 rounded-md gap-1 shrink-0"
                             title="Remover prestador e ajudantes"
                           >
                             <Trash2 className="w-3 h-3" />
@@ -2662,9 +2663,9 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                           {progressData.worker.collaborators.map((c, idx) => (
                             <span
                               key={idx}
-                              className="inline-flex items-center gap-1 text-[10px] bg-background border px-1.5 py-0.5 rounded-md font-medium"
+                              className="inline-flex items-center gap-1 text-[10px] bg-background border px-1.5 py-0.5 rounded-md font-medium max-w-full"
                             >
-                              👤 {c.name}
+                              <span className="truncate">👤 {c.name}</span>
                               <button
                                 type="button"
                                 disabled={deleteAdminWorkerMutation.isPending}
@@ -2673,7 +2674,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                     deleteAdminWorkerMutation.mutate({ orderId: progressData.orderId, collaboratorIndex: idx });
                                   }
                                 }}
-                                className="text-destructive hover:bg-destructive/15 rounded px-0.5 font-bold"
+                                className="text-destructive hover:bg-destructive/15 rounded px-0.5 font-bold shrink-0"
                                 title="Remover ajudante"
                               >
                                 ×
@@ -2683,7 +2684,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                         </div>
                       )}
                       {progressData.worker?.vehicle?.needsGarage && (
-                        <div className="flex items-center justify-between gap-1 pt-1">
+                        <div className="flex items-center justify-between gap-1 pt-1 min-w-0">
                           <span className="text-[11px] text-indigo-700 dark:text-indigo-300 font-semibold truncate">
                             🚗 Garagem: {progressData.worker.vehicle.plate || "Veículo"} {progressData.worker.vehicle.modelColor ? `(${progressData.worker.vehicle.modelColor})` : ""}
                           </span>
@@ -2708,15 +2709,17 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                   {/* Destinatários Configurados na Ordem */}
                   {Array.isArray(progressData.notificationRecipients) &&
                     progressData.notificationRecipients.filter((r) => Array.isArray(r.events) && r.events.length > 0).length > 0 && (
-                      <div className="p-3 bg-muted/40 rounded-xl border text-xs flex items-center justify-between gap-3 flex-wrap">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Bell className="w-4 h-4 text-primary shrink-0" />
-                          <span className="font-bold text-foreground">Notificações configuradas:</span>
-                          <div className="flex items-center gap-1.5 flex-wrap">
+                      <div className="p-3 bg-muted/40 rounded-xl border text-xs flex items-center justify-between gap-2.5 flex-wrap min-w-0">
+                        <div className="flex items-start sm:items-center gap-2 flex-wrap min-w-0 w-full">
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <Bell className="w-4 h-4 text-primary shrink-0" />
+                            <span className="font-bold text-foreground">Notificações configuradas:</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                             {progressData.notificationRecipients
                               .filter((r) => Array.isArray(r.events) && r.events.length > 0)
                               .map((r, i) => (
-                                <Badge key={i} variant="outline" className="text-[10px] bg-background rounded-md whitespace-nowrap">
+                                <Badge key={i} variant="outline" className="text-[10px] bg-background rounded-md whitespace-normal break-words text-left leading-tight py-1 max-w-full">
                                   {r.name} ({r.phone}) [{r.events.map((e) => NOTIFICATION_EVENT_LABELS[e] || e).join(", ")}]
                                 </Badge>
                               ))}
@@ -2726,49 +2729,245 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                   )}
 
                   {/* Filtro por Status da Tabela */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex flex-wrap items-center gap-1.5 bg-muted p-1 rounded-xl">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 min-w-0">
+                    <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1 sm:gap-1.5 bg-muted p-1 rounded-xl w-full sm:w-auto">
                       <Button
                         variant={trackingStatusFilter === "all" ? "default" : "ghost"}
                         size="sm"
                         onClick={() => setTrackingStatusFilter("all")}
-                        className="h-8 text-xs font-semibold px-3 rounded-lg"
+                        className="h-8 text-[11px] sm:text-xs font-semibold px-2 sm:px-3 rounded-lg min-w-0"
                       >
-                        Todos ({progressData.flats.length})
+                        <span className="truncate">Todos ({progressData.flats.length})</span>
                       </Button>
                       <Button
                         variant={trackingStatusFilter === "pending" ? "default" : "ghost"}
                         size="sm"
                         onClick={() => setTrackingStatusFilter("pending")}
-                        className="h-8 text-xs font-semibold px-3 rounded-lg"
+                        className="h-8 text-[11px] sm:text-xs font-semibold px-2 sm:px-3 rounded-lg min-w-0"
                       >
-                        Pendentes ({progressData.stats.pending})
+                        <span className="truncate">Pendentes ({progressData.stats.pending})</span>
                       </Button>
                       <Button
                         variant={trackingStatusFilter === "in_progress" ? "default" : "ghost"}
                         size="sm"
                         onClick={() => setTrackingStatusFilter("in_progress")}
-                        className="h-8 text-xs font-semibold px-3 rounded-lg text-sky-700 dark:text-sky-300"
+                        className="h-8 text-[11px] sm:text-xs font-semibold px-2 sm:px-3 rounded-lg text-sky-700 dark:text-sky-300 min-w-0"
                       >
-                        Em Andamento ({progressData.stats.inProgress})
+                        <span className="truncate">Andamento ({progressData.stats.inProgress})</span>
                       </Button>
                       <Button
                         variant={trackingStatusFilter === "done" ? "default" : "ghost"}
                         size="sm"
                         onClick={() => setTrackingStatusFilter("done")}
-                        className="h-8 text-xs font-semibold px-3 rounded-lg text-emerald-700 dark:text-emerald-300"
+                        className="h-8 text-[11px] sm:text-xs font-semibold px-2 sm:px-3 rounded-lg text-emerald-700 dark:text-emerald-300 min-w-0"
                       >
-                        Finalizados ({progressData.stats.done})
+                        <span className="truncate">Finalizados ({progressData.stats.done})</span>
                       </Button>
                     </div>
 
-                    <span className="text-xs text-muted-foreground">
-                      Clique em qualquer linha para ver fotos e observações completas.
+                    <span className="text-[11px] sm:text-xs text-muted-foreground">
+                      Toque em qualquer apartamento para ver fotos e observações completas.
                     </span>
                   </div>
 
-                  {/* Tabela de Acompanhamento */}
-                  <div className="rounded-2xl border bg-card overflow-hidden shadow-xs">
+                  {/* ── VISÃO MOBILE (CARDS EMPILHADOS OTIMIZADOS PARA CELULAR) ── */}
+                  <div className="md:hidden space-y-2.5 min-w-0">
+                    {trackingFlats.length === 0 ? (
+                      <div className="rounded-2xl border bg-card p-6 text-center text-muted-foreground text-xs">
+                        Nenhum apartamento encontrado com o filtro selecionado.
+                      </div>
+                    ) : (
+                      trackingFlats.map((flat) => {
+                        const hasPhotos = Array.isArray(flat.photos) && flat.photos.length > 0;
+                        const durationStr = formatDuration(flat.startedAt, flat.finishedAt);
+
+                        return (
+                          <div
+                            key={flat.flatId}
+                            onClick={() => setDetailModalFlat(flat)}
+                            className="p-3.5 rounded-2xl border bg-card shadow-2xs space-y-2.5 active:scale-[0.99] transition-all cursor-pointer min-w-0"
+                          >
+                            {/* Linha 1: Flat + Status do Serviço */}
+                            <div className="flex items-start justify-between gap-2 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                                <span className="font-black text-sm text-foreground">Flat {flat.flatNumber}</span>
+                                {flat.operationalScenarioIcon && flat.operationalScenarioLabel && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] px-1.5 py-0 rounded-md font-medium inline-flex items-center gap-1"
+                                  >
+                                    <span>{flat.operationalScenarioIcon}</span>
+                                    <span>{flat.operationalScenarioLabel}</span>
+                                  </Badge>
+                                )}
+                                {flat.forceReleased ? (
+                                  <Badge className="text-[9px] px-1.5 py-0 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-300 font-bold">
+                                    🔓 Liberado
+                                  </Badge>
+                                ) : flat.isStatusAllowed === false ? (
+                                  <Badge
+                                    variant="destructive"
+                                    className="text-[9px] px-1.5 py-0 rounded-md bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-300 font-bold"
+                                  >
+                                    🔒 Bloqueado
+                                  </Badge>
+                                ) : null}
+                              </div>
+
+                              <div className="shrink-0">
+                                {flat.status === "pending" && (
+                                  <Badge variant="secondary" className="text-[10px] font-semibold">
+                                    Pendente
+                                  </Badge>
+                                )}
+                                {flat.status === "in_progress" && (
+                                  <Badge className="bg-sky-600 text-white text-[10px] font-semibold gap-1 animate-pulse">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                                    Andamento
+                                  </Badge>
+                                )}
+                                {flat.status === "done" && (
+                                  <Badge className="bg-emerald-600 text-white text-[10px] font-semibold gap-1">
+                                    <Check className="w-3 h-3 stroke-[3]" />
+                                    Finalizado
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Linha 2: Chips de Ocupação / Limpeza / Entrada */}
+                            <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                              {(flat as any).isOccupied ? (
+                                <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800">
+                                  🔴 Ocupado{(flat as any).currentGuest ? `: ${(flat as any).currentGuest.split(" ")[0]}` : ""}
+                                </span>
+                              ) : (flat as any).isDirty ? (
+                                <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
+                                  🧹 Sujo
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+                                  🟢 Vago / Limpo
+                                </span>
+                              )}
+                              {flat.entryRequested && (
+                                <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold bg-amber-50 text-amber-800 border border-amber-300">
+                                  🔑 Entrada Solicitada
+                                </span>
+                              )}
+                              {flat.needsCleaning === true && (
+                                <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-bold bg-amber-500/15 text-amber-700 border border-amber-300">
+                                  🧹 Chamar faxina
+                                </span>
+                              )}
+                              {hasPhotos && (
+                                <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold bg-primary/10 text-primary border border-primary/30">
+                                  <Camera className="w-3 h-3" /> {flat.photos!.length} foto(s)
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Linha 3: Resumo de Execução / Observações se houver */}
+                            {(flat.workerName || flat.startedAt || flat.observations) && (
+                              <div className="text-[11px] text-muted-foreground space-y-0.5 bg-muted/30 p-2 rounded-xl border border-border/50">
+                                {flat.workerName && (
+                                  <div className="truncate">
+                                    👤 <strong className="text-foreground">{flat.workerName}</strong>
+                                  </div>
+                                )}
+                                {flat.startedAt && (
+                                  <div className="text-[10px]">
+                                    🕒 Início: {formatDateTime(flat.startedAt)}
+                                    {flat.finishedAt ? ` • Fim: ${formatDateTime(flat.finishedAt)}` : ""}
+                                    {durationStr ? ` (${durationStr})` : ""}
+                                  </div>
+                                )}
+                                {flat.observations && (
+                                  <div className="text-[11px] text-foreground italic line-clamp-2">
+                                    "{flat.observations}"
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Linha 4: Botões de Ação Rápida Mobile */}
+                            <div
+                              className="flex items-center justify-end gap-1.5 pt-1 border-t border-border/40"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {flat.status !== "done" && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    adminCompleteFlatMutation.mutate({
+                                      orderId: effectiveTrackingOrderId,
+                                      flatId: flat.flatId,
+                                    })
+                                  }
+                                  disabled={adminCompleteFlatMutation.isPending}
+                                  className="h-8 px-2.5 text-xs text-emerald-700 border-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 font-semibold gap-1 flex-1"
+                                >
+                                  <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                                  <span>Concluir</span>
+                                </Button>
+                              )}
+
+                              {flat.status === "pending" ? (
+                                flat.forceReleased ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      forceReleaseMutation.mutate({
+                                        orderId: effectiveTrackingOrderId,
+                                        flatId: flat.flatId,
+                                        forceReleased: false,
+                                      })
+                                    }
+                                    disabled={forceReleaseMutation.isPending}
+                                    className="h-8 px-2.5 text-xs text-amber-700 border-amber-300 gap-1 font-medium flex-1"
+                                  >
+                                    <Lock className="w-3.5 h-3.5" />
+                                    <span>Bloquear</span>
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      forceReleaseMutation.mutate({
+                                        orderId: effectiveTrackingOrderId,
+                                        flatId: flat.flatId,
+                                        forceReleased: true,
+                                      })
+                                    }
+                                    disabled={forceReleaseMutation.isPending}
+                                    className="h-8 px-2.5 text-xs text-emerald-700 border-emerald-300 font-semibold gap-1 flex-1"
+                                  >
+                                    <span>🔓 Liberar</span>
+                                  </Button>
+                                )
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setResetConfirmFlat(flat)}
+                                  className="h-8 px-2.5 text-xs text-muted-foreground hover:text-amber-600 gap-1"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>Resetar</span>
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Tabela de Acompanhamento (Desktop) */}
+                  <div className="hidden md:block rounded-2xl border bg-card overflow-x-auto max-w-full shadow-xs">
                     <Table>
                       <TableHeader className="bg-muted/50">
                         <TableRow className="hover:bg-transparent">
@@ -3092,7 +3291,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
               MODAL DE DETALHES DO FLAT (CLICK NA LINHA DA TABELA)
              ════════════════════════════════════════════════════════════════ */}
           <Dialog open={Boolean(detailModalFlat)} onOpenChange={(open) => !open && setDetailModalFlat(null)}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl">
+            <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[90dvh] overflow-x-hidden overflow-y-auto rounded-2xl p-4 sm:p-6">
               <DialogHeader className="border-b pb-3">
                 <div className="flex items-center justify-between gap-3">
                   <DialogTitle className="text-xl font-bold flex items-center gap-2">
@@ -3344,7 +3543,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
               MODAL DE CONFIRMAÇÃO DE RESET DO FLAT
              ════════════════════════════════════════════════════════════════ */}
           <Dialog open={Boolean(resetConfirmFlat)} onOpenChange={(open) => !open && setResetConfirmFlat(null)}>
-            <DialogContent className="max-w-md rounded-2xl">
+            <DialogContent className="w-[calc(100vw-1rem)] max-w-md rounded-2xl">
               <DialogHeader className="space-y-2">
                 <DialogTitle className="flex items-center gap-2 text-amber-600">
                   <AlertTriangle className="w-5 h-5 shrink-0" />
@@ -3399,7 +3598,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
               MODAL DE CONFIRMAÇÃO DE EXCLUSÃO DA ORDEM
              ════════════════════════════════════════════════════════════════ */}
           <Dialog open={Boolean(deleteConfirmOrderId)} onOpenChange={(open) => !open && setDeleteConfirmOrderId(null)}>
-            <DialogContent className="max-w-md rounded-2xl">
+            <DialogContent className="w-[calc(100vw-1rem)] max-w-md rounded-2xl">
               <DialogHeader className="space-y-2">
                 <DialogTitle className="flex items-center gap-2 text-rose-600">
                   <Trash2 className="w-5 h-5 shrink-0" />

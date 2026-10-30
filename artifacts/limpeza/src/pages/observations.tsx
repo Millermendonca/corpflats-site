@@ -42,8 +42,8 @@ function ObservationCard({ obs, isAdmin, onResolve }: { obs: Observation; isAdmi
     <Card className={`rounded-3xl border border-border shadow-xs overflow-hidden transition-all ${
       obs.status === "resolvida" ? "bg-muted/10 opacity-75" : "bg-card hover:border-border/80"
     }`}>
-      <CardContent className="p-5">
-        <div className="flex items-start gap-3.5">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start gap-3">
           <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
             obs.status === 'resolvida' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600'
           }`}>
@@ -73,7 +73,7 @@ function ObservationCard({ obs, isAdmin, onResolve }: { obs: Observation; isAdmi
               </div>
             </div>
 
-            <p className="text-xs text-foreground leading-relaxed bg-muted/30 p-3 rounded-2xl border border-border/50">
+            <p className="text-xs text-foreground leading-relaxed bg-muted/30 p-3 rounded-2xl border border-border/50 break-words">
               {obs.text}
             </p>
 
@@ -87,13 +87,26 @@ function ObservationCard({ obs, isAdmin, onResolve }: { obs: Observation; isAdmi
                 </span>
               )}
             </div>
+
+            {isAdmin && obs.status === "aberta" && (
+              <div className="pt-1 sm:hidden">
+                <Button 
+                  size="sm" 
+                  onClick={() => onResolve(obs.id)}
+                  className="w-full h-9 px-3 rounded-xl text-xs font-bold gap-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Resolver Ocorrência</span>
+                </Button>
+              </div>
+            )}
           </div>
 
           {isAdmin && obs.status === "aberta" && (
             <Button 
               size="sm" 
               onClick={() => onResolve(obs.id)}
-              className="shrink-0 h-9 px-3 rounded-xl text-xs font-bold gap-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+              className="hidden sm:inline-flex shrink-0 h-9 px-3 rounded-xl text-xs font-bold gap-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
               <span>Resolver</span>
@@ -171,15 +184,15 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
   return (
     <Wrapper>
-      <div className="flex-1 p-4 md:p-8 max-w-6xl mx-auto w-full space-y-6 pb-28">
+      <div className={`flex-1 ${embedded ? "p-0" : "p-4 md:p-8 pb-28"} max-w-6xl mx-auto w-full min-w-0 max-w-full space-y-5 overflow-x-hidden`}>
         {/* Header Principal */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-card border border-border p-5 rounded-3xl shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
-              <Wrench className="w-6 h-6" />
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-card border border-border p-4 sm:p-5 rounded-3xl shadow-sm">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+              <Wrench className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
-              <h1 className="text-xl font-black text-foreground tracking-tight flex items-center gap-2">
+            <div className="min-w-0">
+              <h1 className="text-lg sm:text-xl font-black text-foreground tracking-tight flex flex-wrap items-center gap-2">
                 <span>Ocorrências & Avarias dos Flats</span>
                 {openCount > 0 && (
                   <Badge className="bg-amber-500 text-white text-[10px] animate-pulse">
@@ -193,10 +206,10 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Button 
               onClick={() => setNewObsOpen(true)} 
-              className="h-10 px-4 rounded-2xl text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-sm"
+              className="w-full sm:w-auto h-10 px-4 rounded-2xl text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-sm"
             >
               <Plus className="w-4 h-4" />
               <span>Nova Ocorrência</span>
@@ -206,18 +219,18 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
         {/* Banner Direcionador para Achados & Perdidos */}
         <div className="p-4 rounded-3xl bg-indigo-500/5 border border-indigo-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 shrink-0">
               <Package className="w-4 h-4" />
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="font-bold text-foreground block">Procurando por Objetos Esquecidos nos Quartos?</span>
               <span className="text-muted-foreground text-[11px]">Gerencie a custódia, fotos e contato com hóspedes na Central de Achados & Perdidos</span>
             </div>
           </div>
 
           <Link href="/achados-perdidos">
-            <Button size="sm" variant="outline" className="h-8 text-xs font-bold rounded-xl gap-1.5 border-indigo-500/30 text-indigo-600 hover:bg-indigo-500/10 shrink-0">
+            <Button size="sm" variant="outline" className="w-full sm:w-auto h-8 text-xs font-bold rounded-xl gap-1.5 border-indigo-500/30 text-indigo-600 hover:bg-indigo-500/10 shrink-0">
               <span>Ir para Achados & Perdidos</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </Button>
@@ -225,8 +238,8 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
         </div>
 
         {/* Filtros e Busca */}
-        <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-card border border-border rounded-3xl shadow-xs">
-          <div className="relative flex-1 min-w-[200px]">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center justify-between gap-3 p-3.5 sm:p-4 bg-card border border-border rounded-3xl shadow-xs">
+          <div className="relative w-full sm:flex-1 sm:min-w-[200px]">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input 
               placeholder="Buscar por descrição do defeito, flat ou camareira..."
@@ -236,9 +249,9 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
             />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
             <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger className="w-36 h-9.5 text-xs rounded-xl">
+              <SelectTrigger className="w-full sm:w-36 h-9.5 text-xs rounded-xl">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -249,7 +262,7 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
             </Select>
 
             <Select value={filterCategory} onValueChange={setFilterCategory}>
-              <SelectTrigger className="w-36 h-9.5 text-xs rounded-xl">
+              <SelectTrigger className="w-full sm:w-36 h-9.5 text-xs rounded-xl">
                 <SelectValue placeholder="Categoria" />
               </SelectTrigger>
               <SelectContent>
@@ -261,7 +274,7 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
             </Select>
 
             <Select value={filterFlat} onValueChange={setFilterFlat}>
-              <SelectTrigger className="w-36 h-9.5 text-xs rounded-xl">
+              <SelectTrigger className="w-full sm:w-36 h-9.5 text-xs rounded-xl">
                 <SelectValue placeholder="Apartamento" />
               </SelectTrigger>
               <SelectContent>
@@ -302,7 +315,7 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
         {/* Modal Nova Ocorrência */}
         <Dialog open={newObsOpen} onOpenChange={setNewObsOpen}>
-          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+          <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-md bg-card border border-border rounded-3xl">
             <DialogHeader>
               <DialogTitle className="text-base font-black text-foreground flex items-center gap-2">
                 <Wrench className="w-5 h-5 text-amber-500" />
@@ -381,7 +394,7 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
         {/* Modal Resolver Ocorrência */}
         <Dialog open={resolveId !== null} onOpenChange={open => { if (!open) setResolveId(null) }}>
-          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+          <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-md bg-card border border-border rounded-3xl">
             <DialogHeader>
               <DialogTitle className="text-base font-black text-foreground flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600" />

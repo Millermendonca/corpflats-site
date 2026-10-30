@@ -376,24 +376,24 @@ export default function SurveysPage({ embedded = false }: { embedded?: boolean }
 
   return (
     <Wrapper>
-      <div className="flex-1 p-4 md:p-8 max-w-7xl mx-auto w-full space-y-6">
+      <div className={embedded ? "w-full min-w-0 max-w-full space-y-5 overflow-x-hidden" : "flex-1 p-3.5 sm:p-4 md:p-8 max-w-7xl min-w-0 mx-auto w-full space-y-5 sm:space-y-6 overflow-x-hidden"}>
         {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2.5">
-              <ClipboardCheck className="w-8 h-8 text-primary" />
-              Vistorias & Pesquisas Operacionais
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 min-w-0">
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-2xl md:text-3xl font-black tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <ClipboardCheck className="w-6 h-6 sm:w-8 sm:h-8 text-primary shrink-0" />
+              <span>Vistorias & Pesquisas Operacionais</span>
             </h1>
-            <p className="text-muted-foreground text-xs sm:text-sm mt-1">
+            <p className="text-muted-foreground text-xs sm:text-sm mt-1 leading-snug">
               Crie vistorias pontuais com perguntas personalizadas (Sim/Não, Múltipla Escolha, Fotos e Notas). A camareira responde antes de liberar o quarto.
             </p>
           </div>
 
           <Button 
             onClick={handleOpenCreate}
-            className="bg-primary hover:bg-primary/90 font-bold shadow-xs flex items-center gap-1.5 self-start sm:self-auto"
+            className="bg-primary hover:bg-primary/90 font-bold shadow-xs flex items-center justify-center gap-1.5 w-full sm:w-auto h-9 sm:h-10 text-xs sm:text-sm rounded-xl shrink-0"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 shrink-0" />
             <span>Nova Vistoria</span>
           </Button>
         </div>
@@ -575,7 +575,7 @@ export default function SurveysPage({ embedded = false }: { embedded?: boolean }
                   </div>
 
                   {/* Abas: Perguntas vs Respostas */}
-                  <div className="flex gap-2 pt-3 border-t mt-3">
+                  <div className="flex flex-wrap gap-2 pt-3 border-t mt-3">
                     <button
                       type="button"
                       onClick={() => setActiveTab("responses")}

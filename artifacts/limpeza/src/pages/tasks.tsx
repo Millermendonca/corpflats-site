@@ -116,7 +116,7 @@ function TaskFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{task ? "Editar Tarefa Preventiva" : "Nova Tarefa Preventiva Recorrente"}</DialogTitle>
         </DialogHeader>
@@ -200,7 +200,7 @@ function TaskFormDialog({
 
           {/* 🔄 Intervalo de Repetição (Periodicidade) */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <Label className="text-xs font-bold">
                 Intervalo de Repetição ({periodType === "occupied_days" ? "dias de locação" : "dias corridos"}) *
               </Label>
@@ -286,13 +286,13 @@ function TaskFormDialog({
 
           {/* Seleção de Flats */}
           <div className="space-y-2 pt-2 border-t">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <Label className="text-xs font-bold">Flats Aplicáveis ({selectedFlats.length === 0 || selectedFlats.length === flatOptions.length ? "Todos os Flats" : `${selectedFlats.length} selecionados`})</Label>
               <Button size="sm" variant="ghost" onClick={handleSelectAll} className="text-xs h-7">
                 {selectedFlats.length === flatOptions.length ? "Desmarcar Todos" : "Selecionar Todos"}
               </Button>
             </div>
-            <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-40 overflow-y-auto p-2 bg-muted/20 border rounded-xl">
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 max-h-40 overflow-y-auto p-2 bg-muted/20 border rounded-xl">
               {flatOptions.map(f => (
                 <div key={f.id} className="flex items-center gap-1.5">
                   <Checkbox
@@ -323,7 +323,7 @@ function overdueBadge(item: any) {
 
   if (daysOverdue > 0) {
     return (
-      <div className="text-right">
+      <div className="text-right shrink-0">
         <Badge className="bg-destructive/15 text-destructive border-0 text-xs font-bold">
           {daysOverdue}d {isOccupied ? "locação " : ""}atrasada
         </Badge>
@@ -337,7 +337,7 @@ function overdueBadge(item: any) {
   }
   if (daysOverdue === 0) {
     return (
-      <div className="text-right">
+      <div className="text-right shrink-0">
         <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border-0 text-xs font-bold">
           Vence hoje
         </Badge>
@@ -350,7 +350,7 @@ function overdueBadge(item: any) {
     )
   }
   return (
-    <div className="text-right">
+    <div className="text-right shrink-0">
       <Badge variant="outline" className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
         {isOccupied
           ? `Faltam ${item.remainingOccupiedDays ?? Math.abs(daysOverdue)}d locação`
@@ -471,29 +471,30 @@ export default function Tasks({ embedded = false }: { embedded?: boolean } = {})
 
   return (
     <Wrapper>
-      <div className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Manutenções & Tarefas Preventivas</h1>
+      <div className={`flex-1 ${embedded ? "p-0" : "p-4 md:p-8"} max-w-5xl mx-auto w-full min-w-0 max-w-full space-y-5 overflow-x-hidden`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold tracking-tight">Manutenções & Tarefas Preventivas</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
               Controle de tarefas recorrentes por flat com separação entre Camareiras e Manutenção Técnica.
             </p>
           </div>
           {isAdmin && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
               <Button 
                 variant="outline"
                 size="sm"
                 onClick={handleRegularize} 
                 disabled={regularizing}
-                className="font-bold gap-1.5 shadow-2xs text-xs"
+                className="flex-1 sm:flex-initial font-bold gap-1.5 shadow-2xs text-xs h-9"
                 title="Marca todas as preventivas atrasadas de camareiras anteriores a hoje como executadas"
               >
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{regularizing ? "Regularizando..." : "Regularizar Atrasadas"}</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span className="truncate">{regularizing ? "Regularizando..." : "Regularizar Atrasadas"}</span>
               </Button>
-              <Button onClick={() => { setEditTask(null); setFormOpen(true) }} className="font-bold gap-1.5 shadow-xs">
-                <Plus className="w-4 h-4" /> Nova Preventiva
+              <Button onClick={() => { setEditTask(null); setFormOpen(true) }} className="flex-1 sm:flex-initial font-bold gap-1.5 shadow-xs text-xs h-9">
+                <Plus className="w-4 h-4 shrink-0" />
+                <span className="truncate">Nova Preventiva</span>
               </Button>
             </div>
           )}
@@ -535,7 +536,7 @@ export default function Tasks({ embedded = false }: { embedded?: boolean } = {})
         </div>
 
         {/* Filter Tabs */}
-        <div className="flex items-center gap-1.5 p-1 bg-muted/50 rounded-xl border w-fit">
+        <div className="flex flex-wrap items-center gap-1.5 p-1 bg-muted/50 rounded-xl border w-full sm:w-fit max-w-full">
           <button
             type="button"
             onClick={() => setRoleFilter("all")}
@@ -593,7 +594,7 @@ export default function Tasks({ embedded = false }: { embedded?: boolean } = {})
                 <Card key={`${item.taskId}-${item.flatId}`} className="border-l-4 border-l-destructive/60 shadow-2xs">
                   <CardContent className="p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap mb-1">
                           {item.assignToHousekeeping ? (
                             <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[9px] font-bold">
@@ -605,7 +606,7 @@ export default function Tasks({ embedded = false }: { embedded?: boolean } = {})
                             </Badge>
                           )}
                         </div>
-                        <p className="font-bold text-sm text-slate-900 dark:text-slate-100">{item.taskName}</p>
+                        <p className="font-bold text-sm text-slate-900 dark:text-slate-100 break-words">{item.taskName}</p>
                         <p className="text-xs text-muted-foreground">
                           Flat {item.flatNumber} · a cada {item.periodDays}d {item.periodType === "occupied_days" ? "de locação" : "corridos"}
                         </p>
@@ -640,7 +641,7 @@ export default function Tasks({ embedded = false }: { embedded?: boolean } = {})
                 <Card key={`${item.taskId}-${item.flatId}`} className="opacity-75 shadow-2xs">
                   <CardContent className="p-3.5 space-y-1.5">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex items-center gap-1.5 mb-1">
                           {item.assignToHousekeeping ? (
                             <Badge variant="outline" className="text-[9px] text-emerald-700 border-emerald-300">
@@ -652,7 +653,7 @@ export default function Tasks({ embedded = false }: { embedded?: boolean } = {})
                             </Badge>
                           )}
                         </div>
-                        <p className="font-semibold text-sm">{item.taskName}</p>
+                        <p className="font-semibold text-sm break-words">{item.taskName}</p>
                         <p className="text-xs text-muted-foreground">
                           Flat {item.flatNumber} · a cada {item.periodDays}d {item.periodType === "occupied_days" ? "de locação" : "corridos"}
                         </p>
@@ -679,10 +680,10 @@ export default function Tasks({ embedded = false }: { embedded?: boolean } = {})
             ) : (
               <div className="space-y-2">
                 {filteredTasks.map((task: any) => (
-                  <div key={task.id} className="flex items-center gap-3 p-3.5 bg-card border rounded-xl shadow-2xs">
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-sm text-slate-900 dark:text-slate-100">{task.name}</span>
+                  <div key={task.id} className="flex items-start sm:items-center justify-between gap-3 p-3.5 bg-card border rounded-xl shadow-2xs min-w-0">
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                        <span className="font-bold text-sm text-slate-900 dark:text-slate-100 break-words">{task.name}</span>
                         {task.assignToHousekeeping !== false ? (
                           <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-bold">
                             🧹 Camareira
@@ -702,10 +703,10 @@ export default function Tasks({ embedded = false }: { embedded?: boolean } = {})
                           </Badge>
                         )}
                       </div>
-                      {task.description && <p className="text-xs text-muted-foreground">{task.description}</p>}
+                      {task.description && <p className="text-xs text-muted-foreground break-words">{task.description}</p>}
                       <p className="text-[11px] text-muted-foreground font-mono">{task.flatIds.length} flat{task.flatIds.length !== 1 ? "s" : ""} aplicáveis</p>
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 shrink-0">
                       <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => { setEditTask(task); setFormOpen(true) }}>
                         <Pencil className="w-3.5 h-3.5" />
                       </Button>
@@ -733,7 +734,7 @@ export default function Tasks({ embedded = false }: { embedded?: boolean } = {})
 
       {/* Execute dialog */}
       <Dialog open={execDialogTaskId !== null} onOpenChange={v => !v && setExecDialogTaskId(null)}>
-        <DialogContent>
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-md">
           <DialogHeader>
             <DialogTitle>Marcar como Concluída</DialogTitle>
           </DialogHeader>

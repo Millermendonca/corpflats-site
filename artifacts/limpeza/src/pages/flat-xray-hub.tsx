@@ -633,39 +633,39 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
 
   return (
     <Shell>
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-28 sm:pb-12 space-y-5">
+      <div className="w-full max-w-7xl min-w-0 mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-6 pb-28 sm:pb-12 space-y-4 sm:space-y-5 overflow-x-hidden">
         {/* ════════════════════════════════════════════════════════════════════
             CABEÇALHO UNIFICADO DO HUB DE GOVERNANÇA & RAIO-X DOS FLATS
            ════════════════════════════════════════════════════════════════════ */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bg-card border rounded-3xl p-4 sm:p-6 shadow-xs">
-          <div className="flex items-start sm:items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-primary/15 text-primary flex items-center justify-center shrink-0 shadow-2xs">
-              <Activity className="w-6 h-6" />
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 sm:gap-4 bg-card border rounded-2xl sm:rounded-3xl p-3.5 sm:p-6 shadow-xs min-w-0">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary/15 text-primary flex items-center justify-center shrink-0 shadow-2xs">
+              <Activity className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl sm:text-2xl font-black tracking-tight text-foreground">
+                <h1 className="text-lg sm:text-2xl font-black tracking-tight text-foreground leading-tight">
                   Raio-X 360º & Hub dos Flats
                 </h1>
-                <Badge className="bg-primary/15 text-primary border-primary/30 text-[10px] font-bold">
+                <Badge className="bg-primary/15 text-primary border-primary/30 text-[10px] font-bold shrink-0">
                   19 Flats Sincronizados
                 </Badge>
               </div>
-              <p className="text-xs sm:text-sm text-muted-foreground leading-snug">
+              <p className="text-xs sm:text-sm text-muted-foreground leading-snug break-words">
                 Diário unificado por flat, matriz de campanhas (AC, dedetização, cortinas), ficha técnica, 76 tags, preventivas e vistorias.
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto shrink-0">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setCatalogModalOpen(true)}
-              className="h-9 text-xs font-semibold gap-1.5 rounded-xl"
+              className="h-9 text-[11px] sm:text-xs font-semibold gap-1.5 rounded-xl px-2.5 sm:px-3 min-w-0 justify-center"
             >
-              <Settings className="w-3.5 h-3.5 text-primary" />
-              <span>Catálogo de Serviços ({catalog.length})</span>
+              <Settings className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="truncate">Catálogo ({catalog.length})</span>
             </Button>
 
             <Button
@@ -678,18 +678,18 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
                   isRemovedItem: true,
                 })
               }
-              className="h-9 text-xs font-semibold gap-1.5 rounded-xl border-amber-300 text-amber-800 dark:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20"
+              className="h-9 text-[11px] sm:text-xs font-semibold gap-1.5 rounded-xl px-2.5 sm:px-3 min-w-0 justify-center border-amber-300 text-amber-800 dark:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20"
             >
-              <PackageOpen className="w-3.5 h-3.5" />
-              <span>Retirar Item (Ex: Cortina)</span>
+              <PackageOpen className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Retirar Item</span>
             </Button>
 
             <Button
               size="sm"
               onClick={() => openNewDiaryModal()}
-              className="h-9 text-xs font-bold gap-1.5 rounded-xl shadow-xs"
+              className="col-span-2 sm:col-span-1 h-9 text-xs font-bold gap-1.5 rounded-xl shadow-xs justify-center"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4 shrink-0" />
               <span>Registrar no Diário</span>
             </Button>
           </div>
@@ -701,33 +701,33 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
         <Tabs
           value={activeHubTab}
           onValueChange={(v) => setActiveHubTab(v as HubTabId)}
-          className="space-y-5"
+          className="w-full min-w-0 space-y-4 sm:space-y-5"
         >
-          <TabsList className="flex flex-wrap sm:grid sm:grid-cols-5 w-full h-auto p-1.5 bg-muted/80 rounded-2xl gap-1">
+          <TabsList className="grid grid-cols-6 sm:grid-cols-5 w-full h-auto p-1.5 bg-muted/80 rounded-2xl gap-1">
             <TabsTrigger
               value="xray"
-              className="flex-1 py-2 px-3 rounded-xl text-xs font-bold gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
+              className="col-span-3 sm:col-span-1 min-w-0 py-2 px-2 sm:px-3 rounded-xl text-[11px] sm:text-xs font-bold gap-1 sm:gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
             >
-              <Activity className="w-3.5 h-3.5 text-primary shrink-0" />
+              <Activity className="w-3.5 h-3.5 text-primary shrink-0 hidden xs:inline-block" />
               <span className="truncate">🏥 Raio-X & Diário</span>
             </TabsTrigger>
 
             <TabsTrigger
               value="campaigns"
-              className="flex-1 py-2 px-3 rounded-xl text-xs font-bold gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
+              className="col-span-3 sm:col-span-1 min-w-0 py-2 px-2 sm:px-3 rounded-xl text-[11px] sm:text-xs font-bold gap-1 sm:gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
             >
-              <Wrench className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-              <span className="truncate">🚀 Campanhas Externas</span>
+              <Wrench className="w-3.5 h-3.5 text-amber-600 shrink-0 hidden xs:inline-block" />
+              <span className="truncate">🚀 Campanhas</span>
             </TabsTrigger>
 
             <TabsTrigger
               value="preventives"
-              className="flex-1 py-2 px-3 rounded-xl text-xs font-bold gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
+              className="col-span-2 sm:col-span-1 min-w-0 py-2 px-1.5 sm:px-3 rounded-xl text-[11px] sm:text-xs font-bold gap-1 sm:gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
             >
-              <Clock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <Clock className="w-3.5 h-3.5 text-emerald-600 shrink-0 hidden sm:inline-block" />
               <span className="truncate">🔄 Preventivas</span>
               {totalOverduePreventives > 0 && (
-                <Badge className="bg-rose-500 text-white text-[9px] px-1.5 py-0 ml-0.5">
+                <Badge className="bg-rose-500 text-white text-[9px] px-1 py-0 ml-0.5 shrink-0">
                   {totalOverduePreventives}
                 </Badge>
               )}
@@ -735,12 +735,12 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
 
             <TabsTrigger
               value="issues"
-              className="flex-1 py-2 px-3 rounded-xl text-xs font-bold gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
+              className="col-span-2 sm:col-span-1 min-w-0 py-2 px-1.5 sm:px-3 rounded-xl text-[11px] sm:text-xs font-bold gap-1 sm:gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
             >
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0 hidden sm:inline-block" />
               <span className="truncate">⚠️ Ocorrências</span>
               {totalOpenIssues > 0 && (
-                <Badge className="bg-amber-500 text-white text-[9px] px-1.5 py-0 ml-0.5">
+                <Badge className="bg-amber-500 text-white text-[9px] px-1 py-0 ml-0.5 shrink-0">
                   {totalOpenIssues}
                 </Badge>
               )}
@@ -748,9 +748,9 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
 
             <TabsTrigger
               value="surveys"
-              className="flex-1 py-2 px-3 rounded-xl text-xs font-bold gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
+              className="col-span-2 sm:col-span-1 min-w-0 py-2 px-1.5 sm:px-3 rounded-xl text-[11px] sm:text-xs font-bold gap-1 sm:gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-xs"
             >
-              <ClipboardCheck className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+              <ClipboardCheck className="w-3.5 h-3.5 text-sky-600 shrink-0 hidden sm:inline-block" />
               <span className="truncate">📋 Vistorias</span>
             </TabsTrigger>
           </TabsList>
@@ -758,7 +758,7 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
           {/* ══════════════════════════════════════════════════════════════════
               ABA 1: RAIO-X 360º & DIÁRIO DOS FLATS
              ══════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="xray" className="space-y-5 focus-visible:outline-none">
+          <TabsContent value="xray" className="w-full min-w-0 space-y-4 sm:space-y-5 focus-visible:outline-none">
             {/* Banner de Alerta: Itens Retirados / Fora do Flat (Ex: Cortina na Lavanderia) */}
             {allItemsOutside.length > 0 && (
               <div className="p-4 rounded-2xl border-2 border-amber-400/70 bg-amber-500/10 space-y-3">
@@ -839,9 +839,9 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
                 </div>
               </CardHeader>
 
-              <CardContent className="p-4 sm:p-5 space-y-4">
+              <CardContent className="p-3 sm:p-5 space-y-4">
                 {/* Pílulas dos Tipos de Serviço */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-2.5">
                   {serviceCoverageSummary.map((item) => {
                     const isSelected = selectedServiceTypeFilter === item.catalogItem.id;
                     return (
@@ -851,22 +851,22 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
                           setSelectedServiceTypeFilter(isSelected ? null : item.catalogItem.id);
                           setBatchSelectedFlatIds([]);
                         }}
-                        className={`cursor-pointer p-3 rounded-2xl border transition-all space-y-2 ${
+                        className={`cursor-pointer p-2.5 sm:p-3 rounded-2xl border transition-all space-y-2 min-w-0 ${
                           isSelected
                             ? "border-primary bg-primary/10 shadow-xs ring-2 ring-primary/20"
                             : "border-border hover:border-primary/40 bg-card"
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-lg shrink-0">{item.catalogItem.icon || "🔧"}</span>
-                            <span className="text-xs font-bold text-foreground line-clamp-1">
+                        <div className="flex items-start justify-between gap-1.5 min-w-0">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-base sm:text-lg shrink-0">{item.catalogItem.icon || "🔧"}</span>
+                            <span className="text-[11px] sm:text-xs font-bold text-foreground line-clamp-1">
                               {item.catalogItem.name}
                             </span>
                           </div>
                           <Badge
                             variant="outline"
-                            className={`text-[10px] font-bold shrink-0 ${
+                            className={`text-[9px] sm:text-[10px] px-1.5 py-0 font-bold shrink-0 ${
                               item.doneCount === item.total
                                 ? "bg-emerald-500/15 text-emerald-700 border-emerald-300"
                                 : "bg-muted"
@@ -878,16 +878,16 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
 
                         <Progress value={item.percent} className="h-1.5" />
 
-                        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                          <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                        <div className="flex items-center justify-between gap-1 text-[9.5px] sm:text-[10px] text-muted-foreground">
+                          <span className="text-emerald-600 dark:text-emerald-400 font-semibold truncate">
                             ✓ {item.doneCount} em dia
                           </span>
                           {item.inProgressCount > 0 && (
-                            <span className="text-amber-600 font-semibold">
-                              ⏳ {item.inProgressCount} andamento
+                            <span className="text-amber-600 font-semibold truncate">
+                              ⏳ {item.inProgressCount}
                             </span>
                           )}
-                          <span>Faltam {item.pendingOrOverdueCount}</span>
+                          <span className="shrink-0">Faltam {item.pendingOrOverdueCount}</span>
                         </div>
                       </div>
                     );
@@ -1364,28 +1364,28 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
           {/* ══════════════════════════════════════════════════════════════════
               ABA 2: CAMPANHAS & SERVIÇOS EXTERNOS (TERCEIRIZADOS)
              ══════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="campaigns" className="focus-visible:outline-none">
+          <TabsContent value="campaigns" className="w-full min-w-0 focus-visible:outline-none">
             <ServiceOrders embedded />
           </TabsContent>
 
           {/* ══════════════════════════════════════════════════════════════════
               ABA 3: TAREFAS PREVENTIVAS RECORRENTES (CAMAREIRA & ADMIN)
              ══════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="preventives" className="focus-visible:outline-none">
+          <TabsContent value="preventives" className="w-full min-w-0 focus-visible:outline-none">
             <Tasks embedded />
           </TabsContent>
 
           {/* ══════════════════════════════════════════════════════════════════
               ABA 4: OCORRÊNCIAS & AVARIAS DOS FLATS
              ══════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="issues" className="focus-visible:outline-none">
+          <TabsContent value="issues" className="w-full min-w-0 focus-visible:outline-none">
             <Observations embedded />
           </TabsContent>
 
           {/* ══════════════════════════════════════════════════════════════════
               ABA 5: VISTORIAS & PESQUISAS OPERACIONAIS DAS CAMAREIRAS
              ══════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="surveys" className="focus-visible:outline-none">
+          <TabsContent value="surveys" className="w-full min-w-0 focus-visible:outline-none">
             <SurveysPage embedded />
           </TabsContent>
         </Tabs>
@@ -1394,71 +1394,71 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
             MODAL: PRONTUÁRIO 360º DO FLAT (DIÁRIO + FICHA TÉCNICA/76 TAGS + PREVENTIVAS/VISTORIAS)
            ════════════════════════════════════════════════════════════════════ */}
         <Dialog open={Boolean(selectedFlat)} onOpenChange={(open) => !open && setSelectedFlatId(null)}>
-          <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto rounded-3xl p-4 sm:p-6">
+          <DialogContent className="w-[calc(100vw-1rem)] max-w-4xl max-h-[90dvh] overflow-x-hidden overflow-y-auto rounded-2xl sm:rounded-3xl p-3.5 sm:p-6">
             {selectedFlat && (
               <>
-                <DialogHeader className="border-b pb-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-2xl bg-primary text-primary-foreground font-black text-xl flex items-center justify-center shadow-xs">
+                <DialogHeader className="border-b pb-3.5 sm:pb-4 min-w-0">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-primary text-primary-foreground font-black text-lg sm:text-xl flex items-center justify-center shrink-0 shadow-xs">
                         {selectedFlat.number}
                       </div>
-                      <div>
-                        <DialogTitle className="text-xl font-black flex items-center gap-2">
-                          <span>Prontuário & Raio-X — Flat {selectedFlat.number}</span>
-                          <Badge variant="outline" className="text-xs">
+                      <div className="min-w-0 flex-1 text-left">
+                        <DialogTitle className="text-base sm:text-xl font-black flex items-center gap-2 flex-wrap">
+                          <span>Prontuário — Flat {selectedFlat.number}</span>
+                          <Badge variant="outline" className="text-[11px] sm:text-xs shrink-0">
                             {selectedFlat.floor}º Andar
                           </Badge>
                         </DialogTitle>
-                        <DialogDescription className="text-xs mt-0.5">
+                        <DialogDescription className="text-xs mt-0.5 leading-snug">
                           Histórico unificado de manutenções, itens retirados, ficha técnica, 76 tags e vistorias de camareiras.
                         </DialogDescription>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
                       <Button
                         size="sm"
                         onClick={() => openNewDiaryModal({ flatIds: [selectedFlat.id] })}
-                        className="h-8 text-xs font-bold gap-1.5 rounded-xl"
+                        className="h-8 text-xs font-bold gap-1.5 rounded-xl w-full sm:w-auto justify-center"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-3.5 h-3.5 shrink-0" />
                         <span>Registrar no Diário</span>
                       </Button>
                     </div>
                   </div>
 
                   {/* Sub-abas do Prontuário do Flat */}
-                  <div className="grid grid-cols-3 gap-1.5 pt-3">
+                  <div className="grid grid-cols-3 gap-1 sm:gap-1.5 pt-3">
                     <Button
                       type="button"
                       variant={prontuarioTab === "timeline" ? "default" : "outline"}
                       size="sm"
                       onClick={() => setProntuarioTab("timeline")}
-                      className="h-9 text-xs font-bold rounded-xl gap-1.5"
+                      className="h-9 px-2 sm:px-3 text-[11px] sm:text-xs font-bold rounded-xl gap-1 min-w-0"
                     >
-                      <FileText className="w-3.5 h-3.5" />
-                      <span>📜 Diário & Linha do Tempo ({selectedFlat.timeline?.length || 0})</span>
+                      <FileText className="w-3.5 h-3.5 shrink-0 hidden sm:inline-block" />
+                      <span className="truncate">📜 Diário ({selectedFlat.timeline?.length || 0})</span>
                     </Button>
                     <Button
                       type="button"
                       variant={prontuarioTab === "tech_tags" ? "default" : "outline"}
                       size="sm"
                       onClick={() => setProntuarioTab("tech_tags")}
-                      className="h-9 text-xs font-bold rounded-xl gap-1.5"
+                      className="h-9 px-2 sm:px-3 text-[11px] sm:text-xs font-bold rounded-xl gap-1 min-w-0"
                     >
-                      <Tag className="w-3.5 h-3.5" />
-                      <span>🏷️ O Que Tem no Flat (Ficha & Tags)</span>
+                      <Tag className="w-3.5 h-3.5 shrink-0 hidden sm:inline-block" />
+                      <span className="truncate">🏷️ Ficha & Tags</span>
                     </Button>
                     <Button
                       type="button"
                       variant={prontuarioTab === "preventives_surveys" ? "default" : "outline"}
                       size="sm"
                       onClick={() => setProntuarioTab("preventives_surveys")}
-                      className="h-9 text-xs font-bold rounded-xl gap-1.5"
+                      className="h-9 px-2 sm:px-3 text-[11px] sm:text-xs font-bold rounded-xl gap-1 min-w-0"
                     >
-                      <ClipboardCheck className="w-3.5 h-3.5" />
-                      <span>🔄 Preventivas & Vistorias</span>
+                      <ClipboardCheck className="w-3.5 h-3.5 shrink-0 hidden sm:inline-block" />
+                      <span className="truncate">🔄 Preventivas</span>
                     </Button>
                   </div>
                 </DialogHeader>
@@ -2042,7 +2042,7 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
             MODAL: NOVO REGISTRO NO DIÁRIO DO FLAT / RETIRADA DE ITEM (CORTINA ETC.)
            ════════════════════════════════════════════════════════════════════ */}
         <Dialog open={diaryModalOpen} onOpenChange={setDiaryModalOpen}>
-          <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl">
+          <DialogContent className="w-[calc(100vw-1rem)] max-w-xl max-h-[90dvh] overflow-x-hidden overflow-y-auto rounded-2xl sm:rounded-3xl p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle className="text-lg font-black flex items-center gap-2">
                 {diaryIsRemovedItem ? (
@@ -2259,7 +2259,7 @@ export default function FlatXrayHub({ defaultTab }: { defaultTab?: HubTabId } = 
             MODAL: GERENCIAR CATÁLOGO OFICIAL DE SERVIÇOS RECORRENTES
            ════════════════════════════════════════════════════════════════════ */}
         <Dialog open={catalogModalOpen} onOpenChange={setCatalogModalOpen}>
-          <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl">
+          <DialogContent className="w-[calc(100vw-1rem)] max-w-xl max-h-[90dvh] overflow-x-hidden overflow-y-auto rounded-2xl sm:rounded-3xl p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle className="text-lg font-black flex items-center gap-2">
                 <Settings className="w-5 h-5 text-primary" />
