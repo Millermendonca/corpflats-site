@@ -13,6 +13,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
+import { Popover, PopoverContent, PopoverAnchor } from "@/components/ui/popover"
 import { 
   CalendarDays, Plus, Wand2, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
@@ -24,7 +25,8 @@ import { compressImage } from "@/lib/image-compression"
 import { useToast } from "@/hooks/use-toast"
 import { 
   format, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, 
-  isSameDay, isToday, isYesterday, parseISO, differenceInDays, differenceInCalendarDays 
+  isSameDay, isToday, isYesterday, parseISO, differenceInDays, differenceInCalendarDays,
+  addMonths, subMonths, getDay
 } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -373,6 +375,12 @@ export default function PmsCalendar() {
   const [defaultCheckinTime, setDefaultCheckinTime] = useState("14:00")
   const [defaultCheckoutTime, setDefaultCheckoutTime] = useState("12:00")
   const [formChannel, setFormChannel] = useState("whatsapp")
+
+  // Range Picker Popover State (Check-in e Check-out unificados)
+  const [rangePickerOpen, setRangePickerOpen] = useState(false)
+  const [pickerRangeStart, setPickerRangeStart] = useState<string | null>(null)
+  const [pickerHoverDate, setPickerHoverDate] = useState<string | null>(null)
+  const [pickerMonth, setPickerMonth] = useState<Date>(() => new Date())
   const [formPaymentMethod, setFormPaymentMethod] = useState("pix")
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>(DEFAULT_CLIENT_PAYMENT_METHODS)
   const [paymentConfigModalOpen, setPaymentConfigModalOpen] = useState(false)
@@ -2345,6 +2353,10 @@ export default function PmsCalendar() {
     setFormFlatLockReason("")
     setFormForceReplace(false)
     setMobileRangeStart(null)
+    setRangePickerOpen(false)
+    setPickerRangeStart(null)
+    setPickerHoverDate(null)
+    setPickerMonth(d1)
     setResModalTab("reservation")
     setResModalOpen(true)
   }
@@ -2567,6 +2579,10 @@ export default function PmsCalendar() {
     setPhoneVerification(null)
     setAuditLogs([])
     setCommunications([])
+    setRangePickerOpen(false)
+    setPickerRangeStart(null)
+    setPickerHoverDate(null)
+    setPickerMonth(defaultDate || new Date())
     setResModalTab("reservation")
     setResModalOpen(true)
   }
@@ -2886,6 +2902,10 @@ export default function PmsCalendar() {
     setManualRecipient(resItem.guestEmail || pEmail)
     setManualSubject(`[CorpFlats] Flat ${resItem.flatNumber} - ${resItem.guestName}`)
     setManualBody("")
+    setRangePickerOpen(false)
+    setPickerRangeStart(null)
+    setPickerHoverDate(null)
+    setPickerMonth(resItem.checkinDate ? parseISO(resItem.checkinDate) : new Date())
     setResModalOpen(true)
   }
 
@@ -3712,6 +3732,35 @@ export default function PmsCalendar() {
     });
 
     return newTot;
+  };
+
+  // Sincronização centralizada de datas (via digitação manual ou calendário único)
+  const handleDatesChange = (newCin: string, newCout: string) => {
+    setFormCheckin(newCin);
+    setFormCheckout(newCout);
+    if (newCin && newCout && newCin < newCout) {
+      const updated = buildReservationDailyRates(newCin, newCout, Number(formDailyRate) || 250, formChannel, formDailyRates);
+      setFormDailyRates(updated);
+      syncCompositeTotalAndPaid(updated, formCharges, formChannel);
+    }
+  };
+
+  const handleCheckinChange = (val: string) => {
+    setFormCheckin(val);
+    if (val && formCheckout && val < formCheckout) {
+      const updated = buildReservationDailyRates(val, formCheckout, Number(formDailyRate) || 250, formChannel, formDailyRates);
+      setFormDailyRates(updated);
+      syncCompositeTotalAndPaid(updated, formCharges, formChannel);
+    }
+  };
+
+  const handleCheckoutChange = (val: string) => {
+    setFormCheckout(val);
+    if (val && formCheckin && formCheckin < val) {
+      const updated = buildReservationDailyRates(formCheckin, val, Number(formDailyRate) || 250, formChannel, formDailyRates);
+      setFormDailyRates(updated);
+      syncCompositeTotalAndPaid(updated, formCharges, formChannel);
+    }
   };
 
   // ── Funções de Gestão de Taxas, Adicionais & Rateio Inteligente ──
@@ -5987,561 +6036,267 @@ export default function PmsCalendar() {
                   )
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
-                  <div className="space-y-1.5 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
-                      {!selectedRes && fairShareResult?.bestFlatId && String(formFlatId) === String(fairShareResult.bestFlatId) && (
-                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
-                          ✨ Sugerido da vez
-                        </span>
-                      )}
+                                {/* 1º Bloco: Datas e Horários de Entrada (Check-in) e Saída (Check-out) com Calendário Range Picker Unificado */}
+                <Popover open={rangePickerOpen} onOpenChange={setRangePickerOpen}>
+                  <PopoverAnchor asChild>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
+                      {/* Entrada / Check-in */}
+                      <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
+                        <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <LogIn className="w-3.5 h-3.5 text-emerald-600" />
+                            Entrada (Check-in)
+                          </span>
+                          <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckinTime}</span>
+                        </Label>
+                        <div className="grid grid-cols-5 gap-2 items-center">
+                          <div className="col-span-3 min-w-0">
+                            <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
+                            <div className="relative flex items-center">
+                              <Input 
+                                type="date" 
+                                value={formCheckin} 
+                                onChange={e => handleCheckinChange(e.target.value)} 
+                                required 
+                                className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPickerRangeStart(null);
+                                  setPickerHoverDate(null);
+                                  setPickerMonth(formCheckin ? parseISO(formCheckin) : new Date());
+                                  setRangePickerOpen(true);
+                                }}
+                                className="absolute right-1.5 z-10 p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 transition-colors cursor-pointer rounded pointer-events-auto"
+                                title="Abrir calendário de período (Range Picker)"
+                              >
+                                <CalendarIcon className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="col-span-2 min-w-0">
+                            <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
+                            <Input 
+                              type="time" 
+                              value={formCheckinTime} 
+                              onChange={e => setFormCheckinTime(e.target.value)} 
+                              required 
+                              className="text-xs h-9 font-medium w-full min-w-0 px-2"
+                              title="Horário previsto para início do Check-in"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Saída / Check-out */}
+                      <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
+                        <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <LogOut className="w-3.5 h-3.5 text-rose-600" />
+                            Saída (Check-out)
+                          </span>
+                          <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckoutTime}</span>
+                        </Label>
+                        <div className="grid grid-cols-5 gap-2 items-center">
+                          <div className="col-span-3 min-w-0">
+                            <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
+                            <div className="relative flex items-center">
+                              <Input 
+                                type="date" 
+                                value={formCheckout} 
+                                onChange={e => handleCheckoutChange(e.target.value)} 
+                                required 
+                                className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPickerRangeStart(formCheckin || null);
+                                  setPickerHoverDate(null);
+                                  setPickerMonth(formCheckout ? parseISO(formCheckout) : (formCheckin ? parseISO(formCheckin) : new Date()));
+                                  setRangePickerOpen(true);
+                                }}
+                                className="absolute right-1.5 z-10 p-1 text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 transition-colors cursor-pointer rounded pointer-events-auto"
+                                title="Abrir calendário de período (Range Picker)"
+                              >
+                                <CalendarIcon className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="col-span-2 min-w-0">
+                            <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
+                            <Input 
+                              type="time" 
+                              value={formCheckoutTime} 
+                              onChange={e => setFormCheckoutTime(e.target.value)} 
+                              required 
+                              className="text-xs h-9 font-medium w-full min-w-0 px-2"
+                              title="Horário limite para conclusão do Check-out"
+                            />
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <Select 
-                      value={formFlatId} 
-                      onValueChange={(val) => { 
-                        isFlatManuallyChangedRef.current = true;
-                        setFormFlatId(val); 
-                        setFormForceReplace(false); 
-                      }}
-                    >
-                      <SelectTrigger className="text-xs font-bold h-9 w-full min-w-0">
-                        <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
-                          {formFlatId 
-                            ? `Apt ${data.flats.find(f => String(f.id) === String(formFlatId))?.number || formFlatId}${!selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId) ? " ✨ (Sugerido)" : ""}` 
-                            : (loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat")}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent className="max-h-60">
-                        {data.flats.map(f => {
-                          const flatStat = fairShareResult?.allStats?.find((s: any) => s.flat?.id === f.id);
-                          const isBest = fairShareResult?.bestFlatId === f.id;
-                          const isAvail = flatStat ? flatStat.isAvailable : true;
-                          const conflictName = flatStat?.conflicts?.[0]?.guestName;
-                          const hasSameDayTurnover = Boolean(flatStat?.hasCheckoutOnCheckinDay);
+                  </PopoverAnchor>
 
-                          return (
-                            <SelectItem key={f.id} value={String(f.id)}>
-                              <div className="flex items-center justify-between gap-2 w-full py-0.5">
-                                <span className="font-bold">Apt {f.number}</span>
-                                {isBest && (
-                                   <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                     ✨ Quarto da Vez {hasSameDayTurnover ? "(Saída no Dia)" : "(Vago no Check-in)"}
-                                   </span>
-                                )}
-                                {!isAvail && (
-                                  <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
-                                    ⚠️ Ocupado {conflictName ? `(${conflictName})` : ''}
-                                  </span>
-                                )}
-                                {isAvail && !isBest && (
-                                  <span className="text-[9px] text-muted-foreground font-medium">
-                                    {hasSameDayTurnover ? "🔄 Saída no Dia" : "🟢 Vago no Check-in"} ({flatStat?.monthOccupiedDays || 0}d)
-                                  </span>
-                                )}
-                              </div>
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-1.5 min-w-0">
-                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Canal de Origem</Label>
-                    <Select 
-                      value={formChannel} 
-                      onValueChange={val => {
-                        setFormChannel(val);
-                        const allSame = formDailyRates.length <= 1 || formDailyRates.every(d => (d.channel || "whatsapp") === formChannel);
-                        const updatedDailyRates = allSame 
-                          ? formDailyRates.map(d => ({ ...d, channel: val })) 
-                          : formDailyRates;
-                        setFormDailyRates(updatedDailyRates);
-
-                        if (val === "b2b") {
-                          setFormRequesterType("agency_b2b");
-                          setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
-                          setFormStatus("confirmada");
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
-                        } else if (val === "booking" || val === "airbnb") {
-                          let updatedCharges = [...formCharges];
-                          const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning");
-                          if (cleanIdx === -1) {
-                            updatedCharges.push({
-                              id: `charge_${Date.now()}_clean`,
-                              type: "cleaning",
-                              title: "Taxa de Limpeza",
-                              amount: 50,
-                              notes: ""
-                            });
-                          } else if (updatedCharges[cleanIdx].amount === 80) {
-                            updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 };
-                          }
-                          setFormCharges(updatedCharges);
-                          syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, val, val);
-                        } else if (val === "site") {
-                          setFormPaymentMethod("pix");
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, "pix");
-                        } else {
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val);
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="text-xs h-9 w-full min-w-0">
-                        <SelectValue placeholder="Canal" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="site">🌐 Site Próprio / Motor de Reservas</SelectItem>
-                        <SelectItem value="whatsapp">💬 WhatsApp / Reserva Direta</SelectItem>
-                        <SelectItem value="booking">🔵 Booking.com</SelectItem>
-                        <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
-                        <SelectItem value="b2b">🟣 B2B Reservas / Agência Corporativa</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
-                {!selectedRes && fairShareResult?.bestFlatNumber && (
-                  <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg animate-in fade-in">
-                    <div className="flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <span>
-                        Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong>
-                        {String(formFlatId) === String(fairShareResult.bestFlatId) && (
-                          <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">✓ Selecionado</span>
-                        )}
-                      </span>
-                    </div>
-                    {String(formFlatId) !== String(fairShareResult.bestFlatId) && (
+                  <PopoverContent 
+                    align="center" 
+                    side="bottom" 
+                    sideOffset={8}
+                    className="z-[70] w-[310px] sm:w-[330px] p-3 bg-popover border border-border shadow-2xl rounded-2xl animate-in fade-in-0 zoom-in-95"
+                  >
+                    {/* Cabeçalho do Range Picker com navegação de mês */}
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/60">
                       <Button
                         type="button"
                         variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          isFlatManuallyChangedRef.current = false;
-                          setFormFlatId(String(fairShareResult.bestFlatId));
-                          setFormForceReplace(false);
-                        }}
-                        className="h-6 text-[10px] font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-500/20 px-2 py-0 border border-amber-500/30 rounded"
+                        size="icon"
+                        onClick={() => setPickerMonth(prev => subMonths(prev, 1))}
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                        title="Mês anterior"
                       >
-                        Usar Apt {fairShareResult.bestFlatNumber}
+                        <ChevronLeft className="w-4 h-4" />
                       </Button>
-                    )}
-                  </div>
-                )}
-
-                {/* Bloqueio de Flat / Quarto Preferencial */}
-                <div className="p-3 bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                      <div>
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                          Bloquear Flat (Quarto Preferencial / Não Trocar)
-                        </span>
-                        <span className="text-[11px] text-muted-foreground block leading-tight">
-                          Impede a Sofia AI de trocar ou remanejar o quarto deste hóspede. Evita alocação de novos hóspedes neste flat.
-                        </span>
-                      </div>
-                    </div>
-                    <Switch 
-                      checked={formIsFlatLocked} 
-                      onCheckedChange={setFormIsFlatLocked} 
-                    />
-                  </div>
-
-                  {formIsFlatLocked && (
-                    <div className="pt-2 border-t border-border/60 animate-in fade-in space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                        Motivo / Justificativa do Quarto Fixo (Opcional)
-                      </Label>
-                      <Input
-                        value={formFlatLockReason}
-                        onChange={e => setFormFlatLockReason(e.target.value)}
-                        placeholder="Ex: Hóspede pediu cama casal + ar split; hóspede idoso pediu andar baixo..."
-                        className="text-xs h-8"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
-                  {/* Entrada / Check-in */}
-                  <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
-                    <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <LogIn className="w-3.5 h-3.5 text-emerald-600" />
-                        Entrada (Check-in)
+                      <span className="text-xs font-bold capitalize text-foreground">
+                        {format(pickerMonth, "MMMM 'de' yyyy", { locale: ptBR })}
                       </span>
-                      <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckinTime}</span>
-                    </Label>
-                    <div className="grid grid-cols-5 gap-2 items-center">
-                      <div className="col-span-3 min-w-0">
-                        <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
-                        <Input 
-                          type="date" 
-                          value={formCheckin} 
-                          onChange={e => {
-                            const val = e.target.value;
-                            setFormCheckin(val);
-                            if (val && formCheckout && val < formCheckout) {
-                              const updated = buildReservationDailyRates(val, formCheckout, Number(formDailyRate) || 250, formChannel, formDailyRates);
-                              setFormDailyRates(updated);
-                              syncCompositeTotalAndPaid(updated, formCharges, formChannel);
-                            }
-                          }} 
-                          required 
-                          className="text-xs h-9 w-full min-w-0 px-2"
-                        />
-                      </div>
-                      <div className="col-span-2 min-w-0">
-                        <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
-                        <Input 
-                          type="time" 
-                          value={formCheckinTime} 
-                          onChange={e => setFormCheckinTime(e.target.value)} 
-                          required 
-                          className="text-xs h-9 font-medium w-full min-w-0 px-2"
-                          title="Horário previsto para início do Check-in"
-                        />
-                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setPickerMonth(prev => addMonths(prev, 1))}
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                        title="Próximo mês"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </Button>
                     </div>
-                  </div>
 
-                  {/* Saída / Check-out */}
-                  <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
-                    <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <LogOut className="w-3.5 h-3.5 text-rose-600" />
-                        Saída (Check-out)
+                    {/* Guia de Seleção */}
+                    <div className="text-[11px] font-semibold py-1 px-2 mb-2 rounded-lg text-center bg-muted/60 text-muted-foreground flex items-center justify-between">
+                      <span>
+                        {!pickerRangeStart ? (
+                          "1º clique: Selecione a Entrada"
+                        ) : (
+                          <>
+                            Entrada: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{format(parseISO(pickerRangeStart), "dd/MM")}</strong> ➔ 2º clique: Saída
+                          </>
+                        )}
                       </span>
-                      <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckoutTime}</span>
-                    </Label>
-                    <div className="grid grid-cols-5 gap-2 items-center">
-                      <div className="col-span-3 min-w-0">
-                        <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
-                        <Input 
-                          type="date" 
-                          value={formCheckout} 
-                          onChange={e => {
-                            const val = e.target.value;
-                            setFormCheckout(val);
-                            if (val && formCheckin && formCheckin < val) {
-                              const updated = buildReservationDailyRates(formCheckin, val, Number(formDailyRate) || 250, formChannel, formDailyRates);
-                              setFormDailyRates(updated);
-                              syncCompositeTotalAndPaid(updated, formCharges, formChannel);
-                            }
-                          }} 
-                          required 
-                          className="text-xs h-9 w-full min-w-0 px-2"
-                        />
-                      </div>
-                      <div className="col-span-2 min-w-0">
-                        <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
-                        <Input 
-                          type="time" 
-                          value={formCheckoutTime} 
-                          onChange={e => setFormCheckoutTime(e.target.value)} 
-                          required 
-                          className="text-xs h-9 font-medium w-full min-w-0 px-2"
-                          title="Horário limite para conclusão do Check-out"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Early Check-in Switch */}
-                <div className="p-3 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Autorizar Early Check-in</span>
-                      <span className="text-[11px] text-muted-foreground">Permite liberação na portaria antes das 13:00</span>
-                    </div>
-                  </div>
-                  <Switch checked={formEarlyCheckin} onCheckedChange={setFormEarlyCheckin} />
-                </div>
-
-
-                {/* Alerta de Quarto Ocupado & Trava Anti-Overbooking */}
-                {(() => {
-                  const selectedStat = fairShareResult?.allStats?.find((s: any) => String(s.flat?.id) === String(formFlatId));
-                  if (!selectedStat || selectedStat.isAvailable) return null;
-                  const conflictsList = (selectedStat.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
-                  if (conflictsList.length === 0 && selectedStat.blocks?.length === 0) return null;
-                  const conflict = conflictsList[0];
-
-                  return (
-                    <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-700/60 rounded-2xl space-y-2 text-xs">
-                      <div className="flex items-start gap-2 text-rose-800 dark:text-rose-200">
-                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                        <div>
-                          <span className="font-bold block">🚨 Conflito de Ocupação: Apt {selectedStat.flat?.number} já possui reserva neste período!</span>
-                          {conflict && (
-                            <span className="text-[11px] text-rose-700 dark:text-rose-300/90 block">
-                              Hóspede em conflito: <strong>{conflict?.guestName || "Outro Hóspede"}</strong> ({conflict?.checkinDate} a {conflict?.checkoutDate})
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="pt-1.5 border-t border-rose-200 dark:border-rose-800/60 flex items-center justify-between gap-2">
-                        <div className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
-                          Forçar encaixe mesmo com conflito (Overbooking — notifica Gestão imediatamente)
-                        </div>
-                        <Switch checked={formForceReplace} onCheckedChange={setFormForceReplace} />
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Switch: Mensalista / Contrato */}
-                <div className="p-3 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/60 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Cliente Mensalista / Contrato Long Stay</span>
-                      <span className="text-[11px] text-muted-foreground">Exibe destaque visual exclusivo no Livro de Reservas</span>
-                    </div>
-                  </div>
-                  <Switch checked={formIsMonthlyGuest} onCheckedChange={setFormIsMonthlyGuest} />
-                </div>
-
-                {/* Auto NFS-e Switch */}
-                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Auto-Emitir Nota Fiscal (NFS-e) no Check-out</span>
-                      <span className="text-[11px] text-muted-foreground">Emite e envia NFS-e no WhatsApp deste cliente no check-out (Padrão: OFF)</span>
-                    </div>
-                  </div>
-                  <Switch checked={formAutoInvoice} onCheckedChange={setFormAutoInvoice} />
-                </div>
-
-                {/* Special Reception Notice */}
-                <div className="space-y-1">
-                  <Label className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-                    <KeyRound className="w-3.5 h-3.5" />
-                    <span>Aviso / Nota Especial para a Portaria & Recepção</span>
-                  </Label>
-                  <Input 
-                    value={formReceptionNotes} 
-                    onChange={e => setFormReceptionNotes(e.target.value)} 
-                    placeholder="Ex: Entregar chave extra, vaga de garagem G2-14 liberada..." 
-                    className="text-xs border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/30"
-                  />
-                </div>
-
-                {/* Veículo & Garagem (Disparo automático p/ garagem e portaria) */}
-                <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                      <Car className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      <span>Veículo & Garagem (Disparo Automático)</span>
-                    </span>
-                    <Badge variant="outline" className="text-[10px] bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 border-blue-300">
-                      Notifica PFB Estacionamento
-                    </Badge>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Placa</Label>
-                      <Input
-                        value={formVehiclePlate}
-                        onChange={e => setFormVehiclePlate(e.target.value.toUpperCase())}
-                        placeholder="ABC-1234"
-                        className="text-xs font-mono uppercase bg-white dark:bg-slate-900"
-                        maxLength={8}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Marca</Label>
-                      <Input
-                        value={formVehicleBrand}
-                        onChange={e => setFormVehicleBrand(e.target.value)}
-                        placeholder="Ex: Toyota"
-                        className="text-xs bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Modelo</Label>
-                      <Input
-                        value={formVehicleModel}
-                        onChange={e => setFormVehicleModel(e.target.value)}
-                        placeholder="Ex: Corolla"
-                        className="text-xs bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Cor</Label>
-                      <Input
-                        value={formVehicleColor}
-                        onChange={e => setFormVehicleColor(e.target.value)}
-                        placeholder="Ex: Preto"
-                        className="text-xs bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
-                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo diretamente para a garagem (<span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span>).
-                  </p>
-                </div>
-
-                {/* Configuração do Quarto para a Governança / Camareiras */}
-                <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                      <BedDouble className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                      <span>Preparação do Quarto para as Camareiras</span>
-                    </span>
-                    <Badge variant="outline" className="text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 border-amber-300">
-                      Exibido no Card da Governança
-                    </Badge>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    {/* 2 Camas de solteiro */}
-                    <button
-                      type="button"
-                      onClick={() => setFormTwinBeds(!formTwinBeds)}
-                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
-                        formTwinBeds 
-                          ? "bg-indigo-600 text-white border-indigo-600 shadow-xs" 
-                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-400"
-                      }`}
-                    >
-                      <span>🛏️ {formTwinBeds ? "2 Camas Solteiro" : "1 Cama Casal"}</span>
-                      {formTwinBeds ? <CheckCircle2 className="w-3.5 h-3.5" /> : <span className="text-[10px] text-muted-foreground font-semibold">Padrão</span>}
-                    </button>
-
-                    {/* Colchão extra */}
-                    <button
-                      type="button"
-                      onClick={() => setFormExtraMattress(!formExtraMattress)}
-                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
-                        formExtraMattress 
-                          ? "bg-purple-600 text-white border-purple-600 shadow-xs" 
-                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-purple-400"
-                      }`}
-                    >
-                      <span>➕ Colchão Extra</span>
-                      {formExtraMattress && <CheckCircle2 className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-
-                  <div className="space-y-1">
-                    <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                      Nota / Recado para a Camareira (Exibida no Card de Limpeza no Check-in)
-                    </Label>
-                    <Input 
-                      value={formSpecialRequests}
-                      onChange={e => setFormSpecialRequests(e.target.value)}
-                      placeholder="Ex: Montar berço, kit bebê, toalhas extras, atenção especial ao ar-condicionado..."
-                      className="text-xs"
-                    />
-                  </div>
-                </div>
-
-                {/* Seção Própria: Serviço de Café da Manhã */}
-                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Coffee className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                      <div>
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
-                          Café da Manhã Incluso na Diária
-                        </span>
-                        <span className="text-[11px] text-muted-foreground">
-                          Habilita link de cardápio e agendamento de café para este hóspede
-                        </span>
-                      </div>
-                    </div>
-                    <Switch checked={formIncludeBreakfast} onCheckedChange={setFormIncludeBreakfast} />
-                  </div>
-
-                  {formIncludeBreakfast && (
-                    <div className="pt-2 border-t border-amber-500/20 space-y-2 animate-in fade-in">
-                      <div className="text-[11px] text-muted-foreground">
-                        Link exclusivo para escolha de itens e horários pelo hóspede:
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <Button
+                      {pickerRangeStart && (
+                        <button
                           type="button"
-                          size="sm"
-                          {...bindZapiClickOrHoldWaWeb({
-                            onClickZapi: async () => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
-                              const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
-                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
-                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
-                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
-                              await sendDirectZapiWithFallback({
-                                phone,
-                                message: msg,
-                                recipientName: guestName,
-                                reservationCode: String(resCode),
-                                flatNumber: String(flatNum),
-                                triggerEvent: "breakfast_link_manual",
-                                label: "Link do Café da Manhã",
-                                toast
-                              })
-                            },
-                            getWaUrl: () => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
-                              const phone = formGuestPhone || selectedRes?.guestPhone || ""
-                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
-                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
-                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
-                              return buildDirectWaWebUrl(phone, msg)
-                            },
-                            toast
-                          })}
-                          title="Clique rápido: enviar via Z-API • Segure por 2 segundos: abrir no WhatsApp Web"
-                          className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
+                          onClick={() => { setPickerRangeStart(null); setPickerHoverDate(null); }}
+                          className="text-[10px] text-rose-500 hover:underline font-bold cursor-pointer"
                         >
-                          <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp (Z-API)
-                        </Button>
-
-                        <div className="flex items-center gap-1.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
-                              navigator.clipboard.writeText(url)
-                              toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
-                            }}
-                            className="flex-1 h-8 text-xs font-bold gap-1.5 bg-background hover:bg-muted border-border"
-                          >
-                            <Copy className="w-3.5 h-3.5" /> Copiar Link
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `/cafe/${encodeURIComponent(String(resCode))}`
-                              window.open(url, "_blank")
-                            }}
-                            className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"
-                            title="Abrir página de pedidos"
-                          >
-                            Abrir ↗
-                          </Button>
-                        </div>
-                      </div>
+                          Limpar
+                        </button>
+                      )}
                     </div>
-                  )}
-                </div>
+
+                    {/* Dias da Semana */}
+                    <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-muted-foreground mb-1">
+                      {["D", "S", "T", "Q", "Q", "S", "S"].map((dia, idx) => (
+                        <div key={idx} className="h-5 flex items-center justify-center">
+                          {dia}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Grid dos Dias do Mês */}
+                    {(() => {
+                      const mStart = startOfMonth(pickerMonth);
+                      const mEnd = endOfMonth(pickerMonth);
+                      const days = eachDayOfInterval({ start: mStart, end: mEnd });
+                      const startDay = getDay(mStart);
+
+                      return (
+                        <div className="grid grid-cols-7 gap-1">
+                          {Array.from({ length: startDay }).map((_, idx) => (
+                            <div key={`blank-${idx}`} className="h-7 w-full" />
+                          ))}
+
+                          {days.map(d => {
+                            const dStr = format(d, "yyyy-MM-dd");
+                            const effectiveStart = pickerRangeStart || formCheckin;
+                            const effectiveEnd = pickerRangeStart ? (pickerHoverDate || null) : formCheckout;
+                            const isStart = dStr === effectiveStart;
+                            const isEnd = dStr === effectiveEnd;
+                            const isBetween = Boolean(effectiveStart && effectiveEnd && effectiveStart < effectiveEnd && dStr > effectiveStart && dStr < effectiveEnd);
+                            const isTodayDate = isToday(d);
+
+                            return (
+                              <button
+                                key={dStr}
+                                type="button"
+                                onClick={() => {
+                                  if (!pickerRangeStart) {
+                                    setPickerRangeStart(dStr);
+                                    setPickerHoverDate(null);
+                                  } else {
+                                    if (dStr <= pickerRangeStart) {
+                                      setPickerRangeStart(dStr);
+                                      setPickerHoverDate(null);
+                                    } else {
+                                      handleDatesChange(pickerRangeStart, dStr);
+                                      setPickerRangeStart(null);
+                                      setPickerHoverDate(null);
+                                      setRangePickerOpen(false);
+                                    }
+                                  }
+                                }}
+                                onMouseEnter={() => {
+                                  if (pickerRangeStart) {
+                                    setPickerHoverDate(dStr);
+                                  }
+                                }}
+                                className={cn(
+                                  "h-7 w-full text-[11px] font-semibold rounded-md flex items-center justify-center transition-all cursor-pointer",
+                                  isStart && "bg-emerald-600 text-white font-bold shadow-xs",
+                                  isEnd && "bg-rose-600 text-white font-bold shadow-xs",
+                                  isBetween && "bg-emerald-500/20 text-emerald-950 dark:text-emerald-100 rounded-none",
+                                  !isStart && !isEnd && !isBetween && "hover:bg-muted text-foreground",
+                                  isTodayDate && !isStart && !isEnd && "border border-primary font-bold"
+                                )}
+                              >
+                                {format(d, "d")}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Rodapé com Resumo de Diárias e Botão Fechar */}
+                    <div className="pt-2 mt-2 border-t border-border/60 flex items-center justify-between text-xs">
+                      <span className="text-[11px] text-muted-foreground">
+                        {formCheckin && formCheckout && formCheckin < formCheckout ? (
+                          <>
+                            <strong className="text-foreground font-bold">
+                              {differenceInCalendarDays(parseISO(formCheckout), parseISO(formCheckin))}
+                            </strong> {differenceInCalendarDays(parseISO(formCheckout), parseISO(formCheckin)) === 1 ? "diária" : "diárias"}
+                          </>
+                        ) : (
+                          "Selecione entrada e saída"
+                        )}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setPickerRangeStart(null);
+                          setPickerHoverDate(null);
+                          setRangePickerOpen(false);
+                        }}
+                        className="h-6 px-2 text-[11px] font-semibold cursor-pointer"
+                      >
+                        Fechar
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
 
                 {/* 1. Quantidade de Hóspedes Autorizados (1, 2 ou 3) */}
                 <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-xl space-y-2">
@@ -8407,6 +8162,526 @@ export default function PmsCalendar() {
                   </div>
                 </div>
 
+                {/* Resumo Financeiro & Atalho para a Aba de Pagamentos */}
+                <div className="p-3.5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <span className="text-xs font-bold text-foreground">Resumo Financeiro da Hospedagem</span>
+                      {(() => {
+                        const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                        const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
+                        const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+                        const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
+                        const remaining = Math.max(0, curTot - curPaid);
+                        if (isResPaid || (remaining === 0 && curTot > 0)) {
+                          return <Badge className="bg-emerald-600 text-white font-bold text-[10px]">✓ Quitado</Badge>;
+                        } else if (curPaid > 0) {
+                          return <Badge className="bg-amber-600 text-white font-bold text-[10px]">⚡ Sinal Pago</Badge>;
+                        }
+                        return <Badge className="bg-rose-500 text-white font-bold text-[10px]">⏳ Pagamento Pendente</Badge>;
+                      })()}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                      {(() => {
+                        const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                        const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
+                        const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+                        const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
+                        return (
+                          <>
+                            <span>Total: <strong className="text-foreground font-bold">R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                            <span>•</span>
+                            <span>Pago: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                            <span>•</span>
+                            <span>{formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"} configuradas</span>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setResModalTab("payments")}
+                    className="h-8 px-3 text-xs font-bold border-emerald-400/60 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <span>Gerenciar Pagamentos & Diárias</span>
+                    <span className="font-bold">➔</span>
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
+                  <div className="space-y-1.5 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
+                      {!selectedRes && fairShareResult?.bestFlatId && String(formFlatId) === String(fairShareResult.bestFlatId) && (
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
+                          ✨ Sugerido da vez
+                        </span>
+                      )}
+                    </div>
+                    <Select 
+                      value={formFlatId} 
+                      onValueChange={(val) => { 
+                        isFlatManuallyChangedRef.current = true;
+                        setFormFlatId(val); 
+                        setFormForceReplace(false); 
+                      }}
+                    >
+                      <SelectTrigger className="text-xs font-bold h-9 w-full min-w-0">
+                        <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
+                          {formFlatId 
+                            ? `Apt ${data.flats.find(f => String(f.id) === String(formFlatId))?.number || formFlatId}${!selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId) ? " ✨ (Sugerido)" : ""}` 
+                            : (loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat")}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent className="max-h-60">
+                        {data.flats.map(f => {
+                          const flatStat = fairShareResult?.allStats?.find((s: any) => s.flat?.id === f.id);
+                          const isBest = fairShareResult?.bestFlatId === f.id;
+                          const isAvail = flatStat ? flatStat.isAvailable : true;
+                          const conflictName = flatStat?.conflicts?.[0]?.guestName;
+                          const hasSameDayTurnover = Boolean(flatStat?.hasCheckoutOnCheckinDay);
+
+                          return (
+                            <SelectItem key={f.id} value={String(f.id)}>
+                              <div className="flex items-center justify-between gap-2 w-full py-0.5">
+                                <span className="font-bold">Apt {f.number}</span>
+                                {isBest && (
+                                   <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                                     ✨ Quarto da Vez {hasSameDayTurnover ? "(Saída no Dia)" : "(Vago no Check-in)"}
+                                   </span>
+                                )}
+                                {!isAvail && (
+                                  <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
+                                    ⚠️ Ocupado {conflictName ? `(${conflictName})` : ''}
+                                  </span>
+                                )}
+                                {isAvail && !isBest && (
+                                  <span className="text-[9px] text-muted-foreground font-medium">
+                                    {hasSameDayTurnover ? "🔄 Saída no Dia" : "🟢 Vago no Check-in"} ({flatStat?.monthOccupiedDays || 0}d)
+                                  </span>
+                                )}
+                              </div>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Canal de Origem</Label>
+                    <Select 
+                      value={formChannel} 
+                      onValueChange={val => {
+                        setFormChannel(val);
+                        const allSame = formDailyRates.length <= 1 || formDailyRates.every(d => (d.channel || "whatsapp") === formChannel);
+                        const updatedDailyRates = allSame 
+                          ? formDailyRates.map(d => ({ ...d, channel: val })) 
+                          : formDailyRates;
+                        setFormDailyRates(updatedDailyRates);
+
+                        if (val === "b2b") {
+                          setFormRequesterType("agency_b2b");
+                          setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
+                          setFormStatus("confirmada");
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
+                        } else if (val === "booking" || val === "airbnb") {
+                          let updatedCharges = [...formCharges];
+                          const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning");
+                          if (cleanIdx === -1) {
+                            updatedCharges.push({
+                              id: `charge_${Date.now()}_clean`,
+                              type: "cleaning",
+                              title: "Taxa de Limpeza",
+                              amount: 50,
+                              notes: ""
+                            });
+                          } else if (updatedCharges[cleanIdx].amount === 80) {
+                            updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 };
+                          }
+                          setFormCharges(updatedCharges);
+                          syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, val, val);
+                        } else if (val === "site") {
+                          setFormPaymentMethod("pix");
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, "pix");
+                        } else {
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val);
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="text-xs h-9 w-full min-w-0">
+                        <SelectValue placeholder="Canal" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="site">🌐 Site Próprio / Motor de Reservas</SelectItem>
+                        <SelectItem value="whatsapp">💬 WhatsApp / Reserva Direta</SelectItem>
+                        <SelectItem value="booking">🔵 Booking.com</SelectItem>
+                        <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                        <SelectItem value="b2b">🟣 B2B Reservas / Agência Corporativa</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
+                {!selectedRes && fairShareResult?.bestFlatNumber && (
+                  <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg animate-in fade-in">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span>
+                        Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong>
+                        {String(formFlatId) === String(fairShareResult.bestFlatId) && (
+                          <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">✓ Selecionado</span>
+                        )}
+                      </span>
+                    </div>
+                    {String(formFlatId) !== String(fairShareResult.bestFlatId) && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          isFlatManuallyChangedRef.current = false;
+                          setFormFlatId(String(fairShareResult.bestFlatId));
+                          setFormForceReplace(false);
+                        }}
+                        className="h-6 text-[10px] font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-500/20 px-2 py-0 border border-amber-500/30 rounded"
+                      >
+                        Usar Apt {fairShareResult.bestFlatNumber}
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Bloqueio de Flat / Quarto Preferencial */}
+                <div className="p-3 bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                          Bloquear Flat (Quarto Preferencial / Não Trocar)
+                        </span>
+                        <span className="text-[11px] text-muted-foreground block leading-tight">
+                          Impede a Sofia AI de trocar ou remanejar o quarto deste hóspede. Evita alocação de novos hóspedes neste flat.
+                        </span>
+                      </div>
+                    </div>
+                    <Switch 
+                      checked={formIsFlatLocked} 
+                      onCheckedChange={setFormIsFlatLocked} 
+                    />
+                  </div>
+
+                  {formIsFlatLocked && (
+                    <div className="pt-2 border-t border-border/60 animate-in fade-in space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Motivo / Justificativa do Quarto Fixo (Opcional)
+                      </Label>
+                      <Input
+                        value={formFlatLockReason}
+                        onChange={e => setFormFlatLockReason(e.target.value)}
+                        placeholder="Ex: Hóspede pediu cama casal + ar split; hóspede idoso pediu andar baixo..."
+                        className="text-xs h-8"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Alerta de Quarto Ocupado & Trava Anti-Overbooking */}
+                {(() => {
+                  const selectedStat = fairShareResult?.allStats?.find((s: any) => String(s.flat?.id) === String(formFlatId));
+                  if (!selectedStat || selectedStat.isAvailable) return null;
+                  const conflictsList = (selectedStat.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
+                  if (conflictsList.length === 0 && selectedStat.blocks?.length === 0) return null;
+                  const conflict = conflictsList[0];
+
+                  return (
+                    <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-700/60 rounded-2xl space-y-2 text-xs">
+                      <div className="flex items-start gap-2 text-rose-800 dark:text-rose-200">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold block">🚨 Conflito de Ocupação: Apt {selectedStat.flat?.number} já possui reserva neste período!</span>
+                          {conflict && (
+                            <span className="text-[11px] text-rose-700 dark:text-rose-300/90 block">
+                              Hóspede em conflito: <strong>{conflict?.guestName || "Outro Hóspede"}</strong> ({conflict?.checkinDate} a {conflict?.checkoutDate})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-1.5 border-t border-rose-200 dark:border-rose-800/60 flex items-center justify-between gap-2">
+                        <div className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
+                          Forçar encaixe mesmo com conflito (Overbooking — notifica Gestão imediatamente)
+                        </div>
+                        <Switch checked={formForceReplace} onCheckedChange={setFormForceReplace} />
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Early Check-in Switch */}
+                <div className="p-3 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Autorizar Early Check-in</span>
+                      <span className="text-[11px] text-muted-foreground">Permite liberação na portaria antes das 13:00</span>
+                    </div>
+                  </div>
+                  <Switch checked={formEarlyCheckin} onCheckedChange={setFormEarlyCheckin} />
+                </div>
+
+                {/* Switch: Mensalista / Contrato */}
+                <div className="p-3 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/60 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Cliente Mensalista / Contrato Long Stay</span>
+                      <span className="text-[11px] text-muted-foreground">Exibe destaque visual exclusivo no Livro de Reservas</span>
+                    </div>
+                  </div>
+                  <Switch checked={formIsMonthlyGuest} onCheckedChange={setFormIsMonthlyGuest} />
+                </div>
+
+                {/* Auto NFS-e Switch */}
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Auto-Emitir Nota Fiscal (NFS-e) no Check-out</span>
+                      <span className="text-[11px] text-muted-foreground">Emite e envia NFS-e no WhatsApp deste cliente no check-out (Padrão: OFF)</span>
+                    </div>
+                  </div>
+                  <Switch checked={formAutoInvoice} onCheckedChange={setFormAutoInvoice} />
+                </div>
+
+                {/* Special Reception Notice */}
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>Aviso / Nota Especial para a Portaria & Recepção</span>
+                  </Label>
+                  <Input 
+                    value={formReceptionNotes} 
+                    onChange={e => setFormReceptionNotes(e.target.value)} 
+                    placeholder="Ex: Entregar chave extra, vaga de garagem G2-14 liberada..." 
+                    className="text-xs border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/30"
+                  />
+                </div>
+
+                {/* Veículo & Garagem (Disparo automático p/ garagem e portaria) */}
+                <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <Car className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>Veículo & Garagem (Disparo Automático)</span>
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 border-blue-300">
+                      Notifica PFB Estacionamento
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Placa</Label>
+                      <Input
+                        value={formVehiclePlate}
+                        onChange={e => setFormVehiclePlate(e.target.value.toUpperCase())}
+                        placeholder="ABC-1234"
+                        className="text-xs font-mono uppercase bg-white dark:bg-slate-900"
+                        maxLength={8}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Marca</Label>
+                      <Input
+                        value={formVehicleBrand}
+                        onChange={e => setFormVehicleBrand(e.target.value)}
+                        placeholder="Ex: Toyota"
+                        className="text-xs bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Modelo</Label>
+                      <Input
+                        value={formVehicleModel}
+                        onChange={e => setFormVehicleModel(e.target.value)}
+                        placeholder="Ex: Corolla"
+                        className="text-xs bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Cor</Label>
+                      <Input
+                        value={formVehicleColor}
+                        onChange={e => setFormVehicleColor(e.target.value)}
+                        placeholder="Ex: Preto"
+                        className="text-xs bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
+                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo diretamente para a garagem (<span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span>).
+                  </p>
+                </div>
+
+                {/* Configuração do Quarto para a Governança / Camareiras */}
+                <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <BedDouble className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <span>Preparação do Quarto para as Camareiras</span>
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-300 border-amber-300">
+                      Exibido no Card da Governança
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* 2 Camas de solteiro */}
+                    <button
+                      type="button"
+                      onClick={() => setFormTwinBeds(!formTwinBeds)}
+                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
+                        formTwinBeds 
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-xs" 
+                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-400"
+                      }`}
+                    >
+                      <span>🛏️ {formTwinBeds ? "2 Camas Solteiro" : "1 Cama Casal"}</span>
+                      {formTwinBeds ? <CheckCircle2 className="w-3.5 h-3.5" /> : <span className="text-[10px] text-muted-foreground font-semibold">Padrão</span>}
+                    </button>
+
+                    {/* Colchão extra */}
+                    <button
+                      type="button"
+                      onClick={() => setFormExtraMattress(!formExtraMattress)}
+                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
+                        formExtraMattress 
+                          ? "bg-purple-600 text-white border-purple-600 shadow-xs" 
+                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-purple-400"
+                      }`}
+                    >
+                      <span>➕ Colchão Extra</span>
+                      {formExtraMattress && <CheckCircle2 className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                      Nota / Recado para a Camareira (Exibida no Card de Limpeza no Check-in)
+                    </Label>
+                    <Input 
+                      value={formSpecialRequests}
+                      onChange={e => setFormSpecialRequests(e.target.value)}
+                      placeholder="Ex: Montar berço, kit bebê, toalhas extras, atenção especial ao ar-condicionado..."
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Seção Própria: Serviço de Café da Manhã */}
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Coffee className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                          Café da Manhã Incluso na Diária
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          Habilita link de cardápio e agendamento de café para este hóspede
+                        </span>
+                      </div>
+                    </div>
+                    <Switch checked={formIncludeBreakfast} onCheckedChange={setFormIncludeBreakfast} />
+                  </div>
+
+                  {formIncludeBreakfast && (
+                    <div className="pt-2 border-t border-amber-500/20 space-y-2 animate-in fade-in">
+                      <div className="text-[11px] text-muted-foreground">
+                        Link exclusivo para escolha de itens e horários pelo hóspede:
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          {...bindZapiClickOrHoldWaWeb({
+                            onClickZapi: async () => {
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
+                              const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
+                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
+                              await sendDirectZapiWithFallback({
+                                phone,
+                                message: msg,
+                                recipientName: guestName,
+                                reservationCode: String(resCode),
+                                flatNumber: String(flatNum),
+                                triggerEvent: "breakfast_link_manual",
+                                label: "Link do Café da Manhã",
+                                toast
+                              })
+                            },
+                            getWaUrl: () => {
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
+                              const phone = formGuestPhone || selectedRes?.guestPhone || ""
+                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                              const msg = `Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`
+                              return buildDirectWaWebUrl(phone, msg)
+                            },
+                            toast
+                          })}
+                          title="Clique rápido: enviar via Z-API • Segure por 2 segundos: abrir no WhatsApp Web"
+                          className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp (Z-API)
+                        </Button>
+
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe/${encodeURIComponent(String(resCode))}`
+                              navigator.clipboard.writeText(url)
+                              toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
+                            }}
+                            className="flex-1 h-8 text-xs font-bold gap-1.5 bg-background hover:bg-muted border-border"
+                          >
+                            <Copy className="w-3.5 h-3.5" /> Copiar Link
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              const resCode = selectedRes?.code || selectedRes?.reservationCode || selectedRes?.id || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `/cafe/${encodeURIComponent(String(resCode))}`
+                              window.open(url, "_blank")
+                            }}
+                            className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"
+                            title="Abrir página de pedidos"
+                          >
+                            Abrir ↗
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Banner de Check-out Antecipado & Ações Rápidas */}
                 {selectedRes && (
                   selectedRes.earlyCheckout ? (
@@ -8543,57 +8818,6 @@ export default function PmsCalendar() {
                     placeholder="Ex: Cama de casal, chegada de madrugada, berço..." 
                     className="text-xs h-16 resize-none"
                   />
-                </div>
-
-                {/* Resumo Financeiro & Atalho para a Aba de Pagamentos */}
-                <div className="p-3.5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                      <span className="text-xs font-bold text-foreground">Resumo Financeiro da Hospedagem</span>
-                      {(() => {
-                        const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                        const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
-                        const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-                        const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
-                        const remaining = Math.max(0, curTot - curPaid);
-                        if (isResPaid || (remaining === 0 && curTot > 0)) {
-                          return <Badge className="bg-emerald-600 text-white font-bold text-[10px]">✓ Quitado</Badge>;
-                        } else if (curPaid > 0) {
-                          return <Badge className="bg-amber-600 text-white font-bold text-[10px]">⚡ Sinal Pago</Badge>;
-                        }
-                        return <Badge className="bg-rose-500 text-white font-bold text-[10px]">⏳ Pagamento Pendente</Badge>;
-                      })()}
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                      {(() => {
-                        const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                        const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
-                        const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-                        const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
-                        return (
-                          <>
-                            <span>Total: <strong className="text-foreground font-bold">R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
-                            <span>•</span>
-                            <span>Pago: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
-                            <span>•</span>
-                            <span>{formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"} configuradas</span>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setResModalTab("payments")}
-                    className="h-8 px-3 text-xs font-bold border-emerald-400/60 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 flex items-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    <span>Gerenciar Pagamentos & Diárias</span>
-                    <span className="font-bold">➔</span>
-                  </Button>
                 </div>
 
                 {selectedRes && (
