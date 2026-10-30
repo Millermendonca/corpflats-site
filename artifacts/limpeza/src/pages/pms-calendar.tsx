@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Popover, PopoverContent, PopoverAnchor } from "@/components/ui/popover"
 import { 
-  CalendarDays, Plus, Wand2, ChevronLeft, ChevronRight, Search, 
+  CalendarDays, Plus, Wand2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
   LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
@@ -26,7 +26,7 @@ import { useToast } from "@/hooks/use-toast"
 import { 
   format, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, 
   isSameDay, isToday, isYesterday, parseISO, differenceInDays, differenceInCalendarDays,
-  addMonths, subMonths, getDay
+  addMonths, subMonths, addYears, subYears, getDay
 } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
@@ -2907,7 +2907,7 @@ export default function PmsCalendar() {
     setRangePickerOpen(false)
     setPickerRangeStart(null)
     setPickerHoverDate(null)
-    setPickerMonth(resItem.checkinDate ? parseISO(resItem.checkinDate) : new Date())
+    setPickerMonth(safeParseDate(resItem.checkinDate) || new Date())
     setResModalOpen(true)
   }
 
@@ -6138,7 +6138,7 @@ export default function PmsCalendar() {
                                 onClick={() => {
                                   setPickerRangeStart(null);
                                   setPickerHoverDate(null);
-                                  setPickerMonth(safeParseDate(formCheckout) || safeParseDate(formCheckin) || new Date());
+                                  setPickerMonth(safeParseDate(formCheckin) || safeParseDate(formCheckout) || new Date());
                                   setRangePickerOpen(true);
                                 }}
                                 className="absolute right-1.5 z-10 p-1 text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 transition-colors cursor-pointer rounded pointer-events-auto"
@@ -6178,31 +6178,67 @@ export default function PmsCalendar() {
                     sideOffset={8}
                     className="z-[70] w-[310px] sm:w-[330px] max-w-[calc(100vw-2rem)] p-3 bg-popover border border-border shadow-2xl rounded-2xl animate-in fade-in-0 zoom-in-95"
                   >
-                    {/* Cabeçalho do Range Picker com navegação de mês */}
+                    {/* Cabeçalho do Range Picker com navegação de mês e ano */}
                     <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/60">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setPickerMonth(prev => subMonths(prev, 1))}
-                        className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                        title="Mês anterior"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </Button>
-                      <span className="text-xs font-bold capitalize text-foreground">
-                        {format(pickerMonth, "MMMM 'de' yyyy", { locale: ptBR })}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setPickerMonth(prev => addMonths(prev, 1))}
-                        className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                        title="Próximo mês"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </Button>
+                      <div className="flex items-center gap-0.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setPickerMonth(prev => subYears(prev, 1))}
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                          title="Ano anterior (-1 ano)"
+                        >
+                          <ChevronsLeft className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setPickerMonth(prev => subMonths(prev, 1))}
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                          title="Mês anterior"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold capitalize text-foreground select-none">
+                          {format(pickerMonth, "MMMM 'de' yyyy", { locale: ptBR })}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPickerMonth(new Date())}
+                          className="text-[10px] text-primary hover:underline font-semibold cursor-pointer px-1.5 py-0.5 rounded bg-muted/60 hover:bg-muted"
+                          title="Ir para o mês atual"
+                        >
+                          Hoje
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-0.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setPickerMonth(prev => addMonths(prev, 1))}
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                          title="Próximo mês"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setPickerMonth(prev => addYears(prev, 1))}
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                          title="Próximo ano (+1 ano)"
+                        >
+                          <ChevronsRight className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
 
                     {/* Guia de Seleção */}
@@ -6212,7 +6248,10 @@ export default function PmsCalendar() {
                           "1º clique: Selecione a Entrada"
                         ) : (
                           <>
-                            Entrada: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{format(parseISO(pickerRangeStart), "dd/MM")}</strong> ➔ 2º clique: Saída
+                            Entrada: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{(() => {
+                              const pStart = safeParseDate(pickerRangeStart);
+                              return pStart ? format(pStart, "dd/MM") : pickerRangeStart;
+                            })()}</strong> ➔ 2º clique: Saída
                           </>
                         )}
                       </span>
@@ -6314,6 +6353,23 @@ export default function PmsCalendar() {
                     <div className="pt-2 mt-2 border-t border-border/60 flex items-center justify-between text-xs">
                       <span className="text-[11px] text-muted-foreground">
                         {(() => {
+                          if (pickerRangeStart) {
+                            if (pickerHoverDate && pickerHoverDate > pickerRangeStart) {
+                              const dStart = safeParseDate(pickerRangeStart);
+                              const dHover = safeParseDate(pickerHoverDate);
+                              if (dStart && dHover) {
+                                const nights = differenceInCalendarDays(dHover, dStart);
+                                return (
+                                  <span className="text-emerald-700 dark:text-emerald-300 font-medium">
+                                    <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{nights}</strong>{" "}
+                                    {nights === 1 ? "diária" : "diárias"} (selecionando)
+                                  </span>
+                                );
+                              }
+                            }
+                            return "Selecione a data de saída";
+                          }
+
                           const validCin = safeParseDate(formCheckin);
                           const validCout = safeParseDate(formCheckout);
                           if (validCin && validCout && formCheckin < formCheckout) {
