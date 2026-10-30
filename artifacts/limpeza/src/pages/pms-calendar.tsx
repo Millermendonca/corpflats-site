@@ -195,6 +195,16 @@ export function areGuestNamesCompatibleUI(nameA?: string | null, nameB?: string 
   return surnamesB.some(t => surnamesA.has(t));
 }
 
+// Helper exportado para validação e parsing seguro de datas com limitação de ano (2000-2100)
+export function safeParseDate(dateStr: string | null | undefined): Date | null {
+  if (!dateStr || typeof dateStr !== "string" || dateStr.length < 10) return null;
+  const d = parseISO(dateStr);
+  if (isNaN(d.getTime())) return null;
+  const yr = d.getFullYear();
+  if (yr < 2000 || yr > 2100) return null;
+  return d;
+}
+
 export default function PmsCalendar() {
   const [, setLocation] = useLocation()
   const { toast } = useToast()
@@ -3736,13 +3746,6 @@ export default function PmsCalendar() {
     return newTot;
   };
 
-  // Helper para validação e parsing seguro de datas evitando RangeError em digitação manual incompleta
-  const safeParseDate = (dateStr: string | null | undefined): Date | null => {
-    if (!dateStr || typeof dateStr !== "string" || dateStr.length < 10) return null;
-    const d = parseISO(dateStr);
-    return isNaN(d.getTime()) ? null : d;
-  };
-
   // Sincronização centralizada de datas (via digitação manual ou calendário único)
   const handleDatesChange = (newCin: string, newCout: string) => {
     setFormCheckin(newCin);
@@ -6081,6 +6084,8 @@ export default function PmsCalendar() {
                                 type="date" 
                                 value={formCheckin} 
                                 onChange={e => handleCheckinChange(e.target.value)} 
+                                min="2020-01-01"
+                                max="2099-12-31"
                                 required 
                                 className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:pointer-events-none [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
                               />
@@ -6130,6 +6135,8 @@ export default function PmsCalendar() {
                                 type="date" 
                                 value={formCheckout} 
                                 onChange={e => handleCheckoutChange(e.target.value)} 
+                                min="2020-01-01"
+                                max="2099-12-31"
                                 required 
                                 className="text-xs h-9 w-full min-w-0 pr-8 pl-2 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:pointer-events-none [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:w-7"
                               />
@@ -6178,174 +6185,183 @@ export default function PmsCalendar() {
                     sideOffset={8}
                     className="z-[70] w-[310px] sm:w-[330px] max-w-[calc(100vw-2rem)] p-3 bg-popover border border-border shadow-2xl rounded-2xl animate-in fade-in-0 zoom-in-95"
                   >
-                    {/* Cabeçalho do Range Picker com navegação de mês e ano */}
-                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/60">
-                      <div className="flex items-center gap-0.5">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setPickerMonth(prev => subYears(prev, 1))}
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                          title="Ano anterior (-1 ano)"
-                        >
-                          <ChevronsLeft className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setPickerMonth(prev => subMonths(prev, 1))}
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                          title="Mês anterior"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </Button>
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold capitalize text-foreground select-none">
-                          {format(pickerMonth, "MMMM 'de' yyyy", { locale: ptBR })}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setPickerMonth(new Date())}
-                          className="text-[10px] text-primary hover:underline font-semibold cursor-pointer px-1.5 py-0.5 rounded bg-muted/60 hover:bg-muted"
-                          title="Ir para o mês atual"
-                        >
-                          Hoje
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-0.5">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setPickerMonth(prev => addMonths(prev, 1))}
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                          title="Próximo mês"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setPickerMonth(prev => addYears(prev, 1))}
-                          className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
-                          title="Próximo ano (+1 ano)"
-                        >
-                          <ChevronsRight className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Guia de Seleção */}
-                    <div className="text-[11px] font-semibold py-1 px-2 mb-2 rounded-lg text-center bg-muted/60 text-muted-foreground flex items-center justify-between">
-                      <span>
-                        {!pickerRangeStart ? (
-                          "1º clique: Selecione a Entrada"
-                        ) : (
-                          <>
-                            Entrada: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{(() => {
-                              const pStart = safeParseDate(pickerRangeStart);
-                              return pStart ? format(pStart, "dd/MM") : pickerRangeStart;
-                            })()}</strong> ➔ 2º clique: Saída
-                          </>
-                        )}
-                      </span>
-                      {pickerRangeStart && (
-                        <button
-                          type="button"
-                          onClick={() => { setPickerRangeStart(null); setPickerHoverDate(null); }}
-                          className="text-[10px] text-rose-500 hover:underline font-bold cursor-pointer"
-                        >
-                          Limpar
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Dias da Semana */}
-                    <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-muted-foreground mb-1">
-                      {["D", "S", "T", "Q", "Q", "S", "S"].map((dia, idx) => (
-                        <div key={idx} className="h-5 flex items-center justify-center">
-                          {dia}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Grid dos Dias do Mês */}
                     {(() => {
-                      const mStart = startOfMonth(pickerMonth);
-                      const mEnd = endOfMonth(pickerMonth);
-                      const days = eachDayOfInterval({ start: mStart, end: mEnd });
-                      const startDay = getDay(mStart);
-
-                      const validCin = safeParseDate(formCheckin);
-                      const validCout = safeParseDate(formCheckout);
-                      const hasValidPreExistingRange = Boolean(validCin && validCout && formCheckin < formCheckout);
-
-                      const effectiveStart = pickerRangeStart || (hasValidPreExistingRange ? formCheckin : null);
-                      const effectiveEnd = pickerRangeStart
-                        ? (pickerHoverDate && pickerHoverDate > pickerRangeStart ? pickerHoverDate : null)
-                        : (hasValidPreExistingRange ? formCheckout : null);
-
+                      const safeMonth = !pickerMonth || isNaN(pickerMonth.getTime()) ? new Date() : pickerMonth;
                       return (
-                        <div 
-                          className="grid grid-cols-7 gap-1"
-                          onMouseLeave={() => setPickerHoverDate(null)}
-                        >
-                          {Array.from({ length: startDay }).map((_, idx) => (
-                            <div key={`blank-${idx}`} className="h-7 w-full" />
-                          ))}
+                        <>
+                          {/* Cabeçalho do Range Picker com navegação de mês e ano */}
+                          <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/60">
+                            <div className="flex items-center gap-0.5">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setPickerMonth(prev => subYears(prev, 1))}
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                                title="Ano anterior (-1 ano)"
+                              >
+                                <ChevronsLeft className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setPickerMonth(prev => subMonths(prev, 1))}
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                                title="Mês anterior"
+                              >
+                                <ChevronLeft className="w-4 h-4" />
+                              </Button>
+                            </div>
 
-                          {days.map(d => {
-                            const dStr = format(d, "yyyy-MM-dd");
-                            const isStart = Boolean(effectiveStart && dStr === effectiveStart);
-                            const isEnd = Boolean(effectiveEnd && dStr === effectiveEnd);
-                            const isBetween = Boolean(effectiveStart && effectiveEnd && effectiveStart < effectiveEnd && dStr > effectiveStart && dStr < effectiveEnd);
-                            const isTodayDate = isToday(d);
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold capitalize text-foreground select-none">
+                                {format(safeMonth, "MMMM 'de' yyyy", { locale: ptBR })}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setPickerMonth(new Date())}
+                                className="text-[10px] text-primary hover:underline font-semibold cursor-pointer px-1.5 py-0.5 rounded bg-muted/60 hover:bg-muted"
+                                title="Ir para o mês atual"
+                              >
+                                Hoje
+                              </button>
+                            </div>
+
+                            <div className="flex items-center gap-0.5">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setPickerMonth(prev => addMonths(prev, 1))}
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                                title="Próximo mês"
+                              >
+                                <ChevronRight className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setPickerMonth(prev => addYears(prev, 1))}
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                                title="Próximo ano (+1 ano)"
+                              >
+                                <ChevronsRight className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Guia de Seleção */}
+                          <div className="text-[11px] font-semibold py-1 px-2 mb-2 rounded-lg text-center bg-muted/60 text-muted-foreground flex items-center justify-between">
+                            <span>
+                              {!pickerRangeStart ? (
+                                "1º clique / toque: Selecione a Entrada"
+                              ) : (
+                                <>
+                                  Entrada: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{(() => {
+                                    const pStart = safeParseDate(pickerRangeStart);
+                                    return pStart ? format(pStart, "dd/MM") : pickerRangeStart;
+                                  })()}</strong> ➔ 2º clique / toque: Saída
+                                </>
+                              )}
+                            </span>
+                            {pickerRangeStart && (
+                              <button
+                                type="button"
+                                onClick={() => { setPickerRangeStart(null); setPickerHoverDate(null); }}
+                                className="text-[10px] text-rose-500 hover:underline font-bold cursor-pointer"
+                              >
+                                Limpar
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Dias da Semana */}
+                          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-muted-foreground mb-1">
+                            {["D", "S", "T", "Q", "Q", "S", "S"].map((dia, idx) => (
+                              <div key={idx} className="h-5 flex items-center justify-center">
+                                {dia}
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Grid dos Dias do Mês */}
+                          {(() => {
+                            const mStart = startOfMonth(safeMonth);
+                            const mEnd = endOfMonth(safeMonth);
+                            const days = eachDayOfInterval({ start: mStart, end: mEnd });
+                            const startDay = getDay(mStart);
+
+                            const validCin = safeParseDate(formCheckin);
+                            const validCout = safeParseDate(formCheckout);
+                            const hasValidPreExistingRange = Boolean(validCin && validCout && formCheckin < formCheckout);
+
+                            const effectiveStart = pickerRangeStart || (hasValidPreExistingRange ? formCheckin : null);
+                            const effectiveEnd = pickerRangeStart
+                              ? (pickerHoverDate && pickerHoverDate > pickerRangeStart ? pickerHoverDate : null)
+                              : (hasValidPreExistingRange ? formCheckout : null);
 
                             return (
-                              <button
-                                key={dStr}
-                                type="button"
-                                onClick={() => {
-                                  if (!pickerRangeStart) {
-                                    setPickerRangeStart(dStr);
-                                    setPickerHoverDate(null);
-                                  } else {
-                                    if (dStr <= pickerRangeStart) {
-                                      setPickerRangeStart(dStr);
-                                      setPickerHoverDate(null);
-                                    } else {
-                                      handleDatesChange(pickerRangeStart, dStr);
-                                      setPickerRangeStart(null);
-                                      setPickerHoverDate(null);
-                                      setRangePickerOpen(false);
-                                    }
-                                  }
-                                }}
-                                onMouseEnter={() => {
-                                  if (pickerRangeStart) {
-                                    setPickerHoverDate(dStr);
-                                  }
-                                }}
-                                className={cn(
-                                  "h-7 w-full text-[11px] font-semibold rounded-md flex items-center justify-center transition-all cursor-pointer",
-                                  isStart && "bg-emerald-600 text-white font-bold shadow-xs",
-                                  isEnd && "bg-rose-600 text-white font-bold shadow-xs",
-                                  isBetween && "bg-emerald-500/20 text-emerald-950 dark:text-emerald-100 rounded-none",
-                                  !isStart && !isEnd && !isBetween && "hover:bg-muted text-foreground",
-                                  isTodayDate && !isStart && !isEnd && "border border-primary font-bold"
-                                )}
+                              <div 
+                                className="grid grid-cols-7 gap-1"
+                                onMouseLeave={() => setPickerHoverDate(null)}
                               >
-                                {format(d, "d")}
-                              </button>
+                                {Array.from({ length: startDay }).map((_, idx) => (
+                                  <div key={`blank-${idx}`} className="h-7 w-full" />
+                                ))}
+
+                                {days.map(d => {
+                                  const dStr = format(d, "yyyy-MM-dd");
+                                  const isStart = Boolean(effectiveStart && dStr === effectiveStart);
+                                  const isEnd = Boolean(effectiveEnd && dStr === effectiveEnd);
+                                  const isBetween = Boolean(effectiveStart && effectiveEnd && effectiveStart < effectiveEnd && dStr > effectiveStart && dStr < effectiveEnd);
+                                  const isTodayDate = isToday(d);
+
+                                  return (
+                                    <button
+                                      key={dStr}
+                                      type="button"
+                                      title={format(d, "dd/MM/yyyy")}
+                                      aria-label={format(d, "dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+                                      onClick={() => {
+                                        if (!pickerRangeStart) {
+                                          setPickerRangeStart(dStr);
+                                          setPickerHoverDate(null);
+                                        } else {
+                                          if (dStr <= pickerRangeStart) {
+                                            setPickerRangeStart(dStr);
+                                            setPickerHoverDate(null);
+                                          } else {
+                                            handleDatesChange(pickerRangeStart, dStr);
+                                            setPickerRangeStart(null);
+                                            setPickerHoverDate(null);
+                                            setRangePickerOpen(false);
+                                          }
+                                        }
+                                      }}
+                                      onMouseEnter={() => {
+                                        if (pickerRangeStart) {
+                                          setPickerHoverDate(dStr);
+                                        }
+                                      }}
+                                      className={cn(
+                                        "h-7 w-full text-[11px] font-semibold rounded-md flex items-center justify-center transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none",
+                                        isStart && "bg-emerald-600 text-white font-bold shadow-xs",
+                                        isEnd && "bg-rose-600 text-white font-bold shadow-xs",
+                                        isBetween && "bg-emerald-500/20 text-emerald-950 dark:text-emerald-100 rounded-none",
+                                        !isStart && !isEnd && !isBetween && "hover:bg-muted text-foreground",
+                                        isTodayDate && !isStart && !isEnd && "border border-primary font-bold"
+                                      )}
+                                    >
+                                      {format(d, "d")}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             );
-                          })}
-                        </div>
+                          })()}
+                        </>
                       );
                     })()}
 
