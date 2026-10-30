@@ -1,29 +1,24 @@
-## 2026-10-07T16:00:55Z
+## 2026-10-29T16:33:32Z
+You are explorer_m1_1, a read-only exploration agent.
+Your working directory is:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_1`
 
-You are teamwork_preview_explorer (Explorer M1_1 - SERPRO Client Specialist).
-Your working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_m1_1
-Parent conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
+IMPORTANT REQUIREMENTS & CONSTRAINTS:
+1. First, read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (read lines 890 to 930 for the latest prompt) and `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`.
+2. Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never run any script that sends WhatsApp messages to guests.
+3. You are read-only: do NOT modify source code files.
+4. Update `progress.md` in your working directory as you work with timestamped heartbeats.
 
-MANDATORY: Read the authoritative request at:
-c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (specifically the latest entry from 2026-10-07T15:33:29Z).
+TASK OBJECTIVE:
+Investigate the codebase for all Google Contacts synchronization and contact management logic.
+- Locate all files related to Google Contacts (e.g. search for Google Contacts, People API, contacts sync in `artifacts/api-server/`, `scripts/`, etc.).
+- Trace the exact sync algorithm: how contacts are matched, created, or updated.
+- Pinpoint the exact root cause (file names and exact line numbers) explaining:
+  1. Why multiple unrelated guests' phone numbers were merged into single contacts.
+  2. Why guest names were overwritten by other people's names.
+- Detail any twin-file requirements (e.g. `artifacts/api-server/` vs `scripts/`).
+- Propose the exact fix strategy for the sync logic so distinct guests and phone numbers are never merged or overwritten.
 
-Read the Project Plan at:
-c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/orchestrator_2/PROJECT.md
-and backend survey at:
-c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_backend_2/survey_backend.md
-
-YOUR MISSION FOR MILESTONE 1 (Feature 2):
-Design the exact specification and implementation plan for `scripts/fnrh-serpro-service.mjs`:
-1. SERPRO FNRH v2.4.2 API Client:
-   - Base URLs: `https://hom-lowcode.serpro.gov.br/FNRH_API/rest/v2` (homologacao) and `https://fnrh.turismo.serpro.gov.br/FNRH_API/rest/v2` (producao).
-   - Authentication: Basic Auth (base64 encoded `usuario:senha`) and header `cpf_solicitante`.
-   - Credentials resolution: check environment variables (`SERPRO_USER`, `SERPRO_PASSWORD`, `SERPRO_CPF_SOLICITANTE`, `SERPRO_ENV`) and fallback/defaults in settings.
-   - Request signature for `POST /reservas`: fields `numero_reserva`, `data_entrada` (YYYY-MM-DD), `data_saida` (YYYY-MM-DD), `quantidade_hospede_adulto`, `quantidade_hospede_menor`, `origem_reserva_id: 'MEIOHOSPEDAGEM'`.
-   - Response parsing: extract `reserva.reserva_id` (or `reserva_id`) as `serproReservaId` and `reserva.link_precheckin` (or `link_precheckin`).
-   - Timeout handling: default 5000ms abort controller.
-   - Health check method `checkHealth()`: query lightweight endpoint `GET /dominios/reservas/situacoes` with 5000ms timeout, returning latency and status.
-   - Standalone resilience: should be importable as ES module in `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-2. Write your implementation blueprint to:
-   `c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_m1_1/blueprint_serpro_service.md`
-   and write a complete `handoff.md` in your working directory.
-3. Send a message to parent (0a1ba31b-b6bc-466b-8394-2ba72ae85fb5) when complete. Do NOT write source code or run build commands.
+Deliverables:
+- Write your comprehensive findings to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_1\analysis.md` and `handoff.md`.
+- Send a completion message via `send_message` to parent orchestrator (conversation ID: 77bac84a-2c7b-483b-8533-2e30a6efd40e).

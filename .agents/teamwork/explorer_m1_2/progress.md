@@ -1,19 +1,17 @@
-# Progress: Settings & Persistence Exploration (M1 Feature 1)
+# Progress - explorer_m1_2
 
-Last visited: 2026-10-07T16:10:00Z
+Last visited: 2026-10-29T16:53:30Z
+Status: Investigation complete. Deliverables generated.
 
-## Status
-- [x] Initialized DISPATCH.md and BRIEFING.md
-- [x] Reviewed ORIGINAL_REQUEST.md, PROJECT.md, and survey_backend.md
-- [x] Inspect `data/database.json` for current `settings` block (verified 17 keys, single-line JSON format)
-- [x] Inspect `artifacts/api-server/demo-server.mjs`:
-  - [x] Default `db.settings` (~line 560: lines 554-577)
-  - [x] `loadDatabase` and PostgreSQL `system_store` reload (~lines 3371-3530: lines 3487-3510)
-  - [x] `GET /api/settings` and `PATCH /api/settings` (~lines 10042-10088)
-  - [x] Status route placement for `GET /api/fnrh-serpro/status`
-  - [x] Reservation creation routes (`POST /api/pms/reservations` lines 11810-11850, `POST /api/reservations/direct-booking` lines 10720-10820)
-  - [x] Mirror parity requirements with `scripts/demo-server.mjs` (current SHA-256 match confirmed: `d37e4d0d95637d976c0fff2af0cbb4d0027216c6abbc7293abae213cc411fce3`)
-- [x] Produce `blueprint_settings_persistence.md`
-- [ ] Produce `handoff.md` (5-component protocol)
-- [ ] Update `BRIEFING.md`
-- [ ] Send completion message to parent
+## Checklist
+- [x] Workspace initialized (DISPATCH.md, BRIEFING.md, progress.md)
+- [x] Read ORIGINAL_REQUEST.md lines 890-930 and AGENTS.md
+- [x] Investigate CRM data store architecture (JSON database, Postgres database, models)
+- [x] Deep dive on reported cases:
+  - Phone `21976403551` (Roselene vs Raiza Castro Tavares)
+  - Phone `28999136926` (Fabiana vs João Eduardo Leal Correa)
+- [x] Audit CRM contacts to find all contacts with multiple phones or corrupted/merged data
+- [x] Map out all authoritative data sources for name reconstruction (reservations, guest docs, chats, etc.)
+- [x] Develop criteria and logic for unmerging and repairing corrupted contact records
+- [x] Write analysis.md and handoff.md
+- [x] Send completion message to parent

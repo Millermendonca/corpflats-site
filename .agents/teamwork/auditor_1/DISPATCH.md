@@ -47,3 +47,30 @@ REGRA CRÍTICA DE EXECUÇÃO (AGENTS.md):
 - É ESTRITAMENTE PROIBIDO executar testes globais (`tests/*.test.mjs`).
 
 Escreva seu relatório em `handoff.md` contendo seu veredito binário explícito: CLEAN ou INTEGRITY VIOLATION. Ao concluir, avise o orquestrador via send_message.
+
+## 2026-10-29T17:47:02Z
+You are auditor_1, a forensic integrity auditor.
+Your working directory is:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1`
+
+CRITICAL REQUIREMENTS:
+1. Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (lines 890 to 930) and `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`.
+2. Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never send WhatsApp messages.
+
+TASK OBJECTIVE:
+Perform a full forensic integrity verification across all work delivered:
+1. **Cheating & Facade Detection**:
+   - Verify that the synchronization logic in `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` contains authentic, genuine logic and not hardcoded fake passes or dummy facades.
+   - Verify that `tests/google-contacts-sync-fix.test.mjs` actually tests the functions and asserts real values.
+   - Verify that `scripts/restore-and-audit-contacts.mjs` actually restored real database fields and generated genuine Google People API payloads.
+2. **Operational Safety & Compliance**:
+   - Verify that NO WhatsApp messages were sent to guests.
+   - Verify that NO global or batch test suites (`tests/*.test.mjs`) were executed.
+3. **Repository Parity & Git Cleanliness**:
+   - Run `node scripts/check-twin-parity.mjs` and confirm 100% SHA-256 byte-by-byte match between `artifacts/api-server/` and `scripts/`.
+   - Run `git status` to verify working tree is clean.
+   - Run `git log -n 5` to verify all commits are pushed to remote origin.
+4. **Binary Verdict**:
+   - You MUST deliver an explicit binary verdict: **CLEAN** or **INTEGRITY VIOLATION**.
+   - Write your forensic evidence and verdict in `handoff.md`.
+   - Send completion message to parent orchestrator.

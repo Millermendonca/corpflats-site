@@ -1,35 +1,23 @@
-# Task Assignment: Reviewer 2 (R3 & R4 Review)
-Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_2
-Role: teamwork_preview_reviewer
+## 2026-10-29T17:47:01Z
+You are reviewer_2, a high-reliability reviewer.
+Your working directory is:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_2`
 
-## Escopo
-Revisar de forma independente a implementação dos requisitos R3 e R4:
-- Interceptação de intenção fiscal no WhatsApp (`whatsapp-ai-service.mjs`, `zapi-service.mjs`).
-- Fluxo condicional: não perguntar novamente para quem já possui empresa vinculada no CRM; confirmar Razão Social e CNPJ, ativar `autoEmitInvoice = true`.
-- Onboarding claro e acolhedor (PJ vs PF) para clientes não vinculados (`awaitingFiscalData`).
-- Validação matemática por Módulo 11 (CPF e CNPJ) com alerta amigável e bloqueio de registros inválidos no CRM.
-- Sanitização (`toTitleCase` preservando siglas e preposições, `cleanPhone`, `cleanCep`) e enriquecimento (CNPJ e CEP).
-- Vínculo no CRM, reserva e confirmação no WhatsApp.
-- Paridade estrita 100% SHA-256 entre `artifacts/api-server/` e `scripts/`.
-- Verificação do build em `artifacts/limpeza` (`npm run build`).
+CRITICAL REQUIREMENTS:
+1. Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (lines 890 to 930) and `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`.
+2. Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never send WhatsApp messages.
+3. You are read-only: do NOT modify source code files.
 
-Execução de Testes:
-- Execute EXCLUSIVAMENTE o teste pontual `node --test tests/nfse-crm-whatsapp-flow.test.mjs`.
-- NUNCA execute testes globais (`tests/*.test.mjs`).
-
-Entregue seu relatório em `handoff.md` com veredito explícito: `APPROVE` ou `REQUEST_CHANGES`.
-## 2026-10-14T11:26:21Z
-Você é o Reviewer 2 (R3 & R4 Review).
-Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_2
-
-Leia atentamente:
-1. Requisitos oficiais: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-2. Sua atribuição de tarefa: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_2\DISPATCH.md
-3. O plano de arquitetura: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_9\PROJECT.md
-4. Relatório do test writer: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\test_writer_m4\handoff.md
-
-REGRA CRÍTICA DE EXECUÇÃO (AGENTS.md):
-- Execute EXCLUSIVAMENTE o teste pontual `node --test tests/nfse-crm-whatsapp-flow.test.mjs`.
-- É ESTRITAMENTE PROIBIDO executar testes globais (`tests/*.test.mjs`) ou outros módulos.
-
-Escreva seu relatório em `handoff.md` contendo seu veredito explícito: APPROVE ou REQUEST_CHANGES. Ao concluir, avise o orquestrador via send_message.
+TASK OBJECTIVE:
+Objectively and rigorously review the data audit and restoration artifacts from Milestones 3 & 4:
+- Inspect `scripts/restore-and-audit-contacts.mjs`, `data/database.json`, and `docs/google-contacts-audit-before-after.md`.
+- Verify:
+  1. Phone `21976403551` is restored to Roselene in both CRM database and Google Contacts, separated from unrelated numbers (Raiza Castro Tavares, Sintia).
+  2. Phone `28999136926` is restored to Fabiana in both CRM database and Google Contacts, separated from unrelated numbers (João Eduardo Leal Correa).
+  3. All other contaminated records (Gustavo vs Guido, Dayana vs Aline, Luiz Carlos, Selma, WhatsApp mislinked chats) are clean and restored.
+  4. The Before/After report in `docs/google-contacts-audit-before-after.md` is complete, accurate, and thorough.
+- Run:
+  `node scripts/restore-and-audit-contacts.mjs --audit-only`
+- Verify git status is clean and pushed (`git status`, `git log -n 3`).
+- Record your explicit verdict: APPROVE or REQUEST_CHANGES in `handoff.md`.
+- Send completion message to parent orchestrator.

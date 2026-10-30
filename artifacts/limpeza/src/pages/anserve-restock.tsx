@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { useLocation } from "wouter";
 import { Shell } from "@/components/layout";
 import { useGetMe, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,26 +12,14 @@ import {
   Camera,
   Plus,
   Minus,
-  Sparkles,
   Calendar,
   User,
   Users,
-  Coffee,
   Check,
   X,
-  History,
-  Lock,
-  LogOut,
-  ArrowRight,
-  ShieldAlert,
-  Info,
-  Clock,
-  ExternalLink,
-  ChevronDown,
-  ChevronUp,
-  FileText
+  Clock
 } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -47,10 +34,52 @@ import {
   DialogFooter
 } from "@/components/ui/dialog";
 
+export interface DailyLaunchGroup {
+  dateYmd: string;
+  dateBr: string;
+  items: Array<{
+    itemKey?: string;
+    orderId: string;
+    launchDateYmd: string;
+    launchDateBr: string;
+    productId: string;
+    productName: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+    isCourtesy?: boolean;
+    paymentStatus: string;
+    launchedByName?: string;
+  }>;
+  totalDayAmount: number;
+  pendingDayAmount: number;
+}
+
+export interface CheckoutSummaryData {
+  todayStr: string;
+  doneCount: number;
+  pendingCount: number;
+  totalTodayCheckouts: number;
+  doneCheckouts: Array<{
+    flatNumber: string;
+    guestName: string;
+    checkoutTime: string;
+    reservationCode: string;
+  }>;
+  pendingCheckouts: Array<{
+    flatNumber: string;
+    guestName: string;
+    scheduledTime?: string;
+    reservationCode: string;
+  }>;
+}
+
 export interface FlatStatusItem {
   flatNumber: string;
   colName?: string;
   status: "checkout_hoje" | "ocupado" | "livre";
+  isCheckedOut?: boolean;
+  checkoutTime?: string;
   currentReservation?: {
     code: string;
     guestName: string;
@@ -58,31 +87,23 @@ export interface FlatStatusItem {
     checkIn?: string;
     checkOut?: string;
     phone?: string;
+    isCheckedOut?: boolean;
+    checkoutTime?: string;
   } | null;
   declaredAmount: number;
+  totalLaunchedAmount?: number;
+  totalPaidAmount?: number;
+  pendingBalance?: number;
+  dailyLaunches?: DailyLaunchGroup[];
   declaredItemsByProduct?: Record<string, number>;
-  declaredOrdersSummary?: Array<{
-    id: string;
-    guestName: string;
-    totalAmount: number;
-    paidAt: string;
-    items: Array<{ productId: string; name: string; quantity: number }>;
-  }>;
-  pendingDiscrepancyOrder?: {
-    id: string;
-    totalAmount: number;
-    paymentStatus: string;
-    items: any[];
-  } | null;
   lastInspection?: {
     id: string;
     inspectedAt: string;
+    launchDate?: string;
+    launchDateBr?: string;
     inspectorName?: string;
-    status: "conforme" | "divergencia";
-    hasDiscrepancy?: boolean;
-    discrepancyPaid?: boolean;
-    discrepancyResolved?: boolean;
-    restockedItems?: any[];
+    status: string;
+    isDailyLaunch?: boolean;
     discrepancyTotalAmount?: number;
     notes?: string;
   } | null;
@@ -100,10 +121,28 @@ export interface MinibarProduct {
   defaultQuantity?: number;
 }
 
+function getTodayYmdBr(): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function formatYmdToBr(ymd: string): string {
+  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return ymd;
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
 export default function AnserveRestockPage() {
   const { data: user, isLoading: authLoading } = useGetMe();
   const queryClient = useQueryClient();
-  const [location, setLocation] = useLocation();
   const { toast } = useToast();
 
   // Token / PIN auth state for quick access
@@ -133,6 +172,7 @@ export default function AnserveRestockPage() {
 
   // Data state
   const [flats, setFlats] = useState<FlatStatusItem[]>([]);
+  const [checkoutSummary, setCheckoutSummary] = useState<CheckoutSummaryData | null>(null);
   const [products, setProducts] = useState<MinibarProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -142,18 +182,20 @@ export default function AnserveRestockPage() {
   const [searchQuery, setSearchQuery] = useState("");
 
   // Modals state
-  const [conformeModalFlat, setConformeModalFlat] = useState<FlatStatusItem | null>(null);
-  const [divergenciaModalFlat, setDivergenciaModalFlat] = useState<FlatStatusItem | null>(null);
+  const [semConsumoModalFlat, setSemConsumoModalFlat] = useState<FlatStatusItem | null>(null);
+  const [launchModalFlat, setLaunchModalFlat] = useState<FlatStatusItem | null>(null);
   const [submittingInspection, setSubmittingInspection] = useState(false);
 
-  // Conforme form state
+  // Inspector & "Sem Consumo" form state
   const [inspectorName, setInspectorName] = useState("");
-  const [conformeNotes, setConformeNotes] = useState("");
-  const [conformeCourtesyRestock, setConformeCourtesyRestock] = useState(true);
+  const [semConsumoNotes, setSemConsumoNotes] = useState("");
+  const [semConsumoCourtesyRestock, setSemConsumoCourtesyRestock] = useState(true);
 
-  // Divergência 3-Colunas form state: Contagem da Repositora por produto
-  const [countedQuantities, setCountedQuantities] = useState<Record<string, number>>({});
-  const [divergenceNotes, setDivergenceNotes] = useState("");
+  // "Lançar Consumo do Dia" form state
+  const [launchDateYmd, setLaunchDateYmd] = useState<string>(getTodayYmdBr());
+  const [launchedQuantities, setLaunchedQuantities] = useState<Record<string, number>>({});
+  const [launchCourtesyRestock, setLaunchCourtesyRestock] = useState<boolean>(true);
+  const [launchNotes, setLaunchNotes] = useState("");
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -174,7 +216,6 @@ export default function AnserveRestockPage() {
         const json = await res.json();
         if (json.success && Array.isArray(json.restockers)) {
           setRestockersList(json.restockers);
-          // Se só houver 1 repositora cadastrada, já deixa pré-selecionada
           if (json.restockers.length === 1 && !selectedRestockerId) {
             setSelectedRestockerId(Number(json.restockers[0].id));
           }
@@ -211,7 +252,7 @@ export default function AnserveRestockPage() {
     }
   }, [user]);
 
-  // Load flats and products
+  // Load flats, checkout summary, and products
   const fetchData = async () => {
     try {
       setRefreshing(true);
@@ -229,6 +270,9 @@ export default function AnserveRestockPage() {
         const jsonFlats = await resFlats.json();
         if (jsonFlats.success && Array.isArray(jsonFlats.flats)) {
           setFlats(jsonFlats.flats);
+        }
+        if (jsonFlats.checkoutSummary) {
+          setCheckoutSummary(jsonFlats.checkoutSummary);
         }
       }
 
@@ -264,9 +308,8 @@ export default function AnserveRestockPage() {
     const pin = pinValue || pinInput;
     if (!pin || pin.length < 4) return;
 
-    // Se houver 2 ou mais repositoras cadastradas e nenhuma estiver selecionada nem tiver PIN individual único correspondente, pede para tocar no nome se usar o PIN padrão
     if (restockersList.length > 1 && !selectedRestockerId && pin === "1234") {
-      setPinError("Por favor, selecione qual repositora está conferindo na lista acima antes de digitar o PIN.");
+      setPinError("Por favor, selecione qual repositora está trabalhando na lista acima antes de digitar o PIN.");
       setPinInput("");
       return;
     }
@@ -395,7 +438,7 @@ export default function AnserveRestockPage() {
       });
   }, [flats, statusFilter, searchQuery]);
 
-  // Photo capture for divergence
+  // Photo capture
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -416,87 +459,52 @@ export default function AnserveRestockPage() {
     setCapturedPhotos((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Open "Conforme" modal
-  const handleOpenConforme = (flat: FlatStatusItem) => {
-    setConformeModalFlat(flat);
-    setConformeNotes("");
-    setConformeCourtesyRestock(true);
+  // Open "Sem Consumo / Repor" modal
+  const handleOpenSemConsumo = (flat: FlatStatusItem) => {
+    setSemConsumoModalFlat(flat);
+    setSemConsumoNotes("");
+    setSemConsumoCourtesyRestock(true);
   };
 
-  // Open "Apontar Divergência" modal (inicializa Coluna 2 com o que o hóspede já declarou na Coluna 1)
-  const handleOpenDivergencia = (flat: FlatStatusItem) => {
-    setDivergenciaModalFlat(flat);
-    const declaredMap = flat.declaredItemsByProduct || {};
-    const initialCounted: Record<string, number> = {};
-    for (const [prodId, qty] of Object.entries(declaredMap)) {
-      initialCounted[prodId] = Number(qty) || 0;
-    }
-    setCountedQuantities(initialCounted);
-    setDivergenceNotes("");
+  // Open "Lançar Consumo do Dia" modal
+  const handleOpenLaunchConsumo = (flat: FlatStatusItem) => {
+    setLaunchModalFlat(flat);
+    setLaunchDateYmd(getTodayYmdBr());
+    setLaunchedQuantities({});
+    setLaunchCourtesyRestock(true);
+    setLaunchNotes("");
     setCapturedPhotos([]);
   };
 
-  // Cálculo em tempo real das 3 Colunas da Divergência
-  const discrepancyCalculation = useMemo(() => {
-    if (!divergenciaModalFlat) {
-      return {
-        rows: [],
-        totalDeclaredUnits: 0,
-        totalDeclaredAmount: 0,
-        totalCountedUnits: 0,
-        totalCountedAmount: 0,
-        totalDiffUnits: 0,
-        totalDiffAmount: 0
-      };
-    }
-
-    const declaredMap = divergenciaModalFlat.declaredItemsByProduct || {};
+  // Cálculo em tempo real do Lançamento Diário de Consumo
+  const dailyLaunchCalculation = useMemo(() => {
     const nonCourtesyProducts = products.filter((p) => !p.isCourtesy);
-
-    let totalDeclaredUnits = 0;
-    let totalDeclaredAmount = 0;
-    let totalCountedUnits = 0;
-    let totalCountedAmount = 0;
-    let totalDiffUnits = 0;
-    let totalDiffAmount = 0;
+    let totalUnits = 0;
+    let totalAmount = 0;
 
     const rows = nonCourtesyProducts.map((prod) => {
       const price = Number(prod.price) || 0;
-      const declaredQty = Number(declaredMap[prod.id]) || 0;
-      const countedQty = Number(countedQuantities[prod.id] ?? declaredQty) || 0;
-      const diffQty = Math.max(0, countedQty - declaredQty);
-      const diffAmount = Number((diffQty * price).toFixed(2));
-
-      totalDeclaredUnits += declaredQty;
-      totalDeclaredAmount += declaredQty * price;
-      totalCountedUnits += countedQty;
-      totalCountedAmount += countedQty * price;
-      totalDiffUnits += diffQty;
-      totalDiffAmount += diffAmount;
-
+      const qty = Number(launchedQuantities[prod.id]) || 0;
+      const subtotal = Number((qty * price).toFixed(2));
+      totalUnits += qty;
+      totalAmount += subtotal;
       return {
         product: prod,
-        declaredQty,
-        countedQty,
-        diffQty,
-        diffAmount
+        qty,
+        subtotal
       };
     });
 
     return {
       rows,
-      totalDeclaredUnits,
-      totalDeclaredAmount: Number(totalDeclaredAmount.toFixed(2)),
-      totalCountedUnits,
-      totalCountedAmount: Number(totalCountedAmount.toFixed(2)),
-      totalDiffUnits,
-      totalDiffAmount: Number(totalDiffAmount.toFixed(2))
+      totalUnits,
+      totalAmount: Number(totalAmount.toFixed(2))
     };
-  }, [divergenciaModalFlat, products, countedQuantities]);
+  }, [products, launchedQuantities]);
 
-  // Submit "Conforme" inspection
-  const handleSubmitConforme = async () => {
-    if (!conformeModalFlat) return;
+  // Submit "Sem Consumo / Repor Cortesias"
+  const handleSubmitSemConsumo = async () => {
+    if (!semConsumoModalFlat) return;
     setSubmittingInspection(true);
 
     try {
@@ -505,7 +513,7 @@ export default function AnserveRestockPage() {
 
       const restockedItems: Array<{ productId: string; quantity: number; isCourtesy?: boolean }> = [];
 
-      if (conformeCourtesyRestock) {
+      if (semConsumoCourtesyRestock) {
         const nespresso = products.find((p) => p.id.includes("nespresso") || p.name.toLowerCase().includes("nespresso"));
         if (nespresso) {
           restockedItems.push({ productId: nespresso.id, quantity: 2, isCourtesy: true });
@@ -525,12 +533,14 @@ export default function AnserveRestockPage() {
         headers,
         credentials: "include",
         body: JSON.stringify({
-          flatNumber: conformeModalFlat.flatNumber,
-          reservationCode: conformeModalFlat.currentReservation?.code || "",
+          flatNumber: semConsumoModalFlat.flatNumber,
+          reservationCode: semConsumoModalFlat.currentReservation?.code || "",
           inspectedBy: inspectorName || user?.name || "Repositora Anserve",
           inspectorId: selectedRestockerId || user?.id || undefined,
           status: "conforme",
-          notes: conformeNotes,
+          isDailyLaunch: false,
+          launchDate: getTodayYmdBr(),
+          notes: semConsumoNotes,
           restockedItems
         })
       });
@@ -538,14 +548,14 @@ export default function AnserveRestockPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         toast({
-          title: "Vistoria concluída com sucesso! ✅",
-          description: `Flat ${conformeModalFlat.flatNumber} inspecionado e conforme. Reposição registrada.`
+          title: "Passagem registrada com sucesso! ✅",
+          description: `Flat ${semConsumoModalFlat.flatNumber} conferido sem novo consumo pago.`
         });
-        setConformeModalFlat(null);
+        setSemConsumoModalFlat(null);
         fetchData();
       } else {
         toast({
-          title: "Erro ao registrar vistoria",
+          title: "Erro ao registrar passagem",
           description: data.error || "Tente novamente.",
           variant: "destructive"
         });
@@ -561,30 +571,21 @@ export default function AnserveRestockPage() {
     }
   };
 
-  // Submit "Divergência" inspection (com 3 Colunas em tempo real)
-  const handleSubmitDivergencia = async () => {
-    if (!divergenciaModalFlat) return;
+  // Submit "Lançar Consumo do Dia"
+  const handleSubmitLaunchConsumo = async () => {
+    if (!launchModalFlat) return;
 
-    const missingItemsList = discrepancyCalculation.rows
-      .filter((r) => r.diffQty > 0)
+    const consumedItemsList = dailyLaunchCalculation.rows
+      .filter((r) => r.qty > 0)
       .map((r) => ({
         productId: r.product.id,
-        quantity: r.diffQty,
-        declaredQuantity: r.declaredQty,
-        countedQuantity: r.countedQty
+        quantity: r.qty
       }));
 
-    const countedItemsList = discrepancyCalculation.rows
-      .filter((r) => r.countedQty > 0 || r.declaredQty > 0)
-      .map((r) => ({
-        productId: r.product.id,
-        countedQuantity: r.countedQty
-      }));
-
-    if (missingItemsList.length === 0) {
+    if (consumedItemsList.length === 0) {
       toast({
-        title: "Nenhuma divergência apurada",
-        description: "Na coluna 'Contagem da Repositora', informe uma quantidade consumida maior que a informada pelo hóspede.",
+        title: "Nenhum item selecionado",
+        description: "Selecione a quantidade de ao menos 1 produto consumido hoje para lançar no flat.",
         variant: "destructive"
       });
       return;
@@ -596,17 +597,18 @@ export default function AnserveRestockPage() {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (localToken) headers["x-anserve-token"] = localToken;
 
-      const restockedItems = discrepancyCalculation.rows
-        .filter((r) => r.countedQty > 0)
-        .map((r) => ({
-          productId: r.product.id,
-          quantity: r.countedQty,
+      const restockedItems: Array<{ productId: string; quantity: number; isCourtesy?: boolean }> =
+        consumedItemsList.map((it) => ({
+          productId: it.productId,
+          quantity: it.quantity,
           isCourtesy: false
         }));
 
-      const nespresso = products.find((p) => p.id.includes("nespresso") || p.name.toLowerCase().includes("nespresso"));
-      if (nespresso) {
-        restockedItems.push({ productId: nespresso.id, quantity: 2, isCourtesy: true });
+      if (launchCourtesyRestock) {
+        const nespresso = products.find((p) => p.id.includes("nespresso") || p.name.toLowerCase().includes("nespresso"));
+        if (nespresso) {
+          restockedItems.push({ productId: nespresso.id, quantity: 2, isCourtesy: true });
+        }
       }
 
       const res = await fetch("/api/minibar/inspections", {
@@ -614,15 +616,16 @@ export default function AnserveRestockPage() {
         headers,
         credentials: "include",
         body: JSON.stringify({
-          flatNumber: divergenciaModalFlat.flatNumber,
-          reservationCode: divergenciaModalFlat.currentReservation?.code || "",
+          flatNumber: launchModalFlat.flatNumber,
+          reservationCode: launchModalFlat.currentReservation?.code || "",
           inspectedBy: inspectorName || user?.name || "Repositora Anserve",
           inspectorId: selectedRestockerId || user?.id || undefined,
-          status: "divergencia",
-          countedItems: countedItemsList,
-          missingItems: missingItemsList,
+          status: "lancamento_diario",
+          isDailyLaunch: true,
+          launchDate: launchDateYmd || getTodayYmdBr(),
+          consumedItems: consumedItemsList,
           photos: capturedPhotos,
-          notes: divergenceNotes,
+          notes: launchNotes,
           restockedItems
         })
       });
@@ -630,14 +633,16 @@ export default function AnserveRestockPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         toast({
-          title: "Divergência registrada e enviada ao(s) hóspede(s)! ⚠️",
-          description: `Cobrança de R$ ${Number(data.inspection?.discrepancyTotalAmount || discrepancyCalculation.totalDiffAmount).toFixed(2)} enviada com link de baixa automática.`
+          title: `Consumo do dia ${formatYmdToBr(launchDateYmd)} lançado! ✅`,
+          description: launchModalFlat.isCheckedOut
+            ? `R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)} lançado pós-checkout e link enviado ao WhatsApp do hóspede!`
+            : `R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)} adicionado ao extrato do Flat ${launchModalFlat.flatNumber}.`
         });
-        setDivergenciaModalFlat(null);
+        setLaunchModalFlat(null);
         fetchData();
       } else {
         toast({
-          title: "Erro ao registrar divergência",
+          title: "Erro ao lançar consumo",
           description: data.error || "Tente novamente.",
           variant: "destructive"
         });
@@ -664,16 +669,16 @@ export default function AnserveRestockPage() {
 
           <h1 className="text-xl font-black text-center text-white">Portal da Repositora</h1>
           <p className="text-xs text-slate-400 text-center mt-1 mb-4">
-            CorpFlats Soho Residence & Anserve. Selecione seu nome ou digite seu PIN de 4 dígitos.
+            CorpFlats Soho Residence & Anserve. Selecione seu nome e digite seu PIN de 4 dígitos.
           </p>
 
-          {/* Seletor de Funcionária (exibe as repositoras cadastradas na Equipe Anserve) */}
+          {/* Seletor de Funcionária */}
           {restockersList.length > 0 && (
             <div className="w-full mb-5 bg-slate-950/70 border border-slate-800 rounded-2xl p-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5 text-sky-400" />
-                  Qual repositora está conferindo?
+                  Qual repositora está trabalhando hoje?
                 </span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/25">
                   {restockersList.length} {restockersList.length === 1 ? "cadastrada" : "cadastradas"}
@@ -719,11 +724,9 @@ export default function AnserveRestockPage() {
                 })}
               </div>
 
-              {restockersList.length === 1 && (
-                <p className="text-[10px] text-slate-500 mt-2 leading-snug">
-                  💡 Quando o Gestor Anserve cadastrar mais funcionárias na aba Equipe, todas aparecerão aqui para seleção (ou serão identificadas automaticamente pelo PIN individual de cada uma).
-                </p>
-              )}
+              <p className="text-[10px] text-slate-400 mt-2 leading-snug">
+                📲 Ao fazer o 1º login do dia, o resumo de check-outs de hoje é enviado automaticamente para o WhatsApp de Trabalho das Repositoras!
+              </p>
             </div>
           )}
 
@@ -786,12 +789,6 @@ export default function AnserveRestockPage() {
               ⌫
             </button>
           </div>
-
-          <div className="mt-2 text-center">
-            <span className="text-[11px] text-slate-500">
-              Caso não saiba o PIN, solicite à supervisão Anserve.
-            </span>
-          </div>
         </div>
       </div>
     );
@@ -809,7 +806,7 @@ export default function AnserveRestockPage() {
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-lg md:text-xl font-black text-foreground">
-                  Portal da Repositora Anserve
+                  Lançamento Diário & Reposição — Anserve
                 </h1>
                 <Badge className="bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30 text-[10px] font-bold">
                   19 Flats Soho
@@ -819,7 +816,7 @@ export default function AnserveRestockPage() {
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Conferência comparativa em 3 colunas (Informado × Contagem × Divergência) e baixa automática no pagamento.
+                Lance diariamente os itens consumidos em cada flat. O hóspede acompanha por dia no portal e paga após o check-out.
               </p>
             </div>
           </div>
@@ -830,7 +827,6 @@ export default function AnserveRestockPage() {
               size="sm"
               onClick={handleSwitchRestocker}
               className="rounded-xl text-xs font-bold h-9 border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
-              title="Trocar de funcionária ou voltar para a tela de PIN"
             >
               <Users className="w-3.5 h-3.5 mr-1.5" />
               Trocar Repositora / PIN
@@ -848,7 +844,73 @@ export default function AnserveRestockPage() {
           </div>
         </div>
 
-        {/* Filter Pills & Stats */}
+        {/* Painel Ao Vivo: Resumo de Check-outs de Hoje (Mesmo Resumo Enviado ao WhatsApp de Trabalho) */}
+        {checkoutSummary && (
+          <Card className="rounded-3xl border-border bg-card p-4 sm:p-5 space-y-3 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-sky-500" />
+                <h2 className="text-xs sm:text-sm font-black text-foreground">
+                  Resumo de Check-outs de Hoje ({formatYmdToBr(checkoutSummary.todayStr)})
+                </h2>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-bold">
+                  ✅ Já saíram: {checkoutSummary.doneCount}
+                </Badge>
+                <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px] font-bold">
+                  ⏳ Faltam sair hoje: {checkoutSummary.pendingCount}
+                </Badge>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <div className="p-3 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-1.5">
+                <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-300 block">
+                  ✅ Flats que JÁ fizeram check-out hoje ({checkoutSummary.doneCount}):
+                </span>
+                {checkoutSummary.doneCheckouts.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">Nenhum check-out concluído até o momento.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {checkoutSummary.doneCheckouts.map((c) => (
+                      <span
+                        key={`${c.flatNumber}-${c.reservationCode}`}
+                        className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-bold text-emerald-800 dark:text-emerald-200"
+                      >
+                        Flat {c.flatNumber} • às {c.checkoutTime} ({c.guestName.split(" ")[0]})
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-1.5">
+                <span className="text-[11px] font-black text-amber-700 dark:text-amber-300 block">
+                  ⏳ Flats que FALTAM fazer check-out hoje ({checkoutSummary.pendingCount}):
+                </span>
+                {checkoutSummary.pendingCheckouts.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    Todos os check-outs previstos para hoje já foram concluídos!
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {checkoutSummary.pendingCheckouts.map((c) => (
+                      <span
+                        key={`${c.flatNumber}-${c.reservationCode}`}
+                        className="px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-[11px] font-bold text-amber-800 dark:text-amber-200"
+                      >
+                        Flat {c.flatNumber} ({c.guestName.split(" ")[0]})
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Filter Pills & Search */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1.5">
             <Button
@@ -896,26 +958,6 @@ export default function AnserveRestockPage() {
           </div>
         </div>
 
-        {/* Priority Banner for Checkouts Today */}
-        {stats.checkoutHoje > 0 && statusFilter !== "checkout_hoje" && (
-          <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-2xl flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-red-600 dark:text-red-400">
-              <AlertTriangle className="w-4 h-4 shrink-0 animate-bounce" />
-              <span>
-                Atenção: Existem <strong>{stats.checkoutHoje} flats com checkout previsto para hoje</strong> que exigem vistoria prioritária!
-              </span>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setStatusFilter("checkout_hoje")}
-              className="rounded-xl text-[11px] font-bold h-7 bg-card shrink-0"
-            >
-              Ver Checkouts
-            </Button>
-          </div>
-        )}
-
         {/* Flats Grid */}
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -935,13 +977,17 @@ export default function AnserveRestockPage() {
               const isCheckout = flat.status === "checkout_hoje";
               const isOcupado = flat.status === "ocupado";
               const isLivre = flat.status === "livre";
-              const declaredEntries = Object.entries(flat.declaredItemsByProduct || {}).filter(([_, q]) => Number(q) > 0);
+              const dailyGroups = Array.isArray(flat.dailyLaunches) ? flat.dailyLaunches : [];
+              const pendingVal = Number(flat.pendingBalance) || 0;
+              const paidVal = Number(flat.totalPaidAmount || flat.declaredAmount) || 0;
 
               return (
                 <Card
                   key={flat.flatNumber}
                   className={`rounded-3xl border transition-all duration-200 overflow-hidden ${
-                    isCheckout
+                    flat.isCheckedOut
+                      ? "border-emerald-500/40 bg-emerald-500/5"
+                      : isCheckout
                       ? "border-red-500/40 bg-red-500/5 shadow-md shadow-red-500/5"
                       : isOcupado
                       ? "border-blue-500/20 bg-card hover:border-blue-500/40"
@@ -954,34 +1000,43 @@ export default function AnserveRestockPage() {
                         <span className="text-base font-black text-foreground">
                           Flat {flat.flatNumber}
                         </span>
-                        {isCheckout && (
-                          <Badge className="bg-red-600 text-white border-none text-[10px] font-black uppercase tracking-wider animate-pulse">
-                            Check-out Hoje
+                        {flat.isCheckedOut ? (
+                          <Badge className="bg-emerald-600 text-white border-none text-[10px] font-black">
+                            ✓ Saiu {flat.checkoutTime ? `às ${flat.checkoutTime}` : "Hoje"}
                           </Badge>
-                        )}
-                        {isOcupado && (
+                        ) : isCheckout ? (
+                          <Badge className="bg-red-600 text-white border-none text-[10px] font-black uppercase tracking-wider animate-pulse">
+                            Saída Hoje
+                          </Badge>
+                        ) : isOcupado ? (
                           <Badge className="bg-blue-600/10 text-blue-700 dark:text-blue-300 border-blue-500/20 text-[10px] font-bold">
                             Ocupado
                           </Badge>
-                        )}
-                        {isLivre && (
+                        ) : (
                           <Badge className="bg-emerald-600/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 text-[10px] font-bold">
                             Livre / Vago
                           </Badge>
                         )}
                       </div>
 
-                      {flat.declaredAmount > 0 && (
-                        <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[11px] font-black shrink-0">
-                          R$ {flat.declaredAmount.toFixed(2)} Pago
-                        </Badge>
-                      )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {paidVal > 0 && (
+                          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-black">
+                            R$ {paidVal.toFixed(2)} Pago
+                          </Badge>
+                        )}
+                        {pendingVal > 0 && (
+                          <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px] font-black">
+                            R$ {pendingVal.toFixed(2)} A pagar
+                          </Badge>
+                        )}
+                      </div>
                     </div>
 
                     {flat.currentReservation ? (
                       <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="font-bold text-foreground truncate max-w-[160px]">
+                          <span className="font-bold text-foreground truncate max-w-[165px]">
                             {flat.currentReservation.guestName}
                           </span>
                           {(flat.currentReservation.numGuests || 1) > 1 && (
@@ -999,86 +1054,85 @@ export default function AnserveRestockPage() {
                   </CardHeader>
 
                   <CardContent className="p-4 pt-2 space-y-3">
-                    {/* Consumo Informado pelo Hóspede + Status de Divergência */}
-                    <div className="p-3 rounded-2xl bg-muted/40 border border-border text-xs space-y-1.5">
+                    {/* Lançamentos Diários Registrados no Flat */}
+                    <div className="p-3 rounded-2xl bg-muted/40 border border-border text-xs space-y-2">
                       <div className="flex items-center justify-between text-[11px]">
-                        <span className="text-muted-foreground font-medium">Informado pelo hóspede:</span>
-                        {declaredEntries.length > 0 ? (
-                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                            {declaredEntries.reduce((acc, [_, q]) => acc + Number(q), 0)} un. declaradas
+                        <span className="text-muted-foreground font-bold flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-sky-500" />
+                          Consumo lançado na estadia:
+                        </span>
+                        {dailyGroups.length > 0 ? (
+                          <span className="font-black text-foreground">
+                            R$ {Number(flat.totalLaunchedAmount || 0).toFixed(2)}
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">Nenhum item informado</span>
+                          <span className="text-muted-foreground">Nenhum lançamento</span>
                         )}
                       </div>
 
-                      {declaredEntries.length > 0 && (
-                        <div className="flex flex-wrap gap-1 pt-0.5">
-                          {declaredEntries.map(([prodId, qty]) => {
-                            const p = products.find((x) => x.id === prodId);
-                            return (
-                              <span
-                                key={prodId}
-                                className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-700 dark:text-emerald-300"
-                              >
-                                {qty}x {p?.name || prodId}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {flat.pendingDiscrepancyOrder && (
-                        <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-between text-[11px] text-amber-700 dark:text-amber-300 mt-1">
-                          <span className="font-bold">⏳ Divergência Pendente:</span>
-                          <span className="font-black">R$ {Number(flat.pendingDiscrepancyOrder.totalAmount).toFixed(2)}</span>
+                      {dailyGroups.length > 0 && (
+                        <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                          {dailyGroups.map((g) => (
+                            <div
+                              key={g.dateYmd}
+                              className="p-2 rounded-xl bg-background/80 border border-border/80 space-y-1"
+                            >
+                              <div className="flex items-center justify-between text-[10px] font-black text-sky-600 dark:text-sky-400">
+                                <span>📅 Dia {g.dateBr}</span>
+                                <span>R$ {g.totalDayAmount.toFixed(2)}</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {g.items.map((it, idx) => (
+                                  <span
+                                    key={`${it.orderId}-${it.productId}-${idx}`}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                      it.paymentStatus === "pago"
+                                        ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                                        : "bg-amber-500/15 text-amber-800 dark:text-amber-300"
+                                    }`}
+                                  >
+                                    {it.quantity}x {it.productName}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
 
                       {flat.lastInspection && (
                         <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/50">
-                          <span className="text-muted-foreground">Última vistoria:</span>
-                          <span
-                            className={`font-bold ${
-                              flat.lastInspection.status === "conforme" || flat.lastInspection.discrepancyPaid
-                                ? "text-emerald-600"
-                                : "text-amber-600"
-                            }`}
-                          >
-                            {flat.lastInspection.status === "conforme"
-                              ? "✅ Conforme"
-                              : flat.lastInspection.discrepancyPaid
-                              ? "✅ Divergência Quitada"
-                              : "⚠️ Divergência"} (
-                            {new Date(flat.lastInspection.inspectedAt).toLocaleDateString("pt-BR", {
-                              day: "2-digit",
-                              month: "2-digit"
-                            })}
-                            )
+                          <span className="text-muted-foreground">Última passagem:</span>
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                            ✓ {flat.lastInspection.launchDateBr ||
+                              new Date(flat.lastInspection.inspectedAt).toLocaleDateString("pt-BR", {
+                                day: "2-digit",
+                                month: "2-digit"
+                              })}
                           </span>
                         </div>
                       )}
                     </div>
 
-                    {/* Action Buttons for Repositora */}
+                    {/* Botões de Ação da Repositora */}
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <Button
                         size="sm"
-                        onClick={() => handleOpenConforme(flat)}
-                        className="rounded-2xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white h-9 shadow-xs"
+                        onClick={() => handleOpenLaunchConsumo(flat)}
+                        className="rounded-2xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white h-9 shadow-xs"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                        Conforme
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        Lançar Consumo
                       </Button>
 
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => handleOpenDivergencia(flat)}
-                        className="rounded-2xl text-xs font-bold border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 h-9"
+                        onClick={() => handleOpenSemConsumo(flat)}
+                        className="rounded-2xl text-xs font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-9"
                       >
-                        <AlertTriangle className="w-3.5 h-3.5 mr-1" />
-                        Divergência
+                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                        Sem Consumo
                       </Button>
                     </div>
                   </CardContent>
@@ -1088,29 +1142,22 @@ export default function AnserveRestockPage() {
           </div>
         )}
 
-        {/* Modal: Confirmar Vistoria Conforme */}
-        <Dialog open={Boolean(conformeModalFlat)} onOpenChange={() => setConformeModalFlat(null)}>
+        {/* Modal 1: Registrar Passagem Sem Consumo Pago / Repor Cortesias */}
+        <Dialog open={Boolean(semConsumoModalFlat)} onOpenChange={() => setSemConsumoModalFlat(null)}>
           <DialogContent className="sm:max-w-md rounded-3xl p-6">
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                <span>Confirmar Conformidade — Flat {conformeModalFlat?.flatNumber}</span>
+                <span>Passagem Sem Consumo — Flat {semConsumoModalFlat?.flatNumber}</span>
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Atesta que os itens consumidos conferem exatamente com o declarado pelo hóspede e repõe o estoque nominal.
+                Registra que você conferiu o frigobar hoje e não houve novo consumo de itens pagos.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4 py-2 text-xs">
-              <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300 space-y-1">
-                <div className="font-bold">Sem divergência apurada!</div>
-                <div className="text-[11px]">
-                  O consumo confere com os pagamentos registrados. Ao confirmar, o sistema registrará a reposição dos itens pagos e das cortesias gratuitas.
-                </div>
-              </div>
-
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold">Responsável pela Vistoria</Label>
+                <Label className="text-xs font-bold">Responsável pela Conferência</Label>
                 <Input
                   value={inspectorName}
                   onChange={(e) => setInspectorName(e.target.value)}
@@ -1119,29 +1166,27 @@ export default function AnserveRestockPage() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between p-3 rounded-2xl bg-muted/40 border border-border">
-                  <div className="space-y-0.5">
-                    <span className="font-bold text-foreground">Repor Kit de Cortesias de Boas-Vindas</span>
-                    <p className="text-[11px] text-muted-foreground">
-                      2 Cápsulas Nespresso + Balas + Amendoim (Crédito CorpFlats ↔ Anserve).
-                    </p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={conformeCourtesyRestock}
-                    onChange={(e) => setConformeCourtesyRestock(e.target.checked)}
-                    className="w-4 h-4 accent-primary rounded"
-                  />
+              <div className="flex items-center justify-between p-3 rounded-2xl bg-muted/40 border border-border">
+                <div className="space-y-0.5">
+                  <span className="font-bold text-foreground">Repor Kit de Cortesias de Boas-Vindas</span>
+                  <p className="text-[11px] text-muted-foreground">
+                    2 Cápsulas Nespresso + Balas + Amendoim (Crédito CorpFlats ↔ Anserve).
+                  </p>
                 </div>
+                <input
+                  type="checkbox"
+                  checked={semConsumoCourtesyRestock}
+                  onChange={(e) => setSemConsumoCourtesyRestock(e.target.checked)}
+                  className="w-4 h-4 accent-primary rounded"
+                />
               </div>
 
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold">Observações (Opcional)</Label>
                 <Textarea
-                  placeholder="Ex: Frigobar limpo, gelando perfeitamente e 100% abastecido."
-                  value={conformeNotes}
-                  onChange={(e) => setConformeNotes(e.target.checked ? e.target.value : e.target.value)}
+                  placeholder="Ex: Frigobar conferido e abastecido."
+                  value={semConsumoNotes}
+                  onChange={(e) => setSemConsumoNotes(e.target.value)}
                   className="text-xs rounded-2xl resize-none min-h-[60px]"
                 />
               </div>
@@ -1150,201 +1195,165 @@ export default function AnserveRestockPage() {
             <DialogFooter className="pt-2">
               <Button
                 variant="outline"
-                onClick={() => setConformeModalFlat(null)}
+                onClick={() => setSemConsumoModalFlat(null)}
                 className="rounded-xl text-xs font-bold"
               >
                 Cancelar
               </Button>
               <Button
                 disabled={submittingInspection}
-                onClick={handleSubmitConforme}
+                onClick={handleSubmitSemConsumo}
                 className="rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
               >
-                {submittingInspection ? "Registrando..." : "Confirmar e Repor"}
+                {submittingInspection ? "Registrando..." : "Confirmar Passagem"}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
-        {/* Modal: Apontar Divergência com 3 Colunas em Tempo Real */}
-        <Dialog open={Boolean(divergenciaModalFlat)} onOpenChange={() => setDivergenciaModalFlat(null)}>
-          <DialogContent className="sm:max-w-2xl max-h-[92vh] overflow-y-auto rounded-3xl p-4 sm:p-6">
+        {/* Modal 2: Lançar Consumo do Dia & Reposição */}
+        <Dialog open={Boolean(launchModalFlat)} onOpenChange={() => setLaunchModalFlat(null)}>
+          <DialogContent className="sm:max-w-xl max-h-[92vh] overflow-y-auto rounded-3xl p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle className="text-base font-black flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-amber-600" />
-                <span>Conferência de Divergência — Flat {divergenciaModalFlat?.flatNumber}</span>
+                <Plus className="w-5 h-5 text-sky-600" />
+                <span>Lançar Consumo do Dia — Flat {launchModalFlat?.flatNumber}</span>
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Compare o <strong>Consumo Informado pelo Hóspede (Coluna 1)</strong> com a <strong>Contagem da Repositora (Coluna 2)</strong>. O sistema calcula a <strong>Divergência e o Valor em Tempo Real (Coluna 3)</strong>.
+                Selecione abaixo a quantidade consumida hoje em cada item. O lançamento fica visível para o hóspede com a <strong>data do dia</strong> (sem hora) e pronto para pagamento no check-out.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4 py-1">
-              {divergenciaModalFlat?.currentReservation && (
-                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200 text-xs flex flex-wrap items-center justify-between gap-2">
+              {launchModalFlat?.currentReservation && (
+                <div className="p-3 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-xs flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <span className="font-bold">Hóspede: {divergenciaModalFlat.currentReservation.guestName}</span>
-                    <span className="text-[11px] block opacity-85">
-                      Reserva {divergenciaModalFlat.currentReservation.code} • Ao confirmar, o link de pagamento é enviado no WhatsApp e dá baixa sozinho ao pagar.
+                    <span className="font-bold text-foreground block">
+                      Hóspede: {launchModalFlat.currentReservation.guestName} ({launchModalFlat.currentReservation.code})
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {launchModalFlat.isCheckedOut
+                        ? "✅ Hóspede já fez check-out: ao salvar, a Sofia enviará automaticamente o link no WhatsApp para ele pagar!"
+                        : "🏠 Hóspede no flat: os itens ficarão registrados no extrato do dia e liberados para pagamento no check-out."}
                     </span>
                   </div>
-                  {(divergenciaModalFlat.currentReservation.numGuests || 1) >= 2 && (
-                    <Badge className="bg-amber-600 text-white text-[10px]">
-                      👥 {divergenciaModalFlat.currentReservation.numGuests} hóspedes (qualquer um pode pagar)
-                    </Badge>
-                  )}
                 </div>
               )}
 
-              {/* Tabela de 3 Colunas em Tempo Real (100% Otimizada para Mobile sem sobreposição) */}
-              <div className="border border-border rounded-2xl overflow-hidden bg-card">
-                {/* Cabeçalho Fixo das 3 Colunas */}
-                <div className="grid grid-cols-3 gap-2 bg-muted/80 border-b border-border px-3 py-2 text-[10px] font-black uppercase tracking-tight text-muted-foreground text-center">
-                  <div className="bg-background/60 rounded-lg py-1 px-1 border border-border/50">
-                    1. Informado
-                    <span className="block text-[9px] font-semibold normal-case opacity-80">Pelo Hóspede</span>
-                  </div>
-                  <div className="bg-background/60 rounded-lg py-1 px-1 border border-border/50">
-                    2. Contagem
-                    <span className="block text-[9px] font-semibold normal-case opacity-80">Da Repositora</span>
-                  </div>
-                  <div className="bg-background/60 rounded-lg py-1 px-1 border border-border/50">
-                    3. Divergência
-                    <span className="block text-[9px] font-semibold normal-case opacity-80">Tempo Real (R$)</span>
+              {/* Seletor de Data do Lançamento (Dia) */}
+              <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-muted/50 border border-border">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-sky-500" />
+                  <div>
+                    <Label className="text-xs font-bold block">Data do Lançamento (Dia)</Label>
+                    <span className="text-[10px] text-muted-foreground">
+                      Aparecerá para o hóspede como Dia {formatYmdToBr(launchDateYmd)}
+                    </span>
                   </div>
                 </div>
+                <Input
+                  type="date"
+                  value={launchDateYmd}
+                  onChange={(e) => setLaunchDateYmd(e.target.value)}
+                  className="w-40 h-9 text-xs font-bold rounded-xl"
+                />
+              </div>
 
-                {/* Lista de Produtos com Nome Completo + 3 Colunas Alinhadas */}
+              {/* Lista de Produtos para Lançar Quantidade Consumida no Dia */}
+              <div className="border border-border rounded-2xl overflow-hidden bg-card">
                 <div className="divide-y divide-border max-h-[42vh] overflow-y-auto">
-                  {discrepancyCalculation.rows.map(({ product: prod, declaredQty, countedQty, diffQty, diffAmount }) => (
+                  {dailyLaunchCalculation.rows.map(({ product: prod, qty, subtotal }) => (
                     <div
                       key={prod.id}
-                      className={`p-3 space-y-2 transition-colors ${
-                        diffQty > 0 ? "bg-amber-500/10" : "bg-card"
+                      className={`p-3 flex items-center justify-between gap-3 transition-colors ${
+                        qty > 0 ? "bg-sky-500/10" : "bg-card"
                       }`}
                     >
-                      {/* Linha 1: Nome completo do produto (sem cortar) + Preço e Padrão */}
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-xs sm:text-sm text-foreground leading-snug">
+                      <div className="min-w-0 flex-1">
+                        <span className="font-bold text-xs sm:text-sm text-foreground block truncate">
                           {prod.name}
                         </span>
-                        <span className="text-[10px] font-semibold text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-md shrink-0">
-                          R$ {Number(prod.price).toFixed(2)} • Padrão: {prod.defaultQuantity ?? 2}
+                        <span className="text-[11px] text-muted-foreground">
+                          R$ {Number(prod.price).toFixed(2)} un. • Padrão no flat: <strong>{prod.defaultQuantity ?? 2} un.</strong>
                         </span>
                       </div>
 
-                      {/* Linha 2: As 3 Colunas Lado a Lado com Espaçamento Limpo */}
-                      <div className="grid grid-cols-3 gap-2 items-center">
-                        {/* Coluna 1: Consumo Informado pelo Hóspede */}
-                        <div
-                          className={`h-9 rounded-xl border flex flex-col items-center justify-center px-2 ${
-                            declaredQty > 0
-                              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
-                              : "bg-muted/40 border-border/60 text-muted-foreground"
-                          }`}
-                        >
-                          <span className="text-xs font-black leading-none">{declaredQty} un.</span>
-                          <span className="text-[9px] opacity-75 mt-0.5">Informado</span>
-                        </div>
-
-                        {/* Coluna 2: Contagem da Repositora */}
-                        <div className="h-9 rounded-xl bg-background border border-border flex items-center justify-between px-1 shadow-2xs">
-                          <button
-                            type="button"
-                            disabled={countedQty <= 0}
-                            onClick={() =>
-                              setCountedQuantities((prev) => ({
-                                ...prev,
-                                [prod.id]: Math.max(0, countedQty - 1)
-                              }))
-                            }
-                            className="w-7 h-7 rounded-lg bg-muted/60 hover:bg-muted active:scale-95 disabled:opacity-30 flex items-center justify-center text-foreground shrink-0"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-
-                          <span className="font-black text-xs sm:text-sm text-foreground text-center min-w-[24px]">
-                            {countedQty}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {qty > 0 && (
+                          <span className="text-xs font-black font-mono text-sky-600 dark:text-sky-400 mr-1">
+                            R$ {subtotal.toFixed(2)}
                           </span>
+                        )}
 
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setCountedQuantities((prev) => ({
-                                ...prev,
-                                [prod.id]: countedQty + 1
-                              }))
-                            }
-                            className="w-7 h-7 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 active:scale-95 flex items-center justify-center font-bold shrink-0"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        {/* Coluna 3: Divergência em Tempo Real */}
-                        <div
-                          className={`h-9 rounded-xl border flex flex-col items-center justify-center px-1.5 ${
-                            diffQty > 0
-                              ? "bg-amber-500/15 border-amber-500/40 text-amber-800 dark:text-amber-300"
-                              : "bg-emerald-500/5 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
-                          }`}
+                        <button
+                          type="button"
+                          disabled={qty <= 0}
+                          onClick={() =>
+                            setLaunchedQuantities((prev) => ({
+                              ...prev,
+                              [prod.id]: Math.max(0, qty - 1)
+                            }))
+                          }
+                          className="w-8 h-8 rounded-xl bg-muted/70 hover:bg-muted active:scale-95 disabled:opacity-30 flex items-center justify-center text-foreground border border-border"
                         >
-                          {diffQty > 0 ? (
-                            <>
-                              <span className="text-[11px] font-black leading-none">
-                                +{diffQty} un.
-                              </span>
-                              <span className="text-[10px] font-black font-mono leading-none mt-0.5">
-                                R$ {diffAmount.toFixed(2)}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="text-[11px] font-bold">OK (0)</span>
-                          )}
-                        </div>
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+
+                        <span className="font-black text-sm text-foreground text-center min-w-[24px]">
+                          {qty}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLaunchedQuantities((prev) => ({
+                              ...prev,
+                              [prod.id]: qty + 1
+                            }))
+                          }
+                          className="w-8 h-8 rounded-xl bg-sky-600 hover:bg-sky-500 text-white active:scale-95 flex items-center justify-center font-bold shadow-xs"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   ))}
                 </div>
 
-                {/* Rodapé com Totais das 3 Colunas em Tempo Real */}
-                <div className="bg-muted/90 border-t border-border p-3 space-y-2">
-                  <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground text-center">
-                    Resumo Total Apurado em Tempo Real
+                {/* Rodapé Total do Dia */}
+                <div className="bg-muted/90 border-t border-border p-3 flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-muted-foreground font-bold block">
+                      Total do Lançamento ({formatYmdToBr(launchDateYmd)}):
+                    </span>
+                    <span className="text-xs font-bold text-foreground">
+                      {dailyLaunchCalculation.totalUnits} {dailyLaunchCalculation.totalUnits === 1 ? "item" : "itens"}
+                    </span>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="bg-card rounded-xl p-2 border border-border">
-                      <span className="text-[9px] text-muted-foreground font-bold block uppercase">1. Informado</span>
-                      <span className="text-xs font-black text-foreground">{discrepancyCalculation.totalDeclaredUnits} un.</span>
-                      <span className="block text-[10px] font-mono text-muted-foreground">
-                        R$ {discrepancyCalculation.totalDeclaredAmount.toFixed(2)}
-                      </span>
-                    </div>
-
-                    <div className="bg-card rounded-xl p-2 border border-border">
-                      <span className="text-[9px] text-muted-foreground font-bold block uppercase">2. Contagem</span>
-                      <span className="text-xs font-black text-foreground">{discrepancyCalculation.totalCountedUnits} un.</span>
-                      <span className="block text-[10px] font-mono text-muted-foreground">
-                        R$ {discrepancyCalculation.totalCountedAmount.toFixed(2)}
-                      </span>
-                    </div>
-
-                    <div className="bg-amber-500/15 rounded-xl p-2 border border-amber-500/40">
-                      <span className="text-[9px] text-amber-800 dark:text-amber-300 font-black block uppercase">
-                        3. Divergência
-                      </span>
-                      <span className="text-xs font-black text-amber-700 dark:text-amber-300">
-                        +{discrepancyCalculation.totalDiffUnits} un.
-                      </span>
-                      <span className="block text-xs font-black font-mono text-amber-700 dark:text-amber-300">
-                        R$ {discrepancyCalculation.totalDiffAmount.toFixed(2)}
-                      </span>
-                    </div>
+                  <div className="text-right">
+                    <span className="text-base font-black font-mono text-sky-600 dark:text-sky-400">
+                      R$ {dailyLaunchCalculation.totalAmount.toFixed(2)}
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {/* Photo Evidence Capture */}
+              {/* Repor Cortesias & Foto Opcional */}
+              <div className="flex items-center justify-between p-3 rounded-2xl bg-muted/40 border border-border text-xs">
+                <div>
+                  <span className="font-bold text-foreground block">Repor Cortesias Consumidas</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Registrar reposição de cápsulas Nespresso / cortesias gratuitas
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={launchCourtesyRestock}
+                  onChange={(e) => setLaunchCourtesyRestock(e.target.checked)}
+                  className="w-4 h-4 accent-primary rounded"
+                />
+              </div>
+
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs font-bold">Foto do Frigobar (Opcional)</Label>
@@ -1356,7 +1365,7 @@ export default function AnserveRestockPage() {
                     className="h-7 text-[11px] rounded-xl font-bold"
                   >
                     <Camera className="w-3.5 h-3.5 mr-1" />
-                    Tirar Foto / Anexar
+                    Tirar Foto
                   </Button>
                 </div>
                 <input
@@ -1373,7 +1382,7 @@ export default function AnserveRestockPage() {
                   <div className="flex items-center gap-2 overflow-x-auto py-1">
                     {capturedPhotos.map((photo, i) => (
                       <div key={i} className="relative w-16 h-16 rounded-xl overflow-hidden border border-border shrink-0">
-                        <img src={photo} alt={`Evidência ${i + 1}`} className="w-full h-full object-cover" />
+                        <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
                         <button
                           type="button"
                           onClick={() => removePhoto(i)}
@@ -1387,13 +1396,12 @@ export default function AnserveRestockPage() {
                 )}
               </div>
 
-              {/* Notes */}
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold">Observações (Opcional)</Label>
                 <Textarea
-                  placeholder="Ex: Contagem realizada na saída do hóspede."
-                  value={divergenceNotes}
-                  onChange={(e) => setDivergenceNotes(e.target.value)}
+                  placeholder="Ex: Reposição diária realizada."
+                  value={launchNotes}
+                  onChange={(e) => setLaunchNotes(e.target.value)}
                   className="text-xs rounded-2xl resize-none min-h-[52px]"
                 />
               </div>
@@ -1402,19 +1410,19 @@ export default function AnserveRestockPage() {
             <DialogFooter className="pt-2 flex flex-col sm:flex-row gap-2">
               <Button
                 variant="outline"
-                onClick={() => setDivergenciaModalFlat(null)}
+                onClick={() => setLaunchModalFlat(null)}
                 className="rounded-xl text-xs font-bold"
               >
                 Cancelar
               </Button>
               <Button
-                disabled={submittingInspection || discrepancyCalculation.totalDiffUnits === 0}
-                onClick={handleSubmitDivergencia}
-                className="rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white"
+                disabled={submittingInspection || dailyLaunchCalculation.totalUnits === 0}
+                onClick={handleSubmitLaunchConsumo}
+                className="rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white"
               >
                 {submittingInspection
-                  ? "Enviando..."
-                  : `Confirmar e Enviar Cobrança (R$ ${discrepancyCalculation.totalDiffAmount.toFixed(2)})`}
+                  ? "Salvando Lançamento..."
+                  : `Salvar Lançamento do Dia (R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)})`}
               </Button>
             </DialogFooter>
           </DialogContent>

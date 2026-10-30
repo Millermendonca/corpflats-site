@@ -1,79 +1,54 @@
-# BRIEFING — 2026-10-14T11:38:00Z
+# BRIEFING — 2026-10-29T17:53:00Z
 
 ## Mission
-Adversarially challenge and stress-test the NFS-e & CRM 360° implementation: anomalous calls to `POST /api/nfse/emit` (nulls, divergent CEP/UF formats, special characters in discrimination), `getFiscalData()` persistence across reboots and repeated queries, corporate check-out auto-emission with and without company address, fast PJ ↔ PF toggle on UI, and dedicated pontual test execution (`node --test tests/nfse-crm-whatsapp-flow.test.mjs`).
+Adversarially challenge and empirically stress-test the Google Contacts sync logic fixes (8-digit suffix isolation, companion phone leakage prevention, contact overwrite guards).
 
 ## 🔒 My Identity
-- Archetype: EMPIRICAL CHALLENGER
+- Archetype: empirical-challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_1
-- Original parent: d9d088c2-767a-4f5a-9d52-d234243c2f9b
-- Milestone: Developer AI Coaching Verification
+- Original parent: 77bac84a-2c7b-483b-8533-2e30a6efd40e
+- Milestone: Adversarial Verification of Google Contacts Sync Fixes
 - Instance: 1 of 1
-- Appended Milestone: Smart Flat Hub Adversarial Verification (Parent: 26335f75-5ae5-4381-97dc-4cdaaa103cfd, Instance 1 of 1)
-- Appended Milestone: NFS-e & CRM Stress/Edge Case Challenge (Parent: 3d03f136-f013-4588-99e3-f22e17cc1ae4, Instance 1 of 1)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code.
-- NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs).
-- Apenas teste estritamente pontual: execute EXCLUSIVAMENTE node --test tests/developer-ai-coaching.test.mjs.
-- Empirical verification required: all bugs must be reproduced empirically.
-- Twin-server parity between scripts/ and artifacts/api-server/.
-- Issue verdict: APPROVE or REQUEST_CHANGES in handoff.md and send message back to parent.
-- Smart Flat Hub Constraint: Execute EXCLUSIVAMENTE node --test tests/smart-flat-hub.test.mjs.
-- NFS-e & CRM Constraint: Execute EXCLUSIVAMENTE node --test tests/nfse-crm-whatsapp-flow.test.mjs (ou testes isolados temporários em memória).
-- Desafiar anomalias em POST /api/nfse/emit, getFiscalData persistence, auto-emissão check-out (empresa com vs sem endereço), e alternância rápida PJ ↔ PF na UI.
+- Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never send WhatsApp messages.
+- Must execute targeted verification code directly (empirical proof, no unverified trust).
+- `.agents/teamwork/` must contain only metadata (no code, tests, or data files).
 
 ## Current Parent
-- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
-- Updated: 2026-10-14T11:38:00Z
+- Conversation ID: 77bac84a-2c7b-483b-8533-2e30a6efd40e
+- Updated: 2026-10-29T17:47:01Z
 
 ## Review Scope
-- **Files to review**: `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `artifacts/api-server/giss-soap.mjs`, `scripts/giss-soap.mjs`, `artifacts/api-server/national-nfse.mjs`, `scripts/national-nfse.mjs`, `artifacts/api-server/chat-service.mjs`, `scripts/chat-service.mjs`, `artifacts/api-server/lookup.mjs`, `scripts/lookup.mjs`, `artifacts/api-server/whatsapp-ai-service.mjs`, `scripts/whatsapp-ai-service.mjs`, `artifacts/api-server/zapi-service.mjs`, `scripts/zapi-service.mjs`, `artifacts/limpeza/src/pages/fiscal-invoices.tsx`, `artifacts/limpeza/src/pages/crm-guests.tsx`, `tests/nfse-crm-whatsapp-flow.test.mjs`.
-- **Interface contracts**: `PROJECT.md` and `ORIGINAL_REQUEST.md`.
+- **Files to review**: `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `tests/google-contacts-sync-fix.test.mjs`.
+- **Interface contracts**: `ORIGINAL_REQUEST.md` (lines 890-930), `AGENTS.md`.
 - **Review criteria**:
-  1. Anomalous inputs to `POST /api/nfse/emit` (null fields, boundary lengths, formatted vs unformatted CEP/UF, special/escaped chars in discrimination).
-  2. Persistence guarantee in `getFiscalData()`: no invoice wiping upon repeated reads, reboot, or state updates.
-  3. Corporate check-out auto-emission: company with full address vs company without address (fallback behaviors).
-  4. Fast toggle PJ ↔ PF in `fiscal-invoices.tsx` (state consistency and tomador field switching).
-  5. Pontual test execution passing (`node --test tests/nfse-crm-whatsapp-flow.test.mjs`).
-  6. Twin-server SHA-256 parity for all 7 twin files.
+  1. 8-digit suffix isolation (prevent collision between numbers sharing 8-digit suffixes with different DDDs).
+  2. Companion phone leakage into `buildGuestCallerIdContactData`.
+  3. Strict blocking of Google Contact overwrite on incompatible name or mismatched CRM_ID.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Anomalous `POST /api/nfse/emit` calls:
-    - Empty/whitespace/null names rejected with HTTP 400: VERIFIED EMPIRICALLY.
-    - Invalid CPF/CNPJ check digits, repeated digits, short digits, alphanumeric, null rejected with HTTP 400: VERIFIED EMPIRICALLY.
-    - Zero/negative/string/null valorServico rejected with HTTP 400: VERIFIED EMPIRICALLY.
-    - Divergent CEP formats normalized to 8 digits / default 28035000: VERIFIED EMPIRICALLY.
-    - Divergent UF formats normalized to uppercase 2 letters / default RJ: VERIFIED EMPIRICALLY.
-    - XML entities, special symbols, quotes, linebreaks, emojis in discrimination safely processed without crashing GISS or ADN: VERIFIED EMPIRICALLY.
-  - `getFiscalData()` persistence:
-    - 20 concurrent calls preserved all invoices without data loss: VERIFIED EMPIRICALLY.
-    - Other fiscal endpoints (/danfse, /settings) preserve invoices: VERIFIED EMPIRICALLY.
-    - Full server reboot with debounced disk flush preserves 100% of invoices (14/14): VERIFIED EMPIRICALLY.
-  - Corporate check-out:
-    - Company with full address sets Tomador PJ with complete address: VERIFIED EMPIRICALLY.
-    - Company without address / null address fields falls back safely without crash: VERIFIED EMPIRICALLY.
-    - Idempotency guard prevents double emission on repeat check-out: VERIFIED EMPIRICALLY.
-  - UI fast PJ ↔ PF toggle:
-    - 100 rapid alternations maintain 100% field consistency, switching between company PJ and guest PF while preserving stay details: VERIFIED EMPIRICALLY.
-- **Vulnerabilities found**:
-  - None critical. Server disk write uses a 300ms debounce timer (`saveDatabase`), meaning hard process termination (`SIGKILL`) within 300ms of mutation would leave disk unflushed; graceful shutdown (`SIGTERM`/`SIGINT`) or normal debounced write flushes completely to disk.
-- **Untested angles**:
-  - Live production mTLS certificate authentication with SEFIN Nacional and GissOnline SOAP (tested against mock/sandbox in `NODE_ENV=test`).
+  - Hypothesis 1: 8-digit suffix isolation could fail across disparate Brazilian DDDs (e.g. RJ 21 vs ES 28 vs SP 11) or with landlines / unformatted raw phone numbers. (Falsified: 2,211 pairwise combinations of all 67 DDDs tested with 0 collisions).
+  - Hypothesis 2: Reservation companions (`r.guests`) could leak into Caller ID payload when primary phone is missing or when companion shares parts of primary guest's name. (Falsified: complete elimination of `r.guests` loop and validation of titular name / other guest ownership prevented all leakage).
+  - Hypothesis 3: Google Contact could be overwritten when `GET /{resourceName}` or `searchContacts` encounters a contact with divergent name or mismatched CRM_ID. (Falsified: PATCH is strictly suppressed, resourceName cleared, and isolated contact created via POST `people:createContact`).
+- **Vulnerabilities found**: None in the updated logic.
+- **Untested angles**: Live Google People API quota limits during massive concurrent batch calls (mocked safely without triggering external side effects).
 
 ## Loaded Skills
-- None specified by orchestrator.
+- None
 
 ## Key Decisions Made
-- Executed strict pontual test `node --test tests/nfse-crm-whatsapp-flow.test.mjs` (24/24 tests passing).
-- Verified twin-server parity SHA-256 match for all 7 files: True.
-- Verified frontend build `npm --prefix artifacts/limpeza run build`: Exit code 0.
-- Executed dedicated isolated stress suite in os.tmpdir(): 100% pass across all 4 challenge dimensions.
+- Authored dedicated adversarial test suite in `tests/challenger-contacts-sync-adversarial.test.mjs`.
+- Executed targeted suite `tests/challenger-contacts-sync-adversarial.test.mjs` (14/14 tests PASS).
+- Executed unit test `tests/google-contacts-sync-fix.test.mjs` (8/8 tests PASS).
+- Verified twin parity `scripts/check-twin-parity.mjs` (36/36 files 100% PASS).
 - Verdict: APPROVE.
 
 ## Artifact Index
-- `handoff.md` — Final 5-component challenge report and APPROVE verdict.
-- `progress.md` — Liveness and progress heartbeat.
-- `DISPATCH.md` — Incoming dispatch messages.
+- `.agents/teamwork/challenger_1/BRIEFING.md` — persistent memory
+- `.agents/teamwork/challenger_1/progress.md` — liveness heartbeat
+- `.agents/teamwork/challenger_1/handoff.md` — final verification report
+- `tests/challenger-contacts-sync-adversarial.test.mjs` — targeted adversarial test harness

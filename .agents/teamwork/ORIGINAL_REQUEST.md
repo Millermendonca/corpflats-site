@@ -887,3 +887,43 @@ Verificar o registro da reserva `RES-113-0524` no banco de dados para assegurar 
 - [ ] No banco de dados, a reserva `RES-113-0524` encontra-se com `totalPrice` de `800.40`, total recebido/pago de `800.40` (2 lançamentos: `650.40` + `150.00`), check-out em `31/10/2026` e status de pagamento quitado.
 - [ ] A mensagem de confirmação de alteração/extensão corrigida (indicando pagamento integral de `R$ 800,40` e sem cobrança PIX) foi enviada com sucesso via WhatsApp ao hóspede da `RES-113-0524`.
 - [ ] Se houve alteração em `artifacts/limpeza/src`, `npm run build` em `artifacts/limpeza` concluiu sem erros e `git status` / `git push` confirmam que todas as alterações foram enviadas ao repositório remoto sem rodar suítes de testes globais.
+
+## 2026-10-29T16:29:13Z
+
+Investigate the root cause of the CRM-to-Google Contacts synchronization bug that merged multiple unrelated guests' phone numbers into single contacts and overwrote contact names, identify all affected contacts, fix the synchronization logic, and automatically restore all corrupted records in both the CRM database and Google Contacts.
+
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Integrity mode: development
+
+## Requirements
+
+### R1. Root Cause Analysis & Synchronization Bug Fix
+Identify the exact mechanism in the CRM-to-Google Contacts synchronization code that caused multiple unrelated guests' phone numbers to be grouped under a single contact and caused guest names to be overwritten by other people's names. Fix the synchronization logic so that each guest and phone number is matched and synced accurately without merging unrelated contacts or overwriting valid names.
+
+### R2. Comprehensive Audit of All Affected Contacts
+Perform a full programmatic audit comparing CRM records (contacts, reservations, guest documents, and chat history) against Google Contacts to identify every contact corrupted by the synchronization bug. This must cover the known reported cases — phone `21976403551` (Roselene, erroneously saved as "Raiza Castro Tavares" with multiple numbers) and phone `28999136926` (Fabiana, erroneously saved as "João Eduardo Leal Correa") — as well as all other affected records. Generate a complete Before/After audit report detailing every impacted contact.
+
+### R3. Automated Data Restoration in CRM & Google Contacts
+Automatically repair all affected records in both the CRM database and Google Contacts. Unmerge improperly grouped phone numbers into their rightful individual contacts and restore the true guest names using authoritative historical data from reservations, guest registrations, and chat history.
+
+### R4. Controlled Execution & Repository Rules
+Strictly follow the workspace's `AGENTS.md` rules:
+- Never run global or batch test suites (`tests/*.test.mjs`) or any script that sends WhatsApp messages to guests.
+- If any files under `artifacts/limpeza/src` are modified, run `npm run build` in `artifacts/limpeza` and include the build output.
+- Commit all code fixes and immediately run `git push` to the remote repository.
+
+## Acceptance Criteria
+
+### Root Cause & Code Fix
+- [ ] The exact root cause in the sync logic is documented with file and line references explaining why unrelated phone numbers were merged and names were overwritten.
+- [ ] The synchronization code is fixed and verified via a safe, non-destructive check (without triggering WhatsApp messages) proving that distinct contacts are no longer merged or renamed erroneously.
+
+### Data Audit & Restoration Verification
+- [ ] Programmatic verification confirms that phone `21976403551` is restored to Roselene in both the CRM database and Google Contacts, separated from unrelated phone numbers.
+- [ ] Programmatic verification confirms that phone `28999136926` is restored to Fabiana in both the CRM database and Google Contacts, separated from unrelated phone numbers.
+- [ ] Programmatic verification across all CRM and Google Contacts records confirms zero remaining contacts where unrelated guests' phone numbers are merged together or where a guest's name remains overwritten by another guest's name due to the sync bug.
+- [ ] A comprehensive Before/After report is produced listing every affected contact ID/phone, the corrupted name and merged numbers before repair, the authoritative name restored, and the verified post-repair status.
+
+### Operational & Git Compliance
+- [ ] Zero WhatsApp messages or global test suites (`tests/*.test.mjs`) were triggered during the work.
+- [ ] All code changes (and frontend build artifacts, if applicable) are committed and pushed to the remote git repository (`git status` is clean and up-to-date with `origin`).

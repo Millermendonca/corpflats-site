@@ -12389,6 +12389,19 @@ export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, 
     });
   }
 
+  // Dispara notificação em tempo real (com resumo atualizado do dia) para o WhatsApp exclusivo de trabalho das Repositoras
+  if (!options.skipRestockerWhatsAppAlert) {
+    await sendRestockerWorkWhatsappCheckoutSummary(db, saveDatabase, {
+      triggerType: "checkout_event",
+      justCheckedOutReservation: reservation,
+      justCheckedOutFlat: reservation.flatNumber,
+      justCheckedOutTime: reservation.actualCheckoutTime || timeStr,
+      actorName: reportedBy
+    }).catch(err => {
+      console.warn("[Restocker Checkout Alert Error]:", err?.message || err);
+    });
+  }
+
   return {
     isEarlyCheckout,
     reportedBy,
@@ -12396,6 +12409,194 @@ export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, 
     effectiveCheckoutDate: reservation.checkoutDate,
     cancelledBreakfastCount
   };
+}
+
+/**
+ * Monta o panorama diário de check-outs para a Equipe de Reposição do Frigobar (Anserve):
+ * - Flats que já efetuaram check-out hoje + horário exato de cada saída
+ * - Quantos check-outs ainda faltam acontecer hoje + lista dos flats pendentes
+ */
+export function buildTodayCheckoutsSummaryForRestockers(db, todayOverride = null) {
+  const nowBrl = getBrasiliaNow();
+  const todayStr = todayOverride || nowBrl.date;
+  const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+  const flats = Array.isArray(db?.flats) ? db.flats : [];
+
+  const resolveFlatNum = (r) => {
+    if (r?.flatNumber) return String(r.flatNumber).trim();
+    const f = flats.find(fl => Number(fl.id) === Number(r?.flatId));
+    return f ? String(f.number).trim() : String(r?.flatId || "");
+  };
+
+  const validReservations = reservations.filter(r => {
+    if (!r) return false;
+    const st = String(r.status || "").toLowerCase().trim();
+    return st !== "cancelada" && st !== "cancelado" && st !== "cancelled" && st !== "no_show" && st !== "pre_reserva" && st !== "pendente" && st !== "expirada";
+  });
+
+  const checkedOutMap = new Map();
+  const pendingMap = new Map();
+
+  for (const r of validReservations) {
+    const flatNum = resolveFlatNum(r);
+    if (!flatNum) continue;
+
+    let actualDateBr = "";
+    let extractedTime = r.actualCheckoutTime || r.earlyCheckoutTime || "";
+    if (r.actualCheckoutAt) {
+      const d = new Date(new Date(r.actualCheckoutAt).getTime() - 3 * 3600000);
+      if (!isNaN(d.getTime())) {
+        actualDateBr = d.toISOString().substring(0, 10);
+        if (!extractedTime) {
+          extractedTime = d.toISOString().substring(11, 16);
+        }
+      }
+    }
+
+    const isScheduledToday = r.checkoutDate === todayStr || r.earlyCheckoutDate === todayStr || actualDateBr === todayStr;
+    if (!isScheduledToday) continue;
+
+    const checkedOut = isReservationOrFlatCheckedOut(db, r, r.flatId, flatNum);
+    if (checkedOut) {
+      checkedOutMap.set(flatNum, {
+        flatNumber: flatNum,
+        checkoutTime: extractedTime || nowBrl.timeStr || "hoje",
+        guestName: (r.guestName || "Hóspede").trim(),
+        reservationCode: r.code || `RES-${r.id}`
+      });
+    } else {
+      pendingMap.set(flatNum, {
+        flatNumber: flatNum,
+        plannedCheckoutTime: r.checkoutTime || db?.settings?.checkoutTime || "12:00",
+        guestName: (r.guestName || "Hóspede").trim(),
+        reservationCode: r.code || `RES-${r.id}`
+      });
+    }
+  }
+
+  // Se algum flat já saiu, remove da lista de pendentes caso houvesse duplicidade
+  for (const flatNum of checkedOutMap.keys()) {
+    pendingMap.delete(flatNum);
+  }
+
+  const checkedOutTodayList = Array.from(checkedOutMap.values()).sort((a, b) =>
+    String(a.checkoutTime || "").localeCompare(String(b.checkoutTime || "")) ||
+    (Number(a.flatNumber) - Number(b.flatNumber))
+  );
+
+  const pendingCheckoutsTodayList = Array.from(pendingMap.values()).sort((a, b) =>
+    Number(a.flatNumber) - Number(b.flatNumber)
+  );
+
+  return {
+    todayStr,
+    todayBr: formatDateBrSimple(todayStr),
+    checkedOutCount: checkedOutTodayList.length,
+    checkedOutTodayList,
+    pendingCount: pendingCheckoutsTodayList.length,
+    pendingCheckoutsTodayList
+  };
+}
+
+/**
+ * Envia o Resumo de Check-outs no 1º Login do Dia ou o Alerta em Tempo Real a cada Check-out
+ * EXCLUSIVAMENTE para o WhatsApp de Trabalho das Repositoras configurado em db.minibarSettings.restockerWorkWhatsapp.
+ */
+export async function sendRestockerWorkWhatsappCheckoutSummary(db, saveDatabase, options = {}) {
+  try {
+    if (!db) return { sent: false, reason: "no_db" };
+    if (!db.minibarSettings) db.minibarSettings = {};
+
+    const rawTargetPhone = options.overridePhone || db.minibarSettings.restockerWorkWhatsapp || "";
+    const workPhone = cleanWhatsAppPhone(rawTargetPhone);
+    if (!workPhone) {
+      return { sent: false, reason: "no_work_whatsapp_configured" };
+    }
+
+    const nowBrl = getBrasiliaNow();
+    const todayStr = options.todayStr || nowBrl.date;
+    const triggerType = options.triggerType || "checkout_event";
+
+    // Controle de 1º login do dia
+    if (triggerType === "first_login") {
+      if (db.minibarSettings.lastRestockerDailySummaryDate === todayStr && !options.force) {
+        return { sent: false, reason: "already_sent_first_login_today" };
+      }
+      db.minibarSettings.lastRestockerDailySummaryDate = todayStr;
+      if (typeof saveDatabase === "function") saveDatabase("restocker_daily_summary_login");
+    }
+
+    // Controle de desduplicação por check-out de reserva no dia
+    const resv = options.justCheckedOutReservation;
+    if (triggerType === "checkout_event" && resv) {
+      if (resv.restockerWorkAlertSentDate === todayStr && !options.force) {
+        return { sent: false, reason: "already_notified_for_reservation_today" };
+      }
+      resv.restockerWorkAlertSentDate = todayStr;
+      resv.restockerWorkAlertSentAt = new Date().toISOString();
+    }
+
+    const summary = buildTodayCheckoutsSummaryForRestockers(db, todayStr);
+    const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
+
+    const checkedOutLines = summary.checkedOutTodayList.length > 0
+      ? summary.checkedOutTodayList
+          .map(item => `• *Flat ${item.flatNumber}* — check-out às *${item.checkoutTime}*`)
+          .join("\n")
+      : "• Nenhum flat realizou check-out até o momento.";
+
+    const pendingFlatsStr = summary.pendingCheckoutsTodayList.length > 0
+      ? summary.pendingCheckoutsTodayList.map(item => `Flat ${item.flatNumber}`).join(", ")
+      : "Nenhum check-out pendente";
+
+    let message = "";
+    if (triggerType === "first_login" || triggerType === "manual_test") {
+      const actorLabel = options.actorName ? ` (Acesso iniciado por *${options.actorName}*)` : "";
+      message =
+        `☀️ *Resumo Diário de Check-outs — Frigobar (${summary.todayBr})*${actorLabel}\n\n` +
+        `✅ *Flats que já fizeram check-out hoje (${summary.checkedOutCount}):*\n` +
+        `${checkedOutLines}\n\n` +
+        `⏳ *Mais ${summary.pendingCount} check-out(s) previsto(s) para hoje:*\n` +
+        `${summary.pendingCount > 0 ? `• *Quais flats:* ${pendingFlatsStr}` : "• Não há mais saídas previstas para hoje."}\n\n` +
+        `🔗 *Painel da Repositora:* ${serverBaseUrl}/frigobar-reposicao`;
+    } else {
+      const flatOut = options.justCheckedOutFlat || resv?.flatNumber || "";
+      const timeOut = options.justCheckedOutTime || resv?.actualCheckoutTime || nowBrl.timeStr;
+      message =
+        `🚪 *Check-out Realizado Agora — Flat ${flatOut}!*\n` +
+        `O *Flat ${flatOut}* acabou de efetuar check-out às *${timeOut}* e já está liberado para vistoria e lançamento do frigobar.\n\n` +
+        `📊 *Resumo Atualizado de Hoje (${summary.todayBr}):*\n\n` +
+        `✅ *Já fizeram check-out (${summary.checkedOutCount}):*\n` +
+        `${checkedOutLines}\n\n` +
+        `⏳ *Faltam sair hoje (${summary.pendingCount}):*\n` +
+        `${summary.pendingCount > 0 ? `• *Quais flats:* ${pendingFlatsStr}` : "• Todos os check-outs previstos para hoje já saíram! 🎉"}\n\n` +
+        `🔗 *Acessar Painel:* ${serverBaseUrl}/frigobar-reposicao`;
+    }
+
+    const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
+    const sendRes = await sendZapiMessage(zapiConfig, {
+      phone: workPhone,
+      message,
+      channelId: "service_providers",
+      recipientRole: "staff",
+      triggerEvent: triggerType === "first_login" ? "restocker_daily_login_summary" : "restocker_checkout_realtime_alert",
+      bypassTestMode: true,
+      db
+    });
+
+    if (typeof saveDatabase === "function") saveDatabase("restocker_whatsapp_summary_sent");
+
+    return {
+      sent: true,
+      phone: workPhone,
+      summary,
+      message,
+      result: sendRes
+    };
+  } catch (err) {
+    console.warn("[sendRestockerWorkWhatsappCheckoutSummary Error]:", err?.message || err);
+    return { sent: false, error: err?.message };
+  }
 }
 
 // ── Disparo Centralizado de Check-out (com Desduplicação Estrita) ─────────────
@@ -12411,6 +12612,14 @@ export async function triggerCheckoutWhatsApp(dbOrGetter, saveDatabase, reservat
       flatNumber: reservation.flatNumber,
       reason: `Cancelado: check-out realizado (${source})`
     });
+
+    // 0.1 Notifica o WhatsApp Exclusivo de Trabalho das Repositoras (com desduplicação nativa por reserva)
+    sendRestockerWorkWhatsappCheckoutSummary(db, saveDatabase, {
+      triggerType: "checkout_event",
+      justCheckedOutFlat: String(reservation.flatNumber || reservation.flatId || ""),
+      justCheckedOutTime: reservation.actualCheckoutTime || getBrasiliaNow().timeStr,
+      reservation
+    }).catch(err => console.warn("[Restocker Work WhatsApp Checkout Trigger Error]:", err?.message));
 
     const resCode = reservation.code || reservation.reservationCode;
     const resId = reservation.id;

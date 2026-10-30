@@ -1,45 +1,43 @@
-# BRIEFING — 2026-10-29T05:24:00Z
+# BRIEFING — 2026-10-29T19:00:00Z
 
 ## Mission
-Corrigir o cálculo de valor já pago e saldo pendente no fluxo de edição/extensão de reservas com múltiplos pagamentos, atualizar registro da reserva RES-113-0524 no banco de dados e reenviar mensagem WhatsApp de alteração confirmando quitação 100%.
+Investigar e corrigir o bug de sincronização CRM-Google Contacts que mesclou telefones de hóspedes diferentes e sobrescreveu nomes, auditar todos os contatos afetados, desmembrar números e restaurar nomes fidedignos no CRM e no Google Contacts.
 
 ## 🔒 My Identity
 - Archetype: sentinel
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\sentinel
-- Orchestrator: 0dcd32ae-57cd-47f3-b949-a0be1ad0eb02 (swe_light_3, terminated)
-- Victory Auditor: e2e463de-f804-4410-9cbc-457f4da16261 (victory_auditor_16, terminated)
+- Orchestrator: 77bac84a-2c7b-483b-8533-2e30a6efd40e (orchestrator_20, terminated)
+- Victory Auditor: e50ceb60-ba98-43cf-8f5a-e633ff20c296 (victory_auditor_19, terminated)
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
 - Victory Audit is MANDATORY before reporting completion
-- Route: SWE Light (teamwork_preview_swe)
+- Route: General (teamwork_preview_orchestrator)
 - AGENTS.md rules: NUNCA rodar testes globais/varreduras. Apenas teste estritamente pontual do que foi alterado
 - Build de verificação em artifacts/limpeza (npm run build) se houver alteração em src/
 - Sempre git push ao realizar commits
-- Twin-server parity SHA-256 entre scripts/ e artifacts/api-server/
 - Limpeza de crons e subagents ao concluir
 
 ## User Context
-- **Last user request**: Corrigir cálculo de valor pago e saldo pendente na edição/extensão de reservas com múltiplos pagamentos, regularizar RES-113-0524 no banco de dados e reenviar confirmação quitada via WhatsApp.
+- **Last user request**: Investigar causa raiz do bug de sincronização CRM -> Google Contacts, auditar todos os contatos afetados (incluindo Roselene 21976403551 e Fabiana 28999136926), corrigir a sincronização e restaurar os registros no CRM e Google Contacts.
 - **Pending clarifications**: none
-- **Delivered results**: Entregue com 100% de sucesso e verificado de forma independente pelo Victory Auditor com veredito VICTORY CONFIRMED.
+- **Delivered results**: Entregue com 100% de sucesso. Causa raiz solucionada, código blindado contra colisões DDD, todos os registros corrompidos restaurados, Before/After documentado, e verificação independente aprovada com VICTORY CONFIRMED.
 
 ## Project Status
 - **Phase**: complete
-- **Route**: SWE Light (teamwork_preview_swe)
-- **SWE Directory**: .agents/teamwork/swe_light_3
-- **Active Orchestrator ID**: 0dcd32ae-57cd-47f3-b949-a0be1ad0eb02
-- **Victory Auditor ID**: e2e463de-f804-4410-9cbc-457f4da16261
+- **Route**: General (teamwork_preview_orchestrator)
+- **Orchestrator Directory**: .agents/teamwork/orchestrator_20
+- **Active Orchestrator ID**: [terminated]
 
 ## Victory Audit Status
 - **Triggered**: yes
 - **Verdict**: VICTORY CONFIRMED
-- **Retry count**: 0
-- **Auditor Dir**: .agents/teamwork/victory_auditor_16
+- **Retry count**: 1
+- **Auditor Dir**: .agents/teamwork/victory_auditor_19
 
 ## Artifact Index
 - c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md — Authoritative user requirements
 - c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\sentinel\BRIEFING.md — Sentinel persistent briefing
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\swe_light_3\handoff.md — SWE Light Orchestrator handoff
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\victory_auditor_16\handoff.md — Victory Auditor report
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\sentinel\handoff.md — Sentinel final handoff
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_20\handoff.md — Orchestrator final handoff
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\google-contacts-audit-before-after.md — Before/After audit report
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\victory_auditor_19\handoff.md — Victory Auditor report

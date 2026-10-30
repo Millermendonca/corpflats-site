@@ -231,6 +231,97 @@ export default function AnserveDashboardPage() {
   const [retryEmailInput, setRetryEmailInput] = useState("");
   const [retryingInvoice, setRetryingInvoice] = useState(false);
 
+  // WhatsApp Exclusivo de Trabalho das Repositoras & Resumo de Check-outs
+  const [restockerWorkWhatsapp, setRestockerWorkWhatsapp] = useState("");
+  const [savingWorkWhatsapp, setSavingWorkWhatsapp] = useState(false);
+  const [sendingTestSummary, setSendingTestSummary] = useState(false);
+  const [checkoutSummary, setCheckoutSummary] = useState<any | null>(null);
+
+  const fetchMinibarSettings = async () => {
+    try {
+      const res = await fetch("/api/minibar/settings", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setRestockerWorkWhatsapp(data.settings?.restockerWorkWhatsapp || "");
+          if (data.checkoutSummary) {
+            setCheckoutSummary(data.checkoutSummary);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[AnserveDashboard] Erro ao buscar configurações do frigobar:", err);
+    }
+  };
+
+  const handleSaveRestockerWorkWhatsapp = async () => {
+    setSavingWorkWhatsapp(true);
+    try {
+      const res = await fetch("/api/minibar/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          restockerWorkWhatsapp: restockerWorkWhatsapp.trim()
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({
+          title: "WhatsApp de Trabalho salvo! 📱",
+          description: "Os avisos de check-out e o resumo do 1º login do dia serão enviados para este número."
+        });
+      } else {
+        toast({
+          title: "Erro ao salvar WhatsApp",
+          description: data.error || "Tente novamente.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setSavingWorkWhatsapp(false);
+    }
+  };
+
+  const handleSendTestCheckoutSummary = async () => {
+    setSendingTestSummary(true);
+    try {
+      const res = await fetch("/api/minibar/test-checkout-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include"
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (data.checkoutSummary) setCheckoutSummary(data.checkoutSummary);
+        toast({
+          title: "Resumo de Check-outs enviado! ✅",
+          description: "A mensagem foi disparada para o WhatsApp de Trabalho das Repositoras."
+        });
+      } else {
+        toast({
+          title: "Não foi possível enviar",
+          description: data.error || "Cadastre e salve o número do WhatsApp de Trabalho primeiro.",
+          variant: "destructive"
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setSendingTestSummary(false);
+    }
+  };
+
   const fetchDeliveryMonitor = async () => {
     try {
       const res = await fetch("/api/minibar/invoices/delivery-monitor", { credentials: "include" });
@@ -367,7 +458,8 @@ export default function AnserveDashboardPage() {
         fetchSettlement(),
         fetchAnsReports(),
         fetchStaff(),
-        fetchDeliveryMonitor()
+        fetchDeliveryMonitor(),
+        fetchMinibarSettings()
       ]);
     } finally {
       setLoading(false);
@@ -1468,6 +1560,76 @@ export default function AnserveDashboardPage() {
               </Card>
             </div>
 
+            {/* WhatsApp Exclusivo de Trabalho das Repositoras (Avisos de Check-out e Resumo Diário) */}
+            <Card className="rounded-3xl border border-teal-500/30 bg-teal-500/5 p-4 sm:p-5 space-y-4 w-full min-w-0">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Phone className="w-4 h-4 text-teal-600 shrink-0" />
+                    <h4 className="text-xs sm:text-sm font-black text-foreground">
+                      WhatsApp Exclusivo de Trabalho das Repositoras (Avisos de Check-out)
+                    </h4>
+                    <Badge className="bg-teal-600 text-white text-[10px]">Celular de Trabalho</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Cadastre o número do WhatsApp que ficará no celular de trabalho das repositoras. Ao fazerem o <strong>1º login do dia</strong>, elas recebem o resumo dos flats já liberados (com horário) e quantos faltam sair. Além disso, <strong>a cada novo check-out</strong>, este número recebe o alerta imediato + resumo atualizado.
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+                  <Input
+                    placeholder="Ex: 11999999999"
+                    value={restockerWorkWhatsapp}
+                    onChange={e => setRestockerWorkWhatsapp(e.target.value)}
+                    className="h-9 w-full sm:w-48 text-xs font-mono rounded-xl bg-background"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleSaveRestockerWorkWhatsapp}
+                    disabled={savingWorkWhatsapp}
+                    className="h-9 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white"
+                  >
+                    {savingWorkWhatsapp ? "Salvando..." : "Salvar WhatsApp"}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSendTestCheckoutSummary}
+                    disabled={sendingTestSummary || !restockerWorkWhatsapp.trim()}
+                    className="h-9 rounded-xl text-xs font-bold border-teal-500/40 text-teal-700 dark:text-teal-300"
+                  >
+                    <Send className="w-3.5 h-3.5 mr-1.5" />
+                    {sendingTestSummary ? "Enviando..." : "Enviar Resumo Agora"}
+                  </Button>
+                </div>
+              </div>
+
+              {checkoutSummary && (
+                <div className="pt-2 border-t border-teal-500/20 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">
+                    Status de hoje ({checkoutSummary.todayStr}):{" "}
+                    <strong className="text-emerald-600">
+                      {checkoutSummary.doneCount} check-outs já realizados
+                    </strong>{" "}
+                    •{" "}
+                    <strong className="text-amber-600">
+                      {checkoutSummary.pendingCount} previstos aguardando saída
+                    </strong>
+                  </span>
+                  {checkoutSummary.doneCheckouts?.length > 0 && (
+                    <span className="text-[11px] font-mono text-foreground">
+                      Liberados:{" "}
+                      {checkoutSummary.doneCheckouts
+                        .map((c: any) => `Flat ${c.flatNumber} (${c.checkoutTime})`)
+                        .join(", ")}
+                    </span>
+                  )}
+                </div>
+              )}
+            </Card>
+
             {/* Staff & Productivity Table */}
             <Card className="rounded-3xl border border-border overflow-hidden w-full min-w-0">
               <CardHeader className="p-4 border-b border-border bg-card">
@@ -1868,6 +2030,15 @@ export default function AnserveDashboardPage() {
                   />
                 </div>
               </div>
+
+              {!editingStaff && (
+                <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-800 dark:text-emerald-300 space-y-0.5">
+                  <span className="font-bold block">📲 Disparo Automático de Credenciais no WhatsApp</span>
+                  <span>
+                    Ao criar a funcionária com o número de WhatsApp preenchido acima, o sistema envia automaticamente uma mensagem com o link direto de acesso, login (@usuário), senha inicial e PIN!
+                  </span>
+                </div>
+              )}
 
               <div className="flex items-center justify-between p-3 rounded-2xl bg-muted/40 border border-border">
                 <div>

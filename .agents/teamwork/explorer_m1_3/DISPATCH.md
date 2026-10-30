@@ -1,31 +1,22 @@
-## 2026-10-07T16:00:55Z
-You are teamwork_preview_explorer (Explorer M1_3 - Resilient Helper Specialist).
-Your working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_m1_3
-Parent conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
+## 2026-10-29T16:33:33Z
+You are explorer_m1_3, a read-only exploration agent.
+Your working directory is:
+`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_3`
 
-MANDATORY: Read the authoritative request at:
-c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (specifically the latest entry from 2026-10-07T15:33:29Z).
+IMPORTANT REQUIREMENTS & CONSTRAINTS:
+1. First, read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (read lines 890 to 930 for the latest prompt) and `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`.
+2. Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never run any script that sends WhatsApp messages to guests.
+3. You are read-only: do NOT modify source code files.
+4. Update `progress.md` in your working directory as you work with timestamped heartbeats.
 
-Read the Project Plan at:
-c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/orchestrator_2/PROJECT.md
-and backend survey at:
-c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_backend_2/survey_backend.md
+TASK OBJECTIVE:
+Investigate the Google Contacts integration architecture, credentials, and API interaction mechanisms.
+- Check how Google Contacts API (People API) authentication is configured in the environment (tokens, OAuth, service account, env variables).
+- Check existing scripts or utilities that interact with Google Contacts in the repo.
+- Determine how to programmatically query existing Google Contacts to inspect the live state of contacts (e.g. fetch contacts with multiple phone numbers, resourceNames, etags).
+- Determine how to safely update, split, or delete/recreate contacts in Google Contacts without data loss or unintended side effects.
+- Outline the programmatic restoration workflow for Google Contacts API to unmerge numbers and restore genuine guest names.
 
-YOUR MISSION FOR MILESTONE 1 (Feature 3):
-Design the exact specification and implementation plan for the Centralized Helper `getCheckinUrl` and its Resilient Fallback Engine:
-1. Exact helper signature and implementation in `artifacts/api-server/demo-server.mjs` (and mirror `scripts/demo-server.mjs`):
-   - `getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null)`
-   - Provider check: read `db.settings.checkinProvider`. If `'proprio'`, return `${baseUrl}/pre-checkin/${reservation.code || reservation.id}?guest=${guestIndex || 1}`.
-   - If `'gov_fnrh'`:
-     - Check if `reservation.serproPrecheckinUrl` or `reservation.link_precheckin` exists. If so, return it.
-     - If not exists or if registration is needed on the fly: attempt registration with strict 5-second timeout.
-     - If registration succeeds: update reservation with `serproReservaId` and `serproPrecheckinUrl`, save database, and return Gov.br link.
-     - If registration throws or times out (> 5000ms): activate intelligent fallback immediately.
-       - Log audit event: `logAuditEvent("FNRH_SERPRO_FALLBACK", { reservationCode: reservation.code, guestIndex, error: err.message })`.
-       - Create reception notification: `createNotification("alerta", "Falha SERPRO FNRH: Check-in fallback ativado para reserva " + reservation.code, { reservationId: reservation.id })`.
-       - Return internal URL without throwing any error: `${baseUrl}/pre-checkin/${reservation.code || reservation.id}?guest=${guestIndex || 1}`.
-   - Synchronous vs Asynchronous handling: document how `getCheckinUrl` works in both sync template rendering and async routes.
-2. Write your implementation blueprint to:
-   `c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_m1_3/blueprint_fallback_helper.md`
-   and write a complete `handoff.md` in your working directory.
-3. Send a message to parent (0a1ba31b-b6bc-466b-8394-2ba72ae85fb5) when complete. Do NOT write source code or run build commands.
+Deliverables:
+- Write your comprehensive findings to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_3\analysis.md` and `handoff.md`.
+- Send a completion message via `send_message` to parent orchestrator (conversation ID: 77bac84a-2c7b-483b-8533-2e30a6efd40e).

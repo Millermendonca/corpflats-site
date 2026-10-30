@@ -1,107 +1,90 @@
-# Relatório de Handoff — Explorer M1_1 (SERPRO Client Specialist)
+# Handoff Report: Google Contacts Synchronization & Contact Management Exploration
 
 ## 1. Observation
-1. **Ambiente de Execução e Versão do Node.js:**
-   - Comando executado: `node -v`
-   - Saída obtida: `v20.10.0`
-   - O Node.js v20 oferece suporte nativo e estável a `fetch`, `AbortController`, `AbortSignal`, `Buffer` e `crypto` sem necessidade de bibliotecas externas adicionais.
-
-2. **Especificação Oficial da API FNRH SERPRO v2.4.2:**
-   - Localização no repositório de documentação: `C:/Users/mille/.gemini/antigravity/brain/ae277c84-8ece-427a-822e-a46adebdb65c/scratch/api_doc_v2_4_2_full.json`
-   - **Página 3 (URLs Base e Autenticação):**
-     - Homologação: `https://hom-lowcode.serpro.gov.br/FNRH_API/rest/v2`
-     - Produção: `https://fnrh.turismo.serpro.gov.br/FNRH_API/rest/v2`
-     - Autenticação: Basic Authentication (`RFC 7617`), `Authorization: Basic {base64(usuario:senha)}`
-   - **Página 44 (Cabeçalho de Auditoria):**
-     - `cpf_solicitante: <11_digitos_numericos>` obrigatório para rastreabilidade de todas as chamadas.
-   - **Páginas 15–16 (Endpoint de Domínio para Diagnóstico):**
-     - `GET /dominios/reservas/situacoes`
-     - Retorna `{ "dados": [ { "id": "CRIADA", "label": "Criada" }, { "id": "EM_ANDAMENTO", ... }, ... ] }`
-     - Perfeito para health check de baixa latência e consumo mínimo de banda.
-   - **Páginas 20–21 (Endpoint de Criação de Reserva):**
-     - `POST /reservas`
-     - Request body:
-       ```json
-       {
-         "numero_reserva": "RESERVA003",
-         "numero_reserva_ota": "",
-         "data_entrada": "2025-04-10",
-         "data_saida": "2025-04-20",
-         "quantidade_hospede_adulto": 2,
-         "quantidade_hospede_menor": 0,
-         "origem_reserva_id": "MEIOHOSPEDAGEM"
-       }
-       ```
-     - Response body (200 OK):
-       ```json
-       {
-         "reserva": {
-           "reserva_id": "634eecb8-5973-47fd-a8a6-718e3c9d717f",
-           "numero_reserva": "RESERVA003",
-           "situacao_reserva_id": "CRIADA",
-           "origem_reserva_id": "MEIOHOSPEDAGEM",
-           "data_entrada": "2025-04-10",
-           "data_saida": "2025-04-20",
-           "quantidade_hospede_adulto": 2,
-           "quantidade_hospede_menor": 0,
-           "link_precheckin": "https://fnrh.turismo.gov.br/precheckin/634eecb8..."
-         }
-       }
-       ```
-
-3. **Arquitetura de Módulos e Espelhamento no Guest-Flow-Manager:**
-   - Em `artifacts/api-server/demo-server.mjs` (linhas 53–88) e `scripts/demo-server.mjs` (linhas 53–90), as importações ocorrem via caminhos relativos locais (`./...`), por exemplo:
-     `import { generateFnrhPdf, ... } from "./fnrh-pdf-service.mjs";`
-     `import { initWhatsAppEngine, ... } from "./zapi-service.mjs";`
-     `import { getSmtpConfig, ... } from "./mail-service.mjs";`
-   - O projeto mantém paridade byte-a-byte entre os arquivos de serviços em `scripts/` e `artifacts/api-server/`:
-     - `scripts/fnrh-pdf-service.mjs` (21.566 bytes) == `artifacts/api-server/fnrh-pdf-service.mjs` (21.566 bytes)
-     - `scripts/mail-service.mjs` (44.419 bytes) == `artifacts/api-server/mail-service.mjs` (44.419 bytes)
-     - `scripts/zapi-service.mjs` (301.351 bytes) == `artifacts/api-server/zapi-service.mjs` (301.351 bytes)
-
-4. **Ponto de Injeção no Servidor Express:**
-   - Em `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`:
-     - Linhas 10042–10052: `GET /api/settings`
-     - Linhas 10054–10088: `PATCH /api/settings`
-     - Linha 10089: Início da seção seguinte (`/api/sync/...`). Ponto ideal para posicionar `GET /api/fnrh-serpro/status`.
+- **Twin Files Located**:
+  - `artifacts/api-server/demo-server.mjs` (2,637,141 bytes, 61,560 lines)
+  - `scripts/demo-server.mjs` (2,637,141 bytes, 61,560 lines)
+  - `scripts/check-twin-parity.mjs` enforces byte-level SHA-256 parity between these files.
+- **Google Contacts Integration Code**:
+  - Located at lines 33560–34852 of `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+  - Phone expansion logic in `expandBrazilianPhoneVariants` (lines 33593–33674).
+  - Caller ID payload assembly in `buildGuestCallerIdContactData` (lines 33676–33907).
+  - Single guest sync logic in `syncSingleGuestToGoogleContacts` (lines 34039–34235).
+  - Bulk sync endpoint in `POST /api/pms/guests/google-contacts/sync-all` (lines 34508–34798).
+- **Companion and Reservation Phone Aggregation**:
+  - Lines 33750–33762: `buildGuestCallerIdContactData` loops through all reservations and companion slots (`r.guests`), pushing every `rg.phone` into `rawPhonesCandidateList`.
+  - Lines 33993–33995: `personPayload.phoneNumbers` packages all expanded variants of all candidate phones into a single Google Contact payload.
+- **Area-Code-Free Suffix Collisions**:
+  - Lines 34083 & 34103 (`syncSingleGuestToGoogleContacts`):
+    `searchUrl = ... query=${encodeURIComponent(contactData.phoneDigits.slice(-8))}`
+    `pDigits.slice(-8) === contactData.phoneDigits.slice(-8)`
+  - Lines 34569–34571 & 34643 (`sync-all`):
+    `existingByPhoneSuffix.set(digits.slice(-8), entry)`
+    `existingByPhoneSuffix.get(phoneKey8)`
+  - Line 34664:
+    `seenPhonesInBatch.has(phoneKey8)` checks only 8 digits, skipping legitimate distinct guests in other area codes.
+- **Unverified Name Overwriting**:
+  - Lines 34114–34135: `syncSingleGuestToGoogleContacts` fetches `existingPerson` to get `etag`, but never validates whether `existingPerson.names` matches `contactData.fullName` before submitting `names` update to Google People API.
+  - Lines 34553–34554 & 34613: `sync-all` extracts `unstructuredName || givenName`, truncating full names to single first names (e.g. "Raiza", "João") and bypassing compatibility checks if names are empty or structured differently.
+  - Lines 9833–9838 (`mergeGuestRecords`): Overwrites `target.fullName` with `source.fullName` simply if `source.fullName.length > target.fullName.length`.
+- **Database & Incident Records**:
+  - `data/database.json`:
+    - Line 8584: Guest 143 (Roselene) has `phone`: `"21997598289"` and `additionalPhones`: `["21976403551"]`.
+    - Line 28701: Reservation `RES-712-0012` has `guestName`: `"Roselene"`, `guestPhone`: `"21976403551"`.
+    - Line 14150: Guest 359 (Fabiana) has `phone`: `"28999136926"`.
+    - Line 12686: Guest 20 (João Eduardo Leal Correa) had previously accumulated Fabiana's phone and resourceName `people/c5362578501072660427`.
 
 ---
 
 ## 2. Logic Chain
-1. A partir das observações da documentação técnica oficial v2.4.2 (Observação 2), comprovou-se que a API SERPRO FNRH exige Basic Auth em Base64 e o cabeçalho obrigatório `cpf_solicitante`. O endpoint correto para registro de reserva com link de pré-check-in é `POST /reservas` com corpo contendo `origem_reserva_id: 'MEIOHOSPEDAGEM'`.
-2. A resposta do SERPRO encapsula os dados sob a chave raiz `reserva` (`reserva.reserva_id`, `reserva.link_precheckin`, `reserva.situacao_reserva_id`), embora clientes resilientes devam aceitar fallbacks para chaves na raiz (`reserva_id`, `link_precheckin`).
-3. O requisito R3 do `ORIGINAL_REQUEST.md` exige que a resolução de URL ocorra em menos de 5 segundos, acionando o fallback transparente caso a API governamental falhe ou atinja timeout.
-4. Para garantir o limite estrito de 5.000 ms sem deixar sockets pendentes, o cliente utiliza `AbortController` com `clearTimeout` no bloco `finally`, mapeando abortos para erro com código `ETIMEDOUT`.
-5. Devido à convenção de paridade de espelhamento do projeto (Observação 3), o arquivo `fnrh-serpro-service.mjs` deve ser implementado em `scripts/` e mantido espelhado em `artifacts/api-server/`, permitindo que `demo-server.mjs` faça `import { fnrhSerproService } from "./fnrh-serpro-service.mjs";` com idêntico comportamento em ambos os locais.
+1. **Aggregating Companion Phones into Single Payloads**:
+   `buildGuestCallerIdContactData` (lines 33750–33762) does not distinguish between a guest's personal phone and companion phones listed in reservation slots. Every companion number is placed into `rawPhonesCandidateList`. Each phone is expanded into 3 variants by `expandBrazilianPhoneVariants` (lines 33636–33641) and sent as `phoneNumbers` in Google People API.
+   -> **Direct Consequence**: Unrelated companions and guests from past stays are merged into the primary guest's Google Contact.
+
+2. **Matching on 8-Digit Suffixes Without Area Code (DDD)**:
+   In `sync-all` (lines 34569–34571) and `syncSingleGuestToGoogleContacts` (line 34083), phone lookups query and match on `digits.slice(-8)`. Brazilian phone numbers repeat the last 8 digits across different state/city DDDs (e.g. (21) 97640-3551 vs (22) 97640-3551 vs (27) 97640-3551).
+   -> **Direct Consequence**: Contacts in different DDDs collide. Roselene's phone `21976403551` matched an unrelated contact ("Raiza Castro Tavares") whose phone ended in `76403551`, causing Roselene's number to be merged into Raiza's Google Contact.
+
+3. **Overwriting Google Contact Names**:
+   When updating an existing Google Contact, both `syncSingleGuestToGoogleContacts` (lines 34121–34135) and `batchUpdateContacts` (lines 34739–34751) include `names` in `updatePersonFields`/`updateMask`.
+   Neither verifies that the existing Google Contact's full name matches the CRM guest's full name.
+   -> **Direct Consequence**: When Fabiana (Guest 359) was linked to Guest 20's contact (`people/c5362578501072660427`), the contact's name was overwritten to "Fabiana". When João Eduardo was synced, it was overwritten back to "João Eduardo Leal Correa", while retaining Fabiana's phone number.
+
+4. **Name Overwriting in CRM Database**:
+   In `mergeGuestRecords` (lines 9833–9838), any source record with a longer string length replaces `target.fullName`. Combined with `areGuestNamesCompatible` (lines 9769–9786) which treats single-token names as matching any name sharing the first token, distinct people with the same first name (or unlinked reservations) overwrite existing CRM records.
 
 ---
 
 ## 3. Caveats
-- **Credenciais em Produção vs. Homologação:** No ambiente de desenvolvimento atual, o sistema pode não ter credenciais ativas do SERPRO configuradas em `.env`. Por isso, o método `isConfigured()` e o health check foram desenhados para retornar imediatamente `status: 'not_configured'` em vez de tentar requisições que gerariam erros 401 ou timeouts desnecessários.
-- **Formato das Datas:** O SERPRO exige `YYYY-MM-DD`. Reservas do PMS que eventualmente possuam timestamps ISO (ex: `2026-10-10T14:00:00Z`) devem ter as strings fatiadas em `substring(0, 10)` antes do envio.
-- **Não há modificação de código de produção nesta etapa:** Por se tratar de missão de investigação e especificação (Explorer M1_1), nenhum arquivo de código-fonte (`.mjs`, `.ts`) foi alterado ou criado fora de `.agents/teamwork/explorer_m1_1/`.
+- No live calls were made to Google People API during this investigation, as this is a read-only exploration step and network access to live Google OAuth tokens is strictly restricted to runtime execution.
+- The live Google Contacts account may contain legacy contacts created or edited manually outside the CRM; the programmatic audit must compare live Google Contacts against historical reservations, guest documents, and WhatsApp chat history to identify all discrepancies.
+- Strictly adhered to `AGENTS.md`: No global test suites (`tests/*.test.mjs`) were run, and no WhatsApp messages were sent.
 
 ---
 
 ## 4. Conclusion
-A especificação e o blueprint completo para `scripts/fnrh-serpro-service.mjs` foram elaborados e documentados com sucesso em:
-`c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_m1_1/blueprint_serpro_service.md`
+The root cause consists of four interacting flaws in `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`:
+1. **Lines 33750–33762**: Companion phones in reservation slots are indiscriminately collected into `rawPhonesCandidateList` and mapped into `phoneNumbers`.
+2. **Lines 34083, 34103, 34569–34571, 34643, 34664**: Phone lookups use 8-digit suffixes without DDD (`slice(-8)`), causing cross-DDD collision across Brazil.
+3. **Lines 34114–34135 & 34739–34751**: `updateContact` replaces contact `names` without verifying that the existing Google Contact belongs to the guest being synced.
+4. **Lines 9833–9838 & 9857–9862**: `mergeGuestRecords` unconditionally overwrites shorter names with longer names and appends mismatched phones to `additionalPhones`.
 
-O blueprint cobre:
-1. Classe `FnrhSerproClient` e exportação singleton `fnrhSerproService`.
-2. Resolução de credenciais hierárquica (`process.env` > `db.settings.serproConfig` > defaults seguros).
-3. Headers padrão com Basic Auth e `cpf_solicitante`.
-4. Endpoint `POST /reservas` com sanitização completa de dados.
-5. Endpoint de diagnóstico `GET /dominios/reservas/situacoes` via `checkHealth()`.
-6. Timeout fail-safe de 5.000 ms via `AbortController`.
-7. Estratégia de espelhamento e integração em `demo-server.mjs` e `getCheckinUrl`.
+**Fix Strategy**:
+1. Require full E.164 phone numbers (with DDD) for all matching and searching; eliminate all 8-digit suffix lookups.
+2. Verify contact identity and name compatibility before updating any existing Google Contact; if incompatible, clear `resourceName` and create a distinct contact.
+3. Remove companion phone aggregation from `buildGuestCallerIdContactData`.
+4. Deploy an automated restoration routine to unmerge CRM records and Google Contacts, restoring phone `21976403551` to Roselene and phone `28999136926` to Fabiana.
+5. Mirror all changes across both twin files (`artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`) ensuring `scripts/check-twin-parity.mjs` passes.
 
 ---
 
 ## 5. Verification Method
-1. **Inspeção do Blueprint:**
-   - Ler o arquivo `c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_m1_1/blueprint_serpro_service.md` e verificar se todas as seções e códigos propostos atendem aos requisitos da Milestone 1.
-2. **Inspeção da Documentação Oficial do SERPRO:**
-   - Conferir se os endpoints e esquemas batem com `scratch/analyze_fnrh.mjs` e `api_doc_v2_4_2_full.json`.
-3. **Verificação de Regras do Projeto:**
-   - Confirmar que nenhuma modificação de código fonte foi feita em `scripts/` ou `artifacts/api-server/` durante esta fase de investigação.
+1. **Twin Parity Verification**:
+   Execute `node scripts/check-twin-parity.mjs` to verify 100% SHA-256 consistency between `artifacts/api-server/` and `scripts/`.
+2. **Unit / Logic Verification (Safe & Isolated)**:
+   Create or run a dedicated, isolated test script targeting solely the sandbox functions (`loadReconciliationSandbox` logic for phone matching and contact builder) without running `tests/*.test.mjs`.
+3. **Audit Script Verification**:
+   Run an audit script comparing CRM guests (IDs 143, 359, 20, etc.) ensuring:
+   - Roselene (Guest 143) has primary phone `21976403551` and no merged foreign numbers.
+   - Fabiana (Guest 359) has phone `28999136926` and is not attached to João Eduardo's contact.
+   - João Eduardo (Guest 20) has only his own phones and does not contain Fabiana's phone `28999136926`.

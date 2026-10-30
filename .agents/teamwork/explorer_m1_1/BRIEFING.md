@@ -1,50 +1,46 @@
-# BRIEFING — 2026-10-07T16:10:30Z
+# BRIEFING — 2026-10-29T16:50:00Z
 
 ## Mission
-Design the exact specification and implementation blueprint for `scripts/fnrh-serpro-service.mjs` (SERPRO FNRH v2.4.2 API Client).
+Investigate Google Contacts synchronization logic, identify root causes of contact merging and name overwriting, and propose an exact fix strategy.
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: explorer, SERPRO Client Specialist
-- Working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_m1_1
-- Original parent: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
-- Milestone: Milestone 1 (Feature 2: scripts/fnrh-serpro-service.mjs blueprint)
+- Roles: read-only investigation, code tracing, root cause analysis
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_1
+- Original parent: 77bac84a-2c7b-483b-8533-2e30a6efd40e
+- Milestone: milestone_1
 
 ## 🔒 Key Constraints
 - Read-only investigation — do NOT implement
-- Do NOT write source code or run build commands
-- Write implementation blueprint to `blueprint_serpro_service.md` and complete `handoff.md`
-- Send message to parent (0a1ba31b-b6bc-466b-8394-2ba72ae85fb5) when complete
+- Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never run any script that sends WhatsApp messages to guests.
+- Update progress.md with timestamped heartbeats.
 
 ## Current Parent
-- Conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
-- Updated: 2026-10-07T16:10:30Z
+- Conversation ID: 77bac84a-2c7b-483b-8533-2e30a6efd40e
+- Updated: not yet
 
 ## Investigation State
 - **Explored paths**:
-  - `ORIGINAL_REQUEST.md`, `PROJECT.md`, `survey_backend.md`
-  - `scratch/analyze_fnrh.mjs`, `api_doc_v2_4_2_full.json` (Pages 3, 15, 16, 20, 21, 44, 53, 54)
-  - `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`
-  - `artifacts/api-server/zapi-service.mjs`, `artifacts/api-server/mail-service.mjs`, `scripts/fnrh-pdf-service.mjs`
+  - `artifacts/api-server/demo-server.mjs` (lines 9760–11150, 33560–34852)
+  - `scripts/demo-server.mjs` (twin file)
+  - `scripts/check-twin-parity.mjs`
+  - `artifacts/limpeza/src/pages/crm-guests.tsx`
+  - `tests/guest-unlink-contamination.test.mjs`
+  - `data/database.json`
 - **Key findings**:
-  - Node version v20.10.0 supports native fetch, AbortController, Buffer, and crypto.
-  - API SERPRO v2.4.2 uses Basic Auth (`RFC 7617`) and mandatory header `cpf_solicitante`.
-  - Base URLs: `https://hom-lowcode.serpro.gov.br/FNRH_API/rest/v2` (homologacao) and `https://fnrh.turismo.serpro.gov.br/FNRH_API/rest/v2` (producao).
-  - Lightweight health check endpoint: `GET /dominios/reservas/situacoes`.
-  - Reservation registration endpoint: `POST /reservas` (`numero_reserva`, `data_entrada`, `data_saida`, `quantidade_hospede_adulto`, `quantidade_hospede_menor`, `origem_reserva_id: 'MEIOHOSPEDAGEM'`).
-  - Response parsing maps `reserva.reserva_id` and `reserva.link_precheckin`.
-  - Mirroring convention requires `scripts/fnrh-serpro-service.mjs` to be byte-for-byte synced with `artifacts/api-server/fnrh-serpro-service.mjs`.
-- **Unexplored areas**: None for M1 Feature 2 scope.
+  - Root causes of contact merging: 8-digit phone suffix matching without DDD (lines 34083, 34569–34571), companion phone aggregation into candidate list (lines 33750–33762), accumulation of unlinked phones in `additionalPhones` (lines 9857–9862).
+  - Root causes of name overwriting: update payload blindly updates `names` field via People API without validating that existing Google contact name matches guest (lines 34114–34135, 34739–34751); `mergeGuestRecords` overwrites shorter names with longer names (lines 9833–9838).
+  - Traced exact mechanisms for Roselene (phone `21976403551`) vs Raiza Castro Tavares, and Fabiana (phone `28999136926`) vs João Eduardo Leal Correa.
+  - Formulated fix strategy and restoration methodology.
+- **Unexplored areas**: None. Exploration complete.
 
 ## Key Decisions Made
-- Designed `FnrhSerproClient` class and singleton export `fnrhSerproService`.
-- Standardized strict 5000ms timeout with `AbortController` and error code `ETIMEDOUT`.
-- Formatted `checkHealth` to categorize statuses: `healthy`, `not_configured`, `auth_error`, `unreachable`, `server_error`.
-- Delivered full blueprint in `blueprint_serpro_service.md` and handoff report in `handoff.md`.
+- Completed read-only investigation.
+- Generated `analysis.md` and `handoff.md`.
 
 ## Artifact Index
-- `DISPATCH.md` — Incoming task instructions
-- `BRIEFING.md` — Persistent state tracking
-- `progress.md` — Liveness heartbeat
-- `blueprint_serpro_service.md` — Exhaustive specification and complete implementation code
-- `handoff.md` — 5-component handoff report
+- DISPATCH.md — Parent dispatch instruction
+- BRIEFING.md — Situational awareness and state
+- progress.md — Heartbeat and activity log
+- analysis.md — Detailed technical analysis report
+- handoff.md — 5-component handoff report
