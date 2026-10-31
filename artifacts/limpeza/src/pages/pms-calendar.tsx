@@ -6436,6 +6436,183 @@ export default function PmsCalendar() {
                   </PopoverContent>
                 </Popover>
 
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
+                  <div className="space-y-1.5 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
+                      {!selectedRes && fairShareResult?.bestFlatId && String(formFlatId) === String(fairShareResult.bestFlatId) && (
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
+                          ✨ Sugerido da vez
+                        </span>
+                      )}
+                    </div>
+                    <Select 
+                      value={formFlatId} 
+                      onValueChange={(val) => { 
+                        isFlatManuallyChangedRef.current = true;
+                        setFormFlatId(val); 
+                        setFormForceReplace(false); 
+                      }}
+                    >
+                      <SelectTrigger className="text-xs font-bold h-9 w-full min-w-0">
+                        <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
+                          {formFlatId 
+                            ? `Apt ${data.flats.find(f => String(f.id) === String(formFlatId))?.number || formFlatId}${!selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId) ? " ✨ (Sugerido)" : ""}` 
+                            : (loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat")}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent className="max-h-60">
+                        {data.flats.map(f => {
+                          const flatStat = fairShareResult?.allStats?.find((s: any) => s.flat?.id === f.id);
+                          const isBest = fairShareResult?.bestFlatId === f.id;
+                          const isAvail = flatStat ? flatStat.isAvailable : true;
+                          const conflictName = flatStat?.conflicts?.[0]?.guestName;
+                          const hasSameDayTurnover = Boolean(flatStat?.hasCheckoutOnCheckinDay);
+
+                          return (
+                            <SelectItem key={f.id} value={String(f.id)}>
+                              <div className="flex items-center justify-between gap-2 w-full py-0.5">
+                                <span className="font-bold">Apt {f.number}</span>
+                                {isBest && (
+                                   <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                                     ✨ Quarto da Vez {hasSameDayTurnover ? "(Saída no Dia)" : "(Vago no Check-in)"}
+                                   </span>
+                                )}
+                                {!isAvail && (
+                                  <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
+                                    ⚠️ Ocupado {conflictName ? `(${conflictName})` : ''}
+                                  </span>
+                                )}
+                                {isAvail && !isBest && (
+                                  <span className="text-[9px] text-muted-foreground font-medium">
+                                    {hasSameDayTurnover ? "🔄 Saída no Dia" : "🟢 Vago no Check-in"} ({flatStat?.monthOccupiedDays || 0}d)
+                                  </span>
+                                )}
+                              </div>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5 min-w-0">
+                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Canal de Origem</Label>
+                    <Select 
+                      value={formChannel} 
+                      onValueChange={val => {
+                        setFormChannel(val);
+                        const allSame = formDailyRates.length <= 1 || formDailyRates.every(d => (d.channel || "whatsapp") === formChannel);
+                        const updatedDailyRates = allSame 
+                          ? formDailyRates.map(d => ({ ...d, channel: val })) 
+                          : formDailyRates;
+                        setFormDailyRates(updatedDailyRates);
+
+                        if (val === "b2b") {
+                          setFormRequesterType("agency_b2b");
+                          setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
+                          setFormStatus("confirmada");
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
+                        } else if (val === "booking" || val === "airbnb") {
+                          let updatedCharges = [...formCharges];
+                          const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning");
+                          if (cleanIdx === -1) {
+                            updatedCharges.push({
+                              id: `charge_${Date.now()}_clean`,
+                              type: "cleaning",
+                              title: "Taxa de Limpeza",
+                              amount: 50,
+                              notes: ""
+                            });
+                          } else if (updatedCharges[cleanIdx].amount === 80) {
+                            updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 };
+                          }
+                          setFormCharges(updatedCharges);
+                          syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, val, val);
+                        } else if (val === "site") {
+                          setFormPaymentMethod("pix");
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, "pix");
+                        } else {
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val);
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="text-xs h-9 w-full min-w-0">
+                        <SelectValue placeholder="Canal" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="site">🌐 Site Próprio / Motor de Reservas</SelectItem>
+                        <SelectItem value="whatsapp">💬 WhatsApp / Reserva Direta</SelectItem>
+                        <SelectItem value="booking">🔵 Booking.com</SelectItem>
+                        <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                        <SelectItem value="b2b">🟣 B2B Reservas / Agência Corporativa</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
+                {!selectedRes && fairShareResult?.bestFlatNumber && (
+                  <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg animate-in fade-in">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span>
+                        Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong>
+                        {String(formFlatId) === String(fairShareResult.bestFlatId) && (
+                          <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">✓ Selecionado</span>
+                        )}
+                      </span>
+                    </div>
+                    {String(formFlatId) !== String(fairShareResult.bestFlatId) && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          isFlatManuallyChangedRef.current = false;
+                          setFormFlatId(String(fairShareResult.bestFlatId));
+                          setFormForceReplace(false);
+                        }}
+                        className="h-6 text-[10px] font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-500/20 px-2 py-0 border border-amber-500/30 rounded"
+                      >
+                        Usar Apt {fairShareResult.bestFlatNumber}
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Alerta de Quarto Ocupado & Trava Anti-Overbooking */}
+                {(() => {
+                  const selectedStat = fairShareResult?.allStats?.find((s: any) => String(s.flat?.id) === String(formFlatId));
+                  if (!selectedStat || selectedStat.isAvailable) return null;
+                  const conflictsList = (selectedStat.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
+                  if (conflictsList.length === 0 && selectedStat.blocks?.length === 0) return null;
+                  const conflict = conflictsList[0];
+
+                  return (
+                    <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-700/60 rounded-2xl space-y-2 text-xs">
+                      <div className="flex items-start gap-2 text-rose-800 dark:text-rose-200">
+                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold block">🚨 Conflito de Ocupação: Apt {selectedStat.flat?.number} já possui reserva neste período!</span>
+                          {conflict && (
+                            <span className="text-[11px] text-rose-700 dark:text-rose-300/90 block">
+                              Hóspede em conflito: <strong>{conflict?.guestName || "Outro Hóspede"}</strong> ({conflict?.checkinDate} a {conflict?.checkoutDate})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-1.5 border-t border-rose-200 dark:border-rose-800/60 flex items-center justify-between gap-2">
+                        <div className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
+                          Forçar encaixe mesmo com conflito (Overbooking — notifica Gestão imediatamente)
+                        </div>
+                        <Switch checked={formForceReplace} onCheckedChange={setFormForceReplace} />
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* 1. Quantidade de Hóspedes Autorizados (1, 2 ou 3) */}
                 <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-xl space-y-2">
                   <div className="flex items-center justify-between">
@@ -8503,151 +8680,6 @@ export default function PmsCalendar() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
-                  <div className="space-y-1.5 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
-                      {!selectedRes && fairShareResult?.bestFlatId && String(formFlatId) === String(fairShareResult.bestFlatId) && (
-                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
-                          ✨ Sugerido da vez
-                        </span>
-                      )}
-                    </div>
-                    <Select 
-                      value={formFlatId} 
-                      onValueChange={(val) => { 
-                        isFlatManuallyChangedRef.current = true;
-                        setFormFlatId(val); 
-                        setFormForceReplace(false); 
-                      }}
-                    >
-                      <SelectTrigger className="text-xs font-bold h-9 w-full min-w-0">
-                        <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
-                          {formFlatId 
-                            ? `Apt ${data.flats.find(f => String(f.id) === String(formFlatId))?.number || formFlatId}${!selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId) ? " ✨ (Sugerido)" : ""}` 
-                            : (loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat")}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent className="max-h-60">
-                        {data.flats.map(f => {
-                          const flatStat = fairShareResult?.allStats?.find((s: any) => s.flat?.id === f.id);
-                          const isBest = fairShareResult?.bestFlatId === f.id;
-                          const isAvail = flatStat ? flatStat.isAvailable : true;
-                          const conflictName = flatStat?.conflicts?.[0]?.guestName;
-                          const hasSameDayTurnover = Boolean(flatStat?.hasCheckoutOnCheckinDay);
-
-                          return (
-                            <SelectItem key={f.id} value={String(f.id)}>
-                              <div className="flex items-center justify-between gap-2 w-full py-0.5">
-                                <span className="font-bold">Apt {f.number}</span>
-                                {isBest && (
-                                   <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                     ✨ Quarto da Vez {hasSameDayTurnover ? "(Saída no Dia)" : "(Vago no Check-in)"}
-                                   </span>
-                                )}
-                                {!isAvail && (
-                                  <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
-                                    ⚠️ Ocupado {conflictName ? `(${conflictName})` : ''}
-                                  </span>
-                                )}
-                                {isAvail && !isBest && (
-                                  <span className="text-[9px] text-muted-foreground font-medium">
-                                    {hasSameDayTurnover ? "🔄 Saída no Dia" : "🟢 Vago no Check-in"} ({flatStat?.monthOccupiedDays || 0}d)
-                                  </span>
-                                )}
-                              </div>
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-1.5 min-w-0">
-                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Canal de Origem</Label>
-                    <Select 
-                      value={formChannel} 
-                      onValueChange={val => {
-                        setFormChannel(val);
-                        const allSame = formDailyRates.length <= 1 || formDailyRates.every(d => (d.channel || "whatsapp") === formChannel);
-                        const updatedDailyRates = allSame 
-                          ? formDailyRates.map(d => ({ ...d, channel: val })) 
-                          : formDailyRates;
-                        setFormDailyRates(updatedDailyRates);
-
-                        if (val === "b2b") {
-                          setFormRequesterType("agency_b2b");
-                          setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
-                          setFormStatus("confirmada");
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
-                        } else if (val === "booking" || val === "airbnb") {
-                          let updatedCharges = [...formCharges];
-                          const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning");
-                          if (cleanIdx === -1) {
-                            updatedCharges.push({
-                              id: `charge_${Date.now()}_clean`,
-                              type: "cleaning",
-                              title: "Taxa de Limpeza",
-                              amount: 50,
-                              notes: ""
-                            });
-                          } else if (updatedCharges[cleanIdx].amount === 80) {
-                            updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 };
-                          }
-                          setFormCharges(updatedCharges);
-                          syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, val, val);
-                        } else if (val === "site") {
-                          setFormPaymentMethod("pix");
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, "pix");
-                        } else {
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val);
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="text-xs h-9 w-full min-w-0">
-                        <SelectValue placeholder="Canal" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="site">🌐 Site Próprio / Motor de Reservas</SelectItem>
-                        <SelectItem value="whatsapp">💬 WhatsApp / Reserva Direta</SelectItem>
-                        <SelectItem value="booking">🔵 Booking.com</SelectItem>
-                        <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
-                        <SelectItem value="b2b">🟣 B2B Reservas / Agência Corporativa</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
-                {!selectedRes && fairShareResult?.bestFlatNumber && (
-                  <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg animate-in fade-in">
-                    <div className="flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <span>
-                        Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong>
-                        {String(formFlatId) === String(fairShareResult.bestFlatId) && (
-                          <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">✓ Selecionado</span>
-                        )}
-                      </span>
-                    </div>
-                    {String(formFlatId) !== String(fairShareResult.bestFlatId) && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          isFlatManuallyChangedRef.current = false;
-                          setFormFlatId(String(fairShareResult.bestFlatId));
-                          setFormForceReplace(false);
-                        }}
-                        className="h-6 text-[10px] font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-500/20 px-2 py-0 border border-amber-500/30 rounded"
-                      >
-                        Usar Apt {fairShareResult.bestFlatNumber}
-                      </Button>
-                    )}
-                  </div>
-                )}
-
                 {/* Bloqueio de Flat / Quarto Preferencial */}
                 <div className="p-3 bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 rounded-xl space-y-2">
                   <div className="flex items-center justify-between gap-3">
@@ -8682,38 +8714,6 @@ export default function PmsCalendar() {
                     </div>
                   )}
                 </div>
-
-                {/* Alerta de Quarto Ocupado & Trava Anti-Overbooking */}
-                {(() => {
-                  const selectedStat = fairShareResult?.allStats?.find((s: any) => String(s.flat?.id) === String(formFlatId));
-                  if (!selectedStat || selectedStat.isAvailable) return null;
-                  const conflictsList = (selectedStat.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
-                  if (conflictsList.length === 0 && selectedStat.blocks?.length === 0) return null;
-                  const conflict = conflictsList[0];
-
-                  return (
-                    <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-700/60 rounded-2xl space-y-2 text-xs">
-                      <div className="flex items-start gap-2 text-rose-800 dark:text-rose-200">
-                        <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                        <div>
-                          <span className="font-bold block">🚨 Conflito de Ocupação: Apt {selectedStat.flat?.number} já possui reserva neste período!</span>
-                          {conflict && (
-                            <span className="text-[11px] text-rose-700 dark:text-rose-300/90 block">
-                              Hóspede em conflito: <strong>{conflict?.guestName || "Outro Hóspede"}</strong> ({conflict?.checkinDate} a {conflict?.checkoutDate})
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="pt-1.5 border-t border-rose-200 dark:border-rose-800/60 flex items-center justify-between gap-2">
-                        <div className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
-                          Forçar encaixe mesmo com conflito (Overbooking — notifica Gestão imediatamente)
-                        </div>
-                        <Switch checked={formForceReplace} onCheckedChange={setFormForceReplace} />
-                      </div>
-                    </div>
-                  );
-                })()}
 
                 {/* Early Check-in Switch */}
                 <div className="p-3 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-xl flex items-center justify-between">
