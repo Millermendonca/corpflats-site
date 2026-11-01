@@ -44481,7 +44481,8 @@ import {
   consultNationalNfseByChave,
   consultNationalDpsById,
   fetchNationalDfeFromAdn,
-  checkMunicipalConvenioParams
+  checkMunicipalConvenioParams,
+  cancelNationalNfseByChave
 } from "./national-nfse.mjs";
 
 function formatCpf(cpf = "") {
@@ -45833,8 +45834,10 @@ async function executeNfseEmissionInternal(payload) {
     const newInvoice = {
       id: nextDpsNumber,
       numeroRps: nextRpsNumber,
+      numeroDps: emissionResult.numeroDps || String(nextDpsNumber),
       numeroNfse: numeroNfse,
       numeroNota: numeroNfse,
+      nDFSe: emissionResult.nDFSe || null,
       codigoVerificacao: codigoVerificacao,
       chaveAcesso: chaveAcesso,
       protocoloAutorizacao: protocoloAutorizacao,
@@ -45885,6 +45888,8 @@ async function executeNfseEmissionInternal(payload) {
       status: "autorizada",
       linkPrefeitura: linkPrefeitura,
       qrCodeUrl: qrCodeUrl,
+      xmlPath: emissionResult.xmlPath || null,
+      rawXml: emissionResult.rawXml || null,
       danfseUrl: `/api/nfse/danfse/${numeroNfse}`,
       pdfUrl: `/api/nfse/pdf/${numeroNfse}`,
       createdAt: new Date().toISOString()
@@ -46537,8 +46542,10 @@ async function processSingleNfseRetryItem(item) {
     const newInvoice = {
       id: nextDpsNumber,
       numeroRps: nextRpsNumber,
+      numeroDps: emissionResult.numeroDps || String(nextDpsNumber),
       numeroNfse,
       numeroNota: numeroNfse,
+      nDFSe: emissionResult.nDFSe || null,
       codigoVerificacao,
       chaveAcesso,
       protocoloAutorizacao,
@@ -46581,6 +46588,8 @@ async function processSingleNfseRetryItem(item) {
       status: "autorizada",
       linkPrefeitura,
       qrCodeUrl,
+      xmlPath: emissionResult.xmlPath || null,
+      rawXml: emissionResult.rawXml || null,
       danfseUrl: `/api/nfse/danfse/${numeroNfse}`,
       pdfUrl: `/api/nfse/pdf/${numeroNfse}`,
       createdAt: new Date().toISOString()
@@ -46637,21 +46646,35 @@ if (process.env.NODE_ENV !== "test") {
   }, 3 * 60 * 1000);
 }
 
-function findNfseInvoiceByAnyId(rawIdInput) {
+function findNfseInvoiceByAnyId(rawIdInput, allowFallbackLatest = true) {
   const rawId = String(rawIdInput || "").trim();
   const numId = Number(rawId);
+  const list = db.invoices || [];
 
-  let inv = (db.invoices || []).find(i =>
-    (numId && i.id === numId) ||
-    String(i.id) === rawId ||
-    String(i.numeroNfse) === rawId ||
-    String(i.numeroNota) === rawId ||
+  // 1. Prioriza Chave de Acesso (50 dígitos) ou Código de Verificação
+  let inv = list.find(i =>
     String(i.chaveAcesso) === rawId ||
     (i.codigoVerificacao && String(i.codigoVerificacao).toUpperCase() === rawId.toUpperCase())
   );
 
-  if (!inv && (rawId === "latest" || db.invoices?.length > 0)) {
-    inv = db.invoices[0];
+  // 2. Prioriza Número da NFS-e / Nota Oficial antes de cair no ID interno (evitando colisão com seeds id: 1, 2)
+  if (!inv) {
+    inv = list.find(i =>
+      String(i.numeroNfse) === rawId ||
+      String(i.numeroNota) === rawId
+    );
+  }
+
+  // 3. Fallback por ID interno
+  if (!inv) {
+    inv = list.find(i =>
+      (numId && i.id === numId) ||
+      String(i.id) === rawId
+    );
+  }
+
+  if (!inv && allowFallbackLatest && (rawId === "latest" || list.length > 0)) {
+    inv = list[0];
   }
   return inv;
 }
@@ -46706,74 +46729,90 @@ app.get("/api/nfse/pdf/:id", async (req, res) => {
 // Download XML Oficial Padrão Nacional ADN (Gov.br)
 app.get("/api/nfse/xml/:id", (req, res) => {
   getFiscalData();
-  const rawId = String(req.params.id || "").trim();
-  const numId = Number(rawId);
-  const inv = (db.invoices || []).find(i =>
-    (numId && i.id === numId) ||
-    String(i.id) === rawId ||
-    String(i.numeroNfse) === rawId ||
-    String(i.numeroNota) === rawId ||
-    String(i.chaveAcesso) === rawId ||
-    (i.codigoVerificacao && String(i.codigoVerificacao).toUpperCase() === rawId.toUpperCase())
-  );
+  const inv = findNfseInvoiceByAnyId(req.params.id, false);
   if (!inv) return res.status(404).json({ error: "Nota não encontrada" });
 
-  const xmlContent = generateNationalXmlContent({
-    chaveAcesso: inv.chaveAcesso || inv.codigoVerificacao || String(inv.numeroNfse),
-    numNfse: inv.numeroNfse,
-    codVerif: inv.codigoVerificacao,
-    dataEmissao: inv.dataEmissao,
-    dpsPayload: {
-      infDPS: {
-        id: `DPS_${inv.chaveAcesso || inv.numeroNfse}`,
-        tpAmb: db.nfseConfig.ambiente === "producao" ? 1 : 2,
-        dhEmi: inv.dataEmissao,
-        prest: {
-          CNPJ: onlyDigits(inv.prestadorCnpj || "47964813000165"),
-          xNome: inv.prestadorRazaoSocial || "Rental Miller's LTDA"
-        },
-        toma: {
-          CNPJ: inv.tomadorCpfCnpj,
-          xNome: inv.tomadorNome
-        },
-        serv: {
-          cTribNac: inv.codigoTributacaoNacional || "09.02.01",
-          xDescServ: inv.discriminacao
-        },
-        valores: {
-          vServPrest: { vServ: Number(inv.valorServico || 0).toFixed(2) },
-          trib: { totTrib: { indTotTrib: 0 } }
+  let xmlContent = inv.rawXml || null;
+  if (!xmlContent && inv.xmlPath) {
+    try {
+      const diskPath = path.join(process.cwd(), "storage", inv.xmlPath.replace(/^\/+/, ""));
+      if (fs.existsSync(diskPath)) {
+        xmlContent = fs.readFileSync(diskPath, "utf-8");
+      }
+    } catch {}
+  }
+  if (!xmlContent) {
+    xmlContent = generateNationalXmlContent({
+      chaveAcesso: inv.chaveAcesso || inv.codigoVerificacao || String(inv.numeroNfse),
+      numNfse: inv.numeroNfse,
+      codVerif: inv.codigoVerificacao,
+      dataEmissao: inv.dataEmissao,
+      dpsPayload: {
+        infDPS: {
+          id: `DPS_${inv.chaveAcesso || inv.numeroNfse}`,
+          tpAmb: db.nfseConfig.ambiente === "producao" ? 1 : 2,
+          dhEmi: inv.dataEmissao,
+          prest: {
+            CNPJ: onlyDigits(inv.prestadorCnpj || "47964813000165"),
+            xNome: inv.prestadorRazaoSocial || "Rental Miller's LTDA"
+          },
+          toma: {
+            CNPJ: inv.tomadorCpfCnpj,
+            xNome: inv.tomadorNome
+          },
+          serv: {
+            cTribNac: inv.codigoTributacaoNacional || "09.02.02",
+            xDescServ: inv.discriminacao
+          },
+          valores: {
+            vServPrest: { vServ: Number(inv.valorServico || 0).toFixed(2) },
+            trib: { totTrib: { indTotTrib: 0 } }
+          }
         }
       }
-    }
-  });
+    });
+  }
 
   res.setHeader("Content-Type", "application/xml; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="NFSe_${inv.numeroNfse}_${inv.codigoVerificacao || inv.chaveAcesso}.xml"`);
   res.send(xmlContent);
 });
 
-// Cancelamento de NFS-e (Padrão Nacional ADN / Gov.br)
-app.post("/api/nfse/cancel/:id", (req, res) => {
+// Cancelamento de NFS-e (Padrão Nacional ADN / Gov.br - Evento Oficial e101101)
+app.post("/api/nfse/cancel/:id", async (req, res) => {
   getFiscalData();
   const rawId = String(req.params.id || "").trim();
-  const numId = Number(rawId);
-
-  const inv = (db.invoices || []).find(i =>
-    (numId && i.id === numId) ||
-    String(i.id) === rawId ||
-    String(i.numeroNfse) === rawId ||
-    String(i.numeroNota) === rawId ||
-    i.chaveAcesso === rawId ||
-    (i.codigoVerificacao && String(i.codigoVerificacao).toUpperCase() === rawId.toUpperCase())
-  );
+  const inv = findNfseInvoiceByAnyId(rawId, false);
 
   if (!inv) return res.status(404).json({ error: `Nota Fiscal '${rawId}' não encontrada.` });
   if (inv.status === "cancelada") {
     return res.status(400).json({ error: `A NFS-e Nº ${inv.numeroNfse} já se encontra cancelada no sistema.` });
   }
 
-  const { motivo = "Cancelamento solicitado pelo prestador por erro de emissão ou desistência." } = req.body || {};
+  const { motivo = "Cancelamento solicitado pelo prestador por erro de emissão ou desistência.", cMotivo = "1" } = req.body || {};
+
+  // Transmite evento oficial e101101 na SEFIN Nacional caso possua chave de acesso real de 50 dígitos
+  let sefinCancelResult = null;
+  const cleanChave = onlyDigits(inv.chaveAcesso || "");
+  const isMockSeed = ["202600184", "202600185"].includes(String(inv.numeroNfse));
+  if (cleanChave.length === 50 && !isMockSeed && process.env.NODE_ENV !== "test") {
+    try {
+      sefinCancelResult = await cancelNationalNfseByChave({
+        chaveAcesso: cleanChave,
+        cnpjAutor: inv.prestadorCnpj || "47964813000165",
+        cMotivo,
+        xMotivo: motivo,
+        environment: db.nfseConfig?.ambiente || "producao"
+      });
+      if (sefinCancelResult?.success) {
+        inv.canceladoNaSefin = true;
+        inv.protocoloCancelamento = `PRE${cleanChave}101101`;
+      }
+    } catch (err) {
+      sefinCancelResult = { success: false, error: err.message };
+    }
+  }
+
   inv.status = "cancelada";
   inv.motivoCancelamento = motivo;
   inv.canceladoEm = new Date().toISOString();
@@ -46803,35 +46842,49 @@ app.post("/api/nfse/cancel/:id", (req, res) => {
     category: "financial",
     action: "NFSE_CANCELLED_NATIONAL",
     actor: { name: (getAuthUser(req)?.username || "Gestor"), role: "admin" },
-    details: { numeroNfse: inv.numeroNfse, chaveAcesso: inv.chaveAcesso, motivo, sistemaEmissor: "padrao_nacional" },
+    details: {
+      numeroNfse: inv.numeroNfse,
+      chaveAcesso: inv.chaveAcesso,
+      motivo,
+      sistemaEmissor: "padrao_nacional",
+      sefinSynced: Boolean(sefinCancelResult?.success)
+    },
     source: "nfse_engine"
   });
 
   res.json({
     success: true,
     invoice: inv,
+    sefinCancelResult,
     message: `NFS-e Nº ${inv.numeroNfse} cancelada com sucesso (Ambiente Nacional ADN / Gov.br).`
   });
 });
 
 // Substituição de NFS-e (Marca original como substituida e gera draft completo para re-emissão no Studio)
-app.post("/api/nfse/replace/:id", (req, res) => {
+app.post("/api/nfse/replace/:id", async (req, res) => {
   getFiscalData();
   const rawId = String(req.params.id || "").trim();
-  const numId = Number(rawId);
-
-  const original = (db.invoices || []).find(i =>
-    (numId && i.id === numId) ||
-    String(i.id) === rawId ||
-    String(i.numeroNfse) === rawId ||
-    String(i.numeroNota) === rawId ||
-    i.chaveAcesso === rawId ||
-    (i.codigoVerificacao && String(i.codigoVerificacao).toUpperCase() === rawId.toUpperCase())
-  );
+  const original = findNfseInvoiceByAnyId(rawId, false);
 
   if (!original) return res.status(404).json({ error: `Nota Fiscal '${rawId}' não encontrada.` });
 
   const { motivo = "Substituição de nota por correção de dados do tomador/valor." } = req.body || {};
+
+  // Cancela também no Ambiente Nacional SEFIN caso possua chave de acesso real de 50 dígitos
+  const cleanChave = onlyDigits(original.chaveAcesso || "");
+  const isMockSeed = ["202600184", "202600185"].includes(String(original.numeroNfse));
+  if (cleanChave.length === 50 && !isMockSeed && process.env.NODE_ENV !== "test") {
+    try {
+      await cancelNationalNfseByChave({
+        chaveAcesso: cleanChave,
+        cnpjAutor: original.prestadorCnpj || "47964813000165",
+        cMotivo: "2",
+        xMotivo: motivo,
+        environment: db.nfseConfig?.ambiente || "producao"
+      });
+    } catch {}
+  }
+
   original.status = "substituida";
   original.motivoCancelamento = motivo;
   original.canceladoEm = new Date().toISOString();
@@ -47117,6 +47170,17 @@ app.post("/api/nfse/adn-sync", async (req, res) => {
     const lote = Array.isArray(result.response?.LoteDFe) ? result.response.LoteDFe : [];
     let syncedCount = 0;
     for (const item of lote) {
+      if (item.TipoDocumento === "EVENTO" && item.xmlDecoded && item.xmlDecoded.includes("<e101101>")) {
+        const targetInv = (db.invoices || []).find(i => i.chaveAcesso === item.ChaveAcesso);
+        if (targetInv && targetInv.status !== "cancelada") {
+          const xMot = (item.xmlDecoded.match(/<xMotivo>([\s\S]*?)<\/xMotivo>/) || [])[1] || "Cancelamento registrado no ADN Nacional";
+          targetInv.status = "cancelada";
+          targetInv.motivoCancelamento = xMot;
+          targetInv.canceladoNaSefin = true;
+          syncedCount++;
+        }
+        continue;
+      }
       if (item.TipoDocumento !== "NFSE" || !item.xmlDecoded) continue;
       const xml = item.xmlDecoded;
       const nNfse = (xml.match(/<nNFSe>(\d+)<\/nNFSe>/) || [])[1];
@@ -47129,17 +47193,22 @@ app.post("/api/nfse/adn-sync", async (req, res) => {
       const xDescServ = (xml.match(/<xDescServ>([\s\S]*?)<\/xDescServ>/) || [])[1] || "";
       if (!nNfse) continue;
 
-      const existing = (db.invoices || []).find(i => String(i.numeroNfse) === String(nNfse) || i.chaveAcesso === item.ChaveAcesso);
+      const existing = (db.invoices || []).find(i =>
+        i.chaveAcesso === item.ChaveAcesso ||
+        (String(i.numeroNfse) === String(nNfse) && (!i.chaveAcesso || i.chaveAcesso === item.ChaveAcesso))
+      );
       if (existing) {
         existing.chaveAcesso = item.ChaveAcesso;
         existing.nDFSe = nDfse || existing.nDFSe;
         existing.nsuAdn = item.NSU;
+        existing.rawXml = xml;
         existing.sistemaEmissor = "padrao_nacional";
         existing.linkPrefeitura = `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${item.ChaveAcesso}`;
         existing.qrCodeUrl = `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${item.ChaveAcesso}`;
       } else {
+        const maxInvId = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 900;
         db.invoices.unshift({
-          id: Number(nNfse),
+          id: Number(nNfse) > 100 ? Number(nNfse) : maxInvId + 1,
           numeroRps: Number(nNfse),
           numeroNfse: String(nNfse),
           numeroNota: String(nNfse),
@@ -47164,6 +47233,7 @@ app.post("/api/nfse/adn-sync", async (req, res) => {
           codigoTributacaoMunicipio: "090202",
           discriminacao: xDescServ,
           status: "autorizada",
+          rawXml: xml,
           linkPrefeitura: `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${item.ChaveAcesso}`,
           qrCodeUrl: `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${item.ChaveAcesso}`,
           danfseUrl: `/api/nfse/danfse/${nNfse}`,

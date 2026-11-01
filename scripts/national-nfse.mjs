@@ -440,27 +440,28 @@ export const TAX_CATALOG = {
  * [UF 2] + [AAMM 4] + [CNPJ 14] + [Modelo 2] + [Serie 3] + [NumeroDPS 9] + [TipoEmissao 1] + [CodigoNumerico 8] + [DV 1]
  */
 export function generateChaveAcessoNacional({
-  codUf = "33",
+  codMunicipio = "3301009",
+  ambGer = "2",
+  tpInsc = "2",
   anoMes = "",
-  cnpj = "",
-  serie = "001",
-  numeroDps = 1,
-  tipoEmissao = "1"
+  cnpj = "47964813000165",
+  numeroDps = 1
 }) {
-  const cleanCnpj = onlyDigits(cnpj).padStart(14, "0");
-  const aamm = anoMes || new Date().toISOString().substring(2, 4) + new Date().toISOString().substring(5, 7);
-  const modelo = "01"; // Modelo Padrão NFS-e Nacional
-  const formattedSerie = String(serie).padStart(3, "0");
-  const formattedNum = String(numeroDps).padStart(9, "0");
-  const randomCode = String(Math.floor(10000000 + Math.random() * 90000000)).substring(0, 8);
+  const cMun = onlyDigits(codMunicipio || "3301009").padStart(7, "0").substring(0, 7);
+  const cleanCnpj = onlyDigits(cnpj || "47964813000165").padStart(14, "0").substring(0, 14);
+  const formattedNum = String(onlyDigits(String(numeroDps || 1)) || "1").padStart(13, "0").substring(0, 13);
+  const aamm = (anoMes && onlyDigits(anoMes).length === 4)
+    ? onlyDigits(anoMes)
+    : (new Date().toISOString().substring(2, 4) + new Date().toISOString().substring(5, 7));
+  const randomCode = String(Math.floor(100000000 + Math.random() * 900000000)).substring(0, 9);
 
-  const base49 = `${codUf}${aamm}${cleanCnpj}${modelo}${formattedSerie}${formattedNum}${tipoEmissao}${randomCode}`;
+  const base49 = `${cMun}${ambGer}${tpInsc}${cleanCnpj}${formattedNum}${aamm}${randomCode}`;
 
   // Cálculo do Dígito Verificador Módulo 11 (Pesos 2 a 9)
   let sum = 0;
   let weight = 2;
   for (let i = base49.length - 1; i >= 0; i--) {
-    sum += parseInt(base49.charAt(i)) * weight;
+    sum += parseInt(base49.charAt(i), 10) * weight;
     weight = weight === 9 ? 2 : weight + 1;
   }
   const mod = sum % 11;
@@ -641,13 +642,14 @@ export function signDpsXmlContent({
   return `<?xml version="1.0" encoding="utf-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="${versao}">${infDPS.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo.replace(' xmlns="http://www.w3.org/2000/09/xmldsig#"', '')}<SignatureValue>${signatureValue}</SignatureValue><KeyInfo><X509Data><X509Certificate>${certBase64Pure}</X509Certificate></X509Data></KeyInfo></Signature></DPS>`;
 }
 
-function buildCanonicalInfDpsXml({ idDPS, tpAmb, dhStr, serie, nDPS, dComp, cLocEmi, cnpj, im = "142591", tomaXml, xDescServ, valorNum, includeFinNFSe = false, includeNt008 = false }) {
+function buildCanonicalInfDpsXml({ idDPS, tpAmb, dhStr, serie, nDPS, dComp, cLocEmi, cnpj, im = "142591", includeIm = false, tomaXml, xDescServ, valorNum, includeFinNFSe = false, includeNt008 = false }) {
   const finTag = includeFinNFSe ? `<finNFSe>0</finNFSe>` : "";
+  const imTag = includeIm && im ? `<IM>${im}</IM>` : "";
   const nbsTag = includeNt008 ? `<cNBS>101011000</cNBS>` : "";
   const ibscbsTag = includeNt008
     ? `<IBSCBS><finNFSe>0</finNFSe><indFinal>0</indFinal><cIndOp>100301</cIndOp><indDest>0</indDest><valores><trib><gIBSCBS><CST>200</CST><cClassTrib>200051</cClassTrib></gIBSCBS></trib><cLocalidadeIncid>${cLocEmi}</cLocalidadeIncid><pRedutor>0</pRedutor></valores></IBSCBS>`
     : "";
-  return `<infDPS xmlns="http://www.sped.fazenda.gov.br/nfse" Id="${idDPS}"><tpAmb>${tpAmb}</tpAmb><dhEmi>${dhStr}</dhEmi><verAplic>1.00</verAplic><serie>${serie}</serie><nDPS>${nDPS}</nDPS><dCompet>${dComp}</dCompet><tpEmit>1</tpEmit>${finTag}<cLocEmi>${cLocEmi}</cLocEmi><prest><CNPJ>${cnpj}</CNPJ><IM>${im}</IM><regTrib><opSimpNac>3</opSimpNac><regApTribSN>1</regApTribSN><regEspTrib>0</regEspTrib></regTrib></prest>${tomaXml}<serv><locPrest><cLocPrestacao>${cLocEmi}</cLocPrestacao></locPrest><cServ><cTribNac>090202</cTribNac><cTribMun>006</cTribMun><xDescServ>${escXml(xDescServ)}</xDescServ>${nbsTag}</cServ></serv><valores><vServPrest><vServ>${valorNum}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN></tribMun><totTrib><pTotTrib><pTotTribFed>0.00</pTotTribFed><pTotTribEst>0.00</pTotTribEst><pTotTribMun>0.00</pTotTribMun></pTotTrib></totTrib></trib>${ibscbsTag}</valores></infDPS>`;
+  return `<infDPS xmlns="http://www.sped.fazenda.gov.br/nfse" Id="${idDPS}"><tpAmb>${tpAmb}</tpAmb><dhEmi>${dhStr}</dhEmi><verAplic>1.00</verAplic><serie>${serie}</serie><nDPS>${nDPS}</nDPS><dCompet>${dComp}</dCompet><tpEmit>1</tpEmit>${finTag}<cLocEmi>${cLocEmi}</cLocEmi><prest><CNPJ>${cnpj}</CNPJ>${imTag}<regTrib><opSimpNac>3</opSimpNac><regApTribSN>1</regApTribSN><regEspTrib>0</regEspTrib></regTrib></prest>${tomaXml}<serv><locPrest><cLocPrestacao>${cLocEmi}</cLocPrestacao></locPrest><cServ><cTribNac>090202</cTribNac><cTribMun>006</cTribMun><xDescServ>${escXml(xDescServ)}</xDescServ>${nbsTag}</cServ></serv><valores><vServPrest><vServ>${valorNum}</vServ></vServPrest><trib><tribMun><tribISSQN>1</tribISSQN><tpRetISSQN>1</tpRetISSQN></tribMun><totTrib><pTotTrib><pTotTribFed>0.00</pTotTribFed><pTotTribEst>0.00</pTotTribEst><pTotTribMun>0.00</pTotTribMun></pTotTrib></totTrib></trib>${ibscbsTag}</valores></infDPS>`;
 }
 
 function signXmlElementExcC14n(xml, elementId, privKeyPem, certPem) {
@@ -892,7 +894,7 @@ export async function processNationalInvoiceEmission({
   const tpAmb = dps.tpAmb || 1;
   const xDescServ = dps.serv?.cServ?.xDescServ || "Hospedagem em flat mobiliado";
 
-  const signOrWrapDps = (infDpsContent, versao = "1.00") => {
+  const signOrWrapDps = (infDpsContent, versao = "1.00", customIdDps = idDPS) => {
     try {
       ensureNfseCertFilesOnDisk();
       const keyPath = path.join(process.cwd(), "storage/certs/private_key.pem");
@@ -903,40 +905,44 @@ export async function processNationalInvoiceEmission({
         const begin = rawCert.indexOf("-----BEGIN CERTIFICATE-----");
         const end = rawCert.indexOf("-----END CERTIFICATE-----");
         const certBase64Pure = rawCert.substring(begin + 27, end).replace(/\s+/g, "");
-        return signDpsXmlContent({ idDPS, infDPS: infDpsContent, privateKeyPem, certBase64Pure, versao });
+        return signDpsXmlContent({ idDPS: customIdDps, infDPS: infDpsContent, privateKeyPem, certBase64Pure, versao });
       }
     } catch {}
     return `<?xml version="1.0" encoding="utf-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="${versao}">${infDpsContent.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}</DPS>`;
   };
 
+  let currentNDps = nDPS;
+  let currentIdDps = idDPS;
+
   const infDPS100 = buildCanonicalInfDpsXml({
-    idDPS,
+    idDPS: currentIdDps,
     tpAmb,
     dhStr,
     serie,
-    nDPS,
+    nDPS: currentNDps,
     dComp,
     cLocEmi,
     cnpj,
+    includeIm: false,
     tomaXml,
     xDescServ,
     valorNum,
     pAliq,
     includeFinNFSe: false
   });
-  let dpsXml = signOrWrapDps(infDPS100, "1.00");
+  let dpsXml = signOrWrapDps(infDPS100, "1.00", currentIdDps);
 
   // 1. Chamada com a SEFIN Nacional (Gov.br) com fallback resiliente para teste
   let sefinResult;
   const envMode = tpAmb === 1 ? "producao" : "homologacao";
   try {
     if (process.env.NODE_ENV === "test" && !process.env.TEST_REAL_SEFIN) {
-      const numNfseMock = String(nDPS || Date.now() % 900000 + 100000);
+      const numNfseMock = String(currentNDps || Date.now() % 900000 + 100000);
       const chaveMock = invoiceData.chaveAcesso || generateChaveAcessoNacional({
         codUf: "33",
         cnpj: cnpj,
         serie: serie,
-        numeroDps: nDPS
+        numeroDps: currentNDps
       });
       sefinResult = {
         statusCode: 200,
@@ -949,32 +955,62 @@ export async function processNationalInvoiceEmission({
       };
     } else {
       sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
+
+      // Se o nDPS já tiver sido utilizado anteriormente na série (duplicidade de DPS), incrementa automaticamente
+      const dupErrors = sefinResult?.response?.erros || [];
+      if (
+        Array.isArray(dupErrors) &&
+        dupErrors.some(e => /E0008|E0009|E0010|duplic|j[áa]\s+existe|j[áa]\s+foi\s+informad/i.test(`${e.Codigo || ""} ${e.Descricao || ""} ${e.Complemento || ""}`))
+      ) {
+        currentNDps = String(Math.floor(Date.now() / 1000) % 900000 + 100000);
+        currentIdDps = `DPS${cLocEmi}${tpInsc}${cnpj}${seriePad}${currentNDps.padStart(15, "0")}`;
+        const retryInfDps = buildCanonicalInfDpsXml({
+          idDPS: currentIdDps,
+          tpAmb,
+          dhStr,
+          serie,
+          nDPS: currentNDps,
+          dComp,
+          cLocEmi,
+          cnpj,
+          includeIm: false,
+          tomaXml,
+          xDescServ,
+          valorNum,
+          pAliq,
+          includeFinNFSe: false
+        });
+        dpsXml = signOrWrapDps(retryInfDps, "1.00", currentIdDps);
+        sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
+      }
+
       // Fallback automático para layout 1.01 caso a SEFIN solicite a tag finNFSe (E1235)
       const firstErrors = sefinResult?.response?.erros || [];
       if (Array.isArray(firstErrors) && firstErrors.some(e => String(e.Complemento || e.Descricao || "").includes("finNFSe"))) {
         const infDPS101 = buildCanonicalInfDpsXml({
-          idDPS,
+          idDPS: currentIdDps,
           tpAmb,
           dhStr,
           serie,
-          nDPS,
+          nDPS: currentNDps,
           dComp,
           cLocEmi,
           cnpj,
+          includeIm: false,
           tomaXml,
           xDescServ,
           valorNum,
           pAliq,
           includeFinNFSe: true
         });
-        dpsXml = signOrWrapDps(infDPS101, "1.01");
+        dpsXml = signOrWrapDps(infDPS101, "1.01", currentIdDps);
         sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
       }
-      // Fallback automático para o Integrador Municipal ADN (Campos dos Goytacazes aderenteAmbienteNacional=1) quando SEFIN retorna E0160/E0012
+      // Fallback automático para o Integrador Municipal ADN caso SEFIN retorne E0160/E0012/E0014
       const postErrors = sefinResult?.response?.erros || [];
       if (Array.isArray(postErrors) && postErrors.some(e => ["E0160", "E0012", "E0014"].includes(String(e.Codigo || "").trim()))) {
         sefinResult = await transmitViaMunicipalAdnIntegrator({
-          numeroRps: nDPS,
+          numeroRps: currentNDps,
           cnpj,
           im: "142591",
           tomaDoc,
@@ -997,12 +1033,12 @@ export async function processNationalInvoiceEmission({
     }
   } catch (err) {
     if (process.env.NODE_ENV === "test") {
-      const numNfseMock = String(nDPS || Date.now() % 900000 + 100000);
+      const numNfseMock = String(currentNDps || Date.now() % 900000 + 100000);
       const chaveMock = invoiceData.chaveAcesso || generateChaveAcessoNacional({
         codUf: "33",
         cnpj: cnpj,
         serie: serie,
-        numeroDps: nDPS
+        numeroDps: currentNDps
       });
       sefinResult = {
         statusCode: 200,
@@ -1045,10 +1081,14 @@ export async function processNationalInvoiceEmission({
       } catch {}
     }
     const xmlNumMatch = officialXmlDecoded ? officialXmlDecoded.match(/<nNFSe>(\d+)<\/nNFSe>/) : null;
-    const numNfse = String(resp?.numeroNfse || (xmlNumMatch ? xmlNumMatch[1] : "") || nDPS || 1);
+    const xmlDfseMatch = officialXmlDecoded ? officialXmlDecoded.match(/<nDFSe>(\d+)<\/nDFSe>/) : null;
+    const xmlDhProcMatch = officialXmlDecoded ? officialXmlDecoded.match(/<dhProc>([^<]+)<\/dhProc>/) : null;
+    const numNfse = String(resp?.numeroNfse || (xmlNumMatch ? xmlNumMatch[1] : "") || currentNDps || 1);
+    const nDFSe = xmlDfseMatch ? xmlDfseMatch[1] : (resp?.nDFSe || null);
     const chaveAut = resp?.chaveAcesso || invoiceData.chaveAcesso;
     const codVerif = resp?.codigoVerificacao || String(chaveAut || "").slice(-9) || crypto.randomBytes(4).toString("hex").toUpperCase();
-    const protocolo = resp?.protocolo || resp?.idDps || `SEFIN_${Date.now()}`;
+    const protocolo = resp?.protocolo || resp?.idDps || currentIdDps || `SEFIN_${Date.now()}`;
+    const dataEmissaoOficial = (xmlDhProcMatch ? xmlDhProcMatch[1] : null) || resp?.dataHoraProcessamento || invoiceData.dataHoraEmissao || new Date().toISOString();
 
     const now = new Date();
     const year = String(now.getFullYear());
@@ -1072,10 +1112,12 @@ export async function processNationalInvoiceEmission({
       status: "autorizada",
       numeroNfse: numNfse,
       numeroNota: numNfse,
+      numeroDps: currentNDps,
+      nDFSe,
       codigoVerificacao: codVerif,
       chaveAcesso: chaveAut,
       protocoloAutorizacao: protocolo,
-      dataEmissao: invoiceData.dataHoraEmissao || new Date().toISOString(),
+      dataEmissao: dataEmissaoOficial,
       sefinResponse: resp,
       rawXml: xmlContent,
       xmlPath: `/invoices_vault/${cnpj}/${year}/${month}/${xmlFileName}`,
@@ -2059,4 +2101,120 @@ export async function checkMunicipalConvenioParams(codigoMunicipio = "3301009", 
   const cleanMun = onlyDigits(codigoMunicipio) || "3301009";
   return mtlsGetJson(hostname, `/parametrizacao/${cleanMun}/convenio`);
 }
+
+export async function cancelNationalNfseByChave({
+  chaveAcesso,
+  cnpjAutor = "47964813000165",
+  cMotivo = "1",
+  xMotivo = "Cancelamento solicitado pelo prestador por erro na emissão",
+  environment = "producao"
+}) {
+  const cleanChave = onlyDigits(chaveAcesso);
+  if (cleanChave.length !== 50) {
+    return {
+      statusCode: 400,
+      success: false,
+      error: "Chave de acesso inválida para cancelamento nacional (deve conter 50 dígitos)."
+    };
+  }
+
+  if (process.env.NODE_ENV === "test" && !process.env.TEST_REAL_SEFIN) {
+    return {
+      statusCode: 201,
+      success: true,
+      response: {
+        tipoAmbiente: 1,
+        versaoAplicativo: "SefinNacional_1.6.0",
+        dataHoraProcessamento: new Date().toISOString(),
+        chaveAcesso: cleanChave
+      }
+    };
+  }
+
+  ensureNfseCertFilesOnDisk();
+  const pfx = getCertPfxBuffer();
+  if (!pfx) {
+    throw new Error("Certificado Digital A1 não configurado no servidor.");
+  }
+
+  const keyPath = path.join(process.cwd(), "storage/certs/private_key.pem");
+  const certPath = path.join(process.cwd(), "storage/certs/certificate.pem");
+  const privateKeyPem = fs.readFileSync(keyPath, "utf-8");
+  const rawCert = fs.readFileSync(certPath, "utf-8");
+  const begin = rawCert.indexOf("-----BEGIN CERTIFICATE-----");
+  const end = rawCert.indexOf("-----END CERTIFICATE-----");
+  const certBase64Pure = rawCert.substring(begin + 27, end).replace(/\s+/g, "");
+
+  const tpAmb = environment === "producao" ? 1 : 2;
+  const cleanCnpj = onlyDigits(cnpjAutor || "47964813000165");
+  const { dhStr } = getBrasiliaTimeString(3);
+  const codMotivo = ["1", "2", "9"].includes(String(cMotivo).trim()) ? String(cMotivo).trim() : "1";
+  const descMotivo = String(xMotivo || "Cancelamento solicitado pelo prestador por erro na emissão").trim();
+  const safeMotivo = (descMotivo.length >= 15 ? descMotivo : `${descMotivo} - solicitado pelo prestador`).substring(0, 255);
+
+  const idPRE = `PRE${cleanChave}101101`;
+  const infPedReg = `<infPedReg xmlns="http://www.sped.fazenda.gov.br/nfse" Id="${idPRE}"><tpAmb>${tpAmb}</tpAmb><verAplic>1.00</verAplic><dhEvento>${dhStr}</dhEvento><CNPJAutor>${cleanCnpj}</CNPJAutor><chNFSe>${cleanChave}</chNFSe><e101101><xDesc>Cancelamento de NFS-e</xDesc><cMotivo>${codMotivo}</cMotivo><xMotivo>${escXml(safeMotivo)}</xMotivo></e101101></infPedReg>`;
+
+  const digestValue = crypto.createHash("sha1").update(infPedReg, "utf-8").digest("base64");
+  const signedInfo = `<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI="#${idPRE}"><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></Transform></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>${digestValue}</DigestValue></Reference></SignedInfo>`;
+  const signer = crypto.createSign("RSA-SHA1");
+  signer.update(signedInfo, "utf-8");
+  const signatureValue = signer.sign(privateKeyPem, "base64");
+
+  const pedRegEventoXml = `<?xml version="1.0" encoding="utf-8"?><pedRegEvento xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.00">${infPedReg.replace(' xmlns="http://www.sped.fazenda.gov.br/nfse"', '')}<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo.replace(' xmlns="http://www.w3.org/2000/09/xmldsig#"', '')}<SignatureValue>${signatureValue}</SignatureValue><KeyInfo><X509Data><X509Certificate>${certBase64Pure}</X509Certificate></X509Data></KeyInfo></Signature></pedRegEvento>`;
+
+  const gzipB64 = zlib.gzipSync(Buffer.from(pedRegEventoXml, "utf-8")).toString("base64");
+  const postJson = JSON.stringify({ pedidoRegistroEventoXmlGZipB64: gzipB64 });
+  const hostname = environment === "producao" ? "sefin.nfse.gov.br" : "sefin.producaorestrita.nfse.gov.br";
+
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname,
+      port: 443,
+      path: `/sefinnacional/nfse/${cleanChave}/eventos`,
+      method: "POST",
+      pfx,
+      passphrase: CERT_PASS,
+      rejectUnauthorized: false,
+      timeout: 15000,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(postJson)
+      }
+    }, (res) => {
+      let data = "";
+      res.on("data", chunk => data += chunk);
+      res.on("end", () => {
+        let json = null;
+        try { json = JSON.parse(data); } catch {}
+        let eventoXmlDecoded = null;
+        if (json?.eventoXmlGZipB64) {
+          try {
+            eventoXmlDecoded = zlib.gunzipSync(Buffer.from(json.eventoXmlGZipB64, "base64")).toString("utf-8");
+          } catch {}
+        }
+        const hasErros = Array.isArray(json?.erros) && json.erros.length > 0;
+        const isSuccess = (res.statusCode === 200 || res.statusCode === 201) && !hasErros;
+        resolve({
+          statusCode: res.statusCode,
+          success: isSuccess,
+          response: json,
+          eventoXmlDecoded,
+          raw: data,
+          error: hasErros
+            ? json.erros.map(e => `[${e.Codigo}] ${e.Descricao}${e.Complemento ? " - " + e.Complemento : ""}`).join(" | ")
+            : (!isSuccess ? `SEFIN respondeu HTTP ${res.statusCode}` : null)
+        });
+      });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Tempo limite excedido ao cancelar NFS-e na SEFIN Nacional."));
+    });
+    req.write(postJson);
+    req.end();
+  });
+}
+
 
