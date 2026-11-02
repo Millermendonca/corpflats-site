@@ -25550,16 +25550,16 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
   const available = flatStats.filter(s => s.isAvailable);
 
   // Ordenação:
-  // 1º Prioridade operacional no check-in (1 = Vago & Limpo, 2 = Em Limpeza, 3 = Vago & Sujo, 4 = Saída no Dia)
-  // 2º Menor uso no mês (rodízio justo)
+  // 1º Menor uso / taxa de ocupação no mês (rodízio justo para distribuir todos os quartos por igual)
+  // 2º Prontidão operacional e limpeza no check-in (1 = Vago & Limpo, 2 = Em Limpeza, 3 = Vago & Sujo, 4 = Saída no Dia)
   // 3º Maior tempo ocioso desde o último check-out
   // 4º Número do flat
   available.sort((a, b) => {
-    if (a.checkinDayPriority !== b.checkinDayPriority) {
-      return a.checkinDayPriority - b.checkinDayPriority;
-    }
     if (a.monthOccupiedDays !== b.monthOccupiedDays) {
       return a.monthOccupiedDays - b.monthOccupiedDays;
+    }
+    if (a.checkinDayPriority !== b.checkinDayPriority) {
+      return a.checkinDayPriority - b.checkinDayPriority;
     }
     if (a.daysSinceLastCheckout !== b.daysSinceLastCheckout) {
       return b.daysSinceLastCheckout - a.daysSinceLastCheckout;

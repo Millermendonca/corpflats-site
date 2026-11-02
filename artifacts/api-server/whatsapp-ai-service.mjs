@@ -11607,11 +11607,11 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
   const availableFlats = stats
     .filter(s => s.isAvailableInPeriod)
     .sort((a, b) => {
-      if (a.checkinDayPriority !== b.checkinDayPriority) {
-        return a.checkinDayPriority - b.checkinDayPriority;
-      }
       if (a.monthOccupiedDays !== b.monthOccupiedDays) {
         return a.monthOccupiedDays - b.monthOccupiedDays;
+      }
+      if (a.checkinDayPriority !== b.checkinDayPriority) {
+        return a.checkinDayPriority - b.checkinDayPriority;
       }
       if (b.daysSinceLastCheckout !== a.daysSinceLastCheckout) {
         return b.daysSinceLastCheckout - a.daysSinceLastCheckout;

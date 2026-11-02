@@ -2498,24 +2498,18 @@ export default function PmsCalendar() {
       const suggestedStat = isResultForTargetDates
         ? fairShareResult?.allStats?.find((s: any) => Number(s.flat?.id) === Number(fairShareResult?.bestFlatId))
         : null
-      const suggestedFlatObj = data.flats.find((fl: any) => Number(fl.id) === Number(fairShareResult?.bestFlatId))
-      const suggestedIsCleanAndAvail = Boolean(
-        suggestedStat?.isAvailable &&
-        suggestedStat?.cleaningStatus !== "dirty" &&
-        suggestedFlatObj?.cleaningStatus !== "dirty"
-      )
-      if (suggestedIsCleanAndAvail && fairShareResult?.bestFlatId) {
+      if (suggestedStat?.isAvailable && fairShareResult?.bestFlatId) {
+        setFormFlatId(String(fairShareResult.bestFlatId))
+      } else if (fairShareResult?.bestFlatId) {
         setFormFlatId(String(fairShareResult.bestFlatId))
       } else {
-        const cleanAvailFlat = data.flats.find((fl: any) => {
-          const isClean = (fl.cleaningStatus || "clean") === "clean"
-          if (!isClean) return false
+        const availFlat = data.flats.find((fl: any) => {
           const hasResConf = (data.reservations || []).some((r: any) => {
             if (Number(r.flatId) !== Number(fl.id) && String(r.flatNumber) !== String(fl.number)) return false
             const st = String(r.status || "").toLowerCase()
             if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false
             if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= cin) return false
-            return r.checkinDate < cout && r.checkoutDate >= cin
+            return r.checkinDate < cout && r.checkoutDate > cin
           })
           const hasBlkConf = (data.blocks || []).some((b: any) => {
             if (Number(b.flatId) !== Number(fl.id) && String(b.flatNumber) !== String(fl.number)) return false
@@ -2523,7 +2517,7 @@ export default function PmsCalendar() {
           })
           return !hasResConf && !hasBlkConf
         })
-        const fallbackFlatId = cleanAvailFlat?.id || fairShareResult?.bestFlatId || data.flats[0]?.id || ""
+        const fallbackFlatId = availFlat?.id || data.flats[0]?.id || ""
         setFormFlatId(fallbackFlatId ? String(fallbackFlatId) : "")
       }
     }
@@ -6741,17 +6735,23 @@ export default function PmsCalendar() {
                   const hasSameDay = Boolean(selectedStat?.hasCheckoutOnCheckinDay);
                   if (!isDirty && !hasSameDay) return null;
 
-                  const bestStat = fairShareResult?.allStats?.find(
-                    (s: any) => Number(s.flat?.id) === Number(fairShareResult?.bestFlatId)
+                  const isSelectedTheBestFlat = Boolean(
+                    fairShareResult?.bestFlatId && String(fairShareResult.bestFlatId) === String(formFlatId)
                   );
-                  const canSwitchToCleanBest = Boolean(
-                    fairShareResult?.bestFlatId &&
-                    String(fairShareResult.bestFlatId) !== String(formFlatId) &&
-                    bestStat?.isAvailable &&
-                    !bestStat?.isDirty &&
-                    bestStat?.cleaningStatus !== "dirty" &&
-                    !bestStat?.hasCheckoutOnCheckinDay
-                  );
+                  const nextCleanStat = (fairShareResult?.allStats || [])
+                    .filter((s: any) =>
+                      s?.isAvailable &&
+                      String(s.flat?.id) !== String(formFlatId) &&
+                      !s.isDirty &&
+                      s.cleaningStatus !== "dirty" &&
+                      !s.hasCheckoutOnCheckinDay
+                    )
+                    .sort((a: any, b: any) => {
+                      if ((a.monthOccupiedDays || 0) !== (b.monthOccupiedDays || 0)) {
+                        return (a.monthOccupiedDays || 0) - (b.monthOccupiedDays || 0);
+                      }
+                      return (b.daysSinceLastCheckout || 0) - (a.daysSinceLastCheckout || 0);
+                    })[0];
 
                   return (
                     <div className="p-2.5 bg-orange-50 dark:bg-orange-950/40 border border-orange-300 dark:border-orange-700/60 rounded-xl flex items-center justify-between gap-2 text-xs animate-in fade-in">
@@ -6760,33 +6760,33 @@ export default function PmsCalendar() {
                         <div>
                           {hasSameDay ? (
                             <span className="font-bold block">
-                              🔄 Atenção: Apt {selFlat?.number || formFlatId} possui saída prevista hoje (ainda ocupado pelo hóspede anterior).
+                              🔄 Atenção: Apt {selFlat?.number || formFlatId} {isSelectedTheBestFlat ? `é o Quarto da Vez (${selectedStat?.monthOccupiedDays || 0}d), mas ` : ""}possui saída prevista no dia (hóspede anterior ainda no flat).
                             </span>
                           ) : (
                             <span className="font-bold block">
-                              🧹 Atenção: Apt {selFlat?.number || formFlatId} consta como VAGO & SUJO (aguardando limpeza na Governança).
+                              🧹 Atenção: Apt {selFlat?.number || formFlatId} {isSelectedTheBestFlat ? `é o Quarto da Vez (${selectedStat?.monthOccupiedDays || 0}d ocupados), porém ` : ""}consta como VAGO & SUJO na Governança.
                             </span>
                           )}
                           <span className="text-[11px] text-orange-800/90 dark:text-orange-300/90 block">
                             {hasSameDay
-                              ? "Confirme o check-out e a limpeza antes de liberar a entrada do novo hóspede."
-                              : "Priorize um apartamento Vago & Limpo para check-in imediato ou acione a Governança."}
+                              ? "Mantenha para equilíbrio de ocupação (confirmando o check-out/limpeza) ou escolha outro apartamento."
+                              : "Mantenha para equilibrar a ocupação (acionando a Governança) ou troque para o próximo quarto já limpo se for entrada imediata."}
                           </span>
                         </div>
                       </div>
-                      {canSwitchToCleanBest && (
+                      {nextCleanStat?.flat?.id && (
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            isFlatManuallyChangedRef.current = false;
-                            setFormFlatId(String(fairShareResult.bestFlatId));
+                            isFlatManuallyChangedRef.current = true;
+                            setFormFlatId(String(nextCleanStat.flat.id));
                             setFormForceReplace(false);
                           }}
                           className="h-7 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white border-0 shrink-0 px-2.5"
                         >
-                          Trocar p/ Apt {fairShareResult.bestFlatNumber} (Limpo)
+                          Usar próximo limpo (Apt {nextCleanStat.flat.number})
                         </Button>
                       )}
                     </div>

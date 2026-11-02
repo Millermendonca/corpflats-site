@@ -106,12 +106,13 @@ function createMockDb() {
   const availNums = fairShare.availableFlats.map(f => f.number);
   assert.deepEqual(availNums, ["509", "501", "301"], "Apenas flats disponíveis ordenados pelo Fair-Share (404 ocupado deve ser excluído)");
 
-  // Se o Flat 509 estiver sujo, deve priorizar o Flat 501 (Vago & Limpo) como Flat da Vez!
+  // Se o Flat 509 estiver sujo e empatado em ocupação (3d) com o Flat 501 (3d, limpo),
+  // o desempate prioriza o Flat 501 (Vago & Limpo), mantendo ambos à frente do Flat 301 (10d ocupados)!
   db.flats.find(f => f.number === "509").cleaningStatus = "dirty";
   const fairShareWithDirty = selectFairShareFlat(db, "2026-11-20", "2026-11-22");
-  assert.equal(fairShareWithDirty.recommendedFlat.number, "501", "Quarto sujo (509) não deve ser recomendado como Flat da Vez quando há quarto vago e limpo (501)");
-  assert.deepEqual(fairShareWithDirty.availableFlats.map(f => f.number), ["501", "301", "509"], "Quartos vagos e limpos (501, 301) têm prioridade sobre quarto vago e sujo (509)");
-  console.log("✅ 1. Lógica Fair-Share ('Flat da Vez' com priorização Vago & Limpo vs Sujo) validada com sucesso.");
+  assert.equal(fairShareWithDirty.recommendedFlat.number, "501", "No empate de ocupação (3d), quarto limpo (501) vence quarto sujo (509)");
+  assert.deepEqual(fairShareWithDirty.availableFlats.map(f => f.number), ["501", "509", "301"], "A 1ª prioridade é sempre a menor taxa de ocupação no mês (3d < 10d), usando status de limpeza no desempate");
+  console.log("✅ 1. Lógica Fair-Share (1ª prioridade: taxa de ocupação no mês; 2ª prioridade: status de limpeza) validada com sucesso.");
 }
 
 // ----------------------------------------------------------------------------
