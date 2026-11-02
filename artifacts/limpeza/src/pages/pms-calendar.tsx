@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef, useMemo, Fragment } from "react"
 import { useLocation } from "wouter"
 import { useGetMe, useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
@@ -224,7 +224,8 @@ export function safeParseDate(dateStr: string | null | undefined): Date | null {
   return d;
 }
 
-export default function PmsCalendar() {
+export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]: any }) {
+  const modalOnly = Boolean(props?.modalOnly)
   const [, setLocation] = useLocation()
   const { toast } = useToast()
   const { data: user, isLoading: loadingUser } = useGetMe()
@@ -2012,8 +2013,12 @@ export default function PmsCalendar() {
   };
 
   useEffect(() => {
+    if (modalOnly) {
+      const t = setTimeout(() => fetchData(false), 600);
+      return () => clearTimeout(t);
+    }
     fetchData(true);
-  }, []);
+  }, [modalOnly]);
 
   const handleConfirmDragMove = async () => {
     if (!dragConfirmData) return;
@@ -2211,6 +2216,7 @@ export default function PmsCalendar() {
 
   // Sincronização em tempo real entre múltiplos dispositivos (PC, Tablet, Celular)
   useEffect(() => {
+    if (modalOnly) return;
     const doSilentSync = () => {
       // Se a aba estiver oculta/minimizada, não executa o poll para economizar recursos
       if (typeof document !== "undefined" && document.hidden) return;
@@ -2656,6 +2662,47 @@ export default function PmsCalendar() {
     setResModalTab("reservation")
     setResModalOpen(true)
   }
+
+  const handleOpenNewResRef = useRef(handleOpenNewRes)
+  handleOpenNewResRef.current = handleOpenNewRes
+
+  useEffect(() => {
+    const handleGlobalOpenNewRes = () => {
+      if (modalOnly) {
+        fetchData(false)
+      }
+      handleOpenNewResRef.current()
+    }
+    window.addEventListener("open-new-reservation-modal", handleGlobalOpenNewRes)
+    return () => window.removeEventListener("open-new-reservation-modal", handleGlobalOpenNewRes)
+  }, [modalOnly])
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("gfm-res-modal-state", { detail: { open: resModalOpen } }))
+  }, [resModalOpen])
+
+  useEffect(() => {
+    if (resModalOpen && !selectedRes && !formFlatId && data.flats.length > 0) {
+      const cin = formCheckin || format(new Date(), "yyyy-MM-dd")
+      const cout = formCheckout || format(addDays(new Date(), 1), "yyyy-MM-dd")
+      const availFlat = data.flats.find((fl: any) => {
+        const hasResConf = (data.reservations || []).some((r: any) => {
+          if (Number(r.flatId) !== Number(fl.id) && String(r.flatNumber) !== String(fl.number)) return false
+          const st = String(r.status || "").toLowerCase()
+          if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false
+          if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= cin) return false
+          return r.checkinDate < cout && r.checkoutDate > cin
+        })
+        const hasBlkConf = (data.blocks || []).some((b: any) => {
+          if (Number(b.flatId) !== Number(fl.id) && String(b.flatNumber) !== String(fl.number)) return false
+          return b.startDate < cout && b.endDate >= cin
+        })
+        return !hasResConf && !hasBlkConf
+      })
+      const fallbackFlatId = fairShareResult?.bestFlatId || availFlat?.id || data.flats[0]?.id || ""
+      if (fallbackFlatId) setFormFlatId(String(fallbackFlatId))
+    }
+  }, [resModalOpen, selectedRes, formFlatId, data.flats, data.reservations, data.blocks, fairShareResult, formCheckin, formCheckout])
 
   const handleOpenEditRes = (resItem: any) => {
     setSelectedRes(resItem)
@@ -4661,12 +4708,17 @@ export default function PmsCalendar() {
   })
 
   if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
+    if (modalOnly) return null
     return <AccessDenied moduleName="o Livro de Reservas & Mapa de Ocupação" />
   }
 
+  const MaybeShell = modalOnly ? Fragment : Shell
+
   return (
-    <Shell>
-      <div className="p-4 sm:p-6 space-y-6 max-w-[100vw] overflow-x-hidden">
+    <MaybeShell>
+      <div className={modalOnly ? "" : "p-4 sm:p-6 space-y-6 max-w-[100vw] overflow-x-hidden"}>
+        {!modalOnly && (
+          <>
         {/* Header Title & Actions */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -5858,6 +5910,8 @@ export default function PmsCalendar() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+          </>
+        )}
 
         {/* Modal: New / Edit Reservation */}
         <Dialog open={resModalOpen} onOpenChange={setResModalOpen}>
@@ -12437,6 +12491,6 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
           </DialogContent>
         </Dialog>
       </div>
-    </Shell>
+    </MaybeShell>
   )
 }

@@ -8,6 +8,7 @@ import { cancelGoogleOneTap } from '@/lib/auth-client';
 import { useGetMe } from '@workspace/api-client-react';
 import { AccessDenied } from '@/components/access-denied';
 import { AdminAiCopilot } from '@/components/admin-ai-copilot';
+import { FloatingNewReservationButton } from '@/components/floating-new-reservation';
 import { hasModuleAccess } from '@/lib/permissions';
 
 // Páginas públicas e operacionais principais (Carregamento Imediato — sem dependência de chunk dinâmico no 5G)
@@ -603,6 +604,7 @@ function App() {
         <VersionGuard>
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
             <Router />
+            <FloatingNewReservationButton />
             <AdminAiCopilot />
           </WouterRouter>
           <Toaster />
