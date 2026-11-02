@@ -9113,16 +9113,152 @@ export function buildDefaultStayDescription(matchedReservation, options = {}) {
  * Ex.: "Nota relativa à hospedagem de Miller Mendonça Pessanha, no Flat 212."
  *   -> "Nota relativa à hospedagem de Miller Mendonça Pessanha e Maria Silva, no Flat 212."
  */
+const FORBIDDEN_PERSON_NAME_TOKENS = new Set([
+  "ja", "informei", "mandei", "enviei", "falei", "disse", "escrevi", "passei", "coloquei", "botei", "adicionei", "inclui", "respondi",
+  "colocar", "coloca", "coloque", "colocando", "acrescentar", "acrescenta", "acrescente", "acrescentando",
+  "incluir", "inclua", "incluindo", "adicionar", "adiciona", "adicione", "adicionando",
+  "botar", "bota", "bote", "botando", "inserir", "insere", "insira", "inserindo", "por", "poe",
+  "mudar", "muda", "mude", "alterar", "altera", "altere", "trocar", "troca", "troque",
+  "corrigir", "corrige", "corrija", "editar", "edita", "edite", "emitir", "emite", "emitida",
+  "tirar", "tira", "tire", "remover", "remove", "remova", "substituir", "substitui", "substitua",
+  "tem", "como", "pode", "poderia", "consegue", "quero", "queria", "preciso", "gostaria", "favor", "gentileza", "pfv", "pf",
+  "obrigado", "obrigada", "valeu", "beleza", "perfeito", "certo", "correto", "confirmo", "confirmar", "autorizo", "autorizar",
+  "pessoa", "pessoas", "hospede", "hospedes", "acompanhante", "acompanhantes", "alguem", "ninguem", "colaborador", "colaboradores",
+  "descricao", "discriminacao", "servico", "servicos", "nota", "notas", "fiscal", "nfse", "nfs", "rps", "danfse", "recibo", "fatura", "boleto",
+  "hospedagem", "diaria", "diarias", "flat", "quarto", "apartamento", "reserva", "reservas", "checkin", "checkout", "estadia", "periodo",
+  "valor", "valores", "preco", "reais", "total", "desconto", "referente", "relativa", "projeto", "contrato", "pedido", "ordem",
+  "cpf", "cnpj", "endereco", "cep", "email", "telefone", "empresa", "tomador", "razao", "social", "corporativa", "corporativo",
+  "acima", "abaixo", "cima", "baixo", "ai", "ali", "aqui", "la", "isso", "isto", "aquilo", "esse", "essa", "este", "esta",
+  "outro", "outra", "outros", "outras", "mais", "menos", "um", "uma", "uns", "umas",
+  "meu", "minha", "meus", "minhas", "seu", "sua", "dele", "dela", "nosso", "nossa", "comigo", "junto", "tambem", "tbm",
+  "quem", "qual", "quando", "onde", "porque", "para", "pra", "sim", "nao", "ok", "oi", "ola", "bom", "boa", "dia", "tarde", "noite",
+  "nome", "completo", "chamado", "chamada", "chama", "esposa", "esposo", "marido", "mulher", "filho", "filha", "amigo", "amiga", "colega"
+]);
+
+const ALLOWED_NAME_CONNECTORS = new Set(["de", "da", "do", "dos", "das", "e", "del", "di", "du", "van", "von", "la", "le"]);
+
+/**
+ * Higieniza emojis e pontuações externas de um possível nome próprio.
+ */
+export function stripOuterNonNameChars(raw = "") {
+  return String(raw || "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{1F3FB}-\u{1F3FF}\u200D\uFE0F]/gu, "")
+    .replace(/^[^A-Za-zÀ-ÖØ-öø-ÿ]+|[^A-Za-zÀ-ÖØ-öø-ÿ.]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Valida se uma string candidata é genuinamente um nome próprio de pessoa,
+ * rejeitando frases conversacionais ("já informei 👆🏼", "mais uma pessoa", "na descrição", etc.).
+ */
+export function isValidPersonNameCandidate(raw = "") {
+  if (!raw || typeof raw !== "string") return false;
+  // Se o texto bruto continha emojis de apontar/conversação acoplados a verbo, ou dígitos, rejeita
+  const cleaned = stripOuterNonNameChars(raw);
+  if (!cleaned || cleaned.length < 2 || cleaned.length > 80) return false;
+  if (/\d/.test(cleaned)) return false;
+  if (!/^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]*[A-Za-zÀ-ÖØ-öø-ÿ.]$/.test(cleaned)) return false;
+
+  const norm = cleaned
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.'-]/g, " ")
+    .trim();
+  const tokens = norm.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 10) return false;
+
+  let meaningfulWords = 0;
+  for (const tk of tokens) {
+    if (ALLOWED_NAME_CONNECTORS.has(tk)) continue;
+    if (FORBIDDEN_PERSON_NAME_TOKENS.has(tk)) return false;
+    if (tk.length >= 2) meaningfulWords++;
+  }
+  return meaningfulWords >= 1;
+}
+
+/**
+ * Limpa segmentos inválidos (ex: "Já Informei 👆🏼") que possam ter entrado na lista de hóspedes
+ * do cabeçalho da descrição e formata a lista final em português ("A", "A e B", "A, B e C").
+ */
+export function sanitizeGuestNameList(rawNamesStr = "") {
+  if (!rawNamesStr || typeof rawNamesStr !== "string") return { validNames: [], hadInvalid: false };
+  const parts = rawNamesStr
+    .split(/\s*,\s*|\s+e\s+/i)
+    .map(p => p.trim())
+    .filter(Boolean);
+
+  const validNames = [];
+  let hadInvalid = false;
+  for (const part of parts) {
+    if (isValidPersonNameCandidate(part)) {
+      const formatted = toTitleCase(stripOuterNonNameChars(part));
+      if (!validNames.some(v => v.toLowerCase() === formatted.toLowerCase())) {
+        validNames.push(formatted);
+      }
+    } else {
+      hadInvalid = true;
+    }
+  }
+  return { validNames, hadInvalid };
+}
+
+export function formatGuestNamesJoined(names = []) {
+  const list = (Array.isArray(names) ? names : []).filter(Boolean);
+  if (list.length === 0) return "";
+  if (list.length === 1) return list[0];
+  if (list.length === 2) return `${list[0]} e ${list[1]}`;
+  return `${list.slice(0, -1).join(", ")} e ${list[list.length - 1]}`;
+}
+
+/**
+ * Higieniza descrições de serviço cujo cabeçalho possa conter segmentos inválidos (ex: "e Já Informei 👆🏼").
+ */
+export function sanitizeServiceDescriptionGuests(currentDesc = "") {
+  const desc = String(currentDesc || "").trim();
+  if (!desc) return { description: desc, hadInvalid: false };
+
+  const stdRegex = /(Nota\s+relativa\s+[àa]\s+hospedagem\s+(?:de|do|da|dos|das)\s+)([^\n.]+?)((?:,\s*no\s+Flat\s+[^\n.]+)?\.?)(?=\r?\n|$)/i;
+  const stdMatch = desc.match(stdRegex);
+  if (stdMatch) {
+    const prefix = stdMatch[1];
+    let currentNames = stdMatch[2].trim();
+    let flatSuffix = stdMatch[3] || "";
+    const innerFlatMatch = currentNames.match(/^(.+?)(,\s*no\s+Flat\s+.+)$/i);
+    if (innerFlatMatch) {
+      currentNames = innerFlatMatch[1].trim();
+      flatSuffix = innerFlatMatch[2] + flatSuffix;
+    }
+    const { validNames, hadInvalid } = sanitizeGuestNameList(currentNames);
+    if (hadInvalid && validNames.length > 0) {
+      return {
+        description: desc.replace(stdRegex, `${prefix}${formatGuestNamesJoined(validNames)}${flatSuffix}`),
+        hadInvalid: true
+      };
+    }
+  }
+  return { description: desc, hadInvalid: false };
+}
+
+/**
+ * Acrescenta ou substitui um hóspede diretamente no cabeçalho padrão da descrição oficial do /notas
+ * Ex.: "Nota relativa à hospedagem de Miller Mendonça Pessanha, no Flat 212."
+ *   -> "Nota relativa à hospedagem de Miller Mendonça Pessanha e Maria Silva, no Flat 212."
+ */
 export function addGuestToServiceDescription(currentDesc = "", newGuestName = "", mode = "add") {
-  const cleanGuest = toTitleCase(
+  const strippedInput = stripOuterNonNameChars(
     String(newGuestName || "")
-      .replace(/^[\s,.:;("'-]+|[\s,.:;!?)"'-]+$/g, "")
       .replace(/^(?:o\s+h[oó]spede|a\s+h[oó]spede|h[oó]spede|acompanhante|o\s+nome\s+d[aeo]s?|nome|sr\.?|sra\.?|dr\.?|dra\.?)\s+/i, "")
       .trim()
   );
+  if (!isValidPersonNameCandidate(strippedInput)) {
+    return sanitizeServiceDescriptionGuests(currentDesc).description;
+  }
+  const cleanGuest = toTitleCase(strippedInput);
   if (!cleanGuest || cleanGuest.length < 2) return currentDesc;
 
-  const desc = String(currentDesc || "").trim();
+  const { description: desc } = sanitizeServiceDescriptionGuests(currentDesc);
   if (!desc) {
     return `Nota relativa à hospedagem de ${cleanGuest}.`;
   }
@@ -9142,13 +9278,13 @@ export function addGuestToServiceDescription(currentDesc = "", newGuestName = ""
     if (mode === "replace") {
       return desc.replace(stdRegex, `Nota relativa à hospedagem de ${cleanGuest}${flatSuffix}`);
     }
-    if (currentNames.toLowerCase().includes(cleanGuest.toLowerCase())) {
-      return desc;
+    const { validNames } = sanitizeGuestNameList(currentNames);
+    const baseList = validNames.length > 0 ? validNames : [currentNames];
+    if (baseList.some(n => n.toLowerCase() === cleanGuest.toLowerCase())) {
+      return desc.replace(stdRegex, `${prefix}${formatGuestNamesJoined(baseList)}${flatSuffix}`);
     }
-    const updatedNames = currentNames.includes(" e ")
-      ? `${currentNames.replace(/\s+e\s+/i, ", ")} e ${cleanGuest}`
-      : `${currentNames} e ${cleanGuest}`;
-    return desc.replace(stdRegex, `${prefix}${updatedNames}${flatSuffix}`);
+    baseList.push(cleanGuest);
+    return desc.replace(stdRegex, `${prefix}${formatGuestNamesJoined(baseList)}${flatSuffix}`);
   }
 
   // 2. Formato Corporativo Oficial /notas: "...referente ao hóspede/colaborador <Nome>, no Flat <X>."
@@ -9165,13 +9301,13 @@ export function addGuestToServiceDescription(currentDesc = "", newGuestName = ""
     if (mode === "replace") {
       return desc.replace(corpRegex, `referente ao hóspede/colaborador ${cleanGuest}${flatSuffix}`);
     }
-    if (currentNames.toLowerCase().includes(cleanGuest.toLowerCase())) {
-      return desc;
+    const { validNames } = sanitizeGuestNameList(currentNames);
+    const baseList = validNames.length > 0 ? validNames : [currentNames];
+    if (baseList.some(n => n.toLowerCase() === cleanGuest.toLowerCase())) {
+      return desc.replace(corpRegex, `referente aos hóspedes/colaboradores ${formatGuestNamesJoined(baseList)}${flatSuffix}`);
     }
-    const updatedNames = currentNames.includes(" e ")
-      ? `${currentNames.replace(/\s+e\s+/i, ", ")} e ${cleanGuest}`
-      : `${currentNames} e ${cleanGuest}`;
-    return desc.replace(corpRegex, `referente aos hóspedes/colaboradores ${updatedNames}${flatSuffix}`);
+    baseList.push(cleanGuest);
+    return desc.replace(corpRegex, `referente aos hóspedes/colaboradores ${formatGuestNamesJoined(baseList)}${flatSuffix}`);
   }
 
   // 3. Caso a descrição seja customizada
@@ -9195,35 +9331,31 @@ export function extractGuestAdditionForDescription(messageText = "") {
   }
 
   const cleanCandidateName = (raw = "") => {
-    let s = String(raw || "").trim();
-    s = s.replace(/^[\s,.:;("'-]+|[\s,.:;!?)"'-]+$/g, "").trim();
-    s = s.replace(/^(?:(?:mais\s+)?um(?:a)?\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|que\s+[eé]\s+(?:o|a)?|:|,|-)?\s*)/i, "");
-    s = s.replace(/^(?:(?:outr[oa])\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|que\s+[eé]\s+(?:o|a)?|:|,|-)?\s*)/i, "");
-    s = s.replace(/^(?:chamad[oa]|de\s+nome|nome|o\s+nome\s+d[aeo]s?|o\s+h[oó]spede|a\s+h[oó]spede|h[oó]spede|o\s+acompanhante|a\s+acompanhante|acompanhante|meu\s+(?:esposo|marido|filho|pai|irm[aã]o|colega|amigo|s[oó]cio)|minha\s+(?:esposa|mulher|filha|m[aã]e|irm[aã]|colega|amiga|s[oó]cia)|tamb[eé]m\s+o|tamb[eé]m\s+a|tamb[eé]m)\s+/i, "");
-    s = s.replace(/^(?:o|a)\s+/i, "");
-    s = s.replace(/\s+(?:como\s+(?:h[oó]spede|acompanhante).*|na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota).*|no\s+servi[cç]o.*|da\s+nota.*|d[eo]s?\s+servi[cç]os?.*|junto\s+comigo.*|tamb[eé]m.*|por\s+favor.*|por\s+gentileza.*|obrigad[oa].*|,?\s+e\s+(?:o\s+)?valor.*)$/i, "");
-    s = s.replace(/^[\s,.:;("'-]+|[\s,.:;!?)"'-]+$/g, "").trim();
+    let s = stripOuterNonNameChars(raw);
+    for (let i = 0; i < 6; i++) {
+      const prev = s;
+      s = s
+        .replace(/^(?:tem\s+como|pode(?:ria)?|consegue|d[aá]\s+para|d[aá]\s+pra|quero|queria|gostaria\s+de|preciso|favor|por\s+favor|por\s+gentileza|pfv)\s+/i, "")
+        .replace(/^(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira|p[oõ]e|por)\s+/i, "")
+        .replace(/^(?:tamb[eé]m|a[ií]|l[aá]|aqui|pra\s+mim|para\s+mim|por\s+favor|por\s+gentileza|pfv)\s+/i, "")
+        .replace(/^(?:(?:na|no|da|do|em)\s+)?(?:descri[cç][aã]o|discrimina[cç][aã]o)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?(?:\s+a[ií])?\s*/i, "")
+        .replace(/^(?:(?:na|da)\s+nota(?:\s+fiscal)?)(?:\s+a[ií])?\s*/i, "")
+        .replace(/^(?:(?:mais\s+)?um(?:a)?\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|que\s+[eé]\s+(?:o|a)?|:|,|-|\?|\.)?\s*)/i, "")
+        .replace(/^(?:(?:outr[oa])\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|que\s+[eé]\s+(?:o|a)?|:|,|-|\?|\.)?\s*)/i, "")
+        .replace(/^(?:como\s+(?:h[oó]spede|acompanhante)s?\s*)/i, "")
+        .replace(/^(?:chamad[oa]|de\s+nome|que\s+se\s+chama|que\s+chama|que\s+[eé]\s+(?:o|a)?|o\s+nome\s+(?:dela|dele|da\s+pessoa|do\s+h[oó]spede)(?:\s+[eé])?|o\s+nome\s+d[aeo]s?|nome(?:\s+completo)?|[eé]\s+(?:o|a)|[eé])\s+/i, "")
+        .replace(/^(?:o\s+h[oó]spede|a\s+h[oó]spede|h[oó]spede|o\s+acompanhante|a\s+acompanhante|acompanhante|a\s+pessoa|pessoa)\s+/i, "")
+        .replace(/^(?:meu\s+(?:esposo|marido|filho|pai|irm[aã]o|colega|amigo|s[oó]cio|namorado|noivo)|minha\s+(?:esposa|mulher|filha|m[aã]e|irm[aã]|colega|amiga|s[oó]cia|namorada|noiva))\s+/i, "")
+        .replace(/^(?:o|a)\s+/i, "")
+        .replace(/\s+(?:como\s+(?:h[oó]spede|acompanhante).*|na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota).*|no\s+servi[cç]o.*|da\s+nota.*|d[eo]s?\s+servi[cç]os?.*|junto\s+comigo.*|tamb[eé]m.*|a[ií]\s*[.!?]*$|por\s+favor.*|por\s+gentileza.*|pfv.*|obrigad[oa].*|,?\s+e\s+(?:o\s+)?valor.*)$/i, "");
+      s = stripOuterNonNameChars(s);
+      if (s === prev) break;
+    }
     return s;
   };
 
   const isIndefiniteOrInvalidGuestName = (cand = "") => {
-    if (!cand || cand.length < 2) return true;
-    if (/\d/.test(cand)) return true;
-    const norm = cand.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    const invalidExact = new Set([
-      "uma pessoa", "outra pessoa", "mais uma pessoa", "pessoa", "alguem",
-      "um hospede", "outro hospede", "mais um hospede", "hospede", "hospedes",
-      "um acompanhante", "outro acompanhante", "mais um acompanhante", "acompanhante",
-      "na descricao", "descricao", "no servico", "do servico", "dos servicos", "servico", "servicos",
-      "na nota", "da nota", "nota", "nota fiscal", "minha esposa", "meu esposo", "meu marido",
-      "minha mulher", "meu filho", "minha filha", "meu amigo", "minha amiga", "meu colega", "minha colega",
-      "ela", "ele", "nos", "mim", "eu"
-    ]);
-    if (invalidExact.has(norm)) return true;
-    if (/^(?:um|uma|outro|outra|mais\s+um|mais\s+uma)\b/i.test(norm)) return true;
-    if (/^(?:na|no|da|do|dos|das|para|pra|como|que|em)\s+(?:descricao|discriminacao|nota|servico|servicos|hospede)/i.test(norm)) return true;
-    if (/\b(?:descricao|discriminacao|nota\s+fiscal|valor|reais|check-?in|check-?out|diarias)\b/i.test(norm)) return true;
-    return false;
+    return !isValidPersonNameCandidate(cand);
   };
 
   // 0. Substituição explícita do hóspede na descrição ("muda o hóspede na descrição para X")
@@ -9232,6 +9364,17 @@ export function extractGuestAdditionForDescription(messageText = "") {
     const cand = cleanCandidateName(replaceMatch[1]);
     if (!isIndefiniteOrInvalidGuestName(cand)) {
       return { type: "replace_guest_named", guestName: toTitleCase(cand) };
+    }
+  }
+
+  // 0.5 Correção/substituição de um nome adicionado ("tira/remove/substitui X e coloca/por Y", "não é X, é Y")
+  const correctionMatch =
+    text.match(/\b(?:tira(?:r)?|remove(?:r)?|substitui(?:r)?|troca(?:r)?)\s+.+?\s+(?:e\s+(?:coloca|bota|inclui|adiciona|acrescenta)|por|para)\s+([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70})/i) ||
+    text.match(/\bn[aã]o\s+[eé]\s+[^,.;!?]+[,;]\s*(?:o\s+nome\s+[eé]\s+|[eé]\s+(?:o\s+|a\s+)?)?([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70})/i);
+  if (correctionMatch) {
+    const cand = cleanCandidateName(correctionMatch[1]);
+    if (!isIndefiniteOrInvalidGuestName(cand)) {
+      return { type: "add_guest_named", guestName: toTitleCase(cand) };
     }
   }
 
@@ -9245,8 +9388,8 @@ export function extractGuestAdditionForDescription(messageText = "") {
     }
   }
 
-  // 2. "... como hóspede/acompanhante [na descrição do serviço] [:|-|,|a|o] <Nome>"
-  const p2 = text.match(/\bcomo\s+(?:h[oó]spede|acompanhante)s?(?:\s+(?:tamb[eé]m\s+)?na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota(?:\s+fiscal)?)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota)?)?\s*(?:[:=-]\s*|,\s*|\s+(?:chamad[oa]\s+|de\s+nome\s+|o\s+nome\s+d[aeo]s?\s+|o\s+|a\s+))([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{1,60})/i);
+  // 2. "... como hóspede/acompanhante [na descrição do serviço] [:|-|,|?|.|a|o] <Nome>"
+  const p2 = text.match(/\bcomo\s+(?:h[oó]spede|acompanhante)s?(?:\s+(?:tamb[eé]m\s+)?na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota(?:\s+fiscal)?)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota)?(?:\s+a[ií])?)?\s*(?:[?:=.,;-]+\s*|\s+(?:chamad[oa]\s+|de\s+nome\s+|o\s+nome\s+d[aeo]s?\s+|o\s+|a\s+))([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{1,70})/i);
   if (p2) {
     const cand = cleanCandidateName(p2[1]);
     if (!isIndefiniteOrInvalidGuestName(cand)) {
@@ -9254,28 +9397,33 @@ export function extractGuestAdditionForDescription(messageText = "") {
     }
   }
 
-  // 3. "<Verbo> ... na descrição [do serviço]: <Nome>" quando a frase menciona hóspede/acompanhante/pessoa
-  if (/\b(?:h[oó]spede|acompanhante|pessoa)\b/i.test(text) && /\b(?:acrescenta|adiciona|inclui|coloca|bota|insere)\w*/i.test(text)) {
-    const colonAfterDesc = text.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o|servi[cç]os?|h[oó]spede|acompanhante)\s*[:=-]\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,60})$/i);
-    if (colonAfterDesc) {
-      const cand = cleanCandidateName(colonAfterDesc[1]);
+  // 3. Nome informado APÓS "descrição [do serviço / da nota] [aí / por favor] [? / : / - / , / . / espaço] <Nome>"
+  // Ex.: "tem como colocar mais uma pessoa na descrição do serviço aí? Thamiris Maiara Santos Da Silva"
+  if (/\b(?:acrescenta|adiciona|inclui|coloca|bota|insere|p[oõ]e)\w*/i.test(text) || /\b(?:h[oó]spede|acompanhante|pessoa)\b/i.test(text)) {
+    const afterDescMatch = text.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?(?:\s+(?:a[ií]|tamb[eé]m|por\s+favor|por\s+gentileza|pfv|pra\s+mim|para\s+mim))*\s*(?:[?:=.,;\r\n-]+\s*|\s+)([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70}?)\s*[.!?]*$/i);
+    if (afterDescMatch) {
+      const cand = cleanCandidateName(afterDescMatch[1]);
       if (!isIndefiniteOrInvalidGuestName(cand)) {
         return { type: "add_guest_named", guestName: toTitleCase(cand) };
       }
     }
   }
 
-  // 4. "<Verbo> [o hóspede / o nome de / também] <Nome> na descrição [do serviço / da nota]"
-  const p4 = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(?:tamb[eé]m\s+)?(?:(?:o\s+|a\s+)?(?:h[oó]spede|acompanhante)\s+|o\s+nome\s+d[aeo]s?\s+|meu\s+\w+\s+|minha\s+\w+\s+)([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{1,60}?)(?=\s+(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)|junto\s+comigo|tamb[eé]m|[,.;!?]|$))/i);
-  if (p4) {
-    const cand = cleanCandidateName(p4[1]);
-    if (!isIndefiniteOrInvalidGuestName(cand)) {
-      return { type: "add_guest_named", guestName: toTitleCase(cand) };
+  // 4. "<Verbo> [mais uma pessoa / o hóspede / o nome de / também / (Nome)] <Nome> na descrição [do serviço / da nota]"
+  const p4 = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(?:tamb[eé]m\s+)?(?:(?:(?:mais\s+)?um(?:a)?|outr[oa])\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|:|,|-|\()?\s*|(?:o\s+|a\s+)?(?:h[oó]spede|acompanhante)\s+|o\s+nome\s+d[aeo]s?\s+|meu\s+\w+\s+|minha\s+\w+\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70}?)\)?(?=\s+(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)|junto\s+comigo|tamb[eé]m))?/i);
+  if (p4 && /\b(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota))\b/i.test(text)) {
+    const beforeNaDesc = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(.+?)\s+na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)\b/i);
+    if (beforeNaDesc) {
+      const parenInner = beforeNaDesc[1].match(/\(([^)]+)\)/);
+      const cand = cleanCandidateName(parenInner ? parenInner[1] : beforeNaDesc[1]);
+      if (!isIndefiniteOrInvalidGuestName(cand)) {
+        return { type: "add_guest_named", guestName: toTitleCase(cand) };
+      }
     }
   }
 
-  // 5. "na descrição [do serviço] <Verbo> [o hóspede / o nome de] <Nome>" ou "<Verbo> na descrição [do serviço] o hóspede <Nome>"
-  const p5 = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote)\s+(?:tamb[eé]m\s+)?na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota)?\s*(?:[:=-]?\s*)(?:(?:o\s+|a\s+)?(?:h[oó]spede|acompanhante)\s+|o\s+nome\s+d[aeo]s?\s+)([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{1,60})/i);
+  // 5. "<Verbo> na descrição [do serviço] [o hóspede / mais uma pessoa / :] <Nome>"
+  const p5 = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(?:tamb[eé]m\s+)?na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota)?\s*(?:[:=,-]?\s*)(?:(?:(?:mais\s+)?um(?:a)?|outr[oa])\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|:|,|-)?\s*|(?:o\s+|a\s+)?(?:h[oó]spede|acompanhante)\s+|o\s+nome\s+d[aeo]s?\s+)([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{1,70})/i);
   if (p5) {
     const cand = cleanCandidateName(p5[1]);
     if (!isIndefiniteOrInvalidGuestName(cand)) {
@@ -9283,13 +9431,18 @@ export function extractGuestAdditionForDescription(messageText = "") {
     }
   }
 
-  // 6. Pedido para acrescentar uma pessoa/hóspede/acompanhante na descrição SEM informar o nome ainda
-  const isUnnamedGuestAddIntent =
-    /\b(?:acrescenta|adiciona|inclui|coloca|bota|insere|altera|muda)\w*/i.test(text) &&
-    /\b(?:(?:uma|outra|mais\s+uma)\s+pessoa|(?:um|outro|mais\s+um)\s+h[oó]spede|(?:um|outro|mais\s+um)\s+acompanhante|como\s+h[oó]spede|como\s+acompanhante)\b/i.test(text) &&
+  // 6. Pedido para acrescentar uma pessoa/hóspede/acompanhante na descrição:
+  // Antes de classificar como "sem nome", remove todas as cláusulas do pedido e verifica se sobrou um nome válido
+  const isGuestAddIntent =
+    /\b(?:acrescenta|adiciona|inclui|coloca|bota|insere|p[oõ]e|altera|muda)\w*/i.test(text) &&
+    /\b(?:(?:uma|outra|mais\s+uma)\s+pessoa|(?:um|outro|mais\s+um)\s+h[oó]spede|(?:um|outro|mais\s+um)\s+acompanhante|como\s+h[oó]spede|como\s+acompanhante|h[oó]spede\s+na\s+descri[cç][aã]o)\b/i.test(text) &&
     /\b(?:descri[cç][aã]o|discrimina[cç][aã]o|servi[cç]o|nota|hospedagem)\b/i.test(text);
 
-  if (isUnnamedGuestAddIntent) {
+  if (isGuestAddIntent) {
+    const residualCandidate = cleanCandidateName(text);
+    if (!isIndefiniteOrInvalidGuestName(residualCandidate)) {
+      return { type: "add_guest_named", guestName: toTitleCase(residualCandidate) };
+    }
     return { type: "add_guest_unnamed" };
   }
 
@@ -10293,6 +10446,8 @@ export async function handleWhatsAppFiscalFlow({
   messageText,
   senderName,
   conv,
+  quotedText = "",
+  referenceMessageId = "",
   sendZapiMessage,
   appendMessageFn,
   saveDatabase,
@@ -10405,14 +10560,21 @@ export async function handleWhatsAppFiscalFlow({
   };
 
   const conf = conv?.fiscalConferenceState;
-  const hasAlterationVerb = /\b(?:altera(?:r|[cç][aã]o)?|muda(?:r|n[cç]a)?|troca(?:r)?|acrescenta(?:r|ndo)?|acrescente|adiciona(?:r|ndo)?|adicione|inclui(?:r|ndo)?|inclua|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|corrige|corrigir|edita(?:r)?|inserir|insere|insira)\b/i.test(messageText);
-  const hasFiscalFieldTarget = /\b(?:nota|nf|nfse|nfs-e|descri[cç][aã]o|discrimina[cç][aã]o|h[oó]spede|acompanhante|tomador|cpf|cnpj|endere[cç]o|cep|e-?mail|raz[aã]o\s*social|nome|valor|servi[cç]o)\b/i.test(messageText);
+  const hasAlterationVerb = /\b(?:altera(?:r|[cç][aã]o)?|muda(?:r|n[cç]a)?|troca(?:r)?|acrescenta(?:r|ndo)?|acrescente|adiciona(?:r|ndo)?|adicione|inclui(?:r|ndo)?|inclua|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|corrige|corrigir|edita(?:r)?|inserir|insere|insira|tira(?:r)?|remove(?:r)?|substitui(?:r)?)\b/i.test(messageText);
+  const hasFiscalFieldTarget = /\b(?:nota|nf|nfse|nfs-e|descri[cç][aã]o|discrimina[cç][aã]o|h[oó]spede|acompanhante|pessoa|tomador|cpf|cnpj|endere[cç]o|cep|e-?mail|raz[aã]o\s*social|nome|valor|servi[cç]o)\b/i.test(messageText);
   const isAlterationRequest = Boolean(hasAlterationVerb && hasFiscalFieldTarget);
+  const isRefToPreviousMsg = Boolean(
+    /\b(?:j[aá]\s+(?:informei|mandei|enviei|falei|disse|escrevi|coloquei|passei)|est[aá]\s+a[ií]\s+em\s+cima|a[ií]\s+em\s+cima|olha\s+a[ií]|mensagem\s+acima|acima)\b/i.test(messageText) ||
+    /👆|⬆️|☝️/u.test(messageText) ||
+    quotedText ||
+    referenceMessageId
+  );
 
   const isAwaitingConferenceConfirmation = Boolean(
     conf && (
       conf.status === "awaiting_confirmation" ||
       Boolean(conf.pendingFieldEdit) ||
+      isRefToPreviousMsg ||
       (conf.status === "scheduled_for_checkout" && (isAlterationRequest || isFiscalIntentMessage(messageText)))
     )
   );
@@ -10423,6 +10585,35 @@ export async function handleWhatsAppFiscalFlow({
   if (!isFiscalRequest && !isAwaitingFiscal && !isAwaitingConferenceConfirmation) {
     return { handled: false };
   }
+
+  // Helper para recuperar nome de hóspede adicional a partir de mensagem citada (quote) ou histórico recente da conversa
+  const recoverGuestNameFromContext = () => {
+    const candidateTexts = [];
+    if (quotedText && typeof quotedText === "string") {
+      candidateTexts.push(quotedText);
+    }
+    const msgs = Array.isArray(conv?.messages) ? conv.messages : [];
+    if (referenceMessageId) {
+      const refMsg = msgs.find(m => m && String(m.messageId) === String(referenceMessageId));
+      if (refMsg?.text) candidateTexts.push(refMsg.text);
+    }
+    for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 12); i--) {
+      const m = msgs[i];
+      if (!m || !m.text || m.text === messageText) continue;
+      if (/^(?:📋\s*\*Confer[eê]ncia|Com certeza!\s*Por favor,\s*me informe|Dados cadastrais atualizados|✅\s*\*Dados da Nota)/i.test(m.text)) {
+        continue;
+      }
+      candidateTexts.push(m.text);
+    }
+
+    for (const txt of candidateTexts) {
+      const extracted = extractGuestAdditionForDescription(txt);
+      if (extracted?.guestName && isValidPersonNameCandidate(extracted.guestName)) {
+        return extracted.guestName;
+      }
+    }
+    return "";
+  };
 
   // ── ETAPA 1: Usuário já está na fase de conferência e respondeu à mensagem ──
   if (isAwaitingConferenceConfirmation) {
@@ -10442,18 +10633,47 @@ export async function handleWhatsAppFiscalFlow({
       });
     }
 
+    // Higienização automática caso a descrição tenha sido poluída anteriormente com texto inválido (ex: "e Já Informei 👆🏼")
+    let healedFromCorruptedDescription = false;
+    if (typeof conf.descricaoServico === "string") {
+      const sanitized = sanitizeServiceDescriptionGuests(conf.descricaoServico);
+      if (sanitized.hadInvalid) {
+        conf.descricaoServico = sanitized.description;
+        healedFromCorruptedDescription = true;
+      }
+    }
+
     // 1.0 Pré-extração de dados cadastrais, hóspede adicional e descrição (R2)
     const newCnpj = extractCnpj(messageText);
     const newCpf = extractCpf(messageText);
     const newEmail = extractEmail(messageText);
     const newCep = extractCep(messageText);
-    const matchName = messageText.match(/\b(?:nome\s+do\s+tomador|raz[aã]o\s*social|empresa|tomador)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i) ||
-      (!/\bh[oó]spede\b/i.test(messageText) ? messageText.match(/\b(?:nome)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i) : null);
+    const isAboutGuestOrDescription = /\b(?:h[oó]spede|acompanhante|pessoa|descri[cç][aã]o|discrimina[cç][aã]o|servi[cç]os?|dela|dele)\b/i.test(messageText);
+    const matchName = messageText.match(/\b(?:nome\s+do\s+tomador|raz[aã]o\s*social|empresa|tomador)\s*(?:para|por|como|:|=|-)+\s*([^,\n\r]+)/i) ||
+      (!isAboutGuestOrDescription ? messageText.match(/\b(?:muda(?:r)?|altera(?:r)?|troca(?:r)?)\s+(?:o\s+)?nome\s+(?:para|por|:|=|-)\s*([^,\n\r]+)/i) : null);
 
     const guestDescEdit = extractGuestAdditionForDescription(messageText);
 
     // Se pediu para acrescentar uma pessoa/hóspede na descrição mas ainda não informou o nome da pessoa
     if (guestDescEdit?.type === "add_guest_unnamed") {
+      const recoveredFromQuote = quotedText ? extractGuestAdditionForDescription(quotedText)?.guestName : "";
+      if (recoveredFromQuote && isValidPersonNameCandidate(recoveredFromQuote)) {
+        conf.descricaoServico = addGuestToServiceDescription(conf.descricaoServico, recoveredFromQuote, "add");
+        delete conf.pendingFieldEdit;
+        conf.status = "awaiting_confirmation";
+        conf.updatedAt = new Date().toISOString();
+        const resForUpdate = Array.isArray(db.reservations)
+          ? db.reservations.find(r => r && ((conf.reservationId && Number(r.id) === Number(conf.reservationId)) || (conf.reservationCode && String(r.code) === String(conf.reservationCode))))
+          : null;
+        if (resForUpdate) {
+          resForUpdate.confirmedFiscalData = { ...(resForUpdate.confirmedFiscalData || {}), ...conf, updatedAt: conf.updatedAt };
+        }
+        const isCheckedOutUpdate = isReservationCheckedOutForFiscal(resForUpdate, db);
+        return await respond(`Dados cadastrais atualizados com sucesso!\n\n${buildConferencePresentationMessage(conf, { isCheckedOut: isCheckedOutUpdate })}`, {
+          action: "updated_conference_data",
+          conference: conf
+        });
+      }
       conf.pendingFieldEdit = "add_guest_to_description";
       conf.status = "awaiting_confirmation";
       conf.updatedAt = new Date().toISOString();
@@ -10464,17 +10684,61 @@ export async function handleWhatsAppFiscalFlow({
       });
     }
 
-    // Se estava aguardando o nome do hóspede adicional da pergunta anterior
+    // Se estava aguardando o nome do hóspede adicional da pergunta anterior ou respondeu "já informei 👆🏼" / citou mensagem
     let followUpGuestName = "";
-    if (conf.pendingFieldEdit === "add_guest_to_description" && !guestDescEdit && !/\b(?:cancelar|cancela|n[aã]o\s*quero|deixa\s*pra\s*l[aá])\b/i.test(messageText)) {
-      const cleanedFollowUp = messageText
-        .replace(/^(?:o\s+nome\s+(?:dela|dele|da\s+pessoa|do\s+h[oó]spede)\s+[eé]|o\s+nome\s+[eé]|[eé]\s+(?:o|a)|pode\s+(?:colocar|acrescentar|incluir|adicionar|botar)|acrescenta(?:r)?|coloca(?:r)?|inclui(?:r)?|adiciona(?:r)?|bota(?:r)?|h[oó]spede|acompanhante|nome)\s*[:=-]?\s*/i, "")
-        .replace(/^(?:o|a)\s+/i, "")
-        .replace(/\s+(?:como\s+(?:h[oó]spede|acompanhante).*|na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota).*|por\s+favor.*|por\s+gentileza.*|obrigad[oa].*)$/i, "")
-        .replace(/^[\s,.:;("'-]+|[\s,.:;!?)"'-]+$/g, "")
-        .trim();
-      if (cleanedFollowUp.length >= 2 && !/\d/.test(cleanedFollowUp)) {
+    const cleanFollowUpCandidate = (rawMsg = "") => {
+      return stripOuterNonNameChars(
+        String(rawMsg || "")
+          .replace(/^(?:o\s+nome\s+(?:dela|dele|da\s+pessoa|do\s+h[oó]spede)\s+[eé]|o\s+nome\s+[eé]|[eé]\s+(?:o|a)|[eé]|pode\s+(?:colocar|acrescentar|incluir|adicionar|botar)|acrescenta(?:r)?|coloca(?:r)?|inclui(?:r)?|adiciona(?:r)?|bota(?:r)?|h[oó]spede|acompanhante|pessoa|nome(?:\s+completo)?)\s*[:=-]?\s*/i, "")
+          .replace(/^(?:o|a)\s+/i, "")
+          .replace(/\s+(?:como\s+(?:h[oó]spede|acompanhante).*|na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota).*|por\s+favor.*|por\s+gentileza.*|obrigad[oa].*)$/i, "")
+      );
+    };
+
+    if (!guestDescEdit && isRefToPreviousMsg) {
+      const recovered = recoverGuestNameFromContext();
+      if (recovered) {
+        followUpGuestName = recovered;
+      }
+    }
+
+    if (conf.pendingFieldEdit === "add_guest_to_description" && !guestDescEdit && !followUpGuestName && !/\b(?:cancelar|cancela|n[aã]o\s*quero|deixa\s*pra\s*l[aá])\b/i.test(messageText)) {
+      const cleanedFollowUp = cleanFollowUpCandidate(messageText);
+      if (isValidPersonNameCandidate(cleanedFollowUp)) {
         followUpGuestName = toTitleCase(cleanedFollowUp);
+      } else {
+        const recovered = recoverGuestNameFromContext();
+        if (recovered) {
+          followUpGuestName = recovered;
+        } else if (!/\b(?:sim|pode\s*emitir|confirmo|confirmar)\b/i.test(messageText)) {
+          const retryAskMsg = `Não consegui identificar o nome na mensagem anterior. Por favor, digite apenas o *nome completo* da pessoa que deseja acrescentar como hóspede na descrição do serviço (ex.: *Maria da Silva*). ✨`;
+          return await respond(retryAskMsg, {
+            action: "prompted_guest_name_for_description",
+            conference: conf
+          });
+        }
+      }
+    }
+
+    // Se o usuário enviou diretamente o nome da pessoa (ex: "o nome dela é X" ou apenas "Thamiris Maiara Santos Da Silva")
+    // logo após tentativa de adição de hóspede na conversa ou recuperação de descrição corrompida
+    if (!guestDescEdit && !followUpGuestName && !matchName && !newCnpj && !newCpf && !newEmail && !newCep) {
+      const directCandidate = cleanFollowUpCandidate(messageText);
+      const hasExplicitPersonPrefix = /^(?:o\s+nome\s+(?:dela|dele|da\s+pessoa|do\s+h[oó]spede)\s+[eé]|h[oó]spede\s*[:=-])/i.test(messageText.trim());
+      const hasMultiWordPersonName = isValidPersonNameCandidate(directCandidate) && directCandidate.split(/\s+/).length >= 2;
+      const hadRecentGuestPrompt = healedFromCorruptedDescription || (Array.isArray(conv?.messages) && conv.messages.slice(-6).some(m =>
+        m?.text && /(?:acrescentar como hóspede na descrição|mais uma pessoa na descrição|hóspede na descrição)/i.test(m.text)
+      ));
+      if (isValidPersonNameCandidate(directCandidate) && (hasExplicitPersonPrefix || (hasMultiWordPersonName && hadRecentGuestPrompt))) {
+        followUpGuestName = toTitleCase(directCandidate);
+      }
+    }
+
+    // Se a descrição estava corrompida (ex: "Já Informei") e ainda não extraímos o nome da mensagem atual, recupera do histórico
+    if (healedFromCorruptedDescription && !guestDescEdit && !followUpGuestName) {
+      const recovered = recoverGuestNameFromContext();
+      if (recovered) {
+        followUpGuestName = recovered;
       }
     }
 
@@ -11359,6 +11623,8 @@ export async function processAiInboundMessage({
     messageText: incomingInfo.text,
     senderName: incomingInfo.senderName,
     conv,
+    quotedText: incomingInfo.quotedText || "",
+    referenceMessageId: incomingInfo.referenceMessageId || "",
     sendZapiMessage,
     appendMessageFn,
     saveDatabase,

@@ -1700,5 +1700,110 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     );
     delete res605.confirmedFiscalData;
   });
+
+  it("Adição de Hóspede na Descrição (3): Pergunta com o nome no final ('tem como colocar mais uma pessoa na descrição do serviço aí? Thamiris Maiara Santos Da Silva') aplica o nome imediatamente", async () => {
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = false;
+
+    const conv = {
+      id: "conv_add_guest_question_with_name",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: []
+    };
+
+    await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Preciso da nota fiscal",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    const editRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "tem como colocar mais uma pessoa na descrição do serviço aí? Thamiris Maiara Santos Da Silva",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(editRes.action, "updated_conference_data", "Deve extrair Thamiris Maiara Santos da Silva e atualizar imediatamente");
+    assert.match(
+      conv.fiscalConferenceState.descricaoServico,
+      /Nota relativa à hospedagem de Miller (?:Ferreira|Mendonça Pessanha) e Thamiris Maiara Santos da Silva, no Flat 605\./,
+      "Deve inserir Thamiris Maiara Santos da Silva no cabeçalho da descrição"
+    );
+    delete res605.confirmedFiscalData;
+  });
+
+  it("Adição de Hóspede na Descrição (4): Resposta 'já informei 👆🏼' nunca vira nome de hóspede, limpa 'Já Informei' corrompido e recupera o nome da mensagem citada/histórico", async () => {
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = false;
+
+    const conv = {
+      id: "conv_ja_informei_recovery",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [
+        {
+          messageId: "msg_user_prev_1",
+          fromMe: false,
+          text: "tem como colocar mais uma pessoa na descrição do serviço aí? Thamiris Maiara Santos Da Silva"
+        }
+      ],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        pendingFieldEdit: "add_guest_to_description",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Mendonça Pessanha",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        tomadorEndereco: "Rua Sebastião Rangel, 26",
+        descricaoServico: "Nota relativa à hospedagem de Miller Mendonça Pessanha e Já Informei 👆🏼, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const replyRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "já informei 👆🏼",
+      senderName: "Miller Ferreira",
+      conv,
+      referenceMessageId: "msg_user_prev_1",
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(replyRes.action, "updated_conference_data", "Deve recuperar o nome do histórico/quote e atualizar a conferência");
+    assert.ok(!/Já Informei/i.test(conv.fiscalConferenceState.descricaoServico), "Não deve conter 'Já Informei' na descrição");
+    assert.match(
+      conv.fiscalConferenceState.descricaoServico,
+      /Nota relativa à hospedagem de Miller Mendonça Pessanha e Thamiris Maiara Santos da Silva, no Flat 605\./,
+      "Deve substituir 'Já Informei 👆🏼' por 'Thamiris Maiara Santos da Silva'"
+    );
+    delete res605.confirmedFiscalData;
+  });
 });
 

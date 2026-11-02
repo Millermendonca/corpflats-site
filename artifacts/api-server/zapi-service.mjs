@@ -5964,6 +5964,27 @@ export function extractIncomingMessageInfo(body) {
   }
 
   const messageId = String(body.messageId || body.id || body.data?.key?.id || body.key?.id || `msg_${Date.now()}`);
+  const referenceMessageId = String(
+    body.referenceMessageId ||
+    body.text?.referenceMessageId ||
+    body.quotedMsg?.messageId ||
+    body.quotedMsg?.id ||
+    body.data?.message?.extendedTextMessage?.contextInfo?.stanzaId ||
+    body.message?.extendedTextMessage?.contextInfo?.stanzaId ||
+    ""
+  ).trim();
+  const quotedText = String(
+    body.quotedMsg?.message ||
+    body.quotedMsg?.text ||
+    body.quotedMsg?.body ||
+    body.quotedMessage?.text ||
+    body.quotedMessage?.conversation ||
+    body.data?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation ||
+    body.data?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text ||
+    body.message?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation ||
+    body.message?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text ||
+    ""
+  ).trim();
 
   const rawTs = body.momment || body.moment || body.timestamp || null;
   let isoTimestamp = new Date().toISOString();
@@ -5997,6 +6018,8 @@ export function extractIncomingMessageInfo(body) {
     fileName,
     caption,
     messageId,
+    referenceMessageId,
+    quotedText,
     timestamp: isoTimestamp
   };
 }
