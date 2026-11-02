@@ -361,7 +361,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES = [
     id: "tpl_corpflats_intro",
     triggerEvent: "corpflats_intro",
     title: "1ª Mensagem • Apresentação CorpFlats & Soho Residence (Antes de Todas)",
-    description: "Enviada antes de todas as mensagens (para todos os canais) assim que o WhatsApp do hóspede é informado na reserva ou preenchido pela agência no link de credenciamento. Explica sobre a CorpFlats no Soho Residence, retirada da chave na recepção após check-in online e café servido exclusivamente no flat (quando incluso).",
+    description: "Enviada antes de todas as mensagens (para todos os canais) exclusivamente para novos hóspedes (1ª estadia) assim que o WhatsApp do hóspede é informado na reserva ou preenchido pela agência no link de credenciamento. Não é enviada para hóspedes frequentes/recorrentes. Explica sobre a CorpFlats no Soho Residence, retirada da chave na recepção após check-in online e café servido exclusivamente no flat (quando incluso).",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
@@ -10668,6 +10668,155 @@ function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservationId, pho
   });
 }
 
+/**
+ * Avalia individualmente se um destinatário (hóspede titular ou acompanhante) já é
+ * um hóspede frequente/recorrente (a partir da 2ª reserva não cancelada no sistema,
+ * ou já recebeu a mensagem de apresentação/régua em estadia anterior, ou possui
+ * histórico/tag de recorrência no CRM).
+ */
+export function isFrequentOrReturningGuestRecipient(db, reservation, target = null) {
+  if (!db || !reservation) return false;
+
+  const rCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
+  const rId = reservation.id ? String(reservation.id) : "";
+
+  const targetType = String(target?.type || "guest").trim();
+  const compMatch = /^guest_(\d+)$/.exec(targetType);
+  const guestIndex = compMatch ? Number(compMatch[1]) : (Number(target?.guestIndex) > 1 ? Number(target.guestIndex) : 1);
+  const isCompanion = guestIndex > 1;
+
+  const guestList = Array.isArray(reservation.guests) ? reservation.guests : [];
+  const guestObj = isCompanion
+    ? (guestList.find(g => Number(g?.index) === guestIndex) || guestList[guestIndex - 1] || null)
+    : (guestList[0] || null);
+
+  const rawPhone = target?.phone || (isCompanion ? (guestObj?.phone || guestObj?.whatsapp) : (reservation.guestPhone || guestObj?.phone || guestObj?.whatsapp)) || "";
+  const cleanPhone = cleanWhatsAppPhone(rawPhone);
+  const hasValidPhone = cleanPhone.length >= 8;
+
+  const rawDoc = isCompanion
+    ? (guestObj?.cpf || guestObj?.document || guestObj?.documentNumber || "")
+    : (reservation.guestDocument || reservation.document || guestObj?.cpf || guestObj?.document || guestObj?.documentNumber || "");
+  const cleanDoc = String(rawDoc || "").replace(/\D/g, "");
+  const hasValidDoc = cleanDoc.length >= 8;
+
+  const rawEmail = target?.email || (isCompanion ? guestObj?.email : (reservation.guestEmail || guestObj?.email)) || "";
+  const cleanEmail = normalizeEmailAddress(rawEmail);
+  const hasValidEmail = Boolean(cleanEmail && cleanEmail.includes("@"));
+
+  const rawName = target?.name || (isCompanion ? guestObj?.name : (reservation.guestName || guestObj?.name)) || "";
+  const firstNameNorm = String(rawName).trim().toLowerCase().split(/\s+/)[0] || "";
+
+  const targetGuestId = isCompanion
+    ? (guestObj?.guestId ? String(guestObj.guestId) : "")
+    : (reservation.guestId ? String(reservation.guestId) : (guestObj?.guestId ? String(guestObj.guestId) : ""));
+
+  // 1. Verifica no histórico de envios do WhatsApp (db.whatsappHistory):
+  //    - Se este telefone já recebeu 'corpflats_intro' anteriormente (em qualquer reserva); ou
+  //    - Se já recebeu mensagens da régua de estadia em outra reserva anterior.
+  if (hasValidPhone && Array.isArray(db.whatsappHistory)) {
+    const receivedBeforeInHistory = db.whatsappHistory.some(h => {
+      if (!h || (h.status !== "sent" && h.status !== "delivered")) return false;
+      if (!h.guestPhone || !matchClientPhone(rawPhone, h.guestPhone)) return false;
+
+      if (h.triggerEvent === "corpflats_intro" || h.templateId === "tpl_corpflats_intro") {
+        return true;
+      }
+
+      const hCode = String(h.reservationCode || "").trim().toUpperCase();
+      const hId = h.reservationId ? String(h.reservationId) : "";
+      const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+      if (!isSameRes && (hCode || hId) && (h.recipientType || "guest") !== "requester") {
+        return true;
+      }
+      return false;
+    });
+    if (receivedBeforeInHistory) return true;
+  }
+
+  // 2. Verifica se já possui pelo menos 1 outra reserva não cancelada no sistema (db.reservations)
+  if (Array.isArray(db.reservations)) {
+    const hasPriorReservation = db.reservations.some(prev => {
+      if (!prev) return false;
+      const prevCode = String(prev.code || prev.reservationCode || "").trim().toUpperCase();
+      const prevId = prev.id ? String(prev.id) : "";
+      const isSameRes = (rCode && prevCode === rCode) || (rId && (prevId === rId || prevCode === rId));
+      if (isSameRes) return false;
+
+      const prevStatus = String(prev.status || "").toLowerCase().trim();
+      if (prevStatus === "cancelada" || prevStatus === "cancelado" || prevStatus === "cancelled") {
+        return false;
+      }
+
+      if (targetGuestId && prev.guestId && String(prev.guestId) === targetGuestId) {
+        return true;
+      }
+
+      const prevDoc = String(prev.guestDocument || prev.document || "").replace(/\D/g, "");
+      if (hasValidDoc && prevDoc === cleanDoc) return true;
+
+      if (hasValidPhone && prev.guestPhone && matchClientPhone(rawPhone, prev.guestPhone)) {
+        return true;
+      }
+
+      if (hasValidEmail && prev.guestEmail && normalizeEmailAddress(prev.guestEmail) === cleanEmail) {
+        const prevFirst = String(prev.guestName || "").trim().toLowerCase().split(/\s+/)[0] || "";
+        if (!firstNameNorm || !prevFirst || firstNameNorm === prevFirst) {
+          return true;
+        }
+      }
+
+      if (Array.isArray(prev.guests)) {
+        const matchedInPrevGuests = prev.guests.some(pg => {
+          if (!pg) return false;
+          if (targetGuestId && pg.guestId && String(pg.guestId) === targetGuestId) return true;
+          const pgDoc = String(pg.cpf || pg.document || pg.documentNumber || "").replace(/\D/g, "");
+          if (hasValidDoc && pgDoc === cleanDoc) return true;
+          const pgPhone = pg.phone || pg.whatsapp || "";
+          if (hasValidPhone && pgPhone && matchClientPhone(rawPhone, pgPhone)) return true;
+          if (hasValidEmail && pg.email && normalizeEmailAddress(pg.email) === cleanEmail) {
+            const pgFirst = String(pg.name || "").trim().toLowerCase().split(/\s+/)[0] || "";
+            if (!firstNameNorm || !pgFirst || firstNameNorm === pgFirst) return true;
+          }
+          return false;
+        });
+        if (matchedInPrevGuests) return true;
+      }
+
+      return false;
+    });
+    if (hasPriorReservation) return true;
+  }
+
+  // 3. Verifica no cadastro de hóspedes / CRM (db.guests) se já consta com >= 2 estadias ou tag Recorrente/VIP
+  if (Array.isArray(db.guests)) {
+    const matchedCrmGuest = db.guests.find(g => {
+      if (!g) return false;
+      if (targetGuestId && g.id && String(g.id) === targetGuestId) return true;
+      const gDoc = String(g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "");
+      if (hasValidDoc && gDoc === cleanDoc) return true;
+      const gPhone = g.phone || g.whatsapp || "";
+      if (hasValidPhone && gPhone && matchClientPhone(rawPhone, gPhone)) return true;
+      if (hasValidEmail && g.email && normalizeEmailAddress(g.email) === cleanEmail) {
+        const gFirst = String(g.fullName || g.name || "").trim().toLowerCase().split(/\s+/)[0] || "";
+        if (!firstNameNorm || !gFirst || firstNameNorm === gFirst) return true;
+      }
+      return false;
+    });
+    if (matchedCrmGuest) {
+      if (Number(matchedCrmGuest.totalStays) >= 2) return true;
+      if (
+        Array.isArray(matchedCrmGuest.tags) &&
+        matchedCrmGuest.tags.some(t => /^(recorrente|frequente|vip)$/i.test(String(t || "").trim()))
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 // ── Disparo Unificado por Destinatário (WhatsApp + Espelho por E-mail) ────────
 /**
  * Monta um item da fila de agendamentos para um destinatário (hóspede, acompanhante ou solicitante).
@@ -11478,6 +11627,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
       const targetsToSchedule = buildTemplateTargets(tpl, recipients, { targetMode });
 
       for (const targetItem of targetsToSchedule) {
+        // Hóspede frequente/recorrente nunca recebe a 1ª mensagem de apresentação institucional (corpflats_intro)
+        if ((tpl.triggerEvent === "corpflats_intro" || tpl.id === "tpl_corpflats_intro") && isFrequentOrReturningGuestRecipient(db, resv, targetItem)) {
+          continue;
+        }
+
         // Acompanhante que já preencheu a própria ficha não recebe lembrete de pré-check-in
         if (tpl.triggerEvent === "pre_checkin_reminder" && targetItem.guestIndex > 1 && targetItem.hasCompletedCheckin) {
           continue;
@@ -11893,6 +12047,16 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
       for (const d of dispatches) {
         let target = { ...d };
+
+        // REGRA HÓSPEDE FREQUENTE: Nunca enviar a 1ª mensagem de apresentação institucional (corpflats_intro)
+        // para destinatários que já se hospedaram antes (2ª reserva em diante) ou já a receberam no histórico.
+        if (
+          (eventName === "corpflats_intro" || tpl.id === "tpl_corpflats_intro" || tpl.triggerEvent === "corpflats_intro") &&
+          isFrequentOrReturningGuestRecipient(db, reservation, target)
+        ) {
+          console.log(`[Z-API Intro Skip] Apresentação 'corpflats_intro' ignorada para ${target.type || "guest"} (${target.name || target.phone}): hóspede frequente/recorrente (Reserva ${reservation.code || reservation.id}).`);
+          continue;
+        }
 
         // Se a reserva tiver solicitante distinto (ou para acompanhantes guest_2/guest_3) e a alteração foi EXCLUSIVAMENTE financeira,
         // não envia notificação de atualização ao hóspede/acompanhantes.
@@ -12947,8 +13111,13 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
     const isSameDayAfter0701 = todayStr === reservation.checkinDate && (brHour > 7 || (brHour === 7 && brMinute >= 1));
     if (!hasGuestReceivedEvent(["reservation_created", "payment_confirmed", "sameday_reservation"])) {
       const initialEvent = isSameDayAfter0701 ? "sameday_reservation" : "reservation_created";
+      const historyBefore = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
       await triggerImmediateWhatsApp(db, saveDatabase, initialEvent, guestOnlyRes, baseUrl);
-      dispatchedStages.push("corpflats_intro", initialEvent);
+      const sentIntroNow = (db.whatsappHistory || []).slice(historyBefore).some(h => h && h.triggerEvent === "corpflats_intro" && (h.status === "sent" || h.status === "delivered"));
+      if (sentIntroNow) {
+        dispatchedStages.push("corpflats_intro");
+      }
+      dispatchedStages.push(initialEvent);
       await pauseBetweenStages();
     }
 
