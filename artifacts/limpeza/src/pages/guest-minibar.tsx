@@ -76,9 +76,15 @@ export interface PendingLaunchedItem {
   productId: string;
   productName: string;
   quantity: number;
+  remainingQuantity?: number;
   unitPrice: number;
   totalPrice: number;
+  remainingTotalPrice?: number;
   isCourtesy?: boolean;
+  allocation?: {
+    allocations: Record<number, number>;
+    unassignedQty: number;
+  };
 }
 
 export interface DailyLaunchGroup {
@@ -92,11 +98,17 @@ export interface DailyLaunchGroup {
     productId: string;
     productName: string;
     quantity: number;
+    remainingQuantity?: number;
     unitPrice: number;
     totalPrice: number;
+    remainingTotalPrice?: number;
     isCourtesy?: boolean;
     paymentStatus: string;
     launchedByName?: string;
+    allocation?: {
+      allocations: Record<number, number>;
+      unassignedQty: number;
+    };
   }[];
   totalDayAmount: number;
   pendingDayAmount: number;
@@ -110,6 +122,7 @@ export interface FlatGuestSlot {
   phone: string;
   email: string;
   cpf: string;
+  document?: string;
   role: string;
 }
 
@@ -131,7 +144,8 @@ export interface MinibarReservation {
 }
 
 export type InvoicePreference = "detailed" | "water" | "minibar_consumption";
-export type PartialPaymentMode = "items" | "equal_split" | "custom_amount";
+export type SplitMode = "titular" | "half_and_half" | "by_item";
+export type PartialPaymentMode = "configured_split" | "items" | "equal_split" | "custom_amount";
 
 function formatBRL(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -208,20 +222,31 @@ export default function GuestMinibar() {
   const [totalPaidAmount, setTotalPaidAmount] = useState<number>(0);
   const [confirmingCheckout, setConfirmingCheckout] = useState<boolean>(false);
   const [checkoutBannerSuccess, setCheckoutBannerSuccess] = useState<string | null>(null);
-  const [showReferenceCatalog, setShowReferenceCatalog] = useState<boolean>(true);
+  // Cardápio Digital recolhido por padrão e posicionado abaixo do extrato
+  const [showReferenceCatalog, setShowReferenceCatalog] = useState<boolean>(false);
   const [menuCategoryFilter, setMenuCategoryFilter] = useState<string>("todos");
 
-  // Pagamento Parcial / Individual (3 Modos)
-  const [partialMode, setPartialMode] = useState<PartialPaymentMode>("items");
+  // Persistência em Tempo Real da Divisão e Atribuição de Consumo
+  const [splitMode, setSplitMode] = useState<SplitMode>("titular");
+  const [itemAssignments, setItemAssignments] = useState<Record<string, Record<number, number>>>({});
+  const [splitBreakdown, setSplitBreakdown] = useState<any | null>(null);
+  const [isSavingSplit, setIsSavingSplit] = useState<boolean>(false);
+  const [splitSavedPulse, setSplitSavedPulse] = useState<boolean>(false);
+  const [expandedUnitItemKey, setExpandedUnitItemKey] = useState<string | null>(null);
+
+  // Pagamento Parcial / Individual
+  const [partialMode, setPartialMode] = useState<PartialPaymentMode>("configured_split");
   const [selectedLaunchQtyMap, setSelectedLaunchQtyMap] = useState<Record<string, number>>({});
   const [splitParts, setSplitParts] = useState<number>(2);
   const [customPartialInput, setCustomPartialInput] = useState<string>("");
 
-  // Múltiplos Hóspedes no mesmo Flat (Consumo e Nota Separados)
+  // Hóspedes do Flat (puxados automaticamente da reserva/FNRH + edição/adição inline na divisão)
   const [reservationGuests, setReservationGuests] = useState<FlatGuestSlot[]>([]);
   const [selectedGuestIndex, setSelectedGuestIndex] = useState<number>(1);
-  const [showAddCompanionModal, setShowAddCompanionModal] = useState(false);
-  const [companionForm, setCompanionForm] = useState({
+  const [editingGuestIndex, setEditingGuestIndex] = useState<number | null>(null);
+  const [isAddingNewGuest, setIsAddingNewGuest] = useState<boolean>(false);
+  const [guestEditForm, setGuestEditForm] = useState({
+    index: 2,
     name: "",
     phone: "",
     email: "",
@@ -256,7 +281,7 @@ export default function GuestMinibar() {
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Hóspede consumidor ativo selecionado
+  // Hóspede consumidor ativo selecionado (para pagamento / emissão da NF)
   const activeConsumerGuest = useMemo<FlatGuestSlot>(() => {
     const found = reservationGuests.find((g) => g.index === selectedGuestIndex);
     if (found) return found;
@@ -275,10 +300,11 @@ export default function GuestMinibar() {
   // Troca de hóspede consumidor no flat (atualiza CPF, WhatsApp e E-mail automaticamente)
   const handleSelectConsumerGuest = (guestSlot: FlatGuestSlot) => {
     setSelectedGuestIndex(guestSlot.index);
+    const gDoc = guestSlot.cpf || guestSlot.document || "";
     setInvoiceEmail(guestSlot.email || "");
     setInvoicePhone(guestSlot.phone || "");
-    if (guestSlot.cpf) {
-      setCustomDocument(formatDocMask(guestSlot.cpf));
+    if (gDoc) {
+      setCustomDocument(formatDocMask(gDoc));
       setDocChoice("cadastrado");
     } else {
       setCustomDocument("");
@@ -292,33 +318,12 @@ export default function GuestMinibar() {
             firstName: guestSlot.firstName || guestSlot.name.split(" ")[0] || "Hóspede",
             phone: guestSlot.phone,
             email: guestSlot.email,
-            document: guestSlot.cpf,
+            document: gDoc,
             matchedGuestIndex: guestSlot.index,
             matchedGuestRole: guestSlot.role
           }
         : prev
     );
-  };
-
-  // Adicionar/identificar 2º ou 3º hóspede para pagar separado
-  const handleConfirmCompanionGuest = () => {
-    const cleanName = companionForm.name.trim();
-    if (!cleanName) return;
-    const nextIdx = Math.max(...reservationGuests.map((g) => g.index), 1) + 1;
-    const newSlot: FlatGuestSlot = {
-      index: nextIdx,
-      guestId: null,
-      name: cleanName,
-      firstName: cleanName.split(" ")[0] || cleanName,
-      phone: companionForm.phone.trim(),
-      email: companionForm.email.trim(),
-      cpf: companionForm.cpf.replace(/\D/g, ""),
-      role: `${nextIdx}º Hóspede (Acompanhante)`
-    };
-    setReservationGuests((prev) => [...prev, newSlot]);
-    handleSelectConsumerGuest(newSlot);
-    setShowAddCompanionModal(false);
-    setCompanionForm({ name: "", phone: "", email: "", cpf: "" });
   };
 
   const applyStatementData = (data: any) => {
@@ -332,17 +337,36 @@ export default function GuestMinibar() {
     setTotalLaunchedAmount(Number(data.totalLaunchedAmount) || 0);
     setTotalPaidAmount(Number(data.totalPaidAmount) || 0);
 
-    // Por padrão, seleciona todos os itens pendentes para pagamento rápido (ou o hóspede pode desmarcar/ajustar)
+    if (data.splitConfig) {
+      const m = data.splitConfig.mode;
+      if (m === "half_and_half" || m === "by_item" || m === "titular") {
+        setSplitMode(m);
+      }
+      if (data.splitConfig.itemAssignments && typeof data.splitConfig.itemAssignments === "object") {
+        setItemAssignments(data.splitConfig.itemAssignments);
+      }
+    }
+    if (data.splitBreakdown) {
+      setSplitBreakdown(data.splitBreakdown);
+      const m = data.splitBreakdown.mode;
+      if (m === "half_and_half" || m === "by_item" || m === "titular") {
+        setSplitMode(m);
+      }
+    }
+
     const initialMap: Record<string, number> = {};
     for (const item of pendingList) {
-      initialMap[item.itemKey] = item.quantity;
+      initialMap[item.itemKey] = item.remainingQuantity ?? item.quantity;
     }
     setSelectedLaunchQtyMap(initialMap);
   };
 
   const applyContextResponse = (data: any, fallbackCodeOrFlat: string) => {
     const guestsList: FlatGuestSlot[] = Array.isArray(data.reservationGuests) && data.reservationGuests.length > 0
-      ? data.reservationGuests
+      ? data.reservationGuests.map((g: any) => ({
+          ...g,
+          cpf: g.cpf || g.document || ""
+        }))
       : [
           {
             index: 1,
@@ -356,7 +380,14 @@ export default function GuestMinibar() {
           }
         ];
 
-    const matchedIdx = Number(data.matchedGuestIndex) || 1;
+    // Verifica se a URL veio com ?guestIndex=N (link individual de WhatsApp pós-vistoria)
+    let urlGuestIndex = 0;
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      urlGuestIndex = Number(sp.get("guestIndex") || 0);
+    }
+
+    const matchedIdx = urlGuestIndex > 0 ? urlGuestIndex : Number(data.matchedGuestIndex) || 1;
     const matchedSlot = guestsList.find((g) => g.index === matchedIdx) || guestsList[0];
 
     setReservationGuests(guestsList);
@@ -367,7 +398,7 @@ export default function GuestMinibar() {
       firstName: matchedSlot.firstName || data.firstName || data.guestName?.split(" ")[0] || "Hóspede",
       phone: matchedSlot.phone || data.phone || "",
       email: matchedSlot.email || data.email || "",
-      document: matchedSlot.cpf || data.document || "",
+      document: matchedSlot.cpf || matchedSlot.document || data.document || "",
       reservationCode: data.reservationCode || fallbackCodeOrFlat,
       reservationId: data.reservationId,
       flatNumber: String(data.flatNumber || ""),
@@ -393,7 +424,7 @@ export default function GuestMinibar() {
     setInvoicePhone(resolvedPhone);
     setIsEditingContact(!resolvedEmail && !resolvedPhone);
 
-    const resolvedDoc = matchedSlot.cpf || data.document || "";
+    const resolvedDoc = matchedSlot.cpf || matchedSlot.document || data.document || "";
     if (resolvedDoc) {
       setCustomDocument(formatDocMask(resolvedDoc));
       setDocChoice("cadastrado");
@@ -402,12 +433,183 @@ export default function GuestMinibar() {
     }
   };
 
+  // Persistência em tempo real da divisão / atribuição de itens / dados de hóspedes na reserva
+  const saveSplitConfigRealtime = async (payload: {
+    mode?: SplitMode;
+    itemAssignments?: Record<string, any>;
+    itemUpdate?: { itemKey: string; allocations: Record<number, number> | null };
+    guestUpdate?: { index: number; name: string; phone: string; email: string; cpf: string };
+  }) => {
+    const resCode = reservation?.reservationCode || codeFromUrl;
+    const flatNum = reservation?.flatNumber || flatFromUrl;
+    if (!resCode && !flatNum) return;
+
+    setIsSavingSplit(true);
+    try {
+      const res = await fetch("/api/minibar/split-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reservationCode: resCode,
+          flatNumber: flatNum,
+          ...payload
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        if (Array.isArray(data.reservationGuests)) {
+          const updatedGuests = data.reservationGuests.map((g: any) => ({
+            ...g,
+            cpf: g.cpf || g.document || ""
+          }));
+          setReservationGuests(updatedGuests);
+          const curSlot = updatedGuests.find((g: FlatGuestSlot) => g.index === selectedGuestIndex);
+          if (curSlot) {
+            handleSelectConsumerGuest(curSlot);
+          }
+        }
+        if (data.statement) {
+          applyStatementData(data.statement);
+        } else {
+          if (data.splitConfig) {
+            setSplitMode(data.splitConfig.mode);
+            setItemAssignments(data.splitConfig.itemAssignments || {});
+          }
+          if (data.splitBreakdown) {
+            setSplitBreakdown(data.splitBreakdown);
+          }
+        }
+        setSplitSavedPulse(true);
+        setTimeout(() => setSplitSavedPulse(false), 2500);
+      }
+    } catch (_) {
+    } finally {
+      setIsSavingSplit(false);
+    }
+  };
+
+  // Alterar modo rápido de divisão ("titular" | "half_and_half" | "by_item")
+  const handleSelectSplitMode = async (newMode: SplitMode) => {
+    setSplitMode(newMode);
+    setPartialMode("configured_split");
+    // Se escolheu dividir meio a meio ou marcar por item e só há 1 hóspede listado, garante pelo menos o 2º slot visível
+    if ((newMode === "half_and_half" || newMode === "by_item") && reservationGuests.length < 2) {
+      const defaultSecondGuest = {
+        index: 2,
+        name: "2º Hóspede",
+        phone: "",
+        email: "",
+        cpf: ""
+      };
+      await saveSplitConfigRealtime({ mode: newMode, guestUpdate: defaultSecondGuest });
+      return;
+    }
+    await saveSplitConfigRealtime({ mode: newMode });
+  };
+
+  // Atribuir item inteiro rapidamente para um hóspede específico (no modo "by_item")
+  const handleQuickAssignItemToGuest = async (itemKey: string, totalQty: number, guestIndex: number) => {
+    const newAlloc = { [guestIndex]: totalQty };
+    setItemAssignments((prev) => ({
+      ...prev,
+      [itemKey]: newAlloc
+    }));
+    if (splitMode !== "by_item") {
+      setSplitMode("by_item");
+    }
+    await saveSplitConfigRealtime({
+      mode: "by_item",
+      itemUpdate: { itemKey, allocations: newAlloc }
+    });
+  };
+
+  // Dividir unidades de um item igualmente (quando quantity > 1) ou ajustar +-1 unidade para um hóspede
+  const handleAdjustItemUnitForGuest = async (
+    itemKey: string,
+    totalQty: number,
+    guestIndex: number,
+    delta: number
+  ) => {
+    const currentAllocObj = itemAssignments[itemKey] || {};
+    const curVal = Number(currentAllocObj[guestIndex] || 0);
+    const otherAllocated = Object.entries(currentAllocObj).reduce(
+      (acc, [k, v]) => (Number(k) === guestIndex ? acc : acc + (Number(v) || 0)),
+      0
+    );
+    const maxForThisGuest = Math.max(0, totalQty - otherAllocated);
+    const nextVal = Math.max(0, Math.min(maxForThisGuest, curVal + delta));
+
+    const updatedAlloc: Record<number, number> = { ...currentAllocObj };
+    if (nextVal <= 0) {
+      delete updatedAlloc[guestIndex];
+    } else {
+      updatedAlloc[guestIndex] = nextVal;
+    }
+
+    setItemAssignments((prev) => ({
+      ...prev,
+      [itemKey]: updatedAlloc
+    }));
+
+    await saveSplitConfigRealtime({
+      mode: "by_item",
+      itemUpdate: { itemKey, allocations: updatedAlloc }
+    });
+  };
+
+  // Abrir formulário inline para completar/editar dados de um hóspede ou adicionar novo hóspede
+  const handleStartEditGuest = (guestSlot?: FlatGuestSlot) => {
+    if (guestSlot) {
+      setIsAddingNewGuest(false);
+      setEditingGuestIndex(guestSlot.index);
+      setGuestEditForm({
+        index: guestSlot.index,
+        name: /^\d+º\s*h[óo]spede$/i.test(guestSlot.name) ? "" : guestSlot.name,
+        phone: guestSlot.phone || "",
+        email: guestSlot.email || "",
+        cpf: formatDocMask(guestSlot.cpf || guestSlot.document || "")
+      });
+    } else {
+      const nextIdx = Math.max(...reservationGuests.map((g) => g.index), 1) + 1;
+      setIsAddingNewGuest(true);
+      setEditingGuestIndex(nextIdx);
+      setGuestEditForm({
+        index: nextIdx,
+        name: "",
+        phone: "",
+        email: "",
+        cpf: ""
+      });
+    }
+  };
+
+  const handleSaveGuestInline = async () => {
+    const cleanName = guestEditForm.name.trim() || `${guestEditForm.index}º Hóspede`;
+    await saveSplitConfigRealtime({
+      guestUpdate: {
+        index: guestEditForm.index,
+        name: cleanName,
+        phone: guestEditForm.phone.trim(),
+        email: guestEditForm.email.trim(),
+        cpf: guestEditForm.cpf.replace(/\D/g, "")
+      }
+    });
+    setEditingGuestIndex(null);
+    setIsAddingNewGuest(false);
+  };
+
   // Carrega contexto direto por código de reserva
   const loadContextByReservationCode = async (code: string) => {
     setStep("loading");
     setOtpError(null);
     try {
-      const res = await fetch(`/api/minibar/reservation-context/${encodeURIComponent(code)}`);
+      let querySuffix = "";
+      if (typeof window !== "undefined") {
+        const sp = new URLSearchParams(window.location.search);
+        const gi = sp.get("guestIndex");
+        if (gi) querySuffix = `?guestIndex=${encodeURIComponent(gi)}`;
+      }
+      const res = await fetch(`/api/minibar/reservation-context/${encodeURIComponent(code)}${querySuffix}`);
       const data = await res.json();
       if (res.ok && data.success) {
         applyContextResponse(data, code);
@@ -584,7 +786,8 @@ export default function GuestMinibar() {
     }, 2500);
   };
 
-  // Botão Canônico: "Se você já efetuou o check-out, clique aqui para informar"
+  // Botão Canônico Integrado no Card Compacto do Topo: informar check-out
+  // Importante: Nunca dispara WhatsApp de cobrança de frigobar aqui (o WhatsApp só é enviado após a vistoria final da repositora)
   const handleConfirmGuestCheckout = async () => {
     if (confirmingCheckout) return;
     setConfirmingCheckout(true);
@@ -621,11 +824,12 @@ export default function GuestMinibar() {
     }
   };
 
-  // Controle de seleção de itens lançados para pagamento parcial por item
+  // Controle de seleção de itens lançados para pagamento parcial manual
   const handleUpdateSelectedLaunchedItemQty = (item: PendingLaunchedItem, delta: number) => {
+    const maxQty = item.remainingQuantity ?? item.quantity;
     setSelectedLaunchQtyMap((prev) => {
       const current = prev[item.itemKey] || 0;
-      const next = Math.max(0, Math.min(item.quantity, current + delta));
+      const next = Math.max(0, Math.min(maxQty, current + delta));
       const copy = { ...prev };
       if (next === 0) {
         delete copy[item.itemKey];
@@ -637,19 +841,28 @@ export default function GuestMinibar() {
   };
 
   const handleToggleLaunchedItemCheck = (item: PendingLaunchedItem) => {
+    const maxQty = item.remainingQuantity ?? item.quantity;
     setSelectedLaunchQtyMap((prev) => {
       const current = prev[item.itemKey] || 0;
       const copy = { ...prev };
       if (current > 0) {
         delete copy[item.itemKey];
       } else {
-        copy[item.itemKey] = item.quantity;
+        copy[item.itemKey] = maxQty;
       }
       return copy;
     });
   };
 
-  // Cálculo do valor e itens a pagar de acordo com o modo de pagamento parcial escolhido
+  // Cota configurada para o hóspede selecionado de acordo com a divisão salva na reserva
+  const activeGuestConfiguredShare = useMemo(() => {
+    const shares: any[] = Array.isArray(splitBreakdown?.shares) ? splitBreakdown.shares : [];
+    const found = shares.find((s) => Number(s.guestIndex) === Number(selectedGuestIndex));
+    if (found) return found;
+    return shares[0] || null;
+  }, [splitBreakdown, selectedGuestIndex]);
+
+  // Cálculo do valor e itens a pagar de acordo com a divisão configurada na reserva
   const paymentSelectionSummary = useMemo(() => {
     if (pendingBalance <= 0) {
       return {
@@ -657,6 +870,45 @@ export default function GuestMinibar() {
         itemsCount: 0,
         summaryLines: [] as { label: string; sublabel: string; subtotal: number }[],
         selectedLaunchItemsPayload: [] as any[]
+      };
+    }
+
+    if (partialMode === "configured_split" && activeGuestConfiguredShare) {
+      const shareAmt = Number(activeGuestConfiguredShare.amount || 0);
+      const shareItems: any[] = Array.isArray(activeGuestConfiguredShare.items)
+        ? activeGuestConfiguredShare.items
+        : [];
+      const lines = shareItems.map((it: any) => ({
+        label: `${it.quantity}x ${it.productName}`,
+        sublabel: it.launchDateBr
+          ? `Consumo em ${it.launchDateBr} • ${formatBRL(it.unitPrice)} un.`
+          : `Divisão configurada (${activeGuestConfiguredShare.guestName})`,
+        subtotal: Number(it.totalPrice || 0)
+      }));
+
+      return {
+        amountToPay: shareAmt,
+        itemsCount: shareItems.reduce((acc, i) => acc + (Number(i.quantity) || 1), 0),
+        summaryLines:
+          lines.length > 0
+            ? lines
+            : shareAmt > 0
+            ? [
+                {
+                  label: `Cota de Frigobar — ${activeGuestConfiguredShare.guestName}`,
+                  sublabel:
+                    splitMode === "half_and_half"
+                      ? "Divisão Meio a Meio (50/50)"
+                      : splitMode === "by_item"
+                      ? "Itens atribuídos no extrato"
+                      : "100% Titular (Padrão)",
+                  subtotal: shareAmt
+                }
+              ]
+            : [],
+        selectedLaunchItemsPayload: Array.isArray(activeGuestConfiguredShare.selectedLaunchItems)
+          ? activeGuestConfiguredShare.selectedLaunchItems
+          : []
       };
     }
 
@@ -700,7 +952,7 @@ export default function GuestMinibar() {
       };
     }
 
-    // Modo padrão: "items" (Pagar Tudo ou Selecionar Meus Itens Lançados)
+    // Modo manual: "items"
     let sum = 0;
     let count = 0;
     const lines: { label: string; sublabel: string; subtotal: number }[] = [];
@@ -720,10 +972,12 @@ export default function GuestMinibar() {
       payload.push({
         itemKey: item.itemKey,
         orderId: item.orderId,
+        launchOrderId: item.orderId,
         productId: item.productId,
         productName: item.productName,
         quantity: selQty,
         unitPrice: item.unitPrice,
+        launchDate: item.launchDateYmd,
         launchDateYmd: item.launchDateYmd,
         launchDateBr: item.launchDateBr
       });
@@ -735,7 +989,30 @@ export default function GuestMinibar() {
       summaryLines: lines,
       selectedLaunchItemsPayload: payload
     };
-  }, [partialMode, pendingBalance, splitParts, customPartialInput, pendingLaunchedItems, selectedLaunchQtyMap, activeConsumerGuest.firstName]);
+  }, [
+    partialMode,
+    activeGuestConfiguredShare,
+    splitMode,
+    pendingBalance,
+    splitParts,
+    customPartialInput,
+    pendingLaunchedItems,
+    selectedLaunchQtyMap,
+    activeConsumerGuest.firstName
+  ]);
+
+  // Iniciar pagamento direto da parte de um hóspede específico no card de divisão
+  const handleStartPayGuestShare = (guestIndex: number) => {
+    const slot = reservationGuests.find((g) => g.index === guestIndex);
+    if (slot) {
+      handleSelectConsumerGuest(slot);
+    } else {
+      setSelectedGuestIndex(guestIndex);
+    }
+    setPartialMode("configured_split");
+    setOrderError(null);
+    setStep("checkout");
+  };
 
   // Submissão do Pagamento no Checkout
   const handleCheckoutSubmit = async () => {
@@ -745,7 +1022,7 @@ export default function GuestMinibar() {
     }
 
     if (paymentSelectionSummary.amountToPay <= 0) {
-      setOrderError("Selecione ao menos um item lançado ou informe um valor parcial válido para pagar.");
+      setOrderError("Selecione ao menos um item lançado ou uma cota com saldo maior que R$ 0,00 para pagar.");
       return;
     }
 
@@ -754,17 +1031,27 @@ export default function GuestMinibar() {
 
     const docToSend =
       docChoice === "cadastrado"
-        ? (activeConsumerGuest.cpf || reservation?.document || "").replace(/\D/g, "")
+        ? (activeConsumerGuest.cpf || activeConsumerGuest.document || reservation?.document || "").replace(/\D/g, "")
         : customDocument.replace(/\D/g, "");
 
     const emailToSend = (invoiceEmail || activeConsumerGuest.email || reservation?.email || "").trim();
     const phoneToSend = (invoicePhone || activeConsumerGuest.phone || reservation?.phone || "").trim();
 
+    let urlOrdId: string | undefined = undefined;
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const ordFromQuery = sp.get("ord");
+      if (ordFromQuery && ordFromQuery.startsWith("ORD-MB-SPLIT-")) {
+        urlOrdId = ordFromQuery;
+      }
+    }
+
     const isPayingAllItems =
-      partialMode === "items" &&
+      (partialMode === "items" || (partialMode === "configured_split" && splitMode === "titular")) &&
       Math.abs(paymentSelectionSummary.amountToPay - pendingBalance) < 0.02;
 
     const orderPayload = {
+      orderId: urlOrdId,
       reservationCode: reservation?.reservationCode || codeFromUrl,
       flatNumber: reservation?.flatNumber || flatFromUrl,
       requireCheckout: true,
@@ -1019,10 +1306,11 @@ export default function GuestMinibar() {
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "catalog") {
     const canPayNow = isCheckedOut && pendingBalance > 0 && paymentSelectionSummary.amountToPay > 0;
+    const sharesList: any[] = Array.isArray(splitBreakdown?.shares) ? splitBreakdown.shares : [];
 
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 pb-36">
-        {/* Topo / Header Mobile */}
+        {/* Topo / Header Mobile (Sem botão 'Trocar') */}
         <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3 sm:px-6">
           <div className="max-w-xl mx-auto flex items-center justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -1042,31 +1330,19 @@ export default function GuestMinibar() {
                         : "bg-cyan-950/60 text-cyan-300 border-cyan-800/80 text-[10px] font-bold"
                     }
                   >
-                    {isCheckedOut ? `✓ Check-out ${checkoutTime ? `às ${checkoutTime}` : "Realizado"}` : activeConsumerGuest.role}
+                    {isCheckedOut
+                      ? `✓ Check-out ${checkoutTime ? `às ${checkoutTime}` : "Realizado"}`
+                      : `Reserva ${reservation?.reservationCode || ""}`}
                   </Badge>
                 </div>
                 <p className="text-xs text-slate-400 truncate">
-                  Hóspede: <strong className="text-white">{activeConsumerGuest.name}</strong> 👋
+                  Titular: <strong className="text-white">{reservationGuests[0]?.name || reservation?.guestName}</strong>
+                  {reservationGuests.length > 1 ? ` (+${reservationGuests.length - 1} hóspede${reservationGuests.length > 2 ? "s" : ""})` : ""}
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              {flatFromUrl && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setOtpValue("");
-                    setStep("otp_gate");
-                  }}
-                  title="Trocar hóspede pelos 4 dígitos do telefone"
-                  className="text-[11px] text-cyan-400 hover:text-cyan-300 rounded-xl h-8 px-2 bg-cyan-950/40 border border-cyan-800/50"
-                >
-                  <Users className="w-3.5 h-3.5 mr-1" />
-                  <span>Trocar</span>
-                </Button>
-              )}
               {reservation?.reservationCode && (
                 <Button
                   variant="ghost"
@@ -1082,116 +1358,61 @@ export default function GuestMinibar() {
         </header>
 
         <main className="max-w-xl mx-auto p-4 sm:p-6 space-y-4">
-          {/* ── Seletor de Hóspede do Flat (2+ Hóspedes: Pagamento e NF Separados) ── */}
-          <Card className="bg-slate-900/90 border-slate-800 rounded-2xl p-3.5 space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
-                <Users className="w-4 h-4 text-cyan-400 shrink-0" />
-                <span>Quem vai pagar / emitir a Nota Fiscal? (Individual ou dividido)</span>
+          {/* ── 1. Card Compacto Unificado: Como Funciona + Status/Botão de Check-out ── */}
+          {!isCheckedOut ? (
+            <Card className="bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/20 border border-amber-500/40 rounded-2xl p-3.5 sm:p-4 space-y-3 shadow-lg">
+              <div className="flex items-start gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <div className="text-xs text-slate-300 leading-relaxed space-y-0.5">
+                  <p className="font-black text-amber-300 text-xs sm:text-sm">
+                    Consumo lançado diariamente • Pagamento liberado no check-out
+                  </p>
+                  <p className="text-[11px] text-slate-300/90">
+                    A repositora lança os itens diariamente no extrato abaixo e você já pode definir a divisão da conta em tempo real. Ao sair do flat, informe seu check-out abaixo para liberar o pagamento (faturado separadamente da diária).
+                  </p>
+                </div>
               </div>
-              <button
+
+              <Button
                 type="button"
-                onClick={() => setShowAddCompanionModal((v) => !v)}
-                className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 shrink-0"
+                onClick={handleConfirmGuestCheckout}
+                disabled={confirmingCheckout}
+                className="w-full h-10 bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-slate-950 font-black text-xs rounded-xl shadow-md shadow-cyan-600/20 flex items-center justify-center gap-2 transition-all"
               >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>+ Outro hóspede</span>
-              </button>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {reservationGuests.map((g) => {
-                const isSelected = g.index === selectedGuestIndex;
-                return (
-                  <button
-                    key={g.index}
-                    type="button"
-                    onClick={() => handleSelectConsumerGuest(g)}
-                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-2 ${
-                      isSelected
-                        ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
-                        : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-600"
-                    }`}
-                  >
-                    <UserCheck className="w-3.5 h-3.5 shrink-0" />
-                    <div className="text-left">
-                      <span className="block leading-tight">{g.name}</span>
-                      <span className={`text-[10px] block font-medium ${isSelected ? "text-slate-900" : "text-slate-400"}`}>
-                        {g.index === 1 ? "1º Hóspede" : `${g.index}º Hóspede`}
-                        {g.phone ? ` • final ${g.phone.replace(/\D/g, "").slice(-4)}` : ""}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {showAddCompanionModal && (
-              <div className="p-3.5 bg-slate-950/90 border border-cyan-500/40 rounded-xl space-y-3 animate-in fade-in">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-cyan-300">
-                    Identificar 2º Hóspede / Acompanhante (para pagar e receber NF separado)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddCompanionModal(false)}
-                    className="text-xs text-slate-400 hover:text-white"
-                  >
-                    Fechar
-                  </button>
+                {confirmingCheckout ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Registrando Check-out...</span>
+                  </>
+                ) : (
+                  <>
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Já efetuei o check-out — Liberar Pagamento</span>
+                  </>
+                )}
+              </Button>
+            </Card>
+          ) : (
+            <Card className="bg-emerald-950/20 border border-emerald-500/35 rounded-2xl p-3.5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-emerald-300">
+                    Check-out Confirmado {checkoutTime ? `às ${checkoutTime}` : ""} — Pagamento Liberado!
+                  </p>
+                  <p className="text-[11px] text-slate-300">
+                    As cobranças e Notas Fiscais já estão separadas abaixo conforme a divisão configurada.
+                  </p>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <Input
-                    placeholder="Seu Nome Completo *"
-                    value={companionForm.name}
-                    onChange={(e) => setCompanionForm((p) => ({ ...p, name: e.target.value }))}
-                    className="h-10 bg-slate-900 border-slate-700 text-xs text-white rounded-xl"
-                  />
-                  <Input
-                    placeholder="Seu WhatsApp (com DDD)"
-                    value={companionForm.phone}
-                    onChange={(e) => setCompanionForm((p) => ({ ...p, phone: e.target.value }))}
-                    className="h-10 bg-slate-900 border-slate-700 text-xs text-white rounded-xl"
-                  />
-                  <Input
-                    type="email"
-                    placeholder="Seu E-mail (para Nota Fiscal)"
-                    value={companionForm.email}
-                    onChange={(e) => setCompanionForm((p) => ({ ...p, email: e.target.value }))}
-                    className="h-10 bg-slate-900 border-slate-700 text-xs text-white rounded-xl"
-                  />
-                  <Input
-                    placeholder="Seu CPF ou CNPJ"
-                    value={companionForm.cpf}
-                    onChange={(e) => setCompanionForm((p) => ({ ...p, cpf: formatDocMask(e.target.value) }))}
-                    className="h-10 bg-slate-900 border-slate-700 text-xs text-white rounded-xl"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  onClick={handleConfirmCompanionGuest}
-                  disabled={!companionForm.name.trim()}
-                  className="w-full h-10 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded-xl"
-                >
-                  Confirmar e Pagar no Meu Nome
-                </Button>
               </div>
-            )}
-          </Card>
-
-          {/* ── Aviso de Como Funciona o Novo Modo Operacional + Desacoplamento Financeiro ── */}
-          <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-start gap-3 shadow-sm">
-            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div className="text-xs text-amber-200/90 leading-relaxed space-y-1">
-              <p className="font-bold text-amber-300">Como funciona o Frigobar:</p>
-              <p>
-                Nossa equipe de reposição passa diariamente no flat e lança os itens consumidos no seu extrato abaixo. <strong>O pagamento é liberado após o check-out</strong> e não pode ser faturado junto com a diária de hospedagem.
-              </p>
-            </div>
-          </div>
+              <Badge className="bg-emerald-600 text-white text-[10px] shrink-0">Liberado</Badge>
+            </Card>
+          )}
 
           {checkoutBannerSuccess && (
-            <div className="p-3.5 bg-emerald-500/15 border border-emerald-500/40 rounded-2xl flex items-start gap-2.5 text-xs text-emerald-200 animate-in fade-in">
+            <div className="p-3 bg-emerald-500/15 border border-emerald-500/40 rounded-2xl flex items-start gap-2.5 text-xs text-emerald-200 animate-in fade-in">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <span>{checkoutBannerSuccess}</span>
             </div>
@@ -1204,60 +1425,7 @@ export default function GuestMinibar() {
             </div>
           )}
 
-          {/* ── Card de Status de Check-out e Trava de Pagamento Pré-Checkout ── */}
-          {!isCheckedOut ? (
-            <Card className="bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/30 border-2 border-amber-500/40 rounded-3xl p-4 sm:p-5 space-y-3.5 shadow-xl">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
-                  <Lock className="w-5 h-5" />
-                </div>
-                <div className="space-y-1">
-                  <h2 className="text-sm sm:text-base font-black text-amber-300">
-                    Pagamento disponível após efetuar o check-out
-                  </h2>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    Durante a estadia você pode acompanhar abaixo todos os itens lançados diariamente pela repositora. Ao encerrar sua estadia, informe seu check-out para liberar o pagamento imediato via PIX ou Cartão.
-                  </p>
-                </div>
-              </div>
-
-              <Button
-                type="button"
-                onClick={handleConfirmGuestCheckout}
-                disabled={confirmingCheckout}
-                className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-slate-950 font-black text-xs sm:text-sm rounded-2xl shadow-lg shadow-cyan-600/20 flex items-center justify-center gap-2 transition-all"
-              >
-                {confirmingCheckout ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Registrando Check-out...</span>
-                  </>
-                ) : (
-                  <>
-                    <LogOut className="w-4 h-4" />
-                    <span>Se você já efetuou o check-out, clique aqui para informar</span>
-                  </>
-                )}
-              </Button>
-            </Card>
-          ) : (
-            <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-emerald-300">
-                    Check-out Confirmado {checkoutTime ? `às ${checkoutTime}` : ""} — Pagamento Liberado!
-                  </p>
-                  <p className="text-[11px] text-slate-300">
-                    Você pode quitar o saldo total ou pagar apenas a sua parte individual abaixo.
-                  </p>
-                </div>
-              </div>
-              <Badge className="bg-emerald-600 text-white text-[10px] shrink-0">Liberado</Badge>
-            </div>
-          )}
-
-          {/* ── Resumo Financeiro da Estadia ── */}
+          {/* ── 2. Totais Financeiros em Destaque no Topo ── */}
           <div className="grid grid-cols-3 gap-2.5">
             <Card className="bg-slate-900 border-slate-800 rounded-2xl p-3 text-center">
               <span className="text-[10px] font-bold text-slate-400 uppercase block">Total Lançado</span>
@@ -1279,7 +1447,582 @@ export default function GuestMinibar() {
             </Card>
           </div>
 
-          {/* ── Cardápio Digital Bonitinho do Frigobar (Aberto por Padrão para Consulta a Qualquer Momento) ── */}
+          {/* ── 3. Extrato de Consumo por Dia + Divisão & Atribuição em Tempo Real (Destaque Principal) ── */}
+          <Card className="bg-slate-900 border-slate-800 rounded-3xl p-4 sm:p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-cyan-400 shrink-0" />
+                <h2 className="text-sm sm:text-base font-black text-white">
+                  Extrato de Consumo por Dia & Divisão
+                </h2>
+              </div>
+              <div className="flex items-center gap-2">
+                {isSavingSplit ? (
+                  <span className="text-[10px] text-cyan-400 flex items-center gap-1 font-medium">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    Salvando...
+                  </span>
+                ) : splitSavedPulse ? (
+                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-bold">
+                    <Check className="w-3 h-3" />
+                    Salvo na reserva
+                  </span>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={refreshCurrentContextSilently}
+                  className="h-7 px-2 text-[11px] text-cyan-400 hover:text-cyan-300 rounded-lg"
+                >
+                  <RefreshCw className="w-3 h-3 mr-1" />
+                  <span>Atualizar</span>
+                </Button>
+              </div>
+            </div>
+
+            {/* ── 3 Opções Rápidas de Divisão (Salvas em Tempo Real na Reserva) ── */}
+            <div className="p-3 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                  <span>Como dividir a conta e a Nota Fiscal deste flat?</span>
+                </span>
+                <Badge
+                  variant="outline"
+                  className="bg-cyan-950/50 text-cyan-300 border-cyan-800/60 text-[9px] font-semibold"
+                >
+                  Salvo em tempo real
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSelectSplitMode("titular")}
+                  className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
+                    splitMode === "titular"
+                      ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                      : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
+                  }`}
+                >
+                  100% Titular (Padrão)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectSplitMode("half_and_half")}
+                  className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
+                    splitMode === "half_and_half"
+                      ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                      : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
+                  }`}
+                >
+                  Dividir Meio a Meio
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectSplitMode("by_item")}
+                  className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
+                    splitMode === "by_item"
+                      ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                      : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
+                  }`}
+                >
+                  Marcar por Item
+                </button>
+              </div>
+
+              <p className="text-[11px] text-slate-400 leading-snug">
+                {splitMode === "titular" && (
+                  <>
+                    <strong className="text-slate-200">100% Titular:</strong> Se nada for marcado, 100% do saldo e da Nota Fiscal ficam configurados para o Hóspede Principal ({reservationGuests[0]?.firstName || "Titular"}).
+                  </>
+                )}
+                {splitMode === "half_and_half" && (
+                  <>
+                    <strong className="text-cyan-300">Dividir Meio a Meio:</strong> Todo o saldo da estadia (inclusive itens lançados na vistoria final pós-check-out) é dividido em partes iguais, gerando cobrança e Nota Fiscal para cada hóspede.
+                  </>
+                )}
+                {splitMode === "by_item" && (
+                  <>
+                    <strong className="text-cyan-300">Marcar por Item:</strong> Toque no nome do hóspede em cada item abaixo para atribuir quem consumiu o quê. Itens sem marcação (ou lançados na vistoria final) ficam para o Hóspede Principal (Titular).
+                  </>
+                )}
+              </p>
+            </div>
+
+            {/* ── Lista Diária de Consumo Lançado (Com Marcação Rápida por Item quando em "by_item") ── */}
+            {dailyLaunches.length === 0 ? (
+              <div className="p-5 rounded-2xl bg-slate-950/60 border border-slate-800/80 text-center space-y-1.5">
+                <Refrigerator className="w-7 h-7 text-slate-600 mx-auto" />
+                <p className="text-xs font-bold text-slate-300">
+                  Nenhum consumo lançado até o momento nesta estadia.
+                </p>
+                <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                  Você já pode deixar a modalidade de divisão e os dados dos hóspedes configurados abaixo; quando houver lançamentos, a divisão será aplicada automaticamente.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {dailyLaunches.map((group) => (
+                  <div
+                    key={group.dateYmd}
+                    className="rounded-2xl bg-slate-950/80 border border-slate-800 overflow-hidden"
+                  >
+                    <div className="px-3.5 py-2.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant="outline"
+                          className="bg-cyan-950/70 text-cyan-300 border-cyan-800 text-[11px] font-bold"
+                        >
+                          📅 Dia {group.dateBr}
+                        </Badge>
+                      </div>
+                      <span className="text-xs font-black text-slate-200">
+                        {formatBRL(group.totalDayAmount)}
+                      </span>
+                    </div>
+
+                    <div className="divide-y divide-slate-800/60 px-3.5 py-1">
+                      {group.items.map((item, idx) => {
+                        const isPaid = item.paymentStatus === "pago";
+                        const itemKey = item.itemKey || `${item.orderId}_${item.productId}_${idx}`;
+                        const remQty = item.remainingQuantity ?? item.quantity;
+                        const canAssignItem = splitMode === "by_item" && !item.isCourtesy && !isPaid && remQty > 0;
+                        const currentAlloc = itemAssignments[itemKey] || item.allocation?.allocations || {};
+                        const allocatedSum = Object.values(currentAlloc).reduce(
+                          (acc: number, v: any) => acc + (Number(v) || 0),
+                          0
+                        );
+                        const unassignedQty = Math.max(0, remQty - allocatedSum);
+                        const isExpandedUnits = expandedUnitItemKey === itemKey;
+
+                        return (
+                          <div
+                            key={`${item.orderId}-${item.productId}-${idx}`}
+                            className="py-2.5 space-y-2 text-xs"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold text-white">
+                                    {item.quantity}x {item.productName}
+                                  </span>
+                                  {item.isCourtesy ? (
+                                    <Badge className="bg-emerald-950 text-emerald-300 border border-emerald-800 text-[9px]">
+                                      Cortesia
+                                    </Badge>
+                                  ) : isPaid ? (
+                                    <Badge className="bg-emerald-600/20 text-emerald-300 border border-emerald-600/40 text-[9px]">
+                                      ✓ Pago
+                                    </Badge>
+                                  ) : (
+                                    <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px]">
+                                      A pagar
+                                    </Badge>
+                                  )}
+                                </div>
+                                <span className="text-[11px] text-slate-400 block">
+                                  Lançado em {item.launchDateBr} • {item.isCourtesy ? "Gratuito" : `${formatBRL(item.unitPrice)} un.`}
+                                </span>
+                              </div>
+
+                              <strong className={isPaid ? "text-emerald-400 font-mono" : "text-cyan-400 font-mono"}>
+                                {item.isCourtesy ? "R$ 0,00" : formatBRL(item.totalPrice)}
+                              </strong>
+                            </div>
+
+                            {/* Botões rápidos de atribuição no modo "Marcar por Item" */}
+                            {canAssignItem && (
+                              <div className="pt-1 flex flex-col gap-2">
+                                <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {reservationGuests.map((g) => {
+                                      const gQty = Number(currentAlloc[g.index] || 0);
+                                      const isFullAssignedToG = gQty === remQty && remQty > 0;
+                                      const isPartialAssignedToG = gQty > 0 && gQty < remQty;
+                                      return (
+                                        <button
+                                          key={g.index}
+                                          type="button"
+                                          onClick={() => handleQuickAssignItemToGuest(itemKey, remQty, g.index)}
+                                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all flex items-center gap-1 ${
+                                            isFullAssignedToG
+                                              ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-sm"
+                                              : isPartialAssignedToG
+                                              ? "bg-cyan-950/80 text-cyan-300 border-cyan-500/60"
+                                              : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
+                                          }`}
+                                        >
+                                          <UserCheck className="w-3 h-3 shrink-0" />
+                                          <span>
+                                            Hóspede {g.index} ({g.firstName || g.name.split(" ")[0]})
+                                            {gQty > 0 && remQty > 1 ? `: ${gQty}x` : ""}
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+
+                                    {remQty > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setExpandedUnitItemKey(isExpandedUnits ? null : itemKey)
+                                        }
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                                          isExpandedUnits
+                                            ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
+                                            : "bg-slate-900 text-cyan-400 border-slate-700 hover:border-cyan-500/50"
+                                        }`}
+                                      >
+                                        ÷ Dividir {remQty} un.
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {unassignedQty > 0 && (
+                                    <span className="text-[10px] text-amber-300/90 font-medium">
+                                      {unassignedQty === remQty
+                                        ? "Sem marcação → Titular (1º Hóspede)"
+                                        : `${unassignedQty} un. s/ marcação → Titular`}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Steppers de divisão de unidades quando quantity > 1 */}
+                                {remQty > 1 && isExpandedUnits && (
+                                  <div className="p-2.5 rounded-xl bg-slate-900/95 border border-slate-800 space-y-2">
+                                    <span className="text-[10px] font-bold text-slate-300 block">
+                                      Distribuir as {remQty} unidades de {item.productName}:
+                                    </span>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                      {reservationGuests.map((g) => {
+                                        const gQty = Number(currentAlloc[g.index] || 0);
+                                        return (
+                                          <div
+                                            key={g.index}
+                                            className="flex items-center justify-between bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800"
+                                          >
+                                            <span className="text-[11px] font-bold text-slate-200 truncate">
+                                              {g.index}º • {g.firstName || g.name}
+                                            </span>
+                                            <div className="flex items-center gap-1.5">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  handleAdjustItemUnitForGuest(itemKey, remQty, g.index, -1)
+                                                }
+                                                disabled={gQty <= 0}
+                                                className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white flex items-center justify-center"
+                                              >
+                                                <Minus className="w-3 h-3" />
+                                              </button>
+                                              <span className="w-5 text-center text-xs font-black text-cyan-400">
+                                                {gQty}
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  handleAdjustItemUnitForGuest(itemKey, remQty, g.index, 1)
+                                                }
+                                                disabled={unassignedQty <= 0}
+                                                className="w-6 h-6 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center"
+                                              >
+                                                <Plus className="w-3 h-3" />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ── Seção de Hóspedes do Flat, Resumo por Consumidor & Dados para Cobrança/Nota Fiscal ── */}
+            <div className="pt-3 border-t border-slate-800 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black text-white flex items-center gap-1.5">
+                    <Receipt className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <span>Hóspedes do Flat — Cobrança e Nota Fiscal por Consumidor</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Dados puxados da reserva/FNRH. Complete se faltar WhatsApp, CPF/CNPJ ou E-mail para envio do link e da NF:
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleStartEditGuest(undefined)}
+                  className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-cyan-950/40 border border-cyan-800/50 shrink-0"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>+ Adicionar Hóspede</span>
+                </button>
+              </div>
+
+              <div className="space-y-2.5">
+                {reservationGuests.map((g) => {
+                  const share = sharesList.find((s) => Number(s.guestIndex) === Number(g.index));
+                  const guestAmount = Number(share?.amount ?? (g.index === 1 && splitMode === "titular" ? pendingBalance : 0));
+                  const guestItems: any[] = Array.isArray(share?.items) ? share.items : [];
+                  const gDoc = g.cpf || g.document || "";
+                  const missingAnyFiscal = !g.phone || !gDoc || !g.email;
+                  const isSelectedPayer = selectedGuestIndex === g.index;
+                  const isEditingThis = editingGuestIndex === g.index && !isAddingNewGuest;
+
+                  return (
+                    <div
+                      key={g.index}
+                      className={`p-3.5 rounded-2xl border transition-all space-y-2.5 ${
+                        isSelectedPayer
+                          ? "bg-slate-950/95 border-cyan-500/50"
+                          : "bg-slate-950/60 border-slate-800"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs sm:text-sm font-black text-white">
+                              {g.name}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className="bg-slate-900 text-slate-300 border-slate-700 text-[9px] font-bold"
+                            >
+                              {g.index === 1 ? "1º Hóspede (Titular)" : `${g.index}º Hóspede`}
+                            </Badge>
+                            {missingAnyFiscal ? (
+                              <Badge className="bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[9px]">
+                                Completar dados p/ NF
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[9px]">
+                                ✓ Dados NF OK
+                              </Badge>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-400">
+                            <span>📱 {g.phone || "Sem WhatsApp"}</span>
+                            <span>•</span>
+                            <span>🪪 {gDoc ? formatDocMask(gDoc) : "Sem CPF/CNPJ"}</span>
+                            <span>•</span>
+                            <span className="truncate max-w-[180px]">✉️ {g.email || "Sem e-mail"}</span>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                            Sua Parte
+                          </span>
+                          <strong
+                            className={`text-sm sm:text-base font-black font-mono ${
+                              guestAmount > 0 ? "text-cyan-400" : "text-slate-500"
+                            }`}
+                          >
+                            {formatBRL(guestAmount)}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {/* Resumo dos itens atribuídos a este hóspede */}
+                      {guestItems.length > 0 && (
+                        <div className="px-2.5 py-2 rounded-xl bg-slate-900/70 border border-slate-800/80 text-[11px] text-slate-300 space-y-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                            Itens / Cota na Nota Fiscal de {g.firstName || g.name}:
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {guestItems.map((gi: any, gIdx: number) => (
+                              <span
+                                key={gIdx}
+                                className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-950 border border-slate-800 text-[11px] text-slate-200"
+                              >
+                                {gi.quantity}x {gi.productName} ({formatBRL(gi.totalPrice)})
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            isEditingThis ? setEditingGuestIndex(null) : handleStartEditGuest(g)
+                          }
+                          className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>
+                            {isEditingThis
+                              ? "Fechar edição"
+                              : missingAnyFiscal
+                              ? "Completar Nome / WhatsApp / CPF / E-mail"
+                              : "Editar dados fiscais"}
+                          </span>
+                        </button>
+
+                        {isCheckedOut && guestAmount > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => handleStartPayGuestShare(g.index)}
+                            className="h-8 px-3 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-black text-[11px] rounded-xl"
+                          >
+                            Pagar parte de {g.firstName || g.name.split(" ")[0]} ({formatBRL(guestAmount)})
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Formulário Inline de Edição de Dados do Hóspede */}
+                      {isEditingThis && (
+                        <div className="p-3 bg-slate-900 border border-cyan-500/40 rounded-xl space-y-2.5 mt-2">
+                          <span className="text-[11px] font-bold text-cyan-300 block">
+                            Dados de {g.index === 1 ? "Hóspede Titular" : `${g.index}º Hóspede`} (para envio do link no WhatsApp e emissão da Nota Fiscal):
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <Input
+                              placeholder="Nome Completo *"
+                              value={guestEditForm.name}
+                              onChange={(e) =>
+                                setGuestEditForm((p) => ({ ...p, name: e.target.value }))
+                              }
+                              className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
+                            />
+                            <Input
+                              placeholder="WhatsApp com DDD (ex: 22999999999)"
+                              value={guestEditForm.phone}
+                              onChange={(e) =>
+                                setGuestEditForm((p) => ({ ...p, phone: e.target.value }))
+                              }
+                              className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
+                            />
+                            <Input
+                              placeholder="CPF ou CNPJ (Tomador da NF)"
+                              value={guestEditForm.cpf}
+                              onChange={(e) =>
+                                setGuestEditForm((p) => ({
+                                  ...p,
+                                  cpf: formatDocMask(e.target.value)
+                                }))
+                              }
+                              className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
+                            />
+                            <Input
+                              type="email"
+                              placeholder="E-mail (para receber a NF)"
+                              value={guestEditForm.email}
+                              onChange={(e) =>
+                                setGuestEditForm((p) => ({ ...p, email: e.target.value }))
+                              }
+                              className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
+                            />
+                          </div>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setEditingGuestIndex(null)}
+                              className="h-8 text-xs text-slate-400"
+                            >
+                              Cancelar
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={handleSaveGuestInline}
+                              className="h-8 px-4 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded-lg"
+                            >
+                              Salvar Hóspede
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Formulário para Adicionar Novo Hóspede ao Flat */}
+                {isAddingNewGuest && editingGuestIndex !== null && (
+                  <div className="p-3.5 bg-slate-950 border border-cyan-500/40 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-cyan-300">
+                        Cadastrar {guestEditForm.index}º Hóspede do Flat (para divisão de conta e Nota Fiscal)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingNewGuest(false);
+                          setEditingGuestIndex(null);
+                        }}
+                        className="text-xs text-slate-400 hover:text-white"
+                      >
+                        Fechar
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Input
+                        placeholder="Nome Completo *"
+                        value={guestEditForm.name}
+                        onChange={(e) =>
+                          setGuestEditForm((p) => ({ ...p, name: e.target.value }))
+                        }
+                        className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
+                      />
+                      <Input
+                        placeholder="WhatsApp com DDD (p/ receber link)"
+                        value={guestEditForm.phone}
+                        onChange={(e) =>
+                          setGuestEditForm((p) => ({ ...p, phone: e.target.value }))
+                        }
+                        className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
+                      />
+                      <Input
+                        placeholder="CPF ou CNPJ (p/ Nota Fiscal)"
+                        value={guestEditForm.cpf}
+                        onChange={(e) =>
+                          setGuestEditForm((p) => ({
+                            ...p,
+                            cpf: formatDocMask(e.target.value)
+                          }))
+                        }
+                        className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
+                      />
+                      <Input
+                        type="email"
+                        placeholder="E-mail (p/ receber Nota Fiscal)"
+                        value={guestEditForm.email}
+                        onChange={(e) =>
+                          setGuestEditForm((p) => ({ ...p, email: e.target.value }))
+                        }
+                        className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={handleSaveGuestInline}
+                      disabled={!guestEditForm.name.trim()}
+                      className="w-full h-9 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded-xl"
+                    >
+                      Salvar {guestEditForm.index}º Hóspede na Reserva
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+
+          {/* ── 4. Cardápio Digital do Frigobar (Recolhido por Padrão e Posicionado Abaixo do Extrato) ── */}
           <Card className="bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/30 border-slate-800 rounded-3xl overflow-hidden shadow-xl">
             <button
               type="button"
@@ -1300,12 +2043,12 @@ export default function GuestMinibar() {
                     </Badge>
                   </div>
                   <span className="text-[11px] text-slate-400 block mt-0.5">
-                    Consulte a qualquer momento os produtos disponíveis, quantidades padrão e valores
+                    Toque para consultar os produtos disponíveis, quantidades padrão e tabela de preços
                   </span>
                 </div>
               </div>
               <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-400 shrink-0">
-                <span className="hidden sm:inline">{showReferenceCatalog ? "Recolher" : "Ver Cardápio"}</span>
+                <span className="hidden sm:inline">{showReferenceCatalog ? "Recolher" : "Abrir Cardápio"}</span>
                 {showReferenceCatalog ? (
                   <ChevronUp className="w-4 h-4 text-cyan-400" />
                 ) : (
@@ -1316,7 +2059,6 @@ export default function GuestMinibar() {
 
             {showReferenceCatalog && (
               <div className="p-4 sm:p-5 pt-0 border-t border-slate-800/80 space-y-4">
-                {/* Pílulas de Filtro de Categoria do Cardápio */}
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-3 no-scrollbar">
                   {[
                     { id: "todos", label: "✨ Todos" },
@@ -1343,7 +2085,6 @@ export default function GuestMinibar() {
                   })}
                 </div>
 
-                {/* Grade Visual do Cardápio */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {catalog
                     .filter((prod) => {
@@ -1476,294 +2217,7 @@ export default function GuestMinibar() {
             )}
           </Card>
 
-          {/* ── Extrato de Consumo Lançado por Dia (Apenas Data DD/MM/AAAA, sem hora) ── */}
-          <Card className="bg-slate-900 border-slate-800 rounded-3xl p-4 sm:p-5 space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-cyan-400" />
-                <h2 className="text-sm font-black text-white">
-                  Extrato de Consumo por Dia
-                </h2>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={refreshCurrentContextSilently}
-                className="h-7 px-2 text-[11px] text-cyan-400 hover:text-cyan-300 rounded-lg"
-              >
-                <RefreshCw className="w-3 h-3 mr-1" />
-                <span>Atualizar</span>
-              </Button>
-            </div>
-
-            {dailyLaunches.length === 0 ? (
-              <div className="p-6 rounded-2xl bg-slate-950/60 border border-slate-800/80 text-center space-y-2">
-                <Refrigerator className="w-8 h-8 text-slate-600 mx-auto" />
-                <p className="text-xs font-bold text-slate-300">
-                  Nenhum consumo lançado até o momento nesta estadia.
-                </p>
-                <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
-                  Quando a repositora registrar os itens consumidos na passagem diária pelo flat, eles aparecerão aqui separados pelo dia do lançamento.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {dailyLaunches.map((group) => (
-                  <div
-                    key={group.dateYmd}
-                    className="rounded-2xl bg-slate-950/80 border border-slate-800 overflow-hidden"
-                  >
-                    <div className="px-3.5 py-2.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant="outline"
-                          className="bg-cyan-950/70 text-cyan-300 border-cyan-800 text-[11px] font-bold"
-                        >
-                          📅 Dia {group.dateBr}
-                        </Badge>
-                      </div>
-                      <span className="text-xs font-black text-slate-200">
-                        {formatBRL(group.totalDayAmount)}
-                      </span>
-                    </div>
-
-                    <div className="divide-y divide-slate-800/60 px-3.5 py-1">
-                      {group.items.map((item, idx) => {
-                        const isPaid = item.paymentStatus === "pago";
-                        return (
-                          <div
-                            key={`${item.orderId}-${item.productId}-${idx}`}
-                            className="py-2.5 flex items-center justify-between gap-2 text-xs"
-                          >
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-bold text-white">
-                                  {item.quantity}x {item.productName}
-                                </span>
-                                {item.isCourtesy ? (
-                                  <Badge className="bg-emerald-950 text-emerald-300 border border-emerald-800 text-[9px]">
-                                    Cortesia
-                                  </Badge>
-                                ) : isPaid ? (
-                                  <Badge className="bg-emerald-600/20 text-emerald-300 border border-emerald-600/40 text-[9px]">
-                                    ✓ Pago
-                                  </Badge>
-                                ) : (
-                                  <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px]">
-                                    A pagar
-                                  </Badge>
-                                )}
-                              </div>
-                              <span className="text-[11px] text-slate-400 block">
-                                Lançado em {item.launchDateBr} • {item.isCourtesy ? "Gratuito" : `${formatBRL(item.unitPrice)} un.`}
-                              </span>
-                            </div>
-
-                            <strong className={isPaid ? "text-emerald-400 font-mono" : "text-cyan-400 font-mono"}>
-                              {item.isCourtesy ? "R$ 0,00" : formatBRL(item.totalPrice)}
-                            </strong>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          {/* ── Opções de Pagamento Total ou Parcial / Individual (Quando há Saldo Pendente) ── */}
-          {pendingBalance > 0 && (
-            <Card className="bg-slate-900 border-slate-800 rounded-3xl p-4 sm:p-5 space-y-4">
-              <div className="space-y-1">
-                <h2 className="text-sm font-black text-white flex items-center gap-2">
-                  <Receipt className="w-4 h-4 text-cyan-400" />
-                  <span>Como deseja pagar sua conta? (Total ou Parcial)</span>
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Se houver mais de um hóspede no flat, cada pessoa pode selecionar seus próprios itens, dividir igualmente ou digitar o valor que deseja pagar agora:
-                </p>
-              </div>
-
-              {/* Abas dos 3 Modos de Pagamento Parcial */}
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPartialMode("items")}
-                  className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
-                    partialMode === "items"
-                      ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
-                      : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-600"
-                  }`}
-                >
-                  Por Itens / Tudo
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPartialMode("equal_split")}
-                  className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
-                    partialMode === "equal_split"
-                      ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
-                      : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-600"
-                  }`}
-                >
-                  Dividir Partes Iguais
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPartialMode("custom_amount");
-                    if (!customPartialInput) {
-                      setCustomPartialInput((pendingBalance / 2).toFixed(2).replace(".", ","));
-                    }
-                  }}
-                  className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
-                    partialMode === "custom_amount"
-                      ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
-                      : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-600"
-                  }`}
-                >
-                  Digitar Valor (R$)
-                </button>
-              </div>
-
-              {/* Modo 1: Selecionar itens específicos lançados (ou pagar tudo) */}
-              {partialMode === "items" && (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span>Marque ou ajuste a quantidade dos itens que você consumiu:</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const allMap: Record<string, number> = {};
-                        for (const it of pendingLaunchedItems) {
-                          allMap[it.itemKey] = it.quantity;
-                        }
-                        setSelectedLaunchQtyMap(allMap);
-                      }}
-                      className="text-cyan-400 hover:underline font-bold"
-                    >
-                      Selecionar todos
-                    </button>
-                  </div>
-
-                  <div className="space-y-2">
-                    {pendingLaunchedItems.map((item) => {
-                      const selQty = selectedLaunchQtyMap[item.itemKey] || 0;
-                      const isSelected = selQty > 0;
-                      return (
-                        <div
-                          key={item.itemKey}
-                          className={`p-3 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
-                            isSelected
-                              ? "bg-slate-950/90 border-cyan-500/60"
-                              : "bg-slate-950/40 border-slate-800 opacity-70"
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleToggleLaunchedItemCheck(item)}
-                            className="flex items-center gap-2.5 text-left min-w-0 flex-1"
-                          >
-                            <div
-                              className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
-                                isSelected
-                                  ? "bg-cyan-500 border-cyan-400 text-slate-950"
-                                  : "border-slate-600 bg-slate-900"
-                              }`}
-                            >
-                              {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                            </div>
-                            <div className="min-w-0">
-                              <span className="text-xs font-bold text-white block truncate">
-                                {item.productName}
-                              </span>
-                              <span className="text-[10px] text-slate-400 block">
-                                Dia {item.launchDateBr} • {formatBRL(item.unitPrice)} un. (Total lançado: {item.quantity}x)
-                              </span>
-                            </div>
-                          </button>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateSelectedLaunchedItemQty(item, -1)}
-                              disabled={selQty <= 0}
-                              className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white flex items-center justify-center border border-slate-700"
-                            >
-                              <Minus className="w-3.5 h-3.5" />
-                            </button>
-                            <span className="w-6 text-center text-xs font-black text-cyan-400">
-                              {selQty}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateSelectedLaunchedItemQty(item, 1)}
-                              disabled={selQty >= item.quantity}
-                              className="w-7 h-7 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Modo 2: Dividir em partes iguais */}
-              {partialMode === "equal_split" && (
-                <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
-                  <Label className="text-xs text-slate-300 font-bold block">
-                    Dividir o saldo pendente ({formatBRL(pendingBalance)}) igualmente entre quantas pessoas?
-                  </Label>
-                  <div className="grid grid-cols-4 gap-2">
-                    {[2, 3, 4, 5].map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => setSplitParts(n)}
-                        className={`py-2.5 rounded-xl font-black text-xs border transition-all ${
-                          splitParts === n
-                            ? "bg-cyan-600 text-slate-950 border-cyan-400"
-                            : "bg-slate-900 text-slate-300 border-slate-700"
-                        }`}
-                      >
-                        ÷ {n} pessoas
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-800">
-                    <span className="text-slate-400">Sua parte individual (1/{splitParts}):</span>
-                    <strong className="text-base font-black text-cyan-400">
-                      {formatBRL(paymentSelectionSummary.amountToPay)}
-                    </strong>
-                  </div>
-                </div>
-              )}
-
-              {/* Modo 3: Digitar valor parcial customizado */}
-              {partialMode === "custom_amount" && (
-                <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
-                  <Label className="text-xs text-slate-300 font-bold block">
-                    Digite o valor parcial que deseja pagar agora (até {formatBRL(pendingBalance)}):
-                  </Label>
-                  <Input
-                    placeholder="Ex: 25,00"
-                    value={customPartialInput}
-                    onChange={(e) => setCustomPartialInput(e.target.value)}
-                    className="h-11 bg-slate-900 border-slate-700 text-white font-bold text-sm rounded-xl"
-                  />
-                  <p className="text-[11px] text-slate-400">
-                    O valor pago será abatido imediatamente do saldo pendente do flat, e o restante ficará disponível para os demais hóspedes.
-                  </p>
-                </div>
-              )}
-            </Card>
-          )}
-
-          {/* ── Histórico de Pagamentos já Realizados na Estadia ── */}
+          {/* ── 5. Histórico de Pagamentos já Realizados na Estadia ── */}
           {paidOrdersHistory.length > 0 && (
             <Card className="bg-slate-900/60 border-slate-800/80 rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -1818,7 +2272,7 @@ export default function GuestMinibar() {
                   ? "🔒 Pagamento após o check-out"
                   : pendingBalance <= 0
                   ? "Tudo quitado nesta estadia"
-                  : `Valor selecionado (${activeConsumerGuest.firstName})`}
+                  : `Cota configurada (${activeConsumerGuest.firstName})`}
               </span>
               <div className="text-lg sm:text-xl font-black text-cyan-400">
                 {formatBRL(pendingBalance > 0 ? paymentSelectionSummary.amountToPay : 0)}

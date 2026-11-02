@@ -59788,6 +59788,14 @@ function getReservationAllGuests(reservation) {
   if (!reservation) return [];
   const list = [];
   const crmGuests = Array.isArray(db.guests) ? db.guests : [];
+  const fnrhDocs = Array.isArray(db.fnrhAuditDocuments)
+    ? db.fnrhAuditDocuments.filter(
+        d =>
+          d &&
+          ((reservation.code && d.reservationCode === reservation.code) ||
+            (reservation.id && String(d.reservationId) === String(reservation.id)))
+      )
+    : [];
 
   // 1. Hóspede Titular (Slot 1)
   const primarySlot = Array.isArray(reservation.guests)
@@ -59798,11 +59806,39 @@ function getReservationAllGuests(reservation) {
     (primarySlot?.guestId && Number(cg.id) === Number(primarySlot.guestId)) ||
     (reservation.guestDocument && String(cg.document || cg.documentNumber || "").replace(/\D/g, "") === String(reservation.guestDocument).replace(/\D/g, ""))
   );
+  const primaryFnrh = primarySlot?.fnrhAuditTrail || reservation.fnrhAuditTrail || fnrhDocs[0] || null;
 
-  const primaryName = (reservation.guestName || primarySlot?.name || primaryCrm?.name || "Hóspede Titular").trim();
-  const primaryPhone = (reservation.guestPhone || primarySlot?.phone || primaryCrm?.phone || "").trim();
-  const primaryEmail = (reservation.guestEmail || primarySlot?.email || primaryCrm?.email || "").trim();
-  const primaryDoc = (reservation.guestDocument || primarySlot?.cpf || primarySlot?.document || primaryCrm?.document || primaryCrm?.documentNumber || "").trim();
+  const primaryName = (
+    reservation.guestName ||
+    primarySlot?.name ||
+    primaryFnrh?.guestFullName ||
+    primaryCrm?.name ||
+    "Hóspede Titular"
+  ).trim();
+  const primaryPhone = (
+    reservation.guestPhone ||
+    primarySlot?.phone ||
+    primarySlot?.whatsapp ||
+    primaryFnrh?.guestPhone ||
+    primaryCrm?.phone ||
+    ""
+  ).trim();
+  const primaryEmail = (
+    reservation.guestEmail ||
+    primarySlot?.email ||
+    primaryFnrh?.guestEmail ||
+    primaryCrm?.email ||
+    ""
+  ).trim();
+  const primaryDoc = (
+    reservation.guestDocument ||
+    primarySlot?.cpf ||
+    primarySlot?.document ||
+    primaryFnrh?.guestCpf ||
+    primaryCrm?.document ||
+    primaryCrm?.documentNumber ||
+    ""
+  ).trim();
 
   list.push({
     index: 1,
@@ -59813,30 +59849,85 @@ function getReservationAllGuests(reservation) {
     firstName: primaryName.split(" ")[0] || "Hóspede",
     phone: primaryPhone,
     email: primaryEmail,
+    cpf: primaryDoc,
     document: primaryDoc
   });
 
-  // 2. Acompanhantes (2º, 3º hóspedes)
+  // 2. Acompanhantes (2º, 3º hóspedes da reserva / FNRH / divisão do frigobar)
   const rawGuestsArr = Array.isArray(reservation.guests) ? reservation.guests : [];
+  const splitSavedGuests = Array.isArray(reservation.minibarSplitConfig?.guests)
+    ? reservation.minibarSplitConfig.guests
+    : [];
+  const maxRawIdx = rawGuestsArr.reduce((m, g, idx) => Math.max(m, Number(g?.index || g?.order || idx + 1) || 1), 1);
+  const maxSplitIdx = splitSavedGuests.reduce((m, g, idx) => Math.max(m, Number(g?.index || idx + 1) || 1), 1);
+
   const totalSlots = Math.max(
     Number(reservation.numGuests || reservation.guestsCount || 1),
-    rawGuestsArr.length
+    rawGuestsArr.length,
+    maxRawIdx,
+    maxSplitIdx
   );
 
   for (let i = 2; i <= totalSlots; i++) {
-    const compSlot = rawGuestsArr.find(g => Number(g?.index || g?.order) === i) || rawGuestsArr[i - 1] || null;
-    const compDocClean = String(compSlot?.cpf || compSlot?.document || "").replace(/\D/g, "");
-    const compPhoneClean = String(compSlot?.phone || "").replace(/\D/g, "");
+    const compSlot =
+      rawGuestsArr.find(g => Number(g?.index || g?.order) === i) ||
+      rawGuestsArr[i - 1] ||
+      splitSavedGuests.find(g => Number(g?.index) === i) ||
+      null;
+    const compFnrh =
+      compSlot?.fnrhAuditTrail ||
+      fnrhDocs[i - 1] ||
+      (Array.isArray(reservation.fnrhHistory)
+        ? reservation.fnrhHistory.find(
+            f => Number(f?.guestIndex || f?.index) === i || Number(f?.guestIndex) === i - 1
+          )
+        : null) ||
+      null;
+    const compDocClean = String(
+      compSlot?.cpf || compSlot?.document || compFnrh?.guestCpf || compFnrh?.cpf || compFnrh?.document || ""
+    ).replace(/\D/g, "");
+    const compPhoneClean = String(
+      compSlot?.phone || compSlot?.whatsapp || compFnrh?.guestPhone || compFnrh?.phone || ""
+    ).replace(/\D/g, "");
     const compCrm = crmGuests.find(cg =>
       (compSlot?.guestId && Number(cg.id) === Number(compSlot.guestId)) ||
       (compDocClean.length >= 8 && String(cg.document || cg.documentNumber || "").replace(/\D/g, "") === compDocClean) ||
       (compPhoneClean.length >= 8 && String(cg.phone || "").replace(/\D/g, "") === compPhoneClean)
     );
 
-    const compName = (compSlot?.name || compCrm?.name || `${i}º Hóspede (Acompanhante)`).trim();
-    const compPhone = (compSlot?.phone || compCrm?.phone || "").trim();
-    const compEmail = (compSlot?.email || compCrm?.email || "").trim();
-    const compDoc = (compSlot?.cpf || compSlot?.document || compCrm?.document || compCrm?.documentNumber || "").trim();
+    const compName = (
+      compSlot?.name ||
+      compFnrh?.guestFullName ||
+      compFnrh?.fullName ||
+      compFnrh?.name ||
+      compCrm?.name ||
+      `${i}º Hóspede (Acompanhante)`
+    ).trim();
+    const compPhone = (
+      compSlot?.phone ||
+      compSlot?.whatsapp ||
+      compFnrh?.guestPhone ||
+      compFnrh?.phone ||
+      compCrm?.phone ||
+      ""
+    ).trim();
+    const compEmail = (
+      compSlot?.email ||
+      compFnrh?.guestEmail ||
+      compFnrh?.email ||
+      compCrm?.email ||
+      ""
+    ).trim();
+    const compDoc = (
+      compSlot?.cpf ||
+      compSlot?.document ||
+      compFnrh?.guestCpf ||
+      compFnrh?.cpf ||
+      compFnrh?.document ||
+      compCrm?.document ||
+      compCrm?.documentNumber ||
+      ""
+    ).trim();
 
     list.push({
       index: i,
@@ -59846,14 +59937,481 @@ function getReservationAllGuests(reservation) {
         : `${compName.split(" ")[0]} (${i}º Hóspede)`,
       guestId: compSlot?.guestId || compCrm?.id || null,
       name: compName,
-      firstName: compName.split(" ")[0] || `Hóspede ${i}`,
+      firstName:
+        /^h[óo]spede\s*\d+/i.test(compName) || /^\d+º\s*h[óo]spede/i.test(compName)
+          ? `${i}º Hóspede`
+          : compName.split(" ")[0] || `Hóspede ${i}`,
       phone: compPhone,
       email: compEmail,
+      cpf: compDoc,
       document: compDoc
     });
   }
 
   return list;
+}
+
+function normalizeMinibarSplitMode(rawMode) {
+  const m = String(rawMode || "").trim().toLowerCase();
+  if (m === "half_and_half" || m === "equal_split" || m === "meio_a_meio" || m === "50_50") {
+    return "half_and_half";
+  }
+  if (m === "by_item" || m === "items" || m === "por_item") {
+    return "by_item";
+  }
+  return "titular";
+}
+
+function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], pendingBalance = 0, reservationGuests = []) {
+  const rawConfig = (reservation && typeof reservation.minibarSplitConfig === "object" && reservation.minibarSplitConfig)
+    ? reservation.minibarSplitConfig
+    : {};
+  const mode = normalizeMinibarSplitMode(rawConfig.mode);
+  const itemAssignments = (rawConfig.itemAssignments && typeof rawConfig.itemAssignments === "object")
+    ? rawConfig.itemAssignments
+    : {};
+
+  // Lista base de hóspedes do flat
+  const guests = Array.isArray(reservationGuests) && reservationGuests.length > 0
+    ? reservationGuests.map(g => ({
+        ...g,
+        cpf: g.cpf || g.document || "",
+        document: g.document || g.cpf || ""
+      }))
+    : [
+        {
+          index: 1,
+          role: "titular",
+          label: "1º Hóspede (Titular)",
+          guestId: reservation?.guestId || null,
+          name: reservation?.guestName || "Hóspede Titular",
+          firstName: (reservation?.guestName || "Hóspede").trim().split(" ")[0],
+          phone: reservation?.guestPhone || "",
+          email: reservation?.guestEmail || "",
+          cpf: reservation?.guestDocument || "",
+          document: reservation?.guestDocument || ""
+        }
+      ];
+
+  // Se o modo de divisão for "half_and_half" (Meio a Meio) ou "by_item" (Marcar por Item)
+  // e houver apenas 1 hóspede listado, garante o 2º slot para permitir a marcação/divisão imediata
+  if ((mode === "half_and_half" || mode === "by_item") && guests.length < 2) {
+    guests.push({
+      index: 2,
+      role: "acompanhante",
+      label: "2º Hóspede (Acompanhante)",
+      guestId: null,
+      name: "2º Hóspede (Acompanhante)",
+      firstName: "2º Hóspede",
+      phone: "",
+      email: "",
+      cpf: "",
+      document: ""
+    });
+  }
+
+  const enrichedGuests = guests.map(g => {
+    const isPlaceholderName = !g.name || /^h[óo]spede\s*\d*/i.test(g.name) || /^\d+º\s*h[óo]spede/i.test(g.name);
+    const cleanDoc = String(g.cpf || g.document || "").replace(/\D/g, "");
+    const cleanPhone = String(g.phone || "").replace(/\D/g, "");
+    const isMissingFiscalData = Boolean(isPlaceholderName || cleanPhone.length < 10 || cleanDoc.length < 11);
+    return {
+      ...g,
+      isPlaceholderName,
+      isMissingFiscalData
+    };
+  });
+
+  const cleanPendingBalance = Number(Math.max(0, Number(pendingBalance) || 0).toFixed(2));
+  const itemAllocationByKey = {};
+
+  const sharesMap = new Map();
+  for (const g of enrichedGuests) {
+    sharesMap.set(g.index, {
+      guestIndex: g.index,
+      guestId: g.guestId || null,
+      guestName: g.name,
+      firstName: g.firstName,
+      phone: g.phone || "",
+      email: g.email || "",
+      cpf: g.cpf || "",
+      document: g.document || "",
+      role: g.index === 1 ? "titular" : "acompanhante",
+      isTitular: g.index === 1,
+      isPlaceholderName: g.isPlaceholderName,
+      isMissingFiscalData: g.isMissingFiscalData,
+      amount: 0,
+      itemsCount: 0,
+      items: [],
+      orderItems: [],
+      selectedLaunchItems: []
+    });
+  }
+
+  if (mode === "half_and_half") {
+    const activeGuests = enrichedGuests.length >= 2 ? enrichedGuests : enrichedGuests.slice(0, 1);
+    const parts = Math.max(1, activeGuests.length);
+    const totalCents = Math.round(cleanPendingBalance * 100);
+    const baseCents = Math.floor(totalCents / parts);
+    const remainderCents = totalCents - baseCents * parts;
+
+    activeGuests.forEach((g, idx) => {
+      const shareEntry = sharesMap.get(g.index);
+      if (!shareEntry) return;
+      const cents = baseCents + (idx === 0 ? remainderCents : 0);
+      const shareAmt = Number((cents / 100).toFixed(2));
+      shareEntry.amount = shareAmt;
+      shareEntry.itemsCount = shareAmt > 0 ? 1 : 0;
+      if (shareAmt > 0) {
+        const desc =
+          parts === 2
+            ? "Divisão Meio a Meio (50% do Consumo de Frigobar)"
+            : `Divisão Igualitária (1/${parts} do Consumo de Frigobar)`;
+        shareEntry.items = [
+          {
+            itemKey: `split_${g.index}`,
+            productId: "split_share",
+            productName: desc,
+            quantity: 1,
+            unitPrice: shareAmt,
+            totalPrice: shareAmt,
+            launchDateBr: "Estadia"
+          }
+        ];
+        shareEntry.orderItems = [
+          {
+            productId: "split_share",
+            productName: desc,
+            quantity: 1,
+            unitPrice: shareAmt,
+            totalPrice: shareAmt,
+            isCourtesy: false
+          }
+        ];
+      }
+    });
+
+    for (const it of pendingLaunchedItems) {
+      itemAllocationByKey[it.itemKey] = {
+        mode: "half_and_half",
+        allocations: Object.fromEntries(activeGuests.map(g => [String(g.index), Number((it.remainingQuantity / parts).toFixed(2))]))
+      };
+    }
+  } else if (mode === "by_item") {
+    for (const it of pendingLaunchedItems) {
+      const remQty = Number(it.remainingQuantity ?? it.quantity) || 0;
+      const uPrice = Number(it.unitPrice) || 0;
+      if (remQty <= 0) continue;
+
+      const rawAssign =
+        itemAssignments[it.itemKey] ??
+        itemAssignments[`${it.launchOrderId}::${it.productId}`] ??
+        itemAssignments[it.productId];
+
+      const perGuestQty = {};
+      if (typeof rawAssign === "number" || typeof rawAssign === "string") {
+        const targetIdx = Number(rawAssign) || 1;
+        if (sharesMap.has(targetIdx)) {
+          perGuestQty[targetIdx] = remQty;
+        } else {
+          perGuestQty[1] = remQty;
+        }
+      } else if (rawAssign && typeof rawAssign === "object") {
+        if (rawAssign.assignedGuestIndex !== undefined || rawAssign.guestIndex !== undefined) {
+          const targetIdx = Number(rawAssign.assignedGuestIndex ?? rawAssign.guestIndex) || 1;
+          perGuestQty[sharesMap.has(targetIdx) ? targetIdx : 1] = remQty;
+        } else {
+          const allocSource =
+            rawAssign.unitsByGuest && typeof rawAssign.unitsByGuest === "object"
+              ? rawAssign.unitsByGuest
+              : rawAssign.allocations && typeof rawAssign.allocations === "object"
+              ? rawAssign.allocations
+              : rawAssign;
+          let remainingToAssign = remQty;
+          for (const g of enrichedGuests) {
+            if (g.index === 1) continue;
+            const wanted = Math.max(0, Math.floor(Number(allocSource[g.index] ?? allocSource[String(g.index)] ?? 0)));
+            const take = Math.min(remainingToAssign, wanted);
+            if (take > 0) {
+              perGuestQty[g.index] = take;
+              remainingToAssign -= take;
+            }
+          }
+          // Eventuais unidades não marcadas (ou marcadas para o Hóspede 1) vão automaticamente para o Hóspede Principal (Titular)
+          if (remainingToAssign > 0) {
+            perGuestQty[1] = remainingToAssign;
+          }
+        }
+      } else {
+        // Regra Canônica: Itens não marcados (inclusive lançados na vistoria final) vão para o Hóspede Principal (Titular)
+        perGuestQty[1] = remQty;
+      }
+
+      itemAllocationByKey[it.itemKey] = {
+        mode: "by_item",
+        isExplicitlyMarked: rawAssign !== undefined && rawAssign !== null,
+        allocations: perGuestQty
+      };
+
+      for (const [gIdxStr, qVal] of Object.entries(perGuestQty)) {
+        const gIdx = Number(gIdxStr) || 1;
+        const qty = Number(qVal) || 0;
+        if (qty <= 0) continue;
+        const shareEntry = sharesMap.get(gIdx) || sharesMap.get(1);
+        if (!shareEntry) continue;
+
+        const subTotal = Number((qty * uPrice).toFixed(2));
+        shareEntry.amount = Number((shareEntry.amount + subTotal).toFixed(2));
+        shareEntry.itemsCount += qty;
+
+        const itemEntry = {
+          itemKey: it.itemKey,
+          orderId: it.launchOrderId,
+          launchOrderId: it.launchOrderId,
+          productId: it.productId,
+          productName: it.productName,
+          quantity: qty,
+          unitPrice: uPrice,
+          totalPrice: subTotal,
+          launchDate: it.launchDate,
+          launchDateYmd: it.launchDate,
+          launchDateBr: it.launchDateBr,
+          isExplicitlyMarked: rawAssign !== undefined && rawAssign !== null
+        };
+        shareEntry.items.push(itemEntry);
+        shareEntry.orderItems.push({
+          productId: it.productId,
+          productName: it.productName,
+          quantity: qty,
+          unitPrice: uPrice,
+          totalPrice: subTotal,
+          isCourtesy: false,
+          launchOrderId: it.launchOrderId,
+          launchDate: it.launchDate,
+          launchDateBr: it.launchDateBr
+        });
+        shareEntry.selectedLaunchItems.push(itemEntry);
+      }
+    }
+  } else {
+    // Modo padrão: "titular" -> 100% para o Hóspede Principal (Titular) como pagador e tomador da Nota Fiscal
+    const titularShare = sharesMap.get(1);
+    if (titularShare) {
+      titularShare.amount = cleanPendingBalance;
+      for (const it of pendingLaunchedItems) {
+        const remQty = Number(it.remainingQuantity ?? it.quantity) || 0;
+        const uPrice = Number(it.unitPrice) || 0;
+        if (remQty <= 0) continue;
+        const subTotal = Number((remQty * uPrice).toFixed(2));
+        titularShare.itemsCount += remQty;
+        const itemEntry = {
+          itemKey: it.itemKey,
+          orderId: it.launchOrderId,
+          launchOrderId: it.launchOrderId,
+          productId: it.productId,
+          productName: it.productName,
+          quantity: remQty,
+          unitPrice: uPrice,
+          totalPrice: subTotal,
+          launchDate: it.launchDate,
+          launchDateYmd: it.launchDate,
+          launchDateBr: it.launchDateBr
+        };
+        titularShare.items.push(itemEntry);
+        titularShare.orderItems.push({
+          productId: it.productId,
+          productName: it.productName,
+          quantity: remQty,
+          unitPrice: uPrice,
+          totalPrice: subTotal,
+          isCourtesy: false,
+          launchOrderId: it.launchOrderId,
+          launchDate: it.launchDate,
+          launchDateBr: it.launchDateBr
+        });
+        titularShare.selectedLaunchItems.push(itemEntry);
+        itemAllocationByKey[it.itemKey] = {
+          mode: "titular",
+          allocations: { "1": remQty }
+        };
+      }
+    }
+  }
+
+  // Vincula eventuais ordens individuais pré-configuradas no pós-checkout (ORD-MB-SPLIT-...)
+  const resCode = reservation?.code || (reservation?.id ? `RES-${reservation.id}` : "");
+  const existingSplitOrders = reservation
+    ? (db.minibarOrders || []).filter(
+        o =>
+          o &&
+          o.isAutoSplitCheckoutOrder &&
+          o.paymentStatus !== "cancelado" &&
+          ((resCode && o.reservationCode === resCode) || String(o.reservationId) === String(reservation.id))
+      )
+    : [];
+
+  for (const share of sharesMap.values()) {
+    const matchedOrd = existingSplitOrders.find(
+      o => Number(o.guestIndex || 1) === share.guestIndex && o.paymentStatus === "pendente"
+    );
+    share.pendingOrderId = matchedOrd ? matchedOrd.id : null;
+  }
+
+  return {
+    mode,
+    itemAssignments,
+    updatedAt: rawConfig.updatedAt || null,
+    guests: enrichedGuests,
+    shares: Array.from(sharesMap.values()),
+    itemAllocationByKey
+  };
+}
+
+function syncReservationAutoSplitOrders(reservation, flatStr, statement) {
+  if (!reservation || !statement) return [];
+  if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
+
+  const resCode = reservation.code || `RES-${reservation.id}`;
+  const splitBreakdown = statement.splitBreakdown;
+  if (!splitBreakdown) return [];
+
+  const existingAutoSplitOrders = db.minibarOrders.filter(
+    o =>
+      o &&
+      o.isAutoSplitCheckoutOrder &&
+      o.paymentStatus === "pendente" &&
+      ((resCode && o.reservationCode === resCode) || String(o.reservationId) === String(reservation.id))
+  );
+
+  // Se não há saldo pendente ou o modo voltou para "titular" (100% titular já atendido pela ordem principal),
+  // cancela ordens parciais pendentes obsoletas e garante os dados fiscais do titular na ordem principal
+  if (statement.pendingBalance <= 0 || splitBreakdown.mode === "titular") {
+    for (const oldOrd of existingAutoSplitOrders) {
+      oldOrd.paymentStatus = "cancelado";
+      oldOrd.updatedAt = new Date().toISOString();
+    }
+    const titularShare = splitBreakdown.shares.find(s => s.guestIndex === 1) || splitBreakdown.shares[0];
+    if (titularShare && statement.primaryPendingOrder) {
+      const pOrd = statement.primaryPendingOrder;
+      const cleanDoc = String(titularShare.document || titularShare.cpf || reservation.guestDocument || "").replace(/\D/g, "");
+      pOrd.guestIndex = 1;
+      pOrd.guestRole = "titular";
+      pOrd.guestId = titularShare.guestId || reservation.guestId || null;
+      pOrd.guestName = titularShare.guestName || reservation.guestName || "Hóspede Titular";
+      pOrd.guestPhone = titularShare.phone || reservation.guestPhone || "";
+      pOrd.guestDocument = cleanDoc;
+      pOrd.guestEmail = titularShare.email || reservation.guestEmail || "";
+      pOrd.fiscalPreferences = {
+        invoiceDescriptionType: pOrd.fiscalPreferences?.invoiceDescriptionType || "detailed",
+        documentType: cleanDoc.length === 14 ? "cnpj" : "cpf",
+        documentNumber: cleanDoc,
+        companyName: pOrd.fiscalPreferences?.companyName || "",
+        email: pOrd.guestEmail,
+        phone: pOrd.guestPhone
+      };
+    }
+    return statement.primaryPendingOrder ? [statement.primaryPendingOrder] : [];
+  }
+
+  // Modo "half_and_half" (Meio a Meio) ou "by_item" (Marcar por Item):
+  // Cria/atualiza uma cobrança e pré-configuração de Nota Fiscal individual para cada hóspede com saldo > 0
+  const activeShares = splitBreakdown.shares.filter(s => s.amount > 0);
+  const syncedOrders = [];
+  const activeGuestIndices = new Set(activeShares.map(s => s.guestIndex));
+
+  for (const oldOrd of existingAutoSplitOrders) {
+    if (!activeGuestIndices.has(Number(oldOrd.guestIndex || 1))) {
+      oldOrd.paymentStatus = "cancelado";
+      oldOrd.updatedAt = new Date().toISOString();
+    }
+  }
+
+  for (const share of activeShares) {
+    const cleanDoc = String(share.document || share.cpf || "").replace(/\D/g, "");
+    const splitOrdId = `ORD-MB-SPLIT-${resCode}-G${share.guestIndex}`;
+    let splitOrd = existingAutoSplitOrders.find(o => Number(o.guestIndex) === share.guestIndex || o.id === splitOrdId);
+
+    const fiscalPreferences = {
+      invoiceDescriptionType: splitOrd?.fiscalPreferences?.invoiceDescriptionType || "detailed",
+      documentType: cleanDoc.length === 14 ? "cnpj" : "cpf",
+      documentNumber: cleanDoc,
+      companyName: splitOrd?.fiscalPreferences?.companyName || "",
+      email: share.email || "",
+      phone: share.phone || ""
+    };
+
+    const effectiveItems =
+      Array.isArray(share.orderItems) && share.orderItems.length > 0
+        ? share.orderItems
+        : [
+            {
+              productId: "split_share",
+              productName: `Cota Individual de Frigobar (${share.guestName})`,
+              quantity: 1,
+              unitPrice: share.amount,
+              totalPrice: share.amount,
+              isCourtesy: false
+            }
+          ];
+
+    if (splitOrd) {
+      splitOrd.flatNumber = flatStr;
+      splitOrd.guestId = share.guestId || splitOrd.guestId || null;
+      splitOrd.guestIndex = share.guestIndex;
+      splitOrd.guestRole = share.guestIndex > 1 ? "acompanhante" : "titular";
+      splitOrd.guestName = share.guestName;
+      splitOrd.guestPhone = share.phone || "";
+      splitOrd.guestDocument = cleanDoc;
+      splitOrd.guestEmail = share.email || "";
+      splitOrd.items = effectiveItems;
+      splitOrd.selectedLaunchItems = share.selectedLaunchItems || [];
+      splitOrd.partialMode = splitBreakdown.mode === "half_and_half" ? "equal_split" : "items";
+      splitOrd.splitMode = splitBreakdown.mode;
+      splitOrd.settlesLaunchOrders = true;
+      splitOrd.isAutoSplitCheckoutOrder = true;
+      splitOrd.totalAmount = share.amount;
+      splitOrd.fiscalPreferences = fiscalPreferences;
+      splitOrd.updatedAt = new Date().toISOString();
+    } else {
+      splitOrd = {
+        id: splitOrdId,
+        flatNumber: flatStr,
+        reservationId: reservation.id || null,
+        reservationCode: resCode,
+        guestId: share.guestId || null,
+        guestIndex: share.guestIndex,
+        guestRole: share.guestIndex > 1 ? "acompanhante" : "titular",
+        guestName: share.guestName,
+        guestPhone: share.phone || "",
+        guestDocument: cleanDoc,
+        guestEmail: share.email || "",
+        items: effectiveItems,
+        selectedLaunchItems: share.selectedLaunchItems || [],
+        partialMode: splitBreakdown.mode === "half_and_half" ? "equal_split" : "items",
+        splitMode: splitBreakdown.mode,
+        settlesLaunchOrders: true,
+        isAutoSplitCheckoutOrder: true,
+        totalAmount: share.amount,
+        paymentMethod: "pendente",
+        paymentStatus: "pendente",
+        source: "guest_split_checkout",
+        fiscalPreferences,
+        invoice: { status: "pendente" },
+        notes:
+          splitBreakdown.mode === "half_and_half"
+            ? `Divisão Meio a Meio configurada na reserva (${share.guestName})`
+            : `Consumo individual marcado por item (${share.guestName})`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      db.minibarOrders.push(splitOrd);
+    }
+
+    share.pendingOrderId = splitOrd.id;
+    syncedOrders.push(splitOrd);
+  }
+
+  return syncedOrders;
 }
 
 function formatMinibarDateBr(ymdOrIso) {
@@ -59963,13 +60521,16 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
     if (!byDateMap.has(rawDate)) {
       byDateMap.set(rawDate, {
         date: rawDate,
+        dateYmd: rawDate,
         dateBr,
         totalDayAmount: 0,
+        pendingDayAmount: 0,
         items: []
       });
     }
     const dayEntry = byDateMap.get(rawDate);
     dayEntry.totalDayAmount = Number((dayEntry.totalDayAmount + ordTotal).toFixed(2));
+    dayEntry.pendingDayAmount = Number((dayEntry.pendingDayAmount + ordRem).toFixed(2));
 
     for (const [idx, it] of (lOrd.items || []).entries()) {
       const qty = Number(it.quantity) || 0;
@@ -59986,12 +60547,16 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
         : Math.max(0, qty - paidQty);
 
       const itemKey = `${lOrd.id}::${it.productId}::${idx}`;
+      const isItemPaid = isOrdPaid || remQty === 0;
       const enrichedItem = {
         itemKey,
+        orderId: lOrd.id,
         launchOrderId: lOrd.id,
         launchDate: rawDate,
+        launchDateYmd: rawDate,
         launchDateBr: dateBr,
         inspectorName: lOrd.inspectorName || "Repositora Anserve",
+        launchedByName: lOrd.inspectorName || "Repositora Anserve",
         productId: it.productId,
         productName: it.productName || it.name || it.productId,
         quantity: qty,
@@ -60001,7 +60566,8 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
         totalPrice: tPrice,
         remainingTotalPrice: Number((remQty * uPrice).toFixed(2)),
         isCourtesy: Boolean(it.isCourtesy),
-        isPaid: isOrdPaid || remQty === 0
+        isPaid: isItemPaid,
+        paymentStatus: isItemPaid ? "pago" : "pendente"
       };
 
       dayEntry.items.push(enrichedItem);
@@ -60022,8 +60588,10 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
     if (!byDateMap.has(rawDate)) {
       byDateMap.set(rawDate, {
         date: rawDate,
+        dateYmd: rawDate,
         dateBr,
         totalDayAmount: 0,
+        pendingDayAmount: 0,
         items: []
       });
     }
@@ -60037,10 +60605,13 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
       const tPrice = Number(it.totalPrice) || Number((qty * uPrice).toFixed(2));
       dayEntry.items.push({
         itemKey: `${pOrd.id}::${it.productId}::${idx}`,
+        orderId: pOrd.id,
         launchOrderId: pOrd.id,
         launchDate: rawDate,
+        launchDateYmd: rawDate,
         launchDateBr: dateBr,
         inspectorName: pOrd.guestName || "Consumo Registrado",
+        launchedByName: pOrd.guestName || "Consumo Registrado",
         productId: it.productId,
         productName: it.productName || it.name || it.productId,
         quantity: qty,
@@ -60050,7 +60621,8 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
         totalPrice: tPrice,
         remainingTotalPrice: 0,
         isCourtesy: Boolean(it.isCourtesy),
-        isPaid: true
+        isPaid: true,
+        paymentStatus: "pago"
       });
     }
   }
@@ -60070,6 +60642,24 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
         (o.remainingAmount === undefined ? Number(o.totalAmount) > 0 : Number(o.remainingAmount) > 0.01)
     ) || null;
 
+  // 4. Computa a divisão em tempo real ("titular", "half_and_half" ou "by_item")
+  const reservationGuests = reservation ? getReservationAllGuests(reservation) : [];
+  const splitBreakdown = computeReservationMinibarSplit(
+    reservation,
+    pendingLaunchedItems,
+    pendingBalance,
+    reservationGuests
+  );
+
+  // Anota cada item pendente com sua alocação atual
+  for (const day of dailyLaunches) {
+    for (const item of day.items) {
+      if (splitBreakdown.itemAllocationByKey[item.itemKey]) {
+        item.allocation = splitBreakdown.itemAllocationByKey[item.itemKey];
+      }
+    }
+  }
+
   return {
     isCheckedOut,
     checkoutTime: checkoutTime || null,
@@ -60078,7 +60668,14 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
     pendingBalance,
     totalLaunchedAmount: Number(totalLaunchedAmount.toFixed(2)),
     totalPaidAmount,
-    primaryPendingOrder
+    primaryPendingOrder,
+    reservationGuests: splitBreakdown.guests || reservationGuests,
+    splitConfig: {
+      mode: splitBreakdown.mode,
+      itemAssignments: splitBreakdown.itemAssignments,
+      updatedAt: splitBreakdown.updatedAt
+    },
+    splitBreakdown
   };
 }
 
@@ -60208,6 +60805,24 @@ function settleMinibarOrder(order, paymentDetails = {}) {
         String(o.flatNumber) === String(order.flatNumber)) &&
       Number(o.remainingAmount ?? o.totalAmount ?? 0) > 0.01
   );
+
+  // Se não há mais saldo nos lançamentos (ou se o pedido pago corresponde à cota daquele hóspede),
+  // limpa eventuais ordens auto-split pendentes daquele hóspede ou da reserva quitada
+  for (const sOrd of db.minibarOrders || []) {
+    if (
+      sOrd &&
+      sOrd.id !== order.id &&
+      sOrd.isAutoSplitCheckoutOrder &&
+      sOrd.paymentStatus === "pendente" &&
+      ((order.reservationCode && sOrd.reservationCode === order.reservationCode) ||
+        (order.reservationId && String(sOrd.reservationId) === String(order.reservationId)))
+    ) {
+      if (!hasAnyRemainingLaunch || Number(sOrd.guestIndex || 1) === Number(order.guestIndex || 1)) {
+        sOrd.paymentStatus = "cancelado";
+        sOrd.updatedAt = nowIso;
+      }
+    }
+  }
 
   const isDiscrepancyOrder =
     isDirectLaunchOrder || Boolean(order.settlesLaunchOrders);
@@ -60707,6 +61322,9 @@ app.post("/api/minibar/flat-context", (req, res) => {
       pendingBalance: statement.pendingBalance,
       totalLaunchedAmount: statement.totalLaunchedAmount,
       totalPaidAmount: statement.totalPaidAmount,
+      splitConfig: statement.splitConfig,
+      splitBreakdown: statement.splitBreakdown,
+      statement,
       guestName,
       firstName,
       phone: matchedGuest.phone || reservation.guestPhone || "",
@@ -60716,6 +61334,7 @@ app.post("/api/minibar/flat-context", (req, res) => {
       matchedGuestRole: matchedGuest.role || "titular",
       matchedGuestId: matchedGuest.guestId || null,
       reservationGuests,
+      allGuests: reservationGuests,
       numGuests: Math.max(Number(reservation.numGuests || 1), reservationGuests.length),
       reservationCode: resCode,
       reservationId: reservation.id,
@@ -60750,19 +61369,22 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
 
     const flatStr = String(reservation.flatNumber || reservation.flatId || "").trim();
     const reservationGuests = getReservationAllGuests(reservation);
-    const primaryGuest = reservationGuests[0] || {
-      index: 1,
-      role: "titular",
-      guestId: reservation.guestId || null,
-      name: reservation.guestName || "Hóspede",
-      firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
-      phone: reservation.guestPhone || "",
-      email: reservation.guestEmail || "",
-      document: reservation.guestDocument || ""
-    };
+    const requestedGuestIndex = Number(req.query?.guestIndex || 0);
+    const selectedGuest =
+      (requestedGuestIndex > 0 && reservationGuests.find(g => g.index === requestedGuestIndex)) ||
+      reservationGuests[0] || {
+        index: 1,
+        role: "titular",
+        guestId: reservation.guestId || null,
+        name: reservation.guestName || "Hóspede",
+        firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
+        phone: reservation.guestPhone || "",
+        email: reservation.guestEmail || "",
+        document: reservation.guestDocument || ""
+      };
 
-    const guestName = primaryGuest.name;
-    const firstName = primaryGuest.firstName;
+    const guestName = selectedGuest.name;
+    const firstName = selectedGuest.firstName;
     const resCode = reservation.code || `RES-${reservation.id}`;
 
     // Pedidos da reserva (pagos e pendentes)
@@ -60832,15 +61454,19 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
       pendingBalance: statement.pendingBalance,
       totalLaunchedAmount: statement.totalLaunchedAmount,
       totalPaidAmount: statement.totalPaidAmount,
+      splitConfig: statement.splitConfig,
+      splitBreakdown: statement.splitBreakdown,
+      statement,
       guestName,
       firstName,
-      phone: primaryGuest.phone || "",
-      email: primaryGuest.email || "",
-      document: primaryGuest.document || "",
-      matchedGuestIndex: 1,
-      matchedGuestRole: "titular",
-      matchedGuestId: primaryGuest.guestId || null,
+      phone: selectedGuest.phone || "",
+      email: selectedGuest.email || "",
+      document: selectedGuest.document || "",
+      matchedGuestIndex: selectedGuest.index || 1,
+      matchedGuestRole: selectedGuest.role || "titular",
+      matchedGuestId: selectedGuest.guestId || null,
       reservationGuests,
+      allGuests: reservationGuests,
       numGuests: Math.max(Number(reservation.numGuests || 1), reservationGuests.length),
       reservationCode: resCode,
       reservationId: reservation.id,
@@ -60858,6 +61484,209 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ── Persistência em Tempo Real da Divisão e Identificação dos Hóspedes do Flat ──
+function handleSaveMinibarSplitConfig(req, res) {
+  try {
+    const {
+      reservationCode: rawResCode,
+      flatNumber: rawFlatNum,
+      mode,
+      itemAssignments,
+      itemUpdate,
+      guestUpdate,
+      guests: incomingGuests
+    } = req.body || {};
+
+    let reservation = null;
+    if (rawResCode) {
+      reservation =
+        findReservationByLocatorOrContact(String(rawResCode).trim()) ||
+        (db.reservations || []).find(r => r.code === String(rawResCode).trim() || String(r.id) === String(rawResCode).trim());
+    }
+    if (!reservation && rawFlatNum) {
+      reservation = findActiveOrRecentReservationForFlat(String(rawFlatNum).trim());
+    }
+    if (!reservation) {
+      return res.status(404).json({ success: false, error: "Reserva não encontrada para salvar a divisão do frigobar." });
+    }
+
+    if (!reservation.minibarSplitConfig || typeof reservation.minibarSplitConfig !== "object") {
+      reservation.minibarSplitConfig = {
+        mode: "titular",
+        itemAssignments: {},
+        guests: [],
+        updatedAt: new Date().toISOString()
+      };
+    }
+
+    if (mode !== undefined) {
+      reservation.minibarSplitConfig.mode = normalizeMinibarSplitMode(mode);
+    }
+
+    if (itemAssignments && typeof itemAssignments === "object") {
+      reservation.minibarSplitConfig.itemAssignments = { ...itemAssignments };
+    }
+
+    if (itemUpdate && typeof itemUpdate === "object" && itemUpdate.itemKey) {
+      if (!reservation.minibarSplitConfig.itemAssignments || typeof reservation.minibarSplitConfig.itemAssignments !== "object") {
+        reservation.minibarSplitConfig.itemAssignments = {};
+      }
+      const key = String(itemUpdate.itemKey);
+      if (itemUpdate.allocations === null || itemUpdate.allocations === undefined) {
+        delete reservation.minibarSplitConfig.itemAssignments[key];
+      } else {
+        reservation.minibarSplitConfig.itemAssignments[key] = itemUpdate.allocations;
+      }
+    }
+
+    // Atualização / adição rápida de hóspede do flat (Nome, WhatsApp, CPF/CNPJ, E-mail)
+    const guestUpdatesList = [];
+    if (guestUpdate && typeof guestUpdate === "object") {
+      guestUpdatesList.push(guestUpdate);
+    }
+    if (Array.isArray(incomingGuests)) {
+      for (const g of incomingGuests) {
+        if (g && typeof g === "object") guestUpdatesList.push(g);
+      }
+    }
+
+    if (guestUpdatesList.length > 0) {
+      if (!Array.isArray(reservation.guests)) reservation.guests = [];
+      if (!Array.isArray(reservation.minibarSplitConfig.guests)) reservation.minibarSplitConfig.guests = [];
+      if (!Array.isArray(db.guests)) db.guests = [];
+
+      for (const gu of guestUpdatesList) {
+        const gIdx = Math.max(1, Number(gu.index || gu.order || 2));
+        const gName = String(gu.name || gu.fullName || "").trim();
+        const gPhone = String(gu.phone || gu.whatsapp || "").trim();
+        const gEmail = String(gu.email || "").trim();
+        const gDoc = String(gu.document || gu.cpf || "").replace(/\D/g, "");
+
+        // 1. Atualiza se for o Titular (index === 1)
+        if (gIdx === 1) {
+          if (gName && !/^\d+º\s*h[óo]spede/i.test(gName)) reservation.guestName = gName;
+          if (gPhone) reservation.guestPhone = gPhone;
+          if (gEmail) reservation.guestEmail = gEmail;
+          if (gDoc) reservation.guestDocument = gDoc;
+        }
+
+        // 2. Atualiza em reservation.guests
+        let slotObj = reservation.guests.find(s => Number(s?.index || s?.order) === gIdx);
+        if (!slotObj) {
+          slotObj = { index: gIdx };
+          reservation.guests.push(slotObj);
+        }
+        if (gName && !/^\d+º\s*h[óo]spede/i.test(gName)) slotObj.name = gName;
+        if (gPhone !== undefined && gu.phone !== undefined) slotObj.phone = gPhone;
+        else if (gPhone) slotObj.phone = gPhone;
+        if (gEmail !== undefined && gu.email !== undefined) slotObj.email = gEmail;
+        else if (gEmail) slotObj.email = gEmail;
+        if (gDoc !== undefined && (gu.document !== undefined || gu.cpf !== undefined)) {
+          slotObj.cpf = gDoc;
+          slotObj.document = gDoc;
+        } else if (gDoc) {
+          slotObj.cpf = gDoc;
+          slotObj.document = gDoc;
+        }
+
+        // 3. Atualiza em reservation.minibarSplitConfig.guests
+        let splitSlot = reservation.minibarSplitConfig.guests.find(s => Number(s?.index) === gIdx);
+        if (!splitSlot) {
+          splitSlot = { index: gIdx };
+          reservation.minibarSplitConfig.guests.push(splitSlot);
+        }
+        if (slotObj.name) splitSlot.name = slotObj.name;
+        if (slotObj.phone !== undefined) splitSlot.phone = slotObj.phone;
+        if (slotObj.email !== undefined) splitSlot.email = slotObj.email;
+        if (slotObj.cpf !== undefined) {
+          splitSlot.cpf = slotObj.cpf;
+          splitSlot.document = slotObj.cpf;
+        }
+
+        // 4. Ajusta numGuests da reserva se um novo hóspede foi adicionado
+        if (gIdx > Number(reservation.numGuests || 1)) {
+          reservation.numGuests = gIdx;
+        }
+
+        // 5. Sincroniza no CRM (db.guests)
+        let crmComp = db.guests.find(cg =>
+          (slotObj.guestId && Number(cg.id) === Number(slotObj.guestId)) ||
+          (gDoc.length >= 11 && String(cg.document || cg.documentNumber || "").replace(/\D/g, "") === gDoc) ||
+          (gPhone.length >= 10 && String(cg.phone || "").replace(/\D/g, "") === gPhone.replace(/\D/g, ""))
+        );
+        if (!crmComp && gName && !/^\d+º\s*h[óo]spede/i.test(gName)) {
+          crmComp = {
+            id: db.guests.length > 0 ? Math.max(...db.guests.map(cg => Number(cg.id) || 0)) + 1 : 1,
+            name: gName,
+            fullName: gName,
+            phone: gPhone,
+            email: gEmail,
+            document: gDoc,
+            documentNumber: gDoc,
+            city: "",
+            notes: gIdx === 1
+              ? `Hóspede titular na reserva ${reservation.code || reservation.id}`
+              : `Hóspede acompanhante (${gIdx}º hóspede) na reserva ${reservation.code || reservation.id}`,
+            tags: [],
+            clientType: "avulso",
+            createdAt: new Date().toISOString()
+          };
+          db.guests.push(crmComp);
+        } else if (crmComp) {
+          if (gName && !/^\d+º\s*h[óo]spede/i.test(gName)) {
+            crmComp.name = gName;
+            crmComp.fullName = gName;
+          }
+          if (gPhone) crmComp.phone = gPhone;
+          if (gEmail) crmComp.email = gEmail;
+          if (gDoc) {
+            crmComp.document = gDoc;
+            crmComp.documentNumber = gDoc;
+          }
+        }
+        if (crmComp) {
+          slotObj.guestId = crmComp.id;
+          splitSlot.guestId = crmComp.id;
+          if (gIdx === 1 && !reservation.guestId) reservation.guestId = crmComp.id;
+        }
+      }
+    }
+
+    reservation.minibarSplitConfig.updatedAt = new Date().toISOString();
+
+    const flatStr = String(reservation.flatNumber || reservation.flatId || rawFlatNum || "").trim();
+    const statement = buildReservationMinibarStatement(reservation, flatStr);
+
+    // Se já realizou check-out ou já existem ordens de split automático, sincroniza imediatamente
+    const resCode = reservation.code || `RES-${reservation.id}`;
+    const hasExistingSplitOrders = (db.minibarOrders || []).some(
+      o => o && o.isAutoSplitCheckoutOrder && o.reservationCode === resCode
+    );
+    let autoSplitOrders = [];
+    if (statement.isCheckedOut || hasExistingSplitOrders) {
+      autoSplitOrders = syncReservationAutoSplitOrders(reservation, flatStr, statement);
+    }
+
+    saveDatabase("minibar_split_config_updated");
+
+    res.json({
+      success: true,
+      splitConfig: statement.splitConfig,
+      splitBreakdown: statement.splitBreakdown,
+      reservationGuests: statement.reservationGuests,
+      allGuests: statement.reservationGuests,
+      numGuests: Math.max(Number(reservation.numGuests || 1), statement.reservationGuests.length),
+      autoSplitOrders,
+      statement
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+app.post("/api/minibar/split-config", handleSaveMinibarSplitConfig);
+app.put("/api/minibar/split-config", handleSaveMinibarSplitConfig);
 
 // ── Confirmação Unificada de Check-out pelo Hóspede na Tela do Frigobar ──────
 app.post("/api/public/minibar/confirm-checkout", async (req, res) => {
@@ -61007,6 +61836,11 @@ app.post("/api/public/minibar/confirm-checkout", async (req, res) => {
       }
     });
 
+    const targetRes = foundRes || matchingResList[0] || null;
+    const statement = targetRes ? buildReservationMinibarStatement(targetRes, flatNumberStr) : null;
+    const autoSplitOrders =
+      targetRes && statement ? syncReservationAutoSplitOrders(targetRes, flatNumberStr, statement) : [];
+
     saveDatabase("minibar_guest_confirmed_checkout");
 
     if (typeof createNotification === "function") {
@@ -61028,15 +61862,15 @@ app.post("/api/public/minibar/confirm-checkout", async (req, res) => {
       });
     }
 
-    const targetRes = foundRes || matchingResList[0] || null;
-    const statement = targetRes ? buildReservationMinibarStatement(targetRes, flatNumberStr) : null;
-
     res.json({
       success: true,
       isCheckedOut: true,
       checkoutTime: timeStr,
       flatNumber: flatNumberStr,
       guestName: guestDisplayName,
+      splitConfig: statement?.splitConfig || null,
+      splitBreakdown: statement?.splitBreakdown || null,
+      autoSplitOrders,
       statement,
       message: "Check-out confirmado com sucesso! O pagamento do seu consumo de frigobar já está liberado."
     });
@@ -61214,8 +62048,38 @@ app.post("/api/minibar/orders", async (req, res) => {
         ? Number(existingOrder.remainingAmount ?? existingOrder.totalAmount ?? 0)
         : 0;
 
+    // Modo 0: Divisão pré-configurada na reserva (Meio a Meio ou Por Item por Hóspede)
+    if (partialMode === "configured_split") {
+      const share = (statement?.splitBreakdown?.shares || []).find(s => Number(s.guestIndex) === reqGuestIndex);
+      if (!share || Number(share.amount || 0) <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: "Não há saldo pendente atribuído para este hóspede na divisão configurada."
+        });
+      }
+      totalAmount = Number(Number(share.amount).toFixed(2));
+      orderItems = Array.isArray(share.items) && share.items.length > 0
+        ? share.items.map(it => ({ ...it }))
+        : [
+            {
+              productId: "split_share",
+              productName: `Cota de Consumo de Frigobar (${share.guestName})`,
+              quantity: 1,
+              unitPrice: totalAmount,
+              totalPrice: totalAmount,
+              isCourtesy: false
+            }
+          ];
+      recordedSelectedLaunchItems = Array.isArray(share.selectedLaunchItems)
+        ? share.selectedLaunchItems.map(it => ({ ...it }))
+        : [];
+      settlesLaunchOrders = true;
+      const splitOrdId = `ORD-MB-SPLIT-${finalResCode}-G${reqGuestIndex}`;
+      const foundSplitOrd = (db.minibarOrders || []).find(o => o && o.id === splitOrdId && o.paymentStatus !== "pago");
+      existingOrder = foundSplitOrd || null;
+    }
     // Modo 1: Divisão em partes iguais (÷ 2, ÷ 3, ÷ 4...)
-    if (partialMode === "equal_split") {
+    else if (partialMode === "equal_split") {
       const parts = Math.max(2, Math.min(10, parseInt(splitParts, 10) || 2));
       if (basePendingBalance <= 0) {
         return res.status(400).json({ success: false, error: "Não há saldo pendente de frigobar para dividir." });
@@ -61294,12 +62158,21 @@ app.post("/api/minibar/orders", async (req, res) => {
       existingOrder &&
       (existingOrder.source === "anserve_discrepancy" ||
         existingOrder.source === "restocker_launch" ||
+        existingOrder.source === "guest_split_checkout" ||
+        Boolean(existingOrder.isAutoSplitCheckoutOrder) ||
         String(existingOrder.id || "").startsWith("ORD-MB-DIV-") ||
-        String(existingOrder.id || "").startsWith("ORD-MB-LANC-")) &&
+        String(existingOrder.id || "").startsWith("ORD-MB-LANC-") ||
+        String(existingOrder.id || "").startsWith("ORD-MB-SPLIT-")) &&
       Array.isArray(existingOrder.items) &&
       existingOrder.items.length > 0
     ) {
       orderItems = [...existingOrder.items];
+      if (Array.isArray(existingOrder.selectedLaunchItems) && existingOrder.selectedLaunchItems.length > 0) {
+        recordedSelectedLaunchItems = [...existingOrder.selectedLaunchItems];
+      }
+      if (existingOrder.settlesLaunchOrders || existingOrder.isAutoSplitCheckoutOrder) {
+        settlesLaunchOrders = true;
+      }
       totalAmount = Number(existingOrder.remainingAmount ?? existingOrder.totalAmount) || 0;
     } else {
       const effectiveItems = Array.isArray(items) && items.length > 0 ? items : (existingOrder?.items || []);
@@ -61450,7 +62323,8 @@ app.post("/api/minibar/orders", async (req, res) => {
       documentNumber: cleanDoc,
       companyName: companyName || "",
       email: cleanEmail,
-      phone: finalGuestPhone
+      phone: finalGuestPhone,
+      payerName: finalGuestName
     };
 
     // Caso de Cortesia Gratuita (total 0)
@@ -61544,6 +62418,8 @@ app.post("/api/minibar/orders", async (req, res) => {
         existingOrder.mpPreferenceId = pref?.id || `pref_${orderId}`;
         existingOrder.mpInitPoint = initPoint;
         existingOrder.fiscalPreferences = fiscalPreferences;
+        if (settlesLaunchOrders) existingOrder.settlesLaunchOrders = true;
+        if (recordedSelectedLaunchItems.length > 0) existingOrder.selectedLaunchItems = recordedSelectedLaunchItems;
         existingOrder.updatedAt = new Date().toISOString();
         if (orderItems.length > 0) existingOrder.items = orderItems;
         if (totalAmount > 0) existingOrder.totalAmount = totalAmount;
@@ -61651,6 +62527,8 @@ app.post("/api/minibar/orders", async (req, res) => {
       existingOrder.pixCopiaECola = copiaECola;
       existingOrder.pixExpiresAt = expiresAt;
       existingOrder.fiscalPreferences = fiscalPreferences;
+      if (settlesLaunchOrders) existingOrder.settlesLaunchOrders = true;
+      if (recordedSelectedLaunchItems.length > 0) existingOrder.selectedLaunchItems = recordedSelectedLaunchItems;
       existingOrder.updatedAt = new Date().toISOString();
       if (orderItems.length > 0) existingOrder.items = orderItems;
       if (totalAmount > 0) existingOrder.totalAmount = totalAmount;
@@ -62029,6 +62907,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
     let discrepancyTotalAmount = 0;
     let whatsappSofiaAlertSent = false;
     let notifiedPhones = [];
+    let whatsappMessagesSent = [];
 
     const effectiveCountedList =
       Array.isArray(consumedItems) && consumedItems.length > 0
@@ -62101,6 +62980,8 @@ app.post("/api/minibar/inspections", async (req, res) => {
           flatNumber: flatStr,
           reservationId: reservation?.id || null,
           reservationCode: finalResCode,
+          guestIndex: 1,
+          guestRole: "titular",
           guestName: reservation?.guestName || "Hóspede CorpFlats",
           guestPhone: reservation?.guestPhone || "",
           guestDocument: reservation?.guestDocument || "",
@@ -62119,7 +63000,8 @@ app.post("/api/minibar/inspections", async (req, res) => {
             documentType: "cpf",
             documentNumber: (reservation?.guestDocument || "").replace(/\D/g, ""),
             email: reservation?.guestEmail || "",
-            phone: reservation?.guestPhone || ""
+            phone: reservation?.guestPhone || "",
+            payerName: reservation?.guestName || "Hóspede CorpFlats"
           },
           invoice: { status: "pendente" },
           notes: notes || `Consumo lançado pela repositora em ${launchDateBr}`,
@@ -62144,132 +63026,231 @@ app.post("/api/minibar/inspections", async (req, res) => {
         )
       : false;
 
+    // Na vistoria final pós-check-out (ou divergência final), separa automaticamente os valores
+    // e deixa cada cobrança e Nota Fiscal configurada para o respectivo hóspede consumidor
+    let autoSplitOrders = [];
+    if (
+      reservation &&
+      updatedStatement &&
+      (resCheckedOut || isFinalCheckoutInspection || (!isDailyLaunch && status === "divergencia"))
+    ) {
+      autoSplitOrders = syncReservationAutoSplitOrders(reservation, flatStr, updatedStatement);
+    }
+
     const totalPendingNow = Number(updatedStatement?.pendingBalance || 0);
     const totalPaidPreviously = Number(updatedStatement?.totalPaidAmount || 0);
     let postCheckoutNotificationType = "none_needed";
 
     // Regra Canônica Pós-Checkout:
-    // - Se pendingBalance <= 0: NÃO envia nenhuma mensagem de cobrança.
-    // - Se pendingBalance > 0 e totalPaidAmount === 0: envia o extrato completo por dia + valor total a pagar.
-    // - Se pendingBalance > 0 e totalPaidAmount > 0: informa o valor já pago antes e cobra apenas o saldo restante / divergência do último dia.
+    // - O disparo de WhatsApp só ocorre após a repositora finalizar a vistoria pós-check-out (nunca em lançamento diário durante a estadia nem no botão de check-out do hóspede).
+    // - Respeita a divisão salva em tempo real ("half_and_half" ou "by_item"), enviando instruções/links individuais para cada respectivo consumidor; ou envia 100% para o Titular se nada foi marcado ("titular").
+    const isInStayDailyLaunchOnly =
+      Boolean(isDailyLaunch || status === "lancamento_diario") &&
+      !isFinalCheckoutInspection &&
+      !resCheckedOut;
+
     const shouldNotifySofiaNow =
       Boolean(reservation) &&
       db.minibarSettings?.autoNotifySofiaOnDiscrepancy !== false &&
-      (bodyNotifySofia === true || resCheckedOut || (!isDailyLaunch && status === "divergencia")) &&
+      !isInStayDailyLaunchOnly &&
+      (bodyNotifySofia === true || resCheckedOut || isFinalCheckoutInspection || status === "divergencia") &&
       totalPendingNow > 0;
 
     if (shouldNotifySofiaNow) {
       const allGuestsInFlat = getReservationAllGuests(reservation);
-      const uniqueTargets = [];
-      const seenPhones = new Set();
-
-      for (const g of allGuestsInFlat) {
-        const cleanPh = String(g.phone || "").replace(/\D/g, "");
-        if (cleanPh.length >= 10 && !seenPhones.has(cleanPh)) {
-          seenPhones.add(cleanPh);
-          uniqueTargets.push(g);
-        }
-      }
-
-      if (uniqueTargets.length === 0 && reservation.guestPhone) {
-        uniqueTargets.push({
-          name: reservation.guestName || "Hóspede",
-          firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
-          phone: reservation.guestPhone
-        });
-      }
-
+      const splitBreakdown = updatedStatement?.splitBreakdown || null;
+      const splitMode = splitBreakdown?.mode || "titular";
       const linkedOrderId = chargeOrderId || updatedStatement?.primaryPendingOrder?.id || "";
-      const ordQuery = linkedOrderId ? `?ord=${linkedOrderId}` : "";
       const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
-      const multiGuestNote =
-        allGuestsInFlat.length > 1
-          ? `\n💡 *Nota para reservas compartilhadas:* Qualquer um dos hóspedes do Flat ${flatStr} pode acessar o link abaixo para realizar o pagamento integral ou parcial (selecionando seus itens, dividindo em partes iguais ou digitando um valor parcial, com emissão individual de Nota Fiscal)!\n`
-          : "";
 
       const hasPriorPayment = totalPaidPreviously > 0;
       postCheckoutNotificationType = hasPriorPayment ? "remaining_balance" : "full_total";
 
-      const dayBlocks = (updatedStatement?.dailyLaunches || [])
-        .map(day => {
-          const dayItems = (day.items || []).filter(
-            it => !it.isCourtesy && (Number(it.remainingQuantity ?? it.quantity) || 0) > 0
-          );
-          if (dayItems.length === 0) return null;
-          const lines = dayItems
-            .map(it => {
-              const q = Number(it.remainingQuantity ?? it.quantity) || 0;
-              const p = Number(it.remainingTotalPrice ?? it.totalPrice) || 0;
-              return `  • ${q}x ${it.productName} — R$ ${p.toFixed(2)}`;
-            })
+      if (splitMode === "half_and_half" || splitMode === "by_item") {
+        const activeShares = (splitBreakdown?.shares || []).filter(s => Number(s.amount || 0) > 0);
+        const modeTitle =
+          splitMode === "half_and_half"
+            ? "Divisão Meio a Meio (Partes Iguais)"
+            : "Divisão por Item Consumido";
+
+        for (const share of activeShares) {
+          const splitOrd = autoSplitOrders.find(o => Number(o.guestIndex) === Number(share.guestIndex));
+          const targetOrdId = splitOrd?.id || linkedOrderId;
+          const targetPhone = String(share.phone || reservation.guestPhone || "").trim();
+          if (!targetPhone) continue;
+
+          const firstName = share.firstName || (share.guestName || "Hóspede").trim().split(" ")[0];
+          const shareItemsStr = (share.items || [])
+            .map(
+              it =>
+                `• ${it.quantity}x ${it.productName}${it.launchDateBr ? ` (${it.launchDateBr})` : ""} — R$ ${Number(
+                  it.totalPrice
+                ).toFixed(2)}`
+            )
             .join("\n");
-          return `📅 *Consumo em ${day.dateBr}:*\n${lines}`;
-        })
-        .filter(Boolean)
-        .join("\n\n");
 
-      const fullStayListStr =
-        dayBlocks ||
-        discrepancyItems
-          .map(it => `• ${it.quantity}x ${it.productName} (${launchDateBr}) — R$ ${Number(it.totalPrice).toFixed(2)}`)
-          .join("\n");
+          const fallbackNote =
+            splitMode === "by_item" &&
+            share.guestIndex === 1 &&
+            Array.isArray(share.unassignedFallbackItems) &&
+            share.unassignedFallbackItems.length > 0
+              ? `\n📌 *Nota:* Itens lançados na vistoria final sem marcação prévia foram atribuídos automaticamente ao Hóspede Principal (Titular).\n`
+              : "";
 
-      const remainingItemsListStr =
-        (updatedStatement?.pendingLaunchedItems || []).length > 0
-          ? updatedStatement.pendingLaunchedItems
-              .map(
-                it =>
-                  `• ${it.remainingQuantity}x ${it.productName} (${it.launchDateBr}) — R$ ${Number(
-                    it.remainingTotalPrice
-                  ).toFixed(2)}`
-              )
-              .join("\n")
-          : fullStayListStr;
+          const paymentUrl = `${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar?guestIndex=${share.guestIndex}${
+            targetOrdId ? `&ord=${targetOrdId}` : ""
+          }`;
 
-      for (const targetG of uniqueTargets) {
-        const firstName = targetG.firstName || (targetG.name || "Hóspede").trim().split(" ")[0];
-        const sofiaMsg = hasPriorPayment
-          ? `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
-            `Nossa equipe concluiu a conferência final do frigobar após o seu check-out.\n` +
-            `✅ Já identificamos o pagamento anterior de *R$ ${totalPaidPreviously.toFixed(2)}*, porém restou o seguinte saldo referente ao consumo do último dia / conferência final:\n\n` +
-            `${remainingItemsListStr}\n\n` +
-            `💰 *Saldo restante para pagamento: R$ ${totalPendingNow.toFixed(2)}*\n` +
-            `${multiGuestNote}\n` +
-            `Para quitar o valor restante via PIX ou Cartão (com emissão da respectiva Nota Fiscal), acesse o link exclusivo abaixo:\n` +
-            `🔗 ${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar${ordQuery}\n\n` +
-            `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`
-          : `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
-            `Nossa equipe de governança concluiu a conferência final do consumo de frigobar do seu apartamento:\n\n` +
-            `${fullStayListStr}\n\n` +
-            `💰 *Saldo total pendente para pagamento: R$ ${totalPendingNow.toFixed(2)}*\n` +
-            `${multiGuestNote}\n` +
-            `Como o frigobar não pode ser faturado junto com a diária da hospedagem, você já pode efetuar o pagamento via PIX ou Cartão pelo link exclusivo abaixo:\n` +
-            `🔗 ${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar${ordQuery}\n\n` +
+          const sofiaMsg =
+            `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
+            `Nossa equipe concluiu a conferência final do frigobar após o check-out. Conforme a *${modeTitle}* registrada na sua reserva, segue o resumo individual da sua parte:\n\n` +
+            `${shareItemsStr}\n` +
+            `${fallbackNote}\n` +
+            `💰 *Valor da sua parte (${share.guestName}): R$ ${Number(share.amount).toFixed(2)}* (Total do flat: R$ ${totalPendingNow.toFixed(2)})\n` +
+            `🧾 *Tomador da Nota Fiscal:* ${share.guestName}${share.document ? ` (Doc: ${share.document})` : ""}\n\n` +
+            `Para efetuar o pagamento da sua cota via PIX ou Cartão e receber sua Nota Fiscal individual, acesse seu link exclusivo abaixo:\n` +
+            `🔗 ${paymentUrl}\n\n` +
             `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
 
-        try {
-          if (typeof sendZapiMessage === "function") {
-            const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
-            sendZapiMessage(zapiConfig, {
-              phone: targetG.phone,
-              message: sofiaMsg,
-              channelId: "guest",
-              triggerEvent: "minibar_discrepancy",
-              db
+          try {
+            if (typeof sendZapiMessage === "function") {
+              const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
+              sendZapiMessage(zapiConfig, {
+                phone: targetPhone,
+                message: sofiaMsg,
+                channelId: "guest",
+                triggerEvent: "minibar_discrepancy",
+                db
+              });
+              whatsappSofiaAlertSent = true;
+              notifiedPhones.push(targetPhone);
+            }
+            if (typeof appendMessageToConversation === "function") {
+              appendMessageToConversation(db, {
+                phone: targetPhone,
+                text: sofiaMsg,
+                type: "text",
+                sender: "Sofia (IA)"
+              });
+            }
+            whatsappMessagesSent.push({
+              guestIndex: share.guestIndex,
+              guestName: share.guestName,
+              phone: targetPhone,
+              amount: share.amount,
+              orderId: targetOrdId,
+              paymentUrl,
+              link: paymentUrl,
+              message: sofiaMsg
             });
-            whatsappSofiaAlertSent = true;
-            notifiedPhones.push(targetG.phone);
+          } catch (sErr) {
+            console.warn("[Minibar Sofia Alert Split] Erro ao disparar mensagem:", sErr.message);
           }
-          if (typeof appendMessageToConversation === "function") {
-            appendMessageToConversation(db, {
-              phone: targetG.phone,
-              text: sofiaMsg,
-              type: "text",
-              sender: "Sofia (IA)"
+        }
+      } else {
+        // Modo Padrão (100% Titular): se nada foi marcado, 100% vai para o Hóspede Principal (Titular) como pagador e tomador da NF
+        const titularGuest = allGuestsInFlat[0] || {
+          index: 1,
+          name: reservation.guestName || "Hóspede",
+          firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
+          phone: reservation.guestPhone || "",
+          document: reservation.guestDocument || ""
+        };
+        const targetPhone = String(titularGuest.phone || reservation.guestPhone || "").trim();
+        const ordQuery = linkedOrderId ? `?ord=${linkedOrderId}` : "";
+        const paymentUrl = `${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar${ordQuery}`;
+
+        const dayBlocks = (updatedStatement?.dailyLaunches || [])
+          .map(day => {
+            const dayItems = (day.items || []).filter(
+              it => !it.isCourtesy && (Number(it.remainingQuantity ?? it.quantity) || 0) > 0
+            );
+            if (dayItems.length === 0) return null;
+            const lines = dayItems
+              .map(it => {
+                const q = Number(it.remainingQuantity ?? it.quantity) || 0;
+                const p = Number(it.remainingTotalPrice ?? it.totalPrice) || 0;
+                return `  • ${q}x ${it.productName} — R$ ${p.toFixed(2)}`;
+              })
+              .join("\n");
+            return `📅 *Consumo em ${day.dateBr}:*\n${lines}`;
+          })
+          .filter(Boolean)
+          .join("\n\n");
+
+        const fullStayListStr =
+          dayBlocks ||
+          discrepancyItems
+            .map(it => `• ${it.quantity}x ${it.productName} (${launchDateBr}) — R$ ${Number(it.totalPrice).toFixed(2)}`)
+            .join("\n");
+
+        const remainingItemsListStr =
+          (updatedStatement?.pendingLaunchedItems || []).length > 0
+            ? updatedStatement.pendingLaunchedItems
+                .map(
+                  it =>
+                    `• ${it.remainingQuantity}x ${it.productName} (${it.launchDateBr}) — R$ ${Number(
+                      it.remainingTotalPrice
+                    ).toFixed(2)}`
+                )
+                .join("\n")
+            : fullStayListStr;
+
+        if (targetPhone) {
+          const firstName = titularGuest.firstName || (titularGuest.name || "Hóspede").trim().split(" ")[0];
+          const sofiaMsg = hasPriorPayment
+            ? `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
+              `Nossa equipe concluiu a conferência final do frigobar após o seu check-out.\n` +
+              `✅ Já identificamos o pagamento anterior de *R$ ${totalPaidPreviously.toFixed(2)}*, porém restou o seguinte saldo referente ao consumo do último dia / conferência final:\n\n` +
+              `${remainingItemsListStr}\n\n` +
+              `💰 *Saldo restante para pagamento: R$ ${totalPendingNow.toFixed(2)}*\n` +
+              `🧾 *Tomador da Nota Fiscal:* ${titularGuest.name}\n\n` +
+              `Para quitar o valor restante via PIX ou Cartão (com emissão da respectiva Nota Fiscal), acesse o link exclusivo abaixo:\n` +
+              `🔗 ${paymentUrl}\n\n` +
+              `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`
+            : `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
+              `Nossa equipe de governança concluiu a conferência final do consumo de frigobar do seu apartamento:\n\n` +
+              `${fullStayListStr}\n\n` +
+              `💰 *Saldo total pendente para pagamento: R$ ${totalPendingNow.toFixed(2)}*\n` +
+              `🧾 *Tomador da Nota Fiscal:* ${titularGuest.name}\n\n` +
+              `Como o frigobar não pode ser faturado junto com a diária da hospedagem, você já pode efetuar o pagamento via PIX ou Cartão pelo link exclusivo abaixo:\n` +
+              `🔗 ${paymentUrl}\n\n` +
+              `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
+
+          try {
+            if (typeof sendZapiMessage === "function") {
+              const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
+              sendZapiMessage(zapiConfig, {
+                phone: targetPhone,
+                message: sofiaMsg,
+                channelId: "guest",
+                triggerEvent: "minibar_discrepancy",
+                db
+              });
+              whatsappSofiaAlertSent = true;
+              notifiedPhones.push(targetPhone);
+            }
+            if (typeof appendMessageToConversation === "function") {
+              appendMessageToConversation(db, {
+                phone: targetPhone,
+                text: sofiaMsg,
+                type: "text",
+                sender: "Sofia (IA)"
+              });
+            }
+            whatsappMessagesSent.push({
+              guestIndex: 1,
+              guestName: titularGuest.name,
+              phone: targetPhone,
+              amount: totalPendingNow,
+              orderId: linkedOrderId,
+              paymentUrl,
+              link: paymentUrl,
+              message: sofiaMsg
             });
+          } catch (sErr) {
+            console.warn("[Minibar Sofia Alert] Erro ao disparar mensagem:", sErr.message);
           }
-        } catch (sErr) {
-          console.warn("[Minibar Sofia Alert] Erro ao disparar mensagem:", sErr.message);
         }
       }
     }
@@ -62304,8 +63285,10 @@ app.post("/api/minibar/inspections", async (req, res) => {
       photos: Array.isArray(photos) ? photos : [],
       notes: notes || "",
       chargeOrderId: chargeOrderId || updatedStatement?.primaryPendingOrder?.id || null,
+      autoSplitOrderIds: autoSplitOrders.map(o => o.id),
       whatsappSofiaAlertSent,
       notifiedPhones,
+      whatsappMessagesSent,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -62321,9 +63304,12 @@ app.post("/api/minibar/inspections", async (req, res) => {
       launchDateBr,
       hasDiscrepancy,
       chargeOrderId: inspection.chargeOrderId,
+      autoSplitOrders,
+      splitBreakdown: updatedStatement?.splitBreakdown || null,
       whatsappSofiaAlertSent,
       postCheckoutNotificationType,
       notifiedPhones,
+      whatsappMessagesSent,
       statement: updatedStatement,
       inspection
     });
@@ -62423,6 +63409,8 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
         pendingBalance: statement ? statement.pendingBalance : 0,
         totalLaunchedAmount: statement ? statement.totalLaunchedAmount : 0,
         totalPaidAmount: statement ? statement.totalPaidAmount : declaredAmount,
+        splitConfig: statement ? statement.splitConfig : null,
+        splitBreakdown: statement ? statement.splitBreakdown : null,
         currentReservation: resActive ? {
           code: resActive.code,
           guestName: resActive.guestName,
@@ -62499,6 +63487,8 @@ function enrichMinibarOrderForInvoiceScreen(order) {
     partialMode === "items" ||
     partialMode === "equal_split" ||
     partialMode === "custom_amount" ||
+    partialMode === "configured_split" ||
+    Boolean(order.isAutoSplitCheckoutOrder) ||
     Number(order.guestIndex || 1) > 1;
 
   let partialModeLabel = "Pagamento Único Integral";
@@ -62508,6 +63498,8 @@ function enrichMinibarOrderForInvoiceScreen(order) {
     partialModeLabel = "Valor Parcial Livre em R$";
   } else if (partialMode === "items") {
     partialModeLabel = "Seleção Individual de Itens";
+  } else if (partialMode === "configured_split") {
+    partialModeLabel = "Divisão Configurada na Reserva";
   } else if (totalPaidOrdersInReservation > 1) {
     partialModeLabel = `Pagamento Separado (${orderSequenceIndex}ª de ${totalPaidOrdersInReservation} NFs do Flat)`;
   }
@@ -62577,7 +63569,8 @@ function enrichMinibarOrderForInvoiceScreen(order) {
   ).replace(/\D/g, "");
   const docType = docRaw.length > 11 || order.fiscalPreferences?.documentType === "cnpj" ? "CNPJ" : "CPF";
 
-  const payerName = order.guestName || reservation?.guestName || "Hóspede CorpFlats";
+  const payerName =
+    order.fiscalPreferences?.payerName || order.guestName || reservation?.guestName || "Hóspede CorpFlats";
   const payerEmail = order.fiscalPreferences?.email || order.guestEmail || reservation?.guestEmail || "";
   const payerPhone = order.fiscalPreferences?.phone || order.guestPhone || reservation?.guestPhone || "";
 
@@ -62585,6 +63578,9 @@ function enrichMinibarOrderForInvoiceScreen(order) {
     ...order,
     flatNumber: flatStr,
     reservationCode: resCode,
+    documentNumber: docRaw,
+    email: payerEmail,
+    phone: payerPhone,
     consumptionDatesBr,
     dailyLaunches: statement?.dailyLaunches || [],
     reservationTotalLaunchedAmount: statement?.totalLaunchedAmount ?? Number(order.totalAmount || 0),
@@ -62603,6 +63599,8 @@ function enrichMinibarOrderForInvoiceScreen(order) {
       totalPaidOrdersInReservation,
       guestIndex: Number(order.guestIndex || 1),
       guestRole: order.guestRole || (Number(order.guestIndex || 1) > 1 ? "acompanhante" : "titular"),
+      configuredSplitMode: statement?.splitBreakdown?.mode || "titular",
+      configuredSplitShares: statement?.splitBreakdown?.shares || [],
       siblingOrders: siblingOrdersSummary
     },
     fiscalSummary: {
@@ -62636,10 +63634,21 @@ app.get("/api/minibar/invoices/pending", (req, res) => {
       .map(enrichMinibarOrderForInvoiceScreen)
       .sort((a, b) => String(b.paidAt || b.createdAt || "").localeCompare(String(a.paidAt || a.createdAt || "")));
 
+    const preConfiguredCheckoutSplits = (db.minibarOrders || [])
+      .filter(
+        o =>
+          o &&
+          o.paymentStatus === "pendente" &&
+          Number(o.totalAmount) > 0 &&
+          (Boolean(o.isAutoSplitCheckoutOrder) || o.source === "anserve_discrepancy")
+      )
+      .map(enrichMinibarOrderForInvoiceScreen);
+
     res.json({
       success: true,
       count: pending.length,
-      pendingInvoices: pending
+      pendingInvoices: pending,
+      preConfiguredCheckoutSplits
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -62661,6 +63670,16 @@ app.get("/api/minibar/invoices/hub", (req, res) => {
     const pendingInvoices = allPaidOrders.filter(o => !o.invoice || o.invoice.status !== "anexada");
     const issuedInvoices = allPaidOrders.filter(o => o.invoice && o.invoice.status === "anexada");
     const separatePaymentsPendingCount = pendingInvoices.filter(o => o.splitPaymentInfo?.isSeparatePayment).length;
+    const preConfiguredCheckoutSplits = (db.minibarOrders || [])
+      .filter(
+        o =>
+          o &&
+          o.paymentStatus === "pendente" &&
+          Number(o.totalAmount) > 0 &&
+          (Boolean(o.isAutoSplitCheckoutOrder) || o.source === "anserve_discrepancy")
+      )
+      .map(enrichMinibarOrderForInvoiceScreen);
+
     const failedDeliveries = issuedInvoices.filter(o => {
       const m = o.invoice?.deliveryMonitor;
       if (!m) return false;
@@ -62681,14 +63700,17 @@ app.get("/api/minibar/invoices/hub", (req, res) => {
           pendingInvoices.reduce((s, o) => s + Number(o.totalAmount || 0), 0).toFixed(2)
         ),
         separatePaymentsPendingCount,
+        preConfiguredSplitsCount: preConfiguredCheckoutSplits.length,
         issuedCount: issuedInvoices.length,
         issuedTotalAmount: Number(
           issuedInvoices.reduce((s, o) => s + Number(o.totalAmount || 0), 0).toFixed(2)
         ),
         failedDeliveriesCount: failedDeliveries.length
       },
+      invoices: [...pendingInvoices, ...preConfiguredCheckoutSplits, ...issuedInvoices],
       pendingInvoices,
       issuedInvoices,
+      preConfiguredCheckoutSplits,
       failedDeliveries
     });
   } catch (err) {
