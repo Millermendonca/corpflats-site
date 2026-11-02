@@ -22,6 +22,7 @@ import {
   handleWhatsAppFiscalFlow,
   handleManagerFiscalApprovalReply,
   executeWhatsAppFiscalEmission,
+  enableAutoEmitInvoiceForGuestAndReservations,
   parseFlexibleMoney,
   formatDateBr,
   formatMoneyBr,
@@ -1023,6 +1024,118 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.strictEqual(spoofResultFlow.handled, false, "Tentativa de aprovação via fluxo de não-gestor deve ser rejeitada com handled: false");
     assert.strictEqual(pendingApproval.status, "pending_manager", "Status da pendência deve permanecer pending_manager");
     assert.strictEqual(testDb.invoices.length, initialInvoices, "Nenhuma nota fiscal deve ser emitida por não-gestor");
+  });
+
+  it("Autoemissão no Check-out (1): Ao pedir nota fiscal no WhatsApp (número autorizado), ativa autoEmitInvoice = true no hóspede e em todas as suas reservas", async () => {
+    const guestMiller = testDb.guests.find(g => g.id === 501);
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    const res501 = testDb.reservations.find(r => r.id === 501);
+
+    // Reseta flags antes do teste
+    guestMiller.autoEmitInvoice = false;
+    res605.autoEmitInvoice = false;
+    res501.autoEmitInvoice = false;
+
+    const conv = {
+      id: "conv_auto_emit_auth",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: []
+    };
+
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Sofia, pode gerar minha nota fiscal por favor?",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(result.handled, true);
+    assert.strictEqual(guestMiller.autoEmitInvoice, true, "Deve ativar autoEmitInvoice = true no cadastro do hóspede (db.guests)");
+    assert.strictEqual(res605.autoEmitInvoice, true, "Deve ativar autoEmitInvoice = true na reserva principal do hóspede");
+    assert.strictEqual(res501.autoEmitInvoice, true, "Deve propagar autoEmitInvoice = true para as demais reservas do mesmo hóspede");
+  });
+
+  it("Autoemissão no Check-out (2): Hóspede fora do número de teste (ex.: 5521999998888) que pede nota no WhatsApp tem autoEmitInvoice = true ativado silenciosamente enquanto a Sofia ignora a emissão no chat", async () => {
+    const guestExterno = testDb.guests.find(g => g.id === 502);
+    const res777 = testDb.reservations.find(r => r.id === 777);
+
+    // Cria uma segunda reserva futura para o mesmo hóspede externo para validar propagação
+    const res778 = {
+      id: 778,
+      code: "RES-778-TEST",
+      guestId: 502,
+      guestName: "Hóspede Não Autorizado",
+      guestPhone: "5521999998888",
+      flatNumber: "703",
+      checkinDate: "2026-12-01",
+      checkoutDate: "2026-12-05",
+      totalAmount: 550.00,
+      status: "confirmada",
+      autoEmitInvoice: false
+    };
+    testDb.reservations.push(res778);
+
+    guestExterno.autoEmitInvoice = false;
+    res777.autoEmitInvoice = false;
+
+    let saveCalled = false;
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "5521999998888",
+      messageText: "Olá, gostaria de pedir a nota fiscal da minha estadia",
+      senderName: "Hóspede Não Autorizado",
+      conv: { id: "conv_ext_auto", phone: "5521999998888", messages: [] },
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => { saveCalled = true; },
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(result.handled, false, "Sofia deve continuar ignorando a resposta fiscal no WhatsApp para números fora do teste");
+    assert.strictEqual(guestExterno.autoEmitInvoice, true, "Deve ativar silenciosamente autoEmitInvoice = true no hóspede em db.guests");
+    assert.strictEqual(res777.autoEmitInvoice, true, "Deve ativar autoEmitInvoice = true na reserva atual do hóspede");
+    assert.strictEqual(res778.autoEmitInvoice, true, "Deve propagar autoEmitInvoice = true para as demais reservas do mesmo hóspede");
+    assert.strictEqual(saveCalled, true, "Deve persistir a alteração no banco de dados");
+  });
+
+  it("Autoemissão no Check-out (3): Emissão de nota fiscal (WhatsApp ou Painel /notas) ativa autoEmitInvoice = true no hóspede e em todas as suas reservas", async () => {
+    const guestExterno = testDb.guests.find(g => g.id === 502);
+    const res777 = testDb.reservations.find(r => r.id === 777);
+    const res778 = testDb.reservations.find(r => r.id === 778);
+
+    guestExterno.autoEmitInvoice = false;
+    res777.autoEmitInvoice = false;
+    if (res778) res778.autoEmitInvoice = false;
+
+    const emitRes = await executeWhatsAppFiscalEmission({
+      db: testDb,
+      payload: {
+        reservationId: 777,
+        reservationCode: "RES-777-TEST",
+        guestId: 502,
+        flatNumber: "702",
+        tomadorNome: "Hóspede Não Autorizado",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTelefone: "5521999998888",
+        tomadorEmail: "hospede.externo@email.com",
+        valorServico: 400.00,
+        descricaoServico: "Hospedagem Flat 702"
+      },
+      saveDatabase: () => {}
+    });
+
+    assert.strictEqual(emitRes.success, true);
+    assert.strictEqual(guestExterno.autoEmitInvoice, true, "Emissão fiscal deve ativar autoEmitInvoice = true no hóspede");
+    assert.strictEqual(res777.autoEmitInvoice, true, "Emissão fiscal deve ativar autoEmitInvoice = true na reserva emitida");
+    if (res778) {
+      assert.strictEqual(res778.autoEmitInvoice, true, "Emissão fiscal deve propagar autoEmitInvoice = true para todas as reservas do hóspede");
+    }
   });
 });
 

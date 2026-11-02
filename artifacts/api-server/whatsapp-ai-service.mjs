@@ -9131,6 +9131,17 @@ export async function executeWhatsAppFiscalEmission({
   saveDatabase = null,
   createNotification = null
 }) {
+  if (db && payload) {
+    enableAutoEmitInvoiceForGuestAndReservations(db, {
+      guestId: payload.guestId,
+      reservationId: payload.reservationId || payload.reservationCode,
+      reservationIds: payload.reservationIds,
+      phone: payload.tomadorTelefone,
+      cpfCnpj: payload.tomadorCpfCnpj,
+      saveDatabase
+    });
+  }
+
   if (typeof globalThis.executeNfseEmissionInternal === "function") {
     try {
       const res = await globalThis.executeNfseEmissionInternal(payload);
@@ -9262,6 +9273,16 @@ export async function executeWhatsAppFiscalEmission({
     matchedRes.invoiceId = newInvoice.id;
     matchedRes.numeroNfse = newInvoice.numeroNfse;
   }
+
+  enableAutoEmitInvoiceForGuestAndReservations(db, {
+    reservation: matchedRes,
+    guestId: payload.guestId,
+    reservationId: payload.reservationId || payload.reservationCode,
+    reservationIds: payload.reservationIds,
+    phone: cleanTel,
+    cpfCnpj: cleanDoc,
+    saveDatabase: null
+  });
 
   if (typeof createNotification === "function") {
     createNotification({
@@ -9554,6 +9575,185 @@ export function findContactAndReservation(db, cleanTarget) {
 }
 
 /**
+ * Ativa a flag autoEmitInvoice = true (Auto-Emissão de NFS-e no Check-out)
+ * no cadastro do hóspede no CRM (db.guests) e propaga para a reserva atual
+ * e todas as demais reservas vinculadas a esse hóspede em db.reservations.
+ */
+export function enableAutoEmitInvoiceForGuestAndReservations(db, {
+  guest = null,
+  reservation = null,
+  phone = null,
+  cpfCnpj = null,
+  guestId = null,
+  reservationId = null,
+  reservationIds = null,
+  saveDatabase = null
+} = {}) {
+  if (!db || typeof db !== "object") {
+    return { updated: false, guestsUpdated: 0, reservationsUpdated: 0 };
+  }
+
+  const guests = Array.isArray(db.guests) ? db.guests : [];
+  const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+
+  const targetReservations = new Set();
+  if (reservation && typeof reservation === "object") {
+    targetReservations.add(reservation);
+  }
+  if (reservationId !== null && reservationId !== undefined && reservationId !== "") {
+    const rById = reservations.find(r =>
+      r && (Number(r.id) === Number(reservationId) || String(r.code) === String(reservationId) || String(r.id) === String(reservationId))
+    );
+    if (rById) targetReservations.add(rById);
+  }
+  if (Array.isArray(reservationIds)) {
+    for (const rid of reservationIds) {
+      if (rid === null || rid === undefined || rid === "") continue;
+      const rById = reservations.find(r =>
+        r && (Number(r.id) === Number(rid) || String(r.code) === String(rid) || String(r.id) === String(rid))
+      );
+      if (rById) targetReservations.add(rById);
+    }
+  }
+
+  const targetGuests = new Set();
+  if (guest && typeof guest === "object") {
+    targetGuests.add(guest);
+  }
+
+  const addGuestByCriteria = ({ gId, doc, tel, name }) => {
+    const cleanDocVal = onlyDigits(doc || "");
+    const cleanTelVal = cleanWhatsAppPhone(tel || "");
+    const telLast8 = cleanTelVal.length >= 8 ? cleanTelVal.slice(-8) : "";
+    const normNameVal = String(name || "").trim().toLowerCase();
+
+    for (const g of guests) {
+      if (!g) continue;
+      if (gId && Number(g.id) === Number(gId)) {
+        targetGuests.add(g);
+        continue;
+      }
+      const gDoc = onlyDigits(g.document || g.documentNumber || g.cpf || "");
+      if (cleanDocVal && cleanDocVal.length === 11 && gDoc && gDoc === cleanDocVal) {
+        targetGuests.add(g);
+        continue;
+      }
+      const gTel = cleanWhatsAppPhone(g.phone || g.whatsapp || "");
+      const gName = String(g.fullName || g.name || "").trim().toLowerCase();
+      if (telLast8 && gTel && (gTel === cleanTelVal || gTel.endsWith(telLast8) || cleanTelVal.endsWith(gTel.slice(-8)))) {
+        if (!normNameVal || !gName || gName === normNameVal || gName.split(/\s+/)[0] === normNameVal.split(/\s+/)[0]) {
+          targetGuests.add(g);
+          continue;
+        }
+      }
+    }
+  };
+
+  if (guestId || cpfCnpj || phone) {
+    addGuestByCriteria({ gId: guestId, doc: cpfCnpj, tel: phone, name: null });
+  }
+
+  for (const r of targetReservations) {
+    addGuestByCriteria({
+      gId: r.guestId,
+      doc: r.guestDocument || r.document,
+      tel: r.guestPhone || r.phone || r.whatsapp,
+      name: r.guestName
+    });
+  }
+
+  let guestsUpdated = 0;
+  let reservationsUpdated = 0;
+
+  for (const r of targetReservations) {
+    if (!r.autoEmitInvoice) {
+      r.autoEmitInvoice = true;
+      reservationsUpdated++;
+    }
+  }
+
+  for (const g of targetGuests) {
+    if (!g.autoEmitInvoice) {
+      g.autoEmitInvoice = true;
+      guestsUpdated++;
+    }
+    g.updatedAt = new Date().toISOString();
+
+    const gDoc = onlyDigits(g.document || g.documentNumber || g.cpf || "");
+    const gTel = cleanWhatsAppPhone(g.phone || g.whatsapp || "");
+    const gTelLast8 = gTel.length >= 8 ? gTel.slice(-8) : "";
+    const gNameLower = String(g.fullName || g.name || "").trim().toLowerCase();
+
+    for (const r of reservations) {
+      if (!r) continue;
+      const byId = g.id && r.guestId && Number(r.guestId) === Number(g.id);
+      const rDoc = onlyDigits(r.guestDocument || r.document || "");
+      const byDoc = gDoc && gDoc.length >= 8 && rDoc === gDoc;
+      const rTel = cleanWhatsAppPhone(r.guestPhone || r.phone || r.whatsapp || "");
+      const rNameLower = String(r.guestName || "").trim().toLowerCase();
+      const namesCompat = !rNameLower || !gNameLower || rNameLower === gNameLower ||
+        rNameLower.split(/\s+/)[0] === gNameLower.split(/\s+/)[0];
+      const byPhone = gTelLast8 && rTel && (rTel === gTel || rTel.endsWith(gTelLast8) || gTel.endsWith(rTel.slice(-8))) && namesCompat;
+      const byName = gNameLower && rNameLower && rNameLower === gNameLower;
+
+      if (byId || byDoc || byPhone || byName) {
+        if (!r.autoEmitInvoice) {
+          r.autoEmitInvoice = true;
+          reservationsUpdated++;
+        }
+      }
+    }
+
+    if (Array.isArray(db.guestAccounts)) {
+      for (const acc of db.guestAccounts) {
+        if (!acc) continue;
+        const accDoc = onlyDigits(acc.document || acc.documentNumber || acc.cpf || "");
+        const accTel = cleanWhatsAppPhone(acc.phone || "");
+        if ((g.id && Number(acc.guestId) === Number(g.id)) || (gDoc && accDoc === gDoc) || (gTelLast8 && accTel && accTel.endsWith(gTelLast8))) {
+          acc.autoEmitInvoice = true;
+        }
+      }
+    }
+  }
+
+  // Se uma reserva foi localizada mesmo sem registro em db.guests, propaga para demais reservas do mesmo hóspede
+  if (targetGuests.size === 0 && targetReservations.size > 0) {
+    for (const baseRes of Array.from(targetReservations)) {
+      const bDoc = onlyDigits(baseRes.guestDocument || baseRes.document || "");
+      const bTel = cleanWhatsAppPhone(baseRes.guestPhone || baseRes.phone || baseRes.whatsapp || "");
+      const bTelLast8 = bTel.length >= 8 ? bTel.slice(-8) : "";
+      const bNameLower = String(baseRes.guestName || "").trim().toLowerCase();
+
+      for (const r of reservations) {
+        if (!r || r === baseRes) continue;
+        const byId = baseRes.guestId && r.guestId && Number(r.guestId) === Number(baseRes.guestId);
+        const rDoc = onlyDigits(r.guestDocument || r.document || "");
+        const byDoc = bDoc && bDoc.length >= 8 && rDoc === bDoc;
+        const rTel = cleanWhatsAppPhone(r.guestPhone || r.phone || r.whatsapp || "");
+        const rNameLower = String(r.guestName || "").trim().toLowerCase();
+        const namesCompat = !rNameLower || !bNameLower || rNameLower === bNameLower ||
+          rNameLower.split(/\s+/)[0] === bNameLower.split(/\s+/)[0];
+        const byPhone = bTelLast8 && rTel && (rTel === bTel || rTel.endsWith(bTelLast8) || bTel.endsWith(rTel.slice(-8))) && namesCompat;
+
+        if (byId || byDoc || byPhone) {
+          if (!r.autoEmitInvoice) {
+            r.autoEmitInvoice = true;
+            reservationsUpdated++;
+          }
+        }
+      }
+    }
+  }
+
+  const updated = guestsUpdated > 0 || reservationsUpdated > 0;
+  if (updated && typeof saveDatabase === "function") {
+    try { saveDatabase("auto_emit_invoice_enabled"); } catch (_) {}
+  }
+
+  return { updated, guestsUpdated, reservationsUpdated };
+}
+
+/**
  * Fluxo Central do Assistente Fiscal do WhatsApp (Features F12 a F17)
  */
 export async function handleWhatsAppFiscalFlow({
@@ -9568,6 +9768,24 @@ export async function handleWhatsAppFiscalFlow({
   createNotification
 }) {
   if (!db || !cleanTarget || !messageText) return { handled: false };
+
+  // Sempre que um hóspede pedir nota fiscal no WhatsApp (mesmo fora do número de teste),
+  // ativa silenciosamente autoEmitInvoice = true para o hóspede e suas reservas.
+  const isFiscalRequestEarly = isFiscalIntentMessage(messageText);
+  const isAwaitingConfEarly = Boolean(conv?.fiscalConferenceState && conv.fiscalConferenceState.status === "awaiting_confirmation");
+  const isAwaitingFiscalEarly = Boolean(conv?.awaitingFiscalData === true);
+  if (isFiscalRequestEarly || isAwaitingConfEarly || isAwaitingFiscalEarly) {
+    const { matchedReservation: earlyRes, matchedGuest: earlyGuest } = findContactAndReservation(db, cleanTarget);
+    if (earlyGuest || earlyRes || conv?.fiscalConferenceState?.reservationId) {
+      enableAutoEmitInvoiceForGuestAndReservations(db, {
+        guest: earlyGuest,
+        reservation: earlyRes,
+        phone: cleanTarget,
+        reservationId: conv?.fiscalConferenceState?.reservationId || earlyRes?.id,
+        saveDatabase
+      });
+    }
+  }
 
   // ── R3. Restrição de Teste por Número de Telefone ───────────────────────────
   // Durante a fase de testes, ignorar silenciosamente solicitações de nota fiscal
@@ -9892,6 +10110,14 @@ export async function handleWhatsAppFiscalFlow({
   const { matchedReservation, matchedGuest, companyId, linkedCompany } = findContactAndReservation(db, cleanTarget);
   const rawCnpj = extractCnpj(messageText);
   const rawCpf = extractCpf(messageText);
+
+  enableAutoEmitInvoiceForGuestAndReservations(db, {
+    guest: matchedGuest,
+    reservation: matchedReservation,
+    phone: cleanTarget,
+    cpfCnpj: rawCpf || null,
+    saveDatabase
+  });
 
   const contactDisplayName = senderName || matchedReservation?.guestName || matchedGuest?.name || "Hóspede";
   const firstName = contactDisplayName ? toTitleCase(contactDisplayName).split(" ")[0] : "";

@@ -196,7 +196,8 @@ import {
   handleGetFlatAmenities,
   handleReallocateReservationFlat,
   querySystemData,
-  callGeminiAi
+  callGeminiAi,
+  enableAutoEmitInvoiceForGuestAndReservations
 } from "./whatsapp-ai-service.mjs";
 import { createWbpCallbackRouter, WbpBackgroundWorker, verifyChannexHmacSignature } from "./wbp/callbacks.mjs";
 import { getIntegrationMode, isWbpEnabled, setIntegrationMode, getChannexConfig, updateChannexConfig, WBP_MODES } from "./wbp/config.mjs";
@@ -45312,6 +45313,11 @@ app.post("/api/invoices/chat", async (req, res) => {
           db.guests.unshift(existingGuest);
         }
         result.data.guestId = existingGuest.id;
+        enableAutoEmitInvoiceForGuestAndReservations(db, {
+          guest: existingGuest,
+          cpfCnpj: cleanDoc,
+          phone: result.data.tomadorTelefone
+        });
         saveDatabase();
         console.log(`[CRM] Hóspede PF ${existingGuest.fullName} registrado com sucesso via Chat Fiscal!`);
       }
@@ -46069,6 +46075,15 @@ async function executeNfseEmissionInternal(payload) {
       matchedRes.invoiceId = newInvoice.id;
       matchedRes.numeroNfse = newInvoice.numeroNfse;
     }
+
+    enableAutoEmitInvoiceForGuestAndReservations(db, {
+      reservation: matchedRes,
+      guestId: newInvoice.guestId,
+      reservationId: newInvoice.reservationId || newInvoice.reservationCode,
+      reservationIds: newInvoice.reservationIds,
+      cpfCnpj: cleanDoc,
+      phone: cleanTel
+    });
 
     // Se havia item na fila de retentativa fiscal para esta reserva/documento, remove
     if (Array.isArray(db.nfseRetryQueue)) {
