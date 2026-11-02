@@ -969,3 +969,42 @@ Logo abaixo do 5º bloco (Resumo Financeiro da Hospedagem), posicionar todos os 
 - [ ] O usuário continua podendo digitar manualmente a data de Check-in e a data de Check-out pelo teclado, bem como editar os horários de Check-in e Check-out.
 - [ ] Alterar as datas (via calendário único ou digitação) recalcula normalmente o array de diárias (`formDailyRates`) e o valor total composto.
 - [ ] `npm run build` em `artifacts/limpeza` compila com código de saída 0 sem erros.
+
+
+## 2026-11-02T01:36:00Z
+
+Implementar no WhatsApp da Sofia a emissão e envio de notas fiscais mediante conferência prévia e confirmação de dados pelo solicitante, com trava de segurança exigindo aprovação prévia do gestor para qualquer alteração de valor e restrição de execução exclusiva para o número 22998505276 nesta fase de testes.
+
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Integrity mode: development
+
+## Requirements
+
+### R1. Conferência e Emissão de Nota Fiscal via WhatsApp
+Quando uma mensagem solicitar nota fiscal no WhatsApp, a Sofia deve conferir os dados da nota com o solicitante antes de emitir: apresentar as informações do tomador do serviço, a descrição e o valor. Se o solicitante confirmar que os dados estão corretos e autorizar a emissão, a Sofia emite a nota fiscal e envia diretamente para ele no WhatsApp.
+
+### R2. Tratamento de Alterações de Dados e Trava de Valor
+Se o solicitante solicitar alterações cadastrais ou de descrição, a Sofia aplica as alterações solicitadas e prossegue com a emissão e envio. Se o solicitante solicitar alteração de valor, a Sofia não pode emitir diretamente: deve solicitar aprovação prévia do gestor enviando notificação no WhatsApp para o número 22998505276 com os dados da solicitação, garantindo que o valor final faturado corresponda estritamente ao valor real do serviço. A emissão com novo valor só pode ocorrer após a aprovação do gestor.
+
+### R3. Restrição de Teste por Número de Telefone
+Durante a fase de testes, a Sofia não deve ativar a emissão automática de notas fiscais para clientes em geral. A Sofia deve ignorar silenciosamente solicitações de nota fiscal vindas de qualquer número diferente de 22998505276, mantendo o atendimento normal da conversa sem iniciar o fluxo de emissão fiscal.
+
+### R4. Conformidade de Testes com as Regras do Projeto
+A validação das alterações deve ser realizada por meio de testes automatizados pontuais estritamente associados ao fluxo fiscal alterado, respeitando a diretriz do projeto que proíbe expressamente a execução de suítes de testes globais ou varreduras em lote (ex.: proibido rodar testes globais ou de outros módulos).
+
+## Acceptance Criteria
+
+### Conferência e Envio
+- [ ] Ao receber solicitação de nota fiscal do número autorizado (22998505276), a Sofia responde apresentando os dados do tomador do serviço, descrição e valor para conferência.
+- [ ] Mediante confirmação explícita do usuário de que os dados estão corretos, a Sofia aciona a emissão da nota fiscal e envia o documento/link gerado na conversa do WhatsApp.
+- [ ] Quando o usuário solicitar alterações nos dados do tomador ou na descrição, a Sofia atualiza essas informações e envia a nota fiscal com os dados retificados.
+
+### Trava de Alteração de Valor
+- [ ] Qualquer pedido de alteração de valor bloqueia a emissão imediata e dispara uma mensagem de notificação de aprovação para o número do gestor (22998505276) via WhatsApp contendo os detalhes da solicitação.
+- [ ] A nota fiscal com valor alterado não é emitida a menos que haja aprovação prévia confirmada pelo gestor.
+
+### Restrição de Acesso
+- [ ] Mensagens solicitando nota fiscal vindas de números diferentes de 22998505276 não disparam o fluxo fiscal nem emitem nota, mantendo a conversa normal do bot.
+
+### Verificação
+- [ ] Teste automatizado pontual dedicado ao fluxo fiscal (em arquivo específico de teste) é executado com sucesso e valida: (1) exibição dos dados de conferência, (2) emissão após confirmação, (3) bloqueio e notificação ao gestor em pedido de alteração de valor, e (4) descarte silencioso do fluxo fiscal para números não autorizados.

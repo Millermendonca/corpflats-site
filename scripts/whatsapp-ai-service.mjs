@@ -43,6 +43,12 @@ import {
   formatCpf,
   formatCep
 } from "./lookup.mjs";
+import crypto from "crypto";
+import {
+  buildNationalDpsPayload,
+  processNationalInvoiceEmission,
+  normalizeTomadorAddressFields
+} from "./national-nfse.mjs";
 
 export {
   isFaqApplicableToClient,
@@ -8960,6 +8966,462 @@ export function extractCompanyName(text = "") {
 }
 
 /**
+ * Conversor de Valores em Linguagem Natural para NFS-e
+ */
+export function parseFlexibleMoney(text = "") {
+  if (!text || typeof text !== "string") return null;
+  const clean = text.trim();
+
+  // 1. Padrões monetários com prefixo: R$ 250,00 | R$250 | valor: 300 | para R$ 800
+  const m1 = clean.match(/(?:R\$|valor|total|de|diaria|diária|custo|preco|preço|para)\s*:?\s*(?:R\$\s*)?([\d\.,]+)/i);
+  if (m1) {
+    const v = m1[1].replace(/\./g, "").replace(",", ".");
+    const num = parseFloat(v);
+    if (!isNaN(num) && num > 0) return num.toFixed(2);
+  }
+
+  // 2. Número acompanhado de "reais" ou "real": "250 reais", "800 real"
+  const m2 = clean.match(/([\d\.,]+)\s*(?:reais|real|conto|pila)/i);
+  if (m2) {
+    const v = m2[1].replace(/\./g, "").replace(",", ".");
+    const num = parseFloat(v);
+    if (!isNaN(num) && num > 0) return num.toFixed(2);
+  }
+
+  // 3. Mensagem é apenas um número puro: "250", "250.00", "250,00", "800"
+  const m3 = clean.match(/^\s*(?:R\$\s*)?(\d{1,6}(?:[\.,]\d{1,2})?)\s*$/i);
+  if (m3) {
+    const v = m3[1].replace(/\./g, "").replace(",", ".");
+    const num = parseFloat(v);
+    if (!isNaN(num) && num > 0) return num.toFixed(2);
+  }
+
+  // 4. Números por extenso comuns
+  const lower = clean.toLowerCase();
+  const extensoMap = {
+    "cem": "100.00", "cento e cinquenta": "150.00", "duzentos": "200.00",
+    "duzentos e cinquenta": "250.00", "trezentos": "300.00", "trezentos e cinquenta": "350.00",
+    "quatrocentos": "400.00", "quatrocentos e cinquenta": "450.00", "quinhentos": "500.00",
+    "seiscentos": "600.00", "setecentos": "700.00", "oitocentos": "800.00",
+    "novecentos": "900.00", "mil": "1000.00", "mil e quinhentos": "1500.00"
+  };
+  for (const [k, v] of Object.entries(extensoMap)) {
+    if (lower.includes(k)) return v;
+  }
+
+  return null;
+}
+
+/**
+ * Formata data ISO (YYYY-MM-DD) para padrão brasileiro (DD/MM/YYYY)
+ */
+export function formatDateBr(isoDate = "") {
+  if (!isoDate || typeof isoDate !== "string") return "";
+  const parts = isoDate.split("T")[0].split("-");
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return isoDate;
+}
+
+/**
+ * Formata valor numérico em reais (ex: "600,00")
+ */
+export function formatMoneyBr(val) {
+  const num = Number(val) || 0;
+  return num.toFixed(2).replace(".", ",");
+}
+
+/**
+ * Formata CPF ou CNPJ conforme a quantidade de dígitos
+ */
+export function formatCpfOrCnpj(doc = "") {
+  const digits = onlyDigits(String(doc || ""));
+  if (digits.length === 11) return formatCpf(digits);
+  if (digits.length === 14) return formatCnpj(digits);
+  return doc || "";
+}
+
+/**
+ * Monta descrição padrão para a estadia na NFS-e
+ */
+export function buildDefaultStayDescription(matchedReservation) {
+  if (!matchedReservation) {
+    return "SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.";
+  }
+  const flat = matchedReservation.flatNumber ? `Flat ${matchedReservation.flatNumber}` : "Flat Mobiliado CorpFlats";
+  const inDate = formatDateBr(matchedReservation.checkinDate);
+  const outDate = formatDateBr(matchedReservation.checkoutDate);
+  const dates = inDate && outDate ? ` (${inDate} a ${outDate})` : "";
+  const code = matchedReservation.code || matchedReservation.id;
+  const resCode = code ? ` Reserva #${code}.` : "";
+  return `Diárias de hospedagem no ${flat}${dates}.${resCode} Serviços de hospedagem com Wi-Fi e condomínio inclusos.`;
+}
+
+/**
+ * Monta mensagem estruturada de conferência prévia da NFS-e (R1)
+ */
+export function buildConferencePresentationMessage(conf) {
+  const docFmt = formatCpfOrCnpj(conf.tomadorCpfCnpj);
+  const valFmt = formatMoneyBr(conf.valorServico);
+  const addrFmt = conf.tomadorEndereco
+    ? `${conf.tomadorEndereco}${conf.tomadorNumero && conf.tomadorNumero !== "S/N" ? ", " + conf.tomadorNumero : ""}${conf.tomadorCidade ? " - " + conf.tomadorCidade + "/" + (conf.tomadorUf || "RJ") : ""}`
+    : "Endereço cadastrado";
+
+  return `📋 *Conferência de Dados para Emissão de Nota Fiscal (NFS-e)*\n\n` +
+    `Por favor, confira os dados da sua nota fiscal antes da emissão:\n\n` +
+    `• *Tomador do Serviço:* ${conf.tomadorNome}\n` +
+    `• *CPF/CNPJ:* ${docFmt}\n` +
+    `• *Endereço:* ${addrFmt}\n` +
+    `• *E-mail:* ${conf.tomadorEmail || "Não informado"}\n\n` +
+    `• *Descrição dos Serviços:*\n${conf.descricaoServico}\n\n` +
+    `• *Valor Total:* R$ ${valFmt}\n\n` +
+    `Os dados estão corretos? Responda *Sim* ou *Pode emitir* para autorizar a emissão da sua nota fiscal! ✨`;
+}
+
+/**
+ * Motor Unificado de Emissão Fiscal no WhatsApp via Padrão Nacional Gov.br ADN
+ */
+export async function executeWhatsAppFiscalEmission({
+  db,
+  payload,
+  saveDatabase = null,
+  createNotification = null
+}) {
+  if (typeof globalThis.executeNfseEmissionInternal === "function") {
+    try {
+      const res = await globalThis.executeNfseEmissionInternal(payload);
+      if (res && res.success) return res;
+    } catch (_) {}
+  }
+
+  const tomadorNome = payload.tomadorNome || "Hóspede";
+  const cleanDoc = onlyDigits(payload.tomadorCpfCnpj || "");
+  const valor = Number(payload.valorServico);
+
+  if (!tomadorNome || !cleanDoc || !valor || valor <= 0) {
+    return { success: false, error: "Dados incompletos para emissão fiscal." };
+  }
+
+  const matchedRes = Array.isArray(db?.reservations) && (payload.reservationId || payload.reservationCode)
+    ? db.reservations.find(r =>
+        (payload.reservationId && Number(r.id) === Number(payload.reservationId)) ||
+        (payload.reservationCode && String(r.code) === String(payload.reservationCode))
+      )
+    : null;
+
+  const maxId = db?.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 875;
+  const nextDpsNumber = maxId + 1;
+  const nextRpsNumber = Math.floor(Date.now() / 1000) % 900000 + 100000;
+
+  const endLogradouro = payload.tomadorEndereco || "Av. Pelinca";
+  const endNumero = payload.tomadorNumero || "100";
+  const endComplemento = payload.tomadorComplemento || "";
+  const endBairro = payload.tomadorBairro || "Pelinca";
+  const endCep = payload.tomadorCep || "28035000";
+  const endCidade = payload.tomadorCidade || "Campos dos Goytacazes";
+  const endUf = payload.tomadorUf || "RJ";
+  const endCodMun = payload.tomadorCodigoMunicipio || "3301009";
+  const cleanEmail = (payload.tomadorEmail || "").trim().toLowerCase();
+  const cleanTel = cleanPhone(payload.tomadorTelefone || "");
+  const resolvedDiscriminacao = payload.descricaoServico || payload.discriminacao ||
+    `SERVIÇOS DE HOSPEDAGEM CORPFLATS FLAT ${payload.flatNumber || ""}.`;
+
+  const dpsData = buildNationalDpsPayload({
+    numeroDps: nextDpsNumber,
+    serie: "1",
+    regraFiscalId: "hospedagem_corpflats",
+    tomador: {
+      cpfCnpj: cleanDoc,
+      nome: toTitleCase(tomadorNome),
+      telefone: cleanTel,
+      email: cleanEmail,
+      logradouro: endLogradouro,
+      numero: endNumero,
+      complemento: endComplemento,
+      bairro: endBairro,
+      cep: endCep,
+      cidade: endCidade,
+      uf: endUf,
+      codigoMunicipio: endCodMun
+    },
+    servico: {
+      valorServico: valor,
+      discriminacao: resolvedDiscriminacao,
+      cnae: "5510801",
+      codigoServico: "09.02",
+      codigoTributacaoMunicipio: "090201",
+      aliquota: 2.0
+    }
+  });
+
+  const emissionResult = await processNationalInvoiceEmission({
+    invoiceData: {
+      ...dpsData,
+      tomador: { ...dpsData.tomador, cpfCnpj: cleanDoc },
+      valorServico: valor,
+      discriminacao: resolvedDiscriminacao
+    }
+  });
+
+  const numeroNfse = emissionResult.numeroNfse || String(nextDpsNumber);
+  const codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
+  const chaveAcesso = emissionResult.chaveAcesso;
+  const linkPrefeitura = emissionResult.qrCodeUrl || `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${chaveAcesso || ""}`;
+  const qrCodeUrl = emissionResult.qrCodeUrl;
+  const danfseUrl = `/api/nfse/danfse/${numeroNfse}`;
+  const pdfUrl = `/api/nfse/pdf/${numeroNfse}`;
+
+  const newInvoice = {
+    id: nextDpsNumber,
+    numeroNfse,
+    numeroRps: nextRpsNumber,
+    serieRps: "1",
+    codigoVerificacao,
+    chaveAcesso,
+    protocoloAutorizacao: emissionResult.protocoloAutorizacao,
+    motor: "padrao_nacional",
+    tomadorNome: toTitleCase(tomadorNome),
+    tomadorCpfCnpj: cleanDoc,
+    tomadorEmail: cleanEmail,
+    tomadorTelefone: cleanTel,
+    tomadorEndereco: endLogradouro,
+    tomadorNumero: endNumero,
+    tomadorComplemento: endComplemento,
+    tomadorBairro: endBairro,
+    tomadorCep: endCep,
+    tomadorCidade: endCidade,
+    tomadorUf: endUf,
+    tomadorCodigoMunicipio: endCodMun,
+    flatNumber: payload.flatNumber || matchedRes?.flatNumber || "",
+    checkinDate: payload.checkinDate || matchedRes?.checkinDate || null,
+    checkoutDate: payload.checkoutDate || matchedRes?.checkoutDate || null,
+    reservationId: payload.reservationId ? Number(payload.reservationId) : (matchedRes?.id ? Number(matchedRes.id) : null),
+    reservationCode: payload.reservationCode || matchedRes?.code || null,
+    valorServico: valor,
+    aliquota: 2.0,
+    cnae: "5510801",
+    codigoServico: "09.02",
+    codigoTributacaoMunicipio: "090201",
+    discriminacao: resolvedDiscriminacao,
+    status: "autorizada",
+    linkPrefeitura,
+    qrCodeUrl,
+    danfseUrl,
+    pdfUrl,
+    createdAt: new Date().toISOString()
+  };
+
+  if (!Array.isArray(db.invoices)) db.invoices = [];
+  db.invoices.unshift(newInvoice);
+
+  if (matchedRes) {
+    matchedRes.invoiceId = newInvoice.id;
+    matchedRes.numeroNfse = newInvoice.numeroNfse;
+  }
+
+  if (typeof createNotification === "function") {
+    createNotification({
+      category: "fiscal",
+      title: `📄 NFS-e Emitida: Nº ${numeroNfse}`,
+      message: `NFS-e emitida via WhatsApp para ${newInvoice.tomadorNome} no valor de R$ ${valor.toFixed(2)}.`,
+      type: "nfse_emitted",
+      targetUrl: `/notas`,
+      link: `/notas`
+    });
+  }
+
+  if (typeof saveDatabase === "function") {
+    try { saveDatabase("whatsapp_nfse_emitted"); } catch (_) {}
+  }
+
+  return {
+    success: true,
+    invoice: newInvoice,
+    numeroNfse,
+    codigoVerificacao,
+    danfseUrl,
+    pdfUrl,
+    linkPrefeitura,
+    qrCodeUrl
+  };
+}
+
+/**
+ * Intercepta e processa respostas do gestor (22998505276 / 5522998505276)
+ * para autorização de alterações de valor em NFS-e pendentes (R2).
+ */
+export async function handleManagerFiscalApprovalReply({
+  db,
+  cleanTarget,
+  messageText,
+  conv = null,
+  sendZapiMessage = null,
+  appendMessageFn = null,
+  saveDatabase = null,
+  createNotification = null
+}) {
+  if (!db || !messageText || !isDeveloperPhone(cleanTarget, db)) {
+    return { handled: false };
+  }
+
+  const pendingApprovals = (db.pendingFiscalApprovals || []).filter(a => a && a.status === "pending_manager");
+  if (pendingApprovals.length === 0) {
+    return { handled: false };
+  }
+
+  const norm = String(messageText).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  const isApprove = /\b(?:aprovar|aprovo|aprovado|autorizado|autorizo|autorizar|sim|confirmo|confirmar|ok|liberado|liberar)\b/i.test(norm) &&
+    !/\b(?:nao|recusar|reprovar|cancelar)\b/i.test(norm);
+  const isReject = /\b(?:recusar|recuso|recusado|reprovar|reprovo|reprovado|negar|negado|cancelar|cancelo|nao\s*autorizo)\b/i.test(norm);
+
+  if (!isApprove && !isReject) {
+    return { handled: false };
+  }
+
+  let targetApproval = pendingApprovals[0];
+  for (const a of pendingApprovals) {
+    if (a.id && norm.includes(String(a.id).toLowerCase())) {
+      targetApproval = a;
+      break;
+    }
+    if (a.reservationCode && norm.includes(String(a.reservationCode).toLowerCase())) {
+      targetApproval = a;
+      break;
+    }
+  }
+
+  const managerPhone = cleanWhatsAppPhone(cleanTarget) || getManagerWhatsAppPhone(db);
+  const requesterPhone = targetApproval.requesterPhone || targetApproval.conversationPhone;
+
+  if (isReject) {
+    targetApproval.status = "rejected";
+    targetApproval.rejectedAt = new Date().toISOString();
+    targetApproval.rejectedBy = cleanTarget;
+
+    const managerReply = `❌ *Solicitação de Alteração de Valor Rejeitada*\n\nA solicitação #${targetApproval.id} para ${targetApproval.requesterName} (Reserva #${targetApproval.reservationCode || targetApproval.reservationId}) foi marcada como recusada. A nota não será emitida com o valor de R$ ${formatMoneyBr(targetApproval.requestedValue)}.`;
+
+    if (typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig, {
+        phone: managerPhone,
+        message: managerReply,
+        channelId: "ai_agent",
+        recipientRole: "developer",
+        bypassTestMode: true,
+        db
+      });
+
+      if (requesterPhone && requesterPhone !== managerPhone) {
+        await sendZapiMessage(db.zapiConfig, {
+          phone: requesterPhone,
+          message: `Olá! Informamos que a solicitação de alteração do valor da sua nota fiscal para R$ ${formatMoneyBr(targetApproval.requestedValue)} não foi aprovada pela gerência. Permanecemos à disposição caso deseje a emissão no valor original da hospedagem (R$ ${formatMoneyBr(targetApproval.originalValue)}).`,
+          channelId: "ai_agent",
+          recipientRole: "guest",
+          db
+        });
+      }
+    }
+
+    if (typeof saveDatabase === "function") {
+      try { saveDatabase("fiscal_approval_rejected"); } catch (_) {}
+    }
+
+    return {
+      handled: true,
+      action: "manager_rejected_fiscal",
+      approval: targetApproval,
+      replyText: managerReply
+    };
+  }
+
+  // isApprove === true
+  targetApproval.status = "approved";
+  targetApproval.approvedAt = new Date().toISOString();
+  targetApproval.approvedBy = cleanTarget;
+
+  const invoicePayload = {
+    ...targetApproval.pendingFiscalInvoice,
+    valorServico: targetApproval.requestedValue
+  };
+
+  const emissionResult = await executeWhatsAppFiscalEmission({
+    db,
+    payload: invoicePayload,
+    saveDatabase,
+    createNotification
+  });
+
+  const numNfse = emissionResult.numeroNfse;
+  const linkNfse = emissionResult.linkPrefeitura || emissionResult.danfseUrl;
+  const codVerif = emissionResult.codigoVerificacao;
+  const valFmt = formatMoneyBr(targetApproval.requestedValue);
+
+  const guestReply = `✅ *Nota Fiscal Emitida com Sucesso!*\n\nA emissão da sua NFS-e no valor de *R$ ${valFmt}* foi autorizada pela gerência:\n• *Número da NFS-e:* ${numNfse}\n• *Código de Verificação:* ${codVerif}\n• *Tomador:* ${targetApproval.pendingFiscalInvoice?.tomadorNome || "Tomador"}\n• *Valor Faturado:* R$ ${valFmt}\n\n📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkNfse}\n\nAgradecemos pela preferência pela CorpFlats! 🏨✨`;
+
+  const managerReply = `✅ *Aprovação Confirmada e NFS-e Emitida!*\n\nA nota fiscal #${numNfse} foi emitida com sucesso no valor aprovado de R$ ${valFmt} e os dados/link foram enviados para ${targetApproval.requesterName} (${requesterPhone}).`;
+
+  if (typeof sendZapiMessage === "function") {
+    await sendZapiMessage(db.zapiConfig, {
+      phone: managerPhone,
+      message: managerReply,
+      channelId: "ai_agent",
+      recipientRole: "developer",
+      bypassTestMode: true,
+      db
+    });
+
+    if (requesterPhone && requesterPhone !== managerPhone) {
+      await sendZapiMessage(db.zapiConfig, {
+        phone: requesterPhone,
+        message: guestReply,
+        channelId: "ai_agent",
+        recipientRole: "guest",
+        db
+      });
+    }
+  }
+
+  if (typeof appendMessageFn === "function") {
+    appendMessageFn(db, {
+      phone: managerPhone,
+      senderName: db?.whatsappAiSettings?.agentName || "Sofia",
+      fromMe: true,
+      text: managerReply,
+      type: "text",
+      status: "delivered",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  if (Array.isArray(db.whatsappConversations)) {
+    const reqConv = db.whatsappConversations.find(c => {
+      const p = cleanWhatsAppPhone(c.phone);
+      return p && (p.endsWith(requesterPhone.slice(-8)) || requesterPhone.endsWith(p.slice(-8)));
+    });
+    if (reqConv && reqConv.fiscalConferenceState) {
+      reqConv.fiscalConferenceState.status = "emitted";
+      reqConv.fiscalConferenceState.numeroNfse = numNfse;
+      reqConv.fiscalConferenceState.valorServico = targetApproval.requestedValue;
+    }
+  }
+
+  if (typeof saveDatabase === "function") {
+    try { saveDatabase("fiscal_approval_executed"); } catch (_) {}
+  }
+
+  return {
+    handled: true,
+    action: "manager_approved_fiscal",
+    approval: targetApproval,
+    numeroNfse: numNfse,
+    linkPrefeitura: linkNfse,
+    invoice: emissionResult.invoice,
+    replyText: managerReply
+  };
+}
+
+/**
  * Cruza o telefone do remetente com as reservas (titular ou requesterInfo) e hóspedes do CRM.
  */
 export function findContactAndReservation(db, cleanTarget) {
@@ -9064,15 +9526,31 @@ export async function handleWhatsAppFiscalFlow({
 }) {
   if (!db || !cleanTarget || !messageText) return { handled: false };
 
-  const isFiscalRequest = isFiscalIntentMessage(messageText);
-  const isAwaitingFiscal = Boolean(conv?.awaitingFiscalData === true);
-
-  // Se não é pedido fiscal nem conversa aguardando dados fiscais, ignora
-  if (!isFiscalRequest && !isAwaitingFiscal) {
+  // ── R3. Restrição de Teste por Número de Telefone ───────────────────────────
+  // Durante a fase de testes, ignorar silenciosamente solicitações de nota fiscal
+  // vindas de qualquer número diferente de 22998505276 / 5522998505276.
+  if (!isDeveloperPhone(cleanTarget, db)) {
     return { handled: false };
   }
 
-  // Garante que conv exista para registrar estado
+  // Intercepta aprovação do gestor se houver pendências em db.pendingFiscalApprovals
+  if (Array.isArray(db.pendingFiscalApprovals) && db.pendingFiscalApprovals.some(a => a?.status === "pending_manager")) {
+    const approvalRes = await handleManagerFiscalApprovalReply({
+      db,
+      cleanTarget,
+      messageText,
+      conv,
+      sendZapiMessage,
+      appendMessageFn,
+      saveDatabase,
+      createNotification
+    });
+    if (approvalRes && approvalRes.handled) {
+      return approvalRes;
+    }
+  }
+
+  // Garante que conv exista para registrar estado da sessão
   if (!conv && Array.isArray(db.whatsappConversations)) {
     conv = db.whatsappConversations.find(c => {
       const p = cleanWhatsAppPhone(c.phone);
@@ -9092,14 +9570,7 @@ export async function handleWhatsAppFiscalFlow({
     }
   }
 
-  const { matchedReservation, matchedGuest, companyId, linkedCompany } = findContactAndReservation(db, cleanTarget);
-  const rawCnpj = extractCnpj(messageText);
-  const rawCpf = extractCpf(messageText);
-
-  const contactDisplayName = senderName || matchedReservation?.guestName || matchedGuest?.name || "Hóspede";
-  const firstName = contactDisplayName ? toTitleCase(contactDisplayName).split(" ")[0] : "";
-
-  // Helper para envio de resposta e persistência
+  // Helper unificado de envio de resposta
   const respond = async (replyText, actionDetails = {}) => {
     if (typeof sendZapiMessage === "function") {
       await sendZapiMessage(db.zapiConfig, {
@@ -9135,324 +9606,375 @@ export async function handleWhatsAppFiscalFlow({
     };
   };
 
-  // ── CENÁRIO 1: CNPJ enviado pelo cliente ─────────────────────────────────────
+  const conf = conv?.fiscalConferenceState;
+  const isAwaitingConferenceConfirmation = Boolean(conf && conf.status === "awaiting_confirmation");
+  const isFiscalRequest = isFiscalIntentMessage(messageText);
+  const isAwaitingFiscal = Boolean(conv?.awaitingFiscalData === true);
+
+  // Se não é pedido fiscal, nem aguardando dados, nem aguardando confirmação da conferência, ignora
+  if (!isFiscalRequest && !isAwaitingFiscal && !isAwaitingConferenceConfirmation) {
+    return { handled: false };
+  }
+
+  // ── ETAPA 1: Usuário já está na fase de conferência e respondeu à mensagem ──
+  if (isAwaitingConferenceConfirmation) {
+    // 1.1 Trava de Valor (R2)
+    const moneyVal = parseFlexibleMoney(messageText);
+    const mentionsValue = /\b(?:valor|pre[cç]o|total|di[aá]ria|muda\s*o\s*valor|alterar\s*o\s*valor|muda\s*para|coloca|troca\s*o\s*valor)\b/i.test(messageText);
+    const parsedNum = moneyVal ? Number(moneyVal) : null;
+    const isValueChange = parsedNum && parsedNum > 0 && Math.abs(parsedNum - Number(conf.valorOriginal || conf.valorServico)) > 0.01;
+
+    if (isValueChange) {
+      if (!Array.isArray(db.pendingFiscalApprovals)) db.pendingFiscalApprovals = [];
+      const approvalId = `NFSE-APP-${Date.now().toString(36).toUpperCase()}`;
+      const pendingApproval = {
+        id: approvalId,
+        status: "pending_manager",
+        requesterPhone: cleanTarget,
+        requesterName: senderName || conv?.name || conf.tomadorNome || "Hóspede",
+        reservationId: conf.reservationId,
+        reservationCode: conf.reservationCode,
+        flatNumber: conf.flatNumber,
+        originalValue: Number(conf.valorOriginal || conf.valorServico),
+        requestedValue: parsedNum,
+        reason: messageText,
+        pendingFiscalInvoice: {
+          ...conf,
+          valorServico: parsedNum
+        },
+        createdAt: new Date().toISOString()
+      };
+      db.pendingFiscalApprovals.push(pendingApproval);
+
+      conf.status = "pending_manager_approval";
+      conf.pendingApprovalId = approvalId;
+      conf.requestedValue = parsedNum;
+      conf.updatedAt = new Date().toISOString();
+
+      // Notificação ao gestor (22998505276 / 5522998505276)
+      const managerPhone = getManagerWhatsAppPhone(db);
+      const managerAlert = `🔔 *Solicitação de Alteração de Valor de NFS-e*\n\n` +
+        `Um solicitante pediu alteração de valor para emissão de nota fiscal:\n` +
+        `• *Solicitante:* ${pendingApproval.requesterName} (${cleanTarget})\n` +
+        `• *Reserva:* #${conf.reservationCode || conf.reservationId || "S/N"} (Flat ${conf.flatNumber || "S/N"})\n` +
+        `• *Valor Original:* R$ ${formatMoneyBr(pendingApproval.originalValue)}\n` +
+        `• *Novo Valor Solicitado:* R$ ${formatMoneyBr(pendingApproval.requestedValue)}\n` +
+        `• *Mensagem:* "${messageText}"\n\n` +
+        `Para autorizar a emissão com este novo valor, responda:\n` +
+        `*Aprovar fiscal* ou *Aprovar #${approvalId}*`;
+
+      if (typeof sendZapiMessage === "function") {
+        await sendZapiMessage(db.zapiConfig, {
+          phone: managerPhone,
+          message: managerAlert,
+          channelId: "ai_agent",
+          recipientRole: "developer",
+          bypassTestMode: true,
+          db
+        });
+      }
+
+      if (typeof createNotification === "function") {
+        createNotification({
+          category: "fiscal",
+          title: `⚠️ Alteração de Valor Solicitada: R$ ${formatMoneyBr(parsedNum)}`,
+          message: `${pendingApproval.requesterName} solicitou alteração de valor na NFS-e de R$ ${formatMoneyBr(pendingApproval.originalValue)} para R$ ${formatMoneyBr(parsedNum)}. Aguardando aprovação do gestor.`,
+          type: "fiscal_value_change_requested",
+          targetUrl: "/notas",
+          link: "/notas"
+        });
+      }
+
+      const replyText = `⚠️ Identifiquei a solicitação de alteração do valor da nota fiscal para *R$ ${formatMoneyBr(parsedNum)}*.\n\n` +
+        `Por motivos de segurança fiscal e conformidade contábil, qualquer alteração no valor original da hospedagem (R$ ${formatMoneyBr(conf.valorOriginal)}) exige aprovação prévia do gestor.\n\n` +
+        `Já encaminhei a notificação para a gerência com os detalhes da solicitação. Assim que for aprovada, daremos continuidade imediata à emissão da sua nota fiscal! 🙏`;
+
+      return await respond(replyText, {
+        action: "value_lock_engaged",
+        pendingApprovalId: approvalId,
+        requestedValue: parsedNum,
+        originalValue: conf.valorOriginal
+      });
+    }
+
+    // 1.2 Alteração de Dados Cadastrais ou de Descrição (R2)
+    const newCnpj = extractCnpj(messageText);
+    const newCpf = extractCpf(messageText);
+    const newEmail = extractEmail(messageText);
+    const newCep = extractCep(messageText);
+    const matchName = messageText.match(/\b(?:nome|raz[aã]o\s*social|empresa|tomador)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i);
+    const matchDesc = messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i);
+
+    let hasCadastralChanges = false;
+    if (newCnpj && isValidCnpj(newCnpj)) {
+      conf.tomadorCpfCnpj = onlyDigits(newCnpj);
+      conf.tomadorTipo = "PJ";
+      hasCadastralChanges = true;
+      try {
+        const lookup = await lookupCnpj(conf.tomadorCpfCnpj, db);
+        if (lookup?.razaoSocial) conf.tomadorNome = toTitleCase(lookup.razaoSocial);
+        if (lookup?.email && !newEmail) conf.tomadorEmail = lookup.email.toLowerCase().trim();
+        if (lookup?.logradouro) conf.tomadorEndereco = `${lookup.logradouro}, ${lookup.numero || "S/N"}`;
+      } catch (_) {}
+    } else if (newCpf && isValidCpf(newCpf)) {
+      conf.tomadorCpfCnpj = onlyDigits(newCpf);
+      conf.tomadorTipo = "PF";
+      hasCadastralChanges = true;
+    }
+
+    if (newEmail) {
+      conf.tomadorEmail = newEmail;
+      hasCadastralChanges = true;
+    }
+    if (matchName) {
+      conf.tomadorNome = toTitleCase(matchName[1].trim());
+      hasCadastralChanges = true;
+    }
+    if (matchDesc) {
+      conf.descricaoServico = matchDesc[1].trim();
+      hasCadastralChanges = true;
+    }
+    if (newCep && newCep.length === 8) {
+      conf.tomadorCep = newCep;
+      hasCadastralChanges = true;
+      try {
+        const cepLookup = await lookupCep(newCep, db);
+        if (cepLookup?.logradouro) {
+          conf.tomadorEndereco = `${cepLookup.logradouro}, ${cepLookup.numero || "S/N"}`;
+          if (cepLookup.bairro) conf.tomadorBairro = cepLookup.bairro;
+          if (cepLookup.cidade) conf.tomadorCidade = cepLookup.cidade;
+          if (cepLookup.uf) conf.tomadorUf = cepLookup.uf;
+        }
+      } catch (_) {}
+    }
+
+    const hasConfirmExplicit = /\b(?:sim|pode\s*emitir|confirmo|confirmar|correto|autorizo|autorizar|pode\s*mandar|pode\s*gerar|est[aá]\s*correto|est[aá]\s*certo|tudo\s*certo|ok|beleza|perfeito|valeu|emitir|emite)\b/i.test(messageText) &&
+      !/\b(?:n[aã]o|cancela|recusa)\b/i.test(messageText);
+
+    if (hasCadastralChanges && !hasConfirmExplicit) {
+      conf.updatedAt = new Date().toISOString();
+      const updatedConfMsg = `Dados cadastrais atualizados com sucesso!\n\n${buildConferencePresentationMessage(conf)}`;
+      return await respond(updatedConfMsg, {
+        action: "updated_conference_data",
+        conference: conf
+      });
+    }
+
+    // 1.3 Confirmação e Emissão Direta (R1)
+    if (hasConfirmExplicit) {
+      const emissionResult = await executeWhatsAppFiscalEmission({
+        db,
+        payload: {
+          tomadorNome: conf.tomadorNome,
+          tomadorCpfCnpj: conf.tomadorCpfCnpj,
+          tomadorTipo: conf.tomadorTipo,
+          tomadorEmail: conf.tomadorEmail,
+          tomadorTelefone: conf.tomadorTelefone || cleanTarget,
+          tomadorEndereco: conf.tomadorEndereco,
+          tomadorNumero: conf.tomadorNumero || "S/N",
+          tomadorComplemento: conf.tomadorComplemento || "",
+          tomadorBairro: conf.tomadorBairro || "",
+          tomadorCidade: conf.tomadorCidade || "Campos dos Goytacazes",
+          tomadorUf: conf.tomadorUf || "RJ",
+          tomadorCep: conf.tomadorCep || "28035000",
+          tomadorCodigoMunicipio: conf.tomadorCodigoMunicipio || "3301009",
+          descricaoServico: conf.descricaoServico,
+          discriminacao: conf.descricaoServico,
+          valorServico: conf.valorServico,
+          reservationId: conf.reservationId,
+          reservationCode: conf.reservationCode,
+          flatNumber: conf.flatNumber
+        },
+        saveDatabase,
+        createNotification
+      });
+
+      conf.status = "emitted";
+      conf.numeroNfse = emissionResult.numeroNfse;
+      conf.emittedAt = new Date().toISOString();
+
+      const numNfse = emissionResult.numeroNfse;
+      const codVerif = emissionResult.codigoVerificacao;
+      const linkNfse = emissionResult.linkPrefeitura || emissionResult.danfseUrl;
+      const valFmt = formatMoneyBr(conf.valorServico);
+
+      const successMsg = `✅ *Nota Fiscal Emitida com Sucesso!*\n\n` +
+        `Sua NFS-e foi emitida com os dados conferidos:\n` +
+        `• *Número da NFS-e:* ${numNfse}\n` +
+        `• *Código de Verificação:* ${codVerif}\n` +
+        `• *Tomador:* ${conf.tomadorNome}\n` +
+        `• *Valor:* R$ ${valFmt}\n\n` +
+        `📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkNfse}\n\n` +
+        `Agradecemos pela preferência pela CorpFlats! 🏨✨`;
+
+      return await respond(successMsg, {
+        action: "emitted_nfse",
+        numeroNfse: numNfse,
+        codigoVerificacao: codVerif,
+        linkPrefeitura: linkNfse,
+        danfseUrl: emissionResult.danfseUrl,
+        invoice: emissionResult.invoice
+      });
+    }
+
+    // 1.4 Cancelamento
+    if (/\b(?:cancelar|cancela|n[aã]o\s*quero|deixa\s*pra\s*l[aá]|depois)\b/i.test(messageText)) {
+      conf.status = "cancelled";
+      conf.updatedAt = new Date().toISOString();
+      return await respond("Entendido! Cancelei a emissão da nota fiscal. Caso precise futuramente, estou à disposição! 🏨✨", {
+        action: "cancelled_fiscal_conference"
+      });
+    }
+  }
+
+  // ── ETAPA 2: Abertura / Captação de Dados para Conferência (R1) ──────────────
+  const { matchedReservation, matchedGuest, companyId, linkedCompany } = findContactAndReservation(db, cleanTarget);
+  const rawCnpj = extractCnpj(messageText);
+  const rawCpf = extractCpf(messageText);
+
+  const contactDisplayName = senderName || matchedReservation?.guestName || matchedGuest?.name || "Hóspede";
+  const firstName = contactDisplayName ? toTitleCase(contactDisplayName).split(" ")[0] : "";
+
+  // Cenário A: Cliente enviou CNPJ
   if (rawCnpj) {
-    // 1. Validação Módulo 11 do CNPJ
     if (!isValidCnpj(rawCnpj)) {
       if (conv) {
         conv.awaitingFiscalData = true;
         conv.awaitingFiscalDataAt = new Date().toISOString();
       }
-      const replyText = `Identificamos a tentativa de envio do CNPJ ${rawCnpj}, porém os dígitos verificadores parecem incorretos segundo o cálculo oficial (Módulo 11). Por gentileza, confira os números digitados e nos envie novamente para emitirmos sua nota fiscal com total segurança! 🙏`;
+      const replyText = `Identificamos a tentativa de envio do CNPJ ${rawCnpj}, porém os dígitos verificadores parecem incorretos segundo o cálculo oficial (Módulo 11). Por gentileza, confira os números digitados e nos envie novamente! 🙏`;
       return await respond(replyText, { action: "invalid_cnpj", invalidCnpj: rawCnpj });
     }
 
-    // CNPJ é matematicamente VÁLIDO (14 dígitos)
     const cleanCnpjNum = onlyDigits(rawCnpj);
-
-    // 2. Enriquecimento Automático via local db.companies + BrasilAPI
     let lookupData = {};
     try {
       lookupData = await lookupCnpj(cleanCnpjNum, db);
-    } catch (_) {
-      lookupData = {};
-    }
+    } catch (_) {}
 
-    // Se houver CEP informado no texto ou retornado do CNPJ, enriquece endereço
-    const cepFromText = extractCep(messageText);
-    const effectiveCep = cleanCep(cepFromText || lookupData.cep || "");
-    if (effectiveCep && effectiveCep.length === 8 && effectiveCep !== "00000000") {
-      try {
-        const cepData = await lookupCep(effectiveCep, db);
-        if (cepData) {
-          if (!lookupData.logradouro && cepData.logradouro) lookupData.logradouro = cepData.logradouro;
-          if (!lookupData.bairro && cepData.bairro) lookupData.bairro = cepData.bairro;
-          if (!lookupData.cidade && cepData.cidade) lookupData.cidade = cepData.cidade;
-          if (!lookupData.uf && cepData.uf) lookupData.uf = cepData.uf;
-          if (!lookupData.codigoMunicipio && cepData.codigoMunicipio) lookupData.codigoMunicipio = cepData.codigoMunicipio;
-        }
-      } catch (_) {}
-    }
-
-    // 3. Sanitização dos campos corporativos
     const emailFromText = extractEmail(messageText);
     const finalEmail = (emailFromText || lookupData.email || "").toLowerCase().trim();
     const finalCorporateName = toTitleCase(lookupData.razaoSocial || extractCompanyName(messageText) || "Empresa");
-    const finalTradeName = toTitleCase(lookupData.nomeFantasia || finalCorporateName);
     const finalLogradouro = toTitleCase(lookupData.logradouro || "");
     const finalNumero = lookupData.numero || "S/N";
-    const finalComplemento = lookupData.complemento || "";
     const finalBairro = toTitleCase(lookupData.bairro || "");
     const finalCidade = toTitleCase(lookupData.cidade || "Campos dos Goytacazes");
     const finalUf = (lookupData.uf || "RJ").toUpperCase();
-    const finalIbge = String(lookupData.codigoMunicipio || "3301009");
-    const finalPhone = cleanPhone(lookupData.telefone || cleanTarget);
+    const effectiveCep = cleanCep(extractCep(messageText) || lookupData.cep || "28035000");
 
-    // 4. Criação / Atualização em db.companies
+    // Salva / atualiza em db.companies
     if (!Array.isArray(db.companies)) db.companies = [];
     let company = db.companies.find(c => onlyDigits(c.cnpj) === cleanCnpjNum);
-    if (company) {
-      company.corporateName = finalCorporateName || company.corporateName;
-      company.tradeName = finalTradeName || company.tradeName;
-      if (finalEmail) company.financialEmail = finalEmail;
-      if (finalLogradouro) company.address = company.logradouro = finalLogradouro;
-      if (finalNumero && finalNumero !== "S/N") company.number = company.numero = finalNumero;
-      if (finalComplemento) company.complement = company.complemento = finalComplemento;
-      if (finalBairro) company.neighborhood = company.bairro = finalBairro;
-      if (finalCidade) company.city = company.cidade = finalCidade;
-      if (finalUf) company.state = company.uf = finalUf;
-      if (finalIbge) company.ibgeCode = company.codigoMunicipio = finalIbge;
-      if (effectiveCep) company.cep = effectiveCep;
-      company.updatedAt = new Date().toISOString();
-    } else {
+    if (!company) {
       company = {
         id: `comp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         corporateName: finalCorporateName,
-        tradeName: finalTradeName,
+        tradeName: finalCorporateName,
         cnpj: cleanCnpjNum,
-        stateRegistration: "",
-        municipalRegistration: "",
         financialEmail: finalEmail,
-        phone: finalPhone,
-        contactPerson: contactDisplayName,
+        phone: cleanTarget,
         address: finalLogradouro,
         logradouro: finalLogradouro,
-        number: finalNumero,
         numero: finalNumero,
-        complement: finalComplemento,
-        complemento: finalComplemento,
-        neighborhood: finalBairro,
         bairro: finalBairro,
-        city: finalCidade,
         cidade: finalCidade,
-        state: finalUf,
         uf: finalUf,
-        ibgeCode: finalIbge,
-        codigoMunicipio: finalIbge,
         cep: effectiveCep,
-        billingTerms: "faturado_15d",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
       db.companies.push(company);
     }
 
-    // 5. Atualização / Vínculo em db.guests
-    if (!Array.isArray(db.guests)) db.guests = [];
-    let guest = matchedGuest || db.guests.find(g => {
-      const gp = cleanPhone(g.phone || g.whatsapp || "");
-      return gp && (cleanTarget.endsWith(gp.slice(-8)) || gp.endsWith(cleanTarget.slice(-8)));
-    });
+    const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+    const desc = buildDefaultStayDescription(matchedReservation);
 
-    if (guest) {
-      guest.companyId = company.id;
-      guest.companyName = company.corporateName;
-      guest.autoEmitInvoice = true;
-      if (finalEmail && !guest.email) guest.email = finalEmail;
-      guest.updatedAt = new Date().toISOString();
-    } else {
-      guest = {
-        id: `guest_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        name: contactDisplayName,
-        phone: cleanTarget,
-        whatsapp: cleanTarget,
-        email: finalEmail,
-        companyId: company.id,
-        companyName: company.corporateName,
-        autoEmitInvoice: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      db.guests.push(guest);
-    }
+    conv.fiscalConferenceState = {
+      status: "awaiting_confirmation",
+      reservationId: matchedReservation?.id,
+      reservationCode: matchedReservation?.code,
+      flatNumber: matchedReservation?.flatNumber,
+      tomadorNome: company.corporateName,
+      tomadorCpfCnpj: cleanCnpjNum,
+      tomadorTipo: "PJ",
+      tomadorEmail: finalEmail || company.financialEmail || "",
+      tomadorTelefone: cleanTarget,
+      tomadorEndereco: finalLogradouro ? `${finalLogradouro}, ${finalNumero}` : "Endereço cadastrado",
+      tomadorNumero: finalNumero,
+      tomadorBairro: finalBairro,
+      tomadorCidade: finalCidade,
+      tomadorUf: finalUf,
+      tomadorCep: effectiveCep,
+      tomadorCodigoMunicipio: "3301009",
+      descricaoServico: desc,
+      valorOriginal: valTotal,
+      valorServico: valTotal,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    conv.awaitingFiscalData = false;
 
-    // 6. Atualização / Vínculo na Reserva ativa ou recente
-    if (matchedReservation) {
-      matchedReservation.companyId = company.id;
-      matchedReservation.companyName = company.corporateName;
-      matchedReservation.autoEmitInvoice = true;
-      matchedReservation.invoiceDetails = {
-        companyId: company.id,
-        companyName: company.corporateName,
-        tomadorTipo: "PJ",
-        tomadorCpfCnpj: company.cnpj,
-        tomadorNome: company.corporateName,
-        tomadorRazaoSocial: company.corporateName,
-        tomadorNomeFantasia: company.tradeName,
-        tomadorEmail: company.financialEmail || finalEmail,
-        tomadorTelefone: company.phone || cleanTarget,
-        tomadorCep: company.cep || "",
-        tomadorEndereco: company.logradouro || company.address || "",
-        tomadorNumero: company.numero || company.number || "S/N",
-        tomadorComplemento: company.complemento || company.complement || "",
-        tomadorBairro: company.bairro || company.neighborhood || "",
-        tomadorCidade: company.cidade || company.city || "Campos dos Goytacazes",
-        tomadorUf: company.uf || company.state || "RJ",
-        tomadorCodigoMunicipio: company.codigoMunicipio || company.ibgeCode || "3301009",
-        autoEmitInvoice: true,
-        solicitadoEm: new Date().toISOString()
-      };
-      matchedReservation.updatedAt = new Date().toISOString();
-    }
-
-    if (conv) {
-      conv.awaitingFiscalData = false;
-    }
-
-    if (typeof createNotification === "function") {
-      createNotification({
-        category: "fiscal",
-        title: `🏢 Dados Fiscais PJ Cadastrados: ${company.corporateName}`,
-        message: `CNPJ ${formatCnpj(company.cnpj)} cadastrado e vinculado à reserva via WhatsApp.`,
-        type: "fiscal_pj_registered",
-        targetUrl: "/notas",
-        link: "/notas"
-      });
-    }
-
-    const replyText = `Perfeito${firstName ? `, ${firstName}` : ""}! Cadastramos e vinculamos a empresa **${company.corporateName}** (CNPJ: ${formatCnpj(company.cnpj)}) à sua estadia. A Nota Fiscal (NFS-e) será emitida com todos os dados corporativos. Agradecemos a preferência pela CorpFlats! 🏨✨`;
-    return await respond(replyText, {
-      action: "registered_pj",
-      company,
-      guest,
-      reservation: matchedReservation
+    const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState);
+    return await respond(confMsg, {
+      action: "presented_conference",
+      conference: conv.fiscalConferenceState
     });
   }
 
-  // ── CENÁRIO 2: CPF enviado pelo cliente (Pessoa Física) ──────────────────────
+  // Cenário B: Cliente enviou CPF
   if (rawCpf) {
-    // 1. Validação Módulo 11 do CPF
     if (!isValidCpf(rawCpf)) {
       if (conv) {
         conv.awaitingFiscalData = true;
         conv.awaitingFiscalDataAt = new Date().toISOString();
       }
-      const replyText = `Identificamos o CPF ${rawCpf}, porém os dígitos verificadores parecem incorretos segundo o cálculo oficial (Módulo 11). Por favor, confira os números e nos envie novamente para darmos andamento à sua nota fiscal! 🙏`;
+      const replyText = `Identificamos o CPF ${rawCpf}, porém os dígitos verificadores parecem incorretos segundo o cálculo oficial (Módulo 11). Por favor, confira os números digitados e envie novamente! 🙏`;
       return await respond(replyText, { action: "invalid_cpf", invalidCpf: rawCpf });
     }
 
-    // CPF é matematicamente VÁLIDO (11 dígitos)
     const cleanCpfNum = onlyDigits(rawCpf);
-
-    // 2. Extração e sanitização dos campos de PF
     const emailFromText = extractEmail(messageText);
     const cepFromText = extractCep(messageText);
-    const cleanCepNum = cleanCep(cepFromText || "");
+    const cleanCepNum = cleanCep(cepFromText || "28035000");
     const nameFromText = extractPersonName(messageText);
     const finalName = toTitleCase(nameFromText || contactDisplayName || "Hóspede");
 
-    let addressData = {
-      logradouro: "",
-      bairro: "",
-      cidade: "Campos dos Goytacazes",
-      uf: "RJ",
-      codigoMunicipio: "3301009",
-      numero: "S/N"
+    const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+    const desc = buildDefaultStayDescription(matchedReservation);
+
+    conv.fiscalConferenceState = {
+      status: "awaiting_confirmation",
+      reservationId: matchedReservation?.id,
+      reservationCode: matchedReservation?.code,
+      flatNumber: matchedReservation?.flatNumber,
+      tomadorNome: finalName,
+      tomadorCpfCnpj: cleanCpfNum,
+      tomadorTipo: "PF",
+      tomadorEmail: emailFromText || matchedGuest?.email || "",
+      tomadorTelefone: cleanTarget,
+      tomadorEndereco: "Endereço cadastrado",
+      tomadorNumero: "S/N",
+      tomadorBairro: "Pelinca",
+      tomadorCidade: "Campos dos Goytacazes",
+      tomadorUf: "RJ",
+      tomadorCep: cleanCepNum,
+      tomadorCodigoMunicipio: "3301009",
+      descricaoServico: desc,
+      valorOriginal: valTotal,
+      valorServico: valTotal,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
+    conv.awaitingFiscalData = false;
 
-    if (cleanCepNum && cleanCepNum.length === 8 && cleanCepNum !== "00000000") {
-      try {
-        const cepLookup = await lookupCep(cleanCepNum, db);
-        if (cepLookup) {
-          addressData = { ...addressData, ...cepLookup };
-        }
-      } catch (_) {}
-    }
-
-    // 3. Atualização / Criação em db.guests
-    if (!Array.isArray(db.guests)) db.guests = [];
-    let guest = matchedGuest || db.guests.find(g => {
-      const gp = cleanPhone(g.phone || g.whatsapp || "");
-      return gp && (cleanTarget.endsWith(gp.slice(-8)) || gp.endsWith(cleanTarget.slice(-8)));
-    });
-
-    if (guest) {
-      guest.name = finalName;
-      guest.cpf = cleanCpfNum;
-      guest.autoEmitInvoice = true;
-      if (emailFromText) guest.email = emailFromText.toLowerCase().trim();
-      if (cleanCepNum) guest.cep = cleanCepNum;
-      if (addressData.logradouro) guest.address = guest.logradouro = toTitleCase(addressData.logradouro);
-      if (addressData.bairro) guest.neighborhood = guest.bairro = toTitleCase(addressData.bairro);
-      if (addressData.cidade) guest.city = guest.cidade = toTitleCase(addressData.cidade);
-      if (addressData.uf) guest.state = guest.uf = addressData.uf.toUpperCase();
-      if (addressData.codigoMunicipio) guest.ibgeCode = guest.codigoMunicipio = addressData.codigoMunicipio;
-      guest.updatedAt = new Date().toISOString();
-    } else {
-      guest = {
-        id: `guest_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        name: finalName,
-        phone: cleanTarget,
-        whatsapp: cleanTarget,
-        cpf: cleanCpfNum,
-        email: emailFromText.toLowerCase().trim(),
-        cep: cleanCepNum,
-        address: toTitleCase(addressData.logradouro),
-        logradouro: toTitleCase(addressData.logradouro),
-        number: addressData.numero,
-        numero: addressData.numero,
-        neighborhood: toTitleCase(addressData.bairro),
-        bairro: toTitleCase(addressData.bairro),
-        city: toTitleCase(addressData.cidade),
-        cidade: toTitleCase(addressData.cidade),
-        state: addressData.uf.toUpperCase(),
-        uf: addressData.uf.toUpperCase(),
-        ibgeCode: addressData.codigoMunicipio,
-        codigoMunicipio: addressData.codigoMunicipio,
-        autoEmitInvoice: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      db.guests.push(guest);
-    }
-
-    // 4. Atualização na Reserva
-    if (matchedReservation) {
-      matchedReservation.autoEmitInvoice = true;
-      matchedReservation.invoiceDetails = {
-        tomadorTipo: "PF",
-        tomadorCpfCnpj: cleanCpfNum,
-        tomadorNome: finalName,
-        tomadorEmail: guest.email || "",
-        tomadorTelefone: cleanTarget,
-        tomadorCep: cleanCepNum || "",
-        tomadorEndereco: guest.logradouro || guest.address || "",
-        tomadorNumero: guest.numero || guest.number || "S/N",
-        tomadorComplemento: guest.complemento || "",
-        tomadorBairro: guest.bairro || guest.neighborhood || "",
-        tomadorCidade: guest.cidade || guest.city || "Campos dos Goytacazes",
-        tomadorUf: guest.uf || guest.state || "RJ",
-        tomadorCodigoMunicipio: guest.codigoMunicipio || guest.ibgeCode || "3301009",
-        autoEmitInvoice: true,
-        solicitadoEm: new Date().toISOString()
-      };
-      matchedReservation.updatedAt = new Date().toISOString();
-    }
-
-    if (conv) {
-      conv.awaitingFiscalData = false;
-    }
-
-    if (typeof createNotification === "function") {
-      createNotification({
-        category: "fiscal",
-        title: `👤 Dados Fiscais PF Cadastrados: ${finalName}`,
-        message: `CPF ${formatCpf(cleanCpfNum)} registrado para emissão de NFS-e via WhatsApp.`,
-        type: "fiscal_pf_registered",
-        targetUrl: "/notas",
-        link: "/notas"
-      });
-    }
-
-    const replyText = `Dados recebidos com sucesso${firstName ? `, ${firstName}` : ""}! Registramos o faturamento da Nota Fiscal em nome de **${finalName}** (CPF: ${formatCpf(cleanCpfNum)}). A sua NFS-e será emitida conforme solicitado. Muito obrigado! 🏨✨`;
-    return await respond(replyText, {
-      action: "registered_pf",
-      guest,
-      reservation: matchedReservation
+    const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState);
+    return await respond(confMsg, {
+      action: "presented_conference",
+      conference: conv.fiscalConferenceState
     });
   }
 
-  // ── CENÁRIO 3: Se estava aguardando dados e respondeu escolha PJ/PF sem documento ──
+  // Cenário C: Se estava aguardando dados e respondeu escolha PJ/PF sem documento
   if (isAwaitingFiscal) {
     const lower = messageText.toLowerCase();
     if (/\b(?:empresa|pj|pessoa\s*jur[ií]dica|corporativ[ao])\b/i.test(lower)) {
@@ -9465,74 +9987,61 @@ export async function handleWhatsAppFiscalFlow({
     }
   }
 
-  // ── CENÁRIO 4: Cliente JÁ possui empresa vinculada no CRM (R3.2 - F13) ───────
-  // Sem repetição de perguntas!
-  if (linkedCompany && isValidCnpj(linkedCompany.cnpj)) {
-    if (matchedReservation) {
-      matchedReservation.companyId = linkedCompany.id;
-      matchedReservation.companyName = linkedCompany.corporateName || linkedCompany.tradeName;
-      matchedReservation.autoEmitInvoice = true;
-      matchedReservation.invoiceDetails = {
-        companyId: linkedCompany.id,
-        companyName: linkedCompany.corporateName || linkedCompany.tradeName,
-        tomadorTipo: "PJ",
-        tomadorCpfCnpj: onlyDigits(linkedCompany.cnpj),
-        tomadorNome: linkedCompany.corporateName || linkedCompany.tradeName,
-        tomadorRazaoSocial: linkedCompany.corporateName || linkedCompany.tradeName,
-        tomadorNomeFantasia: linkedCompany.tradeName || linkedCompany.corporateName,
-        tomadorEmail: linkedCompany.financialEmail || linkedCompany.email || "",
-        tomadorTelefone: linkedCompany.phone || cleanTarget,
-        tomadorCep: onlyDigits(linkedCompany.cep || ""),
-        tomadorEndereco: linkedCompany.logradouro || linkedCompany.address || "",
-        tomadorNumero: linkedCompany.numero || linkedCompany.number || "S/N",
-        tomadorComplemento: linkedCompany.complemento || linkedCompany.complement || "",
-        tomadorBairro: linkedCompany.bairro || linkedCompany.neighborhood || "",
-        tomadorCidade: linkedCompany.cidade || linkedCompany.city || "Campos dos Goytacazes",
-        tomadorUf: linkedCompany.uf || linkedCompany.state || "RJ",
-        tomadorCodigoMunicipio: linkedCompany.codigoMunicipio || linkedCompany.ibgeCode || "3301009",
-        autoEmitInvoice: true,
-        solicitadoEm: new Date().toISOString()
-      };
-      matchedReservation.updatedAt = new Date().toISOString();
-    }
+  // Cenário D: Tomador já identificado no CRM / Reserva (Empresa vinculada ou dados na reserva/hóspede)
+  const tomadorCadastrado = linkedCompany || (matchedReservation?.invoiceDetails?.tomadorCpfCnpj ? matchedReservation.invoiceDetails : null) || (matchedGuest?.cpf || matchedGuest?.cnpj ? matchedGuest : null);
 
-    if (matchedGuest) {
-      matchedGuest.companyId = linkedCompany.id;
-      matchedGuest.companyName = linkedCompany.corporateName || linkedCompany.tradeName;
-      matchedGuest.autoEmitInvoice = true;
-      matchedGuest.updatedAt = new Date().toISOString();
-    }
+  if (tomadorCadastrado) {
+    const isPj = Boolean(tomadorCadastrado.cnpj || tomadorCadastrado.tomadorTipo === "PJ");
+    const docNum = onlyDigits(tomadorCadastrado.cnpj || tomadorCadastrado.cpf || tomadorCadastrado.tomadorCpfCnpj || "");
+    const nomeTomador = tomadorCadastrado.corporateName || tomadorCadastrado.tradeName || tomadorCadastrado.tomadorNome || tomadorCadastrado.name || "Tomador";
+    const emailTomador = tomadorCadastrado.financialEmail || tomadorCadastrado.email || tomadorCadastrado.tomadorEmail || "";
+    const endTomador = tomadorCadastrado.logradouro || tomadorCadastrado.address || tomadorCadastrado.tomadorEndereco || "Av. Pelinca, 100";
+    const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+    const desc = buildDefaultStayDescription(matchedReservation);
 
-    if (conv) {
-      conv.awaitingFiscalData = false;
-    }
+    conv.fiscalConferenceState = {
+      status: "awaiting_confirmation",
+      reservationId: matchedReservation?.id,
+      reservationCode: matchedReservation?.code,
+      flatNumber: matchedReservation?.flatNumber,
+      tomadorNome: nomeTomador,
+      tomadorCpfCnpj: docNum,
+      tomadorTipo: isPj ? "PJ" : "PF",
+      tomadorEmail: emailTomador,
+      tomadorTelefone: cleanTarget,
+      tomadorEndereco: endTomador,
+      tomadorNumero: tomadorCadastrado.numero || "S/N",
+      tomadorBairro: tomadorCadastrado.bairro || "Pelinca",
+      tomadorCidade: tomadorCadastrado.cidade || "Campos dos Goytacazes",
+      tomadorUf: tomadorCadastrado.uf || "RJ",
+      tomadorCep: tomadorCadastrado.cep || "28035000",
+      tomadorCodigoMunicipio: "3301009",
+      descricaoServico: desc,
+      valorOriginal: valTotal,
+      valorServico: valTotal,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    conv.awaitingFiscalData = false;
 
-    const replyText = `Olá${firstName ? `, ${firstName}` : ""}! Que ótimo, identificamos que a sua estadia já possui vínculo com a empresa **${linkedCompany.corporateName || linkedCompany.tradeName}** (CNPJ: ${formatCnpj(linkedCompany.cnpj)}). A sua Nota Fiscal (NFS-e) será emitida automaticamente com todos os dados corporativos cadastrados. Qualquer dúvida, estamos à disposição! 🏨✨`;
-    return await respond(replyText, {
-      action: "confirmed_existing_company",
-      company: linkedCompany,
-      reservation: matchedReservation
+    const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState);
+    return await respond(confMsg, {
+      action: "presented_conference",
+      conference: conv.fiscalConferenceState
     });
   }
 
-  // ── CENÁRIO 5: Cliente NÃO possui empresa vinculada (R3.3 - F14) ────────────
-  // Envia onboarding acolhedor e didático perguntando PJ vs PF
-  if (conv) {
-    conv.awaitingFiscalData = true;
-    conv.awaitingFiscalDataAt = new Date().toISOString();
-  }
+  // Cenário E: Não possui cadastro fiscal prévio -> Solicita dados didaticamente
+  conv.awaitingFiscalData = true;
+  conv.awaitingFiscalDataAt = new Date().toISOString();
 
-  const replyText = `Olá${firstName ? `, ${firstName}` : ""}! Com certeza podemos emitir a sua Nota Fiscal de Serviços (NFS-e)! 📄✨
-
-Por favor, nos informe para quem a nota deve ser emitida:
-
-🏢 **Para Empresa (Pessoa Jurídica - PJ):**
-Basta nos informar o **CNPJ** da empresa e o **e-mail financeiro** para envio da nota.
-
-👤 **Para Você (Pessoa Física - PF):**
-Informe seu **Nome Completo**, **CPF**, **Endereço com CEP** e **E-mail**.
-
-Assim que nos enviar, nosso sistema cuidará do preenchimento e emissão para você!`;
+  const replyText = `Olá${firstName ? `, ${firstName}` : ""}! Com certeza podemos emitir a sua Nota Fiscal de Serviços (NFS-e)! 📄✨\n\n` +
+    `Por favor, nos informe para quem a nota deve ser emitida:\n\n` +
+    `🏢 **Para Empresa (Pessoa Jurídica - PJ):**\n` +
+    `Basta nos informar o **CNPJ** da empresa e o **e-mail financeiro** para envio da nota.\n\n` +
+    `👤 **Para Você (Pessoa Física - PF):**\n` +
+    `Informe seu **Nome Completo**, **CPF**, **Endereço com CEP** e **E-mail**.\n\n` +
+    `Assim que nos enviar, nosso sistema cuidará do preenchimento e conferência para você!`;
 
   return await respond(replyText, {
     action: "requested_fiscal_data",
@@ -9652,6 +10161,20 @@ export async function processAiInboundMessage({
     });
     if (preResReply && preResReply.handled) {
       return preResReply;
+    }
+
+    const fiscalApprovalReply = await handleManagerFiscalApprovalReply({
+      db,
+      cleanTarget,
+      messageText: incomingInfo.text,
+      conv,
+      sendZapiMessage,
+      appendMessageFn,
+      saveDatabase,
+      createNotification
+    });
+    if (fiscalApprovalReply && fiscalApprovalReply.handled) {
+      return fiscalApprovalReply;
     }
   }
 
