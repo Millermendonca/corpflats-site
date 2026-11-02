@@ -1320,9 +1320,9 @@ export default function GuestMinibar() {
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-3 no-scrollbar">
                   {[
                     { id: "todos", label: "✨ Todos" },
-                    { id: "bebidas", label: "💧 Águas & Bebidas" },
-                    { id: "cervejas", label: "🍺 Cervejas" },
-                    { id: "snacks", label: "🍫 Snacks & Doces" },
+                    { id: "bebidas", label: "💧 Bebidas" },
+                    { id: "snacks", label: "🍫 Petiscos & Snacks" },
+                    { id: "cervejas", label: "🍺 Cervejas & Alcoólicos" },
                     { id: "cortesias", label: "☕ Cafés & Cortesias" }
                   ].map((cat) => {
                     const active = menuCategoryFilter === cat.id;
@@ -1354,18 +1354,35 @@ export default function GuestMinibar() {
                         return Boolean(prod.isCourtesy) || cat.includes("cafe") || name.includes("cápsula") || name.includes("capsula");
                       }
                       if (menuCategoryFilter === "cervejas") {
-                        return cat.includes("cerveja") || cat.includes("alcool") || name.includes("heineken") || name.includes("stella") || name.includes("corona") || name.includes("cerveja");
+                        return cat.includes("cerveja") || cat.includes("alcool") || name.includes("heineken") || name.includes("stella") || name.includes("corona") || name.includes("cerveja") || name.includes("smirnoff");
                       }
                       if (menuCategoryFilter === "snacks") {
-                        return cat.includes("snack") || cat.includes("doce") || cat.includes("comida") || cat.includes("bomboniere") || name.includes("chocolate") || name.includes("batata") || name.includes("castanha") || name.includes("amendoim") || name.includes("kitkat") || name.includes("pringles");
+                        return (
+                          cat.includes("petisco") ||
+                          cat.includes("snack") ||
+                          cat.includes("doce") ||
+                          cat.includes("comida") ||
+                          cat.includes("bomboniere") ||
+                          name.includes("cereal") ||
+                          name.includes("batata") ||
+                          name.includes("biscoito") ||
+                          name.includes("castanha") ||
+                          name.includes("chiclete") ||
+                          name.includes("chocolate") ||
+                          name.includes("kinder") ||
+                          name.includes("kitkat") ||
+                          name.includes("snickers") ||
+                          name.includes("cookies") ||
+                          name.includes("amendoim")
+                        );
                       }
                       if (menuCategoryFilter === "bebidas") {
                         return (
                           !prod.isCourtesy &&
-                          !cat.includes("cerveja") &&
+                          !cat.includes("petisco") &&
                           !cat.includes("snack") &&
                           !cat.includes("cafe") &&
-                          (cat.includes("agua") || cat.includes("bebida") || cat.includes("refrigerante") || cat.includes("suco") || cat.includes("energetico") || true)
+                          (cat.includes("bebida") || cat.includes("cerveja") || cat.includes("agua") || cat.includes("suco") || cat.includes("energetico") || cat.includes("refrigerante"))
                         );
                       }
                       return true;
@@ -1388,14 +1405,14 @@ export default function GuestMinibar() {
                               className={`w-14 h-14 rounded-2xl border flex items-center justify-center shrink-0 overflow-hidden shadow-inner ${
                                 isCourtesyItem
                                   ? "bg-emerald-950/60 border-emerald-700/50"
-                                  : "bg-slate-900 border-slate-700/80"
+                                  : "bg-white border-slate-700/50"
                               }`}
                             >
                               {prod.imageUrl ? (
                                 <img
                                   src={prod.imageUrl}
                                   alt={prod.name}
-                                  className="w-full h-full object-cover"
+                                  className="w-full h-full object-contain p-0.5"
                                   onError={(e) => {
                                     (e.target as HTMLElement).style.display = "none";
                                   }}

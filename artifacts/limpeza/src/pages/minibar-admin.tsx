@@ -73,8 +73,8 @@ export interface MinibarProduct {
 }
 
 export interface DefaultStockData {
-  globalTemplate?: Array<{ productId: string; quantity: number }> | Record<string, number>;
-  flatOverrides?: Record<string, Array<{ productId: string; quantity: number }>>;
+  globalTemplate?: Array<{ productId: string; quantity?: number; defaultQuantity?: number }> | Record<string, number>;
+  flatOverrides?: Record<string, Array<{ productId: string; quantity?: number; defaultQuantity?: number }>>;
   courtesyItems?: Array<{ productId: string; freeQuantity: number }>;
 }
 
@@ -85,6 +85,8 @@ const SOHO_FLATS = [
 ];
 
 const CATEGORIES = [
+  "Bebidas",
+  "Petiscos",
   "Água & Sucos",
   "Refrigerantes",
   "Cervejas & Alcoólicos",
@@ -460,7 +462,7 @@ export default function MinibarAdminPage() {
       const template = data.globalTemplate;
       if (Array.isArray(template)) {
         template.forEach(item => {
-          map[item.productId] = Number(item.quantity) || 0;
+          map[item.productId] = Number(item.quantity ?? item.defaultQuantity) || 0;
         });
       } else if (template && typeof template === "object") {
         Object.entries(template).forEach(([pid, qty]) => {
@@ -471,13 +473,13 @@ export default function MinibarAdminPage() {
       const override = data.flatOverrides?.[flatKey];
       if (Array.isArray(override)) {
         override.forEach(item => {
-          map[item.productId] = Number(item.quantity) || 0;
+          map[item.productId] = Number(item.quantity ?? item.defaultQuantity) || 0;
         });
       } else {
         const template = data.globalTemplate;
         if (Array.isArray(template)) {
           template.forEach(item => {
-            map[item.productId] = Number(item.quantity) || 0;
+            map[item.productId] = Number(item.quantity ?? item.defaultQuantity) || 0;
           });
         }
       }
@@ -581,7 +583,8 @@ export default function MinibarAdminPage() {
     try {
       const templateList = Object.entries(stockQuantities).map(([productId, quantity]) => ({
         productId,
-        quantity: Math.max(0, quantity)
+        quantity: Math.max(0, quantity),
+        defaultQuantity: Math.max(0, quantity)
       }));
 
       const bodyPayload =
