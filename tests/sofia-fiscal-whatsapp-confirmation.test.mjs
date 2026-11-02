@@ -1591,5 +1591,114 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     );
     delete res605.confirmedFiscalData;
   });
+
+  it("Adição de Hóspede na Descrição (1): Solicitar acrescentar uma pessoa pelo nome como hóspede na descrição atualiza o cabeçalho padrão de /notas", async () => {
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = false;
+
+    const conv = {
+      id: "conv_add_guest_named",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: []
+    };
+
+    await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Preciso da nota fiscal",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    const editRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Quero alterar minha nota, acrescentando Maria Silva como hóspede na descrição do serviço",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(editRes.action, "updated_conference_data", "Deve atualizar a descrição com o novo hóspede");
+    assert.match(
+      conv.fiscalConferenceState.descricaoServico,
+      /Nota relativa à hospedagem de Miller (?:Ferreira|Mendonça Pessanha) e Maria Silva, no Flat 605\./,
+      "Deve inserir o segundo hóspede no cabeçalho padrão da descrição de /notas"
+    );
+    delete res605.confirmedFiscalData;
+  });
+
+  it("Adição de Hóspede na Descrição (2): Solicitar acrescentar 'uma pessoa como hóspede na descrição do serviço' sem dizer o nome pergunta o nome e depois aplica na descrição", async () => {
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = false;
+
+    const conv = {
+      id: "conv_add_guest_unnamed",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: []
+    };
+
+    await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Preciso da nota fiscal",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    const askRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Solicitei uma alteração da minha nota, pedindo para acrescentar uma pessoa como hóspede na descrição do serviço",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(askRes.action, "prompted_guest_name_for_description", "Deve perguntar o nome da pessoa a ser acrescentada");
+    assert.strictEqual(conv.fiscalConferenceState.pendingFieldEdit, "add_guest_to_description");
+
+    const nameReplyRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Ana Clara Pessanha",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(nameReplyRes.action, "updated_conference_data", "Deve atualizar a descrição com o nome informado");
+    assert.match(
+      conv.fiscalConferenceState.descricaoServico,
+      /Nota relativa à hospedagem de Miller (?:Ferreira|Mendonça Pessanha) e Ana Clara Pessanha, no Flat 605\./,
+      "Deve inserir Ana Clara Pessanha na descrição padrão de /notas"
+    );
+    delete res605.confirmedFiscalData;
+  });
 });
 
