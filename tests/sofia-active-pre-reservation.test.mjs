@@ -105,7 +105,13 @@ function createMockDb() {
   assert.equal(fairShare.recommendedFlat.number, "509", "Flat 509 deve ser o Flat da Vez (empatado em 3 diárias no mês com 501, porém há mais dias desde o último checkout)");
   const availNums = fairShare.availableFlats.map(f => f.number);
   assert.deepEqual(availNums, ["509", "501", "301"], "Apenas flats disponíveis ordenados pelo Fair-Share (404 ocupado deve ser excluído)");
-  console.log("✅ 1. Lógica Fair-Share ('Flat da Vez') validada com sucesso.");
+
+  // Se o Flat 509 estiver sujo, deve priorizar o Flat 501 (Vago & Limpo) como Flat da Vez!
+  db.flats.find(f => f.number === "509").cleaningStatus = "dirty";
+  const fairShareWithDirty = selectFairShareFlat(db, "2026-11-20", "2026-11-22");
+  assert.equal(fairShareWithDirty.recommendedFlat.number, "501", "Quarto sujo (509) não deve ser recomendado como Flat da Vez quando há quarto vago e limpo (501)");
+  assert.deepEqual(fairShareWithDirty.availableFlats.map(f => f.number), ["501", "301", "509"], "Quartos vagos e limpos (501, 301) têm prioridade sobre quarto vago e sujo (509)");
+  console.log("✅ 1. Lógica Fair-Share ('Flat da Vez' com priorização Vago & Limpo vs Sujo) validada com sucesso.");
 }
 
 // ----------------------------------------------------------------------------

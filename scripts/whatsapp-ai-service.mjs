@@ -10928,10 +10928,18 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
       daysSinceLastCheckout = Math.max(0, Math.round((refD - lastD) / (1000 * 60 * 60 * 24)));
     }
 
+    const isResCheckoutCompleted = (r) => {
+      const statusNorm = String(r?.status || "").toLowerCase();
+      if (["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(statusNorm)) return true;
+      if (r?.checkoutDone || r?.earlyCheckout || r?.actualCheckoutAt || isReservationCheckoutCompleted(r, db)) return true;
+      return false;
+    };
+
     const hasResConflict = flatRes.some(r => {
-      const statusNorm = String(r.status || "").toLowerCase();
-      if (["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(statusNorm) && r.checkoutDate <= checkinDate) return false;
-      if ((r.checkoutDone || r.earlyCheckout || isReservationCheckoutCompleted(r, db)) && r.checkoutDate <= checkinDate) return false;
+      if (isResCheckoutCompleted(r)) {
+        const effectiveOut = String(r.actualCheckoutAt || r.earlyCheckoutAt || todayStr).slice(0, 10);
+        if (effectiveOut <= checkinDate || r.checkoutDate <= checkinDate) return false;
+      }
       return r.checkinDate < checkoutDate && r.checkoutDate > checkinDate;
     });
 
@@ -10991,17 +10999,61 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
       return (!sDate || sDate <= checkoutDate) && (!eDate || eDate >= checkinDate);
     });
 
-    // Verifica se o flat possui check-out pendente previsto para o mesmo dia do check-in (2ª prioridade)
-    // ou se está totalmente desocupado no dia do check-in (1ª prioridade)
+    // Verifica se o flat possui check-out pendente previsto para o mesmo dia do check-in
+    // ou se está totalmente desocupado no dia do check-in
     const hasPendingCheckoutOnCheckinDay = flatRes.some(r => {
       if (r.checkoutDate !== checkinDate) return false;
-      const statusNorm = String(r.status || "").toLowerCase();
-      if (["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(statusNorm)) return false;
-      if (r.checkoutDone || r.earlyCheckout || r.actualCheckoutAt || isReservationCheckoutCompleted(r, db)) return false;
+      if (isResCheckoutCompleted(r)) return false;
       return true;
     });
 
-    const checkinDayPriority = hasPendingCheckoutOnCheckinDay ? 2 : 1;
+    // Status real de limpeza do flat (clean | dirty | cleaning_now)
+    const activeCleaningReqs = (db?.cleaningRequests || []).filter(cr => {
+      if (!cr || cr.isDeleted || cr.deletedAt) return false;
+      const st = String(cr.status || "").toLowerCase();
+      if (st === "cancelled" || st === "deleted" || st === "completed") return false;
+      if (cr.requestType === "instruction" || cr.isInstructionCard) return false;
+      return (cr.flatId != null && String(cr.flatId) === String(flat.id)) ||
+             (cr.flatNumber != null && String(cr.flatNumber) === String(flat.number));
+    });
+    const hasInProgressCleaning = activeCleaningReqs.some(cr => String(cr.status || "").toLowerCase() === "in_progress");
+    const hasPendingCleaning = activeCleaningReqs.some(cr => {
+      const st = String(cr.status || "").toLowerCase();
+      if (st !== "pending") return false;
+      const reqDate = String(cr.scheduledDate || cr.createdAt || "").slice(0, 10);
+      if (reqDate === todayStr) return true;
+      if (reqDate < todayStr && (cr.requestType === "checkout" || cr.requestType === "dirty")) {
+        const completedAfter = (db?.cleaningRequests || []).some(other =>
+          !other.isDeleted && !other.deletedAt &&
+          ((other.flatId != null && String(other.flatId) === String(flat.id)) ||
+           (other.flatNumber != null && String(other.flatNumber) === String(flat.number))) &&
+          String(other.status || "").toLowerCase() === "completed" &&
+          String(other.completedAt || other.scheduledDate || "").slice(0, 10) >= reqDate
+        );
+        return !completedAfter;
+      }
+      return false;
+    });
+    const rawCleanStatus = String(flat.cleaningStatus || "clean").toLowerCase();
+    let cleaningStatus = "clean";
+    if (hasInProgressCleaning || rawCleanStatus === "cleaning_now" || rawCleanStatus === "in_progress") {
+      cleaningStatus = "cleaning_now";
+    } else if (hasPendingCleaning || rawCleanStatus === "dirty" || rawCleanStatus === "sujo" || rawCleanStatus === "pending") {
+      cleaningStatus = "dirty";
+    }
+
+    // Prioridade na alocação:
+    // 1 = Vago e Limpo (pronto para uso imediato)
+    // 2 = Vago e Em Limpeza (arrumação em andamento)
+    // 3 = Vago, porém Sujo (aguardando limpeza)
+    // 4 = Com saída prevista no mesmo dia do check-in (check-out pendente)
+    const checkinDayPriority = hasPendingCheckoutOnCheckinDay
+      ? 4
+      : cleaningStatus === "dirty"
+      ? 3
+      : cleaningStatus === "cleaning_now"
+      ? 2
+      : 1;
     const isCompletelyVacantOnCheckin = !hasPendingCheckoutOnCheckinDay;
     const isAvailableInPeriod = !hasResConflict && !hasPendingModConflict && !hasBlockConflict && !hasServiceOrderConflict;
     const amenitiesInfo = getFlatAmenitiesInfo(flat);
@@ -11012,6 +11064,10 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
       type: flat.type || "Standard",
       floor: flat.floor || null,
       status: flat.status || "disponivel",
+      cleaningStatus,
+      isClean: cleaningStatus === "clean",
+      isDirty: cleaningStatus === "dirty",
+      isCleaningNow: cleaningStatus === "cleaning_now",
       monthOccupiedDays,
       lastCheckoutDate: lastCheckoutStr,
       daysSinceLastCheckout,

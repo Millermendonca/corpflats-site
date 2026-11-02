@@ -16868,11 +16868,11 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
     r.status !== "no_show"
   );
 
-  const stayoverRes = activeRes.find(r => r.checkinDate < dateStr && r.checkoutDate > dateStr);
-  const checkinTodayRes = activeRes.find(r => r.checkinDate === dateStr);
+  const stayoverRes = activeRes.find(r => r.checkinDate < dateStr && r.checkoutDate > dateStr && !r.checkoutDone && !r.earlyCheckout && r.status !== "completed" && r.status !== "checked_out");
+  const checkinTodayRes = activeRes.find(r => r.checkinDate === dateStr && !r.checkoutDone && !r.earlyCheckout && r.status !== "completed" && r.status !== "checked_out");
   const isCheckedIn = Boolean(checkinTodayRes && (checkinTodayRes.status === "checked_in" || checkinTodayRes.status === "checkin" || checkinTodayRes.checkinDone || checkinTodayRes.fnhrCompleted));
   const checkoutTodayRes = activeRes.find(r => r.checkoutDate === dateStr);
-  const isCheckedOut = Boolean(checkoutTodayRes && (checkoutTodayRes.status === "checked_out" || checkoutTodayRes.checkoutDone || checkoutTodayRes.actualCheckoutAt));
+  const isCheckedOut = Boolean(checkoutTodayRes && (checkoutTodayRes.status === "checked_out" || checkoutTodayRes.status === "completed" || checkoutTodayRes.checkoutDone || checkoutTodayRes.earlyCheckout || checkoutTodayRes.actualCheckoutAt));
 
   const isOccupied = Boolean(stayoverRes || isCheckedIn || (checkoutTodayRes && !isCheckedOut));
   const currentGuest = stayoverRes ? (stayoverRes.guestName || stayoverRes.title) :
@@ -16885,6 +16885,8 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
   const dailyRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(dateStr) : (db.cleaningRequests || []);
   const todayReq = dailyRequests.find(c =>
     (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
+    !c.isDeleted &&
+    c.status !== "deleted" &&
     !c.isInstructionOnly &&
     c.source !== "manual_instruction" &&
     c.type !== "instruction" &&
@@ -16894,13 +16896,15 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
   const directTodayReq = (db.cleaningRequests || []).find(c =>
     (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
     (c.requestDate === dateStr || c.effectiveDate === dateStr) &&
+    !c.isDeleted &&
+    c.status !== "deleted" &&
     !c.isInstructionOnly &&
     c.source !== "manual_instruction" &&
     c.type !== "instruction" &&
     c.type !== "bed_adjustment_only"
   );
 
-  const reqToEvaluate = directTodayReq || todayReq;
+  const reqToEvaluate = todayReq || directTodayReq;
 
   let isDirty = false;
   let cleaningStatus = "clean"; // "clean" | "dirty" | "in_progress"
@@ -19032,6 +19036,10 @@ function getRequestsForDate(dateStr, isNested = false) {
       if (r.isDeleted || r.status === "deleted") return false;
       const fNumber = String(r.flatNumber || "");
       const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
+      if (isInst) return false;
+      if (r.source === "stayover" || r.cleaningType === "stayover") {
+        if (!stayoverFlatNumbers.has(fNumber)) return false;
+      }
       if (stayoverFlatNumbers.has(fNumber)) {
         const currentStayRes = (db.reservations || []).find(res =>
           res.status !== "cancelada" &&
@@ -19047,6 +19055,24 @@ function getRequestsForDate(dateStr, isNested = false) {
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
+
+      // Descarta cards de checkout órfãos cuja reserva associada na data foi cancelada ou marcada como no_show
+      if (r.source === "checkout" && !r.isVacantExplicitlySet) {
+        const hasActiveCheckoutOnReqDate = (db.reservations || []).some(res =>
+          res.status !== "cancelada" &&
+          res.status !== "cancelado" &&
+          res.status !== "cancelled" &&
+          res.status !== "no_show" &&
+          String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber &&
+          (res.checkoutDate === r.requestDate || res.earlyCheckoutDate === r.requestDate)
+        );
+        const hasCancelledCheckoutOnReqDate = (db.reservations || []).some(res =>
+          (res.status === "cancelada" || res.status === "cancelado" || res.status === "cancelled" || res.status === "no_show") &&
+          String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber &&
+          res.checkoutDate === r.requestDate
+        );
+        if (!hasActiveCheckoutOnReqDate && hasCancelledCheckoutOnReqDate) return false;
+      }
 
       // Se o flat já possui qualquer limpeza concluída (status === "clean") ou excluída (status === "deleted") nessa mesma data ou em data posterior,
       // ele já foi resolvido e NÃO deve ser considerado pendência nem reaparecer para limpar!
@@ -25205,13 +25231,19 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
   const flats = (db.flats || []).filter(f => f && f.isActive !== false);
   if (flats.length === 0) return { bestFlat: null, availableCount: 0, allStats: [] };
 
-  const [y, m] = checkinDate.split("-").map(Number);
+  const todayStr = getTodayStr();
+  const effectiveCheckin = String(checkinDate || todayStr).slice(0, 10);
+  const effectiveCheckout = (!checkoutDate || String(checkoutDate).slice(0, 10) <= effectiveCheckin)
+    ? addDaysToDateStr(effectiveCheckin, 1)
+    : String(checkoutDate).slice(0, 10);
+
+  const [y, m] = effectiveCheckin.split("-").map(Number);
   const monthStart = `${y}-${String(m).padStart(2, '0')}-01`;
   const nextM = m === 12 ? 1 : m + 1;
   const nextY = m === 12 ? y + 1 : y;
   const monthEnd = `${nextY}-${String(nextM).padStart(2, '0')}-01`;
   const nowMs = Date.now();
-  const todayStr = getTodayStr();
+  const cleaningRequestsToday = typeof getRequestsForDate === "function" ? getRequestsForDate(todayStr) : [];
 
   const isActiveFairShareRes = (r) => {
     if (!r) return false;
@@ -25227,10 +25259,11 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
   };
 
   const flatStats = flats.map(flat => {
+    const fNum = String(flat.number);
     const matchesFlat = (r) =>
       r.flatId === flat.id ||
       Number(r.flatId) === Number(flat.id) ||
-      String(r.flatNumber) === String(flat.number);
+      String(r.flatNumber) === fNum;
 
     const isFlatBlockedStatus = Boolean(
       flat.status === "manutencao_bloqueada" ||
@@ -25242,14 +25275,75 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
       flat.maintenanceBlocked === true
     );
 
-    // 1. Verifica conflitos de ocupação no período solicitado [checkinDate, checkoutDate)
+    // Status de limpeza em tempo real (sincronizado com GET /api/pms/calendar e Governança)
+    const reqToday = cleaningRequestsToday.find(r =>
+      (String(r.flatNumber) === fNum || Number(r.flatId) === Number(flat.id)) &&
+      !r.isDeleted &&
+      r.status !== "deleted" &&
+      !r.isInstructionOnly &&
+      !r.cleaningRequest?.isInstructionOnly &&
+      r.source !== "manual_instruction" &&
+      r.cleaningRequest?.source !== "manual_instruction" &&
+      r.type !== "bed_adjustment_only" &&
+      r.type !== "instruction" &&
+      r.cleaningRequest?.type !== "bed_adjustment_only" &&
+      r.cleaningRequest?.type !== "instruction"
+    );
+
+    let cleaningStatus = "clean";
+    let cleaningLabel = "Limpo";
+    if (reqToday) {
+      const st = String(reqToday.cleaningRequest?.status || reqToday.status || "").toLowerCase();
+      if (st === "cleaning_now" || st === "in_progress") {
+        cleaningStatus = "cleaning_now";
+        cleaningLabel = "Limpando";
+      } else if (st === "dirty" || st === "pending") {
+        cleaningStatus = "dirty";
+        cleaningLabel = "Sujo";
+      } else if (st === "clean" || st === "inspected") {
+        cleaningStatus = "clean";
+        cleaningLabel = "Limpo";
+      }
+    } else if (flat.cleaningStatus === "cleaning_now" || flat.cleaningStatus === "in_progress") {
+      cleaningStatus = "cleaning_now";
+      cleaningLabel = "Limpando";
+    } else if (flat.cleaningStatus === "dirty" || flat.cleaningStatus === "pending") {
+      cleaningStatus = "dirty";
+      cleaningLabel = "Sujo";
+    }
+
+    const isCleanReqCheckedOut = Boolean(
+      reqToday && (
+        Boolean(reqToday.isVacant) ||
+        cleaningStatus === "cleaning_now" ||
+        cleaningStatus === "clean"
+      )
+    );
+
+    const isResCheckoutCompleted = (r) => {
+      if (!r) return false;
+      const st = String(r.status || "").toLowerCase();
+      const actualOutDate = r.actualCheckoutAt ? getExecutionDateStr(r.actualCheckoutAt) : null;
+      const isValidResOutDate = !actualOutDate || actualOutDate >= r.checkoutDate || Boolean(r.earlyCheckout);
+      const isMarkedOut = isValidResOutDate && Boolean(
+        r.checkoutDone ||
+        r.earlyCheckout ||
+        st === "completed" ||
+        st === "checked_out" ||
+        r.actualCheckoutAt
+      );
+      const isCheckingOutToday = r.checkoutDate === todayStr && !(r.checkinDate === todayStr && r.checkoutDate > todayStr);
+      return isMarkedOut || (isCheckingOutToday && isCleanReqCheckedOut);
+    };
+
+    // 1. Verifica conflitos de ocupação no período solicitado [effectiveCheckin, effectiveCheckout)
     const conflicts = (db.reservations || []).filter(r => {
       if (!isActiveFairShareRes(r) || !matchesFlat(r)) return false;
-      const st = String(r.status || "").toLowerCase();
-      if ((r.checkoutDone || r.earlyCheckout || st === "completed" || st === "checked_out") && r.checkoutDate <= checkinDate) {
-        return false;
+      if (isResCheckoutCompleted(r)) {
+        const effectiveOut = r.earlyCheckoutDate || (r.actualCheckoutAt ? getExecutionDateStr(r.actualCheckoutAt) : null) || (r.checkoutDate <= todayStr ? r.checkoutDate : todayStr);
+        if (effectiveOut <= effectiveCheckin) return false;
       }
-      return r.checkinDate < checkoutDate && r.checkoutDate > checkinDate;
+      return r.checkinDate < effectiveCheckout && r.checkoutDate > effectiveCheckin;
     });
 
     // Verifica travas temporárias de alteração pendente (pendingModification)
@@ -25262,17 +25356,17 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
       const targetFlatNum = pm.newFlatNumber ?? r.flatNumber;
       const sameFlat =
         (targetFlatId !== undefined && targetFlatId !== null && Number(targetFlatId) === Number(flat.id)) ||
-        (targetFlatNum !== undefined && targetFlatNum !== null && String(targetFlatNum) === String(flat.number));
+        (targetFlatNum !== undefined && targetFlatNum !== null && String(targetFlatNum) === fNum);
       if (!sameFlat) return false;
       const modIn = pm.newCheckinDate || r.checkinDate;
       const modOut = pm.newCheckoutDate || r.checkoutDate;
-      return modIn < checkoutDate && modOut > checkinDate;
+      return modIn < effectiveCheckout && modOut > effectiveCheckin;
     });
 
     const blockConflicts = (db.roomBlocks || []).filter(b =>
-      (b.flatId === flat.id || Number(b.flatId) === Number(flat.id) || String(b.flatNumber) === String(flat.number)) &&
-      b.startDate < checkoutDate &&
-      b.endDate >= checkinDate
+      (b.flatId === flat.id || Number(b.flatId) === Number(flat.id) || String(b.flatNumber) === fNum) &&
+      b.startDate < effectiveCheckout &&
+      b.endDate >= effectiveCheckin
     );
 
     const hasServiceOrderConflict = (db.serviceOrders || []).some(order => {
@@ -25286,21 +25380,21 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
           if (!oflat) return false;
           const oflatSt = String(oflat.status || "").toLowerCase();
           if (oflatSt !== "in_progress" && oflatSt !== "pending" && oflatSt !== "pendente" && oflatSt !== "em_andamento") return false;
-          if (Number(oflat.flatId) !== Number(flat.id) && String(oflat.flatNumber) !== String(flat.number)) return false;
+          if (Number(oflat.flatId) !== Number(flat.id) && String(oflat.flatNumber) !== fNum) return false;
           if (oflatSt === "in_progress") {
             const range = getActiveServiceFlatBlockRange(oflat, todayStr);
             if (!range) return false;
-            return range.startDate <= checkoutDate && range.endDate >= checkinDate;
+            return range.startDate <= effectiveCheckout && range.endDate >= effectiveCheckin;
           }
           const sDate = String(oflat.startedAt || order.blockStartDate || order.startDate || order.scheduledDate || "").slice(0, 10);
           const eDate = String(oflat.estimatedFinishAt || order.blockEndDate || order.endDate || order.expectedCompletionDate || "2099-12-31").slice(0, 10);
-          return (!sDate || sDate <= checkoutDate) && (!eDate || eDate >= checkinDate);
+          return (!sDate || sDate <= effectiveCheckout) && (!eDate || eDate >= effectiveCheckin);
         });
       }
-      if (Number(order.flatId) !== Number(flat.id) && String(order.flatNumber) !== String(flat.number)) return false;
+      if (Number(order.flatId) !== Number(flat.id) && String(order.flatNumber) !== fNum) return false;
       const sDate = String(order.startDate || order.scheduledDate || order.createdAt || "").slice(0, 10);
       const eDate = String(order.endDate || order.expectedCompletionDate || order.scheduledDate || "2099-12-31").slice(0, 10);
-      return (!sDate || sDate <= checkoutDate) && (!eDate || eDate >= checkinDate);
+      return (!sDate || sDate <= effectiveCheckout) && (!eDate || eDate >= effectiveCheckin);
     });
 
     const isAvailable =
@@ -25310,21 +25404,77 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
       blockConflicts.length === 0 &&
       !hasServiceOrderConflict;
 
-    // 1.1 Prioridade no dia do Check-in:
-    // Prioridade 1 (isCompletelyVacantOnCheckin = true): flat totalmente desocupado no dia do check-in (sem reserva saindo nesse dia, ou com check-out já concluído)
-    // Prioridade 2 (isCompletelyVacantOnCheckin = false): flat ocupado com check-out previsto para o mesmo dia do check-in (ainda não encerrado)
+    // 1.1 Prioridade no dia do Check-in e Prontidão de Limpeza:
+    // Prioridade 1: Vago no check-in e Limpo (pronto para uso imediato)
+    // Prioridade 2: Vago no check-in e Em Limpeza no momento
+    // Prioridade 3: Vago no check-in, porém Sujo (aguardando limpeza)
+    // Prioridade 4: Ocupado com check-out previsto para o mesmo dia do check-in (ainda não encerrado)
     const sameDayCheckoutReservations = (db.reservations || []).filter(r => {
       if (!isActiveFairShareRes(r) || !matchesFlat(r)) return false;
-      if (r.checkoutDate !== checkinDate) return false;
-      const st = String(r.status || "").toLowerCase();
-      if (r.checkoutDone || r.earlyCheckout || Boolean(r.actualCheckoutAt) || st === "completed" || st === "checked_out") {
-        return false;
-      }
+      if (r.checkoutDate !== effectiveCheckin) return false;
+      if (isResCheckoutCompleted(r)) return false;
       return true;
     });
+    const completedSameDayCheckouts = (db.reservations || []).filter(r => {
+      if (!isActiveFairShareRes(r) || !matchesFlat(r)) return false;
+      const outDate = r.earlyCheckoutDate || r.checkoutDate;
+      if (outDate !== effectiveCheckin) return false;
+      return isResCheckoutCompleted(r);
+    });
     const hasSameDayCheckout = sameDayCheckoutReservations.length > 0;
+    const hasCompletedSameDayCheckout = completedSameDayCheckouts.length > 0;
+    const sameDayCheckoutGuestName = sameDayCheckoutReservations[0]?.guestName || null;
     const isCompletelyVacantOnCheckin = !hasSameDayCheckout;
-    const checkinDayPriority = isCompletelyVacantOnCheckin ? 1 : 2;
+
+    const activeResToday = (db.reservations || []).find(r => {
+      if (!isActiveFairShareRes(r) || !matchesFlat(r)) return false;
+      if (isResCheckoutCompleted(r)) return false;
+      return (r.checkinDate <= todayStr && r.checkoutDate > todayStr) || (r.checkoutDate === todayStr);
+    });
+    const isOccupiedToday = Boolean(activeResToday);
+    const currentGuestToday = activeResToday?.guestName || null;
+
+    const isDirty = cleaningStatus === "dirty";
+    const isCleaningNow = cleaningStatus === "cleaning_now";
+    const isClean = cleaningStatus === "clean";
+
+    const checkinDayPriority = hasSameDayCheckout
+      ? 4
+      : isDirty
+        ? 3
+        : isCleaningNow
+          ? 2
+          : 1;
+
+    let operationalStatus = "vago_limpo";
+    let operationalLabel = "Vago & Limpo";
+    if (!isAvailable) {
+      if (conflicts.length > 0) {
+        operationalStatus = "ocupado";
+        operationalLabel = conflicts[0]?.guestName ? `Ocupado (${conflicts[0].guestName})` : "Ocupado no Período";
+      } else if (hasServiceOrderConflict) {
+        operationalStatus = "bloqueado_os";
+        operationalLabel = "Bloqueado (OS)";
+      } else {
+        operationalStatus = "bloqueado";
+        operationalLabel = "Bloqueado / Manutenção";
+      }
+    } else if (hasSameDayCheckout) {
+      operationalStatus = "saida_no_dia";
+      operationalLabel = sameDayCheckoutGuestName ? `Saída no Dia (${sameDayCheckoutGuestName})` : "Saída no Dia • Ocupado";
+    } else if (isCleaningNow) {
+      operationalStatus = "vago_limpando";
+      operationalLabel = "Vago • Em Limpeza";
+    } else if (isDirty) {
+      operationalStatus = "vago_sujo";
+      operationalLabel = hasCompletedSameDayCheckout ? "Vago & Sujo (Saiu Hoje)" : "Vago & Sujo";
+    } else if (effectiveCheckin > todayStr && isOccupiedToday) {
+      operationalStatus = "livre_checkin_ocupado_hoje";
+      operationalLabel = "Livre no Check-in • Ocupado Hoje";
+    } else {
+      operationalStatus = "vago_limpo";
+      operationalLabel = "Vago & Limpo";
+    }
 
     // 2. Calcula total de diárias ocupadas no mês do checkin
     const monthReservations = (db.reservations || []).filter(r =>
@@ -25346,24 +25496,41 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
     const pastReservations = (db.reservations || []).filter(r =>
       isActiveFairShareRes(r) &&
       matchesFlat(r) &&
-      r.checkoutDate <= checkinDate
+      r.checkoutDate <= effectiveCheckin
     ).sort((a, b) => b.checkoutDate.localeCompare(a.checkoutDate));
 
     let daysSinceLastCheckout = 999;
     if (pastReservations.length > 0) {
       const lastOut = new Date(pastReservations[0].checkoutDate);
-      const reqIn = new Date(checkinDate);
+      const reqIn = new Date(effectiveCheckin);
       daysSinceLastCheckout = Math.max(0, Math.round((reqIn - lastOut) / 86400000));
     }
 
     return {
-      flat,
+      flat: {
+        ...flat,
+        cleaningStatus,
+        cleaningLabel
+      },
       isAvailable,
       isFlatBlockedStatus,
+      hasServiceOrderConflict,
+      hasPendingModConflict,
+      cleaningStatus,
+      cleaningLabel,
+      isDirty,
+      isCleaningNow,
+      isClean,
+      isOccupiedToday,
+      currentGuestToday,
       checkinDayPriority,
       isCompletelyVacantOnCheckin,
       hasSameDayCheckout,
+      hasCompletedSameDayCheckout,
+      sameDayCheckoutGuestName,
       hasCheckoutOnCheckinDay: hasSameDayCheckout,
+      operationalStatus,
+      operationalLabel,
       conflicts: conflicts.map(c => ({
         id: c.id,
         code: c.code,
@@ -25383,7 +25550,7 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
   const available = flatStats.filter(s => s.isAvailable);
 
   // Ordenação:
-  // 1º Prioridade de desocupação no dia do check-in (1 = totalmente livre no check-in, 2 = check-out previsto no mesmo dia)
+  // 1º Prioridade operacional no check-in (1 = Vago & Limpo, 2 = Em Limpeza, 3 = Vago & Sujo, 4 = Saída no Dia)
   // 2º Menor uso no mês (rodízio justo)
   // 3º Maior tempo ocioso desde o último check-out
   // 4º Número do flat
@@ -25413,6 +25580,7 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
 export const calculateFairShareRanking = calculateFairShareStats;
 
 app.get("/api/pms/fair-share-flat", (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
   const { checkin, checkout, excludeResId } = req.query;
   if (!checkin || !checkout) {
     return res.status(400).json({ error: "Check-in e Check-out são obrigatórios." });

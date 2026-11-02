@@ -859,19 +859,32 @@ export default function PmsCalendar() {
     }
   }
 
+  const fairShareReqIdRef = useRef(0)
+
   const fetchFairShare = async (cin: string, cout: string, excludeId: any = null) => {
     if (!cin || !cout) return
+    let normCin = cin
+    let normCout = cout
+    if (normCin >= normCout) {
+      const d = safeParseDate(normCin)
+      if (d) normCout = format(addDays(d, 1), "yyyy-MM-dd")
+    }
+    const reqId = ++fairShareReqIdRef.current
     setLoadingFairShare(true)
     try {
-      const url = `/api/pms/fair-share-flat?checkin=${cin}&checkout=${cout}${excludeId ? `&excludeResId=${excludeId}` : ''}`
-      const res = await fetch(url, { credentials: "include" })
+      const url = `/api/pms/fair-share-flat?checkin=${normCin}&checkout=${normCout}${excludeId ? `&excludeResId=${excludeId}` : ''}&_t=${Date.now()}`
+      const res = await fetch(url, { credentials: "include", cache: "no-store" })
       if (res.ok) {
         const json = await res.json()
-        setFairShareResult(json)
+        if (reqId === fairShareReqIdRef.current) {
+          setFairShareResult({ ...json, _checkin: normCin, _checkout: normCout })
+        }
         return json
       }
     } catch {} finally {
-      setLoadingFairShare(false)
+      if (reqId === fairShareReqIdRef.current) {
+        setLoadingFairShare(false)
+      }
     }
   }
 
@@ -889,7 +902,7 @@ export default function PmsCalendar() {
         }
       })
     }
-  }, [resModalOpen, formCheckin, formCheckout])
+  }, [resModalOpen, formCheckin, formCheckout, selectedRes?.id])
 
   // Flat Tags Modal State
   const [flatTagsModalOpen, setFlatTagsModalOpen] = useState(false)
@@ -1983,8 +1996,10 @@ export default function PmsCalendar() {
             tomorrowGuests: bfTomJson?.totalGuests ?? 0,
           });
 
-          // Prefetch Quarto da Vez (sugestão de equilíbrio) para hoje
-          fetchFairShare(todayStr, tomorrowStr);
+          // Prefetch Quarto da Vez (sugestão de equilíbrio) para hoje apenas se nenhum modal estiver aberto
+          if (!isAnyModalOpenRef.current) {
+            fetchFairShare(todayStr, tomorrowStr);
+          }
         } catch {}
       }
     } catch (err) {
@@ -2479,8 +2494,38 @@ export default function PmsCalendar() {
       setFormFlatId(String(defaultFlatId))
     } else {
       isFlatManuallyChangedRef.current = false
-      const suggestedId = fairShareResult?.bestFlatId
-      setFormFlatId(suggestedId ? String(suggestedId) : (data.flats[0]?.id ? String(data.flats[0].id) : ""))
+      const isResultForTargetDates = fairShareResult && fairShareResult._checkin === cin && fairShareResult._checkout === cout
+      const suggestedStat = isResultForTargetDates
+        ? fairShareResult?.allStats?.find((s: any) => Number(s.flat?.id) === Number(fairShareResult?.bestFlatId))
+        : null
+      const suggestedFlatObj = data.flats.find((fl: any) => Number(fl.id) === Number(fairShareResult?.bestFlatId))
+      const suggestedIsCleanAndAvail = Boolean(
+        suggestedStat?.isAvailable &&
+        suggestedStat?.cleaningStatus !== "dirty" &&
+        suggestedFlatObj?.cleaningStatus !== "dirty"
+      )
+      if (suggestedIsCleanAndAvail && fairShareResult?.bestFlatId) {
+        setFormFlatId(String(fairShareResult.bestFlatId))
+      } else {
+        const cleanAvailFlat = data.flats.find((fl: any) => {
+          const isClean = (fl.cleaningStatus || "clean") === "clean"
+          if (!isClean) return false
+          const hasResConf = (data.reservations || []).some((r: any) => {
+            if (Number(r.flatId) !== Number(fl.id) && String(r.flatNumber) !== String(fl.number)) return false
+            const st = String(r.status || "").toLowerCase()
+            if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false
+            if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= cin) return false
+            return r.checkinDate < cout && r.checkoutDate >= cin
+          })
+          const hasBlkConf = (data.blocks || []).some((b: any) => {
+            if (Number(b.flatId) !== Number(fl.id) && String(b.flatNumber) !== String(fl.number)) return false
+            return b.startDate < cout && b.endDate >= cin
+          })
+          return !hasResConf && !hasBlkConf
+        })
+        const fallbackFlatId = cleanAvailFlat?.id || fairShareResult?.bestFlatId || data.flats[0]?.id || ""
+        setFormFlatId(fallbackFlatId ? String(fallbackFlatId) : "")
+      }
     }
     setFormCheckinTime(defaultCheckinTime || "14:00")
     setFormCheckoutTime(defaultCheckoutTime || "12:00")
@@ -3781,9 +3826,16 @@ export default function PmsCalendar() {
   const handleCheckinChange = (val: string) => {
     setFormCheckin(val);
     const dCin = safeParseDate(val);
-    const dCout = safeParseDate(formCheckout);
+    let targetCout = formCheckout;
+    let dCout = safeParseDate(targetCout);
+    if (dCin && (!dCout || dCin >= dCout)) {
+      const nextDay = addDays(dCin, 1);
+      targetCout = format(nextDay, "yyyy-MM-dd");
+      dCout = nextDay;
+      setFormCheckout(targetCout);
+    }
     if (dCin && dCout && dCin < dCout) {
-      const updated = buildReservationDailyRates(val, formCheckout, Number(formDailyRate) || 250, formChannel, formDailyRates);
+      const updated = buildReservationDailyRates(val, targetCout, Number(formDailyRate) || 250, formChannel, formDailyRates);
       setFormDailyRates(updated);
       syncCompositeTotalAndPaid(updated, formCharges, formChannel);
     }
@@ -6456,36 +6508,118 @@ export default function PmsCalendar() {
                     >
                       <SelectTrigger className="text-xs font-bold h-9 w-full min-w-0">
                         <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
-                          {formFlatId 
-                            ? `Apt ${data.flats.find(f => String(f.id) === String(formFlatId))?.number || formFlatId}${!selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId) ? " ✨ (Sugerido)" : ""}` 
-                            : (loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat")}
+                          {(() => {
+                            if (!formFlatId) {
+                              return loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat";
+                            }
+                            const selFlat = data.flats.find(f => String(f.id) === String(formFlatId));
+                            const selStat = fairShareResult?.allStats?.find(
+                              (s: any) => Number(s.flat?.id) === Number(formFlatId) || (selFlat && String(s.flat?.number) === String(selFlat.number))
+                            );
+                            const cleanSt = selStat?.cleaningStatus || (selFlat as any)?.cleaningStatus || "clean";
+                            const isDirty = cleanSt === "dirty" || Boolean(selStat?.isDirty);
+                            const isCleaningNow = cleanSt === "cleaning_now" || Boolean(selStat?.isCleaningNow);
+                            const hasSameDay = Boolean(selStat?.hasCheckoutOnCheckinDay);
+                            const isAvail = selStat ? Boolean(selStat.isAvailable) : true;
+                            const isBest = !selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId);
+                            let statusShort = "🟢 Vago & Limpo";
+                            if (!isAvail) {
+                              const hasResC = (selStat?.conflicts || []).some((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
+                              statusShort = hasResC ? "⚠️ Ocupado" : "🔒 Bloqueado";
+                            } else if (hasSameDay) {
+                              statusShort = "🔄 Saída no Dia";
+                            } else if (isDirty) {
+                              statusShort = "🧹 Vago & Sujo";
+                            } else if (isCleaningNow) {
+                              statusShort = "🧽 Em Limpeza";
+                            }
+                            return `Apt ${selFlat?.number || formFlatId} • ${statusShort}${isBest ? " ✨" : ""}`;
+                          })()}
                         </SelectValue>
                       </SelectTrigger>
-                      <SelectContent className="max-h-60">
+                      <SelectContent className="max-h-64">
                         {data.flats.map(f => {
-                          const flatStat = fairShareResult?.allStats?.find((s: any) => s.flat?.id === f.id);
-                          const isBest = fairShareResult?.bestFlatId === f.id;
-                          const isAvail = flatStat ? flatStat.isAvailable : true;
-                          const conflictName = flatStat?.conflicts?.[0]?.guestName;
-                          const hasSameDayTurnover = Boolean(flatStat?.hasCheckoutOnCheckinDay);
+                          const flatStat = fairShareResult?.allStats?.find(
+                            (s: any) => Number(s.flat?.id) === Number(f.id) || String(s.flat?.number) === String(f.number)
+                          );
+                          const localResConflict = (data.reservations || []).find((r: any) => {
+                            if (selectedRes && String(r.id) === String(selectedRes.id)) return false;
+                            if (Number(r.flatId) !== Number(f.id) && String(r.flatNumber) !== String(f.number)) return false;
+                            const st = String(r.status || "").toLowerCase();
+                            if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false;
+                            if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= formCheckin) return false;
+                            return r.checkinDate < formCheckout && r.checkoutDate > formCheckin;
+                          });
+                          const localBlockConflict = (data.blocks || []).find((b: any) => {
+                            if (Number(b.flatId) !== Number(f.id) && String(b.flatNumber) !== String(f.number)) return false;
+                            return b.startDate < formCheckout && b.endDate >= formCheckin;
+                          });
+                          const localSameDayCheckout = (data.reservations || []).some((r: any) => {
+                            if (selectedRes && String(r.id) === String(selectedRes.id)) return false;
+                            if (Number(r.flatId) !== Number(f.id) && String(r.flatNumber) !== String(f.number)) return false;
+                            if (r.checkoutDate !== formCheckin) return false;
+                            const st = String(r.status || "").toLowerCase();
+                            if (["cancelada", "cancelled", "no_show", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) return false;
+                            if (r.checkoutDone || r.earlyCheckout || r.actualCheckoutAt) return false;
+                            return true;
+                          });
+
+                          const isBest = Number(fairShareResult?.bestFlatId) === Number(f.id);
+                          const isAvail = flatStat ? Boolean(flatStat.isAvailable) : (!localResConflict && !localBlockConflict);
+                          const conflictList = (flatStat?.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
+                          const conflictName = conflictList[0]?.guestName || localResConflict?.guestName;
+                          const blockItem = flatStat?.blocks?.[0] || localBlockConflict;
+                          const isBlockedOnly = !isAvail && !conflictName && Boolean(blockItem);
+                          const hasSameDayTurnover = flatStat ? Boolean(flatStat.hasCheckoutOnCheckinDay) : localSameDayCheckout;
+                          const hasCompletedSameDayCheckout = Boolean(flatStat?.hasCompletedSameDayCheckout);
+                          const cleaningStatus = flatStat?.cleaningStatus || (f as any).cleaningStatus || "clean";
+                          const isDirty = cleaningStatus === "dirty" || Boolean(flatStat?.isDirty);
+                          const isCleaningNow = cleaningStatus === "cleaning_now" || Boolean(flatStat?.isCleaningNow);
+                          const isOccupiedToday = Boolean(flatStat?.isOccupiedToday);
+                          const todayIso = format(new Date(), "yyyy-MM-dd");
+                          const daysCount = flatStat?.monthOccupiedDays || 0;
+
+                          let stateBadgeText = `🟢 Vago & Limpo (${daysCount}d)`;
+                          let stateBadgeClass = "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20";
+                          let bestSuffix = "Vago & Limpo";
+
+                          if (hasSameDayTurnover) {
+                            stateBadgeText = `🔄 Saída no Dia • Ocupado (${daysCount}d)`;
+                            stateBadgeClass = "text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30";
+                            bestSuffix = "Saída no Dia";
+                          } else if (isDirty) {
+                            stateBadgeText = `🧹 Vago & Sujo${hasCompletedSameDayCheckout ? " • Saiu Hoje" : ""} (${daysCount}d)`;
+                            stateBadgeClass = "text-orange-700 dark:text-orange-300 bg-orange-500/15 border border-orange-500/30";
+                            bestSuffix = "Vago & Sujo";
+                          } else if (isCleaningNow) {
+                            stateBadgeText = `🧽 Vago • Em Limpeza (${daysCount}d)`;
+                            stateBadgeClass = "text-sky-700 dark:text-sky-300 bg-sky-500/15 border border-sky-500/30";
+                            bestSuffix = "Em Limpeza";
+                          } else if (isOccupiedToday && formCheckin > todayIso) {
+                            stateBadgeText = `🟢 Livre no Check-in • Ocupado Hoje (${daysCount}d)`;
+                            stateBadgeClass = "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20";
+                            bestSuffix = "Livre no Check-in";
+                          }
 
                           return (
                             <SelectItem key={f.id} value={String(f.id)}>
                               <div className="flex items-center justify-between gap-2 w-full py-0.5">
                                 <span className="font-bold">Apt {f.number}</span>
-                                {isBest && (
-                                   <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                     ✨ Quarto da Vez {hasSameDayTurnover ? "(Saída no Dia)" : "(Vago no Check-in)"}
-                                   </span>
+                                {isBest && isAvail && (
+                                  <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                                    ✨ Quarto da Vez ({bestSuffix} • {daysCount}d)
+                                  </span>
                                 )}
                                 {!isAvail && (
                                   <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
-                                    ⚠️ Ocupado {conflictName ? `(${conflictName})` : ''}
+                                    {isBlockedOnly
+                                      ? `🔒 Bloqueado (${blockItem?.isServiceBlock || blockItem?.reason === "service_order" ? "OS" : "Manutenção"})`
+                                      : `⚠️ Ocupado ${conflictName ? `(${conflictName})` : ""}`}
                                   </span>
                                 )}
                                 {isAvail && !isBest && (
-                                  <span className="text-[9px] text-muted-foreground font-medium">
-                                    {hasSameDayTurnover ? "🔄 Saída no Dia" : "🟢 Vago no Check-in"} ({flatStat?.monthOccupiedDays || 0}d)
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${stateBadgeClass}`}>
+                                    {stateBadgeText}
                                   </span>
                                 )}
                               </div>
@@ -6552,34 +6686,112 @@ export default function PmsCalendar() {
                 </div>
 
                 {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
-                {!selectedRes && fairShareResult?.bestFlatNumber && (
-                  <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg animate-in fade-in">
-                    <div className="flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <span>
-                        Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong>
-                        {String(formFlatId) === String(fairShareResult.bestFlatId) && (
-                          <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">✓ Selecionado</span>
-                        )}
-                      </span>
+                {!selectedRes && fairShareResult?.bestFlatNumber && (() => {
+                  const bestStat = fairShareResult?.allStats?.find(
+                    (s: any) => Number(s.flat?.id) === Number(fairShareResult.bestFlatId) || String(s.flat?.number) === String(fairShareResult.bestFlatNumber)
+                  );
+                  const bestStatusLabel = bestStat?.hasCheckoutOnCheckinDay
+                    ? "🔄 Saída no Dia"
+                    : bestStat?.isDirty || bestStat?.cleaningStatus === "dirty"
+                    ? "🧹 Vago & Sujo"
+                    : bestStat?.isCleaningNow || bestStat?.cleaningStatus === "cleaning_now"
+                    ? "🧽 Em Limpeza"
+                    : "🟢 Vago & Limpo";
+                  return (
+                    <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg animate-in fade-in">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                        <span>
+                          Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong>{" "}
+                          <span className="text-[10px] opacity-90">({bestStatusLabel})</span>
+                          {String(formFlatId) === String(fairShareResult.bestFlatId) && (
+                            <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">✓ Selecionado</span>
+                          )}
+                        </span>
+                      </div>
+                      {String(formFlatId) !== String(fairShareResult.bestFlatId) && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            isFlatManuallyChangedRef.current = false;
+                            setFormFlatId(String(fairShareResult.bestFlatId));
+                            setFormForceReplace(false);
+                          }}
+                          className="h-6 text-[10px] font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-500/20 px-2 py-0 border border-amber-500/30 rounded"
+                        >
+                          Usar Apt {fairShareResult.bestFlatNumber}
+                        </Button>
+                      )}
                     </div>
-                    {String(formFlatId) !== String(fairShareResult.bestFlatId) && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          isFlatManuallyChangedRef.current = false;
-                          setFormFlatId(String(fairShareResult.bestFlatId));
-                          setFormForceReplace(false);
-                        }}
-                        className="h-6 text-[10px] font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-500/20 px-2 py-0 border border-amber-500/30 rounded"
-                      >
-                        Usar Apt {fairShareResult.bestFlatNumber}
-                      </Button>
-                    )}
-                  </div>
-                )}
+                  );
+                })()}
+
+                {/* Alerta Operacional: Quarto Vago & Sujo ou Saída no Dia Selecionado */}
+                {(() => {
+                  const selFlat = data.flats.find(f => String(f.id) === String(formFlatId));
+                  const selectedStat = fairShareResult?.allStats?.find(
+                    (s: any) => String(s.flat?.id) === String(formFlatId) || (selFlat && String(s.flat?.number) === String(selFlat.number))
+                  );
+                  const isAvail = selectedStat ? Boolean(selectedStat.isAvailable) : true;
+                  if (!isAvail) return null;
+                  const cleanSt = selectedStat?.cleaningStatus || (selFlat as any)?.cleaningStatus || "clean";
+                  const isDirty = cleanSt === "dirty" || Boolean(selectedStat?.isDirty);
+                  const hasSameDay = Boolean(selectedStat?.hasCheckoutOnCheckinDay);
+                  if (!isDirty && !hasSameDay) return null;
+
+                  const bestStat = fairShareResult?.allStats?.find(
+                    (s: any) => Number(s.flat?.id) === Number(fairShareResult?.bestFlatId)
+                  );
+                  const canSwitchToCleanBest = Boolean(
+                    fairShareResult?.bestFlatId &&
+                    String(fairShareResult.bestFlatId) !== String(formFlatId) &&
+                    bestStat?.isAvailable &&
+                    !bestStat?.isDirty &&
+                    bestStat?.cleaningStatus !== "dirty" &&
+                    !bestStat?.hasCheckoutOnCheckinDay
+                  );
+
+                  return (
+                    <div className="p-2.5 bg-orange-50 dark:bg-orange-950/40 border border-orange-300 dark:border-orange-700/60 rounded-xl flex items-center justify-between gap-2 text-xs animate-in fade-in">
+                      <div className="flex items-start gap-2 text-orange-900 dark:text-orange-200">
+                        <AlertCircle className="w-4 h-4 text-orange-600 dark:text-orange-400 shrink-0 mt-0.5" />
+                        <div>
+                          {hasSameDay ? (
+                            <span className="font-bold block">
+                              🔄 Atenção: Apt {selFlat?.number || formFlatId} possui saída prevista hoje (ainda ocupado pelo hóspede anterior).
+                            </span>
+                          ) : (
+                            <span className="font-bold block">
+                              🧹 Atenção: Apt {selFlat?.number || formFlatId} consta como VAGO & SUJO (aguardando limpeza na Governança).
+                            </span>
+                          )}
+                          <span className="text-[11px] text-orange-800/90 dark:text-orange-300/90 block">
+                            {hasSameDay
+                              ? "Confirme o check-out e a limpeza antes de liberar a entrada do novo hóspede."
+                              : "Priorize um apartamento Vago & Limpo para check-in imediato ou acione a Governança."}
+                          </span>
+                        </div>
+                      </div>
+                      {canSwitchToCleanBest && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            isFlatManuallyChangedRef.current = false;
+                            setFormFlatId(String(fairShareResult.bestFlatId));
+                            setFormForceReplace(false);
+                          }}
+                          className="h-7 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white border-0 shrink-0 px-2.5"
+                        >
+                          Trocar p/ Apt {fairShareResult.bestFlatNumber} (Limpo)
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Alerta de Quarto Ocupado & Trava Anti-Overbooking */}
                 {(() => {
