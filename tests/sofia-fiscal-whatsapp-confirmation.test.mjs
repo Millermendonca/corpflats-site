@@ -25,6 +25,7 @@ import {
   enableAutoEmitInvoiceForGuestAndReservations,
   findExistingInvoiceForReservation,
   isReservationCheckedOutForFiscal,
+  resolveCrmFiscalTomador,
   parseFlexibleMoney,
   formatDateBr,
   formatMoneyBr,
@@ -1395,6 +1396,79 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.strictEqual(String(result.numeroNfse), String(existingInv.numeroNfse));
     assert.strictEqual(testDb.invoices.length, invoicesBefore, "Nenhuma nota duplicada deve ser criada");
     assert.match(result.replyText, /já foi emitida/i);
+  });
+
+  // ── REUSO DE DADOS DO CRM SEM PEDIR CPF/NOME/ENDEREÇO NOVAMENTE ──
+
+  it("Reuso CRM (1): Hóspede PF com dados em db.guests (document/documentNumber, fullName, street, neighborhood, city, state, cep, email) não é solicitado a digitar CPF/nome/endereço e vai direto para conferência", async () => {
+    // Simula exatamente o formato real do CRM (db.guests com document/documentNumber e sem companyId)
+    const guestMiller = testDb.guests.find(g => g.id === 501);
+    const savedCompanyId = guestMiller.companyId;
+    const savedCpf = guestMiller.cpf;
+
+    delete guestMiller.companyId;
+    delete guestMiller.cpf;
+    guestMiller.fullName = "Miller Mendonça Pessanha";
+    guestMiller.name = "Miller Mendonça Pessanha";
+    guestMiller.document = "12585736792";
+    guestMiller.documentNumber = "12585736792";
+    guestMiller.email = "millerpessanha@gmail.com";
+    guestMiller.street = "Rua Conselheiro Otaviano";
+    guestMiller.streetNumber = "209";
+    guestMiller.neighborhood = "Centro";
+    guestMiller.city = "Campos dos Goytacazes";
+    guestMiller.state = "RJ";
+    guestMiller.cep = "28010-140";
+
+    // Reserva ativa hoje sem companyId e sem nota emitida
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    const savedResCompanyId = res605.companyId;
+    delete res605.companyId;
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    res605.guestDocument = "12585736792";
+    res605.checkoutDone = false;
+    testDb.invoices = testDb.invoices.filter(i => Number(i.reservationId) !== 605);
+
+    const conv = {
+      id: "conv_crm_pf_direct",
+      phone: "22998505276",
+      name: "Miller Mendonça Pessanha",
+      messages: []
+    };
+
+    try {
+      const result = await handleWhatsAppFiscalFlow({
+        db: testDb,
+        cleanTarget: "22998505276",
+        messageText: "Olá Sofia, gostaria da minha nota fiscal por favor",
+        senderName: "Miller Mendonça Pessanha",
+        conv,
+        sendZapiMessage: async () => ({ success: true }),
+        appendMessageFn: (db, msg) => conv.messages.push(msg),
+        saveDatabase: () => {},
+        createNotification: () => {}
+      });
+
+      assert.strictEqual(result.handled, true);
+      assert.strictEqual(result.action, "presented_conference", "Deve ir direto para a conferência usando os dados do CRM sem pedir CPF/nome/endereço");
+      assert.notStrictEqual(result.action, "requested_fiscal_data", "NUNCA deve pedir CPF, nome ou endereço se já constam no CRM");
+      assert.doesNotMatch(result.replyText, /Informe seu \*\*Nome Completo\*\*, \*\*CPF\*\*/i);
+      assert.match(result.replyText, /Miller Mendonça Pessanha/i);
+      assert.match(result.replyText, /125\.857\.367-92/);
+      assert.match(result.replyText, /millerpessanha@gmail\.com/i);
+
+      assert.strictEqual(conv.fiscalConferenceState.tomadorCpfCnpj, "12585736792");
+      assert.strictEqual(conv.fiscalConferenceState.tomadorNome, "Miller Mendonça Pessanha");
+      assert.strictEqual(conv.fiscalConferenceState.tomadorEndereco, "Rua Conselheiro Otaviano");
+      assert.strictEqual(conv.fiscalConferenceState.tomadorNumero, "209");
+      assert.strictEqual(conv.fiscalConferenceState.tomadorBairro, "Centro");
+      assert.strictEqual(conv.fiscalConferenceState.tomadorCep, "28010140");
+    } finally {
+      guestMiller.companyId = savedCompanyId;
+      guestMiller.cpf = savedCpf;
+      res605.companyId = savedResCompanyId;
+    }
   });
 });
 
