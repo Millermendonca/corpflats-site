@@ -4269,11 +4269,76 @@ export default function GuestPortal() {
                   Cardápio & Extrato do Frigobar
                 </h2>
                 <span className="text-xs text-cyan-950/80 font-medium block mt-0.5">
-                  Consulte preços, cortesias e o extrato de consumo do seu flat
+                  Consulte preços, cortesias, pagamentos e Notas Fiscais do frigobar
                 </span>
               </div>
             </div>
           </div>
+
+          {Array.isArray(data?.minibarOrders) && data.minibarOrders.filter((o: any) => o && o.paymentStatus !== "cancelado").length > 0 && (
+            <div className="space-y-2 pt-1">
+              {data.minibarOrders
+                .filter((o: any) => o && o.paymentStatus !== "cancelado")
+                .map((ord: any) => {
+                  const invUrl = ord.invoice?.invoiceFileUrl || ord.invoiceFileUrl || "";
+                  const invName = ord.invoice?.invoiceFileName || ord.invoiceFileName || "Nota_Fiscal_Frigobar.pdf";
+                  const invNum = ord.invoice?.invoiceNumber || ord.invoiceNumber || "";
+                  const isOrdPaid = ord.paymentStatus === "pago" || ord.paymentStatus === "lancamento_quitado" || Boolean(invUrl);
+                  return (
+                    <div
+                      key={ord.id}
+                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-2xl bg-white border border-cyan-200/80 shadow-xs text-xs"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-slate-800">
+                            Consumo Frigobar ({ord.guestName || reservation.guestName})
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className={
+                              isOrdPaid
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold"
+                                : "bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-bold"
+                            }
+                          >
+                            {isOrdPaid ? "✓ Pago" : "Pendente"} • R$ {Number(ord.totalAmount || 0).toFixed(2).replace(".", ",")}
+                          </Badge>
+                          {invNum && (
+                            <Badge variant="outline" className="bg-cyan-50 text-cyan-800 border-cyan-200 text-[10px] font-bold">
+                              NF #{invNum}
+                            </Badge>
+                          )}
+                        </div>
+                        {Array.isArray(ord.items) && ord.items.length > 0 && (
+                          <p className="text-[11px] text-slate-500">
+                            {ord.items.map((it: any) => `${it.quantity}x ${it.productName || it.name}`).join(", ")}
+                          </p>
+                        )}
+                      </div>
+
+                      {invUrl ? (
+                        <a
+                          href={invUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          download={invName}
+                          className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-cyan-700 hover:bg-cyan-800 text-white font-bold text-xs shadow-xs transition-all shrink-0"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Baixar Nota Fiscal</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : isOrdPaid ? (
+                        <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 text-[10px] self-start sm:self-center shrink-0">
+                          NF em emissão
+                        </Badge>
+                      ) : null}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
 
           <Button
             onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/frigobar`)}

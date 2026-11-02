@@ -526,7 +526,40 @@ const staticUploadsOpts = {
     }
   }
 };
+function tryServeMinibarInvoiceFromMemory(req, res) {
+  if (!req.path || !req.path.startsWith("/invoices/")) return false;
+  const matchedOrder = Array.isArray(db?.minibarOrders)
+    ? db.minibarOrders.find(o => o?.invoice?.invoiceFileUrl && o.invoice.invoiceFileUrl.endsWith(req.path) && o.invoice.fileData)
+    : null;
+  if (!matchedOrder?.invoice?.fileData) return false;
+  try {
+    const rawStr = String(matchedOrder.invoice.fileData).trim();
+    const base64Clean = rawStr.replace(/^data:.*?;base64,/, "");
+    const buf = Buffer.from(base64Clean, "base64");
+    const diskTarget = path.join(UPLOADS_DIR, req.path.replace(/^\/+/, ""));
+    try {
+      fs.mkdirSync(path.dirname(diskTarget), { recursive: true });
+      fs.writeFileSync(diskTarget, buf);
+    } catch (_) {}
+    const ext = (req.path.split(".").pop() || "pdf").toLowerCase();
+    const mimeMap = {
+      pdf: "application/pdf",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      webp: "image/webp"
+    };
+    res.setHeader("Content-Type", mimeMap[ext] || "application/octet-stream");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.send(buf);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 app.use("/api/storage/files", express.static(UPLOADS_DIR, staticUploadsOpts), (req, res, next) => {
+  if (tryServeMinibarInvoiceFromMemory(req, res)) return;
   if (req.path && req.path.startsWith("/documents/") && req.path.toLowerCase().endsWith(".pdf")) {
     const fallbackPdf = path.join(UPLOADS_DIR, "documents", "Manual_do_Hospede_CorpFlats.pdf");
     if (fs.existsSync(fallbackPdf)) {
@@ -538,6 +571,7 @@ app.use("/api/storage/files", express.static(UPLOADS_DIR, staticUploadsOpts), (r
   next();
 });
 app.use("/storage/files", express.static(UPLOADS_DIR, staticUploadsOpts), (req, res, next) => {
+  if (tryServeMinibarInvoiceFromMemory(req, res)) return;
   if (req.path && req.path.startsWith("/documents/") && req.path.toLowerCase().endsWith(".pdf")) {
     const fallbackPdf = path.join(UPLOADS_DIR, "documents", "Manual_do_Hospede_CorpFlats.pdf");
     if (fs.existsSync(fallbackPdf)) {
@@ -4964,7 +4998,23 @@ export function seedInitialFaqItems(dbInstance) {
   return modified;
 }
 
+let isUniversalIntegrityDirty = true;
+let lastUniversalIntegrityTimestamp = 0;
+const UNIVERSAL_INTEGRITY_COOLDOWN_MS = 30000;
+
+export function markUniversalIntegrityDirty() {
+  isUniversalIntegrityDirty = true;
+}
+
 export function reconcileUniversalIntegrity(incomingState = null) {
+  const force = arguments.length > 1 ? Boolean(arguments[1]) : false;
+  const isDirty = (typeof isUniversalIntegrityDirty !== "undefined") ? isUniversalIntegrityDirty : true;
+  const lastTs = (typeof lastUniversalIntegrityTimestamp !== "undefined") ? lastUniversalIntegrityTimestamp : 0;
+  const now = Date.now();
+  if (!incomingState && !force && !isDirty && (now - lastTs < UNIVERSAL_INTEGRITY_COOLDOWN_MS)) {
+    return false;
+  }
+
   if (!db.flats) db.flats = [];
   if (!db.reservations) db.reservations = [];
   if (!db.cleaningRequests) db.cleaningRequests = [];
@@ -6083,6 +6133,9 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     changed = true;
   }
 
+  if (typeof isUniversalIntegrityDirty !== "undefined") isUniversalIntegrityDirty = false;
+  if (typeof lastUniversalIntegrityTimestamp !== "undefined") lastUniversalIntegrityTimestamp = Date.now();
+
   return changed;
 }
 
@@ -6093,8 +6146,8 @@ function ensureRestoredSeptReservations() {
 
 // ── Helpers de Tarefas Preventivas & Periodicidade (Dias de Locação vs Dias Corridos) ──
 
-export function getFlatOccupiedDays(flatId, flatNumber, sinceDateStr, upToDateStr) {
-  const reservations = (db.reservations || []).filter(r => 
+export function getFlatOccupiedDays(flatId, flatNumber, sinceDateStr, upToDateStr, candidateReservations = null) {
+  const reservations = Array.isArray(candidateReservations) ? candidateReservations : (db.reservations || []).filter(r => 
     (Number(r.flatId) === Number(flatId) || String(r.flatNumber) === String(flatNumber)) &&
     r.status !== 'cancelada' && r.status !== 'cancelado' && r.status !== 'cancelled'
   );
@@ -6115,17 +6168,22 @@ export function getFlatOccupiedDays(flatId, flatNumber, sinceDateStr, upToDateSt
   return occupiedDates.size;
 }
 
-export function computePeriodicTaskStatus(task, flat, referenceDateStr) {
+export function computePeriodicTaskStatus(task, flat, referenceDateStr, context = null) {
   const flatId = Number(flat.id || flat.flatId);
   const flatNumber = String(flat.number || flat.flatNumber);
   const periodDays = Number(task.periodDays) || 1;
   const periodType = task.periodType || "calendar_days";
 
-  const executions = (db.periodicExecutions || []).filter(e => 
-    Number(e.periodicTaskId) === Number(task.id) && Number(e.flatId) === flatId
-  );
-  executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
-  const lastExec = executions[0] || null;
+  let lastExec = null;
+  if (context?.latestExecutionMap) {
+    lastExec = context.latestExecutionMap.get(`${task.id}_${flatId}`) || null;
+  } else {
+    const executions = (db.periodicExecutions || []).filter(e => 
+      Number(e.periodicTaskId) === Number(task.id) && Number(e.flatId) === flatId
+    );
+    executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
+    lastExec = executions[0] || null;
+  }
 
   let sinceDateStr;
   if (lastExec) {
@@ -6139,8 +6197,12 @@ export function computePeriodicTaskStatus(task, flat, referenceDateStr) {
   let daysOverdue = 0;
   let currentOccupiedDays = 0;
 
+  const flatResList = context?.reservationsByFlat
+    ? (context.reservationsByFlat.get(flatId) || (flatNumber ? context.reservationsByFlat.get(flatNumber) : null) || [])
+    : null;
+
   if (periodType === "occupied_days") {
-    currentOccupiedDays = getFlatOccupiedDays(flatId, flatNumber, sinceDateStr, referenceDateStr);
+    currentOccupiedDays = getFlatOccupiedDays(flatId, flatNumber, sinceDateStr, referenceDateStr, flatResList);
     if (currentOccupiedDays >= periodDays) {
       isDue = true;
       daysOverdue = currentOccupiedDays - periodDays;
@@ -6151,12 +6213,11 @@ export function computePeriodicTaskStatus(task, flat, referenceDateStr) {
       daysOverdue = -remainingOccupied;
 
       let needed = remainingOccupied;
-      const futureReservations = (db.reservations || [])
-        .filter(r => 
-          (Number(r.flatId) === flatId || String(r.flatNumber) === flatNumber) &&
-          r.status !== 'cancelada' && r.status !== 'cancelado' && r.status !== 'cancelled' &&
-          r.checkoutDate > referenceDateStr
-        )
+      const futureReservations = (flatResList || (db.reservations || []).filter(r => 
+          (Number(r.flatId) === flatId || (flatNumber && String(r.flatNumber) === flatNumber)) &&
+          r.status !== 'cancelada' && r.status !== 'cancelado' && r.status !== 'cancelled'
+        ))
+        .filter(r => r.checkoutDate > referenceDateStr)
         .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate));
 
       for (const r of futureReservations) {
@@ -6202,8 +6263,13 @@ export function computePeriodicTaskStatus(task, flat, referenceDateStr) {
   };
 }
 
-export function regularizeHousekeepingPreventiveTasks() {
+let lastRegularizeHousekeepingDate = null;
+
+export function regularizeHousekeepingPreventiveTasks(force = false) {
   const todayStr = getTodayStr();
+  if (!force && lastRegularizeHousekeepingDate === todayStr) {
+    return false;
+  }
   const yesterdayStr = addDaysToDateStr(todayStr, -1);
   let changed = false;
 
@@ -6211,6 +6277,34 @@ export function regularizeHousekeepingPreventiveTasks() {
   const housekeepingTasks = (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false);
   const activeFlats = (db.flats || []).filter(f => f.isActive !== false && String(f.number) !== "502" && f.id !== 9);
 
+  // O(1) Indexing: Map de última execução por task + flat
+  const latestExecutionMap = new Map();
+  for (const e of db.periodicExecutions) {
+    if (!e) continue;
+    const key = `${e.periodicTaskId}_${e.flatId}`;
+    const existing = latestExecutionMap.get(key);
+    if (!existing || new Date(e.executedAt).getTime() > new Date(existing.executedAt).getTime()) {
+      latestExecutionMap.set(key, e);
+    }
+  }
+
+  // O(1) Indexing: Map de reservas ativas por flatId e flatNumber
+  const reservationsByFlat = new Map();
+  for (const r of (db.reservations || [])) {
+    if (!r || r.status === 'cancelada' || r.status === 'cancelado' || r.status === 'cancelled') continue;
+    const fId = Number(r.flatId);
+    const fNum = String(r.flatNumber || "");
+    if (fId) {
+      if (!reservationsByFlat.has(fId)) reservationsByFlat.set(fId, []);
+      reservationsByFlat.get(fId).push(r);
+    }
+    if (fNum) {
+      if (!reservationsByFlat.has(fNum)) reservationsByFlat.set(fNum, []);
+      reservationsByFlat.get(fNum).push(r);
+    }
+  }
+
+  const context = { latestExecutionMap, reservationsByFlat };
   let nextId = db.periodicExecutions.length > 0 ? Math.max(...db.periodicExecutions.map(e => e.id)) + 1 : 1;
 
   for (const flat of activeFlats) {
@@ -6219,7 +6313,7 @@ export function regularizeHousekeepingPreventiveTasks() {
         continue;
       }
 
-      const status = computePeriodicTaskStatus(t, flat, todayStr);
+      const status = computePeriodicTaskStatus(t, flat, todayStr, context);
       let shouldRegularize = false;
       if (status.periodType === "occupied_days") {
         if (status.isDue) {
@@ -6246,6 +6340,7 @@ export function regularizeHousekeepingPreventiveTasks() {
     }
   }
 
+  lastRegularizeHousekeepingDate = todayStr;
   return changed;
 }
 
@@ -11878,8 +11973,23 @@ export function healContaminatedGuestAndReservationLinks(database) {
   return changed;
 }
 
-export function reconcileAndMergeGuests(database) {
+let isGuestReconciliationDirty = true;
+let lastGuestReconcileTimestamp = 0;
+const GUEST_RECONCILE_COOLDOWN_MS = 60000;
+
+export function markGuestReconciliationDirty() {
+  isGuestReconciliationDirty = true;
+}
+
+export function reconcileAndMergeGuests(database, force = false) {
   const currentDb = database || db;
+  const isDirty = (typeof isGuestReconciliationDirty !== "undefined") ? isGuestReconciliationDirty : true;
+  const lastTs = (typeof lastGuestReconcileTimestamp !== "undefined") ? lastGuestReconcileTimestamp : 0;
+  const now = Date.now();
+  if (!force && !isDirty && (now - lastTs < GUEST_RECONCILE_COOLDOWN_MS)) {
+    return false;
+  }
+
   if (!currentDb.guests) currentDb.guests = [];
   if (!currentDb.reservations) currentDb.reservations = [];
   if (!currentDb.invoices) currentDb.invoices = [];
@@ -12453,6 +12563,8 @@ export function reconcileAndMergeGuests(database) {
       }
     }
   }
+  if (typeof isGuestReconciliationDirty !== "undefined") isGuestReconciliationDirty = false;
+  if (typeof lastGuestReconcileTimestamp !== "undefined") lastGuestReconcileTimestamp = Date.now();
   return didHeal;
 }
 
@@ -14738,6 +14850,13 @@ function saveDatabase(reason = "auto_save") {
   try {
     invalidateGuestCache();
     invalidateFlatsCache();
+    if (typeof invalidateRequestsForDateCache === "function") {
+      invalidateRequestsForDateCache();
+    }
+    if (reason !== "integrity_reconciled" && reason !== "get_requests_sync") {
+      if (typeof markGuestReconciliationDirty === "function") markGuestReconciliationDirty();
+      if (typeof markUniversalIntegrityDirty === "function") markUniversalIntegrityDirty();
+    }
 
     // Blindagem crítica: se PostgreSQL está configurado mas ainda não concluiu a hidratação inicial,
     // NÃO grava estado vazio/parcial nem no disco local (DB_FILE) nem na nuvem, evitando poluir retries.
@@ -17026,7 +17145,7 @@ function getFlatServiceInProgress(flatId, flatNumber) {
   return fallbackMatch;
 }
 
-function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
+function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr(), precomputedRequests = null) {
   const fId = Number(flatId);
   const fNum = String(flatNumber || "");
 
@@ -17052,7 +17171,7 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
   const expectedArrival = checkinTodayRes ? (checkinTodayRes.estimatedArrivalTime || checkinTodayRes.arrivalTime || checkinTodayRes.eta || checkinTodayRes.checkinTime || "14:00") : null;
 
   // 2. Status de Higienização em Tempo Real (Apenas data consultada ou checkout recente)
-  const dailyRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(dateStr) : (db.cleaningRequests || []);
+  const dailyRequests = Array.isArray(precomputedRequests) ? precomputedRequests : (typeof getRequestsForDate === "function" ? getRequestsForDate(dateStr) : (db.cleaningRequests || []));
   const todayReq = dailyRequests.find(c =>
     (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
     !c.isDeleted &&
@@ -17902,10 +18021,13 @@ function checkOverdueServiceFlats() {
 // ── Flats Endpoints ─────────────────────────────────────────────────────────
 app.get("/api/flats", (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate");
-  if (reconcileUniversalIntegrity()) saveDatabase();
+  if (isUniversalIntegrityDirty && reconcileUniversalIntegrity()) {
+    setImmediate(() => saveDatabase("integrity_reconciled"));
+  }
   const todayStr = getTodayStr();
+  const precomputedRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(todayStr) : (db.cleaningRequests || []);
   const activeFlats = (db.flats || []).filter(f => f.isActive !== false).map(flat => {
-    const realtime = getFlatRealtimeStatus(flat.id, flat.number, todayStr);
+    const realtime = getFlatRealtimeStatus(flat.id, flat.number, todayStr, precomputedRequests);
     flat.isOccupied = realtime.isOccupied;
     return {
       ...flat,
@@ -18665,7 +18787,23 @@ function computeLinenTracking(reservation, dateStr, db) {
   };
 }
 
+const requestsForDateCache = new Map(); // dateStr -> { timestamp, data, version }
+let requestsForDateVersion = 0;
+
+export function invalidateRequestsForDateCache() {
+  requestsForDateVersion++;
+  requestsForDateCache.clear();
+}
+
 function getRequestsForDate(dateStr, isNested = false) {
+  const now = Date.now();
+  if (!isNested && requestsForDateCache.has(dateStr)) {
+    const cached = requestsForDateCache.get(dateStr);
+    if (cached && cached.version === requestsForDateVersion && (now - cached.timestamp < 3000)) {
+      return cached.data;
+    }
+  }
+
   const sanitizeCardNote = (note) => {
     if (!note || typeof note !== "string") return null;
     let cleaned = note
@@ -19308,7 +19446,15 @@ function getRequestsForDate(dateStr, isNested = false) {
   }
 
   if (shouldSaveDb) {
-    saveDatabase();
+    saveDatabase("get_requests_sync");
+  }
+
+  if (!isNested) {
+    requestsForDateCache.set(dateStr, {
+      timestamp: Date.now(),
+      data: requestsForDate,
+      version: requestsForDateVersion
+    });
   }
 
   return requestsForDate;
@@ -19331,10 +19477,38 @@ app.post("/api/reservations/clear-all", requireDevAuth, (req, res) => {
 
 app.get("/api/reservations/checkouts", (req, res) => {
   triggerBackgroundSync();
-  if (reconcileUniversalIntegrity()) saveDatabase();
+  if (isUniversalIntegrityDirty && reconcileUniversalIntegrity()) {
+    setImmediate(() => saveDatabase("integrity_reconciled"));
+  }
   const dateStr = req.query.date || getTodayStr();
   const requestsForDate = getRequestsForDate(dateStr);
   const activeSurveys = db.surveys.filter(s => s.isActive);
+
+  // O(1) Indexing: Map de última execução por task + flat e reservas ativas por flat
+  const latestExecutionMap = new Map();
+  for (const e of (db.periodicExecutions || [])) {
+    if (!e) continue;
+    const key = `${e.periodicTaskId}_${e.flatId}`;
+    const existing = latestExecutionMap.get(key);
+    if (!existing || new Date(e.executedAt).getTime() > new Date(existing.executedAt).getTime()) {
+      latestExecutionMap.set(key, e);
+    }
+  }
+  const reservationsByFlat = new Map();
+  for (const r of (db.reservations || [])) {
+    if (!r || r.status === 'cancelada' || r.status === 'cancelado' || r.status === 'cancelled') continue;
+    const fId = Number(r.flatId);
+    const fNum = String(r.flatNumber || "");
+    if (fId) {
+      if (!reservationsByFlat.has(fId)) reservationsByFlat.set(fId, []);
+      reservationsByFlat.get(fId).push(r);
+    }
+    if (fNum) {
+      if (!reservationsByFlat.has(fNum)) reservationsByFlat.set(fNum, []);
+      reservationsByFlat.get(fNum).push(r);
+    }
+  }
+  const checkoutsContext = { latestExecutionMap, reservationsByFlat };
 
   const result = requestsForDate.map(req_ => {
     const isStayover = Boolean(req_.source === "stayover" || req_.cleaningType === "stayover");
@@ -19353,7 +19527,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
 
     const pendingTasks = [];
     for (const pt of (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false && (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(Number(flat.id))))) {
-      const taskStatus = computePeriodicTaskStatus(pt, flat, dateStr);
+      const taskStatus = computePeriodicTaskStatus(pt, flat, dateStr, checkoutsContext);
       if (taskStatus.isDue) {
         pendingTasks.push({
           id: pt.id,
@@ -26234,7 +26408,25 @@ app.get("/api/pms/calendar", (req, res) => {
       earlyCheckoutTime: r.earlyCheckoutTime || null,
       earlyCheckoutReportedBy: r.earlyCheckoutReportedBy || r.checkoutReportedBy || null,
       earlyCheckoutNote: r.earlyCheckoutNote || null,
-      checkoutReportedBy: r.checkoutReportedBy || r.earlyCheckoutReportedBy || null
+      checkoutReportedBy: r.checkoutReportedBy || r.earlyCheckoutReportedBy || null,
+      minibarOrders: (db.minibarOrders || [])
+        .filter(o => o && o.paymentStatus !== "cancelado" && doesMinibarOrderMatchReservation(o, r))
+        .map(o => ({
+          id: o.id,
+          guestName: o.guestName || r.guestName,
+          guestIndex: o.guestIndex || 1,
+          createdAt: o.createdAt,
+          paidAt: o.paidAt || null,
+          totalAmount: o.totalAmount,
+          paymentStatus: o.paymentStatus,
+          paymentMethod: o.paymentMethod,
+          items: o.items || [],
+          invoice: sanitizeMinibarInvoiceForResponse(o.invoice),
+          invoiceFileUrl: o.invoice?.invoiceFileUrl || null,
+          invoiceFileName: o.invoice?.invoiceFileName || null,
+          invoiceNumber: o.invoice?.invoiceNumber || null,
+          invoiceStatus: o.invoice?.status || null
+        }))
     };
   });
   const serviceOrderBlocks = [];
@@ -31021,15 +31213,22 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     contractTerms: db.settings.contractTerms || DEFAULT_CONTRACT_TERMS,
     adminWhatsApp: db.settings.adminWhatsApp || "5522997124021",
     minibarOrders: (db.minibarOrders || [])
-      .filter(o => o.reservationCode === r.code || String(o.reservationId) === String(r.id))
+      .filter(o => o && o.paymentStatus !== "cancelado" && doesMinibarOrderMatchReservation(o, r))
       .map(o => ({
         id: o.id,
+        guestName: o.guestName || r.guestName,
+        guestIndex: o.guestIndex || 1,
         createdAt: o.createdAt,
+        paidAt: o.paidAt || null,
         totalAmount: o.totalAmount,
         paymentStatus: o.paymentStatus,
         paymentMethod: o.paymentMethod,
-        items: o.items,
-        invoice: o.invoice || null
+        items: o.items || [],
+        invoice: sanitizeMinibarInvoiceForResponse(o.invoice),
+        invoiceFileUrl: o.invoice?.invoiceFileUrl || null,
+        invoiceFileName: o.invoice?.invoiceFileName || null,
+        invoiceNumber: o.invoice?.invoiceNumber || null,
+        invoiceStatus: o.invoice?.status || null
       })),
     minibarUrl: `/minha-reserva/${r.code}/frigobar`,
     b2bHousekeeping: isB2b ? {
@@ -36993,7 +37192,14 @@ app.get("/api/pms/guests/:id", async (req, res) => {
     stays: guestReservations,
     invoices: guestInvoices,
     breakfastOrders: guestBreakfastOrders,
-    minibarOrders: guestMinibarOrders,
+    minibarOrders: guestMinibarOrders.map(o => ({
+      ...o,
+      invoice: sanitizeMinibarInvoiceForResponse(o.invoice),
+      invoiceFileUrl: o.invoice?.invoiceFileUrl || null,
+      invoiceFileName: o.invoice?.invoiceFileName || null,
+      invoiceNumber: o.invoice?.invoiceNumber || null,
+      invoiceStatus: o.invoice?.status || null
+    })),
     documents: guest.documents || [],
     callerIdDetails: buildGuestCallerIdContactData(db, guest),
     callerIdPreview: buildGuestCallerIdContactData(db, guest).displayName,
@@ -60614,6 +60820,37 @@ function formatMinibarDateBr(ymdOrIso) {
   return raw;
 }
 
+function sanitizeMinibarInvoiceForResponse(inv) {
+  if (!inv || typeof inv !== "object") return null;
+  const { fileData, ...safeInv } = inv;
+  return safeInv;
+}
+
+function doesMinibarOrderMatchReservation(order, reservation) {
+  if (!order || !reservation) return false;
+  if (order.reservationId && String(order.reservationId) === String(reservation.id)) {
+    return true;
+  }
+  const flatStr = String(reservation.flatNumber || reservation.flatId || "").trim();
+  const candidateCodes = new Set(
+    [
+      reservation.code,
+      reservation.id ? `RES-${reservation.id}` : "",
+      flatStr && reservation.id ? `RES-${flatStr}-${String(reservation.id).padStart(3, "0")}` : ""
+    ].filter(Boolean)
+  );
+  if (order.reservationCode && candidateCodes.has(String(order.reservationCode).trim())) {
+    return true;
+  }
+  if (!order.reservationId && !order.reservationCode && flatStr && String(order.flatNumber || "").trim() === flatStr) {
+    const activeRes = findActiveOrRecentReservationForFlat(flatStr);
+    if (activeRes && String(activeRes.id) === String(reservation.id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
   const flatStr = String(flatStrOverride || reservation?.flatNumber || reservation?.flatId || "").trim();
   const resCode = reservation?.code || (reservation?.id ? `RES-${reservation.id}` : "");
@@ -60675,7 +60912,7 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
     ? (db.minibarOrders || []).filter(
         o =>
           o &&
-          (o.reservationCode === resCode || String(o.reservationId) === String(reservation.id)) &&
+          doesMinibarOrderMatchReservation(o, reservation) &&
           o.paymentStatus !== "cancelado"
       )
     : [];
@@ -60687,7 +60924,7 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
     String(o.id || "").startsWith("ORD-MB-LANC-");
 
   const launchOrders = allResOrders.filter(isLaunchOrder);
-  const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago");
+  const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago" || o.invoice?.status === "anexada" || Boolean(o.invoice?.invoiceFileUrl));
 
   // 3. Agrupa lançamentos por data (somente o dia DD/MM/AAAA, sem hora)
   const byDateMap = new Map();
@@ -61186,17 +61423,19 @@ async function notifyAdminMinibarInvoiceFailure(order, channelLabel, errorReason
       });
     }
 
+    const zapiConfig = db.zapiConfig || db.settings?.zapiConfig || {};
     const adminPhone =
       db.settings?.adminPhone ||
       db.settings?.ownerPhone ||
       db.settings?.notificationPhone ||
+      zapiConfig?.adminAlertPhone ||
       db.settings?.zapiConfig?.adminAlertPhone ||
       "";
     if (adminPhone && typeof sendZapiMessage === "function") {
-      await sendZapiMessage(db.settings?.zapiConfig || {}, {
+      await sendZapiMessage(zapiConfig, {
         phone: adminPhone,
         message: `${msgTitle}\n\n${msgBody}\n\n🔗 Acesse https://corpflats.com.br/frigobar para verificar ou corrigir o contato do hóspede.`,
-        channelId: "internal",
+        channelId: "internal_ops",
         triggerEvent: "minibar_invoice_failure_alert",
         db
       });
@@ -61213,10 +61452,34 @@ async function dispatchMinibarInvoiceWithMonitoring(order, { channels = ["whatsa
 
   const invoiceFileUrl = order.invoice.invoiceFileUrl;
   const safeFileName = order.invoice.invoiceFileName || `NF_Frigobar_${order.flatNumber}_${order.id}.pdf`;
-  const targetPhone = String(order.fiscalPreferences?.phone || order.guestPhone || "").trim();
-  const targetEmail = String(order.fiscalPreferences?.email || order.guestEmail || "").trim();
+
+  // Fallback para telefone/e-mail na reserva vinculada se ausente no pedido
+  const linkedRes = (db.reservations || []).find(r => doesMinibarOrderMatchReservation(order, r)) ||
+    (order.flatNumber ? findActiveOrRecentReservationForFlat(String(order.flatNumber)) : null);
+  let resolvedPhone = String(order.fiscalPreferences?.phone || order.guestPhone || "").trim();
+  let resolvedEmail = String(order.fiscalPreferences?.email || order.guestEmail || "").trim();
+
+  if (linkedRes && (!resolvedPhone || !resolvedEmail)) {
+    const resGuests = getReservationAllGuests(linkedRes);
+    const consumerSlot =
+      resGuests.find(g => Number(g.index) === Number(order.guestIndex || 1)) ||
+      resGuests[0] ||
+      null;
+    if (!resolvedPhone) {
+      resolvedPhone = String(consumerSlot?.phone || linkedRes.guestPhone || "").trim();
+      if (resolvedPhone) order.guestPhone = resolvedPhone;
+    }
+    if (!resolvedEmail) {
+      resolvedEmail = String(consumerSlot?.email || linkedRes.guestEmail || "").trim();
+      if (resolvedEmail) order.guestEmail = resolvedEmail;
+    }
+  }
+
+  const targetPhone = resolvedPhone;
+  const targetEmail = resolvedEmail;
   const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
   const fullDownloadUrl = invoiceFileUrl.startsWith("http") ? invoiceFileUrl : `${serverBaseUrl}${invoiceFileUrl}`;
+  const zapiConfig = db.zapiConfig || db.settings?.zapiConfig || {};
 
   if (!order.invoice.deliveryMonitor) {
     order.invoice.deliveryMonitor = {
@@ -61258,16 +61521,34 @@ async function dispatchMinibarInvoiceWithMonitoring(order, { channels = ["whatsa
       monitor.whatsapp.lastAttemptAt = new Date().toISOString();
       try {
         const caption = `Olá, ${order.guestName}! Segue em anexo a Nota Fiscal referente ao seu consumo de frigobar no Flat ${order.flatNumber} da CorpFlats (R$ ${Number(order.totalAmount || 0).toFixed(2)}).\n\n📄 Link direto do documento: ${fullDownloadUrl}\n\nAgradecemos a sua preferência! ✨`;
-        const zapiRes = await sendZapiDocument(db.settings?.zapiConfig || {}, {
+        let zapiRes = await sendZapiDocument(zapiConfig, {
           phone: targetPhone,
           document: invoiceFileUrl,
           fileName: safeFileName,
           caption,
           recipientRole: "guest",
-          channelId: "guest",
+          channelId: "transactional_chat",
+          bypassTestMode: true,
           triggerEvent: "minibar_invoice",
           db
         });
+
+        // Se o envio como documento falhar (ex: limite/rejeição de formato na Z-API), envia mensagem de texto com o link direto da Nota Fiscal
+        if ((!zapiRes || zapiRes.success === false) && typeof sendZapiMessage === "function") {
+          const textFallbackRes = await sendZapiMessage(zapiConfig, {
+            phone: targetPhone,
+            message: caption,
+            sendMode: "text",
+            recipientRole: "guest",
+            channelId: "transactional_chat",
+            bypassTestMode: true,
+            triggerEvent: "minibar_invoice_fallback",
+            db
+          });
+          if (textFallbackRes && textFallbackRes.success !== false) {
+            zapiRes = { ...textFallbackRes, fallbackToTextLink: true };
+          }
+        }
 
         if (zapiRes && zapiRes.success !== false) {
           const sentIso = new Date().toISOString();
@@ -61318,6 +61599,14 @@ async function dispatchMinibarInvoiceWithMonitoring(order, { channels = ["whatsa
         const candidate = path.join(UPLOADS_DIR, rel);
         if (fs.existsSync(candidate)) {
           diskFilePath = candidate;
+        } else if (order.invoice?.fileData) {
+          try {
+            const rawB64 = String(order.invoice.fileData).replace(/^data:.*?;base64,/, "").trim();
+            const dir = path.dirname(candidate);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(candidate, Buffer.from(rawB64, "base64"));
+            diskFilePath = candidate;
+          } catch (_) {}
         }
       }
 
@@ -61492,10 +61781,10 @@ app.post("/api/minibar/flat-context", (req, res) => {
 
     // Pedidos da reserva (pagos e pendentes)
     const allResOrders = (db.minibarOrders || []).filter(o =>
-      (o.reservationCode === resCode || String(o.reservationId) === String(reservation.id)) &&
+      doesMinibarOrderMatchReservation(o, reservation) &&
       o.paymentStatus !== "cancelado"
     );
-    const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago");
+    const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago" || o.invoice?.status === "anexada" || Boolean(o.invoice?.invoiceFileUrl));
     const statement = buildReservationMinibarStatement(reservation, flatStr);
     const pendingDiscrepancyOrder = statement.primaryPendingOrder;
 
@@ -61529,7 +61818,11 @@ app.post("/api/minibar/flat-context", (req, res) => {
       paidAt: ord.paidAt || ord.createdAt,
       paymentMethod: ord.paymentMethod,
       items: ord.items || [],
-      invoice: ord.invoice || null
+      invoice: sanitizeMinibarInvoiceForResponse(ord.invoice),
+      invoiceFileUrl: ord.invoice?.invoiceFileUrl || null,
+      invoiceFileName: ord.invoice?.invoiceFileName || null,
+      invoiceNumber: ord.invoice?.invoiceNumber || null,
+      invoiceStatus: ord.invoice?.status || null
     }));
 
     // Gabarito padrão do flat
@@ -61624,10 +61917,10 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
 
     // Pedidos da reserva (pagos e pendentes)
     const allResOrders = (db.minibarOrders || []).filter(o =>
-      (o.reservationCode === resCode || String(o.reservationId) === String(reservation.id)) &&
+      doesMinibarOrderMatchReservation(o, reservation) &&
       o.paymentStatus !== "cancelado"
     );
-    const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago");
+    const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago" || o.invoice?.status === "anexada" || Boolean(o.invoice?.invoiceFileUrl));
     const statement = buildReservationMinibarStatement(reservation, flatStr);
     const pendingDiscrepancyOrder = statement.primaryPendingOrder;
 
@@ -61661,7 +61954,11 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
       paidAt: ord.paidAt || ord.createdAt,
       paymentMethod: ord.paymentMethod,
       items: ord.items || [],
-      invoice: ord.invoice || null
+      invoice: sanitizeMinibarInvoiceForResponse(ord.invoice),
+      invoiceFileUrl: ord.invoice?.invoiceFileUrl || null,
+      invoiceFileName: ord.invoice?.invoiceFileName || null,
+      invoiceNumber: ord.invoice?.invoiceNumber || null,
+      invoiceStatus: ord.invoice?.status || null
     }));
 
     // Gabarito padrão do flat
@@ -62920,6 +63217,15 @@ app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
       return res.status(404).json({ success: false, error: "Pedido não encontrado." });
     }
 
+    // Garante vínculo da reserva no pedido se ausente
+    if ((!order.reservationId || !order.reservationCode) && order.flatNumber) {
+      const linkedRes = findActiveOrRecentReservationForFlat(String(order.flatNumber));
+      if (linkedRes) {
+        if (!order.reservationId) order.reservationId = linkedRes.id;
+        if (!order.reservationCode) order.reservationCode = linkedRes.code || `RES-${linkedRes.id}`;
+      }
+    }
+
     const { fileData, fileName, invoiceNumber } = req.body || {};
     if (!fileData) {
       return res.status(400).json({ success: false, error: "Arquivo da Nota Fiscal (Base64 ou URL) é obrigatório." });
@@ -62952,21 +63258,38 @@ app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
       invoiceFileUrl,
       invoiceFileName: safeFileName,
       invoiceNumber: invoiceNumber || null,
+      fileData: (isDataUri || (!isHttpUrl && fileDataStr.length > 100)) ? fileDataStr : undefined,
       attachedAt: new Date().toISOString(),
       attachedBy: user?.name || "Supervisão Anserve",
       whatsappSentAt: null,
       emailSentAt: null,
       deliveryMonitor: null
     };
+    order.updatedAt = new Date().toISOString();
+
+    // Sincroniza referência da NF dentro de reservation.minibarPayments para acesso rápido na reserva
+    const reservation = (db.reservations || []).find(r => doesMinibarOrderMatchReservation(order, r));
+    if (reservation && Array.isArray(reservation.minibarPayments)) {
+      const mpEntry = reservation.minibarPayments.find(mp => mp.orderId === order.id);
+      if (mpEntry) {
+        mpEntry.invoiceFileUrl = invoiceFileUrl;
+        mpEntry.invoiceFileName = safeFileName;
+        mpEntry.invoiceNumber = invoiceNumber || null;
+        mpEntry.invoiceAttachedAt = order.invoice.attachedAt;
+      }
+    }
 
     await dispatchMinibarInvoiceWithMonitoring(order, { channels: ["whatsapp", "email"], isRetry: false });
 
     saveDatabase("minibar_invoice_attached");
     res.json({
       success: true,
-      invoice: order.invoice,
+      invoice: sanitizeMinibarInvoiceForResponse(order.invoice),
       deliveryMonitor: order.invoice.deliveryMonitor,
-      order
+      order: {
+        ...order,
+        invoice: sanitizeMinibarInvoiceForResponse(order.invoice)
+      }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

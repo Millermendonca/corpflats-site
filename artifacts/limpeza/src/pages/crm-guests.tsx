@@ -2618,12 +2618,14 @@ export default function CrmGuests() {
                   ) : (
                     <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                       {activeGuest.minibarOrders.map((o: any) => {
-                        const isPaid = o.paymentStatus === "pago";
+                        const invUrl = o.invoice?.invoiceFileUrl || o.invoiceFileUrl || "";
+                        const invName = o.invoice?.invoiceFileName || o.invoiceFileName || "Nota_Fiscal_Frigobar.pdf";
+                        const isPaid = o.paymentStatus === "pago" || o.paymentStatus === "lancamento_quitado" || Boolean(invUrl);
                         const isCourtesy = o.paymentMethod === "cortesia" || o.totalAmount === 0;
                         return (
                           <div key={o.id} className="p-2.5 rounded-xl bg-muted/40 border border-border flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between text-xs">
-                              <div className="flex items-center gap-2">
+                            <div className="flex items-center justify-between text-xs gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-bold text-foreground">Flat {o.flatNumber || "—"}</span>
                                 <span className="text-muted-foreground text-[10px] font-mono">#{o.id}</span>
                                 <Badge className={`text-[9px] px-1.5 py-0 ${
@@ -2634,7 +2636,19 @@ export default function CrmGuests() {
                                   {isPaid ? "Pago" : isCourtesy ? "Cortesia" : "Pendente"}
                                 </Badge>
                               </div>
-                              <div className="text-right">
+                              <div className="flex items-center gap-2 shrink-0">
+                                {invUrl && (
+                                  <a
+                                    href={invUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    download={invName}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30 font-bold text-[10px] transition-all"
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                    <span>Baixar NF</span>
+                                  </a>
+                                )}
                                 <span className="font-black text-emerald-600">
                                   R$ {Number(o.totalAmount || 0).toFixed(2)}
                                 </span>

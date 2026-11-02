@@ -19,7 +19,7 @@ import {
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
   LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
-  Download, Upload, FileSpreadsheet, Wrench, Camera
+  Download, Upload, FileSpreadsheet, Wrench, Camera, Refrigerator
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 import { useToast } from "@/hooks/use-toast"
@@ -224,8 +224,9 @@ export function safeParseDate(dateStr: string | null | undefined): Date | null {
   return d;
 }
 
-export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]: any }) {
+export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRes?: boolean; [key: string]: any }) {
   const modalOnly = Boolean(props?.modalOnly)
+  const autoOpenNewRes = Boolean(props?.autoOpenNewRes)
   const [, setLocation] = useLocation()
   const { toast } = useToast()
   const { data: user, isLoading: loadingUser } = useGetMe()
@@ -939,6 +940,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
 
   // Carrega tags essenciais do servidor se disponíveis
   useEffect(() => {
+    if (modalOnly) return;
     fetch("/api/pms/amenities/essential-tags")
       .then(r => r.json())
       .then(d => {
@@ -948,7 +950,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
         }
       })
       .catch(() => {});
-  }, []);
+  }, [modalOnly]);
 
   const handleSaveEssentialTags = async (newIds: string[]) => {
     setEssentialTagIds(newIds);
@@ -1804,11 +1806,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
   }
 
 
-  // Timeline Contínua Multi-Mês (sem quebra de mês a mês)
-  // Permite rolar continuamente para frente e para trás
-  const timelineStart = subDays(new Date(), 30)
-  const timelineEnd = addDays(new Date(), 90)
-  const daysInView = eachDayOfInterval({ start: timelineStart, end: timelineEnd })
+  // Timeline Contínua Multi-Mês (desativada quando modalOnly para evitar overhead pesado)
+  const timelineStart = useMemo(() => modalOnly ? new Date() : subDays(new Date(), 30), [modalOnly])
+  const timelineEnd = useMemo(() => modalOnly ? new Date() : addDays(new Date(), 90), [modalOnly])
+  const daysInView = useMemo(() => {
+    if (modalOnly) return []
+    return eachDayOfInterval({ start: timelineStart, end: timelineEnd })
+  }, [modalOnly, timelineStart, timelineEnd])
 
   // Configuração de larguras das colunas da agenda
   const EXPANDED_COL_WIDTH = 100 // Coluna de 100px no dia atual e dia anterior
@@ -1816,14 +1820,21 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
   const FLAT_COL_WIDTH = 145     // Largura da coluna fixa de apartamentos
 
   const getDayColWidth = (day: Date) => (isToday(day) || isYesterday(day) ? EXPANDED_COL_WIDTH : NORMAL_COL_WIDTH)
-  const gridTemplateColumns = `${FLAT_COL_WIDTH}px ${daysInView.map(day => `${getDayColWidth(day)}px`).join(" ")}`
-  const totalGridMinWidth = FLAT_COL_WIDTH + daysInView.reduce((acc, day) => acc + getDayColWidth(day), 0)
+  const gridTemplateColumns = useMemo(() => {
+    if (modalOnly || daysInView.length === 0) return ""
+    return `${FLAT_COL_WIDTH}px ${daysInView.map(day => `${getDayColWidth(day)}px`).join(" ")}`
+  }, [modalOnly, daysInView])
+  const totalGridMinWidth = useMemo(() => {
+    if (modalOnly || daysInView.length === 0) return 0
+    return FLAT_COL_WIDTH + daysInView.reduce((acc, day) => acc + getDayColWidth(day), 0)
+  }, [modalOnly, daysInView])
 
-  const timelineStartStr = format(daysInView[0], "yyyy-MM-dd")
-  const timelineEndStr = format(daysInView[daysInView.length - 1], "yyyy-MM-dd")
+  const timelineStartStr = modalOnly || daysInView.length === 0 ? "" : format(daysInView[0], "yyyy-MM-dd")
+  const timelineEndStr = modalOnly || daysInView.length === 0 ? "" : format(daysInView[daysInView.length - 1], "yyyy-MM-dd")
 
   // Mapa cumulativo de posições horizontais (left e width) de cada dia na linha
   const dayLayoutMap = useMemo(() => {
+    if (modalOnly || daysInView.length === 0) return {}
     const map: Record<string, { left: number; width: number; idx: number }> = {}
     let currentLeft = FLAT_COL_WIDTH
     daysInView.forEach((day, idx) => {
@@ -1833,7 +1844,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
       currentLeft += width
     })
     return map
-  }, [daysInView])
+  }, [modalOnly, daysInView])
 
   const parseTimeToFraction = (timeStr?: string, defaultTime = "12:00") => {
     const cleanTime = (timeStr && timeStr.includes(":") ? timeStr : defaultTime).trim()
@@ -2014,11 +2025,16 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
 
   useEffect(() => {
     if (modalOnly) {
-      const t = setTimeout(() => fetchData(false), 600);
-      return () => clearTimeout(t);
+      if (autoOpenNewRes) {
+        handleOpenNewResRef.current();
+        fetchData(false);
+      } else if (resModalOpen) {
+        fetchData(false);
+      }
+      return;
     }
     fetchData(true);
-  }, [modalOnly]);
+  }, [modalOnly, autoOpenNewRes]);
 
   const handleConfirmDragMove = async () => {
     if (!dragConfirmData) return;
@@ -2215,6 +2231,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
   )
 
   // Sincronização em tempo real entre múltiplos dispositivos (PC, Tablet, Celular)
+  // Desativado completamente se modalOnly. Polling reduzido de 4s para 12s e pausado quando a aba estiver oculta.
   useEffect(() => {
     if (modalOnly) return;
     const doSilentSync = () => {
@@ -2230,20 +2247,42 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
       fetchData(false);
     };
 
-    // 1. Polling a cada 4 segundos para sincronização contínua automática
-    const intervalId = setInterval(doSilentSync, 4000);
+    let pollIntervalId: ReturnType<typeof setInterval> | null = null;
 
-    // 2. Sincronização imediata ao desbloquear o aparelho, trocar de aba ou focar a janela
+    const startPolling = () => {
+      if (pollIntervalId) clearInterval(pollIntervalId);
+      // Reduz frequência de polling de 4s para 12s (intervalo de 10s–15s)
+      pollIntervalId = setInterval(doSilentSync, 12000);
+    };
+
+    const stopPolling = () => {
+      if (pollIntervalId) {
+        clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
+    };
+
+    // Inicia polling caso a aba esteja visível
+    if (typeof document === "undefined" || !document.hidden) {
+      startPolling();
+    }
+
+    // 2. Pausa o polling quando a aba estiver oculta e retoma/sincroniza imediatamente ao focar
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
+      if (typeof document !== "undefined" && document.hidden) {
+        stopPolling();
+      } else {
         doSilentSync();
+        startPolling();
       }
     };
     const handleFocus = () => {
       doSilentSync();
+      startPolling();
     };
     const handlePageShow = () => {
       doSilentSync();
+      startPolling();
     };
 
     // 3. Sincronização instantânea entre abas no mesmo computador via StorageEvent
@@ -2259,13 +2298,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
     window.addEventListener("storage", handleStorageChange);
 
     return () => {
-      clearInterval(intervalId);
+      stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("pageshow", handlePageShow);
       window.removeEventListener("storage", handleStorageChange);
     };
-  }, []);
+  }, [modalOnly]);
 
   const handleOpenNewResRange = (defaultFlatId: number, startDate: Date, endDate: Date, initialChannel: string = "whatsapp") => {
     const d1 = startDate <= endDate ? startDate : endDate
@@ -4642,21 +4681,27 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
   const stayoversTodayCount = stayoversToday.length
 
   // 7. Pedidos com Café da Manhã (Hoje e Amanhã)
-  const reservationsTodayWithBf = data.reservations.filter(r => 
-    r.status !== "cancelada" && 
-    r.checkinDate <= todayStr && 
-    r.checkoutDate >= todayStr && 
-    Boolean(r.includeBreakfast || r.hasBreakfast)
-  )
+  const reservationsTodayWithBf = useMemo(() => {
+    if (modalOnly) return []
+    return data.reservations.filter(r => 
+      r.status !== "cancelada" && 
+      r.checkinDate <= todayStr && 
+      r.checkoutDate >= todayStr && 
+      Boolean(r.includeBreakfast || r.hasBreakfast)
+    )
+  }, [modalOnly, data.reservations, todayStr])
   const todayReservationsWithBfCount = reservationsTodayWithBf.length
   const todayBreakfastOrdersCount = breakfastStats !== null ? breakfastStats.todayOrders : 0
 
-  const reservationsTomorrowWithBf = data.reservations.filter(r => 
-    r.status !== "cancelada" && 
-    r.checkinDate <= tomorrowStr && 
-    r.checkoutDate >= tomorrowStr && 
-    Boolean(r.includeBreakfast || r.hasBreakfast)
-  )
+  const reservationsTomorrowWithBf = useMemo(() => {
+    if (modalOnly) return []
+    return data.reservations.filter(r => 
+      r.status !== "cancelada" && 
+      r.checkinDate <= tomorrowStr && 
+      r.checkoutDate >= tomorrowStr && 
+      Boolean(r.includeBreakfast || r.hasBreakfast)
+    )
+  }, [modalOnly, data.reservations, tomorrowStr])
   const tomorrowReservationsWithBfCount = reservationsTomorrowWithBf.length
   const tomorrowBreakfastOrdersCount = breakfastStats !== null ? breakfastStats.tomorrowOrders : 0
 
@@ -4664,48 +4709,60 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
   const brasiliaHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Sao_Paulo", hour: "numeric", hour12: false }).format(new Date()))
   const isAfter9Am = brasiliaHour >= 9
 
-  // Contagem e filtro de quartos sujos vs. limpos
-  const dirtyFlatsCount = data.flats.filter(f => (f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now").length
-  const cleanFlatsCount = data.flats.filter(f => (f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus).length
+  // Contagem e filtro de quartos sujos vs. limpos (desativados quando modalOnly)
+  const dirtyFlatsCount = useMemo(() => {
+    if (modalOnly) return 0
+    return data.flats.filter(f => (f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now").length
+  }, [modalOnly, data.flats])
+
+  const cleanFlatsCount = useMemo(() => {
+    if (modalOnly) return 0
+    return data.flats.filter(f => (f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus).length
+  }, [modalOnly, data.flats])
 
   // Contagem de reservas com menores de idade e com alerta de atenção (< 30a locais)
   const minorReservationsCount = useMemo(() => {
+    if (modalOnly) return 0
     return data.reservations.filter(r => r.status !== "cancelada" && r.hasMinor).length
-  }, [data.reservations])
+  }, [modalOnly, data.reservations])
 
   const riskAttentionCount = useMemo(() => {
+    if (modalOnly) return 0
     return data.reservations.filter(r => {
       if (r.status === "cancelada") return false
       const matched = data.guests.find(g => g.id === r.guestId)
       return isResCamposResident(r, matched)
     }).length
-  }, [data.reservations, data.guests])
+  }, [modalOnly, data.reservations, data.guests])
 
-  const displayedFlats = data.flats.filter(f => {
-    if (cleaningFilter === "dirty") {
-      if (!((f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now")) return false
-    } else if (cleaningFilter === "clean") {
-      if (!((f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus)) return false
-    }
+  const displayedFlats = useMemo(() => {
+    if (modalOnly) return []
+    return data.flats.filter(f => {
+      if (cleaningFilter === "dirty") {
+        if (!((f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now")) return false
+      } else if (cleaningFilter === "clean") {
+        if (!((f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus)) return false
+      }
 
-    if (specialFilter === "minors") {
-      const hasMinorInFlat = data.reservations.some(r => 
-        (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
-        r.status !== "cancelada" &&
-        r.hasMinor
-      )
-      if (!hasMinorInFlat) return false
-    } else if (specialFilter === "risk") {
-      const hasRiskInFlat = data.reservations.some(r => 
-        (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
-        r.status !== "cancelada" &&
-        isResCamposResident(r, data.guests.find(g => g.id === r.guestId))
-      )
-      if (!hasRiskInFlat) return false
-    }
+      if (specialFilter === "minors") {
+        const hasMinorInFlat = data.reservations.some(r => 
+          (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
+          r.status !== "cancelada" &&
+          r.hasMinor
+        )
+        if (!hasMinorInFlat) return false
+      } else if (specialFilter === "risk") {
+        const hasRiskInFlat = data.reservations.some(r => 
+          (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
+          r.status !== "cancelada" &&
+          isResCamposResident(r, data.guests.find(g => g.id === r.guestId))
+        )
+        if (!hasRiskInFlat) return false
+      }
 
-    return true
-  })
+      return true
+    })
+  }, [modalOnly, data.flats, data.reservations, data.guests, cleaningFilter, specialFilter])
 
   if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     if (modalOnly) return null
@@ -4737,7 +4794,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
               variant="outline" 
               size="sm" 
               className="font-semibold text-xs gap-1.5 shadow-2xs h-8 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
-              title="Sincronizar dados agora (sincronização automática em tempo real a cada 4s)"
+              title="Sincronizar dados agora (sincronização automática em tempo real a cada 12s)"
             >
               <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isSyncing ? "animate-spin text-primary" : ""}`} />
               <span className="hidden sm:inline font-medium">
@@ -8890,6 +8947,132 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; [key: string]
                     </div>
                   )}
                 </div>
+
+                {/* Seção Própria: Frigobar & Notas Fiscais da Reserva */}
+                {selectedRes && (
+                  <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Refrigerator className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                            Frigobar & Notas Fiscais da Reserva
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            Extrato de consumo, pagamentos e Notas Fiscais anexadas
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const resCode = selectedRes?.code || selectedRes?.reservationCode || `RES-${selectedRes?.id}`
+                            const url = `${window.location.origin}/minha-reserva/${encodeURIComponent(String(resCode))}/frigobar`
+                            navigator.clipboard.writeText(url)
+                            toast({ title: "Link copiado!", description: "Link do frigobar da reserva copiado para a área de transferência." })
+                          }}
+                          className="h-7 px-2.5 text-[11px] font-bold gap-1 bg-background hover:bg-muted border-border"
+                        >
+                          <Copy className="w-3 h-3" /> Link
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            const resCode = selectedRes?.code || selectedRes?.reservationCode || `RES-${selectedRes?.id}`
+                            window.open(`/minha-reserva/${encodeURIComponent(String(resCode))}/frigobar`, "_blank")
+                          }}
+                          className="h-7 px-2.5 text-[11px] font-bold gap-1 bg-cyan-600 hover:bg-cyan-700 text-white"
+                        >
+                          <span>Abrir Frigobar ↗</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    {Array.isArray((selectedRes as any).minibarOrders) &&
+                      (selectedRes as any).minibarOrders.filter((o: any) => o && o.paymentStatus !== "cancelado").length > 0 && (
+                        <div className="pt-2 border-t border-cyan-500/20 space-y-1.5">
+                          {(selectedRes as any).minibarOrders
+                            .filter((o: any) => o && o.paymentStatus !== "cancelado")
+                            .map((ord: any) => {
+                              const invUrl = ord.invoice?.invoiceFileUrl || ord.invoiceFileUrl || ""
+                              const invName = ord.invoice?.invoiceFileName || ord.invoiceFileName || "Nota_Fiscal_Frigobar.pdf"
+                              const invNum = ord.invoice?.invoiceNumber || ord.invoiceNumber || ""
+                              const isOrdPaid =
+                                ord.paymentStatus === "pago" ||
+                                ord.paymentStatus === "lancamento_quitado" ||
+                                Boolean(invUrl)
+                              return (
+                                <div
+                                  key={ord.id}
+                                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-background/90 border border-border text-xs"
+                                >
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-bold text-slate-900 dark:text-slate-100">
+                                        {ord.guestName || selectedRes.guestName || "Hóspede"}
+                                      </span>
+                                      <Badge
+                                        variant="outline"
+                                        className={
+                                          isOrdPaid
+                                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px]"
+                                            : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px]"
+                                        }
+                                      >
+                                        {isOrdPaid ? "✓ Pago" : "Pendente"} • R${" "}
+                                        {Number(ord.totalAmount || 0)
+                                          .toFixed(2)
+                                          .replace(".", ",")}
+                                      </Badge>
+                                      {invNum && (
+                                        <Badge
+                                          variant="outline"
+                                          className="bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30 text-[10px]"
+                                        >
+                                          NF #{invNum}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    {Array.isArray(ord.items) && ord.items.length > 0 && (
+                                      <p className="text-[11px] text-muted-foreground">
+                                        {ord.items
+                                          .map((it: any) => `${it.quantity}x ${it.productName || it.name}`)
+                                          .join(", ")}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  {invUrl ? (
+                                    <a
+                                      href={invUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      download={invName}
+                                      className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-[11px] shadow-2xs transition-all shrink-0"
+                                    >
+                                      <FileText className="w-3.5 h-3.5" />
+                                      <span>Baixar Nota Fiscal</span>
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                  ) : isOrdPaid ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px] text-muted-foreground border-border shrink-0"
+                                    >
+                                      NF em emissão
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                              )
+                            })}
+                        </div>
+                      )}
+                  </div>
+                )}
 
                 {/* Configuração do Quarto para a Governança / Camareiras */}
                 <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-3">

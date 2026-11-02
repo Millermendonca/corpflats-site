@@ -4236,7 +4236,11 @@ export async function sendZapiDocument(config, {
   }
 
   const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
-  const policy = evaluateZapiChannelPolicy(config, {
+  const effectiveConfig = (config && config.instanceId && config.token)
+    ? config
+    : (activeDb?.zapiConfig || activeDb?.settings?.zapiConfig || config || {});
+
+  const policy = evaluateZapiChannelPolicy(effectiveConfig, {
     phone: cleanPhone,
     channelId,
     recipientRole,
@@ -4271,9 +4275,9 @@ export async function sendZapiDocument(config, {
     return { success: false, error: "Arquivo ou link do documento não especificado." };
   }
 
-  const instanceId = config?.instanceId?.trim();
-  const token = config?.token?.trim();
-  const clientToken = config?.clientToken?.trim();
+  const instanceId = effectiveConfig?.instanceId?.trim();
+  const token = effectiveConfig?.token?.trim();
+  const clientToken = effectiveConfig?.clientToken?.trim();
 
   // Simulação para desenvolvimento se credenciais não estiverem configuradas
   if (!instanceId || !token) {
@@ -4296,6 +4300,20 @@ export async function sendZapiDocument(config, {
     extension = fileName.split(".").pop().toLowerCase().replace(/[^a-z0-9]/g, "") || "pdf";
   }
 
+  const getMimeByExtension = (ext) => {
+    const map = {
+      pdf: "application/pdf",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      doc: "application/msword",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      webp: "image/webp",
+      gif: "image/gif"
+    };
+    return map[ext] || `application/${ext}`;
+  };
+
   // Se o documento for um arquivo local do sistema (/api/storage/files/...), lê do disco e converte em Base64
   let finalDocument = document;
   if (typeof document === "string") {
@@ -4305,28 +4323,43 @@ export async function sendZapiDocument(config, {
       if (fs.existsSync(fullPath)) {
         try {
           const fileBuf = fs.readFileSync(fullPath);
-          const mime = extension === "pdf" ? "application/pdf" : (extension === "docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : `application/${extension}`);
+          const mime = getMimeByExtension(extension);
           finalDocument = `data:${mime};base64,${fileBuf.toString("base64")}`;
           console.log(`[Z-API Document] Arquivo local '${relPath}' lido e convertido em Base64 (${fileBuf.length} bytes) para envio seguro.`);
         } catch (readErr) {
           console.warn("[Z-API Document] Erro ao ler arquivo local:", readErr.message);
-          const pubBase = config.publicOrigin || "https://corpflats.com.br";
+          const pubBase = effectiveConfig.publicOrigin || "https://corpflats.com.br";
           finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
         }
       } else {
-        const fallbackManualPath = path.join(DOCUMENTS_DIR, "Manual_do_Hospede_CorpFlats.pdf");
-        if (relPath.startsWith("documents/") && extension === "pdf" && fs.existsSync(fallbackManualPath)) {
+        // Verifica se é uma Nota Fiscal de Frigobar com backup em memória/banco (order.invoice.fileData)
+        const matchedInvoiceOrder = Array.isArray(activeDb?.minibarOrders)
+          ? activeDb.minibarOrders.find(o => o?.invoice?.invoiceFileUrl === document && o?.invoice?.fileData)
+          : null;
+        if (matchedInvoiceOrder?.invoice?.fileData) {
+          const rawData = String(matchedInvoiceOrder.invoice.fileData).trim();
+          const mime = getMimeByExtension(extension);
+          finalDocument = rawData.startsWith("data:") ? rawData : `data:${mime};base64,${rawData}`;
           try {
-            const fileBuf = fs.readFileSync(fallbackManualPath);
-            finalDocument = `data:application/pdf;base64,${fileBuf.toString("base64")}`;
-            console.log(`[Z-API Document] Arquivo '${relPath}' ausente no disco; usando Manual_do_Hospede_CorpFlats.pdf oficial (${fileBuf.length} bytes).`);
-          } catch (fbErr) {
-            const pubBase = config.publicOrigin || "https://corpflats.com.br";
-            finalDocument = `${pubBase.replace(/\/+$/, "")}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`;
-          }
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            const base64Clean = rawData.replace(/^data:.*?;base64,/, "");
+            fs.writeFileSync(fullPath, Buffer.from(base64Clean, "base64"));
+          } catch (_) {}
         } else {
-          const pubBase = config.publicOrigin || "https://corpflats.com.br";
-          finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
+          const fallbackManualPath = path.join(DOCUMENTS_DIR, "Manual_do_Hospede_CorpFlats.pdf");
+          if (relPath.startsWith("documents/") && extension === "pdf" && fs.existsSync(fallbackManualPath)) {
+            try {
+              const fileBuf = fs.readFileSync(fallbackManualPath);
+              finalDocument = `data:application/pdf;base64,${fileBuf.toString("base64")}`;
+              console.log(`[Z-API Document] Arquivo '${relPath}' ausente no disco; usando Manual_do_Hospede_CorpFlats.pdf oficial (${fileBuf.length} bytes).`);
+            } catch (fbErr) {
+              const pubBase = effectiveConfig.publicOrigin || "https://corpflats.com.br";
+              finalDocument = `${pubBase.replace(/\/+$/, "")}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`;
+            }
+          } else {
+            const pubBase = effectiveConfig.publicOrigin || "https://corpflats.com.br";
+            finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
+          }
         }
       }
     } else if (!document.startsWith("http://") && !document.startsWith("https://") && !document.startsWith("data:")) {
@@ -4340,7 +4373,7 @@ export async function sendZapiDocument(config, {
     }
   }
 
-  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const baseUrl = effectiveConfig.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
   const docUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-document/${extension}`;
   const headers = { "Content-Type": "application/json" };
   if (clientToken) headers["Client-Token"] = clientToken;
@@ -4366,11 +4399,13 @@ export async function sendZapiDocument(config, {
     });
     const data = await res.json().catch(() => ({}));
 
-    if (res.ok && (data.zaapId || data.id || data.messageId)) {
-      console.log(`[Z-API ✓] Documento ${fileName} entregue para ${targetPhone}. ID: ${data.zaapId || data.id}`);
+    if (res.ok && (data.zaapId || data.id || data.messageId || data.value)) {
+      const msgId = data.zaapId || data.id || data.messageId || `doc_${Date.now()}`;
+      console.log(`[Z-API ✓] Documento ${fileName} entregue para ${targetPhone}. ID: ${msgId}`);
+      recordBotSentMessage({ messageId: msgId, phone: targetPhone, text: finalCaption || fileName });
       return {
         success: true,
-        messageId: data.zaapId || data.id,
+        messageId: msgId,
         fileName,
         phone: targetPhone,
         originalPhone: cleanPhone,
@@ -4416,6 +4451,11 @@ export async function sendZapiMessage(config, {
   }
 
   const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
+  const effectiveConfig = (config && config.instanceId && config.token)
+    ? config
+    : (activeDb?.zapiConfig || activeDb?.settings?.zapiConfig || config || {});
+  config = effectiveConfig;
+
   const policy = evaluateZapiChannelPolicy(config, {
     phone: cleanPhone,
     channelId,
