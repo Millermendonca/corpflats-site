@@ -33,6 +33,10 @@ import {
   findContactAndReservation,
   processAiInboundMessage
 } from "../artifacts/api-server/whatsapp-ai-service.mjs";
+import {
+  extractIncomingMessageInfo,
+  resolveWhatsAppTargetPhone
+} from "../artifacts/api-server/zapi-service.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1469,6 +1473,56 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
       guestMiller.cpf = savedCpf;
       res605.companyId = savedResCompanyId;
     }
+  });
+
+  it("Desafio Empírico 9: Resolução de Webhook Z-API com @lid (37228843659494@lid) e momment numérico aciona conferência fiscal para 22998505276", async () => {
+    const rawWebhookPayload = {
+      text: { message: "me envia minha nota fiscal" },
+      type: "ReceivedCallback",
+      phone: "37228843659494@lid",
+      fromMe: true,
+      isEdit: false,
+      status: "RECEIVED",
+      chatLid: "37228843659494@lid",
+      fromApi: false,
+      isGroup: false,
+      momment: 1793595282000,
+      chatName: "Miller Mendonça Pessanha • Mensalista [UH 509]",
+      messageId: "A5F7FFE24077B83A49DB164FA758E636",
+      senderName: "CorpFlats",
+      connectedPhone: "5522997124021"
+    };
+
+    const incomingInfo = extractIncomingMessageInfo(rawWebhookPayload);
+    assert.ok(/^\d{4}-\d{2}-\d{2}T/.test(incomingInfo.timestamp), "Timestamp deve ser normalizado para string ISO 8601");
+
+    const cleanTarget = resolveWhatsAppTargetPhone(rawWebhookPayload, incomingInfo, testDb);
+    assert.strictEqual(cleanTarget, "5522998505276", "Deve resolver 37228843659494@lid para 5522998505276");
+
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    res605.checkoutDone = false;
+    testDb.invoices = testDb.invoices.filter(i => Number(i.reservationId) !== 605);
+
+    const sentReplies = [];
+    const aiRes = await processAiInboundMessage({
+      db: testDb,
+      incomingInfo: { ...incomingInfo, fromMe: false, senderName: "Miller" },
+      cleanTarget,
+      saveDatabase: () => {},
+      createNotification: () => {},
+      sendZapiMessage: async (_cfg, payload) => {
+        sentReplies.push(payload);
+        return { success: true };
+      },
+      appendMessageFn: () => {}
+    });
+
+    assert.strictEqual(aiRes.handled, true, "Deve processar a solicitação de nota fiscal do número resolvido via @lid");
+    assert.strictEqual(aiRes.action, "presented_conference");
+    assert.strictEqual(sentReplies.length, 1);
+    assert.match(sentReplies[0].message, /Conferência de Dados para Emissão de Nota Fiscal/i);
   });
 });
 

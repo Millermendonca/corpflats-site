@@ -10505,6 +10505,7 @@ export async function handleWhatsAppFiscalFlow({
         message: replyText,
         channelId: "ai_agent",
         recipientRole: "guest",
+        bypassTestMode: isDeveloperPhone(cleanTarget, db),
         db
       });
     }
@@ -10693,8 +10694,10 @@ export async function handleWhatsAppFiscalFlow({
       } catch (_) {}
     }
 
-    const hasConfirmExplicit = /\b(?:sim|pode\s*emitir|confirmo|confirmar|correto|autorizo|autorizar|pode\s*mandar|pode\s*gerar|est[aá]\s*correto|est[aá]\s*certo|tudo\s*certo|ok|beleza|perfeito|valeu|emitir|emite)\b/i.test(messageText) &&
-      !/\b(?:n[aã]o|cancela|recusa)\b/i.test(messageText);
+    const hasConfirmExplicit = (
+      /\b(?:sim|pode\s*emitir|confirmo|confirmar|correto|autorizo|autorizar|pode\s*mandar|pode\s*gerar|pode\s*enviar|est[aá]\s*correto|est[aá]\s*certo|tudo\s*certo|ok|beleza|perfeito|valeu)\b/i.test(messageText) ||
+      /^\s*(?:emitir|emite|pode\s*emitir)\s*[!.?]*$/i.test(messageText)
+    ) && !/\b(?:n[aã]o|cancela|recusa)\b/i.test(messageText);
 
     if (hasCadastralChanges && !hasConfirmExplicit) {
       conf.updatedAt = new Date().toISOString();

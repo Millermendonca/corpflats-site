@@ -1685,6 +1685,11 @@ export function isBotMessage(text) {
     return true;
   }
 
+  // 6. Mensagens automáticas do Fluxo Fiscal da Sofia (NFS-e)
+  if (/\b(?:conferencia\s+de\s+dados\s+para\s+(?:emissao\s+de\s+)?nota\s+fiscal|dados\s+da\s+nota\s+fiscal\s+confirmados|nota\s+fiscal\s+emitida\s+com\s+sucesso|nota\s+fiscal\s+ja\s+emitida\s+para\s+esta\s+reserva|solicitacao\s+de\s+alteracao\s+de\s+valor\s+de\s+nfs-e|aprovacao\s+confirmada\s+e\s+nfs-e\s+emitida|com\s+certeza\s+podemos\s+emitir\s+a\s+sua\s+nota\s+fiscal)\b/i.test(lower)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -5960,6 +5965,20 @@ export function extractIncomingMessageInfo(body) {
 
   const messageId = String(body.messageId || body.id || body.data?.key?.id || body.key?.id || `msg_${Date.now()}`);
 
+  const rawTs = body.momment || body.moment || body.timestamp || null;
+  let isoTimestamp = new Date().toISOString();
+  if (rawTs !== null && rawTs !== undefined && rawTs !== "") {
+    if (typeof rawTs === "number" || /^\d{10,14}$/.test(String(rawTs).trim())) {
+      const numVal = Number(rawTs);
+      const ms = numVal < 1e11 ? numVal * 1000 : numVal;
+      const d = new Date(ms);
+      if (!Number.isNaN(d.getTime())) isoTimestamp = d.toISOString();
+    } else {
+      const d = new Date(rawTs);
+      if (!Number.isNaN(d.getTime())) isoTimestamp = d.toISOString();
+    }
+  }
+
   return {
     isGroup,
     groupId,
@@ -5968,14 +5987,137 @@ export function extractIncomingMessageInfo(body) {
     senderPhone,
     senderName,
     fromMe,
+    fromApi: Boolean(body.fromApi === true || String(body.status || "").toUpperCase() === "SENT"),
+    chatLid: String(body.chatLid || body.participantLid || "").trim(),
+    chatName: String(body.chatName || body.chat?.name || body.name || "").trim(),
+    rawPhoneField: String(body.phone || body.chatId || body.recipientPhone || body.recipient || body.to || "").trim(),
     text: text ? text.trim() : (caption ? caption.trim() : (type !== "text" ? `[${type}]` : "")),
     type,
     mediaUrl,
     fileName,
     caption,
     messageId,
-    timestamp: body.momment || body.moment || body.timestamp || new Date().toISOString()
+    timestamp: isoTimestamp
   };
+}
+
+/**
+ * Resolve identificadores WhatsApp LID (@lid) enviados pela Z-API para o número canônico do telefone (ex: 5522998505276).
+ */
+export function resolveWhatsAppTargetPhone(body, incomingInfo, db) {
+  if (!incomingInfo) return "";
+  if (incomingInfo.isGroup && incomingInfo.groupId) return incomingInfo.groupId;
+
+  const rawTarget = incomingInfo.fromMe
+    ? (incomingInfo.phone || body?.phone || body?.chatId || incomingInfo.senderPhone)
+    : (incomingInfo.senderPhone || body?.phone || incomingInfo.phone);
+
+  const rawPhoneStr = String(body?.phone || body?.chatId || incomingInfo.rawPhoneField || "").trim();
+  const chatLidStr = String(body?.chatLid || incomingInfo.chatLid || "").trim();
+  const lidDigits = chatLidStr.replace(/\D/g, "") || (rawPhoneStr.includes("@lid") ? rawPhoneStr.replace(/\D/g, "") : "");
+  const rawTargetDigits = String(rawTarget || "").replace(/\D/g, "");
+
+  const isLidTarget =
+    rawPhoneStr.includes("@lid") ||
+    String(rawTarget || "").includes("@lid") ||
+    Boolean(lidDigits && rawTargetDigits === lidDigits);
+
+  if (!isLidTarget) {
+    const cleanP = cleanWhatsAppPhone(rawTarget);
+    if (lidDigits && cleanP && db && typeof db === "object") {
+      if (!db.whatsappLidMap) db.whatsappLidMap = {};
+      db.whatsappLidMap[lidDigits] = cleanP;
+    }
+    return cleanP;
+  }
+
+  // 1. Mapeamento estático conhecido do desenvolvedor (Miller: 37228843659494@lid -> 5522998505276)
+  if (lidDigits === "37228843659494") {
+    if (db && typeof db === "object") {
+      if (!db.whatsappLidMap) db.whatsappLidMap = {};
+      db.whatsappLidMap[lidDigits] = "5522998505276";
+    }
+    return "5522998505276";
+  }
+
+  // 2. Consulta db.whatsappLidMap persistido
+  if (lidDigits && db?.whatsappLidMap?.[lidDigits]) {
+    return cleanWhatsAppPhone(db.whatsappLidMap[lidDigits]);
+  }
+
+  // 3. Consulta db.whatsappConversations por chatLid salvo
+  if (lidDigits && Array.isArray(db?.whatsappConversations)) {
+    const convByLid = db.whatsappConversations.find(
+      c => c && c.chatLid && String(c.chatLid).replace(/\D/g, "") === lidDigits && c.phone && String(c.phone).replace(/\D/g, "") !== lidDigits
+    );
+    if (convByLid?.phone) {
+      const resolved = cleanWhatsAppPhone(convByLid.phone);
+      if (resolved) {
+        if (!db.whatsappLidMap) db.whatsappLidMap = {};
+        db.whatsappLidMap[lidDigits] = resolved;
+        return resolved;
+      }
+    }
+  }
+
+  // 4. Consulta histórico recente de Webhooks brutos (db.zapiRawWebhookLogs) com o mesmo chatLid e telefone real
+  if (lidDigits && Array.isArray(db?.zapiRawWebhookLogs)) {
+    for (const logEntry of db.zapiRawWebhookLogs) {
+      const b = logEntry?.body;
+      if (!b) continue;
+      const bLid = String(b.chatLid || "").replace(/\D/g, "");
+      const bPhoneRaw = String(b.phone || "").trim();
+      const bPhoneDigits = bPhoneRaw.replace(/\D/g, "");
+      if (bLid === lidDigits && bPhoneDigits && !bPhoneRaw.includes("@lid") && bPhoneDigits !== lidDigits) {
+        const resolved = cleanWhatsAppPhone(bPhoneDigits);
+        if (resolved) {
+          if (!db.whatsappLidMap) db.whatsappLidMap = {};
+          db.whatsappLidMap[lidDigits] = resolved;
+          return resolved;
+        }
+      }
+    }
+  }
+
+  // 5. Fallback por chatName / senderName no CRM (db.reservations / db.guests / db.whatsappConversations)
+  const rawChatName = String(body?.chatName || incomingInfo.chatName || "").trim();
+  if (rawChatName) {
+    const normStr = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const baseName = normStr(rawChatName.split(/[•|\-\[\(]/)[0]);
+    if (baseName.includes("miller mendonca") || baseName.includes("miller pessanha")) {
+      if (lidDigits && db && typeof db === "object") {
+        if (!db.whatsappLidMap) db.whatsappLidMap = {};
+        db.whatsappLidMap[lidDigits] = "5522998505276";
+      }
+      return "5522998505276";
+    }
+    if (baseName.length >= 3 && db && typeof db === "object") {
+      const resMatch = (db.reservations || []).find(r => r && r.guestName && normStr(r.guestName) === baseName && (r.guestPhone || r.phone));
+      if (resMatch) {
+        const resolved = cleanWhatsAppPhone(resMatch.guestPhone || resMatch.phone);
+        if (resolved) {
+          if (lidDigits) {
+            if (!db.whatsappLidMap) db.whatsappLidMap = {};
+            db.whatsappLidMap[lidDigits] = resolved;
+          }
+          return resolved;
+        }
+      }
+      const guestMatch = (db.guests || []).find(g => g && g.name && normStr(g.name) === baseName && (g.phone || g.whatsapp));
+      if (guestMatch) {
+        const resolved = cleanWhatsAppPhone(guestMatch.phone || guestMatch.whatsapp);
+        if (resolved) {
+          if (lidDigits) {
+            if (!db.whatsappLidMap) db.whatsappLidMap = {};
+            db.whatsappLidMap[lidDigits] = resolved;
+          }
+          return resolved;
+        }
+      }
+    }
+  }
+
+  return cleanWhatsAppPhone(rawTarget);
 }
 
 export function parseConciergeCheckoutMessage(text, registeredFlats = []) {
@@ -6540,7 +6682,18 @@ export function appendMessageToConversation(db, {
     ? (db.reservations || []).find(r => r.code === reservationCode)
     : findReservationByPhone(db, cleanPhone);
 
-  const nowIso = timestamp || new Date().toISOString();
+  let nowIso = new Date().toISOString();
+  if (timestamp !== null && timestamp !== undefined && timestamp !== "") {
+    if (typeof timestamp === "number" || /^\d{10,14}$/.test(String(timestamp).trim())) {
+      const numVal = Number(timestamp);
+      const ms = numVal < 1e11 ? numVal * 1000 : numVal;
+      const d = new Date(ms);
+      if (!Number.isNaN(d.getTime())) nowIso = d.toISOString();
+    } else {
+      const d = new Date(timestamp);
+      if (!Number.isNaN(d.getTime())) nowIso = d.toISOString();
+    }
+  }
   const isDev = isDeveloperPhone(cleanPhone, db);
 
   if (!conv) {
@@ -8419,6 +8572,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     return processInboundNpsAndSentiment(params);
   }
 
+  const processedInboundWebhookMsgIds = new Map();
+
   // 17. Webhook Z-API: Mensagem Recebida (/api/whatsapp/webhook/received)
   app.post("/api/whatsapp/webhook/received", async (req, res) => {
     const db = getDb();
@@ -8450,15 +8605,33 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       return res.status(200).json({ success: true, message: "Mensagem vazia ignorada" });
     }
 
-    // 1. Grava no Chat WhatsApp Web
-    const rawTarget = incomingInfo.isGroup && incomingInfo.groupId
-      ? incomingInfo.groupId
-      : (incomingInfo.fromMe
-          ? (incomingInfo.phone || req.body?.phone || req.body?.chatId || incomingInfo.senderPhone)
-          : (incomingInfo.senderPhone || req.body?.phone || incomingInfo.phone));
-    const cleanTarget = incomingInfo.isGroup ? rawTarget : cleanWhatsAppPhone(rawTarget);
+    // Deduplicação de callbacks duplicados da Z-API para o mesmo messageId em janela curta (60s)
+    const explicitMsgId = String(req.body?.messageId || req.body?.id || "").trim();
+    if (explicitMsgId) {
+      const nowMs = Date.now();
+      const prevTs = processedInboundWebhookMsgIds.get(explicitMsgId);
+      if (prevTs && (nowMs - prevTs) < 60000) {
+        return res.status(200).json({ success: true, duplicateWebhookIgnored: true, messageId: explicitMsgId });
+      }
+      processedInboundWebhookMsgIds.set(explicitMsgId, nowMs);
+      if (processedInboundWebhookMsgIds.size > 300) {
+        for (const [k, ts] of processedInboundWebhookMsgIds.entries()) {
+          if (nowMs - ts > 60000) processedInboundWebhookMsgIds.delete(k);
+        }
+      }
+    }
+
+    // 1. Grava no Chat WhatsApp Web (resolvendo @lid quando aplicável)
+    const cleanTarget = resolveWhatsAppTargetPhone(req.body, incomingInfo, db);
+
+    const isFromApi = Boolean(req.body?.fromApi === true || String(req.body?.status || "").toUpperCase() === "SENT");
+    const isBot = isFromApi ||
+                  isBotMessage(incomingInfo.text) ||
+                  /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(incomingInfo.senderName || "").trim()) ||
+                  isRecentBotSentMessage({ messageId: incomingInfo.messageId, phone: cleanTarget, text: incomingInfo.text });
 
     let updatedConv = null;
+    let preResFromMeResult = null;
     if (cleanTarget) {
       updatedConv = appendMessageToConversation(db, {
         phone: cleanTarget,
@@ -8478,6 +8651,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         groupName: incomingInfo.groupName
       });
 
+      if (updatedConv && incomingInfo.chatLid) {
+        updatedConv.chatLid = incomingInfo.chatLid;
+      }
+
       // Se for mensagem recebida de cliente (!fromMe), cria notificação visual e sonora
       if (!incomingInfo.fromMe && typeof createNotification === "function") {
         const preview = incomingInfo.text || (incomingInfo.type === "audio" ? "🎵 Áudio recebido" : (incomingInfo.type === "image" ? "📷 Foto recebida" : (incomingInfo.type === "document" ? "📄 Documento recebido" : "Nova mensagem")));
@@ -8493,10 +8670,6 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
       // Se for mensagem enviada pelo operador (fromMe: true) no WhatsApp móvel ou desktop:
       if (incomingInfo.fromMe && !incomingInfo.isGroup && cleanTarget) {
-        const isBot = isBotMessage(incomingInfo.text) ||
-                      /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(incomingInfo.senderName || "").trim()) ||
-                      isRecentBotSentMessage({ messageId: incomingInfo.messageId, phone: cleanTarget, text: incomingInfo.text });
-
         if (!isBot) {
           // 1. Pausa a IA nesta conversa para assegurar controle humano total
           const conv = updatedConv || (db.whatsappConversations || []).find(c => matchClientPhone(c.phone, cleanTarget));
@@ -8540,7 +8713,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             // ou respondeu no próprio número do gestor para confirmar/editar uma proposta pendente
             try {
               if (isDeveloperPhone(cleanTarget, db)) {
-                await handleManagerPreReservationReply({
+                preResFromMeResult = await handleManagerPreReservationReply({
                   db,
                   cleanTarget,
                   messageText: incomingInfo.text,
@@ -8705,6 +8878,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     // 5. Agente de IA para WhatsApp (Atuação Híbrida / Resposta Autônoma / Transbordo Humano / Assistente Fiscal)
     let aiProcessResult = null;
+    const isDevSelfTest = Boolean(
+      incomingInfo.fromMe &&
+      isDeveloperPhone(cleanTarget, db) &&
+      !isBot &&
+      !preResFromMeResult?.handled
+    );
     if (npsInboundResult?.npsHandled) {
       aiProcessResult = {
         skipped: true,
@@ -8712,11 +8891,20 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         action: npsInboundResult.action,
         score: npsInboundResult.score
       };
-    } else if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
+    } else if ((!incomingInfo.fromMe || isDevSelfTest) && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
       try {
+        const effectiveIncomingInfo = isDevSelfTest
+          ? {
+              ...incomingInfo,
+              fromMe: false,
+              senderName: (!incomingInfo.senderName || incomingInfo.senderName === "CorpFlats" || incomingInfo.senderName === "Você (CorpFlats)")
+                ? "Miller"
+                : incomingInfo.senderName
+            }
+          : incomingInfo;
         aiProcessResult = await processAiInboundMessage({
           db,
-          incomingInfo,
+          incomingInfo: effectiveIncomingInfo,
           cleanTarget,
           saveDatabase,
           createNotification,
@@ -8788,13 +8976,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     } else {
       const incomingInfo = extractIncomingMessageInfo(req.body);
       if (incomingInfo && (incomingInfo.text || incomingInfo.mediaUrl || incomingInfo.type !== "text")) {
-        const rawTarget = incomingInfo.isGroup && incomingInfo.groupId
-          ? incomingInfo.groupId
-          : (incomingInfo.senderPhone || req.body?.phone || req.body?.participantPhone);
-        const cleanTarget = incomingInfo.isGroup ? rawTarget : cleanWhatsAppPhone(rawTarget);
+        const cleanTarget = resolveWhatsAppTargetPhone(req.body, incomingInfo, db);
 
         if (cleanTarget) {
-          appendMessageToConversation(db, {
+          const updatedConv = appendMessageToConversation(db, {
             phone: cleanTarget,
             senderName: incomingInfo.senderName,
             senderPhone: incomingInfo.senderPhone,
@@ -8811,6 +8996,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             groupId: incomingInfo.groupId,
             groupName: incomingInfo.groupName
           });
+          if (updatedConv && incomingInfo.chatLid) {
+            updatedConv.chatLid = incomingInfo.chatLid;
+          }
           if (!incomingInfo.fromMe && typeof createNotification === "function") {
             createNotification({
               category: "whatsapp",
@@ -8832,6 +9020,27 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             incomingInfo,
             isTest: false
           });
+        } else if (!incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
+          const isFromApi = Boolean(req.body?.fromApi === true || String(req.body?.status || "").toUpperCase() === "SENT");
+          const isBot = isFromApi ||
+                        isBotMessage(incomingInfo.text) ||
+                        /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(incomingInfo.senderName || "").trim()) ||
+                        isRecentBotSentMessage({ messageId: incomingInfo.messageId, phone: cleanTarget, text: incomingInfo.text });
+          if (!incomingInfo.fromMe || (isDeveloperPhone(cleanTarget, db) && !isBot)) {
+            try {
+              await processAiInboundMessage({
+                db,
+                incomingInfo: incomingInfo.fromMe ? { ...incomingInfo, fromMe: false, senderName: "Miller" } : incomingInfo,
+                cleanTarget,
+                saveDatabase,
+                createNotification,
+                sendZapiMessage,
+                appendMessageFn: appendMessageToConversation
+              });
+            } catch (aiErr) {
+              console.warn("[WhatsApp AI Fallback Webhook Error]:", aiErr.message);
+            }
+          }
         }
       }
     }

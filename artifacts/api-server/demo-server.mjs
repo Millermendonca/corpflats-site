@@ -14143,40 +14143,57 @@ function pruneDatabase() {
     delete LIMITS[hrKey];
   }
 
+  const toComparableIso = (raw) => {
+    if (!raw) return "";
+    const str = String(raw).trim();
+    if (/^\d{10,14}$/.test(str)) {
+      const n = Number(str);
+      const d = new Date(n < 1e11 ? n * 1000 : n);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    }
+    return str;
+  };
+
   for (const [key, max] of Object.entries(LIMITS)) {
     if (Array.isArray(db[key]) && db[key].length > max) {
       // Ordena por data mais recente primeiro e mantém os N mais recentes (null-safe e sem overhead de ICU/localeCompare)
       db[key] = db[key]
         .filter(Boolean)
         .sort((a, b) => {
-          const dateA = String(
+          if (key === "whatsappConversations") {
+            const pA = Boolean(a?.isDeveloper || a?.pinned || a?.fiscalConferenceState || a?.awaitingFiscalData || String(a?.phone || "").includes("98505276"));
+            const pB = Boolean(b?.isDeveloper || b?.pinned || b?.fiscalConferenceState || b?.awaitingFiscalData || String(b?.phone || "").includes("98505276"));
+            if (pA && !pB) return -1;
+            if (!pA && pB) return 1;
+          }
+          const dateA = toComparableIso(
+            a?.updatedAt ||
+            a?.updated_at ||
+            a?.lastMessageAt ||
             a?.createdAt ||
             a?.created_at ||
             a?.executedAt ||
             a?.sentAt ||
             a?.metadata?.sentAt ||
             a?.metadata?.queuedAt ||
-            a?.lastMessageAt ||
             a?.scheduledFor ||
             a?.date ||
-            a?.updatedAt ||
-            a?.updated_at ||
             a?.timestamp ||
             a?.id ||
             ""
           );
-          const dateB = String(
+          const dateB = toComparableIso(
+            b?.updatedAt ||
+            b?.updated_at ||
+            b?.lastMessageAt ||
             b?.createdAt ||
             b?.created_at ||
             b?.executedAt ||
             b?.sentAt ||
             b?.metadata?.sentAt ||
             b?.metadata?.queuedAt ||
-            b?.lastMessageAt ||
             b?.scheduledFor ||
             b?.date ||
-            b?.updatedAt ||
-            b?.updated_at ||
             b?.timestamp ||
             b?.id ||
             ""
