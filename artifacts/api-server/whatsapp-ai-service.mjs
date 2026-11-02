@@ -12,6 +12,7 @@
  */
 
 import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp } from "./zapi-service.mjs";
+import { buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
 
 export function isNonRequesterGuestForReservation(reservation, senderPhone = "", db = {}) {
   if (!reservation) return false;
@@ -9096,71 +9097,14 @@ export function formatCpfOrCnpj(doc = "") {
 }
 
 /**
- * Monta descrição padrão do sistema para a estadia na NFS-e (idêntica ao padrão de /notas)
+ * Obtém a descrição oficial da estadia diretamente do motor oficial de /notas (buildOfficialNfseDraftForReservation)
  */
 export function buildDefaultStayDescription(matchedReservation, options = {}) {
-  const guestName = String(
-    options.guestName ||
-    matchedReservation?.guestName ||
-    (Array.isArray(matchedReservation?.guests) && matchedReservation.guests[0]?.name) ||
-    options.tomadorNome ||
-    ""
-  ).trim();
-
-  if (!matchedReservation && !guestName && !options.flatNumber) {
-    return (
-      "Nota relativa à hospedagem de Hóspede.\n" +
-      "Local: CorpFlats.\n" +
-      "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ\n" +
-      "Quantidade de diárias: 1"
-    );
-  }
-
-  const effectiveGuestName = guestName || "Hóspede";
-  const flat = matchedReservation?.flatNumber !== undefined && matchedReservation?.flatNumber !== null && String(matchedReservation.flatNumber).trim() !== ""
-    ? String(matchedReservation.flatNumber).trim()
-    : (options.flatNumber ? String(options.flatNumber).trim() : "");
-
-  const checkin = matchedReservation?.checkinDate
-    ? String(matchedReservation.checkinDate).substring(0, 10)
-    : (options.checkIn ? String(options.checkIn).substring(0, 10) : "");
-
-  const rawCheckout = (matchedReservation?.earlyCheckout && matchedReservation?.originalCheckoutDate)
-    ? matchedReservation.originalCheckoutDate
-    : matchedReservation?.checkoutDate;
-  const checkout = rawCheckout
-    ? String(rawCheckout).substring(0, 10)
-    : (options.checkOut ? String(options.checkOut).substring(0, 10) : "");
-
-  let diarias = Number(matchedReservation?.quantidadeDiarias || matchedReservation?.diarias || matchedReservation?.nights || options.quantidadeDiarias) || 1;
-  if (checkin && checkout) {
-    const t1 = new Date(checkin).getTime();
-    const t2 = new Date(checkout).getTime();
-    if (!isNaN(t1) && !isNaN(t2) && t2 > t1) {
-      diarias = Math.max(1, Math.round((t2 - t1) / (1000 * 60 * 60 * 24)));
-    }
-  }
-
-  let desc = `Nota relativa à hospedagem de ${effectiveGuestName}`;
-  if (flat) desc += `, no Flat ${flat}`;
-  desc += ".\nLocal: CorpFlats.";
-  desc += "\nRua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ";
-  if (diarias) desc += `\nQuantidade de diárias: ${diarias}`;
-  if (checkin) desc += `\nCheck-in: ${checkin}`;
-  if (checkout) desc += `\nCheck-out: ${checkout}`;
-
-  const idParts = [];
-  const b2bNumber = matchedReservation?.b2bReservationNumber || matchedReservation?.externalReservationNumber || options.b2bNumber;
-  const rloc = matchedReservation?.b2bLocatorRloc || options.rloc;
-  const costCenter = matchedReservation?.costCenter || options.costCenter;
-  if (b2bNumber) idParts.push(`Reserva B2B Nº ${b2bNumber}`);
-  if (rloc) idParts.push(`RLOC: ${rloc}`);
-  if (costCenter) idParts.push(`CC: ${costCenter}`);
-  if (idParts.length > 0) {
-    desc += `\nRef.: ${idParts.join(" | ")}`;
-  }
-
-  return desc;
+  const draft = buildOfficialNfseDraftForReservation(options.db || null, {
+    reservation: matchedReservation,
+    ...options
+  });
+  return draft.descricaoServico;
 }
 
 /**
@@ -9346,8 +9290,13 @@ export async function executeWhatsAppFiscalEmission({
 
   if (typeof globalThis.executeNfseEmissionInternal === "function") {
     try {
-      const res = await globalThis.executeNfseEmissionInternal(payload);
-      if (res && res.success) return res;
+      const res = await globalThis.executeNfseEmissionInternal(payload, db);
+      if (res && res.success) {
+        if (typeof saveDatabase === "function") {
+          try { await saveDatabase(); } catch (_) {}
+        }
+        return res;
+      }
     } catch (_) {}
   }
 
@@ -9923,9 +9872,9 @@ export function findContactAndReservation(db, cleanTarget) {
 }
 
 /**
- * Resolve e consolida todos os dados fiscais/cadastrais do tomador já existentes no CRM
- * (db.companies, db.guests, db.reservations, db.guestAccounts e db.invoices) para que
- * a Sofia nunca peça CPF, nome, endereço ou e-mail quando o cliente já possui cadastro.
+ * Obtém diretamente da plataforma oficial /notas (buildOfficialNfseDraftForReservation)
+ * todos os dados pré-montados da nota fiscal (tomador, endereço, descrição e valor),
+ * sem precisar gerar paralelamente e sem pedir dados que já constam no CRM.
  */
 export function resolveCrmFiscalTomador(db, {
   cleanTarget = "",
@@ -9944,355 +9893,26 @@ export function resolveCrmFiscalTomador(db, {
     linkedCompany = found.linkedCompany;
   }
 
-  const cleanPhoneNum = cleanWhatsAppPhone(cleanTarget || matchedReservation?.guestPhone || matchedGuest?.phone || "");
-  const targetLast8 = cleanPhoneNum.length >= 8 ? cleanPhoneNum.slice(-8) : "";
-
-  // Candidatos adicionais em db.guests (caso haja mais de um registro para o mesmo hóspede)
-  const allGuests = Array.isArray(db.guests) ? db.guests : [];
-  const resDoc = onlyDigits(
-    matchedReservation?.guestDocument ||
-    matchedReservation?.guestCpf ||
-    matchedReservation?.document ||
-    matchedReservation?.cpf ||
-    matchedReservation?.guests?.[0]?.cpf ||
-    matchedReservation?.guests?.[0]?.document ||
-    ""
-  );
-  const guestDocInit = onlyDigits(
-    matchedGuest?.document ||
-    matchedGuest?.documentNumber ||
-    matchedGuest?.cpf ||
-    matchedGuest?.cnpj ||
-    matchedGuest?.cpfCnpj ||
-    resDoc ||
-    ""
-  );
-
-  const matchingGuests = allGuests.filter(g => {
-    if (!g) return false;
-    if (matchedGuest && g === matchedGuest) return true;
-    if (matchedGuest?.id && String(g.id) === String(matchedGuest.id)) return true;
-    if (matchedReservation?.guestId && String(g.id) === String(matchedReservation.guestId)) return true;
-    const gDoc = onlyDigits(g.document || g.documentNumber || g.cpf || g.cnpj || g.cpfCnpj || "");
-    if (guestDocInit && guestDocInit.length >= 11 && gDoc === guestDocInit) return true;
-    const gp = cleanWhatsAppPhone(g.phone || g.whatsapp || "");
-    return Boolean(targetLast8 && gp && (gp === cleanPhoneNum || gp.endsWith(targetLast8) || cleanPhoneNum.endsWith(gp.slice(-8))));
-  });
-
-  // Conta do Portal do Hóspede / Pré-Check-in Digital (db.guestAccounts)
-  const allAccounts = Array.isArray(db.guestAccounts) ? db.guestAccounts : [];
-  const matchingAccounts = allAccounts.filter(a => {
-    if (!a) return false;
-    if (matchedGuest?.id && a.guestId && String(a.guestId) === String(matchedGuest.id)) return true;
-    const aDoc = onlyDigits(a.document || a.documentNumber || a.cpf || "");
-    if (guestDocInit && guestDocInit.length >= 11 && aDoc === guestDocInit) return true;
-    const ap = cleanWhatsAppPhone(a.phone || "");
-    return Boolean(targetLast8 && ap && (ap === cleanPhoneNum || ap.endsWith(targetLast8) || cleanPhoneNum.endsWith(ap.slice(-8))));
-  });
-
-  // Faturas anteriores do mesmo hóspede/telefone em db.invoices
-  const allInvoices = Array.isArray(db.invoices) ? db.invoices : [];
-  const prevInvoices = allInvoices.filter(inv => {
-    if (!inv || inv.status === "cancelada" || inv.status === "cancelled") return false;
-    if (matchedGuest?.id && inv.guestId && String(inv.guestId) === String(matchedGuest.id)) return true;
-    const iDoc = onlyDigits(inv.tomadorCpfCnpj || "");
-    if (guestDocInit && guestDocInit.length >= 11 && iDoc === guestDocInit) return true;
-    const ip = cleanWhatsAppPhone(inv.tomadorTelefone || "");
-    return Boolean(targetLast8 && ip && (ip === cleanPhoneNum || ip.endsWith(targetLast8) || cleanPhoneNum.endsWith(ip.slice(-8))));
-  });
-
-  const pickNonEmpty = (...vals) => {
-    for (const v of vals) {
-      if (v !== undefined && v !== null) {
-        const s = String(v).trim();
-        if (s !== "" && !/^h[oó]spede(\s+\d+)?$/i.test(s)) return s;
-      }
-    }
-    return "";
-  };
-
-  const confFiscal = matchedReservation?.confirmedFiscalData || null;
-  const invDetails = matchedReservation?.invoiceDetails || null;
-  const firstResGuest = Array.isArray(matchedReservation?.guests) ? matchedReservation.guests[0] : null;
-  const checkinInfo = matchedReservation?.checkinData || matchedReservation?.fnrh || null;
-
-  // 1. Verifica dados PJ (linkedCompany ou companyData) se não houver preferência explícita por PF
-  const compCnpj = onlyDigits(
-    linkedCompany?.cnpj ||
-    (confFiscal?.tomadorTipo === "PJ" ? confFiscal?.tomadorCpfCnpj : "") ||
-    (invDetails?.tomadorTipo === "PJ" ? invDetails?.tomadorCpfCnpj : "") ||
-    matchedReservation?.companyCnpj ||
-    matchedGuest?.companyCnpj ||
-    matchedGuest?.companyData?.cnpj ||
-    ""
-  );
-
-  if (preferType !== "PF" && compCnpj.length === 14 && isValidCnpj(compCnpj) && (linkedCompany || preferType === "PJ" || confFiscal?.tomadorTipo === "PJ" || invDetails?.tomadorTipo === "PJ" || matchedReservation?.companyId || matchedGuest?.companyId)) {
-    const tomadorNome = pickNonEmpty(
-      confFiscal?.tomadorTipo === "PJ" ? confFiscal?.tomadorNome : "",
-      invDetails?.tomadorTipo === "PJ" ? invDetails?.tomadorNome : "",
-      linkedCompany?.corporateName,
-      linkedCompany?.razaoSocial,
-      linkedCompany?.tradeName,
-      matchedGuest?.companyData?.companyName,
-      matchedGuest?.companyName,
-      matchedReservation?.companyName,
-      "Empresa"
-    );
-    const tomadorEmail = pickNonEmpty(
-      confFiscal?.tomadorEmail,
-      invDetails?.tomadorEmail,
-      linkedCompany?.financialEmail,
-      linkedCompany?.email,
-      matchedGuest?.companyData?.companyEmail,
-      matchedGuest?.financialEmail,
-      matchedGuest?.email,
-      matchedReservation?.guestEmail
-    );
-    const tomadorEndereco = pickNonEmpty(
-      confFiscal?.tomadorEndereco,
-      invDetails?.tomadorEndereco,
-      linkedCompany?.logradouro,
-      linkedCompany?.address,
-      linkedCompany?.street,
-      linkedCompany?.endereco,
-      "Av. Pelinca, 100"
-    );
-    const tomadorNumero = pickNonEmpty(
-      confFiscal?.tomadorNumero,
-      invDetails?.tomadorNumero,
-      linkedCompany?.numero,
-      linkedCompany?.number,
-      linkedCompany?.streetNumber,
-      "S/N"
-    );
-    const tomadorBairro = pickNonEmpty(
-      confFiscal?.tomadorBairro,
-      invDetails?.tomadorBairro,
-      linkedCompany?.bairro,
-      linkedCompany?.neighborhood,
-      "Pelinca"
-    );
-    const tomadorCidade = pickNonEmpty(
-      confFiscal?.tomadorCidade,
-      invDetails?.tomadorCidade,
-      linkedCompany?.cidade,
-      linkedCompany?.city,
-      "Campos dos Goytacazes"
-    );
-    const tomadorUf = pickNonEmpty(
-      confFiscal?.tomadorUf,
-      invDetails?.tomadorUf,
-      linkedCompany?.uf,
-      linkedCompany?.state,
-      "RJ"
-    ).toUpperCase();
-    const tomadorCep = cleanCep(pickNonEmpty(
-      confFiscal?.tomadorCep,
-      invDetails?.tomadorCep,
-      linkedCompany?.cep,
-      linkedCompany?.zipCode,
-      "28035000"
-    ));
-    const tomadorCodigoMunicipio = pickNonEmpty(
-      confFiscal?.tomadorCodigoMunicipio,
-      linkedCompany?.codigoMunicipio,
-      linkedCompany?.ibgeCode,
-      "3301009"
-    );
-
-    return {
-      tomadorTipo: "PJ",
-      tomadorCpfCnpj: compCnpj,
-      tomadorNome,
-      tomadorEmail,
-      tomadorTelefone: cleanPhoneNum,
-      tomadorEndereco,
-      tomadorNumero,
-      tomadorBairro,
-      tomadorCidade,
-      tomadorUf,
-      tomadorCep,
-      tomadorCodigoMunicipio
-    };
-  }
-
-  // 2. Verifica dados PF/PJ do próprio hóspede em db.guests, db.reservations, db.guestAccounts e db.invoices
-  const docCandidates = [
-    confFiscal?.tomadorCpfCnpj,
-    invDetails?.tomadorCpfCnpj,
-    matchedGuest?.cpf,
-    matchedGuest?.document,
-    matchedGuest?.documentNumber,
-    matchedGuest?.cpfCnpj,
-    matchedGuest?.cnpj,
-    ...matchingGuests.flatMap(g => [g.cpf, g.document, g.documentNumber, g.cpfCnpj, g.cnpj]),
-    matchedReservation?.guestDocument,
-    matchedReservation?.guestCpf,
-    matchedReservation?.document,
-    matchedReservation?.cpf,
-    matchedReservation?.cnpj,
-    firstResGuest?.cpf,
-    firstResGuest?.document,
-    firstResGuest?.documentNumber,
-    checkinInfo?.cpf,
-    checkinInfo?.document,
-    checkinInfo?.documentNumber,
-    ...matchingAccounts.flatMap(a => [a.cpf, a.document, a.documentNumber]),
-    ...prevInvoices.map(i => i.tomadorCpfCnpj)
-  ];
-
-  let resolvedDoc = "";
-  for (const rawD of docCandidates) {
-    const d = onlyDigits(rawD || "");
-    if (d.length === 11 || d.length === 14) {
-      resolvedDoc = d;
-      break;
-    }
-  }
-
-  if (!resolvedDoc) {
-    return null;
-  }
-
-  const isPjDoc = resolvedDoc.length === 14;
-  const tomadorNome = pickNonEmpty(
-    confFiscal?.tomadorNome,
-    invDetails?.tomadorNome,
-    matchedGuest?.fullName,
-    matchedGuest?.name,
-    ...matchingGuests.flatMap(g => [g.fullName, g.name]),
-    matchedReservation?.guestName,
-    firstResGuest?.name,
-    checkinInfo?.fullName,
-    checkinInfo?.name,
-    ...matchingAccounts.flatMap(a => [a.fullName, a.name]),
-    ...prevInvoices.map(i => i.tomadorNome),
+  const draft = buildOfficialNfseDraftForReservation(db, {
+    reservation: matchedReservation,
+    guest: matchedGuest,
+    company: linkedCompany,
+    cleanTarget,
     senderName,
-    "Hóspede"
-  );
+    preferType
+  });
 
-  const tomadorEmail = pickNonEmpty(
-    confFiscal?.tomadorEmail,
-    invDetails?.tomadorEmail,
-    matchedGuest?.email,
-    matchedGuest?.financialEmail,
-    ...matchingGuests.flatMap(g => [g.email, g.financialEmail]),
-    matchedReservation?.guestEmail,
-    matchedReservation?.email,
-    firstResGuest?.email,
-    checkinInfo?.email,
-    ...matchingAccounts.map(a => a.email),
-    ...prevInvoices.map(i => i.tomadorEmail)
-  );
-
-  const tomadorEndereco = pickNonEmpty(
-    confFiscal?.tomadorEndereco,
-    invDetails?.tomadorEndereco,
-    matchedGuest?.street,
-    matchedGuest?.logradouro,
-    matchedGuest?.address,
-    matchedGuest?.endereco,
-    ...matchingGuests.flatMap(g => [g.street, g.logradouro, g.address, g.endereco]),
-    matchedReservation?.guestAddress,
-    matchedReservation?.address,
-    checkinInfo?.street,
-    checkinInfo?.address,
-    ...matchingAccounts.flatMap(a => [a.street, a.logradouro, a.address, a.endereco]),
-    ...prevInvoices.map(i => i.tomadorEndereco),
-    "Av. Pelinca, 100"
-  );
-
-  const tomadorNumero = pickNonEmpty(
-    confFiscal?.tomadorNumero,
-    invDetails?.tomadorNumero,
-    matchedGuest?.streetNumber,
-    matchedGuest?.number,
-    matchedGuest?.numero,
-    ...matchingGuests.flatMap(g => [g.streetNumber, g.number, g.numero]),
-    checkinInfo?.streetNumber,
-    checkinInfo?.number,
-    ...matchingAccounts.flatMap(a => [a.streetNumber, a.number, a.numero]),
-    ...prevInvoices.map(i => i.tomadorNumero),
-    "S/N"
-  );
-
-  const tomadorBairro = pickNonEmpty(
-    confFiscal?.tomadorBairro,
-    invDetails?.tomadorBairro,
-    matchedGuest?.neighborhood,
-    matchedGuest?.bairro,
-    ...matchingGuests.flatMap(g => [g.neighborhood, g.bairro]),
-    checkinInfo?.neighborhood,
-    checkinInfo?.bairro,
-    ...matchingAccounts.flatMap(a => [a.neighborhood, a.bairro]),
-    ...prevInvoices.map(i => i.tomadorBairro),
-    "Pelinca"
-  );
-
-  const tomadorCidade = pickNonEmpty(
-    confFiscal?.tomadorCidade,
-    invDetails?.tomadorCidade,
-    matchedGuest?.city,
-    matchedGuest?.cidade,
-    matchedGuest?.municipio,
-    ...matchingGuests.flatMap(g => [g.city, g.cidade, g.municipio]),
-    checkinInfo?.city,
-    checkinInfo?.cidade,
-    ...matchingAccounts.flatMap(a => [a.city, a.cidade, a.municipio]),
-    ...prevInvoices.map(i => i.tomadorCidade),
-    "Campos dos Goytacazes"
-  );
-
-  const tomadorUf = pickNonEmpty(
-    confFiscal?.tomadorUf,
-    invDetails?.tomadorUf,
-    matchedGuest?.state,
-    matchedGuest?.uf,
-    matchedGuest?.estado,
-    ...matchingGuests.flatMap(g => [g.state, g.uf, g.estado]),
-    checkinInfo?.state,
-    checkinInfo?.uf,
-    ...matchingAccounts.flatMap(a => [a.state, a.uf, a.estado]),
-    ...prevInvoices.map(i => i.tomadorUf),
-    "RJ"
-  ).toUpperCase();
-
-  const tomadorCep = cleanCep(pickNonEmpty(
-    confFiscal?.tomadorCep,
-    invDetails?.tomadorCep,
-    matchedGuest?.cep,
-    matchedGuest?.zipCode,
-    ...matchingGuests.flatMap(g => [g.cep, g.zipCode]),
-    checkinInfo?.cep,
-    checkinInfo?.zipCode,
-    ...matchingAccounts.flatMap(a => [a.cep, a.zipCode]),
-    ...prevInvoices.map(i => i.tomadorCep),
-    "28035000"
-  ));
-
-  const tomadorCodigoMunicipio = pickNonEmpty(
-    confFiscal?.tomadorCodigoMunicipio,
-    matchedGuest?.codigoMunicipio,
-    matchedGuest?.ibgeCode,
-    ...matchingGuests.flatMap(g => [g.codigoMunicipio, g.ibgeCode]),
-    ...prevInvoices.map(i => i.tomadorCodigoMunicipio),
-    "3301009"
-  );
+  if (!draft || !draft.tomadorCpfCnpj) return null;
+  const docDigits = onlyDigits(draft.tomadorCpfCnpj);
+  if (docDigits.length !== 11 && docDigits.length !== 14) return null;
+  if (preferType === "PJ" && docDigits.length !== 14) return null;
+  if (preferType === "PF" && docDigits.length !== 11) return null;
 
   return {
-    tomadorTipo: isPjDoc ? "PJ" : "PF",
-    tomadorCpfCnpj: resolvedDoc,
-    tomadorNome,
-    tomadorEmail,
-    tomadorTelefone: cleanPhoneNum,
-    tomadorEndereco,
-    tomadorNumero,
-    tomadorBairro,
-    tomadorCidade,
-    tomadorUf,
-    tomadorCep,
-    tomadorCodigoMunicipio
+    ...draft,
+    tomadorTipo: docDigits.length === 14 ? "PJ" : "PF",
+    tomadorCpfCnpj: docDigits,
+    tomadorTelefone: cleanWhatsAppPhone(draft.tomadorTelefone || cleanTarget || matchedReservation?.guestPhone || matchedGuest?.phone || "")
   };
 }
 
@@ -10801,6 +10421,13 @@ export async function handleWhatsAppFiscalFlow({
             )
           )
         : null;
+      if (resForUpdate) {
+        resForUpdate.confirmedFiscalData = {
+          ...(resForUpdate.confirmedFiscalData || {}),
+          ...conf,
+          updatedAt: conf.updatedAt
+        };
+      }
       const isCheckedOutUpdate = isReservationCheckedOutForFiscal(resForUpdate, db);
       const updatedConfMsg = `Dados cadastrais atualizados com sucesso!\n\n${buildConferencePresentationMessage(conf, { isCheckedOut: isCheckedOutUpdate })}`;
       return await respond(updatedConfMsg, {
@@ -11050,10 +10677,16 @@ export async function handleWhatsAppFiscalFlow({
       db.companies.push(company);
     }
 
-    const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-    const desc = buildDefaultStayDescription(matchedReservation, {
-      guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || contactDisplayName
+    const officialDraft = buildOfficialNfseDraftForReservation(db, {
+      reservation: matchedReservation,
+      guest: matchedGuest,
+      company,
+      cleanTarget,
+      senderName: contactDisplayName,
+      preferType: "PJ"
     });
+    const valTotal = Number(officialDraft.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+    const desc = officialDraft.descricaoServico;
 
     conv.fiscalConferenceState = {
       status: "awaiting_confirmation",
@@ -11113,10 +10746,15 @@ export async function handleWhatsAppFiscalFlow({
     const nameFromText = extractPersonName(messageText);
     const finalName = toTitleCase(nameFromText || crmPf?.tomadorNome || contactDisplayName || "Hóspede");
 
-    const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-    const desc = buildDefaultStayDescription(matchedReservation, {
-      guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || finalName
+    const officialDraftPf = buildOfficialNfseDraftForReservation(db, {
+      reservation: matchedReservation,
+      guest: matchedGuest,
+      guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || finalName,
+      cleanTarget,
+      preferType: "PF"
     });
+    const valTotal = Number(officialDraftPf.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+    const desc = officialDraftPf.descricaoServico;
 
     conv.fiscalConferenceState = {
       status: "awaiting_confirmation",
@@ -11163,10 +10801,8 @@ export async function handleWhatsAppFiscalFlow({
         preferType: "PJ"
       });
       if (crmPj && crmPj.tomadorTipo === "PJ" && crmPj.tomadorCpfCnpj) {
-        const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-        const desc = buildDefaultStayDescription(matchedReservation, {
-          guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || contactDisplayName
-        });
+        const valTotal = Number(crmPj.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+        const desc = crmPj.descricaoServico;
         conv.fiscalConferenceState = {
           status: "awaiting_confirmation",
           reservationId: matchedReservation?.id,
@@ -11199,10 +10835,8 @@ export async function handleWhatsAppFiscalFlow({
         preferType: "PF"
       });
       if (crmPf && crmPf.tomadorCpfCnpj) {
-        const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-        const desc = buildDefaultStayDescription(matchedReservation, {
-          guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || crmPf.tomadorNome
-        });
+        const valTotal = Number(crmPf.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+        const desc = crmPf.descricaoServico;
         conv.fiscalConferenceState = {
           status: "awaiting_confirmation",
           reservationId: matchedReservation?.id,
@@ -11227,7 +10861,7 @@ export async function handleWhatsAppFiscalFlow({
     }
   }
 
-  // Cenário D: Tomador já identificado no CRM / Reserva (Empresa vinculada ou dados PF/PJ do hóspede em db.guests, db.reservations, db.guestAccounts ou db.invoices)
+  // Cenário D: Obtém todos os dados já pré-montados diretamente da plataforma oficial /notas
   const crmTomador = resolveCrmFiscalTomador(db, {
     cleanTarget,
     matchedReservation,
@@ -11237,10 +10871,8 @@ export async function handleWhatsAppFiscalFlow({
   });
 
   if (crmTomador && crmTomador.tomadorCpfCnpj) {
-    const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-    const desc = buildDefaultStayDescription(matchedReservation, {
-      guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || crmTomador.tomadorNome
-    });
+    const valTotal = Number(crmTomador.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+    const desc = crmTomador.descricaoServico;
 
     conv.fiscalConferenceState = {
       status: "awaiting_confirmation",

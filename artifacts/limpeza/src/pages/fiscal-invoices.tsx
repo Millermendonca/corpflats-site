@@ -822,6 +822,23 @@ export default function FiscalInvoicesPage() {
       if (valor) setFormValor(valor)
     }
 
+    if (res.confirmedFiscalData && typeof res.confirmedFiscalData === "object") {
+      const cf = res.confirmedFiscalData
+      if (cf.descricaoServico) {
+        setFormDescricao(cf.descricaoServico)
+        setExtractedData(prev => ({ ...prev, descricaoServico: cf.descricaoServico }))
+      }
+      if (cf.tomadorNome) setFormNome(cf.tomadorNome)
+      if (cf.tomadorCpfCnpj) setFormCpfCnpj(String(cf.tomadorCpfCnpj).replace(/\D/g, ""))
+      if (cf.tomadorEmail) setFormEmail(cf.tomadorEmail)
+      if (cf.tomadorEndereco) setFormStreet(cf.tomadorEndereco)
+      if (cf.tomadorNumero) setFormStreetNumber(cf.tomadorNumero)
+      if (cf.tomadorBairro) setFormNeighborhood(cf.tomadorBairro)
+      if (cf.tomadorCep) setFormCep(String(cf.tomadorCep).replace(/\D/g, ""))
+      if (cf.tomadorCidade) setFormCity(cf.tomadorCidade)
+      if (cf.tomadorUf) setFormState(cf.tomadorUf)
+    }
+
     setMessages(prev => [
       ...prev,
       {

@@ -37,6 +37,9 @@ import {
   extractIncomingMessageInfo,
   resolveWhatsAppTargetPhone
 } from "../artifacts/api-server/zapi-service.mjs";
+import {
+  buildOfficialNfseDraftForReservation
+} from "../artifacts/api-server/chat-service.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1526,6 +1529,67 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.strictEqual(aiRes.action, "presented_conference");
     assert.strictEqual(sentReplies.length, 1);
     assert.match(sentReplies[0].message, /Conferência de Dados para Emissão de Nota Fiscal/i);
+  });
+
+  it("Integração Direta /notas <-> Sofia: Sofia busca exatamente o rascunho oficial de /notas (buildOfficialNfseDraftForReservation) e sincroniza edições de volta na reserva", async () => {
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = false;
+    testDb.invoices = testDb.invoices.filter(i => Number(i.reservationId) !== 605);
+
+    const officialDraft = buildOfficialNfseDraftForReservation(testDb, { reservation: res605 });
+    const conv = {
+      id: "conv_notas_direct_integration",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: []
+    };
+
+    const res1 = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Preciso da nota fiscal",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res1.action, "presented_conference");
+    assert.strictEqual(
+      conv.fiscalConferenceState.descricaoServico,
+      officialDraft.descricaoServico,
+      "A descrição na Sofia deve ser 100% idêntica à extraída da plataforma oficial /notas"
+    );
+    assert.strictEqual(conv.fiscalConferenceState.tomadorCpfCnpj, officialDraft.tomadorCpfCnpj);
+    assert.strictEqual(conv.fiscalConferenceState.valorServico, officialDraft.valorServico);
+
+    // Se o hóspede pedir alteração na descrição, ela atualiza e já grava em res605.confirmedFiscalData para o /notas ler
+    const res2 = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Muda a descrição para Nota relativa à hospedagem executiva no Flat 605.",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res2.action, "updated_conference_data");
+    assert.ok(res605.confirmedFiscalData, "Deve sincronizar alteração de volta na reserva para o Studio /notas");
+    const updatedDraftFromNotas = buildOfficialNfseDraftForReservation(testDb, { reservation: res605 });
+    assert.strictEqual(
+      updatedDraftFromNotas.descricaoServico,
+      conv.fiscalConferenceState.descricaoServico,
+      "O painel /notas passa a refletir imediatamente a alteração feita via Sofia"
+    );
+    delete res605.confirmedFiscalData;
   });
 });
 

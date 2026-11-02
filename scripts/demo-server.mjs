@@ -50,7 +50,7 @@ const DEFAULT_FLATS = [
   { id: 21, number: "1304", colName: "1304 Solteiro(ferro unindo)", isOccupied: true }
 ];
 
-import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE } from "./chat-service.mjs";
+import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE, buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
 import { lookupCep, lookupCnpj } from "./lookup.mjs";
 import express from "express";
 import cors from "cors";
@@ -46002,6 +46002,7 @@ async function executeNfseEmissionInternal(payload) {
       alreadyEmitted: true,
       invoice: existingInvForRes,
       numeroNfse: existingInvForRes.numeroNfse,
+      codigoVerificacao: existingInvForRes.codigoVerificacao,
       danfseUrl: existingInvForRes.danfseUrl || `/api/nfse/danfse/${existingInvForRes.numeroNfse}`,
       pdfUrl: existingInvForRes.pdfUrl || `/api/nfse/pdf/${existingInvForRes.numeroNfse}`,
       linkPrefeitura: existingInvForRes.linkPrefeitura,
@@ -46347,6 +46348,7 @@ async function executeNfseEmissionInternal(payload) {
       success: true,
       invoice: newInvoice,
       numeroNfse: numeroNfse,
+      codigoVerificacao: codigoVerificacao,
       danfseUrl: newInvoice.danfseUrl,
       pdfUrl: newInvoice.pdfUrl,
       linkPrefeitura: newInvoice.linkPrefeitura,
@@ -46358,6 +46360,29 @@ async function executeNfseEmissionInternal(payload) {
     return { success: false, error: "Erro na emissão de NFS-e: " + err.message, retryQueued: true, retryId: retryItem?.id };
   }
 }
+
+globalThis.executeNfseEmissionInternal = (payload, callerDb = null) => {
+  if (callerDb && callerDb !== db) return null;
+  return executeNfseEmissionInternal(payload);
+};
+globalThis.getOfficialNfseDraftForReservation = (opts) => buildOfficialNfseDraftForReservation(db, opts);
+
+// Endpoint Oficial de Rascunho de NFS-e da Reserva (/notas + Sofia WhatsApp)
+app.get("/api/nfse/reservation-draft/:id", (req, res) => {
+  getFiscalData();
+  const rawId = String(req.params.id || "").trim();
+  const r = (db.reservations || []).find(item =>
+    item && (String(item.id) === rawId || String(item.code) === rawId)
+  );
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+  const draft = buildOfficialNfseDraftForReservation(db, {
+    reservation: r,
+    preferType: req.query.preferType || null
+  });
+  return res.json({ success: true, draft });
+});
 
 // Emit NFS-e Individual (Emissor Nacional Gov.br / Padrão Nacional ADN)
 app.post("/api/nfse/emit", async (req, res) => {
