@@ -2703,6 +2703,205 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.strictEqual(parsed.cadastralUpdates.tomadorEmail, null, "Deve descartar tomadorEmail idêntico ao atual");
     assert.strictEqual(parsed.cadastralUpdates.tomadorEndereco, null, "Deve descartar tomadorEndereco idêntico ao atual");
   });
+
+  it("Regressão Citação WhatsApp (Quote/Reply) & Eco de guestNameAction: Responder citando card da Sofia ou histórico com 'já informei' não reenvia 'Dados cadastrais atualizados' em dúvidas ou confirmações", async () => {
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    res605.checkoutDone = false;
+    testDb.invoices = (testDb.invoices || []).filter(i => Number(i.reservationId) !== 605);
+
+    const conv = {
+      id: "conv_quote_reg",
+      phone: "5522998505276",
+      name: "Miller Mendonça Pessanha",
+      messages: [
+        {
+          fromMe: false,
+          text: "tem como colocar mais uma pessoa na descrição do serviço aí? Thamiris Maiara Santos Da Silva",
+          messageId: "msg_q_1"
+        },
+        {
+          fromMe: true,
+          senderName: "Sofia",
+          text: "Com certeza! Por favor, me informe o *nome completo* da pessoa que você deseja acrescentar como hóspede na descrição do serviço, que eu já atualizo os dados da nota para sua conferência! ✨",
+          messageId: "msg_q_2"
+        },
+        {
+          fromMe: false,
+          text: "já informei 👆🏼",
+          messageId: "msg_q_3"
+        },
+        {
+          fromMe: true,
+          senderName: "Sofia",
+          text: "Dados cadastrais atualizados com sucesso!\n\n📋 *Conferência de Dados para Emissão de Nota Fiscal (NFS-e)*\n• *Descrição dos Serviços:* Nota relativa à hospedagem de Miller Mendonça Pessanha e Thamiris Maiara Santos da Silva, no Flat 605.",
+          messageId: "msg_q_4"
+        }
+      ],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Mendonça Pessanha",
+        tomadorCpfCnpj: "12345678909",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        tomadorEndereco: "Av. Pelinca, 100",
+        descricaoServico: "Nota relativa à hospedagem de Miller Mendonça Pessanha e Thamiris Maiara Santos da Silva, no Flat 605.\nPeríodo de 01/11/2026 a 05/11/2026.",
+        valorOriginal: 600,
+        valorServico: 600,
+        healedJaInformeiBug: true
+      }
+    };
+
+    // 1) Hóspede cita o card da Sofia (quotedText / referenceMessageId preenchidos) e pergunta sobre o Wi-Fi:
+    const faqWithQuoteRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "5522998505276",
+      messageText: "Qual a senha do wi-fi?",
+      quotedText: conv.messages[3].text,
+      referenceMessageId: "msg_q_4",
+      senderName: "Miller Mendonça Pessanha",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+    assert.strictEqual(faqWithQuoteRes.handled, false, "Citar o card da Sofia perguntando senha do wi-fi NÃO deve reenviar 'Dados cadastrais atualizados'");
+
+    // 2) Mesmo que o LLM ecoe guestNameAction: { action: 'add', guestName: 'Thamiris Maiara Santos da Silva' } ao confirmar:
+    const aiEchoGuestMock = async () => JSON.stringify({
+      intent: "add_guest",
+      isConfirmation: false,
+      isCancellation: false,
+      valueChange: { hasValueChange: false, requestedValue: null },
+      guestNameAction: {
+        action: "add",
+        guestName: "Thamiris Maiara Santos da Silva",
+        needsPromptForName: false
+      },
+      cadastralUpdates: { tomadorNome: null, tomadorCpfCnpj: null, tomadorEmail: null, tomadorEndereco: null, tomadorTipo: null },
+      resolvedFromReference: true
+    });
+
+    const confirmWithQuoteRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "5522998505276",
+      messageText: "Sim, pode emitir!",
+      quotedText: conv.messages[3].text,
+      referenceMessageId: "msg_q_4",
+      senderName: "Miller Mendonça Pessanha",
+      conv,
+      aiClientMock: aiEchoGuestMock,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+    assert.strictEqual(confirmWithQuoteRes.handled, true);
+    assert.strictEqual(confirmWithQuoteRes.action, "scheduled_for_checkout", "Citar o card dizendo 'Sim, pode emitir!' deve confirmar a nota e NUNCA repetir 'Dados cadastrais atualizados'");
+    assert.doesNotMatch(confirmWithQuoteRes.replyText, /Dados cadastrais atualizados com sucesso/i);
+    delete res605.confirmedFiscalData;
+  });
+
+  it("Regressão Autocura Única (healedJaInformeiBug) & Saudação + Pergunta Fiscal ('Oi, bom dia! Como ficou a minha nota fiscal?')", async () => {
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    res605.checkoutDone = true;
+    testDb.invoices = (testDb.invoices || []).filter(i => Number(i.reservationId) !== 605);
+
+    const conv = {
+      id: "conv_heal_once",
+      phone: "5522998505276",
+      name: "Miller Mendonça Pessanha",
+      messages: [
+        {
+          fromMe: false,
+          text: "tem como colocar mais uma pessoa na descrição do serviço aí? Thamiris Maiara Santos Da Silva",
+          messageId: "msg_h_1"
+        },
+        {
+          fromMe: false,
+          text: "já informei 👆🏼",
+          messageId: "msg_h_2"
+        }
+      ],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Empresa Customizada Ltda",
+        tomadorCpfCnpj: "33000167000101",
+        tomadorTipo: "PJ",
+        tomadorEmail: "financeiro@custom.com.br",
+        tomadorEndereco: "Av. Rio Branco, 1",
+        descricaoServico: "Nota relativa à hospedagem de Miller Mendonça Pessanha e Já Informei 👆🏼, no Flat 605.\nPeríodo de 01/11/2026 a 05/11/2026.",
+        valorOriginal: 600,
+        valorServico: 600
+      }
+    };
+
+    // Turno 1: "Oi, bom dia! Como ficou a minha nota fiscal?" -> cura a descrição para Thamiris e preserva o tomador PJ customizado
+    const statusQueryRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "5522998505276",
+      messageText: "Oi, bom dia! Como ficou a minha nota fiscal?",
+      senderName: "Miller Mendonça Pessanha",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(statusQueryRes.handled, true);
+    assert.strictEqual(statusQueryRes.action, "presented_conference");
+    assert.strictEqual(conv.fiscalConferenceState.tomadorCpfCnpj, "33000167000101", "Deve preservar CNPJ customizado na conferência");
+    assert.match(
+      statusQueryRes.replyText,
+      /Nota relativa à hospedagem de Miller Mendonça Pessanha e Thamiris Maiara Santos da Silva, no Flat 605\./,
+      "Deve apresentar a descrição curada com Thamiris"
+    );
+
+    // Turno 2: Hóspede substitui o nome do hóspede na descrição para João Paulo da Costa
+    const replaceRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "5522998505276",
+      messageText: "na verdade quem ficou hospedado no flat foi o João Paulo da Costa, troca o nome aí",
+      senderName: "Miller Mendonça Pessanha",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+    assert.strictEqual(replaceRes.action, "updated_conference_data");
+    assert.match(replaceRes.replyText, /Nota relativa à hospedagem de João Paulo da Costa, no Flat 605\./);
+
+    // Turno 3: Hóspede confirma ("Pode emitir") -> a autocura NÃO deve reinjetar Thamiris por cima de João Paulo da Costa!
+    const emitRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "5522998505276",
+      messageText: "Pode emitir",
+      senderName: "Miller Mendonça Pessanha",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+    assert.strictEqual(emitRes.action, "emitted_nfse");
+    assert.match(emitRes.invoice.discriminacao, /Nota relativa à hospedagem de João Paulo da Costa, no Flat 605\./);
+    assert.doesNotMatch(emitRes.invoice.discriminacao, /Thamiris/i, "Autocura não deve sobrescrever substituição posterior de hóspede");
+
+    delete res605.confirmedFiscalData;
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    testDb.invoices = (testDb.invoices || []).filter(i => Number(i.reservationId) !== 605);
+  });
 });
-
-

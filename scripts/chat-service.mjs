@@ -565,12 +565,20 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
       currentNames = innerFlatMatch[1].trim();
       flatSuffix = innerFlatMatch[2] + flatSuffix;
     }
-    const parts = currentNames.split(/\s*(?:,|\be\b)\s*/i).map(p => p.trim()).filter(Boolean);
+    const forbiddenTokens = new Set([
+      "ja", "já", "informei", "informado", "mandei", "enviei", "falei", "disse",
+      "escrevi", "passei", "coloquei", "acima", "cima", "olha", "conforme",
+      "antes", "inicio", "início", "conversa", "hospede", "hóspede", "acompanhante",
+      "pessoa", "descricao", "descrição", "nota", "fiscal", "valor", "emitir",
+      "sim", "nao", "não", "ok", "oi", "ola", "olá"
+    ]);
+    const parts = currentNames.split(/\s*,\s*|\s+e\s+/i).map(p => p.trim()).filter(Boolean);
     const validParts = parts.filter(part => {
       const clean = part.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, "").trim();
       if (!clean || clean.length < 2) return false;
       if (/[^\p{L}\s'.-]/u.test(clean)) return false;
-      if (/\b(?:j[aá]|informei|mandei|enviei|falei|disse|escrevi|passei|coloquei|acima|cima|olha|conforme|antes|in[ií]cio|conversa|h[oó]spede|acompanhante|pessoa|descri[cç][aã]o|nota|fiscal|valor|emitir)\b/i.test(clean)) {
+      const tokens = clean.toLowerCase().split(/[\s'.-]+/).filter(Boolean);
+      if (tokens.length === 0 || tokens.some(tk => forbiddenTokens.has(tk))) {
         return false;
       }
       return true;

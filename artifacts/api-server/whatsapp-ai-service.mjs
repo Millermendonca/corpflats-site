@@ -10557,6 +10557,15 @@ function checkDeterministicValueChange(messageText = "", conf = {}) {
   return { hasValueChange: false, requestedValue: null };
 }
 
+function isFiscalBotHistoryMessage(m) {
+  if (!m || !m.text) return true;
+  if (m.senderName && /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(m.senderName).trim())) return true;
+  if (/^(?:📋\s*\*Confer[eê]ncia|Com certeza!\s*Por favor,\s*me informe|N[aã]o consegui identificar o nome|Claro!\s*Qual altera[cç][aã]o|Dados cadastrais atualizados|✅\s*\*Dados da Nota|✅\s*\*Nota Fiscal Emitida|ℹ️\s*\*Nota Fiscal J[aá] Emitida|Entendido!\s*Cancelei a emiss[aã]o|Ol[aá].*?Com certeza podemos emitir|Perfeito!\s*Por gentileza,\s*nos\s*(?:envie|informe)|Identificamos\s+(?:a\s+tentativa|o\s+CPF)|⚠️\s*Identifiquei a solicita[cç][aã]o|🔔\s*\*Solicita[cç][aã]o de Altera[cç][aã]o)/i.test(String(m.text).trim())) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Contingência determinística local de alta precisão (Tier 2 - Zero-Crash Fallback)
  */
@@ -10611,9 +10620,12 @@ function runDeterministicFiscalLocalFallback({
   }
 
   // 3. Ações sobre hóspedes na descrição (Adição, Remoção, Substituição)
-  const isRefToPreviousMsg = Boolean(
+  const hasExplicitBackReference = Boolean(
     /\b(?:j[aá]\s+(?:informei|mandei|enviei|falei|disse|escrevi|coloquei|passei)|est[aá]\s+a[ií]\s+em\s+cima|a[ií]\s+em\s+cima|olha\s+a[ií]|mensagem\s+acima|acima|no\s+in[ií]cio\s+da\s+conversa|conforme\s+(?:disse|falei|passei)\s+antes|t[aá]\s+l[aá]\s+em\s+cima)\b/i.test(text) ||
-    /👆|⬆️|☝️/u.test(text) ||
+    /👆|⬆️|☝️/u.test(text)
+  );
+  const isRefToPreviousMsg = Boolean(
+    hasExplicitBackReference ||
     quotedText ||
     referenceMessageId
   );
@@ -10632,15 +10644,15 @@ function runDeterministicFiscalLocalFallback({
       guestAction = { action: "add", guestName: guestEdit.guestName, needsPromptForName: false };
     } else if (guestEdit.type === "add_guest_unnamed") {
       const candidateTexts = [];
-      if (quotedText) candidateTexts.push(quotedText);
+      if (quotedText && !isFiscalBotHistoryMessage({ text: quotedText })) candidateTexts.push(quotedText);
       const msgs = Array.isArray(history) ? history : [];
       if (referenceMessageId) {
         const refMsg = msgs.find(m => m && String(m.messageId) === String(referenceMessageId));
-        if (refMsg?.text) candidateTexts.push(refMsg.text);
+        if (refMsg?.text && !isFiscalBotHistoryMessage(refMsg)) candidateTexts.push(refMsg.text);
       }
-      for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 8); i--) {
+      for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 20); i--) {
         const m = msgs[i];
-        if (m?.text && m.text !== text && !m.fromMe) candidateTexts.push(m.text);
+        if (m?.text && m.text !== text && !isFiscalBotHistoryMessage(m)) candidateTexts.push(m.text);
       }
       let recovered = null;
       for (const candText of candidateTexts) {
@@ -10657,17 +10669,17 @@ function runDeterministicFiscalLocalFallback({
         guestAction = { action: "add", guestName: null, needsPromptForName: true };
       }
     }
-  } else if (conf.pendingFieldEdit === "add_guest_to_description" || isRefToPreviousMsg) {
+  } else if (conf.pendingFieldEdit === "add_guest_to_description" || hasExplicitBackReference) {
     const candidateTexts = [];
-    if (quotedText) candidateTexts.push(quotedText);
+    if (quotedText && !isFiscalBotHistoryMessage({ text: quotedText })) candidateTexts.push(quotedText);
     const msgs = Array.isArray(history) ? history : [];
     if (referenceMessageId) {
       const refMsg = msgs.find(m => m && String(m.messageId) === String(referenceMessageId));
-      if (refMsg?.text) candidateTexts.push(refMsg.text);
+      if (refMsg?.text && !isFiscalBotHistoryMessage(refMsg)) candidateTexts.push(refMsg.text);
     }
-    for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 8); i--) {
+    for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 20); i--) {
       const m = msgs[i];
-      if (m?.text && m.text !== text && !m.fromMe) candidateTexts.push(m.text);
+      if (m?.text && m.text !== text && !isFiscalBotHistoryMessage(m)) candidateTexts.push(m.text);
     }
 
     let recovered = null;
@@ -10723,7 +10735,7 @@ function runDeterministicFiscalLocalFallback({
     const msgs = Array.isArray(history) ? history : [];
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
-      if (m?.text && !m.fromMe) {
+      if (m?.text && !isFiscalBotHistoryMessage(m)) {
         const prevNameMatch = m.text.match(/\b(?:em\s+nome\s+(?:d[aeo]\s+)?(?:dr\.?|dra\.?|sr\.?|sra\.?)?\s*|o\s+nome\s+[eé]\s*)([A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,50})/i);
         if (prevNameMatch && isValidPersonNameCandidate(prevNameMatch[1])) {
           tomadorNome = toTitleCase(stripOuterNonNameChars(prevNameMatch[1]));
@@ -10840,7 +10852,7 @@ export async function interpretFiscalMessageWithLLM({
 
   const formattedHistoryText = (Array.isArray(history) ? history.slice(-8) : [])
     .filter(m => m && m.text)
-    .map(m => `${m.fromMe ? "Sofia (CorpFlats)" : "Hóspede"}: "${m.text}"`)
+    .map(m => `${isFiscalBotHistoryMessage(m) ? "Sofia (CorpFlats)" : "Hóspede"}: "${m.text}"`)
     .join("\n");
 
   const quotedInfo = quotedText
@@ -10874,7 +10886,7 @@ REGRAS DE CLASSIFICAÇÃO:
    - NUNCA confunda datas de estadia ("de 01/11 a 05/11"), contagem de diárias ("3 diárias") ou número de flat ("flat 605", "para 501") com valor!
    - Se o hóspede disser que "não precisa mudar o valor de 600 reais, pode emitir", hasValueChange é false.
 3. guestNameAction:
-   - action "add": Quando o hóspede solicita acrescentar/incluir alguém como hóspede na descrição do serviço (ex: "acrescentar meu colega Carlos Eduardo como hóspede", "inclui também Mariana Lima"). Extraia o guestName. Se ele referenciar mensagem anterior ("já informei 👆🏼"), resolva o nome a partir da citação ou histórico. Se ele quiser adicionar mas não informou o nome, marque needsPromptForName: true.
+   - action "add": Quando o hóspede solicita na mensagem atual acrescentar/incluir alguém como hóspede na descrição do serviço (ex: "acrescentar meu colega Carlos Eduardo como hóspede", "inclui também Mariana Lima"). Extraia o guestName. Se ele referenciar mensagem anterior ("já informei 👆🏼"), resolva o nome a partir da citação ou histórico. Se ele quiser adicionar mas não informou o nome, marque needsPromptForName: true. NUNCA repita action "add" para um hóspede que JÁ consta na Descrição dos Serviços atual quando a mensagem atual não está pedindo adição!
    - action "remove": Quando o hóspede solicita retirar/remover alguém da descrição (ex: "retira o nome da Maria Silva da descrição, ela não ficou hospedada", "remove o acompanhante, deixa só eu"). Extraia o guestName ou deixe null se for remoção genérica.
    - action "replace": Quando o hóspede pede para trocar ou substituir quem ficou hospedado (ex: "na verdade quem ficou hospedado no flat foi o João Paulo da Costa, troca o nome aí"). Extraia o guestName.
    - action "none": Nenhuma ação sobre nomes na descrição.
@@ -11016,6 +11028,39 @@ RESPONDA EXCLUSIVAMENTE COM O OBJETO JSON NO FORMATO:
   }
   if (conf.tomadorEndereco && result.cadastralUpdates.tomadorEndereco && result.cadastralUpdates.tomadorEndereco.toLowerCase() === String(conf.tomadorEndereco).trim().toLowerCase()) {
     result.cadastralUpdates.tomadorEndereco = null;
+  }
+
+  // Blindagem contra eco de guestNameAction pelo LLM quando o hóspede já consta na descrição atual e a mensagem não pede adição
+  const hasExplicitBackRef = Boolean(
+    /\b(?:j[aá]\s+(?:informei|mandei|enviei|falei|disse|escrevi|coloquei|passei)|est[aá]\s+a[ií]\s+em\s+cima|a[ií]\s+em\s+cima|olha\s+a[ií]|mensagem\s+acima|acima|no\s+in[ií]cio\s+da\s+conversa|conforme\s+(?:disse|falei|passei)\s+antes|t[aá]\s+l[aá]\s+em\s+cima)\b/i.test(text) ||
+    /👆|⬆️|☝️/u.test(text)
+  );
+  const currentGuestEdit = extractGuestAdditionForDescription(text);
+  if (
+    result.guestNameAction.action === "add" &&
+    result.guestNameAction.guestName &&
+    conf.descricaoServico &&
+    conf.pendingFieldEdit !== "add_guest_to_description" &&
+    !hasExplicitBackRef &&
+    !currentGuestEdit
+  ) {
+    const sanitizedCurrent = sanitizeServiceDescriptionGuests(conf.descricaoServico).description;
+    const afterAdd = addGuestToServiceDescription(sanitizedCurrent, result.guestNameAction.guestName, "add");
+    if (afterAdd === sanitizedCurrent) {
+      result.guestNameAction = { action: "none", guestName: null, needsPromptForName: false };
+      if (result.intent === "add_guest") {
+        const fallbackCheck = runDeterministicFiscalLocalFallback({
+          messageText: text,
+          history,
+          quotedText,
+          referenceMessageId,
+          currentConferenceState: conf,
+          db
+        });
+        result.intent = fallbackCheck.intent;
+        result.isConfirmation = fallbackCheck.isConfirmation;
+      }
+    }
   }
 
   if (result.cadastralUpdates.tomadorCpfCnpj) {
@@ -11167,18 +11212,18 @@ export async function handleWhatsAppFiscalFlow({
   // Helper para recuperar nome de hóspede adicional a partir de mensagem citada (quote) ou histórico recente da conversa
   const recoverGuestNameFromContext = () => {
     const candidateTexts = [];
-    if (quotedText && typeof quotedText === "string") {
+    if (quotedText && typeof quotedText === "string" && !isFiscalBotHistoryMessage({ text: quotedText })) {
       candidateTexts.push(quotedText);
     }
     const msgs = Array.isArray(conv?.messages) ? conv.messages : [];
     if (referenceMessageId) {
       const refMsg = msgs.find(m => m && String(m.messageId) === String(referenceMessageId));
-      if (refMsg?.text) candidateTexts.push(refMsg.text);
+      if (refMsg?.text && !isFiscalBotHistoryMessage(refMsg)) candidateTexts.push(refMsg.text);
     }
-    for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 12); i--) {
+    for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 30); i--) {
       const m = msgs[i];
       if (!m || !m.text || m.text === messageText) continue;
-      if (/^(?:📋\s*\*Confer[eê]ncia|Com certeza!\s*Por favor,\s*me informe|Dados cadastrais atualizados|✅\s*\*Dados da Nota)/i.test(m.text)) {
+      if (isFiscalBotHistoryMessage(m)) {
         continue;
       }
       candidateTexts.push(m.text);
@@ -11228,14 +11273,23 @@ export async function handleWhatsAppFiscalFlow({
     }
 
     const msgs = Array.isArray(conv?.messages) ? conv.messages : [];
-    const historyHadJaInformeiBug = msgs.some(m => m?.text && /j[aá]\s+informei/i.test(m.text));
-    const hasLaterRemovalInHistory = msgs.some(m => !m?.fromMe && m?.text && /\b(?:retira(?:r)?|tira(?:r)?|remove(?:r)?|exclui(?:r)?)\b/i.test(m.text));
+    const alreadyHealed = Boolean(conf?.healedJaInformeiBug || resForHeal?.confirmedFiscalData?.healedJaInformeiBug);
+    const historyHadJaInformeiBug = !alreadyHealed && conf?.pendingFieldEdit !== "add_guest_to_description" && msgs.some(m =>
+      m?.text && m.text !== messageText && (/j[aá]\s+informei/i.test(m.text) || (m.fromMe && /J[aá]\s+Informei/i.test(m.text)))
+    );
+    const hasLaterRemovalOrReplaceInHistory = msgs.some(m =>
+      !isFiscalBotHistoryMessage(m) &&
+      m?.text &&
+      m.text !== messageText &&
+      /\b(?:retira(?:r)?|tira(?:r)?|remove(?:r)?|exclui(?:r)?|substitui(?:r)?|troca(?:r)?\s+(?:o\s+)?nome|quem\s+ficou\s+hospedad[oa])\b/i.test(m.text)
+    );
 
-    if ((hadCorruptedDesc || historyHadJaInformeiBug) && !hasLaterRemovalInHistory) {
+    if ((hadCorruptedDesc || historyHadJaInformeiBug) && !hasLaterRemovalOrReplaceInHistory) {
       const recoveredGuest = recoverGuestNameFromContext();
       if (recoveredGuest) {
         if (conf && typeof conf.descricaoServico === "string") {
           conf.descricaoServico = addGuestToServiceDescription(conf.descricaoServico, recoveredGuest, "add");
+          conf.healedJaInformeiBug = true;
           delete conf.pendingFieldEdit;
         }
         if (resForHeal) {
@@ -11245,10 +11299,12 @@ export async function handleWhatsAppFiscalFlow({
             : "";
           if (resForHeal.confirmedFiscalData) {
             resForHeal.confirmedFiscalData.descricaoServico = healedResDesc || resForHeal.confirmedFiscalData.descricaoServico;
+            resForHeal.confirmedFiscalData.healedJaInformeiBug = true;
           } else if (conf && healedResDesc) {
             resForHeal.confirmedFiscalData = {
               ...conf,
               descricaoServico: healedResDesc,
+              healedJaInformeiBug: true,
               updatedAt: new Date().toISOString()
             };
           }
@@ -11275,9 +11331,12 @@ export async function handleWhatsAppFiscalFlow({
   const hasAlterationVerb = /\b(?:altera(?:r|[cç][aã]o)?|muda(?:r|n[cç]a)?|troca(?:r)?|acrescenta(?:r|ndo)?|acrescente|adiciona(?:r|ndo)?|adicione|inclui(?:r|ndo)?|inclua|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|corrige|corrigir|edita(?:r)?|inserir|insere|insira|tira(?:r)?|remove(?:r)?|substitui(?:r)?|abaixa(?:r)?|diminui(?:r)?|reduz(?:ir)?|fecha(?:r)?)\b/i.test(messageText);
   const hasFiscalFieldTarget = /\b(?:nota|nf|nfse|nfs-e|descri[cç][aã]o|discrimina[cç][aã]o|cabe[cç]alho|h[oó]spede|acompanhante|pessoa|tomador|cpf|cnpj|endere[cç]o|cep|e-?mail|raz[aã]o\s*social|nome|valor|pre[cç]o|servi[cç]o|reais|conto)\b/i.test(messageText);
   const isAlterationRequest = Boolean(hasAlterationVerb && hasFiscalFieldTarget);
-  const isRefToPreviousMsg = Boolean(
+  const hasExplicitBackReference = Boolean(
     /\b(?:j[aá]\s+(?:informei|mandei|enviei|falei|disse|escrevi|coloquei|passei)|est[aá]\s+a[ií]\s+em\s+cima|a[ií]\s+em\s+cima|olha\s+a[ií]|mensagem\s+acima|acima|no\s+in[ií]cio\s+da\s+conversa|conforme\s+(?:disse|falei|passei)\s+antes|t[aá]\s+l[aá]\s+em\s+cima)\b/i.test(messageText) ||
-    /👆|⬆️|☝️/u.test(messageText) ||
+    /👆|⬆️|☝️/u.test(messageText)
+  );
+  const isRefToPreviousMsg = Boolean(
+    hasExplicitBackReference ||
     quotedText ||
     referenceMessageId
   );
@@ -11286,7 +11345,7 @@ export async function handleWhatsAppFiscalFlow({
     conf && (
       conf.status === "awaiting_confirmation" ||
       Boolean(conf.pendingFieldEdit) ||
-      isRefToPreviousMsg ||
+      (hasExplicitBackReference && conf.status !== "emitted" && conf.status !== "cancelled") ||
       (conf.status === "scheduled_for_checkout" && (isAlterationRequest || isFiscalIntentMessage(messageText) || checkDeterministicValueChange(messageText, conf).hasValueChange))
     )
   );
@@ -11391,12 +11450,15 @@ export async function handleWhatsAppFiscalFlow({
           llmResult.guestNameAction.guestName || "",
           llmResult.guestNameAction.action
         );
+        conf.healedJaInformeiBug = true;
         delete conf.pendingFieldEdit;
       } else if (matchAppendDesc) {
         const extra = matchAppendDesc[1].trim();
         conf.descricaoServico = conf.descricaoServico ? `${conf.descricaoServico}\n${extra}` : extra;
+        conf.healedJaInformeiBug = true;
       } else if (matchDesc) {
         conf.descricaoServico = matchDesc[1].trim();
+        conf.healedJaInformeiBug = true;
       }
 
       if (llmResult.cadastralUpdates?.tomadorNome) conf.tomadorNome = toTitleCase(llmResult.cadastralUpdates.tomadorNome);
@@ -11510,19 +11572,27 @@ export async function handleWhatsAppFiscalFlow({
     }
 
     if (["add", "remove", "replace"].includes(llmResult.guestNameAction?.action) && (llmResult.guestNameAction.guestName || llmResult.guestNameAction.action === "remove")) {
-      conf.descricaoServico = addGuestToServiceDescription(
+      const prevSanitizedDesc = sanitizeServiceDescriptionGuests(conf.descricaoServico).description;
+      const nextDesc = addGuestToServiceDescription(
         conf.descricaoServico,
         llmResult.guestNameAction.guestName || "",
         llmResult.guestNameAction.action
       );
+      const hadPendingGuestEdit = conf.pendingFieldEdit === "add_guest_to_description";
+      conf.descricaoServico = nextDesc;
+      conf.healedJaInformeiBug = true;
       delete conf.pendingFieldEdit;
-      hasCadastralChanges = true;
+      if (nextDesc !== prevSanitizedDesc || hadPendingGuestEdit || hasExplicitBackReference || Boolean(extractGuestAdditionForDescription(messageText))) {
+        hasCadastralChanges = true;
+      }
     } else if (matchAppendDesc) {
       const extra = matchAppendDesc[1].trim();
       conf.descricaoServico = conf.descricaoServico ? `${conf.descricaoServico}\n${extra}` : extra;
+      conf.healedJaInformeiBug = true;
       hasCadastralChanges = true;
     } else if (matchDesc) {
       conf.descricaoServico = matchDesc[1].trim();
+      conf.healedJaInformeiBug = true;
       hasCadastralChanges = true;
     }
 
@@ -11734,6 +11804,41 @@ export async function handleWhatsAppFiscalFlow({
     // NÃO deve cair na Etapa 2 (evita reenviar o card de conferência fiscal em mensagens gerais ou fora de escopo)
     if (!isFiscalIntentMessage(messageText) && !extractCnpj(messageText) && !extractCpf(messageText)) {
       return { handled: false };
+    }
+
+    // Se já há conferência ativa com dados preenchidos e o hóspede apenas perguntou como ficou a nota
+    // (ex: "Oi, bom dia! Como ficou a minha nota fiscal?") sem enviar novo CPF/CNPJ, preserva integralmente conf
+    if (conf.tomadorCpfCnpj && !extractCnpj(messageText) && !extractCpf(messageText) && !extractGuestAdditionForDescription(messageText)) {
+      const resForReopen = Array.isArray(db.reservations)
+        ? db.reservations.find(r =>
+            r && (
+              (conf.reservationId && Number(r.id) === Number(conf.reservationId)) ||
+              (conf.reservationCode && String(r.code) === String(conf.reservationCode))
+            )
+          )
+        : null;
+      const existingInvReopen = findExistingInvoiceForReservation(db, {
+        reservation: resForReopen,
+        reservationId: conf.reservationId,
+        reservationCode: conf.reservationCode
+      });
+      if (!existingInvReopen) {
+        conf.status = "awaiting_confirmation";
+        conf.updatedAt = new Date().toISOString();
+        if (resForReopen) {
+          resForReopen.confirmedFiscalData = {
+            ...(resForReopen.confirmedFiscalData || {}),
+            ...conf,
+            updatedAt: conf.updatedAt
+          };
+        }
+        const isCheckedOutReopen = isReservationCheckedOutForFiscal(resForReopen, db);
+        const confMsgReopen = buildConferencePresentationMessage(conf, { isCheckedOut: isCheckedOutReopen });
+        return await respond(confMsgReopen, {
+          action: "presented_conference",
+          conference: conf
+        });
+      }
     }
   }
 
@@ -12216,32 +12321,43 @@ export async function processAiInboundMessage({
 
   // 3.0. Assistente Ativa de Pré-Reservas: Intercepta resposta do gestor/desenvolvedor (22998505276)
   if (isDev) {
-    const preResReply = await handleManagerPreReservationReply({
-      db,
-      cleanTarget,
-      messageText: incomingInfo.text,
-      conv,
-      sendZapiMessage,
-      appendMessageFn,
-      saveDatabase,
-      createNotification
-    });
-    if (preResReply && preResReply.handled) {
-      return preResReply;
+    const isAwaitingFiscalConfForDev = Boolean(
+      conv?.fiscalConferenceState &&
+      (conv.fiscalConferenceState.status === "awaiting_confirmation" || conv.fiscalConferenceState.pendingFieldEdit)
+    );
+    const hasExplicitPreResCmd = /\b(?:preres|pre-res|pr[eé]-?reserva)\b/i.test(incomingInfo.text);
+    const hasExplicitFiscalApprovalCmd = /\b(?:aprovar|aprovo|aprovado|reprovar|recusar|nfse-app|nfse-pre|aprovar\s+fiscal)\b/i.test(incomingInfo.text);
+
+    if (!isAwaitingFiscalConfForDev || hasExplicitPreResCmd) {
+      const preResReply = await handleManagerPreReservationReply({
+        db,
+        cleanTarget,
+        messageText: incomingInfo.text,
+        conv,
+        sendZapiMessage,
+        appendMessageFn,
+        saveDatabase,
+        createNotification
+      });
+      if (preResReply && preResReply.handled) {
+        return preResReply;
+      }
     }
 
-    const fiscalApprovalReply = await handleManagerFiscalApprovalReply({
-      db,
-      cleanTarget,
-      messageText: incomingInfo.text,
-      conv,
-      sendZapiMessage,
-      appendMessageFn,
-      saveDatabase,
-      createNotification
-    });
-    if (fiscalApprovalReply && fiscalApprovalReply.handled) {
-      return fiscalApprovalReply;
+    if (!isAwaitingFiscalConfForDev || hasExplicitFiscalApprovalCmd) {
+      const fiscalApprovalReply = await handleManagerFiscalApprovalReply({
+        db,
+        cleanTarget,
+        messageText: incomingInfo.text,
+        conv,
+        sendZapiMessage,
+        appendMessageFn,
+        saveDatabase,
+        createNotification
+      });
+      if (fiscalApprovalReply && fiscalApprovalReply.handled) {
+        return fiscalApprovalReply;
+      }
     }
   }
 

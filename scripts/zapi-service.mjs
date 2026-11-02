@@ -1686,7 +1686,7 @@ export function isBotMessage(text) {
   }
 
   // 6. Mensagens automáticas do Fluxo Fiscal da Sofia (NFS-e)
-  if (/\b(?:conferencia\s+de\s+dados\s+para\s+(?:emissao\s+de\s+)?nota\s+fiscal|dados\s+da\s+nota\s+fiscal\s+confirmados|nota\s+fiscal\s+emitida\s+com\s+sucesso|nota\s+fiscal\s+ja\s+emitida\s+para\s+esta\s+reserva|solicitacao\s+de\s+alteracao\s+de\s+valor\s+de\s+nfs-e|aprovacao\s+confirmada\s+e\s+nfs-e\s+emitida|com\s+certeza\s+podemos\s+emitir\s+a\s+sua\s+nota\s+fiscal)\b/i.test(lower)) {
+  if (/\b(?:conferencia\s+de\s+dados\s+para\s+(?:emissao\s+de\s+)?nota\s+fiscal|dados\s+cadastrais\s+atualizados\s+com\s+sucesso|dados\s+da\s+nota\s+fiscal\s+confirmados|nota\s+fiscal\s+emitida\s+com\s+sucesso|nota\s+fiscal\s+ja\s+emitida\s+para\s+esta\s+reserva|solicitacao\s+de\s+alteracao\s+de\s+valor\s+de\s+nfs-e|aprovacao\s+confirmada\s+e\s+nfs-e\s+emitida|com\s+certeza\s+podemos\s+emitir\s+a\s+sua\s+nota\s+fiscal|me\s+informe\s+o\s+nome\s+completo\s+da\s+pessoa\s+que\s+voce\s+deseja\s+acrescentar|nao\s+consegui\s+identificar\s+o\s+nome\s+na\s+mensagem\s+anterior|qual\s+alteracao\s+voce\s+gostaria\s+de\s+fazer\s+na\s+nota\s+fiscal|cancelei\s+a\s+emissao\s+da\s+nota\s+fiscal|por\s+motivos\s+de\s+seguranca\s+fiscal\s+e\s+conformidade\s+contabil)\b/i.test(lower)) {
     return true;
   }
 
@@ -4482,6 +4482,11 @@ export async function sendZapiMessage(config, {
   const fallbackToText = config?.fallbackToText !== false;
   const configuredDeliveryMode = config?.deliveryMode || "buttons"; // "buttons" (padrão oficial), "text_links", "auto"
 
+  // Registra preventivamente a mensagem antes mesmo do retorno HTTP para evitar condição de corrida com webhook fromMe da Z-API
+  if (finalMessage) {
+    recordBotSentMessage({ phone: targetPhone, text: finalMessage });
+  }
+
   // Se não configurado, simula sucesso em ambiente de desenvolvimento/teste sem travar
   if (!instanceId || !token) {
     console.warn(`[Z-API Mock] Credenciais não configuradas. Mensagem para ${targetPhone} simulada.`);
@@ -4495,6 +4500,9 @@ export async function sendZapiMessage(config, {
       message: finalMessage,
       channelId: policy.channelId
     };
+    if (finalMessage) {
+      recordBotSentMessage({ messageId: mockResult.messageId, phone: targetPhone, text: finalMessage });
+    }
     if (hasDoc) {
       mockResult.hasDocument = true;
       mockResult.documentResult = {
