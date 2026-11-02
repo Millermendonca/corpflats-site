@@ -93,6 +93,30 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
       statementIdx < catalogIdx,
       "O Extrato de Consumo por Dia & Divisão deve aparecer antes/acima do Cardápio Digital recolhido"
     );
+
+    // 1.5 Limpeza visual e remoção de redundâncias (Zero Poluição Visual)
+    assert.doesNotMatch(uiCode, /Salvo em tempo real/, "Tag 'Salvo em tempo real' deve ser removida");
+    assert.doesNotMatch(uiCode, /Salvo na reserva/, "Tag 'Salvo na reserva' deve ser removida");
+    assert.doesNotMatch(uiCode, /Check-out Confirmado[\s\S]*Pagamento Liberado!/, "Card verde redundante de check-out deve ser removido");
+    assert.doesNotMatch(uiCode, /✓ Dados NF OK/, "Badge poluída '✓ Dados NF OK' deve ser removida");
+    assert.doesNotMatch(uiCode, /📱|🪪|✉️/, "Não deve exibir linha poluída de telefone/CPF/e-mail nos cards dos hóspedes");
+    assert.doesNotMatch(uiCode, /Pedido #\{ord\.id\}/, "Não deve exibir código técnico 'Pedido #ORD-MB-...' no histórico");
+    assert.match(uiCode, /expandedDetailItemKey/, "Detalhes de lançamento do item devem expandir somente ao clicar");
+    assert.match(
+      uiCode,
+      /pendingBalance > 0 && splitMode !== "titular"/,
+      "Lista de divisão por hóspede só deve aparecer quando houver saldo pendente e não estiver em 100% Titular"
+    );
+
+    const portalCode = fs.readFileSync(
+      path.join(rootDir, "artifacts/limpeza/src/pages/guest-portal.tsx"),
+      "utf-8"
+    );
+    assert.doesNotMatch(
+      portalCode,
+      /O consumo de frigobar é um serviço independente/,
+      "Caixa amarela longa de aviso do frigobar no guest-portal.tsx deve ser removida"
+    );
   });
 
   describe("2. Fluxos E2E de Persistência em Tempo Real, Vistoria Final e Disparo de WhatsApp", () => {

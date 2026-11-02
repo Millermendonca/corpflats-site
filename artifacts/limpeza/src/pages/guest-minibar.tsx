@@ -235,6 +235,7 @@ export default function GuestMinibar() {
   const [isSavingSplit, setIsSavingSplit] = useState<boolean>(false);
   const [splitSavedPulse, setSplitSavedPulse] = useState<boolean>(false);
   const [expandedUnitItemKey, setExpandedUnitItemKey] = useState<string | null>(null);
+  const [expandedDetailItemKey, setExpandedDetailItemKey] = useState<string | null>(null);
 
   // Pagamento Parcial / Individual
   const [partialMode, setPartialMode] = useState<PartialPaymentMode>("configured_split");
@@ -952,6 +953,22 @@ export default function GuestMinibar() {
     return shares[0] || null;
   }, [splitBreakdown, selectedGuestIndex]);
 
+  // Lista única e limpa de todos os itens lançados no extrato
+  const allLaunchedItems = useMemo(() => {
+    const list: (DailyLaunchGroup["items"][number] & { resolvedKey: string })[] = [];
+    dailyLaunches.forEach((group) => {
+      group.items.forEach((item, idx) => {
+        const resolvedKey = item.itemKey || `${item.orderId}_${item.productId}_${idx}`;
+        list.push({
+          ...item,
+          launchDateBr: item.launchDateBr || group.dateBr,
+          resolvedKey
+        });
+      });
+    });
+    return list;
+  }, [dailyLaunches]);
+
   // Cálculo do valor e itens a pagar de acordo com a divisão configurada na reserva
   const paymentSelectionSummary = useMemo(() => {
     if (pendingBalance <= 0) {
@@ -1407,7 +1424,7 @@ export default function GuestMinibar() {
 
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 pb-36">
-        {/* Topo / Header Mobile (Sem botão 'Trocar') */}
+        {/* Topo / Header Mobile Enxuto */}
         <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3 sm:px-6">
           <div className="max-w-xl mx-auto flex items-center justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -1433,8 +1450,7 @@ export default function GuestMinibar() {
                   </Badge>
                 </div>
                 <p className="text-xs text-slate-400 truncate">
-                  Titular: <strong className="text-white">{reservationGuests[0]?.name || reservation?.guestName}</strong>
-                  {reservationGuests.length > 1 ? ` (+${reservationGuests.length - 1} hóspede${reservationGuests.length > 2 ? "s" : ""})` : ""}
+                  {reservationGuests[0]?.name || reservation?.guestName}
                 </p>
               </div>
             </div>
@@ -1455,64 +1471,36 @@ export default function GuestMinibar() {
         </header>
 
         <main className="max-w-xl mx-auto p-4 sm:p-6 space-y-4">
-          {/* ── 1. Card Compacto Unificado: Como Funciona + Status/Botão de Check-out ── */}
-          {!isCheckedOut ? (
-            <Card className="bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/20 border border-amber-500/40 rounded-2xl p-3.5 sm:p-4 space-y-3 shadow-lg">
-              <div className="flex items-start gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
-                  <Lock className="w-4 h-4" />
-                </div>
-                <div className="text-xs text-slate-300 leading-relaxed space-y-0.5">
-                  <p className="font-black text-amber-300 text-xs sm:text-sm">
-                    Consumo lançado diariamente • Pagamento liberado no check-out
-                  </p>
-                  <p className="text-[11px] text-slate-300/90">
-                    A repositora lança os itens diariamente no extrato abaixo e você já pode definir a divisão da conta em tempo real. Ao sair do flat, informe seu check-out abaixo para liberar o pagamento (faturado separadamente da diária).
-                  </p>
-                </div>
+          {/* ── 1. Barra Compacta Pré-Check-out (Consumo lançado diariamente • Pagamento liberado no check-out) ── */}
+          {!isCheckedOut && (
+            <Card className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="text-xs font-medium text-slate-300 truncate">
+                  Pagamento liberado no check-out
+                </span>
               </div>
 
               <Button
                 type="button"
+                title="Já efetuei o check-out — Liberar Pagamento"
                 onClick={handleConfirmGuestCheckout}
                 disabled={confirmingCheckout}
-                className="w-full h-10 bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-slate-950 font-black text-xs rounded-xl shadow-md shadow-cyan-600/20 flex items-center justify-center gap-2 transition-all"
+                className="h-9 px-3.5 bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-slate-950 font-black text-xs rounded-xl shrink-0 flex items-center gap-1.5 transition-all"
               >
                 {confirmingCheckout ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Registrando Check-out...</span>
+                    <span>Liberando...</span>
                   </>
                 ) : (
                   <>
                     <LogOut className="w-3.5 h-3.5" />
-                    <span>Já efetuei o check-out — Liberar Pagamento</span>
+                    <span>Já fiz check-out</span>
                   </>
                 )}
               </Button>
             </Card>
-          ) : (
-            <Card className="bg-emerald-950/20 border border-emerald-500/35 rounded-2xl p-3.5 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-emerald-300">
-                    Check-out Confirmado {checkoutTime ? `às ${checkoutTime}` : ""} — Pagamento Liberado!
-                  </p>
-                  <p className="text-[11px] text-slate-300">
-                    As cobranças e Notas Fiscais já estão separadas abaixo conforme a divisão configurada.
-                  </p>
-                </div>
-              </div>
-              <Badge className="bg-emerald-600 text-white text-[10px] shrink-0">Liberado</Badge>
-            </Card>
-          )}
-
-          {checkoutBannerSuccess && (
-            <div className="p-3 bg-emerald-500/15 border border-emerald-500/40 rounded-2xl flex items-start gap-2.5 text-xs text-emerald-200 animate-in fade-in">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              <span>{checkoutBannerSuccess}</span>
-            </div>
           )}
 
           {orderError && (
@@ -1544,603 +1532,477 @@ export default function GuestMinibar() {
             </Card>
           </div>
 
-          {/* ── 3. Extrato de Consumo por Dia + Divisão & Atribuição em Tempo Real (Destaque Principal) ── */}
+          {/* ── 3. Extrato de Consumo por Dia & Divisão ── */}
           <Card className="bg-slate-900 border-slate-800 rounded-3xl p-4 sm:p-5 space-y-4 shadow-xl">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-cyan-400 shrink-0" />
+                <Receipt className="w-4 h-4 text-cyan-400 shrink-0" />
                 <h2 className="text-sm sm:text-base font-black text-white">
-                  Extrato de Consumo por Dia & Divisão
+                  Extrato de Consumo
                 </h2>
               </div>
-              <div className="flex items-center gap-2">
-                {isSavingSplit ? (
-                  <span className="text-[10px] text-cyan-400 flex items-center gap-1 font-medium">
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                    Salvando...
-                  </span>
-                ) : splitSavedPulse ? (
-                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-bold">
-                    <Check className="w-3 h-3" />
-                    Salvo na reserva
-                  </span>
-                ) : null}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={refreshCurrentContextSilently}
-                  className="h-7 px-2 text-[11px] text-cyan-400 hover:text-cyan-300 rounded-lg"
-                >
-                  <RefreshCw className="w-3 h-3 mr-1" />
-                  <span>Atualizar</span>
-                </Button>
-              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={refreshCurrentContextSilently}
+                className="h-7 px-2 text-[11px] text-cyan-400 hover:text-cyan-300 rounded-lg"
+              >
+                <RefreshCw className="w-3 h-3 mr-1" />
+                <span>Atualizar</span>
+              </Button>
             </div>
 
-            {/* ── 3 Opções Rápidas de Divisão (Salvas em Tempo Real na Reserva) ── */}
-            <div className="p-3 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
+            {/* ── Seletor Rápido de Divisão (Exibido apenas quando há saldo pendente > R$ 0,00) ── */}
+            {pendingBalance > 0 && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
                   <Users className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                  <span>Como dividir a conta e a Nota Fiscal deste flat?</span>
+                  <span>Como dividir a conta?</span>
                 </span>
-                <Badge
-                  variant="outline"
-                  className="bg-cyan-950/50 text-cyan-300 border-cyan-800/60 text-[9px] font-semibold"
-                >
-                  Salvo em tempo real
-                </Badge>
-              </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleSelectSplitMode("titular")}
-                  className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
-                    splitMode === "titular"
-                      ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
-                      : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
-                  }`}
-                >
-                  100% Titular (Padrão)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectSplitMode("half_and_half")}
-                  className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
-                    splitMode === "half_and_half"
-                      ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
-                      : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
-                  }`}
-                >
-                  Dividir Meio a Meio
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectSplitMode("by_item")}
-                  className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
-                    splitMode === "by_item"
-                      ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
-                      : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
-                  }`}
-                >
-                  Marcar por Item
-                </button>
-              </div>
-
-              <p className="text-[11px] text-slate-400 leading-snug">
-                {splitMode === "titular" && (
-                  <>
-                    <strong className="text-slate-200">100% Titular:</strong> Se nada for marcado, 100% do saldo e da Nota Fiscal ficam configurados para o Hóspede Principal ({reservationGuests[0]?.firstName || "Titular"}).
-                  </>
-                )}
-                {splitMode === "half_and_half" && (
-                  <>
-                    <strong className="text-cyan-300">Dividir Meio a Meio:</strong> Todo o saldo da estadia (inclusive itens lançados na vistoria final pós-check-out) é dividido em partes iguais, gerando cobrança e Nota Fiscal para cada hóspede.
-                  </>
-                )}
-                {splitMode === "by_item" && (
-                  <>
-                    <strong className="text-cyan-300">Marcar por Item:</strong> Toque no nome do hóspede em cada item abaixo para atribuir quem consumiu o quê. Itens sem marcação (ou lançados na vistoria final) ficam para o Hóspede Principal (Titular).
-                  </>
-                )}
-              </p>
-            </div>
-
-            {/* ── Lista Diária de Consumo Lançado (Com Marcação Rápida por Item quando em "by_item") ── */}
-            {dailyLaunches.length === 0 ? (
-              <div className="p-5 rounded-2xl bg-slate-950/60 border border-slate-800/80 text-center space-y-1.5">
-                <Refrigerator className="w-7 h-7 text-slate-600 mx-auto" />
-                <p className="text-xs font-bold text-slate-300">
-                  Nenhum consumo lançado até o momento nesta estadia.
-                </p>
-                <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
-                  Você já pode deixar a modalidade de divisão e os dados dos hóspedes configurados abaixo; quando houver lançamentos, a divisão será aplicada automaticamente.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {dailyLaunches.map((group) => (
-                  <div
-                    key={group.dateYmd}
-                    className="rounded-2xl bg-slate-950/80 border border-slate-800 overflow-hidden"
+                <div className="grid grid-cols-3 gap-2">
+                  {/* 100% Titular (Padrão) */}
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSplitMode("titular")}
+                    className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
+                      splitMode === "titular"
+                        ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                        : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
+                    }`}
                   >
-                    <div className="px-3.5 py-2.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant="outline"
-                          className="bg-cyan-950/70 text-cyan-300 border-cyan-800 text-[11px] font-bold"
-                        >
-                          📅 Dia {group.dateBr}
-                        </Badge>
-                      </div>
-                      <span className="text-xs font-black text-slate-200">
-                        {formatBRL(group.totalDayAmount)}
-                      </span>
-                    </div>
-
-                    <div className="divide-y divide-slate-800/60 px-3.5 py-1">
-                      {group.items.map((item, idx) => {
-                        const isPaid = item.paymentStatus === "pago";
-                        const itemKey = item.itemKey || `${item.orderId}_${item.productId}_${idx}`;
-                        const remQty = item.remainingQuantity ?? item.quantity;
-                        const canAssignItem = splitMode === "by_item" && !item.isCourtesy && !isPaid && remQty > 0;
-                        const currentAlloc = itemAssignments[itemKey] || item.allocation?.allocations || {};
-                        const isExplicitlyMarked =
-                          Boolean(itemAssignments[itemKey]) || Boolean(item.allocation?.isExplicitlyMarked);
-                        const allocatedSum = Object.values(currentAlloc).reduce(
-                          (acc: number, v: any) => acc + (Number(v) || 0),
-                          0
-                        );
-                        const unassignedQty = Math.max(0, remQty - allocatedSum);
-                        const isExpandedUnits = expandedUnitItemKey === itemKey;
-
-                        return (
-                          <div
-                            key={`${item.orderId}-${item.productId}-${idx}`}
-                            className="py-2.5 space-y-2 text-xs"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="font-bold text-white">
-                                    {item.quantity}x {item.productName}
-                                  </span>
-                                  {item.isCourtesy ? (
-                                    <Badge className="bg-emerald-950 text-emerald-300 border border-emerald-800 text-[9px]">
-                                      Cortesia
-                                    </Badge>
-                                  ) : isPaid ? (
-                                    <Badge className="bg-emerald-600/20 text-emerald-300 border border-emerald-600/40 text-[9px]">
-                                      ✓ Pago
-                                    </Badge>
-                                  ) : (
-                                    <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px]">
-                                      A pagar
-                                    </Badge>
-                                  )}
-                                </div>
-                                <span className="text-[11px] text-slate-400 block">
-                                  Lançado em {item.launchDateBr} • {item.isCourtesy ? "Gratuito" : `${formatBRL(item.unitPrice)} un.`}
-                                </span>
-                              </div>
-
-                              <strong className={isPaid ? "text-emerald-400 font-mono" : "text-cyan-400 font-mono"}>
-                                {item.isCourtesy ? "R$ 0,00" : formatBRL(item.totalPrice)}
-                              </strong>
-                            </div>
-
-                            {/* Botões rápidos de atribuição no modo "Marcar por Item" */}
-                            {canAssignItem && (
-                              <div className="pt-1 flex flex-col gap-2">
-                                <div className="flex items-center justify-between gap-1.5 flex-wrap">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    {reservationGuests.map((g) => {
-                                      const gQty = Number(currentAlloc[g.index] || 0);
-                                      const isFullAssignedToG = isExplicitlyMarked && gQty === remQty && remQty > 0;
-                                      const isPartialAssignedToG = gQty > 0 && gQty < remQty;
-                                      const isDefaultFallbackToG = !isExplicitlyMarked && g.index === 1;
-                                      return (
-                                        <button
-                                          key={g.index}
-                                          type="button"
-                                          onClick={() => handleQuickAssignItemToGuest(itemKey, remQty, g.index)}
-                                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all flex items-center gap-1 ${
-                                            isFullAssignedToG
-                                              ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-sm"
-                                              : isPartialAssignedToG
-                                              ? "bg-cyan-950/80 text-cyan-300 border-cyan-500/60"
-                                              : isDefaultFallbackToG
-                                              ? "bg-slate-900 text-amber-300 border-amber-500/40 hover:border-cyan-400"
-                                              : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
-                                          }`}
-                                        >
-                                          <UserCheck className="w-3 h-3 shrink-0" />
-                                          <span>
-                                            Hóspede {g.index} ({g.firstName || g.name.split(" ")[0]})
-                                            {gQty > 0 && remQty > 1 ? `: ${gQty}x` : ""}
-                                          </span>
-                                        </button>
-                                      );
-                                    })}
-
-                                    {remQty > 1 && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleQuickDivideItemUnits(itemKey, remQty, currentAlloc)
-                                        }
-                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
-                                          isExpandedUnits
-                                            ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
-                                            : "bg-slate-900 text-cyan-400 border-slate-700 hover:border-cyan-500/50"
-                                        }`}
-                                      >
-                                        ÷ Dividir {remQty} un.
-                                      </button>
-                                    )}
-                                  </div>
-
-                                  {(!isExplicitlyMarked || unassignedQty > 0) && (
-                                    <span className="text-[10px] text-amber-300/90 font-medium">
-                                      {!isExplicitlyMarked || unassignedQty === remQty
-                                        ? "Sem marcação → Titular (1º Hóspede)"
-                                        : `${unassignedQty} un. s/ marcação → Titular`}
-                                    </span>
-                                  )}
-                                </div>
-
-                                {/* Steppers de divisão de unidades quando quantity > 1 */}
-                                {remQty > 1 && isExpandedUnits && (
-                                  <div className="p-2.5 rounded-xl bg-slate-900/95 border border-slate-800 space-y-2">
-                                    <span className="text-[10px] font-bold text-slate-300 block">
-                                      Distribuir as {remQty} unidades de {item.productName}:
-                                    </span>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                      {reservationGuests.map((g) => {
-                                        const gQty = Number(currentAlloc[g.index] || 0);
-                                        return (
-                                          <div
-                                            key={g.index}
-                                            className="flex items-center justify-between bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800"
-                                          >
-                                            <span className="text-[11px] font-bold text-slate-200 truncate">
-                                              {g.index}º • {g.firstName || g.name}
-                                            </span>
-                                            <div className="flex items-center gap-1.5">
-                                              <button
-                                                type="button"
-                                                onClick={() =>
-                                                  handleAdjustItemUnitForGuest(
-                                                    itemKey,
-                                                    remQty,
-                                                    g.index,
-                                                    -1,
-                                                    currentAlloc
-                                                  )
-                                                }
-                                                disabled={gQty <= 0}
-                                                className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white flex items-center justify-center"
-                                              >
-                                                <Minus className="w-3 h-3" />
-                                              </button>
-                                              <span className="w-5 text-center text-xs font-black text-cyan-400">
-                                                {gQty}
-                                              </span>
-                                              <button
-                                                type="button"
-                                                onClick={() =>
-                                                  handleAdjustItemUnitForGuest(
-                                                    itemKey,
-                                                    remQty,
-                                                    g.index,
-                                                    1,
-                                                    currentAlloc
-                                                  )
-                                                }
-                                                disabled={gQty >= remQty}
-                                                className="w-6 h-6 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center"
-                                              >
-                                                <Plus className="w-3 h-3" />
-                                              </button>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
+                    100% Titular
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSplitMode("half_and_half")}
+                    className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
+                      splitMode === "half_and_half"
+                        ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                        : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
+                    }`}
+                  >
+                    Dividir Meio a Meio
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSplitMode("by_item")}
+                    className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
+                      splitMode === "by_item"
+                        ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                        : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
+                    }`}
+                  >
+                    Marcar por Item
+                  </button>
+                </div>
               </div>
             )}
 
-            {/* ── Seção de Hóspedes do Flat, Resumo por Consumidor & Dados para Cobrança/Nota Fiscal ── */}
-            <div className="pt-3 border-t border-slate-800 space-y-3">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div>
-                  <h3 className="text-xs sm:text-sm font-black text-white flex items-center gap-1.5">
-                    <Receipt className="w-4 h-4 text-cyan-400 shrink-0" />
-                    <span>Hóspedes do Flat — Cobrança e Nota Fiscal por Consumidor</span>
-                  </h3>
-                  <p className="text-[11px] text-slate-400">
-                    Dados puxados da reserva/FNRH. Complete se faltar WhatsApp, CPF/CNPJ ou E-mail para envio do link e da NF:
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleStartEditGuest(undefined)}
-                  className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-cyan-950/40 border border-cyan-800/50 shrink-0"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>+ Adicionar Hóspede</span>
-                </button>
+            {/* ── Lista Única e Limpa de Itens Consumidos (Detalhes só ao clicar no item) ── */}
+            {allLaunchedItems.length === 0 ? (
+              <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80 text-center">
+                <p className="text-xs font-medium text-slate-400">
+                  Nenhum consumo lançado até o momento.
+                </p>
               </div>
-
-              <div className="space-y-2.5">
-                {reservationGuests.map((g) => {
-                  const share = sharesList.find((s) => Number(s.guestIndex) === Number(g.index));
-                  const guestAmount = Number(share?.amount ?? (g.index === 1 && splitMode === "titular" ? pendingBalance : 0));
-                  const guestPaidAmount = Number(share?.paidAmount || 0);
-                  const isSharePaid = Boolean(share?.isSharePaid) || (guestPaidAmount > 0 && guestAmount <= 0);
-                  const guestItems: any[] = Array.isArray(share?.items) ? share.items : [];
-                  const gDoc = g.cpf || g.document || "";
-                  const missingAnyFiscal = !g.phone || !gDoc || !g.email;
-                  const isSelectedPayer = selectedGuestIndex === g.index;
-                  const isEditingThis = editingGuestIndex === g.index && !isAddingNewGuest;
+            ) : (
+              <div className="rounded-2xl bg-slate-950/80 border border-slate-800 divide-y divide-slate-800/60 px-3.5">
+                {allLaunchedItems.map((item) => {
+                  const isPaid = item.paymentStatus === "pago";
+                  const itemKey = item.resolvedKey;
+                  const remQty = item.remainingQuantity ?? item.quantity;
+                  const canAssignItem =
+                    pendingBalance > 0 &&
+                    splitMode === "by_item" &&
+                    !item.isCourtesy &&
+                    !isPaid &&
+                    remQty > 0;
+                  const currentAlloc = itemAssignments[itemKey] || item.allocation?.allocations || {};
+                  const isExplicitlyMarked =
+                    Boolean(itemAssignments[itemKey]) || Boolean(item.allocation?.isExplicitlyMarked);
+                  const isExpandedUnits = expandedUnitItemKey === itemKey;
+                  const isDetailOpen = expandedDetailItemKey === itemKey;
 
                   return (
-                    <div
-                      key={g.index}
-                      className={`p-3.5 rounded-2xl border transition-all space-y-2.5 ${
-                        isSelectedPayer
-                          ? "bg-slate-950/95 border-cyan-500/50"
-                          : "bg-slate-950/60 border-slate-800"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="space-y-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs sm:text-sm font-black text-white">
-                              {g.name}
-                            </span>
-                            <Badge
-                              variant="outline"
-                              className="bg-slate-900 text-slate-300 border-slate-700 text-[9px] font-bold"
-                            >
-                              {g.index === 1 ? "1º Hóspede (Titular)" : `${g.index}º Hóspede`}
-                            </Badge>
-                            {isSharePaid && (
-                              <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
-                                ✓ Parte Quitada ({formatBRL(guestPaidAmount)})
-                              </Badge>
-                            )}
-                            {missingAnyFiscal ? (
-                              <Badge className="bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[9px]">
-                                Completar dados p/ NF
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[9px]">
-                                ✓ Dados NF OK
-                              </Badge>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-400">
-                            <span>📱 {g.phone || "Sem WhatsApp"}</span>
-                            <span>•</span>
-                            <span>🪪 {gDoc ? formatDocMask(gDoc) : "Sem CPF/CNPJ"}</span>
-                            <span>•</span>
-                            <span className="truncate max-w-[180px]">✉️ {g.email || "Sem e-mail"}</span>
-                          </div>
+                    <div key={itemKey} className="py-2.5 space-y-1.5 text-xs">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedDetailItemKey((prev) => (prev === itemKey ? null : itemKey))
+                        }
+                        className="w-full flex items-center justify-between gap-2 text-left group"
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="font-bold text-white truncate">
+                            {item.quantity}x {item.productName}
+                          </span>
+                          {isDetailOpen ? (
+                            <ChevronUp className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                          ) : (
+                            <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0 opacity-70 group-hover:opacity-100" />
+                          )}
                         </div>
 
-                        <div className="text-right shrink-0">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                            Sua Parte
-                          </span>
-                          <strong
-                            className={`text-sm sm:text-base font-black font-mono ${
-                              guestAmount > 0 ? "text-cyan-400" : isSharePaid ? "text-emerald-400" : "text-slate-500"
-                            }`}
-                          >
-                            {isSharePaid && guestAmount <= 0 ? "R$ 0,00 (Pago)" : formatBRL(guestAmount)}
-                          </strong>
-                        </div>
-                      </div>
+                        <strong
+                          className={
+                            item.isCourtesy || isPaid
+                              ? "text-emerald-400 font-mono shrink-0"
+                              : "text-cyan-400 font-mono shrink-0"
+                          }
+                        >
+                          {item.isCourtesy ? "Cortesia" : formatBRL(item.totalPrice)}
+                        </strong>
+                      </button>
 
-                      {/* Resumo dos itens atribuídos a este hóspede */}
-                      {guestItems.length > 0 && (
-                        <div className="px-2.5 py-2 rounded-xl bg-slate-900/70 border border-slate-800/80 text-[11px] text-slate-300 space-y-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase block">
-                            Itens / Cota na Nota Fiscal de {g.firstName || g.name}:
-                          </span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {guestItems.map((gi: any, gIdx: number) => (
-                              <span
-                                key={gIdx}
-                                className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-950 border border-slate-800 text-[11px] text-slate-200"
-                              >
-                                {gi.quantity}x {gi.productName} ({formatBRL(gi.totalPrice)})
-                              </span>
-                            ))}
-                          </div>
+                      {isDetailOpen && (
+                        <div className="text-[11px] text-slate-400 pl-0.5 animate-in fade-in">
+                          Lançado em {item.launchDateBr || "—"} •{" "}
+                          {item.isCourtesy ? "Gratuito" : `${formatBRL(item.unitPrice)} un.`} •{" "}
+                          {item.isCourtesy ? "Cortesia" : isPaid ? "Pago" : "A pagar"}
                         </div>
                       )}
 
-                      <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            isEditingThis ? setEditingGuestIndex(null) : handleStartEditGuest(g)
-                          }
-                          className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1"
-                        >
-                          <Edit3 className="w-3 h-3" />
-                          <span>
-                            {isEditingThis
-                              ? "Fechar edição"
-                              : missingAnyFiscal
-                              ? "Completar Nome / WhatsApp / CPF / E-mail"
-                              : "Editar dados fiscais"}
-                          </span>
-                        </button>
+                      {/* Controles rápidos de atribuição apenas no modo "Marcar por Item" */}
+                      {canAssignItem && (
+                        <div className="pt-1 flex flex-col gap-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {reservationGuests.map((g) => {
+                              const gQty = Number(currentAlloc[g.index] || 0);
+                              const isFullAssignedToG = isExplicitlyMarked && gQty === remQty && remQty > 0;
+                              const isPartialAssignedToG = gQty > 0 && gQty < remQty;
+                              const isDefaultFallbackToG = !isExplicitlyMarked && g.index === 1;
+                              return (
+                                <button
+                                  key={g.index}
+                                  type="button"
+                                  onClick={() => handleQuickAssignItemToGuest(itemKey, remQty, g.index)}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all flex items-center gap-1 ${
+                                    isFullAssignedToG
+                                      ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-sm"
+                                      : isPartialAssignedToG
+                                      ? "bg-cyan-950/80 text-cyan-300 border-cyan-500/60"
+                                      : isDefaultFallbackToG
+                                      ? "bg-slate-900 text-amber-300 border-amber-500/40 hover:border-cyan-400"
+                                      : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
+                                  }`}
+                                >
+                                  <UserCheck className="w-3 h-3 shrink-0" />
+                                  <span>
+                                    {g.firstName || g.name.split(" ")[0]}
+                                    {gQty > 0 && remQty > 1 ? ` (${gQty}x)` : ""}
+                                  </span>
+                                </button>
+                              );
+                            })}
 
-                        {isCheckedOut && guestAmount > 0 && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => handleStartPayGuestShare(g.index)}
-                            className="h-8 px-3 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-black text-[11px] rounded-xl"
-                          >
-                            Pagar parte de {g.firstName || g.name.split(" ")[0]} ({formatBRL(guestAmount)})
-                          </Button>
-                        )}
-                      </div>
+                            {remQty > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleQuickDivideItemUnits(itemKey, remQty, currentAlloc)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                                  isExpandedUnits
+                                    ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
+                                    : "bg-slate-900 text-cyan-400 border-slate-700 hover:border-cyan-500/50"
+                                }`}
+                              >
+                                ÷ Dividir {remQty} un.
+                              </button>
+                            )}
+                          </div>
 
-                      {/* Formulário Inline de Edição de Dados do Hóspede */}
-                      {isEditingThis && (
-                        <div className="p-3 bg-slate-900 border border-cyan-500/40 rounded-xl space-y-2.5 mt-2">
-                          <span className="text-[11px] font-bold text-cyan-300 block">
-                            Dados de {g.index === 1 ? "Hóspede Titular" : `${g.index}º Hóspede`} (para envio do link no WhatsApp e emissão da Nota Fiscal):
-                          </span>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <Input
-                              placeholder="Nome Completo *"
-                              value={guestEditForm.name}
-                              onChange={(e) =>
-                                setGuestEditForm((p) => ({ ...p, name: e.target.value }))
-                              }
-                              className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
-                            />
-                            <Input
-                              placeholder="WhatsApp com DDD (ex: 22999999999)"
-                              value={guestEditForm.phone}
-                              onChange={(e) =>
-                                setGuestEditForm((p) => ({ ...p, phone: e.target.value }))
-                              }
-                              className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
-                            />
-                            <Input
-                              placeholder="CPF ou CNPJ (Tomador da NF)"
-                              value={guestEditForm.cpf}
-                              onChange={(e) =>
-                                setGuestEditForm((p) => ({
-                                  ...p,
-                                  cpf: formatDocMask(e.target.value)
-                                }))
-                              }
-                              className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
-                            />
-                            <Input
-                              type="email"
-                              placeholder="E-mail (para receber a NF)"
-                              value={guestEditForm.email}
-                              onChange={(e) =>
-                                setGuestEditForm((p) => ({ ...p, email: e.target.value }))
-                              }
-                              className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
-                            />
-                          </div>
-                          <div className="flex items-center justify-end gap-2">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setEditingGuestIndex(null)}
-                              className="h-8 text-xs text-slate-400"
-                            >
-                              Cancelar
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={handleSaveGuestInline}
-                              className="h-8 px-4 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded-lg"
-                            >
-                              Salvar Hóspede
-                            </Button>
-                          </div>
+                          {remQty > 1 && isExpandedUnits && (
+                            <div className="p-2.5 rounded-xl bg-slate-900/95 border border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {reservationGuests.map((g) => {
+                                const gQty = Number(currentAlloc[g.index] || 0);
+                                return (
+                                  <div
+                                    key={g.index}
+                                    className="flex items-center justify-between bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800"
+                                  >
+                                    <span className="text-[11px] font-bold text-slate-200 truncate">
+                                      {g.firstName || g.name}
+                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleAdjustItemUnitForGuest(
+                                            itemKey,
+                                            remQty,
+                                            g.index,
+                                            -1,
+                                            currentAlloc
+                                          )
+                                        }
+                                        disabled={gQty <= 0}
+                                        className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white flex items-center justify-center"
+                                      >
+                                        <Minus className="w-3 h-3" />
+                                      </button>
+                                      <span className="w-5 text-center text-xs font-black text-cyan-400">
+                                        {gQty}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleAdjustItemUnitForGuest(
+                                            itemKey,
+                                            remQty,
+                                            g.index,
+                                            1,
+                                            currentAlloc
+                                          )
+                                        }
+                                        disabled={gQty >= remQty}
+                                        className="w-6 h-6 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center"
+                                      >
+                                        <Plus className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   );
                 })}
-
-                {/* Formulário para Adicionar Novo Hóspede ao Flat */}
-                {isAddingNewGuest && editingGuestIndex !== null && (
-                  <div className="p-3.5 bg-slate-950 border border-cyan-500/40 rounded-2xl space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-cyan-300">
-                        Cadastrar {guestEditForm.index}º Hóspede do Flat (para divisão de conta e Nota Fiscal)
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsAddingNewGuest(false);
-                          setEditingGuestIndex(null);
-                        }}
-                        className="text-xs text-slate-400 hover:text-white"
-                      >
-                        Fechar
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <Input
-                        placeholder="Nome Completo *"
-                        value={guestEditForm.name}
-                        onChange={(e) =>
-                          setGuestEditForm((p) => ({ ...p, name: e.target.value }))
-                        }
-                        className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
-                      />
-                      <Input
-                        placeholder="WhatsApp com DDD (p/ receber link)"
-                        value={guestEditForm.phone}
-                        onChange={(e) =>
-                          setGuestEditForm((p) => ({ ...p, phone: e.target.value }))
-                        }
-                        className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
-                      />
-                      <Input
-                        placeholder="CPF ou CNPJ (p/ Nota Fiscal)"
-                        value={guestEditForm.cpf}
-                        onChange={(e) =>
-                          setGuestEditForm((p) => ({
-                            ...p,
-                            cpf: formatDocMask(e.target.value)
-                          }))
-                        }
-                        className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
-                      />
-                      <Input
-                        type="email"
-                        placeholder="E-mail (p/ receber Nota Fiscal)"
-                        value={guestEditForm.email}
-                        onChange={(e) =>
-                          setGuestEditForm((p) => ({ ...p, email: e.target.value }))
-                        }
-                        className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      onClick={handleSaveGuestInline}
-                      disabled={!guestEditForm.name.trim()}
-                      className="w-full h-9 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded-xl"
-                    >
-                      Salvar {guestEditForm.index}º Hóspede na Reserva
-                    </Button>
-                  </div>
-                )}
               </div>
-            </div>
+            )}
+
+            {/* ── Hóspedes do Flat — Cobrança e Nota Fiscal por Consumidor (Visível apenas nos modos de divisão com saldo pendente) ── */}
+            {pendingBalance > 0 && splitMode !== "titular" && (
+              <div className="pt-3 border-t border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-200">
+                    Divisão por Hóspede
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleStartEditGuest(undefined)}
+                    className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-cyan-950/40 border border-cyan-800/50 shrink-0"
+                  >
+                    <UserPlus className="w-3 h-3" />
+                    <span>+ Adicionar Hóspede</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {reservationGuests.map((g) => {
+                    const share = sharesList.find((s) => Number(s.guestIndex) === Number(g.index));
+                    const guestAmount = Number(
+                      share?.amount ?? (g.index === 1 && splitMode === "titular" ? pendingBalance : 0)
+                    );
+                    const guestPaidAmount = Number(share?.paidAmount || 0);
+                    const isSharePaid = Boolean(share?.isSharePaid) || (guestPaidAmount > 0 && guestAmount <= 0);
+                    const gDoc = g.cpf || g.document || "";
+                    const isPlaceholderName = /^\d+º\s*h[óo]spede$/i.test((g.name || "").trim());
+                    const missingAnyFiscal = isPlaceholderName || !g.phone || !gDoc;
+                    const isEditingThis = editingGuestIndex === g.index && !isAddingNewGuest;
+
+                    return (
+                      <div
+                        key={g.index}
+                        className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                            <span className="text-xs sm:text-sm font-bold text-white truncate">
+                              {g.name}
+                            </span>
+                            {isSharePaid && (
+                              <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
+                                ✓ Pago
+                              </Badge>
+                            )}
+                            {missingAnyFiscal ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  isEditingThis ? setEditingGuestIndex(null) : handleStartEditGuest(g)
+                                }
+                                className="px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[10px] font-bold hover:bg-amber-500/25 transition-all"
+                              >
+                                {isEditingThis ? "Fechar" : "Preencher dados"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  isEditingThis ? setEditingGuestIndex(null) : handleStartEditGuest(g)
+                                }
+                                title="Editar dados do hóspede"
+                                className="text-slate-500 hover:text-cyan-400 p-1 rounded-md transition-colors"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <strong
+                              className={`text-sm font-black font-mono ${
+                                guestAmount > 0
+                                  ? "text-cyan-400"
+                                  : isSharePaid
+                                  ? "text-emerald-400"
+                                  : "text-slate-500"
+                              }`}
+                            >
+                              {isSharePaid && guestAmount <= 0 ? "R$ 0,00" : formatBRL(guestAmount)}
+                            </strong>
+
+                            {isCheckedOut && guestAmount > 0 && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => handleStartPayGuestShare(g.index)}
+                                className="h-7 px-2.5 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-black text-[11px] rounded-xl"
+                              >
+                                Pagar
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Formulário Inline exibido apenas quando precisa preencher dados ou clicou em editar */}
+                        {isEditingThis && (
+                          <div className="p-3 bg-slate-900 border border-cyan-500/40 rounded-xl space-y-2.5 mt-1">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <Input
+                                placeholder="Nome Completo *"
+                                value={guestEditForm.name}
+                                onChange={(e) =>
+                                  setGuestEditForm((p) => ({ ...p, name: e.target.value }))
+                                }
+                                className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
+                              />
+                              <Input
+                                placeholder="WhatsApp com DDD"
+                                value={guestEditForm.phone}
+                                onChange={(e) =>
+                                  setGuestEditForm((p) => ({ ...p, phone: e.target.value }))
+                                }
+                                className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
+                              />
+                              <Input
+                                placeholder="CPF ou CNPJ"
+                                value={guestEditForm.cpf}
+                                onChange={(e) =>
+                                  setGuestEditForm((p) => ({
+                                    ...p,
+                                    cpf: formatDocMask(e.target.value)
+                                  }))
+                                }
+                                className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
+                              />
+                              <Input
+                                type="email"
+                                placeholder="E-mail (opcional)"
+                                value={guestEditForm.email}
+                                onChange={(e) =>
+                                  setGuestEditForm((p) => ({ ...p, email: e.target.value }))
+                                }
+                                className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
+                              />
+                            </div>
+                            <div className="flex items-center justify-end gap-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setEditingGuestIndex(null)}
+                                className="h-8 text-xs text-slate-400"
+                              >
+                                Cancelar
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={handleSaveGuestInline}
+                                className="h-8 px-4 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded-lg"
+                              >
+                                Salvar
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Formulário para Adicionar Novo Hóspede ao Flat */}
+                  {isAddingNewGuest && editingGuestIndex !== null && (
+                    <div className="p-3 bg-slate-950 border border-cyan-500/40 rounded-2xl space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-cyan-300">
+                          Novo Hóspede ({guestEditForm.index}º)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAddingNewGuest(false);
+                            setEditingGuestIndex(null);
+                          }}
+                          className="text-xs text-slate-400 hover:text-white"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <Input
+                          placeholder="Nome Completo *"
+                          value={guestEditForm.name}
+                          onChange={(e) =>
+                            setGuestEditForm((p) => ({ ...p, name: e.target.value }))
+                          }
+                          className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
+                        />
+                        <Input
+                          placeholder="WhatsApp com DDD"
+                          value={guestEditForm.phone}
+                          onChange={(e) =>
+                            setGuestEditForm((p) => ({ ...p, phone: e.target.value }))
+                          }
+                          className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
+                        />
+                        <Input
+                          placeholder="CPF ou CNPJ"
+                          value={guestEditForm.cpf}
+                          onChange={(e) =>
+                            setGuestEditForm((p) => ({
+                              ...p,
+                              cpf: formatDocMask(e.target.value)
+                            }))
+                          }
+                          className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
+                        />
+                        <Input
+                          type="email"
+                          placeholder="E-mail (opcional)"
+                          value={guestEditForm.email}
+                          onChange={(e) =>
+                            setGuestEditForm((p) => ({ ...p, email: e.target.value }))
+                          }
+                          className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={handleSaveGuestInline}
+                        disabled={!guestEditForm.name.trim()}
+                        className="w-full h-9 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs rounded-xl"
+                      >
+                        Salvar Hóspede
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </Card>
 
           {/* ── 4. Cardápio Digital do Frigobar (Recolhido por Padrão e Posicionado Abaixo do Extrato) ── */}
@@ -2160,16 +2022,16 @@ export default function GuestMinibar() {
                       Cardápio Digital do Frigobar
                     </h2>
                     <Badge className="bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px]">
-                      {catalog.length} itens no flat
+                      {catalog.length} itens
                     </Badge>
                   </div>
                   <span className="text-[11px] text-slate-400 block mt-0.5">
-                    Toque para consultar os produtos disponíveis, quantidades padrão e tabela de preços
+                    Consultar produtos e tabela de preços
                   </span>
                 </div>
               </div>
               <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-400 shrink-0">
-                <span className="hidden sm:inline">{showReferenceCatalog ? "Recolher" : "Abrir Cardápio"}</span>
+                <span className="hidden sm:inline">{showReferenceCatalog ? "Recolher" : "Abrir"}</span>
                 {showReferenceCatalog ? (
                   <ChevronUp className="w-4 h-4 text-cyan-400" />
                 ) : (
@@ -2264,7 +2126,7 @@ export default function GuestMinibar() {
                         >
                           <div className="flex items-center gap-3 min-w-0">
                             <div
-                              className={`w-14 h-14 rounded-2xl border flex items-center justify-center shrink-0 overflow-hidden shadow-inner ${
+                              className={`w-12 h-12 rounded-2xl border flex items-center justify-center shrink-0 overflow-hidden shadow-inner ${
                                 isCourtesyItem
                                   ? "bg-emerald-950/60 border-emerald-700/50"
                                   : "bg-white border-slate-700/50"
@@ -2280,54 +2142,37 @@ export default function GuestMinibar() {
                                   }}
                                 />
                               ) : prod.category === "cafe" || prod.category === "cafe_capsulas" || isCourtesyItem ? (
-                                <Coffee className="w-6 h-6 text-amber-400" />
+                                <Coffee className="w-5 h-5 text-amber-400" />
                               ) : (
-                                <Refrigerator className="w-6 h-6 text-cyan-400" />
+                                <Refrigerator className="w-5 h-5 text-cyan-400" />
                               )}
                             </div>
-                            <div className="min-w-0 space-y-1">
+                            <div className="min-w-0 space-y-0.5">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="text-xs sm:text-sm font-black text-white leading-tight">
                                   {prod.name}
                                 </span>
                                 {isCourtesyItem && (
                                   <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
-                                    🎁 Cortesia
+                                    Cortesia
                                   </Badge>
                                 )}
                               </div>
-                              {prod.description && (
-                                <p className="text-[11px] text-slate-400 line-clamp-1">
-                                  {prod.description}
-                                </p>
-                              )}
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-[10px] text-slate-300">
-                                  Padrão no flat: <strong className="text-white ml-1">{nominalStandard} un.</strong>
-                                </span>
-                              </div>
+                              <span className="text-[10px] text-slate-400 block">
+                                Padrão: {nominalStandard} un.
+                              </span>
                             </div>
                           </div>
 
                           <div className="text-right shrink-0">
                             {isCourtesyFree ? (
-                              <div className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-center">
-                                <span className="text-[10px] font-bold text-emerald-300 block uppercase">
-                                  1ª un. Grátis
-                                </span>
-                                <strong className="text-xs font-black text-emerald-400">
-                                  R$ 0,00
-                                </strong>
-                              </div>
+                              <strong className="text-xs font-black text-emerald-400">
+                                Cortesia
+                              </strong>
                             ) : (
-                              <div className="px-2.5 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-right">
-                                <span className="text-[9px] font-bold text-slate-400 block uppercase">
-                                  Valor un.
-                                </span>
-                                <strong className="text-sm font-black text-cyan-400 font-mono">
-                                  {formatBRL(prod.price)}
-                                </strong>
-                              </div>
+                              <strong className="text-sm font-black text-cyan-400 font-mono">
+                                {formatBRL(prod.price)}
+                              </strong>
                             )}
                           </div>
                         </div>
@@ -2338,9 +2183,9 @@ export default function GuestMinibar() {
             )}
           </Card>
 
-          {/* ── 5. Histórico de Pagamentos já Realizados na Estadia ── */}
+          {/* ── 5. Histórico de Pagamentos já Realizados na Estadia (Sem código técnico de pedido) ── */}
           {paidOrdersHistory.length > 0 && (
-            <Card className="bg-slate-900/60 border-slate-800/80 rounded-2xl p-4 space-y-3">
+            <Card className="bg-slate-900/60 border-slate-800/80 rounded-2xl p-4 space-y-2.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CheckCircle className="w-4 h-4 text-emerald-400" />
@@ -2354,17 +2199,13 @@ export default function GuestMinibar() {
               </div>
               <div className="space-y-1.5">
                 {paidOrdersHistory.map((ord: any) => (
-                  <div key={ord.id} className="flex items-center justify-between text-xs text-slate-300 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800">
-                    <div>
-                      <span className="block">
-                        Pago por <strong className="text-white">{ord.guestName}</strong> ({formatBRL(ord.totalAmount)})
-                      </span>
-                      {ord.paidAt && (
-                        <span className="text-[10px] text-slate-500">
-                          Pedido #{ord.id}
-                        </span>
-                      )}
-                    </div>
+                  <div
+                    key={ord.id}
+                    className="flex items-center justify-between text-xs text-slate-300 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800"
+                  >
+                    <span>
+                      Pago por <strong className="text-white">{ord.guestName}</strong> ({formatBRL(ord.totalAmount)})
+                    </span>
                     {ord.invoiceFileUrl ? (
                       <a
                         href={ord.invoiceFileUrl}
@@ -2393,7 +2234,7 @@ export default function GuestMinibar() {
                   ? "🔒 Pagamento após o check-out"
                   : pendingBalance <= 0
                   ? "Tudo quitado nesta estadia"
-                  : `Cota configurada (${activeConsumerGuest.firstName})`}
+                  : `Total a pagar (${activeConsumerGuest.firstName})`}
               </span>
               <div className="text-lg sm:text-xl font-black text-cyan-400">
                 {formatBRL(pendingBalance > 0 ? paymentSelectionSummary.amountToPay : 0)}
@@ -2431,12 +2272,12 @@ export default function GuestMinibar() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 5. TELA: CHECKOUT & DADOS FISCAIS
+  // 5. TELA: CHECKOUT & DADOS FISCAIS (Enxuta e Direta)
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "checkout") {
-    const activePhoneDisplay = invoicePhone || activeConsumerGuest.phone || reservation?.phone || "";
-    const activeEmailDisplay = invoiceEmail || activeConsumerGuest.email || reservation?.email || "";
     const checkoutAmount = paymentSelectionSummary.amountToPay;
+    const hasRegisteredCpf = Boolean(activeConsumerGuest.cpf);
+    const showCustomFiscalInputs = !hasRegisteredCpf || docChoice === "personalizado" || isEditingContact;
 
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 pb-28">
@@ -2449,7 +2290,7 @@ export default function GuestMinibar() {
               className="text-xs text-slate-400 hover:text-white rounded-xl h-9 px-2"
             >
               <ArrowLeft className="w-4 h-4 mr-1" />
-              <span>Voltar ao Extrato</span>
+              <span>Voltar</span>
             </Button>
             <span className="text-xs font-bold text-slate-300">
               Pagamento • {activeConsumerGuest.firstName}
@@ -2457,264 +2298,177 @@ export default function GuestMinibar() {
           </div>
         </header>
 
-        <main className="max-w-xl mx-auto p-4 sm:p-6 space-y-5">
-          {/* Resumo do Pagamento */}
-          <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
+        <main className="max-w-xl mx-auto p-4 sm:p-6 space-y-4">
+          {/* Resumo Enxuto do Pagamento */}
+          <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <Receipt className="w-4 h-4 text-cyan-400" />
-                <span>Resumo do Pagamento — Flat {reservation?.flatNumber}</span>
-              </h2>
+              <div>
+                <span className="text-[11px] font-bold text-slate-400 uppercase block">
+                  Total a Pagar — Flat {reservation?.flatNumber}
+                </span>
+                <strong className="text-xl font-black text-cyan-400">
+                  {formatBRL(checkoutAmount)}
+                </strong>
+              </div>
               <Badge variant="outline" className="bg-cyan-950/60 text-cyan-300 border-cyan-800 text-[10px]">
                 {activeConsumerGuest.name}
               </Badge>
             </div>
 
-            <div className="divide-y divide-slate-800 text-xs">
-              {paymentSelectionSummary.summaryLines.map((line, idx) => (
-                <div key={idx} className="py-2.5 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="font-bold text-slate-200">{line.label}</span>
-                    <span className="text-[11px] text-slate-400 block">{line.sublabel}</span>
+            {paymentSelectionSummary.summaryLines.length > 0 && (
+              <div className="pt-2 border-t border-slate-800/80 space-y-1.5 text-xs">
+                {paymentSelectionSummary.summaryLines.map((line, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-slate-300">
+                    <span>{line.label}</span>
+                    <strong className="text-slate-200 font-mono">{formatBRL(line.subtotal)}</strong>
                   </div>
-                  <strong className="text-cyan-400 text-sm">
-                    {formatBRL(line.subtotal)}
-                  </strong>
-                </div>
-              ))}
-            </div>
-
-            <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-sm">
-              <span className="font-bold text-slate-300">Total a Pagar Agora</span>
-              <span className="text-lg font-black text-cyan-400">{formatBRL(checkoutAmount)}</span>
-            </div>
+                ))}
+              </div>
+            )}
           </Card>
 
-          {/* Opções de Emissão de Nota Fiscal (Mandatório F17) */}
-          <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
-            <div className="space-y-1">
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <FileText className="w-4 h-4 text-cyan-400" />
-                <span>Preferência de Descrição na Nota Fiscal</span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                Selecione como os itens devem constar na sua Nota Fiscal:
-              </p>
+          {/* Nota Fiscal: 3 Pílulas Compactas + Confirmação Discreta de CPF */}
+          <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 space-y-3.5">
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Descrição na Nota Fiscal</span>
+              </span>
+
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: "detailed", label: "Detalhar Itens" },
+                  { id: "water", label: 'Lançar como "Água"' },
+                  { id: "minibar_consumption", label: "Consumo de Frigobar" }
+                ].map((opt) => {
+                  const active = invoicePreference === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setInvoicePreference(opt.id as InvoicePreference)}
+                      className={`p-2.5 rounded-xl border text-center text-[11px] font-bold transition-all ${
+                        active
+                          ? "bg-cyan-600 text-slate-950 border-cyan-400 shadow-md shadow-cyan-600/20"
+                          : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <RadioGroup
-              value={invoicePreference}
-              onValueChange={(val) => setInvoicePreference(val as InvoicePreference)}
-              className="space-y-2.5"
-            >
-              <label className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                invoicePreference === "detailed"
-                  ? "bg-cyan-950/40 border-cyan-500/60 text-white"
-                  : "bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800/70"
-              }`}>
-                <RadioGroupItem value="detailed" id="opt-detailed" className="mt-0.5" />
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold block">1. Discriminar todos os itens consumidos</span>
-                  <span className="text-[11px] text-slate-400 block">
-                    Lista detalhada de cada item consumido.
+            <div className="pt-2.5 border-t border-slate-800 space-y-2.5">
+              {!showCustomFiscalInputs ? (
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-300">
+                    CPF na Nota: <strong className="text-white">{formatDocMask(activeConsumerGuest.cpf)}</strong>
                   </span>
-                </div>
-              </label>
-
-              <label className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                invoicePreference === "water"
-                  ? "bg-cyan-950/40 border-cyan-500/60 text-white"
-                  : "bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800/70"
-              }`}>
-                <RadioGroupItem value="water" id="opt-water" className="mt-0.5" />
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold block">2. Lançar tudo como "Água"</span>
-                  <span className="text-[11px] text-slate-400 block">
-                    Ideal para reembolso corporativo com restrição de itens.
-                  </span>
-                </div>
-              </label>
-
-              <label className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
-                invoicePreference === "minibar_consumption"
-                  ? "bg-cyan-950/40 border-cyan-500/60 text-white"
-                  : "bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800/70"
-              }`}>
-                <RadioGroupItem value="minibar_consumption" id="opt-minibar" className="mt-0.5" />
-                <div className="space-y-0.5">
-                  <span className="text-xs font-bold block">3. Lançar tudo como "Consumo de Frigobar"</span>
-                  <span className="text-[11px] text-slate-400 block">
-                    Descrição consolidada padrão de conveniência.
-                  </span>
-                </div>
-              </label>
-            </RadioGroup>
-          </Card>
-
-          {/* Dados Fiscais: Documento (CPF / CNPJ) e Envio Automático para WhatsApp + E-mail Cadastrados */}
-          <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
-            <h2 className="text-sm font-bold text-white flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-cyan-400" />
-              <span>Documento & Envio Automático da Nota Fiscal</span>
-            </h2>
-
-            <div className="space-y-3">
-              {activeConsumerGuest.cpf && (
-                <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setDocChoice("cadastrado")}
-                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
-                      docChoice === "cadastrado"
-                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-300"
-                        : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
-                    }`}
+                    onClick={() => {
+                      if (!customDocument && activeConsumerGuest.cpf) {
+                        setCustomDocument(formatDocMask(activeConsumerGuest.cpf));
+                      }
+                      setIsEditingContact(true);
+                    }}
+                    className="text-[11px] font-bold text-cyan-400 hover:underline"
                   >
-                    Meu CPF ({formatDocMask(activeConsumerGuest.cpf)})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDocChoice("personalizado")}
-                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
-                      docChoice === "personalizado"
-                        ? "bg-cyan-950/60 border-cyan-500 text-cyan-300"
-                        : "bg-slate-800 border-slate-700 text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    Outro CPF ou CNPJ
+                    Usar outro CPF/CNPJ ou alterar contato
                   </button>
                 </div>
-              )}
+              ) : (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-200">
+                      Dados para emissão e envio da NF
+                    </span>
+                    {hasRegisteredCpf && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDocChoice("cadastrado");
+                          setIsEditingContact(false);
+                        }}
+                        className="text-[11px] text-slate-400 hover:text-white"
+                      >
+                        Usar cadastro padrão
+                      </button>
+                    )}
+                  </div>
 
-              {(docChoice === "personalizado" || !activeConsumerGuest.cpf) && (
-                <div className="space-y-3 pt-1">
-                  <div className="space-y-1">
-                    <Label className="text-xs text-slate-300 font-semibold">CPF ou CNPJ na Nota</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <Input
-                      placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                      placeholder="CPF ou CNPJ na Nota"
                       value={customDocument}
-                      onChange={(e) => setCustomDocument(formatDocMask(e.target.value))}
-                      className="h-11 bg-slate-800 border-slate-700 text-white rounded-xl text-xs"
+                      onChange={(e) => {
+                        setDocChoice("personalizado");
+                        setCustomDocument(formatDocMask(e.target.value));
+                      }}
+                      className="h-10 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
                     />
-                  </div>
-
-                  {customDocument.replace(/\D/g, "").length === 14 && (
-                    <div className="space-y-1">
-                      <Label className="text-xs text-slate-300 font-semibold">Razão Social (Opcional)</Label>
+                    {customDocument.replace(/\D/g, "").length === 14 && (
                       <Input
-                        placeholder="Nome da empresa no CNPJ"
+                        placeholder="Razão Social (opcional)"
                         value={customCompanyName}
                         onChange={(e) => setCustomCompanyName(e.target.value)}
-                        className="h-11 bg-slate-800 border-slate-700 text-white rounded-xl text-xs"
+                        className="h-10 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
                       />
-                    </div>
-                  )}
+                    )}
+                    <Input
+                      placeholder="WhatsApp p/ receber NF"
+                      value={invoicePhone}
+                      onChange={(e) => setInvoicePhone(e.target.value)}
+                      className="h-10 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
+                    />
+                    <Input
+                      type="email"
+                      placeholder="E-mail p/ receber NF"
+                      value={invoiceEmail}
+                      onChange={(e) => setInvoiceEmail(e.target.value)}
+                      className="h-10 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
+                    />
+                  </div>
                 </div>
               )}
-
-              <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    <span>Envio Automático para seu Cadastro</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingContact((v) => !v)}
-                    className="text-[11px] text-cyan-400 hover:underline inline-flex items-center gap-1 font-semibold"
-                  >
-                    <Edit3 className="w-3 h-3" />
-                    <span>{isEditingContact ? "Ocultar edição" : "Alterar contato"}</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                  <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center gap-2">
-                    <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <div className="min-w-0">
-                      <span className="text-[10px] text-slate-400 block">WhatsApp da NF:</span>
-                      <strong className="text-slate-200 truncate block">
-                        {activePhoneDisplay || "Não cadastrado"}
-                      </strong>
-                    </div>
-                  </div>
-                  <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center gap-2">
-                    <Mail className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                    <div className="min-w-0">
-                      <span className="text-[10px] text-slate-400 block">E-mail da NF:</span>
-                      <strong className="text-slate-200 truncate block">
-                        {activeEmailDisplay || "Apenas via WhatsApp"}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-
-                <p className="text-[10px] text-slate-400">
-                  Assim que a Nota Fiscal for emitida, nosso sistema envia automaticamente para o seu <strong>WhatsApp</strong> e <strong>E-mail</strong> cadastrados com monitoramento de entrega.
-                </p>
-
-                {isEditingContact && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-800/80">
-                    <div className="space-y-1">
-                      <Label className="text-[11px] text-slate-300 font-semibold">WhatsApp para Recebimento</Label>
-                      <Input
-                        placeholder="(11) 99999-9999"
-                        value={invoicePhone}
-                        onChange={(e) => setInvoicePhone(e.target.value)}
-                        className="h-10 bg-slate-800 border-slate-700 text-white rounded-xl text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] text-slate-300 font-semibold">E-mail para Recebimento</Label>
-                      <Input
-                        type="email"
-                        placeholder="seuemail@exemplo.com"
-                        value={invoiceEmail}
-                        onChange={(e) => setInvoiceEmail(e.target.value)}
-                        className="h-10 bg-slate-800 border-slate-700 text-white rounded-xl text-xs"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
           </Card>
 
           {/* Seleção do Meio de Pagamento */}
           {checkoutAmount > 0 && (
-            <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <CreditCard className="w-4 h-4 text-cyan-400" />
+            <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 space-y-3">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <CreditCard className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Forma de Pagamento</span>
-              </h2>
+              </span>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2.5">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod("pix")}
-                  className={`p-3.5 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all ${
+                  className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all ${
                     paymentMethod === "pix"
                       ? "bg-cyan-950/60 border-cyan-500 text-cyan-300 shadow-md shadow-cyan-950/50"
-                      : "bg-slate-800/60 border-slate-700 text-slate-400 hover:text-white"
+                      : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
                   }`}
                 >
                   <QrCode className="w-5 h-5 text-cyan-400" />
-                  <span className="text-xs font-bold">PIX (Banco Inter)</span>
-                  <span className="text-[10px] text-emerald-400 font-medium">Confirmação Imediata</span>
+                  <span className="text-xs font-bold">PIX</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setPaymentMethod("credit_card")}
-                  className={`p-3.5 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all ${
+                  className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1 transition-all ${
                     paymentMethod === "credit_card"
                       ? "bg-cyan-950/60 border-cyan-500 text-cyan-300 shadow-md shadow-cyan-950/50"
-                      : "bg-slate-800/60 border-slate-700 text-slate-400 hover:text-white"
+                      : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
                   }`}
                 >
                   <CreditCard className="w-5 h-5 text-indigo-400" />
                   <span className="text-xs font-bold">Cartão de Crédito</span>
-                  <span className="text-[10px] text-slate-400 font-medium">Consumo de Frigobar</span>
                 </button>
               </div>
             </Card>
@@ -2731,21 +2485,21 @@ export default function GuestMinibar() {
           <Button
             onClick={handleCheckoutSubmit}
             disabled={isSubmittingOrder}
-            className="w-full h-14 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-2xl text-sm shadow-xl shadow-cyan-600/20 flex items-center justify-center gap-2 active:scale-[0.99] transition-all"
+            className="w-full h-13 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-2xl text-sm shadow-xl shadow-cyan-600/20 flex items-center justify-center gap-2 active:scale-[0.99] transition-all"
           >
             {isSubmittingOrder ? (
               <>
-                <RefreshCw className="w-5 h-5 animate-spin" />
-                <span>Processando Pagamento...</span>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Processando...</span>
               </>
             ) : paymentMethod === "pix" ? (
               <>
-                <QrCode className="w-5 h-5" />
-                <span>Gerar QR Code PIX ({formatBRL(checkoutAmount)})</span>
+                <QrCode className="w-4 h-4" />
+                <span>Gerar PIX ({formatBRL(checkoutAmount)})</span>
               </>
             ) : (
               <>
-                <CreditCard className="w-5 h-5" />
+                <CreditCard className="w-4 h-4" />
                 <span>Pagar com Cartão ({formatBRL(checkoutAmount)})</span>
               </>
             )}
@@ -2771,10 +2525,10 @@ export default function GuestMinibar() {
               <span>Aguardando Pagamento</span>
             </div>
             <h1 className="text-xl font-black text-white pt-1">
-              Total: {formatBRL(activeOrder?.totalAmount || paymentSelectionSummary.amountToPay)}
+              {formatBRL(activeOrder?.totalAmount || paymentSelectionSummary.amountToPay)}
             </h1>
             <p className="text-xs text-slate-400">
-              Consumo de Frigobar — Flat {reservation?.flatNumber} ({activeConsumerGuest.name})
+              Flat {reservation?.flatNumber} • {activeConsumerGuest.name}
             </p>
           </div>
 
@@ -2788,60 +2542,51 @@ export default function GuestMinibar() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Button
-                  onClick={handleCopyPix}
-                  className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-cyan-600/20"
-                >
-                  {copiedPix ? (
-                    <>
-                      <Check className="w-4 h-4 text-emerald-950" />
-                      <span>Código PIX Copiado!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-4 h-4" />
-                      <span>Copiar Código PIX (Copia e Cola)</span>
-                    </>
-                  )}
-                </Button>
+              <Button
+                onClick={handleCopyPix}
+                className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-cyan-600/20"
+              >
+                {copiedPix ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-950" />
+                    <span>Código PIX Copiado!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    <span>Copiar Código PIX</span>
+                  </>
+                )}
+              </Button>
 
-                <p className="text-[11px] text-slate-400">
-                  Abra o aplicativo do seu banco e escolha a opção <strong>PIX Copia e Cola</strong>.
-                </p>
-              </div>
-
-              <div className="p-3 bg-slate-800/80 border border-slate-700/60 rounded-xl flex items-center justify-center gap-2 text-xs text-cyan-300">
+              <div className="p-2.5 bg-slate-800/80 border border-slate-700/60 rounded-xl flex items-center justify-center gap-2 text-xs text-cyan-300">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
-                <span>Aguardando confirmação bancária em tempo real...</span>
+                <span>Aguardando confirmação...</span>
               </div>
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="p-6 bg-slate-800/60 rounded-2xl border border-slate-700 text-center space-y-3">
-                <CreditCard className="w-10 h-10 text-indigo-400 mx-auto" />
-                <p className="text-xs text-slate-300">
-                  Ambiente seguro do Mercado Pago (<strong>Consumo de Frigobar - Flat {reservation?.flatNumber}</strong>).
-                </p>
+              <div className="p-5 bg-slate-800/60 rounded-2xl border border-slate-700 text-center space-y-3">
+                <CreditCard className="w-9 h-9 text-indigo-400 mx-auto" />
                 {activeOrder?.initPoint && (
                   <Button
                     onClick={() => window.open(activeOrder.initPoint, "_blank")}
                     className="w-full h-11 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2"
                   >
-                    <span>Abrir Pagamento Cartão (Mercado Pago)</span>
+                    <span>Abrir Pagamento por Cartão</span>
                     <ExternalLink className="w-4 h-4" />
                   </Button>
                 )}
               </div>
 
-              <div className="p-3 bg-slate-800/80 border border-slate-700/60 rounded-xl flex items-center justify-center gap-2 text-xs text-indigo-300">
+              <div className="p-2.5 bg-slate-800/80 border border-slate-700/60 rounded-xl flex items-center justify-center gap-2 text-xs text-indigo-300">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-                <span>Aguardando aprovação do cartão...</span>
+                <span>Aguardando aprovação...</span>
               </div>
             </div>
           )}
 
-          <div className="pt-2">
+          <div className="pt-1">
             <Button
               variant="ghost"
               size="sm"
@@ -2854,7 +2599,7 @@ export default function GuestMinibar() {
               }}
               className="text-xs text-slate-400 hover:text-white"
             >
-              Cancelar e Voltar
+              Voltar
             </Button>
           </div>
         </Card>
@@ -2863,73 +2608,28 @@ export default function GuestMinibar() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 7. TELA: CONFIRMAÇÃO & SUCESSO
+  // 7. TELA: CONFIRMAÇÃO & SUCESSO (Limpa e Sem Metadados Técnicos)
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "success") {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 sm:p-6">
-        <Card className="w-full max-w-md bg-slate-900 border-slate-800 shadow-2xl rounded-3xl p-6 sm:p-8 space-y-6 text-center">
+        <Card className="w-full max-w-md bg-slate-900 border-slate-800 shadow-2xl rounded-3xl p-6 sm:p-8 space-y-5 text-center">
           <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/20">
             <CheckCircle2 className="w-10 h-10" />
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <h1 className="text-xl sm:text-2xl font-black text-white">
-              Pagamento Confirmado! 🎉
+              Pagamento Confirmado!
             </h1>
-            <p className="text-xs text-slate-300">
-              O pagamento referente ao Flat {reservation?.flatNumber} ({activeConsumerGuest.name}) foi confirmado e baixado automaticamente no extrato!
-            </p>
+            <div className="text-2xl font-black text-emerald-400 pt-1">
+              {formatBRL(activeOrder?.totalAmount || paymentSelectionSummary.amountToPay)}
+            </div>
           </div>
 
-          <div className="p-4 bg-slate-800/60 rounded-2xl border border-slate-700/80 text-left text-xs space-y-2">
-            <div className="flex items-center justify-between text-slate-400">
-              <span>Pedido:</span>
-              <strong className="text-slate-200">{activeOrder?.orderId || "ORD-MB-SUCESSO"}</strong>
-            </div>
-            <div className="flex items-center justify-between text-slate-400">
-              <span>Hóspede:</span>
-              <strong className="text-slate-200">{activeConsumerGuest.name}</strong>
-            </div>
-            <div className="flex items-center justify-between text-slate-400">
-              <span>Valor Pago:</span>
-              <strong className="text-emerald-400">
-                {formatBRL(activeOrder?.totalAmount || paymentSelectionSummary.amountToPay)}
-              </strong>
-            </div>
-            <div className="flex items-center justify-between text-slate-400">
-              <span>Nota Fiscal:</span>
-              <strong className="text-slate-200">
-                {invoicePreference === "water"
-                  ? "Lançado como 'Água'"
-                  : invoicePreference === "minibar_consumption"
-                  ? "Consumo de Frigobar"
-                  : "Itens Discriminados"}
-              </strong>
-            </div>
-            {(invoicePhone || activeConsumerGuest.phone) && (
-              <div className="flex items-center justify-between text-slate-400">
-                <span>WhatsApp da NF:</span>
-                <strong className="text-emerald-400 truncate max-w-[180px]">
-                  {invoicePhone || activeConsumerGuest.phone}
-                </strong>
-              </div>
-            )}
-            {(invoiceEmail || activeConsumerGuest.email) && (
-              <div className="flex items-center justify-between text-slate-400">
-                <span>E-mail da NF:</span>
-                <strong className="text-cyan-400 truncate max-w-[180px]">
-                  {invoiceEmail || activeConsumerGuest.email}
-                </strong>
-              </div>
-            )}
-          </div>
-
-          <div className="text-xs text-slate-400 leading-relaxed space-y-1">
-            <p>
-              Sua Nota Fiscal será enviada automaticamente para o seu <strong>WhatsApp</strong> e <strong>E-mail</strong> cadastrados assim que emitida pela Anserve, além de ficar disponível na sua Área do Hóspede.
-            </p>
-          </div>
+          <p className="text-xs text-slate-300 leading-relaxed">
+            Sua Nota Fiscal será enviada automaticamente para o seu WhatsApp e e-mail cadastrados.
+          </p>
 
           <div className="space-y-2 pt-2">
             <Button
