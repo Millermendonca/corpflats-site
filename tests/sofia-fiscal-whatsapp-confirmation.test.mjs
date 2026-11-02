@@ -515,4 +515,300 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.strictEqual(resultAuth?.action, "presented_conference");
     assert.match(resultAuth?.replyText, /Conferência de Dados/i);
   });
+
+  // ── REGRAS DE OURO M1 ITERAÇÃO 2: PREVENÇÃO DE FALSOS POSITIVOS NA TRAVA DE VALOR ──
+
+  it("Unitário: parseFlexibleMoney não deve capturar preposições com datas, diárias ou número de flat, mas deve capturar valores monetários reais", () => {
+    // Falsos positivos que NÃO devem ser interpretados como valor monetário:
+    assert.strictEqual(parseFlexibleMoney("Confirmo, pode emitir a nota de 01/11 a 05/11"), null);
+    assert.strictEqual(parseFlexibleMoney("Muda a descrição para Diárias de 01/11 a 05/11"), null);
+    assert.strictEqual(parseFlexibleMoney("Muda a descrição para Hospedagem de 3 diárias no flat 605"), null);
+    assert.strictEqual(parseFlexibleMoney("Pode emitir para 501"), null);
+    assert.strictEqual(parseFlexibleMoney("Quero emitir a nota fiscal do flat 605"), null);
+
+    // Verdadeiros positivos que DEVEM ser interpretados como valor monetário:
+    assert.strictEqual(parseFlexibleMoney("Muda o valor para R$ 850,00"), "850.00");
+    assert.strictEqual(parseFlexibleMoney("altera o valor para 900 reais"), "900.00");
+    assert.strictEqual(parseFlexibleMoney("coloca o valor de R$ 1.250,50"), "1250.50");
+    assert.strictEqual(parseFlexibleMoney("preço: 750"), "750.00");
+    assert.strictEqual(parseFlexibleMoney("850"), "850.00");
+  });
+
+  it("Regressão M1-It2 (1): Confirmação contendo datas de estadia ('Confirmo, pode emitir a nota de 01/11 a 05/11') deve emitir NFS-e sem acionar trava de valor", async () => {
+    const sentZapi = [];
+    const mockSendZapi = async (cfg, payload) => {
+      sentZapi.push(payload);
+      return { success: true, messageId: `msg_${Date.now()}` };
+    };
+
+    const initialApprovals = testDb.pendingFiscalApprovals.length;
+    const conv = {
+      id: "conv_it2_confirm_dates",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "TecnoPetro Engenharia Subsea LTDA",
+        tomadorCpfCnpj: "12345678000195",
+        tomadorTipo: "PJ",
+        tomadorEmail: "financeiro@tecnopetro.com.br",
+        tomadorEndereco: "Av. Pelinca, 150",
+        descricaoServico: "Hospedagem no Flat 605 de 01/11/2026 a 05/11/2026",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+    testDb.whatsappConversations.push(conv);
+
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Confirmo, pode emitir a nota de 01/11 a 05/11",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: mockSendZapi,
+      appendMessageFn: (db, msg) => conv.messages.push(msg),
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.notStrictEqual(result.action, "value_lock_engaged", "Não deve acionar trava de valor para datas na confirmação!");
+    assert.strictEqual(result.handled, true);
+    assert.strictEqual(result.action, "emitted_nfse", "Deve emitir a nota fiscal diretamente");
+    assert.ok(result.numeroNfse, "Deve conter número da NFS-e");
+    assert.ok(result.linkPrefeitura, "Deve conter link de consulta da NFS-e");
+    assert.strictEqual(conv.fiscalConferenceState.status, "emitted");
+    assert.strictEqual(testDb.pendingFiscalApprovals.length, initialApprovals, "Nenhuma aprovação pendente deve ter sido gerada");
+  });
+
+  it("Regressão M1-It2 (2): Alteração de descrição contendo datas ('Muda a descrição para Diárias de 01/11 a 05/11') deve atualizar descrição sem travar valor", async () => {
+    const sentZapi = [];
+    const mockSendZapi = async (cfg, payload) => {
+      sentZapi.push(payload);
+      return { success: true, messageId: `msg_${Date.now()}` };
+    };
+
+    const initialApprovals = testDb.pendingFiscalApprovals.length;
+    const conv = {
+      id: "conv_it2_desc_dates",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "TecnoPetro Engenharia Subsea LTDA",
+        tomadorCpfCnpj: "12345678000195",
+        tomadorTipo: "PJ",
+        tomadorEmail: "financeiro@tecnopetro.com.br",
+        tomadorEndereco: "Av. Pelinca, 150",
+        descricaoServico: "Hospedagem no Flat 605",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+    testDb.whatsappConversations.push(conv);
+
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Muda a descrição para Diárias de 01/11 a 05/11",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: mockSendZapi,
+      appendMessageFn: (db, msg) => conv.messages.push(msg),
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.notStrictEqual(result.action, "value_lock_engaged", "Não deve acionar trava de valor para datas na descrição!");
+    assert.strictEqual(result.handled, true);
+    assert.strictEqual(result.action, "updated_conference_data", "Deve atualizar os dados cadastrais da conferência");
+    assert.strictEqual(conv.fiscalConferenceState.descricaoServico, "Diárias de 01/11 a 05/11");
+    assert.strictEqual(conv.fiscalConferenceState.valorServico, 600.00, "Valor do serviço deve permanecer inalterado em R$ 600,00");
+    assert.strictEqual(conv.fiscalConferenceState.status, "awaiting_confirmation");
+    assert.strictEqual(testDb.pendingFiscalApprovals.length, initialApprovals, "Nenhuma aprovação de valor deve ser criada");
+  });
+
+  it("Regressão M1-It2 (3): Alteração de descrição com contagem de diárias ('Muda a descrição para Hospedagem de 3 diárias no flat 605') deve atualizar descrição sem travar valor", async () => {
+    const sentZapi = [];
+    const mockSendZapi = async (cfg, payload) => {
+      sentZapi.push(payload);
+      return { success: true, messageId: `msg_${Date.now()}` };
+    };
+
+    const initialApprovals = testDb.pendingFiscalApprovals.length;
+    const conv = {
+      id: "conv_it2_desc_nights",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "TecnoPetro Engenharia Subsea LTDA",
+        tomadorCpfCnpj: "12345678000195",
+        tomadorTipo: "PJ",
+        tomadorEmail: "financeiro@tecnopetro.com.br",
+        tomadorEndereco: "Av. Pelinca, 150",
+        descricaoServico: "Hospedagem no Flat 605",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+    testDb.whatsappConversations.push(conv);
+
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Muda a descrição para Hospedagem de 3 diárias no flat 605",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: mockSendZapi,
+      appendMessageFn: (db, msg) => conv.messages.push(msg),
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.notStrictEqual(result.action, "value_lock_engaged", "Não deve confundir contagem de diárias com R$ 3,00!");
+    assert.strictEqual(result.handled, true);
+    assert.strictEqual(result.action, "updated_conference_data");
+    assert.strictEqual(conv.fiscalConferenceState.descricaoServico, "Hospedagem de 3 diárias no flat 605");
+    assert.strictEqual(conv.fiscalConferenceState.valorServico, 600.00, "Valor do serviço deve permanecer R$ 600,00");
+    assert.strictEqual(conv.fiscalConferenceState.status, "awaiting_confirmation");
+    assert.strictEqual(testDb.pendingFiscalApprovals.length, initialApprovals);
+  });
+
+  it("Regressão M1-It2 (4): Confirmação mencionando número do flat ('Pode emitir para 501') deve emitir NFS-e sem acionar trava de valor", async () => {
+    const sentZapi = [];
+    const mockSendZapi = async (cfg, payload) => {
+      sentZapi.push(payload);
+      return { success: true, messageId: `msg_${Date.now()}` };
+    };
+
+    const initialApprovals = testDb.pendingFiscalApprovals.length;
+    const conv = {
+      id: "conv_it2_confirm_flat",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 501,
+        reservationCode: "RES-501-TEST",
+        flatNumber: "501",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        tomadorEndereco: "Av. Pelinca, 100",
+        descricaoServico: "Diárias executivas Flat 501",
+        valorOriginal: 750.00,
+        valorServico: 750.00
+      }
+    };
+    testDb.whatsappConversations.push(conv);
+
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Pode emitir para 501",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: mockSendZapi,
+      appendMessageFn: (db, msg) => conv.messages.push(msg),
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.notStrictEqual(result.action, "value_lock_engaged", "Não deve interpretar 'para 501' como novo valor de R$ 501,00!");
+    assert.strictEqual(result.handled, true);
+    assert.strictEqual(result.action, "emitted_nfse", "Deve emitir a NFS-e");
+    assert.ok(result.numeroNfse);
+    assert.strictEqual(conv.fiscalConferenceState.status, "emitted");
+    assert.strictEqual(testDb.pendingFiscalApprovals.length, initialApprovals, "Nenhuma aprovação pendente gerada");
+
+    // Garante que o valor emitido permaneceu R$ 750,00 e não virou R$ 501,00
+    const emittedInv = testDb.invoices.find(i => String(i.numeroNfse) === String(result.numeroNfse));
+    assert.ok(emittedInv, "Nota fiscal emitida deve existir no banco de teste");
+    assert.strictEqual(Number(emittedInv.valorServico), 750.00, "Valor emitido deve ser R$ 750,00");
+  });
+
+  it("Regressão M1-It2 (5): Alteração legítima de valor ('Muda o valor para R$ 850,00') deve engajar a trava de valor (value_lock_engaged)", async () => {
+    const sentZapi = [];
+    const mockSendZapi = async (cfg, payload) => {
+      sentZapi.push(payload);
+      return { success: true, messageId: `msg_${Date.now()}` };
+    };
+
+    const initialApprovals = testDb.pendingFiscalApprovals.length;
+    const conv = {
+      id: "conv_it2_genuine_val_change",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "TecnoPetro Engenharia Subsea LTDA",
+        tomadorCpfCnpj: "12345678000195",
+        tomadorTipo: "PJ",
+        tomadorEmail: "financeiro@tecnopetro.com.br",
+        tomadorEndereco: "Av. Pelinca, 150",
+        descricaoServico: "Hospedagem no Flat 605",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+    testDb.whatsappConversations.push(conv);
+
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Muda o valor para R$ 850,00",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: mockSendZapi,
+      appendMessageFn: (db, msg) => conv.messages.push(msg),
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(result.handled, true);
+    assert.strictEqual(result.action, "value_lock_engaged", "Deve engajar a trava de segurança de valor");
+    assert.strictEqual(result.requestedValue, 850.00, "Novo valor solicitado deve ser 850.00");
+    assert.strictEqual(result.originalValue, 600.00, "Valor original deve ser 600.00");
+
+    // Nenhuma NFS-e emitida com 850 imediatamente
+    const prematureInvoice = (testDb.invoices || []).find(i => Number(i.valorServico) === 850.00);
+    assert.strictEqual(prematureInvoice, undefined, "Não pode emitir NFS-e de R$ 850,00 sem aprovação do gestor");
+
+    // Registrou aprovação pendente no banco
+    assert.strictEqual(testDb.pendingFiscalApprovals.length, initialApprovals + 1);
+    const pending = testDb.pendingFiscalApprovals[testDb.pendingFiscalApprovals.length - 1];
+    assert.strictEqual(pending.status, "pending_manager");
+    assert.strictEqual(pending.requestedValue, 850.00);
+    assert.strictEqual(pending.originalValue, 600.00);
+    assert.strictEqual(pending.flatNumber, "605");
+
+    // Notificação enviada ao gestor
+    const managerMsg = sentZapi.find(s => s.phone === "5522998505276" || s.recipientRole === "developer");
+    assert.ok(managerMsg, "Gestor deve receber notificação no WhatsApp");
+    assert.match(managerMsg.message, /850,00/);
+    assert.match(managerMsg.message, /600,00/);
+
+    // Resposta ao cliente informando sobre a necessidade de aprovação
+    assert.match(result.replyText, /850,00/);
+    assert.match(result.replyText, /aprovação prévia do gestor/i);
+  });
 });

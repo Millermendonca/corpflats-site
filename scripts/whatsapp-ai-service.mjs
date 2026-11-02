@@ -8972,41 +8972,84 @@ export function parseFlexibleMoney(text = "") {
   if (!text || typeof text !== "string") return null;
   const clean = text.trim();
 
-  // 1. Padrões monetários com prefixo: R$ 250,00 | R$250 | valor: 300 | para R$ 800
-  const m1 = clean.match(/(?:R\$|valor|total|de|diaria|diária|custo|preco|preço|para)\s*:?\s*(?:R\$\s*)?([\d\.,]+)/i);
+  // Helper para normalizar e converter string numérica em float com 2 casas
+  function parseNum(str) {
+    if (!str) return null;
+    let s = str.trim();
+    if (s.includes(".") && s.includes(",")) {
+      if (s.lastIndexOf(".") < s.lastIndexOf(",")) {
+        // Formato brasileiro: 1.250,50 -> 1250.50
+        s = s.replace(/\./g, "").replace(",", ".");
+      } else {
+        // Formato internacional: 1,250.50 -> 1250.50
+        s = s.replace(/,/g, "");
+      }
+    } else if (s.includes(",")) {
+      // 600,00 -> 600.00
+      s = s.replace(",", ".");
+    } else if (s.includes(".")) {
+      // 600.00 ou 1.000
+      if (s.endsWith(".00") || /\.\d{1,2}$/.test(s)) {
+        // Decimal com ponto
+      } else if (/\.\d{3}$/.test(s)) {
+        // Separador de milhar com ponto
+        s = s.replace(/\./g, "");
+      }
+    }
+    const num = parseFloat(s);
+    if (!isNaN(num) && num > 0) return num.toFixed(2);
+    return null;
+  }
+
+  // 0. Transição de valores ("de R$ 600 para R$ 850", "de 600 para 850", "muda o valor de 600 para 850")
+  const mTransition = clean.match(/\bde\s+(?:R\$\s*)?(?<![\d\/])(?:\d{1,3}(?:\.\d{3})+|\d+)(?:[,.]\d{1,2})?(?![\d\/])(?!\s*\/)\s+para\s*(?:R\$\s*)?(?<![\d\/])((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,2})?)(?![\d\/])(?!\s*\/)/i);
+  if (mTransition) {
+    const val = parseNum(mTransition[1]);
+    if (val) return val;
+  }
+
+  // 1. Padrão monetário com R$ explícito: "R$ 600,00", "R$600", "de R$ 600", "para R$ 850"
+  const m1 = clean.match(/(?:R\$\s*)(?<![\d\/])((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,2})?)(?![\d\/])(?!\s*\/)/i);
   if (m1) {
-    const v = m1[1].replace(/\./g, "").replace(",", ".");
-    const num = parseFloat(v);
-    if (!isNaN(num) && num > 0) return num.toFixed(2);
+    const val = parseNum(m1[1]);
+    if (val) return val;
   }
 
-  // 2. Número acompanhado de "reais" ou "real": "250 reais", "800 real"
-  const m2 = clean.match(/([\d\.,]+)\s*(?:reais|real|conto|pila)/i);
+  // 2. Número acompanhado de unidade de moeda: "800 reais", "800 real", "500 conto"
+  const m2 = clean.match(/(?<![\d\/])((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,2})?)(?![\d\/])(?!\s*\/)\s*(?:reais|real|conto|pila)\b/i);
   if (m2) {
-    const v = m2[1].replace(/\./g, "").replace(",", ".");
-    const num = parseFloat(v);
-    if (!isNaN(num) && num > 0) return num.toFixed(2);
+    const val = parseNum(m2[1]);
+    if (val) return val;
   }
 
-  // 3. Mensagem é apenas um número puro: "250", "250.00", "250,00", "800"
-  const m3 = clean.match(/^\s*(?:R\$\s*)?(\d{1,6}(?:[\.,]\d{1,2})?)\s*$/i);
+  // 3. Palavras-chave explícitas de valor/total/preço OU ação de alteração ("muda para 850", "valor de 500", "valor para 850")
+  const m3 = clean.match(/\b(?:(?:para\s+o\s+)?(?:valor|total|pre[cç]o|custo|di[aá]ria)(?:\s+de|\s+do|\s+da|\s+para|\s+em)?|muda(?:r)?\s+(?:o\s+valor\s+)?para|altera(?:r)?\s+(?:o\s+valor\s+)?para|troca(?:r)?\s+(?:o\s+valor\s+)?para|passa(?:r)?\s+(?:o\s+valor\s+)?para|ajusta(?:r)?\s+(?:o\s+valor\s+)?para|coloca(?:r)?\s+(?:o\s+valor\s+)?para)\s*:?\s*(?:R\$\s*)?(?<![\d\/])((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,2})?)(?![\d\/])(?!\s*\/)/i);
   if (m3) {
-    const v = m3[1].replace(/\./g, "").replace(",", ".");
-    const num = parseFloat(v);
-    if (!isNaN(num) && num > 0) return num.toFixed(2);
+    const val = parseNum(m3[1]);
+    if (val) return val;
   }
 
-  // 4. Números por extenso comuns
+  // 4. Mensagem inteira é puramente um número: "600", "600,00", "600.00", "850"
+  const m4 = clean.match(/^\s*(?:R\$\s*)?(\d{1,6}(?:[.,]\d{1,2})?)\s*$/i);
+  if (m4) {
+    const val = parseNum(m4[1]);
+    if (val) return val;
+  }
+
+  // 5. Números por extenso comuns
   const lower = clean.toLowerCase();
   const extensoMap = {
-    "cem": "100.00", "cento e cinquenta": "150.00", "duzentos": "200.00",
-    "duzentos e cinquenta": "250.00", "trezentos": "300.00", "trezentos e cinquenta": "350.00",
-    "quatrocentos": "400.00", "quatrocentos e cinquenta": "450.00", "quinhentos": "500.00",
+    "cento e cinquenta": "150.00", "duzentos e cinquenta": "250.00",
+    "trezentos e cinquenta": "350.00", "quatrocentos e cinquenta": "450.00",
+    "mil e quinhentos": "1500.00", "cem": "100.00", "duzentos": "200.00",
+    "trezentos": "300.00", "quatrocentos": "400.00", "quinhentos": "500.00",
     "seiscentos": "600.00", "setecentos": "700.00", "oitocentos": "800.00",
-    "novecentos": "900.00", "mil": "1000.00", "mil e quinhentos": "1500.00"
+    "novecentos": "900.00", "mil": "1000.00"
   };
   for (const [k, v] of Object.entries(extensoMap)) {
-    if (lower.includes(k)) return v;
+    if (new RegExp("\\b" + k + "(?:\\s+reais)?\\b", "i").test(lower)) {
+      return v;
+    }
   }
 
   return null;
@@ -9618,13 +9661,38 @@ export async function handleWhatsAppFiscalFlow({
 
   // ── ETAPA 1: Usuário já está na fase de conferência e respondeu à mensagem ──
   if (isAwaitingConferenceConfirmation) {
+    // 1.0 Pré-extração de dados cadastrais e descrição (R2)
+    const newCnpj = extractCnpj(messageText);
+    const newCpf = extractCpf(messageText);
+    const newEmail = extractEmail(messageText);
+    const newCep = extractCep(messageText);
+    const matchName = messageText.match(/\b(?:nome|raz[aã]o\s*social|empresa|tomador)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i);
+
+    // Captura a descrição delimitando antes de comandos de valor ("e o valor...", "valor...")
+    const matchDesc = messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+?)(?=\s*(?:,\s*|\s+e\s+(?:o\s+)?valor|\s+valor\b|$))/i) ||
+      messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i);
+
+    // Isola o texto fora da descrição para evitar que datas, diárias ou flats da descrição vazem para o parser monetário
+    const textWithoutDesc = matchDesc ? messageText.replace(matchDesc[0], " ") : messageText;
+
     // 1.1 Trava de Valor (R2)
-    const moneyVal = parseFlexibleMoney(messageText);
-    const mentionsValue = /\b(?:valor|pre[cç]o|total|di[aá]ria|muda\s*o\s*valor|alterar\s*o\s*valor|muda\s*para|coloca|troca\s*o\s*valor)\b/i.test(messageText);
+    // Exige intenção explícita de alteração de preço/valor (termos de valor ou símbolos monetários fora da descrição)
+    const mentionsValue = /\b(?:muda\s*o\s*valor|alterar?\s*o\s*valor|troca\s*o\s*valor|ajusta\s*o\s*valor|novo\s*valor|valor\s*correto|valor\s*da\s*nota|valor\s*faturado|valor\s*original|o\s*valor|pre[cç]o)\b/i.test(textWithoutDesc) ||
+      /\b(?:muda(?:r)?|altera(?:r)?|troca(?:r)?|ajusta(?:r)?|coloca(?:r)?)\s+(?:para|pra)\s*(?:R\$\s*)?\d+/i.test(textWithoutDesc);
+    const hasCurrencySymbol = /(?:R\$\s*[\d\.,]+|[\d\.,]+\s*(?:reais|real)\b)/i.test(textWithoutDesc);
+    const isPureNumber = /^\s*(?:R\$\s*)?\d{1,6}(?:[.,]\d{1,2})?\s*$/i.test(textWithoutDesc);
+    const hasValueChangeIntent = mentionsValue || hasCurrencySymbol || isPureNumber;
+
+    const moneyVal = hasValueChangeIntent ? parseFlexibleMoney(textWithoutDesc) : null;
     const parsedNum = moneyVal ? Number(moneyVal) : null;
-    const isValueChange = parsedNum && parsedNum > 0 && Math.abs(parsedNum - Number(conf.valorOriginal || conf.valorServico)) > 0.01;
+    const isValueChange = Boolean(hasValueChangeIntent && parsedNum && parsedNum > 0 && Math.abs(parsedNum - Number(conf.valorOriginal || conf.valorServico)) > 0.01);
 
     if (isValueChange) {
+      // Se houver alteração descritiva ou cadastral concomitante, registra em conf antes de gravar pendingFiscalInvoice
+      if (matchDesc) conf.descricaoServico = matchDesc[1].trim();
+      if (matchName) conf.tomadorNome = toTitleCase(matchName[1].trim());
+      if (newEmail) conf.tomadorEmail = newEmail;
+
       if (!Array.isArray(db.pendingFiscalApprovals)) db.pendingFiscalApprovals = [];
       const approvalId = `NFSE-APP-${Date.now().toString(36).toUpperCase()}`;
       const pendingApproval = {
@@ -9698,13 +9766,6 @@ export async function handleWhatsAppFiscalFlow({
     }
 
     // 1.2 Alteração de Dados Cadastrais ou de Descrição (R2)
-    const newCnpj = extractCnpj(messageText);
-    const newCpf = extractCpf(messageText);
-    const newEmail = extractEmail(messageText);
-    const newCep = extractCep(messageText);
-    const matchName = messageText.match(/\b(?:nome|raz[aã]o\s*social|empresa|tomador)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i);
-    const matchDesc = messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i);
-
     let hasCadastralChanges = false;
     if (newCnpj && isValidCnpj(newCnpj)) {
       conf.tomadorCpfCnpj = onlyDigits(newCnpj);
