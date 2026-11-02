@@ -811,4 +811,218 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.match(result.replyText, /850,00/);
     assert.match(result.replyText, /aprovação prévia do gestor/i);
   });
+
+  // ── DESAFIOS ADVERSARIAIS DO CHALLENGER (M1-IT2) ──
+
+  it("Desafio Empírico 1: Alteração concomitante de descrição e valor ('Muda a descrição para Diárias executivas e o valor para R$ 800') atualiza descrição e engaja trava de valor", async () => {
+    const sentZapi = [];
+    const mockSendZapi = async (cfg, payload) => {
+      sentZapi.push(payload);
+      return { success: true, messageId: `msg_${Date.now()}` };
+    };
+
+    const initialApprovals = testDb.pendingFiscalApprovals.length;
+    const conv = {
+      id: "conv_it2_concomitant",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "TecnoPetro Engenharia Subsea LTDA",
+        tomadorCpfCnpj: "12345678000195",
+        tomadorTipo: "PJ",
+        tomadorEmail: "financeiro@tecnopetro.com.br",
+        tomadorEndereco: "Av. Pelinca, 150",
+        descricaoServico: "Hospedagem no Flat 605",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+    testDb.whatsappConversations.push(conv);
+
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Muda a descrição para Diárias executivas e o valor para R$ 800",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: mockSendZapi,
+      appendMessageFn: (db, msg) => conv.messages.push(msg),
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(result.handled, true, "Fluxo fiscal deve interceptar");
+    assert.strictEqual(result.action, "value_lock_engaged", "Deve engajar a trava de valor");
+    assert.strictEqual(result.requestedValue, 800.00, "Valor solicitado deve ser 800.00");
+    assert.strictEqual(conv.fiscalConferenceState.descricaoServico, "Diárias executivas", "Descrição deve ser atualizada em conf");
+
+    // Valida a aprovação pendente criada
+    assert.strictEqual(testDb.pendingFiscalApprovals.length, initialApprovals + 1);
+    const pending = testDb.pendingFiscalApprovals[testDb.pendingFiscalApprovals.length - 1];
+    assert.strictEqual(pending.status, "pending_manager");
+    assert.strictEqual(pending.requestedValue, 800.00);
+    assert.strictEqual(pending.pendingFiscalInvoice.descricaoServico, "Diárias executivas", "Descrição na fatura pendente deve ser a nova");
+
+    // Agora gestor aprova a solicitação
+    const sentZapiManager = [];
+    const mockSendZapiManager = async (cfg, payload) => {
+      sentZapiManager.push(payload);
+      return { success: true, messageId: `msg_${Date.now()}` };
+    };
+
+    const approvalResult = await handleManagerFiscalApprovalReply({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: `Aprovar #${pending.id}`,
+      conv,
+      sendZapiMessage: mockSendZapiManager,
+      appendMessageFn: (db, msg) => conv.messages.push(msg),
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(approvalResult.handled, true);
+    assert.strictEqual(approvalResult.action, "manager_approved_fiscal");
+
+    const emittedInvoice = testDb.invoices.find(i => String(i.numeroNfse) === String(approvalResult.numeroNfse));
+    assert.ok(emittedInvoice, "Nota fiscal emitida deve existir no banco");
+    assert.strictEqual(Number(emittedInvoice.valorServico), 800.00, "Valor da nota deve ser 800.00");
+    assert.strictEqual(emittedInvoice.discriminacao, "Diárias executivas", "Discriminação da nota deve ser a nova descrição");
+  });
+
+  it("Desafio Empírico 2: Telefones não autorizados (5521999998888, 5522988887777, aleatórios) são silenciosamente descartados ({ handled: false })", async () => {
+    const mockSendZapi = async () => ({ success: true });
+    const unauthorizedNumbers = [
+      "5521999998888",
+      "5522988887777",
+      "5511987654321",
+      "41999999999",
+      "12345678"
+    ];
+
+    for (const phone of unauthorizedNumbers) {
+      const conv = {
+        id: `conv_${phone}`,
+        phone,
+        name: "Desconhecido",
+        messages: []
+      };
+
+      // 1. Pedido de nota fiscal
+      const resRequest = await handleWhatsAppFiscalFlow({
+        db: testDb,
+        cleanTarget: phone,
+        messageText: "Quero minha nota fiscal da hospedagem",
+        senderName: "Desconhecido",
+        conv,
+        sendZapiMessage: mockSendZapi,
+        appendMessageFn: () => {},
+        saveDatabase: () => {},
+        createNotification: () => {}
+      });
+      assert.strictEqual(resRequest.handled, false, `Número ${phone} em pedido de nota deve retornar handled: false`);
+
+      // 2. Confirmação
+      const resConfirm = await handleWhatsAppFiscalFlow({
+        db: testDb,
+        cleanTarget: phone,
+        messageText: "Sim, confirmo os dados da nota",
+        senderName: "Desconhecido",
+        conv,
+        sendZapiMessage: mockSendZapi,
+        appendMessageFn: () => {},
+        saveDatabase: () => {},
+        createNotification: () => {}
+      });
+      assert.strictEqual(resConfirm.handled, false, `Número ${phone} em confirmação deve retornar handled: false`);
+
+      // 3. Alteração de valor
+      const resValChange = await handleWhatsAppFiscalFlow({
+        db: testDb,
+        cleanTarget: phone,
+        messageText: "Muda o valor para R$ 1000",
+        senderName: "Desconhecido",
+        conv,
+        sendZapiMessage: mockSendZapi,
+        appendMessageFn: () => {},
+        saveDatabase: () => {},
+        createNotification: () => {}
+      });
+      assert.strictEqual(resValChange.handled, false, `Número ${phone} em alteração de valor deve retornar handled: false`);
+    }
+  });
+
+  it("Desafio Empírico 3: Spoofing de gestor - número não autorizado NÃO consegue aprovar pendência fiscal", async () => {
+    const sentZapi = [];
+    const mockSendZapi = async (cfg, payload) => {
+      sentZapi.push(payload);
+      return { success: true, messageId: `msg_${Date.now()}` };
+    };
+
+    // Cria aprovação pendente legítima
+    const pendingId = `NFSE-APP-SPOOF-${Date.now()}`;
+    const pendingApproval = {
+      id: pendingId,
+      status: "pending_manager",
+      requesterPhone: "22998505276",
+      requesterName: "Miller Ferreira",
+      reservationId: 605,
+      reservationCode: "RES-605-TEST",
+      flatNumber: "605",
+      originalValue: 600.00,
+      requestedValue: 950.00,
+      reason: "Muda valor para 950",
+      pendingFiscalInvoice: {
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "TecnoPetro Engenharia Subsea LTDA",
+        tomadorCpfCnpj: "12345678000195",
+        tomadorTipo: "PJ",
+        tomadorEmail: "financeiro@tecnopetro.com.br",
+        descricaoServico: "Hospedagem Flat 605",
+        valorOriginal: 600.00,
+        valorServico: 950.00
+      },
+      createdAt: new Date().toISOString()
+    };
+    testDb.pendingFiscalApprovals.push(pendingApproval);
+
+    const initialInvoices = testDb.invoices.length;
+
+    // Invasor/não-gestor (5521999998888) tenta aprovar diretamente
+    const spoofResultDirect = await handleManagerFiscalApprovalReply({
+      db: testDb,
+      cleanTarget: "5521999998888",
+      messageText: `Aprovar fiscal #${pendingId}`,
+      sendZapiMessage: mockSendZapi,
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+    assert.strictEqual(spoofResultDirect.handled, false, "Tentativa de aprovação direta de não-gestor deve ser rejeitada com handled: false");
+    assert.strictEqual(pendingApproval.status, "pending_manager", "Status da pendência deve permanecer pending_manager");
+    assert.strictEqual(testDb.invoices.length, initialInvoices, "Nenhuma nota fiscal deve ser emitida por não-gestor");
+
+    // Invasor/não-gestor (5522988887777) tenta aprovar via handleWhatsAppFiscalFlow
+    const spoofResultFlow = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "5522988887777",
+      messageText: "Aprovar fiscal",
+      senderName: "Impostor",
+      sendZapiMessage: mockSendZapi,
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+    assert.strictEqual(spoofResultFlow.handled, false, "Tentativa de aprovação via fluxo de não-gestor deve ser rejeitada com handled: false");
+    assert.strictEqual(pendingApproval.status, "pending_manager", "Status da pendência deve permanecer pending_manager");
+    assert.strictEqual(testDb.invoices.length, initialInvoices, "Nenhuma nota fiscal deve ser emitida por não-gestor");
+  });
 });
+
