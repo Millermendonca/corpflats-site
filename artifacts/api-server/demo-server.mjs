@@ -197,7 +197,8 @@ import {
   handleReallocateReservationFlat,
   querySystemData,
   callGeminiAi,
-  enableAutoEmitInvoiceForGuestAndReservations
+  enableAutoEmitInvoiceForGuestAndReservations,
+  findExistingInvoiceForReservation
 } from "./whatsapp-ai-service.mjs";
 import { createWbpCallbackRouter, WbpBackgroundWorker, verifyChannexHmacSignature } from "./wbp/callbacks.mjs";
 import { getIntegrationMode, isWbpEnabled, setIntegrationMode, getChannexConfig, updateChannexConfig, WBP_MODES } from "./wbp/config.mjs";
@@ -38206,9 +38207,24 @@ const handleCheckout = async (req, res) => {
     ? db.companies.find(c => c.id === companyId || String(c.id) === String(companyId))
     : null;
 
-  if (shouldAutoEmit && !r.invoiceId && r.guestName && (company || r.guestDocument || guest?.document || guest?.documentNumber)) {
+  // Trava estrita contra emissão duplicada de nota fiscal no check-out
+  const existingInvForCheckout = findExistingInvoiceForReservation(db, {
+    reservation: r,
+    reservationId: r.id,
+    reservationCode: r.code
+  });
+  if (existingInvForCheckout) {
+    r.invoiceId = existingInvForCheckout.id;
+    r.numeroNfse = existingInvForCheckout.numeroNfse;
+  }
+
+  const confFiscal = r.confirmedFiscalData || null;
+
+  if (shouldAutoEmit && !r.invoiceId && !existingInvForCheckout && (r.guestName || confFiscal?.tomadorNome) && (company || r.guestDocument || guest?.document || guest?.documentNumber || confFiscal?.tomadorCpfCnpj)) {
     try {
-      const valor = Number(r.totalAmount || r.dailyRate || 250);
+      const valor = (confFiscal?.managerApprovedValue && Number(confFiscal.valorServico) > 0)
+        ? Number(confFiscal.valorServico)
+        : Number(r.totalAmount || r.dailyRate || confFiscal?.valorServico || 250);
 
       // Calcular quantidade de diárias (preservando o período contratado em caso de check-out antecipado)
       let quantidadeDiarias = 1;
@@ -38220,20 +38236,20 @@ const handleCheckout = async (req, res) => {
         if (diff > 0) quantidadeDiarias = diff;
       }
 
-      let tomadorNome = r.guestName;
-      let tomadorDoc = r.guestDocument || guest?.document || guest?.documentNumber || "";
-      let tomadorEmail = r.guestEmail || guest?.email || "";
-      let tomadorTelefone = r.guestPhone || guest?.phone || "";
-      let tomadorEndereco = guest?.address || guest?.logradouro || "";
-      let tomadorNumero = guest?.number || "";
-      let tomadorComplemento = guest?.complement || "";
-      let tomadorBairro = guest?.neighborhood || guest?.bairro || "";
-      let tomadorCep = guest?.cep || "";
-      let tomadorCidade = guest?.city || guest?.cidade || "Campos dos Goytacazes";
-      let tomadorUf = guest?.state || guest?.uf || "RJ";
-      let tomadorCodigoMunicipio = guest?.ibgeCode || guest?.codigoMunicipio || "3301009";
+      let tomadorNome = confFiscal?.tomadorNome || r.guestName;
+      let tomadorDoc = confFiscal?.tomadorCpfCnpj || r.guestDocument || guest?.document || guest?.documentNumber || "";
+      let tomadorEmail = confFiscal?.tomadorEmail || r.guestEmail || guest?.email || "";
+      let tomadorTelefone = confFiscal?.tomadorTelefone || r.guestPhone || guest?.phone || "";
+      let tomadorEndereco = confFiscal?.tomadorEndereco || guest?.address || guest?.logradouro || "";
+      let tomadorNumero = confFiscal?.tomadorNumero || guest?.number || "";
+      let tomadorComplemento = confFiscal?.tomadorComplemento || guest?.complement || "";
+      let tomadorBairro = confFiscal?.tomadorBairro || guest?.neighborhood || guest?.bairro || "";
+      let tomadorCep = confFiscal?.tomadorCep || guest?.cep || "";
+      let tomadorCidade = confFiscal?.tomadorCidade || guest?.city || guest?.cidade || "Campos dos Goytacazes";
+      let tomadorUf = confFiscal?.tomadorUf || guest?.state || guest?.uf || "RJ";
+      let tomadorCodigoMunicipio = confFiscal?.tomadorCodigoMunicipio || guest?.ibgeCode || guest?.codigoMunicipio || "3301009";
 
-      if (company) {
+      if (company && !confFiscal?.tomadorCpfCnpj) {
         tomadorNome = company.corporateName || company.razaoSocial || company.tradeName || tomadorNome;
         tomadorDoc = company.cnpj || company.document || tomadorDoc;
         tomadorEmail = company.financialEmail || company.email || tomadorEmail;
@@ -38248,9 +38264,9 @@ const handleCheckout = async (req, res) => {
         tomadorCodigoMunicipio = company.ibgeCode || company.codigoMunicipio || tomadorCodigoMunicipio;
       }
 
-      // Discriminação detalhada via template
+      // Discriminação detalhada via template (ou descrição personalizada confirmada via Sofia)
       const template = db.fiscalSettings?.descriptionTemplate || DEFAULT_FISCAL_TEMPLATE;
-      const discriminacaoFormatada = formatarDescricaoComTemplate({
+      const discriminacaoFormatada = confFiscal?.descricaoServico || formatarDescricaoComTemplate({
         tomadorNome: r.guestName,
         tomadorCpfCnpj: r.guestDocument || guest?.document || guest?.documentNumber || "",
         localNome: "CorpFlats",
@@ -38311,6 +38327,26 @@ const handleCheckout = async (req, res) => {
       autoInvoiceEmitted = true;
       autoInvoiceNumber = newInvoice.numeroNfse;
       autoInvoicePdf = newInvoice.danfseUrl;
+
+      const targetNfPhone = cleanPhone(confFiscal?.tomadorTelefone || r.guestPhone || guest?.phone || "");
+      if (targetNfPhone && targetNfPhone.endsWith("998505276") && typeof sendZapiMessage === "function") {
+        const linkNf = `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${newInvoice.chaveAcesso}`;
+        const checkoutNfMsg = `✅ *Nota Fiscal Emitida no Check-out!*\n\n` +
+          `Conforme combinado, sua NFS-e foi emitida automaticamente após a conclusão do seu check-out:\n` +
+          `• *Número da NFS-e:* ${newInvoice.numeroNfse}\n` +
+          `• *Código de Verificação:* ${newInvoice.codigoVerificacao}\n` +
+          `• *Tomador:* ${newInvoice.tomadorNome}\n` +
+          `• *Valor:* R$ ${Number(newInvoice.valorServico).toFixed(2).replace(".", ",")}\n\n` +
+          `📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkNf}\n\n` +
+          `Agradecemos pela sua estadia na CorpFlats! 🏨✨`;
+        sendZapiMessage(db.zapiConfig, {
+          phone: targetNfPhone,
+          message: checkoutNfMsg,
+          channelId: "ai_agent",
+          recipientRole: "guest",
+          db
+        }).catch(() => {});
+      }
     } catch (e) {
       console.error("[Auto-Invoice Error]", e);
     }
@@ -45775,6 +45811,35 @@ async function executeNfseEmissionInternal(payload) {
         (payload.reservationCode && String(r.code) === String(payload.reservationCode))
       )
     : null;
+
+  // Trava contra emissão duplicada para a mesma reserva
+  const existingInvForRes = (payload.reservationId || payload.reservationCode || matchedRes)
+    ? findExistingInvoiceForReservation(db, {
+        reservation: matchedRes,
+        reservationId: payload.reservationId,
+        reservationCode: payload.reservationCode
+      })
+    : null;
+  if (existingInvForRes) {
+    enableAutoEmitInvoiceForGuestAndReservations(db, {
+      reservation: matchedRes,
+      guestId: existingInvForRes.guestId || payload.guestId,
+      reservationId: existingInvForRes.reservationId || payload.reservationId || payload.reservationCode,
+      reservationIds: existingInvForRes.reservationIds || payload.reservationIds,
+      cpfCnpj: cleanDoc,
+      phone: payload.tomadorTelefone
+    });
+    return {
+      success: true,
+      alreadyEmitted: true,
+      invoice: existingInvForRes,
+      numeroNfse: existingInvForRes.numeroNfse,
+      danfseUrl: existingInvForRes.danfseUrl || `/api/nfse/danfse/${existingInvForRes.numeroNfse}`,
+      pdfUrl: existingInvForRes.pdfUrl || `/api/nfse/pdf/${existingInvForRes.numeroNfse}`,
+      linkPrefeitura: existingInvForRes.linkPrefeitura,
+      qrCodeUrl: existingInvForRes.qrCodeUrl
+    };
+  }
 
   // Identifica se o CNPJ pertence a uma Agência (para nunca misturar Agência em db.companies)
   if (!db.agencies) db.agencies = [];

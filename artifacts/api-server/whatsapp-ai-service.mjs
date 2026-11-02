@@ -9102,14 +9102,126 @@ export function buildDefaultStayDescription(matchedReservation) {
 }
 
 /**
+ * Localiza nota fiscal (NFS-e) já emitida e ativa para uma reserva,
+ * impedindo emissões duplicadas para a mesma estadia.
+ */
+export function findExistingInvoiceForReservation(db, {
+  reservation = null,
+  reservationId = null,
+  reservationCode = null
+} = {}) {
+  if (!db || typeof db !== "object") return null;
+
+  const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+  let resObj = reservation && typeof reservation === "object" ? reservation : null;
+  if (!resObj && (reservationId !== null && reservationId !== undefined && reservationId !== "")) {
+    resObj = reservations.find(r =>
+      r && (Number(r.id) === Number(reservationId) || String(r.code) === String(reservationId) || String(r.id) === String(reservationId))
+    ) || null;
+  }
+  if (!resObj && reservationCode) {
+    resObj = reservations.find(r =>
+      r && (String(r.code) === String(reservationCode) || String(r.reservationCode) === String(reservationCode))
+    ) || null;
+  }
+
+  const effResId = resObj?.id !== undefined && resObj?.id !== null ? Number(resObj.id) : (reservationId !== null && reservationId !== undefined && !isNaN(Number(reservationId)) ? Number(reservationId) : null);
+  const effResCode = resObj?.code || resObj?.reservationCode || reservationCode || null;
+
+  const invoices = Array.isArray(db.invoices) ? db.invoices : [];
+  const activeInvoices = invoices.filter(i => {
+    if (!i) return false;
+    const st = String(i.status || "autorizada").toLowerCase();
+    return st !== "cancelada" && st !== "cancelled" && st !== "substituida" && st !== "rejeitada" && st !== "erro";
+  });
+
+  let found = null;
+  if (resObj?.invoiceId) {
+    found = activeInvoices.find(i => Number(i.id) === Number(resObj.invoiceId));
+  }
+  if (!found && resObj?.numeroNfse) {
+    found = activeInvoices.find(i => String(i.numeroNfse) === String(resObj.numeroNfse));
+  }
+  if (!found && effResId !== null) {
+    found = activeInvoices.find(i =>
+      Number(i.reservationId) === effResId ||
+      (Array.isArray(i.reservationIds) && i.reservationIds.map(Number).includes(effResId))
+    );
+  }
+  if (!found && effResCode) {
+    found = activeInvoices.find(i =>
+      String(i.reservationCode) === String(effResCode) ||
+      (Array.isArray(i.reservationCodes) && i.reservationCodes.map(String).includes(String(effResCode)))
+    );
+  }
+
+  if (found && resObj) {
+    resObj.invoiceId = found.id;
+    resObj.numeroNfse = found.numeroNfse;
+  }
+
+  return found || null;
+}
+
+/**
+ * Verifica se a reserva já realizou check-out (ou se a data de saída já passou).
+ * Antes do check-out, a Sofia apenas confirma os dados da nota e agenda para emitir no check-out.
+ */
+export function isReservationCheckedOutForFiscal(reservation, db = null) {
+  if (!reservation || typeof reservation !== "object") return true;
+
+  if (Boolean(reservation.checkoutDone) || Boolean(reservation.actualCheckoutAt) || Boolean(reservation.earlyCheckout)) {
+    return true;
+  }
+
+  const st = String(reservation.status || "").toLowerCase();
+  if (st === "completed" || st === "checked_out" || st === "checkout" || st === "finalizada") {
+    return true;
+  }
+
+  const now = new Date();
+  const brasiliaDateStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(now);
+
+  const coDate = reservation.checkoutDate ? String(reservation.checkoutDate).slice(0, 10) : "";
+  if (coDate && coDate < brasiliaDateStr) {
+    return true;
+  }
+
+  if (coDate === brasiliaDateStr && db && Array.isArray(db.cleaningRequests)) {
+    const fNum = String(reservation.flatNumber || "");
+    const cleanReq = db.cleaningRequests.find(cr =>
+      cr &&
+      (String(cr.flatNumber) === fNum || (reservation.flatId && cr.flatId === reservation.flatId)) &&
+      (cr.requestDate === brasiliaDateStr || cr.date === brasiliaDateStr) &&
+      !cr.isInstructionOnly
+    );
+    const cleanStatus = cleanReq ? (cleanReq.cleaningRequest?.status || cleanReq.status) : null;
+    if (cleanReq && (Boolean(cleanReq.isVacant) || cleanStatus === "cleaning_now" || cleanStatus === "in_progress" || cleanStatus === "clean")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Monta mensagem estruturada de conferência prévia da NFS-e (R1)
  */
-export function buildConferencePresentationMessage(conf) {
+export function buildConferencePresentationMessage(conf, { isCheckedOut = true } = {}) {
   const docFmt = formatCpfOrCnpj(conf.tomadorCpfCnpj);
   const valFmt = formatMoneyBr(conf.valorServico);
   const addrFmt = conf.tomadorEndereco
     ? `${conf.tomadorEndereco}${conf.tomadorNumero && conf.tomadorNumero !== "S/N" ? ", " + conf.tomadorNumero : ""}${conf.tomadorCidade ? " - " + conf.tomadorCidade + "/" + (conf.tomadorUf || "RJ") : ""}`
     : "Endereço cadastrado";
+
+  const footerPrompt = isCheckedOut
+    ? `Os dados estão corretos? Responda *Sim* ou *Pode emitir* para autorizar a emissão da sua nota fiscal! ✨`
+    : `Os dados estão corretos? Responda *Sim* ou *Confirmo* para confirmar os dados! Assim que você realizar o *check-out*, sua nota fiscal será emitida e enviada automaticamente. ✨`;
 
   return `📋 *Conferência de Dados para Emissão de Nota Fiscal (NFS-e)*\n\n` +
     `Por favor, confira os dados da sua nota fiscal antes da emissão:\n\n` +
@@ -9119,7 +9231,7 @@ export function buildConferencePresentationMessage(conf) {
     `• *E-mail:* ${conf.tomadorEmail || "Não informado"}\n\n` +
     `• *Descrição dos Serviços:*\n${conf.descricaoServico}\n\n` +
     `• *Valor Total:* R$ ${valFmt}\n\n` +
-    `Os dados estão corretos? Responda *Sim* ou *Pode emitir* para autorizar a emissão da sua nota fiscal! ✨`;
+    footerPrompt;
 }
 
 /**
@@ -9140,6 +9252,25 @@ export async function executeWhatsAppFiscalEmission({
       cpfCnpj: payload.tomadorCpfCnpj,
       saveDatabase
     });
+
+    // Trava contra emissão duplicada: se a reserva já possui nota fiscal autorizada, retorna a existente
+    const existingInvoice = findExistingInvoiceForReservation(db, {
+      reservationId: payload.reservationId,
+      reservationCode: payload.reservationCode
+    });
+    if (existingInvoice) {
+      return {
+        success: true,
+        alreadyEmitted: true,
+        invoice: existingInvoice,
+        numeroNfse: existingInvoice.numeroNfse,
+        codigoVerificacao: existingInvoice.codigoVerificacao,
+        danfseUrl: existingInvoice.danfseUrl || `/api/nfse/danfse/${existingInvoice.numeroNfse}`,
+        pdfUrl: existingInvoice.pdfUrl || `/api/nfse/pdf/${existingInvoice.numeroNfse}`,
+        linkPrefeitura: existingInvoice.linkPrefeitura || existingInvoice.danfseUrl || `/api/nfse/danfse/${existingInvoice.numeroNfse}`,
+        qrCodeUrl: existingInvoice.qrCodeUrl
+      };
+    }
   }
 
   if (typeof globalThis.executeNfseEmissionInternal === "function") {
@@ -9409,6 +9540,98 @@ export async function handleManagerFiscalApprovalReply({
     valorServico: targetApproval.requestedValue
   };
 
+  const resForApproval = Array.isArray(db.reservations)
+    ? db.reservations.find(r =>
+        r && (
+          (targetApproval.reservationId && Number(r.id) === Number(targetApproval.reservationId)) ||
+          (targetApproval.reservationCode && String(r.code) === String(targetApproval.reservationCode))
+        )
+      )
+    : null;
+
+  const isCheckedOutApproval = isReservationCheckedOutForFiscal(resForApproval, db);
+  const valFmt = formatMoneyBr(targetApproval.requestedValue);
+
+  if (!isCheckedOutApproval && resForApproval) {
+    resForApproval.confirmedFiscalData = {
+      ...invoicePayload,
+      valorServico: targetApproval.requestedValue,
+      managerApprovedValue: true,
+      approvalId: targetApproval.id,
+      confirmedAt: new Date().toISOString()
+    };
+    resForApproval.autoEmitInvoice = true;
+
+    enableAutoEmitInvoiceForGuestAndReservations(db, {
+      reservation: resForApproval,
+      reservationId: resForApproval.id,
+      phone: requesterPhone,
+      cpfCnpj: invoicePayload.tomadorCpfCnpj,
+      saveDatabase: null
+    });
+
+    const guestScheduledReply = `✅ *Alteração de Valor Aprovada e Dados Confirmados!*\n\nA gerência aprovou a emissão da sua nota fiscal no valor de *R$ ${valFmt}*:\n• *Tomador:* ${invoicePayload.tomadorNome || "Tomador"}\n• *Valor Confirmado:* R$ ${valFmt}\n\n📌 *Sua nota fiscal será emitida e enviada automaticamente aqui no WhatsApp assim que o seu check-out for realizado!* 🏨✨`;
+
+    const managerScheduledReply = `✅ *Aprovação Confirmada (Agendada para o Check-out)!*\n\nO novo valor de R$ ${valFmt} foi autorizado para ${targetApproval.requesterName} (${requesterPhone}). Como o hóspede ainda não realizou o check-out, os dados foram salvos e a nota fiscal será emitida automaticamente no check-out.`;
+
+    if (typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig, {
+        phone: managerPhone,
+        message: managerScheduledReply,
+        channelId: "ai_agent",
+        recipientRole: "developer",
+        bypassTestMode: true,
+        db
+      });
+
+      if (requesterPhone && requesterPhone !== managerPhone) {
+        await sendZapiMessage(db.zapiConfig, {
+          phone: requesterPhone,
+          message: guestScheduledReply,
+          channelId: "ai_agent",
+          recipientRole: "guest",
+          db
+        });
+      }
+    }
+
+    if (typeof appendMessageFn === "function") {
+      appendMessageFn(db, {
+        phone: managerPhone,
+        senderName: db?.whatsappAiSettings?.agentName || "Sofia",
+        fromMe: true,
+        text: managerScheduledReply,
+        type: "text",
+        status: "delivered",
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (Array.isArray(db.whatsappConversations)) {
+      const reqConv = db.whatsappConversations.find(c => {
+        const p = cleanWhatsAppPhone(c.phone);
+        return p && (p.endsWith(requesterPhone.slice(-8)) || requesterPhone.endsWith(p.slice(-8)));
+      });
+      if (reqConv && reqConv.fiscalConferenceState) {
+        reqConv.fiscalConferenceState.status = "scheduled_for_checkout";
+        reqConv.fiscalConferenceState.valorServico = targetApproval.requestedValue;
+        reqConv.fiscalConferenceState.confirmedAt = new Date().toISOString();
+      }
+    }
+
+    if (typeof saveDatabase === "function") {
+      try { saveDatabase("fiscal_approval_scheduled_checkout"); } catch (_) {}
+    }
+
+    return {
+      handled: true,
+      action: "manager_approved_fiscal_scheduled",
+      scheduledForCheckout: true,
+      approval: targetApproval,
+      replyText: managerScheduledReply
+    };
+  }
+
   const emissionResult = await executeWhatsAppFiscalEmission({
     db,
     payload: invoicePayload,
@@ -9419,7 +9642,6 @@ export async function handleManagerFiscalApprovalReply({
   const numNfse = emissionResult.numeroNfse;
   const linkNfse = emissionResult.linkPrefeitura || emissionResult.danfseUrl;
   const codVerif = emissionResult.codigoVerificacao;
-  const valFmt = formatMoneyBr(targetApproval.requestedValue);
 
   const guestReply = `✅ *Nota Fiscal Emitida com Sucesso!*\n\nA emissão da sua NFS-e no valor de *R$ ${valFmt}* foi autorizada pela gerência:\n• *Número da NFS-e:* ${numNfse}\n• *Código de Verificação:* ${codVerif}\n• *Tomador:* ${targetApproval.pendingFiscalInvoice?.tomadorNome || "Tomador"}\n• *Valor Faturado:* R$ ${valFmt}\n\n📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkNfse}\n\nAgradecemos pela preferência pela CorpFlats! 🏨✨`;
 
@@ -9795,7 +10017,12 @@ export async function handleWhatsAppFiscalFlow({
   }
 
   // Intercepta aprovação do gestor se houver pendências em db.pendingFiscalApprovals
-  if (Array.isArray(db.pendingFiscalApprovals) && db.pendingFiscalApprovals.some(a => a?.status === "pending_manager")) {
+  const hasExplicitManagerApprovalCmd = /\b(?:aprovar|aprovo|aprovado|autorizar|autorizo|autorizado|reprovar|recusar|nfse-app|nfse-pre)\b/i.test(messageText);
+  if (
+    Array.isArray(db.pendingFiscalApprovals) &&
+    db.pendingFiscalApprovals.some(a => a?.status === "pending_manager") &&
+    (!isAwaitingConfEarly || hasExplicitManagerApprovalCmd)
+  ) {
     const approvalRes = await handleManagerFiscalApprovalReply({
       db,
       cleanTarget,
@@ -10032,15 +10259,103 @@ export async function handleWhatsAppFiscalFlow({
 
     if (hasCadastralChanges && !hasConfirmExplicit) {
       conf.updatedAt = new Date().toISOString();
-      const updatedConfMsg = `Dados cadastrais atualizados com sucesso!\n\n${buildConferencePresentationMessage(conf)}`;
+      const resForUpdate = Array.isArray(db.reservations)
+        ? db.reservations.find(r =>
+            r && (
+              (conf.reservationId && Number(r.id) === Number(conf.reservationId)) ||
+              (conf.reservationCode && String(r.code) === String(conf.reservationCode))
+            )
+          )
+        : null;
+      const isCheckedOutUpdate = isReservationCheckedOutForFiscal(resForUpdate, db);
+      const updatedConfMsg = `Dados cadastrais atualizados com sucesso!\n\n${buildConferencePresentationMessage(conf, { isCheckedOut: isCheckedOutUpdate })}`;
       return await respond(updatedConfMsg, {
         action: "updated_conference_data",
         conference: conf
       });
     }
 
-    // 1.3 Confirmação e Emissão Direta (R1)
+    // 1.3 Confirmação pelo Hóspede (R1)
     if (hasConfirmExplicit) {
+      const resForConf = Array.isArray(db.reservations)
+        ? db.reservations.find(r =>
+            r && (
+              (conf.reservationId && Number(r.id) === Number(conf.reservationId)) ||
+              (conf.reservationCode && String(r.code) === String(conf.reservationCode))
+            )
+          )
+        : null;
+
+      // Trava contra emissão duplicada para a mesma reserva
+      const existingInv = findExistingInvoiceForReservation(db, {
+        reservation: resForConf,
+        reservationId: conf.reservationId,
+        reservationCode: conf.reservationCode
+      });
+      if (existingInv) {
+        conf.status = "emitted";
+        conf.numeroNfse = existingInv.numeroNfse;
+        const linkExisting = existingInv.linkPrefeitura || existingInv.danfseUrl || `/api/nfse/danfse/${existingInv.numeroNfse}`;
+        const valExistingFmt = formatMoneyBr(existingInv.valorServico || conf.valorServico);
+        const dupMsg = `ℹ️ *Nota Fiscal Já Emitida para esta Reserva*\n\n` +
+          `Identificamos que a nota fiscal referente a esta hospedagem já foi emitida anteriormente (não é permitido emitir nota duplicada para a mesma reserva):\n` +
+          `• *Número da NFS-e:* ${existingInv.numeroNfse}\n` +
+          `• *Código de Verificação:* ${existingInv.codigoVerificacao || "N/A"}\n` +
+          `• *Tomador:* ${existingInv.tomadorNome || conf.tomadorNome}\n` +
+          `• *Valor:* R$ ${valExistingFmt}\n\n` +
+          `📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkExisting}\n\n` +
+          `Agradecemos pela preferência pela CorpFlats! 🏨✨`;
+
+        return await respond(dupMsg, {
+          action: "already_emitted_resent",
+          alreadyEmitted: true,
+          numeroNfse: existingInv.numeroNfse,
+          codigoVerificacao: existingInv.codigoVerificacao,
+          linkPrefeitura: linkExisting,
+          danfseUrl: existingInv.danfseUrl || `/api/nfse/danfse/${existingInv.numeroNfse}`,
+          invoice: existingInv
+        });
+      }
+
+      const isCheckedOut = isReservationCheckedOutForFiscal(resForConf, db);
+      const valFmt = formatMoneyBr(conf.valorServico);
+
+      // Se o hóspede ainda NÃO fez check-out: confirma os dados, não emite ainda e agenda para o check-out!
+      if (!isCheckedOut && resForConf) {
+        resForConf.confirmedFiscalData = {
+          ...conf,
+          confirmedAt: new Date().toISOString()
+        };
+        resForConf.autoEmitInvoice = true;
+
+        enableAutoEmitInvoiceForGuestAndReservations(db, {
+          reservation: resForConf,
+          reservationId: resForConf.id,
+          phone: cleanTarget,
+          cpfCnpj: conf.tomadorCpfCnpj,
+          saveDatabase
+        });
+
+        conf.status = "scheduled_for_checkout";
+        conf.confirmedAt = new Date().toISOString();
+        conf.updatedAt = new Date().toISOString();
+
+        const scheduledMsg = `✅ *Dados da Nota Fiscal Confirmados!*\n\n` +
+          `Registramos e validamos todos os dados para a sua Nota Fiscal (NFS-e):\n` +
+          `• *Tomador:* ${conf.tomadorNome} (${formatCpfOrCnpj(conf.tomadorCpfCnpj)})\n` +
+          `• *Descrição:* ${conf.descricaoServico}\n` +
+          `• *Valor Previsto:* R$ ${valFmt}\n\n` +
+          `📌 *Sua nota fiscal será emitida e enviada automaticamente aqui no WhatsApp assim que você realizar o check-out!*\n` +
+          `*(Realizamos a emissão no check-out para garantir que eventual prorrogação, saída antecipada ou ajuste na estadia já saia certinho na nota sem necessidade de cancelamento).* 🏨✨`;
+
+        return await respond(scheduledMsg, {
+          action: "scheduled_for_checkout",
+          scheduledForCheckout: true,
+          conference: conf
+        });
+      }
+
+      // Se a reserva JÁ realizou check-out: emite e envia na hora!
       const emissionResult = await executeWhatsAppFiscalEmission({
         db,
         payload: {
@@ -10075,7 +10390,6 @@ export async function handleWhatsAppFiscalFlow({
       const numNfse = emissionResult.numeroNfse;
       const codVerif = emissionResult.codigoVerificacao;
       const linkNfse = emissionResult.linkPrefeitura || emissionResult.danfseUrl;
-      const valFmt = formatMoneyBr(conf.valorServico);
 
       const successMsg = `✅ *Nota Fiscal Emitida com Sucesso!*\n\n` +
         `Sua NFS-e foi emitida com os dados conferidos:\n` +
@@ -10087,7 +10401,8 @@ export async function handleWhatsAppFiscalFlow({
         `Agradecemos pela preferência pela CorpFlats! 🏨✨`;
 
       return await respond(successMsg, {
-        action: "emitted_nfse",
+        action: emissionResult.alreadyEmitted ? "already_emitted_resent" : "emitted_nfse",
+        alreadyEmitted: Boolean(emissionResult.alreadyEmitted),
         numeroNfse: numNfse,
         codigoVerificacao: codVerif,
         linkPrefeitura: linkNfse,
@@ -10110,6 +10425,7 @@ export async function handleWhatsAppFiscalFlow({
   const { matchedReservation, matchedGuest, companyId, linkedCompany } = findContactAndReservation(db, cleanTarget);
   const rawCnpj = extractCnpj(messageText);
   const rawCpf = extractCpf(messageText);
+  const isMatchedResCheckedOut = isReservationCheckedOutForFiscal(matchedReservation, db);
 
   enableAutoEmitInvoiceForGuestAndReservations(db, {
     guest: matchedGuest,
@@ -10118,6 +10434,33 @@ export async function handleWhatsAppFiscalFlow({
     cpfCnpj: rawCpf || null,
     saveDatabase
   });
+
+  // Se a reserva localizada já possui nota fiscal emitida, impede duplicidade e reenvia a nota existente
+  const existingInvOnRequest = matchedReservation
+    ? findExistingInvoiceForReservation(db, { reservation: matchedReservation })
+    : null;
+  if (existingInvOnRequest && !rawCnpj && !rawCpf) {
+    const linkExisting = existingInvOnRequest.linkPrefeitura || existingInvOnRequest.danfseUrl || `/api/nfse/danfse/${existingInvOnRequest.numeroNfse}`;
+    const valExistingFmt = formatMoneyBr(existingInvOnRequest.valorServico || matchedReservation?.totalAmount || 0);
+    const dupMsg = `ℹ️ *Nota Fiscal Já Emitida para esta Reserva*\n\n` +
+      `Identificamos que a nota fiscal referente à sua hospedagem (Reserva #${matchedReservation.code || matchedReservation.id}) já foi emitida:\n` +
+      `• *Número da NFS-e:* ${existingInvOnRequest.numeroNfse}\n` +
+      `• *Código de Verificação:* ${existingInvOnRequest.codigoVerificacao || "N/A"}\n` +
+      `• *Tomador:* ${existingInvOnRequest.tomadorNome || matchedReservation.guestName || "Tomador"}\n` +
+      `• *Valor:* R$ ${valExistingFmt}\n\n` +
+      `📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkExisting}\n\n` +
+      `Agradecemos pela preferência pela CorpFlats! 🏨✨`;
+
+    return await respond(dupMsg, {
+      action: "already_emitted_resent",
+      alreadyEmitted: true,
+      numeroNfse: existingInvOnRequest.numeroNfse,
+      codigoVerificacao: existingInvOnRequest.codigoVerificacao,
+      linkPrefeitura: linkExisting,
+      danfseUrl: existingInvOnRequest.danfseUrl || `/api/nfse/danfse/${existingInvOnRequest.numeroNfse}`,
+      invoice: existingInvOnRequest
+    });
+  }
 
   const contactDisplayName = senderName || matchedReservation?.guestName || matchedGuest?.name || "Hóspede";
   const firstName = contactDisplayName ? toTitleCase(contactDisplayName).split(" ")[0] : "";
@@ -10201,7 +10544,7 @@ export async function handleWhatsAppFiscalFlow({
     };
     conv.awaitingFiscalData = false;
 
-    const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState);
+    const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState, { isCheckedOut: isMatchedResCheckedOut });
     return await respond(confMsg, {
       action: "presented_conference",
       conference: conv.fiscalConferenceState
@@ -10254,7 +10597,7 @@ export async function handleWhatsAppFiscalFlow({
     };
     conv.awaitingFiscalData = false;
 
-    const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState);
+    const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState, { isCheckedOut: isMatchedResCheckedOut });
     return await respond(confMsg, {
       action: "presented_conference",
       conference: conv.fiscalConferenceState
@@ -10311,7 +10654,7 @@ export async function handleWhatsAppFiscalFlow({
     };
     conv.awaitingFiscalData = false;
 
-    const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState);
+    const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState, { isCheckedOut: isMatchedResCheckedOut });
     return await respond(confMsg, {
       action: "presented_conference",
       conference: conv.fiscalConferenceState

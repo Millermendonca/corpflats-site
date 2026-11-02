@@ -23,6 +23,8 @@ import {
   handleManagerFiscalApprovalReply,
   executeWhatsAppFiscalEmission,
   enableAutoEmitInvoiceForGuestAndReservations,
+  findExistingInvoiceForReservation,
+  isReservationCheckedOutForFiscal,
   parseFlexibleMoney,
   formatDateBr,
   formatMoneyBr,
@@ -240,12 +242,15 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.strictEqual(conv.fiscalConferenceState.valorServico, 600.00);
   });
 
-  it("Critério 2 (R1): Mediante confirmação explícita do usuário, aciona emissão da NFS-e e envia dados/link no WhatsApp", async () => {
+  it("Critério 2 (R1): Mediante confirmação explícita do usuário (pós-check-out), aciona emissão da NFS-e e envia dados/link no WhatsApp", async () => {
     const sentZapi = [];
     const mockSendZapi = async (cfg, payload) => {
       sentZapi.push(payload);
       return { success: true, messageId: `msg_${Date.now()}` };
     };
+
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    res605.checkoutDone = true;
 
     const conv = testDb.whatsappConversations.find(c => c.phone === "22998505276");
     assert.ok(conv?.fiscalConferenceState, "Deve haver conferência pendente do teste anterior");
@@ -395,7 +400,10 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.match(result.replyText, /aprovação prévia do gestor/i);
     assert.match(result.replyText, /900,00/);
 
-    // 5. Gestor aprova a solicitação ("Aprovar fiscal")
+    // 5. Gestor aprova a solicitação ("Aprovar fiscal") para reserva já em pós-check-out
+    const res501 = testDb.reservations.find(r => r.id === 501);
+    res501.checkoutDone = true;
+
     const sentZapiManager = [];
     const mockSendZapiManager = async (cfg, payload) => {
       sentZapiManager.push(payload);
@@ -491,7 +499,12 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.notStrictEqual(resultNonAuth?.action, "presented_conference");
     assert.notStrictEqual(resultNonAuth?.action, "emitted_nfse");
 
-    // Caso B: Número autorizado pede nota fiscal -> Interceptado com sucesso
+    // Caso B: Número autorizado pede nota fiscal (reserva sem nota prévia) -> Interceptado com sucesso
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    testDb.invoices = testDb.invoices.filter(i => Number(i.reservationId) !== 605);
+
     const convMiller = testDb.whatsappConversations.find(c => c.phone === "22998505276");
     convMiller.fiscalConferenceState = null;
 
@@ -541,6 +554,12 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
       sentZapi.push(payload);
       return { success: true, messageId: `msg_${Date.now()}` };
     };
+
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    res605.checkoutDone = true;
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    testDb.invoices = testDb.invoices.filter(i => Number(i.reservationId) !== 605);
 
     const initialApprovals = testDb.pendingFiscalApprovals.length;
     const conv = {
@@ -694,6 +713,12 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
       sentZapi.push(payload);
       return { success: true, messageId: `msg_${Date.now()}` };
     };
+
+    const res501 = testDb.reservations.find(r => r.id === 501);
+    res501.checkoutDone = true;
+    delete res501.invoiceId;
+    delete res501.numeroNfse;
+    testDb.invoices = testDb.invoices.filter(i => Number(i.reservationId) !== 501);
 
     const initialApprovals = testDb.pendingFiscalApprovals.length;
     const conv = {
@@ -869,7 +894,13 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.strictEqual(pending.requestedValue, 800.00);
     assert.strictEqual(pending.pendingFiscalInvoice.descricaoServico, "Diárias executivas", "Descrição na fatura pendente deve ser a nova");
 
-    // Agora gestor aprova a solicitação
+    // Agora gestor aprova a solicitação (em reserva pós-check-out sem nota prévia)
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    res605.checkoutDone = true;
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    testDb.invoices = testDb.invoices.filter(i => Number(i.reservationId) !== 605);
+
     const sentZapiManager = [];
     const mockSendZapiManager = async (cfg, payload) => {
       sentZapiManager.push(payload);
@@ -1136,6 +1167,234 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     if (res778) {
       assert.strictEqual(res778.autoEmitInvoice, true, "Emissão fiscal deve propagar autoEmitInvoice = true para todas as reservas do hóspede");
     }
+  });
+
+  // ── AGENDAMENTO PRÉ-CHECK-OUT E TRAVA ANTI-DUPLICIDADE ──
+
+  it("Agendamento Pré-Check-out (1): Hóspede com reserva ativa (antes do check-out) confirma dados da nota -> Sofia NÃO emite ainda, agenda para o check-out e salva confirmedFiscalData", async () => {
+    const resPre = {
+      id: 801,
+      code: "RES-801-PRE",
+      guestId: 501,
+      guestName: "Miller Ferreira",
+      guestPhone: "22998505276",
+      companyId: 701,
+      flatNumber: "801",
+      checkinDate: "2026-11-01",
+      checkoutDate: "2099-12-31", // Futura (antes do check-out)
+      totalAmount: 1200.00,
+      status: "checked_in",
+      checkoutDone: false
+    };
+    testDb.reservations.push(resPre);
+
+    const conv = {
+      id: "conv_pre_checkout_schedule",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 801,
+        reservationCode: "RES-801-PRE",
+        flatNumber: "801",
+        checkinDate: "2026-11-01",
+        checkoutDate: "2099-12-31",
+        tomadorNome: "TecnoPetro Engenharia Subsea LTDA",
+        tomadorCpfCnpj: "12345678000195",
+        tomadorTipo: "PJ",
+        tomadorEmail: "financeiro@tecnopetro.com.br",
+        tomadorEndereco: "Av. Pelinca, 150",
+        descricaoServico: "Hospedagem corporativa Flat 801",
+        valorOriginal: 1200.00,
+        valorServico: 1200.00
+      }
+    };
+    testDb.whatsappConversations.push(conv);
+
+    const invoicesBefore = testDb.invoices.length;
+
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Sim, está tudo correto, pode confirmar!",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: (db, msg) => conv.messages.push(msg),
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(result.handled, true);
+    assert.strictEqual(result.action, "scheduled_for_checkout", "Antes do check-out, a confirmação deve agendar a emissão para o check-out");
+    assert.strictEqual(result.scheduledForCheckout, true);
+    assert.strictEqual(testDb.invoices.length, invoicesBefore, "Nenhuma nota fiscal deve ser emitida antes do check-out");
+    assert.strictEqual(conv.fiscalConferenceState.status, "scheduled_for_checkout");
+    assert.strictEqual(resPre.autoEmitInvoice, true, "Reserva deve ter autoEmitInvoice = true ativado");
+    assert.ok(resPre.confirmedFiscalData, "Reserva deve armazenar confirmedFiscalData para uso no check-out");
+    assert.strictEqual(resPre.confirmedFiscalData.tomadorCpfCnpj, "12345678000195");
+    assert.strictEqual(resPre.confirmedFiscalData.descricaoServico, "Hospedagem corporativa Flat 801");
+    assert.match(result.replyText, /será emitida e enviada automaticamente.*check-out/i);
+  });
+
+  it("Agendamento Pré-Check-out (2): Aprovação do gestor para alteração de valor antes do check-out agenda o valor aprovado para o check-out sem emitir antecipadamente", async () => {
+    const resPreVal = {
+      id: 802,
+      code: "RES-802-PRE",
+      guestId: 501,
+      guestName: "Miller Ferreira",
+      guestPhone: "22998505276",
+      companyId: 701,
+      flatNumber: "802",
+      checkinDate: "2026-11-01",
+      checkoutDate: "2099-12-31",
+      totalAmount: 1000.00,
+      status: "confirmada",
+      checkoutDone: false
+    };
+    testDb.reservations.push(resPreVal);
+
+    const pendingId = `NFSE-PRE-VAL-${Date.now()}`;
+    testDb.pendingFiscalApprovals.push({
+      id: pendingId,
+      status: "pending_manager",
+      requesterPhone: "22998505276",
+      requesterName: "Miller Ferreira",
+      reservationId: 802,
+      reservationCode: "RES-802-PRE",
+      flatNumber: "802",
+      originalValue: 1000.00,
+      requestedValue: 1150.00,
+      reason: "Ajuste de diária acordado",
+      pendingFiscalInvoice: {
+        reservationId: 802,
+        reservationCode: "RES-802-PRE",
+        flatNumber: "802",
+        tomadorNome: "TecnoPetro Engenharia Subsea LTDA",
+        tomadorCpfCnpj: "12345678000195",
+        tomadorTipo: "PJ",
+        tomadorEmail: "financeiro@tecnopetro.com.br",
+        descricaoServico: "Hospedagem Flat 802",
+        valorOriginal: 1000.00,
+        valorServico: 1150.00
+      },
+      createdAt: new Date().toISOString()
+    });
+
+    const invoicesBefore = testDb.invoices.length;
+
+    const approvalRes = await handleManagerFiscalApprovalReply({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: `Aprovar #${pendingId}`,
+      conv: { id: "conv_mgr_pre", phone: "22998505276", messages: [] },
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(approvalRes.handled, true);
+    assert.strictEqual(approvalRes.action, "manager_approved_fiscal_scheduled", "Aprovação antes do check-out deve agendar para o check-out");
+    assert.strictEqual(approvalRes.scheduledForCheckout, true);
+    assert.strictEqual(testDb.invoices.length, invoicesBefore, "Nenhuma nota deve ser emitida antes do check-out");
+    assert.strictEqual(resPreVal.autoEmitInvoice, true);
+    assert.ok(resPreVal.confirmedFiscalData, "Deve gravar confirmedFiscalData na reserva");
+    assert.strictEqual(resPreVal.confirmedFiscalData.valorServico, 1150.00, "Deve preservar o valor aprovado pelo gestor");
+    assert.strictEqual(resPreVal.confirmedFiscalData.managerApprovedValue, true);
+  });
+
+  it("Trava Anti-Duplicidade (1): Impede emissão de segunda NFS-e para a mesma reserva em executeWhatsAppFiscalEmission", async () => {
+    const resDup = {
+      id: 803,
+      code: "RES-803-DUP",
+      guestId: 501,
+      guestName: "Miller Ferreira",
+      guestPhone: "22998505276",
+      flatNumber: "803",
+      checkinDate: "2026-10-01",
+      checkoutDate: "2026-10-05",
+      totalAmount: 500.00,
+      status: "completed",
+      checkoutDone: true
+    };
+    testDb.reservations.push(resDup);
+
+    // 1ª emissão (autorizada normalmente)
+    const firstEmit = await executeWhatsAppFiscalEmission({
+      db: testDb,
+      payload: {
+        reservationId: 803,
+        reservationCode: "RES-803-DUP",
+        guestId: 501,
+        flatNumber: "803",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        valorServico: 500.00,
+        descricaoServico: "Hospedagem Flat 803"
+      },
+      saveDatabase: () => {}
+    });
+
+    assert.strictEqual(firstEmit.success, true);
+    assert.strictEqual(Boolean(firstEmit.alreadyEmitted), false);
+    const invoicesCountAfterFirst = testDb.invoices.length;
+
+    // 2ª tentativa de emissão para a mesma reserva (ex.: gatilho de check-out ou clique duplo)
+    const secondEmit = await executeWhatsAppFiscalEmission({
+      db: testDb,
+      payload: {
+        reservationId: 803,
+        reservationCode: "RES-803-DUP",
+        guestId: 501,
+        flatNumber: "803",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        valorServico: 500.00,
+        descricaoServico: "Hospedagem Flat 803"
+      },
+      saveDatabase: () => {}
+    });
+
+    assert.strictEqual(secondEmit.success, true);
+    assert.strictEqual(secondEmit.alreadyEmitted, true, "Deve indicar que a nota já foi emitida (trava anti-duplicidade)");
+    assert.strictEqual(String(secondEmit.numeroNfse), String(firstEmit.numeroNfse), "Deve retornar a mesma NFS-e original");
+    assert.strictEqual(testDb.invoices.length, invoicesCountAfterFirst, "NÃO pode criar uma segunda nota fiscal em db.invoices");
+  });
+
+  it("Trava Anti-Duplicidade (2): Se o hóspede pede nota no WhatsApp para reserva que já tem NFS-e emitida, Sofia não duplica e reenvia a nota existente", async () => {
+    // Garante que a reserva 605 (primeira reserva encontrada para o hóspede 501) já possui nota emitida
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    const existingInv = findExistingInvoiceForReservation(testDb, { reservation: res605 });
+    assert.ok(existingInv, "Reserva 605 já possui nota emitida do teste anterior");
+
+    const invoicesBefore = testDb.invoices.length;
+    const conv = {
+      id: "conv_dup_whatsapp_request",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: []
+    };
+
+    const result = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Oi Sofia, pode emitir minha nota fiscal do flat 605?",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: (db, msg) => conv.messages.push(msg),
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(result.handled, true);
+    assert.strictEqual(result.action, "already_emitted_resent", "Deve detectar nota já emitida e apenas reenviar");
+    assert.strictEqual(result.alreadyEmitted, true);
+    assert.strictEqual(String(result.numeroNfse), String(existingInv.numeroNfse));
+    assert.strictEqual(testDb.invoices.length, invoicesBefore, "Nenhuma nota duplicada deve ser criada");
+    assert.match(result.replyText, /já foi emitida/i);
   });
 });
 
