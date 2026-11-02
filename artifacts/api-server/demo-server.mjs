@@ -59799,18 +59799,28 @@ function getReservationAllGuests(reservation) {
 
   // 1. Hóspede Titular (Slot 1)
   const primarySlot = Array.isArray(reservation.guests)
-    ? reservation.guests.find(g => Number(g?.index || g?.order || 1) === 1) || reservation.guests[0]
+    ? reservation.guests.find(g => Number(g?.index || g?.order || 1) === 1) ||
+      (!reservation.guests[0]?.index && !reservation.guests[0]?.order ? reservation.guests[0] : null)
+    : null;
+  const primarySplitSlot = Array.isArray(reservation.minibarSplitConfig?.guests)
+    ? reservation.minibarSplitConfig.guests.find(g => Number(g?.index || 1) === 1)
     : null;
   const primaryCrm = crmGuests.find(cg =>
     (reservation.guestId && Number(cg.id) === Number(reservation.guestId)) ||
     (primarySlot?.guestId && Number(cg.id) === Number(primarySlot.guestId)) ||
     (reservation.guestDocument && String(cg.document || cg.documentNumber || "").replace(/\D/g, "") === String(reservation.guestDocument).replace(/\D/g, ""))
   );
-  const primaryFnrh = primarySlot?.fnrhAuditTrail || reservation.fnrhAuditTrail || fnrhDocs[0] || null;
+  const primaryFnrh =
+    primarySlot?.fnrhAuditTrail ||
+    reservation.fnrhAuditTrail ||
+    fnrhDocs.find(d => !d.guestIndex || Number(d.guestIndex) === 1) ||
+    fnrhDocs[0] ||
+    null;
 
   const primaryName = (
     reservation.guestName ||
     primarySlot?.name ||
+    primarySplitSlot?.name ||
     primaryFnrh?.guestFullName ||
     primaryCrm?.name ||
     "Hóspede Titular"
@@ -59819,6 +59829,7 @@ function getReservationAllGuests(reservation) {
     reservation.guestPhone ||
     primarySlot?.phone ||
     primarySlot?.whatsapp ||
+    primarySplitSlot?.phone ||
     primaryFnrh?.guestPhone ||
     primaryCrm?.phone ||
     ""
@@ -59826,6 +59837,7 @@ function getReservationAllGuests(reservation) {
   const primaryEmail = (
     reservation.guestEmail ||
     primarySlot?.email ||
+    primarySplitSlot?.email ||
     primaryFnrh?.guestEmail ||
     primaryCrm?.email ||
     ""
@@ -59834,6 +59846,8 @@ function getReservationAllGuests(reservation) {
     reservation.guestDocument ||
     primarySlot?.cpf ||
     primarySlot?.document ||
+    primarySplitSlot?.cpf ||
+    primarySplitSlot?.document ||
     primaryFnrh?.guestCpf ||
     primaryCrm?.document ||
     primaryCrm?.documentNumber ||
@@ -59858,28 +59872,33 @@ function getReservationAllGuests(reservation) {
   const splitSavedGuests = Array.isArray(reservation.minibarSplitConfig?.guests)
     ? reservation.minibarSplitConfig.guests
     : [];
+  const fnrhHistoryArr = Array.isArray(reservation.fnrhHistory) ? reservation.fnibarFnrh || reservation.fnrhHistory : [];
   const maxRawIdx = rawGuestsArr.reduce((m, g, idx) => Math.max(m, Number(g?.index || g?.order || idx + 1) || 1), 1);
   const maxSplitIdx = splitSavedGuests.reduce((m, g, idx) => Math.max(m, Number(g?.index || idx + 1) || 1), 1);
+  const maxFnrhIdx = fnrhHistoryArr.reduce((m, f, idx) => Math.max(m, Number(f?.guestIndex || f?.index || idx + 1) || 1), 1);
 
   const totalSlots = Math.max(
     Number(reservation.numGuests || reservation.guestsCount || 1),
     rawGuestsArr.length,
+    fnrhDocs.length,
     maxRawIdx,
-    maxSplitIdx
+    maxSplitIdx,
+    maxFnrhIdx
   );
 
   for (let i = 2; i <= totalSlots; i++) {
-    const compSlot =
+    const rawSlot =
       rawGuestsArr.find(g => Number(g?.index || g?.order) === i) ||
-      rawGuestsArr[i - 1] ||
-      splitSavedGuests.find(g => Number(g?.index) === i) ||
-      null;
+      (rawGuestsArr[i - 1] && !rawGuestsArr[i - 1]?.index && !rawGuestsArr[i - 1]?.order ? rawGuestsArr[i - 1] : null);
+    const splitSlot = splitSavedGuests.find(g => Number(g?.index) === i) || null;
+    const compSlot = rawSlot || splitSlot ? { ...(splitSlot || {}), ...(rawSlot || {}) } : null;
     const compFnrh =
       compSlot?.fnrhAuditTrail ||
+      fnrhDocs.find(d => Number(d?.guestIndex || d?.index) === i) ||
       fnrhDocs[i - 1] ||
       (Array.isArray(reservation.fnrhHistory)
         ? reservation.fnrhHistory.find(
-            f => Number(f?.guestIndex || f?.index) === i || Number(f?.guestIndex) === i - 1
+            f => Number(f?.guestIndex || f?.index) === i
           )
         : null) ||
       null;
@@ -59962,7 +59981,14 @@ function normalizeMinibarSplitMode(rawMode) {
   return "titular";
 }
 
-function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], pendingBalance = 0, reservationGuests = []) {
+function computeReservationMinibarSplit(
+  reservation,
+  pendingLaunchedItems = [],
+  pendingBalance = 0,
+  reservationGuests = [],
+  options = {}
+) {
+  const paidOrders = Array.isArray(options?.paidOrders) ? options.paidOrders : [];
   const rawConfig = (reservation && typeof reservation.minibarSplitConfig === "object" && reservation.minibarSplitConfig)
     ? reservation.minibarSplitConfig
     : {};
@@ -60025,8 +60051,47 @@ function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], 
   const cleanPendingBalance = Number(Math.max(0, Number(pendingBalance) || 0).toFixed(2));
   const itemAllocationByKey = {};
 
+  // Pagamentos já efetuados por índice de hóspede (abate cotas já quitadas individualmente)
+  const paidAmountByGuestIndex = {};
+  const paidUnitsByItemAndGuest = {};
+  let totalLaunchPaidAmount = 0;
+
+  for (const pOrd of paidOrders) {
+    if (!pOrd) continue;
+    const isLaunchSettlement =
+      Boolean(pOrd.settlesLaunchOrders) ||
+      Boolean(pOrd.isAutoSplitCheckoutOrder) ||
+      pOrd.source === "restocker_launch" ||
+      pOrd.source === "anserve_discrepancy" ||
+      String(pOrd.id || "").startsWith("ORD-MB-DIV-") ||
+      String(pOrd.id || "").startsWith("ORD-MB-LANC-") ||
+      String(pOrd.id || "").startsWith("ORD-MB-SPLIT-");
+    if (!isLaunchSettlement) continue;
+
+    const pGuestIdx = Number(pOrd.guestIndex || 1);
+    const pAmt = Number(pOrd.totalAmount || 0);
+    paidAmountByGuestIndex[pGuestIdx] = Number(((paidAmountByGuestIndex[pGuestIdx] || 0) + pAmt).toFixed(2));
+    totalLaunchPaidAmount = Number((totalLaunchPaidAmount + pAmt).toFixed(2));
+
+    const selList =
+      Array.isArray(pOrd.selectedLaunchItems) && pOrd.selectedLaunchItems.length > 0
+        ? pOrd.selectedLaunchItems
+        : Array.isArray(pOrd.items)
+        ? pOrd.items
+        : [];
+    for (const sIt of selList) {
+      if (!sIt || sIt.productId === "split_share" || sIt.productId === "partial_payment") continue;
+      const sQty = Number(sIt.quantity) || 0;
+      if (sQty <= 0) continue;
+      const k = sIt.itemKey || (sIt.launchOrderId ? `${sIt.launchOrderId}::${sIt.productId}` : sIt.productId);
+      if (!paidUnitsByItemAndGuest[k]) paidUnitsByItemAndGuest[k] = {};
+      paidUnitsByItemAndGuest[k][pGuestIdx] = (paidUnitsByItemAndGuest[k][pGuestIdx] || 0) + sQty;
+    }
+  }
+
   const sharesMap = new Map();
   for (const g of enrichedGuests) {
+    const alreadyPaidAmt = Number((paidAmountByGuestIndex[g.index] || 0).toFixed(2));
     sharesMap.set(g.index, {
       guestIndex: g.index,
       guestId: g.guestId || null,
@@ -60041,26 +60106,57 @@ function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], 
       isPlaceholderName: g.isPlaceholderName,
       isMissingFiscalData: g.isMissingFiscalData,
       amount: 0,
+      grossAmount: 0,
+      paidAmount: alreadyPaidAmt,
+      isSharePaid: false,
       itemsCount: 0,
       items: [],
       orderItems: [],
-      selectedLaunchItems: []
+      selectedLaunchItems: [],
+      unassignedFallbackItems: []
     });
   }
 
   if (mode === "half_and_half") {
     const activeGuests = enrichedGuests.length >= 2 ? enrichedGuests : enrichedGuests.slice(0, 1);
     const parts = Math.max(1, activeGuests.length);
-    const totalCents = Math.round(cleanPendingBalance * 100);
-    const baseCents = Math.floor(totalCents / parts);
-    const remainderCents = totalCents - baseCents * parts;
+    const grossStayTotal = Number((cleanPendingBalance + totalLaunchPaidAmount).toFixed(2));
+    const grossTotalCents = Math.round(grossStayTotal * 100);
+    const grossBaseCents = Math.floor(grossTotalCents / parts);
+    const grossRemCents = grossTotalCents - grossBaseCents * parts;
+    const pendingCents = Math.round(cleanPendingBalance * 100);
+
+    const rawRemainingCentsByGuest = [];
+    let sumRawRemCents = 0;
 
     activeGuests.forEach((g, idx) => {
-      const shareEntry = sharesMap.get(g.index);
+      const grossCents = grossBaseCents + (idx === 0 ? grossRemCents : 0);
+      const paidCents = Math.round((paidAmountByGuestIndex[g.index] || 0) * 100);
+      const remCents = Math.max(0, grossCents - paidCents);
+      rawRemainingCentsByGuest.push({ guestIndex: g.index, grossCents, paidCents, remCents });
+      sumRawRemCents += remCents;
+    });
+
+    // Ajusta eventual diferença residual para que a soma das cotas pendentes feche exatamente com cleanPendingBalance
+    let diffCents = pendingCents - sumRawRemCents;
+    if (diffCents !== 0 && rawRemainingCentsByGuest.length > 0) {
+      const targetEntry =
+        rawRemainingCentsByGuest.find(r => r.remCents > 0 && r.paidCents === 0) ||
+        rawRemainingCentsByGuest.find(r => r.remCents + diffCents >= 0) ||
+        rawRemainingCentsByGuest[0];
+      if (targetEntry) {
+        targetEntry.remCents = Math.max(0, targetEntry.remCents + diffCents);
+      }
+    }
+
+    rawRemainingCentsByGuest.forEach(entry => {
+      const shareEntry = sharesMap.get(entry.guestIndex);
       if (!shareEntry) return;
-      const cents = baseCents + (idx === 0 ? remainderCents : 0);
-      const shareAmt = Number((cents / 100).toFixed(2));
+      const shareAmt = Number((entry.remCents / 100).toFixed(2));
+      const grossAmt = Number((entry.grossCents / 100).toFixed(2));
+      shareEntry.grossAmount = grossAmt;
       shareEntry.amount = shareAmt;
+      shareEntry.isSharePaid = grossAmt > 0 && shareAmt <= 0 && shareEntry.paidAmount > 0;
       shareEntry.itemsCount = shareAmt > 0 ? 1 : 0;
       if (shareAmt > 0) {
         const desc =
@@ -60069,7 +60165,7 @@ function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], 
             : `Divisão Igualitária (1/${parts} do Consumo de Frigobar)`;
         shareEntry.items = [
           {
-            itemKey: `split_${g.index}`,
+            itemKey: `split_${entry.guestIndex}`,
             productId: "split_share",
             productName: desc,
             quantity: 1,
@@ -60094,12 +60190,14 @@ function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], 
     for (const it of pendingLaunchedItems) {
       itemAllocationByKey[it.itemKey] = {
         mode: "half_and_half",
+        isExplicitlyMarked: true,
         allocations: Object.fromEntries(activeGuests.map(g => [String(g.index), Number((it.remainingQuantity / parts).toFixed(2))]))
       };
     }
   } else if (mode === "by_item") {
     for (const it of pendingLaunchedItems) {
       const remQty = Number(it.remainingQuantity ?? it.quantity) || 0;
+      const totalQty = Math.max(remQty, Number(it.quantity) || remQty);
       const uPrice = Number(it.unitPrice) || 0;
       if (remQty <= 0) continue;
 
@@ -60108,18 +60206,26 @@ function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], 
         itemAssignments[`${it.launchOrderId}::${it.productId}`] ??
         itemAssignments[it.productId];
 
-      const perGuestQty = {};
+      const isExplicitlyMarked =
+        rawAssign !== undefined &&
+        rawAssign !== null &&
+        (typeof rawAssign !== "object" || Object.keys(rawAssign).length > 0);
+
+      // 1. Calcula a alocação bruta sobre a quantidade original do lançamento (totalQty)
+      const grossPerGuestQty = {};
+      let fallbackToTitularGrossQty = 0;
+
       if (typeof rawAssign === "number" || typeof rawAssign === "string") {
         const targetIdx = Number(rawAssign) || 1;
         if (sharesMap.has(targetIdx)) {
-          perGuestQty[targetIdx] = remQty;
+          grossPerGuestQty[targetIdx] = totalQty;
         } else {
-          perGuestQty[1] = remQty;
+          grossPerGuestQty[1] = totalQty;
         }
       } else if (rawAssign && typeof rawAssign === "object") {
         if (rawAssign.assignedGuestIndex !== undefined || rawAssign.guestIndex !== undefined) {
           const targetIdx = Number(rawAssign.assignedGuestIndex ?? rawAssign.guestIndex) || 1;
-          perGuestQty[sharesMap.has(targetIdx) ? targetIdx : 1] = remQty;
+          grossPerGuestQty[sharesMap.has(targetIdx) ? targetIdx : 1] = totalQty;
         } else {
           const allocSource =
             rawAssign.unitsByGuest && typeof rawAssign.unitsByGuest === "object"
@@ -60127,30 +60233,72 @@ function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], 
               : rawAssign.allocations && typeof rawAssign.allocations === "object"
               ? rawAssign.allocations
               : rawAssign;
-          let remainingToAssign = remQty;
+          let remainingGross = totalQty;
           for (const g of enrichedGuests) {
             if (g.index === 1) continue;
             const wanted = Math.max(0, Math.floor(Number(allocSource[g.index] ?? allocSource[String(g.index)] ?? 0)));
-            const take = Math.min(remainingToAssign, wanted);
+            const take = Math.min(remainingGross, wanted);
             if (take > 0) {
-              perGuestQty[g.index] = take;
-              remainingToAssign -= take;
+              grossPerGuestQty[g.index] = take;
+              remainingGross -= take;
             }
           }
-          // Eventuais unidades não marcadas (ou marcadas para o Hóspede 1) vão automaticamente para o Hóspede Principal (Titular)
-          if (remainingToAssign > 0) {
-            perGuestQty[1] = remainingToAssign;
+          const explicitG1 = Math.max(0, Math.floor(Number(allocSource[1] ?? allocSource["1"] ?? 0)));
+          if (remainingGross > 0) {
+            grossPerGuestQty[1] = remainingGross;
+            if (explicitG1 < remainingGross) {
+              fallbackToTitularGrossQty = remainingGross - explicitG1;
+            }
           }
         }
       } else {
         // Regra Canônica: Itens não marcados (inclusive lançados na vistoria final) vão para o Hóspede Principal (Titular)
-        perGuestQty[1] = remQty;
+        grossPerGuestQty[1] = totalQty;
+        fallbackToTitularGrossQty = totalQty;
+      }
+
+      // 2. Desconta eventuais unidades já pagas por cada hóspede neste item específico
+      const paidByGuestOnItem = {
+        ...(paidUnitsByItemAndGuest[it.itemKey] ||
+          paidUnitsByItemAndGuest[`${it.launchOrderId}::${it.productId}`] ||
+          paidUnitsByItemAndGuest[it.productId] ||
+          {}),
+        ...(it.paidByGuest && typeof it.paidByGuest === "object" ? it.paidByGuest : {})
+      };
+
+      const perGuestQty = {};
+      let sumUnpaidAssigned = 0;
+      for (const g of enrichedGuests) {
+        const grossQ = Number(grossPerGuestQty[g.index] || 0);
+        const paidQ = Number(paidByGuestOnItem[g.index] || paidByGuestOnItem[String(g.index)] || 0);
+        const netQ = Math.max(0, grossQ - paidQ);
+        if (netQ > 0) {
+          perGuestQty[g.index] = netQ;
+          sumUnpaidAssigned += netQ;
+        }
+      }
+
+      // Garante que a soma das unidades pendentes distribuídas feche exatamente com remQty
+      if (sumUnpaidAssigned > remQty) {
+        let excess = sumUnpaidAssigned - remQty;
+        for (const g of enrichedGuests) {
+          const cur = perGuestQty[g.index] || 0;
+          if (cur <= 0 || excess <= 0) continue;
+          const cut = Math.min(cur, excess);
+          perGuestQty[g.index] -= cut;
+          if (perGuestQty[g.index] <= 0) delete perGuestQty[g.index];
+          excess -= cut;
+        }
+      } else if (sumUnpaidAssigned < remQty) {
+        const diff = remQty - sumUnpaidAssigned;
+        perGuestQty[1] = (perGuestQty[1] || 0) + diff;
       }
 
       itemAllocationByKey[it.itemKey] = {
         mode: "by_item",
-        isExplicitlyMarked: rawAssign !== undefined && rawAssign !== null,
-        allocations: perGuestQty
+        isExplicitlyMarked,
+        allocations: perGuestQty,
+        unassignedQty: isExplicitlyMarked ? 0 : remQty
       };
 
       for (const [gIdxStr, qVal] of Object.entries(perGuestQty)) {
@@ -60176,9 +60324,12 @@ function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], 
           launchDate: it.launchDate,
           launchDateYmd: it.launchDate,
           launchDateBr: it.launchDateBr,
-          isExplicitlyMarked: rawAssign !== undefined && rawAssign !== null
+          isExplicitlyMarked
         };
         shareEntry.items.push(itemEntry);
+        if (gIdx === 1 && (!isExplicitlyMarked || fallbackToTitularGrossQty > 0)) {
+          shareEntry.unassignedFallbackItems.push(itemEntry);
+        }
         shareEntry.orderItems.push({
           productId: it.productId,
           productName: it.productName,
@@ -60193,11 +60344,18 @@ function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], 
         shareEntry.selectedLaunchItems.push(itemEntry);
       }
     }
+
+    for (const shareEntry of sharesMap.values()) {
+      shareEntry.grossAmount = Number((shareEntry.amount + shareEntry.paidAmount).toFixed(2));
+      shareEntry.isSharePaid = shareEntry.paidAmount > 0 && shareEntry.amount <= 0;
+    }
   } else {
     // Modo padrão: "titular" -> 100% para o Hóspede Principal (Titular) como pagador e tomador da Nota Fiscal
     const titularShare = sharesMap.get(1);
     if (titularShare) {
       titularShare.amount = cleanPendingBalance;
+      titularShare.grossAmount = Number((cleanPendingBalance + titularShare.paidAmount).toFixed(2));
+      titularShare.isSharePaid = titularShare.paidAmount > 0 && cleanPendingBalance <= 0;
       for (const it of pendingLaunchedItems) {
         const remQty = Number(it.remainingQuantity ?? it.quantity) || 0;
         const uPrice = Number(it.unitPrice) || 0;
@@ -60232,6 +60390,7 @@ function computeReservationMinibarSplit(reservation, pendingLaunchedItems = [], 
         titularShare.selectedLaunchItems.push(itemEntry);
         itemAllocationByKey[it.itemKey] = {
           mode: "titular",
+          isExplicitlyMarked: true,
           allocations: { "1": remQty }
         };
       }
@@ -60283,38 +60442,39 @@ function syncReservationAutoSplitOrders(reservation, flatStr, statement) {
       ((resCode && o.reservationCode === resCode) || String(o.reservationId) === String(reservation.id))
   );
 
-  // Se não há saldo pendente ou o modo voltou para "titular" (100% titular já atendido pela ordem principal),
-  // cancela ordens parciais pendentes obsoletas e garante os dados fiscais do titular na ordem principal
-  if (statement.pendingBalance <= 0 || splitBreakdown.mode === "titular") {
+  // Se não há saldo pendente, cancela eventuais ordens auto-split pendentes obsoletas
+  if (statement.pendingBalance <= 0) {
     for (const oldOrd of existingAutoSplitOrders) {
       oldOrd.paymentStatus = "cancelado";
       oldOrd.updatedAt = new Date().toISOString();
     }
-    const titularShare = splitBreakdown.shares.find(s => s.guestIndex === 1) || splitBreakdown.shares[0];
-    if (titularShare && statement.primaryPendingOrder) {
-      const pOrd = statement.primaryPendingOrder;
-      const cleanDoc = String(titularShare.document || titularShare.cpf || reservation.guestDocument || "").replace(/\D/g, "");
-      pOrd.guestIndex = 1;
-      pOrd.guestRole = "titular";
-      pOrd.guestId = titularShare.guestId || reservation.guestId || null;
-      pOrd.guestName = titularShare.guestName || reservation.guestName || "Hóspede Titular";
-      pOrd.guestPhone = titularShare.phone || reservation.guestPhone || "";
-      pOrd.guestDocument = cleanDoc;
-      pOrd.guestEmail = titularShare.email || reservation.guestEmail || "";
-      pOrd.fiscalPreferences = {
-        invoiceDescriptionType: pOrd.fiscalPreferences?.invoiceDescriptionType || "detailed",
-        documentType: cleanDoc.length === 14 ? "cnpj" : "cpf",
-        documentNumber: cleanDoc,
-        companyName: pOrd.fiscalPreferences?.companyName || "",
-        email: pOrd.guestEmail,
-        phone: pOrd.guestPhone
-      };
-    }
-    return statement.primaryPendingOrder ? [statement.primaryPendingOrder] : [];
+    return [];
   }
 
-  // Modo "half_and_half" (Meio a Meio) ou "by_item" (Marcar por Item):
-  // Cria/atualiza uma cobrança e pré-configuração de Nota Fiscal individual para cada hóspede com saldo > 0
+  // Sempre sincroniza os dados fiscais do titular na ordem de lançamento principal caso exista
+  const titularShare = splitBreakdown.shares.find(s => s.guestIndex === 1) || splitBreakdown.shares[0];
+  if (titularShare && statement.primaryPendingOrder) {
+    const pOrd = statement.primaryPendingOrder;
+    const cleanDoc = String(titularShare.document || titularShare.cpf || reservation.guestDocument || "").replace(/\D/g, "");
+    pOrd.guestIndex = 1;
+    pOrd.guestRole = "titular";
+    pOrd.guestId = titularShare.guestId || reservation.guestId || null;
+    pOrd.guestName = titularShare.guestName || reservation.guestName || "Hóspede Titular";
+    pOrd.guestPhone = titularShare.phone || reservation.guestPhone || "";
+    pOrd.guestDocument = cleanDoc;
+    pOrd.guestEmail = titularShare.email || reservation.guestEmail || "";
+    pOrd.fiscalPreferences = {
+      invoiceDescriptionType: pOrd.fiscalPreferences?.invoiceDescriptionType || "detailed",
+      documentType: cleanDoc.length === 14 ? "cnpj" : "cpf",
+      documentNumber: cleanDoc,
+      companyName: pOrd.fiscalPreferences?.companyName || "",
+      email: pOrd.guestEmail,
+      phone: pOrd.guestPhone
+    };
+  }
+
+  // Para qualquer modo ("titular", "half_and_half" ou "by_item"), cria/atualiza a cobrança
+  // e pré-configuração de Nota Fiscal individual para cada hóspede consumidor com saldo > 0
   const activeShares = splitBreakdown.shares.filter(s => s.amount > 0);
   const syncedOrders = [];
   const activeGuestIndices = new Set(activeShares.map(s => s.guestIndex));
@@ -60328,8 +60488,18 @@ function syncReservationAutoSplitOrders(reservation, flatStr, statement) {
 
   for (const share of activeShares) {
     const cleanDoc = String(share.document || share.cpf || "").replace(/\D/g, "");
-    const splitOrdId = `ORD-MB-SPLIT-${resCode}-G${share.guestIndex}`;
-    let splitOrd = existingAutoSplitOrders.find(o => Number(o.guestIndex) === share.guestIndex || o.id === splitOrdId);
+    const baseSplitOrdId = `ORD-MB-SPLIT-${resCode}-G${share.guestIndex}`;
+    let splitOrd = existingAutoSplitOrders.find(
+      o => Number(o.guestIndex) === share.guestIndex || o.id === baseSplitOrdId
+    );
+    const alreadyPaidWithBaseId = db.minibarOrders.some(
+      o => o && o.id === baseSplitOrdId && o.paymentStatus === "pago"
+    );
+    const splitOrdId = splitOrd
+      ? splitOrd.id
+      : alreadyPaidWithBaseId
+      ? `${baseSplitOrdId}-${Date.now()}`
+      : baseSplitOrdId;
 
     const fiscalPreferences = {
       invoiceDescriptionType: splitOrd?.fiscalPreferences?.invoiceDescriptionType || "detailed",
@@ -60337,7 +60507,8 @@ function syncReservationAutoSplitOrders(reservation, flatStr, statement) {
       documentNumber: cleanDoc,
       companyName: splitOrd?.fiscalPreferences?.companyName || "",
       email: share.email || "",
-      phone: share.phone || ""
+      phone: share.phone || "",
+      payerName: share.guestName
     };
 
     const effectiveItems =
@@ -60354,6 +60525,13 @@ function syncReservationAutoSplitOrders(reservation, flatStr, statement) {
             }
           ];
 
+    const effectivePartialMode =
+      splitBreakdown.mode === "half_and_half"
+        ? "equal_split"
+        : splitBreakdown.mode === "by_item"
+        ? "items"
+        : "full";
+
     if (splitOrd) {
       splitOrd.flatNumber = flatStr;
       splitOrd.guestId = share.guestId || splitOrd.guestId || null;
@@ -60365,7 +60543,7 @@ function syncReservationAutoSplitOrders(reservation, flatStr, statement) {
       splitOrd.guestEmail = share.email || "";
       splitOrd.items = effectiveItems;
       splitOrd.selectedLaunchItems = share.selectedLaunchItems || [];
-      splitOrd.partialMode = splitBreakdown.mode === "half_and_half" ? "equal_split" : "items";
+      splitOrd.partialMode = effectivePartialMode;
       splitOrd.splitMode = splitBreakdown.mode;
       splitOrd.settlesLaunchOrders = true;
       splitOrd.isAutoSplitCheckoutOrder = true;
@@ -60387,7 +60565,7 @@ function syncReservationAutoSplitOrders(reservation, flatStr, statement) {
         guestEmail: share.email || "",
         items: effectiveItems,
         selectedLaunchItems: share.selectedLaunchItems || [],
-        partialMode: splitBreakdown.mode === "half_and_half" ? "equal_split" : "items",
+        partialMode: effectivePartialMode,
         splitMode: splitBreakdown.mode,
         settlesLaunchOrders: true,
         isAutoSplitCheckoutOrder: true,
@@ -60400,7 +60578,9 @@ function syncReservationAutoSplitOrders(reservation, flatStr, statement) {
         notes:
           splitBreakdown.mode === "half_and_half"
             ? `Divisão Meio a Meio configurada na reserva (${share.guestName})`
-            : `Consumo individual marcado por item (${share.guestName})`,
+            : splitBreakdown.mode === "by_item"
+            ? `Consumo individual marcado por item (${share.guestName})`
+            : `100% Hóspede Titular (${share.guestName})`,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -60439,10 +60619,23 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
   const resCode = reservation?.code || (reservation?.id ? `RES-${reservation.id}` : "");
   const todayStr = getBrasiliaNow().date;
 
+  const hasFinalCheckoutInspection = Boolean(
+    reservation &&
+      (reservation.finalMinibarInspectionAt ||
+        (db.minibarInspections || []).some(
+          i =>
+            i &&
+            i.isFinalCheckoutInspection &&
+            ((resCode && i.reservationCode === resCode) ||
+              (reservation.id && String(i.reservationId) === String(reservation.id)))
+        ))
+  );
+
   // 1. Verifica status canônico de check-out
   const isCheckedOut = Boolean(
     reservation &&
       (isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
+        hasFinalCheckoutInspection ||
         reservation.checkoutDone ||
         reservation.status === "completed" ||
         reservation.status === "checked_out" ||
@@ -60460,6 +60653,7 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
       reservation.earlyCheckoutReleasedAt ||
       reservation.checkedOutAt ||
       reservation.digitalCheckoutAt ||
+      reservation.finalMinibarInspectionAt ||
       "";
     if (rawOutIso) {
       try {
@@ -60562,6 +60756,7 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
         quantity: qty,
         paidQuantity: paidQty,
         remainingQuantity: remQty,
+        paidByGuest: it.paidByGuest && typeof it.paidByGuest === "object" ? { ...it.paidByGuest } : {},
         unitPrice: uPrice,
         totalPrice: tPrice,
         remainingTotalPrice: Number((remQty * uPrice).toFixed(2)),
@@ -60648,7 +60843,8 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
     reservation,
     pendingLaunchedItems,
     pendingBalance,
-    reservationGuests
+    reservationGuests,
+    { paidOrders, totalLaunchedAmount }
   );
 
   // Anota cada item pendente com sua alocação atual
@@ -60733,7 +60929,10 @@ function settleMinibarOrder(order, paymentDetails = {}) {
     );
 
     if (pendingLaunchOrders.length > 0) {
-      // Abate quantidades de itens selecionados quando aplicável
+      let amountToDeduct = Number(order.totalAmount || 0);
+      const payerGuestIdx = Number(order.guestIndex || 1);
+
+      // Abate quantidades e valores diretamente nos lançamentos dos itens selecionados quando aplicável
       const selectedItems = Array.isArray(order.selectedLaunchItems) && order.selectedLaunchItems.length > 0
         ? order.selectedLaunchItems
         : (order.partialMode === "items" || order.partialMode === "full" || !order.partialMode)
@@ -60741,6 +60940,7 @@ function settleMinibarOrder(order, paymentDetails = {}) {
         : [];
 
       for (const sel of selectedItems) {
+        if (!sel || sel.productId === "split_share" || sel.productId === "partial_payment") continue;
         let qtyToMark = Number(sel.quantity) || 0;
         if (qtyToMark <= 0) continue;
 
@@ -60755,15 +60955,30 @@ function settleMinibarOrder(order, paymentDetails = {}) {
             const take = Math.min(curRem, qtyToMark);
             lIt.paidQuantity = curPaid + take;
             lIt.remainingQuantity = Math.max(0, totalQ - lIt.paidQuantity);
+            if (!lIt.paidByGuest || typeof lIt.paidByGuest !== "object") {
+              lIt.paidByGuest = {};
+            }
+            lIt.paidByGuest[payerGuestIdx] = (lIt.paidByGuest[payerGuestIdx] || 0) + take;
             qtyToMark -= take;
+
+            const itemValue = Number((take * Number(lIt.unitPrice || 0)).toFixed(2));
+            const curOrdRem =
+              lOrd.remainingAmount !== undefined
+                ? Number(lOrd.remainingAmount)
+                : Number(lOrd.totalAmount || 0);
+            const deductOnThisOrd = Math.min(curOrdRem, amountToDeduct, itemValue);
+            if (deductOnThisOrd > 0) {
+              lOrd.remainingAmount = Number(Math.max(0, curOrdRem - deductOnThisOrd).toFixed(2));
+              lOrd.updatedAt = nowIso;
+              amountToDeduct = Number(Math.max(0, amountToDeduct - deductOnThisOrd).toFixed(2));
+            }
             if (qtyToMark <= 0) break;
           }
           if (qtyToMark <= 0) break;
         }
       }
 
-      // Abate o valor financeiro em R$ em ordem cronológica (FIFO) dos lançamentos pendentes
-      let amountToDeduct = Number(order.totalAmount || 0);
+      // Abate eventual saldo residual em R$ (ex: modo half_and_half ou custom_amount) em ordem cronológica (FIFO)
       for (const lOrd of pendingLaunchOrders) {
         if (amountToDeduct <= 0.009) break;
         const curRem =
@@ -60777,8 +60992,15 @@ function settleMinibarOrder(order, paymentDetails = {}) {
         lOrd.remainingAmount = nextRem;
         lOrd.updatedAt = nowIso;
         amountToDeduct = Number(Math.max(0, amountToDeduct - deductHere).toFixed(2));
+      }
 
-        if (nextRem <= 0.01) {
+      // Verifica lançamentos integralmente quitados
+      for (const lOrd of pendingLaunchOrders) {
+        const curRem =
+          lOrd.remainingAmount !== undefined
+            ? Number(lOrd.remainingAmount)
+            : Number(lOrd.totalAmount || 0);
+        if (curRem <= 0.01) {
           lOrd.remainingAmount = 0;
           lOrd.paymentStatus = "lancamento_quitado";
           lOrd.discrepancyResolvedAt = nowIso;
@@ -60856,6 +61078,19 @@ function settleMinibarOrder(order, paymentDetails = {}) {
   );
 
   if (reservation) {
+    // Re-sincroniza eventuais ordens auto-split remanescentes da reserva
+    const flatStr = String(order.flatNumber || reservation.flatNumber || reservation.flatId || "").trim();
+    const hasPendingSplits = (db.minibarOrders || []).some(
+      o =>
+        o &&
+        o.isAutoSplitCheckoutOrder &&
+        o.paymentStatus === "pendente" &&
+        (o.reservationCode === reservation.code || String(o.reservationId) === String(reservation.id))
+    );
+    if (hasPendingSplits) {
+      const updatedStmt = buildReservationMinibarStatement(reservation, flatStr);
+      syncReservationAutoSplitOrders(reservation, flatStr, updatedStmt);
+    }
     if (!Array.isArray(reservation.minibarPayments)) {
       reservation.minibarPayments = [];
     }
@@ -61687,6 +61922,8 @@ function handleSaveMinibarSplitConfig(req, res) {
 
 app.post("/api/minibar/split-config", handleSaveMinibarSplitConfig);
 app.put("/api/minibar/split-config", handleSaveMinibarSplitConfig);
+app.post("/api/minibar/reservation-guests", handleSaveMinibarSplitConfig);
+app.put("/api/minibar/reservation-guests", handleSaveMinibarSplitConfig);
 
 // ── Confirmação Unificada de Check-out pelo Hóspede na Tela do Frigobar ──────
 app.post("/api/public/minibar/confirm-checkout", async (req, res) => {
@@ -61905,7 +62142,12 @@ app.post("/api/minibar/orders", async (req, res) => {
 
     // Suporte a quitação direta de ordem pré-existente (ex: ORD-MB-DIV-... ou ORD-MB-LANC-...)
     let existingOrder = incomingOrderId ? (db.minibarOrders || []).find(o => o.id === incomingOrderId) : null;
-    if (existingOrder && existingOrder.paymentStatus === "pago") {
+    const incomingGuestIdx = Number(consumerGuest?.index || consumerGuest?.guestIndex || 0);
+    if (
+      existingOrder &&
+      existingOrder.paymentStatus === "pago" &&
+      (!incomingGuestIdx || !existingOrder.guestIndex || Number(existingOrder.guestIndex) === incomingGuestIdx)
+    ) {
       return res.json({
         success: true,
         orderId: existingOrder.id,
@@ -62075,7 +62317,16 @@ app.post("/api/minibar/orders", async (req, res) => {
         : [];
       settlesLaunchOrders = true;
       const splitOrdId = `ORD-MB-SPLIT-${finalResCode}-G${reqGuestIndex}`;
-      const foundSplitOrd = (db.minibarOrders || []).find(o => o && o.id === splitOrdId && o.paymentStatus !== "pago");
+      const foundSplitOrd = (db.minibarOrders || []).find(
+        o =>
+          o &&
+          o.paymentStatus !== "pago" &&
+          o.paymentStatus !== "cancelado" &&
+          (o.id === splitOrdId ||
+            (o.isAutoSplitCheckoutOrder &&
+              o.reservationCode === finalResCode &&
+              Number(o.guestIndex || 1) === reqGuestIndex))
+      );
       existingOrder = foundSplitOrd || null;
     }
     // Modo 1: Divisão em partes iguais (÷ 2, ÷ 3, ÷ 4...)
@@ -63014,14 +63265,19 @@ app.post("/api/minibar/inspections", async (req, res) => {
       }
     }
 
-    const updatedStatement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
     const isFinalCheckoutInspection = Boolean(req.body?.isFinalCheckoutInspection);
+    if (reservation && isFinalCheckoutInspection) {
+      reservation.finalMinibarInspectionAt = new Date().toISOString();
+      reservation.checkoutDone = true;
+    }
+    const updatedStatement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
     const resCheckedOut = reservation
       ? isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
         Boolean(
           reservation.checkoutDone ||
           reservation.actualCheckoutAt ||
           reservation.earlyCheckoutReleasedAt ||
+          reservation.finalMinibarInspectionAt ||
           isFinalCheckoutInspection
         )
       : false;
@@ -63060,7 +63316,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
       const allGuestsInFlat = getReservationAllGuests(reservation);
       const splitBreakdown = updatedStatement?.splitBreakdown || null;
       const splitMode = splitBreakdown?.mode || "titular";
-      const linkedOrderId = chargeOrderId || updatedStatement?.primaryPendingOrder?.id || "";
+      const linkedOrderId = autoSplitOrders[0]?.id || chargeOrderId || updatedStatement?.primaryPendingOrder?.id || "";
       const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
 
       const hasPriorPayment = totalPaidPreviously > 0;
@@ -63634,13 +63890,19 @@ app.get("/api/minibar/invoices/pending", (req, res) => {
       .map(enrichMinibarOrderForInvoiceScreen)
       .sort((a, b) => String(b.paidAt || b.createdAt || "").localeCompare(String(a.paidAt || a.createdAt || "")));
 
+    const resWithAutoSplit = new Set(
+      (db.minibarOrders || [])
+        .filter(o => o && o.paymentStatus === "pendente" && Boolean(o.isAutoSplitCheckoutOrder) && o.reservationCode)
+        .map(o => o.reservationCode)
+    );
     const preConfiguredCheckoutSplits = (db.minibarOrders || [])
       .filter(
         o =>
           o &&
           o.paymentStatus === "pendente" &&
           Number(o.totalAmount) > 0 &&
-          (Boolean(o.isAutoSplitCheckoutOrder) || o.source === "anserve_discrepancy")
+          (Boolean(o.isAutoSplitCheckoutOrder) ||
+            (o.source === "anserve_discrepancy" && (!o.reservationCode || !resWithAutoSplit.has(o.reservationCode))))
       )
       .map(enrichMinibarOrderForInvoiceScreen);
 
@@ -63670,13 +63932,19 @@ app.get("/api/minibar/invoices/hub", (req, res) => {
     const pendingInvoices = allPaidOrders.filter(o => !o.invoice || o.invoice.status !== "anexada");
     const issuedInvoices = allPaidOrders.filter(o => o.invoice && o.invoice.status === "anexada");
     const separatePaymentsPendingCount = pendingInvoices.filter(o => o.splitPaymentInfo?.isSeparatePayment).length;
+    const resWithAutoSplit = new Set(
+      (db.minibarOrders || [])
+        .filter(o => o && o.paymentStatus === "pendente" && Boolean(o.isAutoSplitCheckoutOrder) && o.reservationCode)
+        .map(o => o.reservationCode)
+    );
     const preConfiguredCheckoutSplits = (db.minibarOrders || [])
       .filter(
         o =>
           o &&
           o.paymentStatus === "pendente" &&
           Number(o.totalAmount) > 0 &&
-          (Boolean(o.isAutoSplitCheckoutOrder) || o.source === "anserve_discrepancy")
+          (Boolean(o.isAutoSplitCheckoutOrder) ||
+            (o.source === "anserve_discrepancy" && (!o.reservationCode || !resWithAutoSplit.has(o.reservationCode))))
       )
       .map(enrichMinibarOrderForInvoiceScreen);
 

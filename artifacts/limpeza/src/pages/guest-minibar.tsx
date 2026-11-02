@@ -84,6 +84,7 @@ export interface PendingLaunchedItem {
   allocation?: {
     allocations: Record<number, number>;
     unassignedQty: number;
+    isExplicitlyMarked?: boolean;
   };
 }
 
@@ -108,6 +109,7 @@ export interface DailyLaunchGroup {
     allocation?: {
       allocations: Record<number, number>;
       unassignedQty: number;
+      isExplicitlyMarked?: boolean;
     };
   }[];
   totalDayAmount: number;
@@ -387,7 +389,17 @@ export default function GuestMinibar() {
       urlGuestIndex = Number(sp.get("guestIndex") || 0);
     }
 
-    const matchedIdx = urlGuestIndex > 0 ? urlGuestIndex : Number(data.matchedGuestIndex) || 1;
+    let matchedIdx = urlGuestIndex > 0 ? urlGuestIndex : Number(data.matchedGuestIndex) || 1;
+    // Se não há ?guestIndex= forçado na URL e a cota do hóspede atual já foi paga (R$ 0,00) enquanto outro hóspede ainda tem saldo pendente, pré-seleciona o hóspede com saldo pendente
+    const incomingShares: any[] = Array.isArray(data.splitBreakdown?.shares) ? data.splitBreakdown.shares : [];
+    if (urlGuestIndex <= 0 && incomingShares.length > 1) {
+      const curShare = incomingShares.find((s) => Number(s.guestIndex) === matchedIdx);
+      const pendingGuestShare = incomingShares.find((s) => Number(s.amount || 0) > 0);
+      if (curShare && Number(curShare.amount || 0) <= 0 && pendingGuestShare) {
+        matchedIdx = Number(pendingGuestShare.guestIndex) || matchedIdx;
+      }
+    }
+
     const matchedSlot = guestsList.find((g) => g.index === matchedIdx) || guestsList[0];
 
     setReservationGuests(guestsList);
@@ -509,7 +521,61 @@ export default function GuestMinibar() {
 
   // Atribuir item inteiro rapidamente para um hóspede específico (no modo "by_item")
   const handleQuickAssignItemToGuest = async (itemKey: string, totalQty: number, guestIndex: number) => {
-    const newAlloc = { [guestIndex]: totalQty };
+    const newAlloc: Record<number, number> = {};
+    for (const g of reservationGuests) {
+      newAlloc[g.index] = g.index === guestIndex ? totalQty : 0;
+    }
+    if (newAlloc[guestIndex] === undefined) {
+      newAlloc[guestIndex] = totalQty;
+    }
+    setItemAssignments((prev) => ({
+      ...prev,
+      [itemKey]: newAlloc
+    }));
+    if (splitMode !== "by_item") {
+      setSplitMode("by_item");
+    }
+    await saveSplitConfigRealtime({
+      mode: "by_item",
+      itemUpdate: { itemKey, allocations: newAlloc }
+    });
+  };
+
+  // Dividir rapidamente as unidades de um item entre os hóspedes do flat e abrir/fechar os steppers
+  const handleQuickDivideItemUnits = async (
+    itemKey: string,
+    totalQty: number,
+    fallbackAlloc?: Record<number, number>
+  ) => {
+    if (expandedUnitItemKey === itemKey) {
+      setExpandedUnitItemKey(null);
+      return;
+    }
+    setExpandedUnitItemKey(itemKey);
+
+    const existing = itemAssignments[itemKey] || fallbackAlloc || {};
+    const guestsWithUnits = Object.values(existing).filter((v) => Number(v) > 0).length;
+    if (guestsWithUnits >= 2) {
+      return;
+    }
+
+    const guestsToSplit =
+      reservationGuests.length >= 2
+        ? reservationGuests
+        : [
+            reservationGuests[0] || { index: 1 },
+            { index: 2 }
+          ];
+    const n = guestsToSplit.length;
+    const baseQty = Math.floor(totalQty / n);
+    let remainder = totalQty - baseQty * n;
+    const newAlloc: Record<number, number> = {};
+    for (const g of guestsToSplit) {
+      const extra = remainder > 0 ? 1 : 0;
+      if (remainder > 0) remainder -= 1;
+      newAlloc[g.index] = baseQty + extra;
+    }
+
     setItemAssignments((prev) => ({
       ...prev,
       [itemKey]: newAlloc
@@ -528,22 +594,42 @@ export default function GuestMinibar() {
     itemKey: string,
     totalQty: number,
     guestIndex: number,
-    delta: number
+    delta: number,
+    fallbackAlloc?: Record<number, number>
   ) => {
-    const currentAllocObj = itemAssignments[itemKey] || {};
-    const curVal = Number(currentAllocObj[guestIndex] || 0);
-    const otherAllocated = Object.entries(currentAllocObj).reduce(
-      (acc, [k, v]) => (Number(k) === guestIndex ? acc : acc + (Number(v) || 0)),
-      0
-    );
-    const maxForThisGuest = Math.max(0, totalQty - otherAllocated);
-    const nextVal = Math.max(0, Math.min(maxForThisGuest, curVal + delta));
+    const rawCurrent = itemAssignments[itemKey] || fallbackAlloc || { 1: totalQty };
+    const updatedAlloc: Record<number, number> = {};
+    for (const g of reservationGuests) {
+      updatedAlloc[g.index] = Number(rawCurrent[g.index] || 0);
+    }
+    const curVal = Number(updatedAlloc[guestIndex] || 0);
+    const nextVal = Math.max(0, Math.min(totalQty, curVal + delta));
+    if (nextVal === curVal) return;
 
-    const updatedAlloc: Record<number, number> = { ...currentAllocObj };
-    if (nextVal <= 0) {
-      delete updatedAlloc[guestIndex];
-    } else {
-      updatedAlloc[guestIndex] = nextVal;
+    updatedAlloc[guestIndex] = nextVal;
+
+    const totalNow = Object.values(updatedAlloc).reduce((acc, v) => acc + (Number(v) || 0), 0);
+    if (delta > 0 && totalNow > totalQty) {
+      // Transfere 1 unidade de outro hóspede que possua unidades alocadas
+      let excess = totalNow - totalQty;
+      const otherGuests = reservationGuests
+        .map((g) => g.index)
+        .filter((idx) => idx !== guestIndex)
+        .sort((a, b) => (updatedAlloc[b] || 0) - (updatedAlloc[a] || 0));
+      for (const oIdx of otherGuests) {
+        if (excess <= 0) break;
+        const avail = updatedAlloc[oIdx] || 0;
+        if (avail > 0) {
+          const deduct = Math.min(avail, excess);
+          updatedAlloc[oIdx] = avail - deduct;
+          excess -= deduct;
+        }
+      }
+    } else if (delta < 0 && totalNow < totalQty && reservationGuests.length >= 2) {
+      // Transfere a unidade liberada para o outro hóspede (ex: se tirou do 1º, passa para o 2º; se tirou do 2º, volta para o 1º)
+      const recipientGuest =
+        reservationGuests.find((g) => g.index !== guestIndex)?.index || 1;
+      updatedAlloc[recipientGuest] = (updatedAlloc[recipientGuest] || 0) + (totalQty - totalNow);
     }
 
     setItemAssignments((prev) => ({
@@ -679,7 +765,11 @@ export default function GuestMinibar() {
     const code = reservation?.reservationCode || codeFromUrl;
     if (!code) return;
     try {
-      const res = await fetch(`/api/minibar/reservation-context/${encodeURIComponent(code)}`);
+      const res = await fetch(
+        `/api/minibar/reservation-context/${encodeURIComponent(code)}?guestIndex=${encodeURIComponent(
+          String(selectedGuestIndex || 1)
+        )}`
+      );
       const data = await res.json();
       if (res.ok && data.success) {
         applyContextResponse(data, code);
@@ -1041,9 +1131,16 @@ export default function GuestMinibar() {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
       const ordFromQuery = sp.get("ord");
-      if (ordFromQuery && ordFromQuery.startsWith("ORD-MB-SPLIT-")) {
+      if (
+        ordFromQuery &&
+        ordFromQuery.startsWith("ORD-MB-SPLIT-") &&
+        ordFromQuery.endsWith(`-G${activeConsumerGuest.index}`)
+      ) {
         urlOrdId = ordFromQuery;
       }
+    }
+    if (!urlOrdId && partialMode === "configured_split" && activeGuestConfiguredShare?.pendingOrderId) {
+      urlOrdId = String(activeGuestConfiguredShare.pendingOrderId);
     }
 
     const isPayingAllItems =
@@ -1589,6 +1686,8 @@ export default function GuestMinibar() {
                         const remQty = item.remainingQuantity ?? item.quantity;
                         const canAssignItem = splitMode === "by_item" && !item.isCourtesy && !isPaid && remQty > 0;
                         const currentAlloc = itemAssignments[itemKey] || item.allocation?.allocations || {};
+                        const isExplicitlyMarked =
+                          Boolean(itemAssignments[itemKey]) || Boolean(item.allocation?.isExplicitlyMarked);
                         const allocatedSum = Object.values(currentAlloc).reduce(
                           (acc: number, v: any) => acc + (Number(v) || 0),
                           0
@@ -1638,8 +1737,9 @@ export default function GuestMinibar() {
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     {reservationGuests.map((g) => {
                                       const gQty = Number(currentAlloc[g.index] || 0);
-                                      const isFullAssignedToG = gQty === remQty && remQty > 0;
+                                      const isFullAssignedToG = isExplicitlyMarked && gQty === remQty && remQty > 0;
                                       const isPartialAssignedToG = gQty > 0 && gQty < remQty;
+                                      const isDefaultFallbackToG = !isExplicitlyMarked && g.index === 1;
                                       return (
                                         <button
                                           key={g.index}
@@ -1650,6 +1750,8 @@ export default function GuestMinibar() {
                                               ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-sm"
                                               : isPartialAssignedToG
                                               ? "bg-cyan-950/80 text-cyan-300 border-cyan-500/60"
+                                              : isDefaultFallbackToG
+                                              ? "bg-slate-900 text-amber-300 border-amber-500/40 hover:border-cyan-400"
                                               : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
                                           }`}
                                         >
@@ -1666,7 +1768,7 @@ export default function GuestMinibar() {
                                       <button
                                         type="button"
                                         onClick={() =>
-                                          setExpandedUnitItemKey(isExpandedUnits ? null : itemKey)
+                                          handleQuickDivideItemUnits(itemKey, remQty, currentAlloc)
                                         }
                                         className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
                                           isExpandedUnits
@@ -1679,9 +1781,9 @@ export default function GuestMinibar() {
                                     )}
                                   </div>
 
-                                  {unassignedQty > 0 && (
+                                  {(!isExplicitlyMarked || unassignedQty > 0) && (
                                     <span className="text-[10px] text-amber-300/90 font-medium">
-                                      {unassignedQty === remQty
+                                      {!isExplicitlyMarked || unassignedQty === remQty
                                         ? "Sem marcação → Titular (1º Hóspede)"
                                         : `${unassignedQty} un. s/ marcação → Titular`}
                                     </span>
@@ -1709,7 +1811,13 @@ export default function GuestMinibar() {
                                               <button
                                                 type="button"
                                                 onClick={() =>
-                                                  handleAdjustItemUnitForGuest(itemKey, remQty, g.index, -1)
+                                                  handleAdjustItemUnitForGuest(
+                                                    itemKey,
+                                                    remQty,
+                                                    g.index,
+                                                    -1,
+                                                    currentAlloc
+                                                  )
                                                 }
                                                 disabled={gQty <= 0}
                                                 className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white flex items-center justify-center"
@@ -1722,9 +1830,15 @@ export default function GuestMinibar() {
                                               <button
                                                 type="button"
                                                 onClick={() =>
-                                                  handleAdjustItemUnitForGuest(itemKey, remQty, g.index, 1)
+                                                  handleAdjustItemUnitForGuest(
+                                                    itemKey,
+                                                    remQty,
+                                                    g.index,
+                                                    1,
+                                                    currentAlloc
+                                                  )
                                                 }
-                                                disabled={unassignedQty <= 0}
+                                                disabled={gQty >= remQty}
                                                 className="w-6 h-6 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center"
                                               >
                                                 <Plus className="w-3 h-3" />
@@ -1773,6 +1887,8 @@ export default function GuestMinibar() {
                 {reservationGuests.map((g) => {
                   const share = sharesList.find((s) => Number(s.guestIndex) === Number(g.index));
                   const guestAmount = Number(share?.amount ?? (g.index === 1 && splitMode === "titular" ? pendingBalance : 0));
+                  const guestPaidAmount = Number(share?.paidAmount || 0);
+                  const isSharePaid = Boolean(share?.isSharePaid) || (guestPaidAmount > 0 && guestAmount <= 0);
                   const guestItems: any[] = Array.isArray(share?.items) ? share.items : [];
                   const gDoc = g.cpf || g.document || "";
                   const missingAnyFiscal = !g.phone || !gDoc || !g.email;
@@ -1800,6 +1916,11 @@ export default function GuestMinibar() {
                             >
                               {g.index === 1 ? "1º Hóspede (Titular)" : `${g.index}º Hóspede`}
                             </Badge>
+                            {isSharePaid && (
+                              <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
+                                ✓ Parte Quitada ({formatBRL(guestPaidAmount)})
+                              </Badge>
+                            )}
                             {missingAnyFiscal ? (
                               <Badge className="bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[9px]">
                                 Completar dados p/ NF
@@ -1826,10 +1947,10 @@ export default function GuestMinibar() {
                           </span>
                           <strong
                             className={`text-sm sm:text-base font-black font-mono ${
-                              guestAmount > 0 ? "text-cyan-400" : "text-slate-500"
+                              guestAmount > 0 ? "text-cyan-400" : isSharePaid ? "text-emerald-400" : "text-slate-500"
                             }`}
                           >
-                            {formatBRL(guestAmount)}
+                            {isSharePaid && guestAmount <= 0 ? "R$ 0,00 (Pago)" : formatBRL(guestAmount)}
                           </strong>
                         </div>
                       </div>

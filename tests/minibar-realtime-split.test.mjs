@@ -294,8 +294,8 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
       assert.strictEqual(guest2FromFnrh.name, "Fernanda Costa");
       assert.strictEqual(guest2FromFnrh.phone, "5522988110022");
 
-      // 3. Completar dados faltantes do 2º hóspede (CPF/CNPJ e E-mail) na seção de divisão do extrato
-      const resCompleteGuest2 = await fetch(`${BASE_URL}/api/minibar/split-config`, {
+      // 3. Completar dados faltantes do 2º hóspede (CPF/CNPJ e E-mail) via /api/minibar/reservation-guests
+      const resCompleteGuest2 = await fetch(`${BASE_URL}/api/minibar/reservation-guests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -313,18 +313,48 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
       assert.strictEqual(resCompleteGuest2.status, 200);
       const dataCompleteGuest2 = await resCompleteGuest2.json();
       assert.strictEqual(dataCompleteGuest2.success, true);
+      const guest1Check = dataCompleteGuest2.reservationGuests.find(g => g.index === 1);
       const guest2Updated = dataCompleteGuest2.reservationGuests.find(g => g.index === 2);
+      assert.strictEqual(guest1Check.name, "Carlos Eduardo Martins", "Titular não deve ser sobrescrito ao editar o 2º hóspede");
       assert.strictEqual(guest2Updated.cpf, "55566677788");
       assert.strictEqual(guest2Updated.email, "fernanda.costa@teste.com");
 
       // 4. Salvar divisão "Marcar por Item" (by_item) em tempo real durante a estadia:
-      // - 1x Refrigerante (R$ 12,00) marcado para o Hóspede 1 (Titular, index 1)
-      // - 2x Cerveja Long Neck (R$ 40,00) marcadas para o Hóspede 2 (Fernanda, index 2)
+      // 4a. Testar primeiro divisão de unidades (2x Cerveja -> 1 un. Hóspede 1 e 1 un. Hóspede 2)
       const pendingItems = dataCompleteGuest2.statement.pendingLaunchedItems;
       const beerItem = pendingItems.find(it => it.productId === "prod_cerveja_long_neck");
       const sodaItem = pendingItems.find(it => it.productId === "prod_refrigerante");
       assert.ok(beerItem && sodaItem);
 
+      const resUnitSplit = await fetch(`${BASE_URL}/api/minibar/split-config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reservationCode: resCode,
+          flatNumber: flatNum,
+          mode: "by_item",
+          itemAssignments: {
+            [sodaItem.itemKey]: { 1: 1, 2: 0 },
+            [beerItem.itemKey]: { 1: 1, 2: 1 }
+          }
+        })
+      });
+      assert.strictEqual(resUnitSplit.status, 200);
+      const dataUnitSplit = await resUnitSplit.json();
+      assert.strictEqual(
+        dataUnitSplit.splitBreakdown.shares.find(s => s.guestIndex === 1).amount,
+        32.0,
+        "Com 1x Refrigerante (12) + 1x Cerveja (20), Hóspede 1 deve ter R$ 32,00"
+      );
+      assert.strictEqual(
+        dataUnitSplit.splitBreakdown.shares.find(s => s.guestIndex === 2).amount,
+        20.0,
+        "Com 1x Cerveja (20), Hóspede 2 deve ter R$ 20,00"
+      );
+
+      // 4b. Ajustar para:
+      // - 1x Refrigerante (R$ 12,00) marcado para o Hóspede 1 (Titular, index 1)
+      // - 2x Cerveja Long Neck (R$ 40,00) marcadas para o Hóspede 2 (Fernanda, index 2)
       const resSaveByItem = await fetch(`${BASE_URL}/api/minibar/split-config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -333,8 +363,8 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
           flatNumber: flatNum,
           mode: "by_item",
           itemAssignments: {
-            [sodaItem.itemKey]: 1,
-            [beerItem.itemKey]: 2
+            [sodaItem.itemKey]: { 1: 1, 2: 0 },
+            [beerItem.itemKey]: { 1: 0, 2: 2 }
           }
         })
       });
@@ -396,6 +426,11 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
         19.0,
         "No modo 'by_item', o item lançado na vistoria final sem marcação (R$ 7,00) deve ir para o Hóspede Principal (12 + 7 = 19)"
       );
+      assert.match(
+        msgG1.message,
+        /Nota:\* Itens lançados na vistoria final sem marcação prévia foram atribuídos automaticamente ao Hóspede Principal \(Titular\)/,
+        "A mensagem do Titular deve informar sobre os itens da vistoria final sem marcação atribuídos a ele"
+      );
       assert.strictEqual(
         msgG2.amount,
         40.0,
@@ -405,9 +440,16 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
       assert.match(msgG2.link, /guestIndex=2/);
 
       // 7. Verifica que cada cobrança e Nota Fiscal está configurada para o respectivo hóspede consumidor (tomador da NF)
+      // e que preConfiguredCheckoutSplits NÃO duplica a ordem bruta de divergência junto com as ordens de split
       const resHub = await fetch(`${BASE_URL}/api/minibar/invoices/hub`);
       assert.strictEqual(resHub.status, 200);
       const dataHub = await resHub.json();
+      const preSplitsForRes = (dataHub.preConfiguredCheckoutSplits || []).filter(inv => inv.reservationCode === resCode);
+      assert.strictEqual(
+        preSplitsForRes.length,
+        2,
+        "preConfiguredCheckoutSplits deve conter exatamente as 2 ordens separadas por hóspede (sem duplicar ORD-MB-DIV)"
+      );
       const ordG1 = (dataHub.invoices || []).find(inv => inv.id === `ORD-MB-SPLIT-${resCode}-G1`);
       const ordG2 = (dataHub.invoices || []).find(inv => inv.id === `ORD-MB-SPLIT-${resCode}-G2`);
       assert.ok(ordG1 && ordG2, "Hub de Notas Fiscais deve conter as 2 ordens separadas por hóspede consumidor");
@@ -420,9 +462,61 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
       assert.strictEqual(ordG2.documentNumber, "55566677788");
       assert.strictEqual(ordG2.email, "fernanda.costa@teste.com");
       assert.strictEqual(ordG2.totalAmount, 40.0);
+
+      // 8. Pagamento sequencial no modo 'by_item': 2º Hóspede (Fernanda) paga sua parte (R$ 40,00) primeiro
+      const resPayG2 = await fetch(`${BASE_URL}/api/minibar/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: `ORD-MB-SPLIT-${resCode}-G2`,
+          reservationCode: resCode,
+          flatNumber: flatNum,
+          requireCheckout: true,
+          partialMode: "configured_split",
+          paymentMethod: "pix",
+          invoicePreference: "detailed",
+          document: "55566677788",
+          documentType: "cpf",
+          email: "fernanda.costa@teste.com",
+          phone: "5522988110022",
+          consumerGuest: {
+            index: 2,
+            name: "Fernanda Costa",
+            phone: "5522988110022",
+            email: "fernanda.costa@teste.com",
+            document: "55566677788"
+          }
+        })
+      });
+      assert.strictEqual(resPayG2.status, 200);
+      const dataPayG2 = await resPayG2.json();
+      assert.strictEqual(dataPayG2.totalAmount, 40.0);
+
+      const resSimG2 = await fetch(`${BASE_URL}/api/pms/mercadopago/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "payment",
+          external_reference: `MB-${dataPayG2.orderId}`,
+          status: "approved",
+          transaction_amount: 40.0
+        })
+      });
+      assert.strictEqual(resSimG2.status, 200);
+
+      // Verifica que a parte do Hóspede 1 permanece exatamente R$ 19,00 (1x Refrigerante R$ 12 + 1x Água R$ 7) e a parte do Hóspede 2 está quitada (R$ 0,00)
+      const resCtxAfterG2 = await fetch(`${BASE_URL}/api/minibar/reservation-context/${resCode}?guestIndex=1`);
+      const dataCtxAfterG2 = await resCtxAfterG2.json();
+      assert.strictEqual(dataCtxAfterG2.pendingBalance, 19.0);
+      assert.strictEqual(dataCtxAfterG2.totalPaidAmount, 40.0);
+      const s1After = dataCtxAfterG2.splitBreakdown.shares.find(s => s.guestIndex === 1);
+      const s2After = dataCtxAfterG2.splitBreakdown.shares.find(s => s.guestIndex === 2);
+      assert.strictEqual(s1After.amount, 19.0, "Hóspede 1 deve continuar devendo exatamente seus R$ 19,00");
+      assert.strictEqual(s2After.amount, 0, "Hóspede 2 já pagou sua parte e deve ter saldo pendente R$ 0,00");
+      assert.strictEqual(s2After.isSharePaid, true);
     });
 
-    it("2.2 Modo 'Dividir Meio a Meio' (half_and_half): Divide todo o saldo (inclusive itens da vistoria final sem marcação) 50/50", async () => {
+    it("2.2 Modo 'Dividir Meio a Meio' (half_and_half): Divide todo o saldo (inclusive itens da vistoria final sem marcação) 50/50 e preserva a cota do 2º hóspede após pagamento do 1º", async () => {
       const resCode = "RES-HALF-215";
       const flatNum = "215";
 
@@ -477,6 +571,11 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
       assert.strictEqual(resFinal.status, 200);
       const dataFinal = await resFinal.json();
       assert.strictEqual(dataFinal.success, true);
+      assert.strictEqual(
+        dataFinal.statement.isCheckedOut,
+        true,
+        "A vistoria final pós-check-out deve liberar o pagamento imediatamente mesmo que o hóspede não tenha clicado antes no botão manual de check-out"
+      );
       assert.strictEqual(dataFinal.whatsappMessagesSent.length, 2);
 
       const msg1 = dataFinal.whatsappMessagesSent.find(m => m.guestIndex === 1);
@@ -492,6 +591,113 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
         26.0,
         "No modo 'half_and_half', o Hóspede 2 deve pagar 50% de todo o saldo incluindo a vistoria final (R$ 26,00)"
       );
+
+      // 4. Pagamento sequencial no modo 'half_and_half':
+      // Hóspede 1 clica no seu link do WhatsApp e paga sua cota de R$ 26,00 (com requireCheckout: true)
+      const resOrderG1 = await fetch(`${BASE_URL}/api/minibar/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: `ORD-MB-SPLIT-${resCode}-G1`,
+          reservationCode: resCode,
+          flatNumber: flatNum,
+          requireCheckout: true,
+          partialMode: "configured_split",
+          paymentMethod: "pix",
+          invoicePreference: "detailed",
+          document: "22233344455",
+          documentType: "cpf",
+          email: "ana.paula@teste.com",
+          phone: "5521999113344",
+          consumerGuest: {
+            index: 1,
+            name: "Ana Paula Souza",
+            phone: "5521999113344",
+            email: "ana.paula@teste.com",
+            document: "22233344455"
+          }
+        })
+      });
+      assert.strictEqual(resOrderG1.status, 200, "Pagamento pós-vistoria final não pode falhar com CHECKOUT_REQUIRED");
+      const dataOrderG1 = await resOrderG1.json();
+      assert.strictEqual(dataOrderG1.totalAmount, 26.0);
+
+      const resSimPayG1 = await fetch(`${BASE_URL}/api/pms/mercadopago/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "payment",
+          external_reference: `MB-${dataOrderG1.orderId}`,
+          status: "approved",
+          transaction_amount: 26.0
+        })
+      });
+      assert.strictEqual(resSimPayG1.status, 200);
+
+      // 5. Hóspede 2 abre seu link (?guestIndex=2) para pagar sua metade:
+      // Sua parte DEVE continuar sendo R$ 26,00 (e NÃO ser re-dividida pela metade para R$ 13,00!)
+      const resCtxG2 = await fetch(`${BASE_URL}/api/minibar/reservation-context/${resCode}?guestIndex=2`);
+      assert.strictEqual(resCtxG2.status, 200);
+      const dataCtxG2 = await resCtxG2.json();
+      assert.strictEqual(dataCtxG2.pendingBalance, 26.0);
+      assert.strictEqual(dataCtxG2.totalPaidAmount, 26.0);
+
+      const g1ShareAfter = dataCtxG2.splitBreakdown.shares.find(s => s.guestIndex === 1);
+      const g2ShareAfter = dataCtxG2.splitBreakdown.shares.find(s => s.guestIndex === 2);
+      assert.strictEqual(g1ShareAfter.amount, 0, "Cota do Hóspede 1 já foi quitada e deve ser R$ 0,00");
+      assert.strictEqual(g1ShareAfter.paidAmount, 26.0);
+      assert.strictEqual(g1ShareAfter.isSharePaid, true);
+      assert.strictEqual(
+        g2ShareAfter.amount,
+        26.0,
+        "Cota do Hóspede 2 deve permanecer R$ 26,00 após o pagamento do Hóspede 1 (não pode cair para R$ 13,00)"
+      );
+
+      // 6. Hóspede 2 paga sua cota de R$ 26,00
+      const resOrderG2 = await fetch(`${BASE_URL}/api/minibar/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: `ORD-MB-SPLIT-${resCode}-G2`,
+          reservationCode: resCode,
+          flatNumber: flatNum,
+          requireCheckout: true,
+          partialMode: "configured_split",
+          paymentMethod: "pix",
+          invoicePreference: "detailed",
+          document: "99988877766",
+          documentType: "cpf",
+          email: "roberto.lima@teste.com",
+          phone: "5521988776655",
+          consumerGuest: {
+            index: 2,
+            name: "Roberto Lima",
+            phone: "5521988776655",
+            email: "roberto.lima@teste.com",
+            document: "99988877766"
+          }
+        })
+      });
+      assert.strictEqual(resOrderG2.status, 200);
+      const dataOrderG2 = await resOrderG2.json();
+      assert.strictEqual(dataOrderG2.totalAmount, 26.0);
+
+      const resSimPayG2 = await fetch(`${BASE_URL}/api/pms/mercadopago/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "payment",
+          external_reference: `MB-${dataOrderG2.orderId}`,
+          status: "approved",
+          transaction_amount: 26.0
+        })
+      });
+      assert.strictEqual(resSimPayG2.status, 200);
+
+      const resCtxFinal = await fetch(`${BASE_URL}/api/minibar/reservation-context/${resCode}`);
+      const dataCtxFinal = await resCtxFinal.json();
+      assert.strictEqual(dataCtxFinal.pendingBalance, 0);
+      assert.strictEqual(dataCtxFinal.totalPaidAmount, 52.0);
     });
 
     it("2.3 Modo Padrão ('100% Titular' quando nada foi marcado): Envia 100% da cobrança e NF para o hóspede titular na vistoria final", async () => {
