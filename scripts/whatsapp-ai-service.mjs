@@ -50,8 +50,36 @@ import {
   processNationalInvoiceEmission,
   normalizeTomadorAddressFields
 } from "./national-nfse.mjs";
+import {
+  injectSessionContext,
+  buildContextoSessaoJson,
+  notifyAdminWhatsApp,
+  solicitarLateCheckoutTool,
+  alterarDatasReservaTool,
+  notificarAdministradorTool,
+  ALL_AGENT_TOOLS,
+  getToolsForState,
+  getGeminiFunctionDeclarationsForState,
+  isRegisteredAgentTool,
+  executeRegisteredAgentTool,
+  ensureInstructionalToolResponse,
+  buildStateRoutedPrompt
+} from "./agent-architecture.mjs";
 
 export {
+  injectSessionContext,
+  buildContextoSessaoJson,
+  notifyAdminWhatsApp,
+  solicitarLateCheckoutTool,
+  alterarDatasReservaTool,
+  notificarAdministradorTool,
+  ALL_AGENT_TOOLS,
+  getToolsForState,
+  getGeminiFunctionDeclarationsForState,
+  isRegisteredAgentTool,
+  executeRegisteredAgentTool,
+  ensureInstructionalToolResponse,
+  buildStateRoutedPrompt,
   isFaqApplicableToClient,
   matchClientPhone,
   linkOperatorResponseToPendingFaq,
@@ -769,7 +797,7 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   const recipientsInfo = matchedReservation ? getReservationRecipients(matchedReservation, db) : null;
   const requesterName = recipientsInfo?.requester?.isDifferentFromGuest ? recipientsInfo.requester.name : null;
 
-  return {
+  const baseGuestContext = {
     todayStr,
     timeStr,
     phone: cleanPhone,
@@ -815,6 +843,19 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     cleaningStatus,
     isRoomReady
   };
+
+  const contextoSessao = injectSessionContext({
+    db,
+    phone: cleanPhone,
+    now,
+    guestContext: baseGuestContext
+  });
+
+  return {
+    ...baseGuestContext,
+    estadoAtual: contextoSessao.estado_atual,
+    contextoSessao
+  };
 }
 
 /**
@@ -840,6 +881,9 @@ export function getBotActionsSettings(db) {
         getPricingInfo: hasCustomAllowed ? s.allowedActions.getPricingInfo === true : true,
         recordUnmetDemand: hasCustomAllowed ? s.allowedActions.recordUnmetDemand === true : true,
         informCheckout: hasCustomAllowed ? s.allowedActions.informCheckout === true : false,
+        solicitar_late_checkout: s.allowedActions?.solicitar_late_checkout !== false,
+        alterar_datas_reserva: s.allowedActions?.alterar_datas_reserva !== false,
+        notificar_administrador: s.allowedActions?.notificar_administrador !== false,
         ...(s.allowedActions || {})
       },
       preReservationHoldMinutes: Number(s.preReservationHoldMinutes) || 30,
@@ -861,7 +905,10 @@ export function getBotActionsSettings(db) {
       getFlatStatus: true,
       getPricingInfo: true,
       recordUnmetDemand: true,
-      informCheckout: false
+      informCheckout: false,
+      solicitar_late_checkout: true,
+      alterar_datas_reserva: true,
+      notificar_administrador: true
     },
     preReservationHoldMinutes: 30,
     handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano."
@@ -1519,7 +1566,7 @@ export async function handleQuerySystemData(db, args = {}) {
  * Constrói as declarações de ferramentas (Function Calling) do Gemini adaptativamente
  * de acordo com a chave mestra e as permissões granulares ativas.
  */
-export function buildGeminiTools(actionsSettings = {}) {
+export function buildGeminiTools(actionsSettings = {}, estadoSessao = null) {
   if (!actionsSettings || actionsSettings.apiActionsEnabled === false) {
     return [];
   }
@@ -1870,6 +1917,15 @@ export function buildGeminiTools(actionsSettings = {}) {
         required: ["module"]
       }
     });
+  }
+
+  // Inclui Tools semânticas da nova arquitetura (`src/agent/tools/`) filtradas por Estado da Sessão
+  const effectiveState = estadoSessao || actionsSettings.estadoSessao || "IN_STAY_CONCIERGE";
+  const stateDecls = getGeminiFunctionDeclarationsForState(effectiveState);
+  for (const decl of stateDecls) {
+    if (allowed[decl.name] !== false && !declarations.some(d => d.name === decl.name)) {
+      declarations.push(decl);
+    }
   }
 
   if (declarations.length === 0) {
@@ -4087,6 +4143,38 @@ export function detectAndRecordUnmetDemand({
 export async function executeBotAction(db, actionName, args = {}) {
   const settings = getBotActionsSettings(db);
 
+  // Ferramentas semânticas do registro oficial `src/agent/tools/` (Lei 3 e Lei 4)
+  if (isRegisteredAgentTool(actionName)) {
+    if (!settings.apiActionsEnabled || settings.allowedActions?.[actionName] === false) {
+      const msgDisabled = settings.handoverMessage || "Esta ação do sistema está pausada ou requer atendimento humano.";
+      return {
+        status: "BLOQUEADO_PELA_REGRA",
+        codigo_regra_bloqueio: "ACTION_DISABLED",
+        error: "ACTION_DISABLED",
+        action: actionName,
+        requiresHandover: true,
+        message: msgDisabled,
+        instrucao_para_ia: msgDisabled,
+        instrucao_resposta_ia: msgDisabled
+      };
+    }
+
+    const senderPhone = args.requesterPhone || args.phone || args.guestPhone || "";
+    const sessionCtx = args.contextoSessao || injectSessionContext({
+      db,
+      phone: senderPhone,
+      guestContext: args.guestContext || null,
+      runtime: {
+        db,
+        saveDatabase: args.saveDatabase,
+        sendZapiMessage: args.sendZapiMessage,
+        createNotification: args.createNotification,
+        conversation: args.conversation
+      }
+    });
+    return executeRegisteredAgentTool(actionName, args, sessionCtx);
+  }
+
   if (!settings.apiActionsEnabled || !settings.allowedActions?.[actionName]) {
     try {
       detectAndRecordUnmetDemand({
@@ -4100,48 +4188,75 @@ export async function executeBotAction(db, actionName, args = {}) {
       });
     } catch (_) {}
 
+    const msgDisabled = settings.handoverMessage || "Esta ação do sistema está pausada ou requer atendimento humano.";
     return {
+      status: "BLOQUEADO_PELA_REGRA",
+      codigo_regra_bloqueio: "ACTION_DISABLED",
       error: "ACTION_DISABLED",
       action: actionName,
       requiresHandover: true,
-      message: settings.handoverMessage || "Esta ação do sistema está pausada ou requer atendimento humano."
+      message: msgDisabled,
+      instrucao_para_ia: msgDisabled,
+      instrucao_resposta_ia: msgDisabled
     };
   }
 
+  let rawResult;
   switch (actionName) {
     case "checkAvailability":
-      return handleCheckAvailability(db, args);
+      rawResult = await handleCheckAvailability(db, args);
+      break;
     case "calculateQuote":
-      return handleCalculateQuote(db, args);
+      rawResult = await handleCalculateQuote(db, args);
+      break;
     case "createPreReservation":
-      return handleCreatePreReservation(db, args);
+      rawResult = await handleCreatePreReservation(db, args);
+      break;
     case "generatePayment":
-      return handleGeneratePayment(db, args);
+      rawResult = await handleGeneratePayment(db, args);
+      break;
     case "commitReservation":
-      return handleCommitReservation(db, args);
+      rawResult = await handleCommitReservation(db, args);
+      break;
     case "getReservationDetails":
-      return handleGetReservationDetails(db, args);
+      rawResult = await handleGetReservationDetails(db, args);
+      break;
     case "getFlatStatus":
-      return handleGetFlatStatus(db, args);
+      rawResult = await handleGetFlatStatus(db, args);
+      break;
     case "getPricingInfo":
-      return handleGetPricingInfo(db, args);
+      rawResult = await handleGetPricingInfo(db, args);
+      break;
     case "recordUnmetDemand":
-      return handleRecordUnmetDemand(db, args);
+      rawResult = await handleRecordUnmetDemand(db, args);
+      break;
     case "informCheckout":
-      return handleInformCheckout(db, args);
+      rawResult = await handleInformCheckout(db, args);
+      break;
     case "getFlatAmenities":
-      return handleGetFlatAmenities(db, args);
+      rawResult = await handleGetFlatAmenities(db, args);
+      break;
     case "reallocateReservationFlat":
-      return handleReallocateReservationFlat(db, args);
+      rawResult = await handleReallocateReservationFlat(db, args);
+      break;
     case "querySystemData":
-      return handleQuerySystemData(db, args);
-    default:
+      rawResult = await handleQuerySystemData(db, args);
+      break;
+    default: {
+      const unknownMsg = `Ação '${actionName}' não é reconhecida.`;
       return {
+        status: "ERRO_REQUER_HUMANO",
+        codigo_regra_bloqueio: "UNKNOWN_ACTION",
         error: "UNKNOWN_ACTION",
         action: actionName,
-        message: `Ação '${actionName}' não é reconhecida.`
+        message: unknownMsg,
+        instrucao_para_ia: unknownMsg,
+        instrucao_resposta_ia: unknownMsg
       };
+    }
   }
+
+  return ensureInstructionalToolResponse(actionName, rawResult);
 }
 
 const PORTUGUESE_STOP_WORDS = new Set([
@@ -8304,7 +8419,8 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
 
   const convState = preAnalysis.convState;
   const botSettings = getBotActionsSettings(db);
-  const tools = buildGeminiTools(botSettings);
+  const tools = buildGeminiTools(botSettings, guestContext.estadoAtual);
+  const stateRoutedPromptBlock = buildStateRoutedPrompt(guestContext.contextoSessao);
 
   let systemActionsNotice = "";
   if (!botSettings.apiActionsEnabled) {
@@ -8444,7 +8560,7 @@ ${systemActionsNotice}
     try {
       const geminiRes = await callGeminiAi({
         apiKey,
-        systemInstruction: `${aiConfig.systemPrompt}\n${toneSection}${guidelinesSection}\n${flatsCatalogSection || ""}\n${contextString}`,
+        systemInstruction: `${aiConfig.systemPrompt}\n${stateRoutedPromptBlock}\n${toneSection}${guidelinesSection}\n${flatsCatalogSection || ""}\n${contextString}`,
         prompt: messageText,
         history: effectiveHistory,
         db,
