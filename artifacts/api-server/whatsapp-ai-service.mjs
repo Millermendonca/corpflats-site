@@ -7062,12 +7062,16 @@ export function validateAndRefineResponse({
       replyText = ret(`${salutation} Tudo bem? Sou a ${aiConfig?.agentName || "Sofia"}, concierge virtual da CorpFlats 🏨. Como posso te ajudar hoje? 😊`);
     }
   } else if (analysis.type === "GREETING_ONLY") {
-    // Saudação pura (Escuta Ativa / Memória Silenciosa): NUNCA despeja cobrança de check-out nem links não solicitados
+    // Saudação pura (Escuta Ativa / Memória Silenciosa): NUNCA despeja cobrança de check-out, conferência fiscal nem links não solicitados
     if (/pr[eé]-?check-?in|pre-checkin/i.test(replyText)) {
       replyText = stripPreCheckinFromText(replyText);
     }
     if (/\/checkout\/|Confirma[cç][aã]o\s+de\s+Check-?out|hoje\s+[eé]\s+o\s+dia\s+do\s+seu\s+check-?out/i.test(replyText)) {
       replyText = stripPendingCheckoutReminderFromText(replyText);
+    }
+    if (/Confer[eê]ncia\s+de\s+Dados\s+para\s+Emiss[aã]o|Dados\s+cadastrais\s+atualizados\s+com\s+sucesso|Nota\s+relativa\s+[àa]\s+hospedagem|NFS-e/i.test(replyText)) {
+      const salutation = getGreetingSalutation(queryText, name);
+      replyText = ret(`${salutation} Tudo bem? Sou a ${aiConfig?.agentName || "Sofia"}, concierge virtual da CorpFlats 🏨. Como posso te ajudar hoje? 😊`);
     }
   } else if (guestContext?.stayStatus === "checkout_hoje" || guestContext?.isCheckoutDay) {
     let hadPreCheckinRemoved = false;
@@ -10789,6 +10793,21 @@ function runDeterministicFiscalLocalFallback({
 }
 
 /**
+ * Detecta se a mensagem é exclusivamente uma saudação social ou cumprimento curto
+ * (ex: "oi", "olá", "bom dia", "boa tarde", "boa noite", "oi, tudo bem?", "oi sofia"),
+ * que NUNCA deve ser interpretado como confirmação fiscal ou reenvio de conferência de NFS-e.
+ */
+export function isPureSocialGreeting(text = "") {
+  const clean = String(text || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!clean) return false;
+  return /^(?:(?:oi+|ola+|opa+|ei+|e\s+ai|fala|salve|hello|hi|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem|tudo\s+bom|como\s+vai|como\s+esta|sofia|corpflats|atendente|recepcao)\s*[,.!?👋😊✨]*\s*)+$/i.test(clean);
+}
+
+/**
  * Motor de Compreensão Semântica com IA (LLM) no Fluxo Fiscal da Sofia no WhatsApp.
  * Segue o padrão de dois níveis (Two-Tier Pattern - Zero Crash):
  * - Tier 1: Compreensão via IA (Google Gemini callGeminiAi ou aiClientMock) com prompt estruturado em JSON estrito.
@@ -10805,6 +10824,19 @@ export async function interpretFiscalMessageWithLLM({
 }) {
   const text = String(messageText || "").trim();
   const conf = currentConferenceState || {};
+
+  // Saudações sociais puras ("oi", "olá", "bom dia", etc.) sem mock explícito nunca acionam ações fiscais
+  if (!aiClientMock && isPureSocialGreeting(text)) {
+    return {
+      intent: "other",
+      isConfirmation: false,
+      isCancellation: false,
+      valueChange: { hasValueChange: false, requestedValue: null },
+      guestNameAction: { action: "none", guestName: null, needsPromptForName: false },
+      cadastralUpdates: { tomadorNome: null, tomadorCpfCnpj: null, tomadorEmail: null, tomadorEndereco: null, tomadorTipo: null },
+      resolvedFromReference: false
+    };
+  }
 
   const formattedHistoryText = (Array.isArray(history) ? history.slice(-8) : [])
     .filter(m => m && m.text)
@@ -10835,6 +10867,7 @@ ${formattedHistoryText || "Sem histórico anterior."}
 REGRAS DE CLASSIFICAÇÃO:
 1. isConfirmation: Retorne true se o hóspede estiver confirmando, aprovando ou autorizando a emissão em linguagem natural (ex: "pode emitir", "tá certinho", "tudo certo", "ok", "confirmado", "manda bala", "show de bola", "fechou", "por mim fechou", "está 100%", "tudo em ordem", "pode prosseguir", "dados conferidos e aprovados").
    IMPORTANTE: Frases com negações retóricas como "não tem nenhum erro, pode emitir" ou "não precisa mudar nada, tá tudo perfeito" SÃO CONFIRMAÇÕES (isConfirmation: true, isCancellation: false).
+   ATENÇÃO: Saudações isoladas ("oi", "olá", "bom dia", "boa tarde", "boa noite", "tudo bem?") NÃO são confirmações (isConfirmation: false, intent: "other").
 2. valueChange: Se o hóspede solicitar mudança no valor da nota, preço das diárias ou total (ex: "abaixa o valor pra 300", "muda para 500 reais", "quinhentos reais", "400 conto"), marque hasValueChange: true e extraia requestedValue como número float.
    ATENÇÃO PRIORITÁRIA DE TRAVA DE VALOR:
    - Se o hóspede enviar confirmação E alteração de valor na mesma mensagem (ex: "está tudo certo, pode emitir, só muda o valor para 400 antes"), A ALTERAÇÃO DE VALOR TEM PRIORIDADE ABSOLUTA: intent = "change_value", hasValueChange: true, isConfirmation: false!
@@ -10845,8 +10878,9 @@ REGRAS DE CLASSIFICAÇÃO:
    - action "remove": Quando o hóspede solicita retirar/remover alguém da descrição (ex: "retira o nome da Maria Silva da descrição, ela não ficou hospedada", "remove o acompanhante, deixa só eu"). Extraia o guestName ou deixe null se for remoção genérica.
    - action "replace": Quando o hóspede pede para trocar ou substituir quem ficou hospedado (ex: "na verdade quem ficou hospedado no flat foi o João Paulo da Costa, troca o nome aí"). Extraia o guestName.
    - action "none": Nenhuma ação sobre nomes na descrição.
-4. cadastralUpdates: Extraia qualquer atualização ou correção solicitada de CPF/CNPJ, Razão Social/Nome, E-mail ou Endereço em linguagem natural.
+4. cadastralUpdates: Extraia APENAS se o hóspede estiver solicitando na mensagem atual uma MUDANÇA/CORREÇÃO de CPF/CNPJ, Razão Social/Nome do Tomador, E-mail ou Endereço. NUNCA repita os dados atuais da conferência em cadastralUpdates; se um campo não foi alterado na mensagem atual, retorne null!
 5. isCancellation: true APENAS se o hóspede pedir explicitamente para cancelar a emissão da nota fiscal (ex: "cancela a nota", "não quero mais nota").
+6. Saudações ("oi", "olá", "bom dia") ou dúvidas gerais do hotel (ex: senha do wi-fi, horário do café) NÃO são ações fiscais: retorne intent: "other", isConfirmation: false, isCancellation: false, guestNameAction.action: "none" e todos os campos de cadastralUpdates como null.
 
 RESPONDA EXCLUSIVAMENTE COM O OBJETO JSON NO FORMATO:
 {
@@ -10904,7 +10938,7 @@ RESPONDA EXCLUSIVAMENTE COM O OBJETO JSON NO FORMATO:
         const geminiRes = await aiClientMock.callGeminiAi({
           systemInstruction,
           prompt: `[MENSAGEM DO HÓSPEDE]:\n"${text}"`,
-          history,
+          history: [],
           db,
           customPrompt: true
         });
@@ -10922,7 +10956,7 @@ RESPONDA EXCLUSIVAMENTE COM O OBJETO JSON NO FORMATO:
           apiKey,
           systemInstruction,
           prompt: `[MENSAGEM DO HÓSPEDE]:\n"${text}"`,
-          history,
+          history: [],
           db,
           customPrompt: true
         });
@@ -10969,6 +11003,20 @@ RESPONDA EXCLUSIVAMENTE COM O OBJETO JSON NO FORMATO:
     },
     resolvedFromReference: Boolean(parsed.resolvedFromReference)
   };
+
+  // Blindagem contra eco de dados cadastrais inalterados pelo LLM
+  if (conf.tomadorCpfCnpj && result.cadastralUpdates.tomadorCpfCnpj === onlyDigits(String(conf.tomadorCpfCnpj))) {
+    result.cadastralUpdates.tomadorCpfCnpj = null;
+  }
+  if (conf.tomadorNome && result.cadastralUpdates.tomadorNome && result.cadastralUpdates.tomadorNome.toLowerCase() === String(conf.tomadorNome).trim().toLowerCase()) {
+    result.cadastralUpdates.tomadorNome = null;
+  }
+  if (conf.tomadorEmail && result.cadastralUpdates.tomadorEmail && result.cadastralUpdates.tomadorEmail.toLowerCase() === String(conf.tomadorEmail).trim().toLowerCase()) {
+    result.cadastralUpdates.tomadorEmail = null;
+  }
+  if (conf.tomadorEndereco && result.cadastralUpdates.tomadorEndereco && result.cadastralUpdates.tomadorEndereco.toLowerCase() === String(conf.tomadorEndereco).trim().toLowerCase()) {
+    result.cadastralUpdates.tomadorEndereco = null;
+  }
 
   if (result.cadastralUpdates.tomadorCpfCnpj) {
     if (result.cadastralUpdates.tomadorCpfCnpj.length === 14) result.cadastralUpdates.tomadorTipo = "PJ";
@@ -11115,31 +11163,6 @@ export async function handleWhatsAppFiscalFlow({
   };
 
   const conf = conv?.fiscalConferenceState;
-  const hasAlterationVerb = /\b(?:altera(?:r|[cç][aã]o)?|muda(?:r|n[cç]a)?|troca(?:r)?|acrescenta(?:r|ndo)?|acrescente|adiciona(?:r|ndo)?|adicione|inclui(?:r|ndo)?|inclua|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|corrige|corrigir|edita(?:r)?|inserir|insere|insira|tira(?:r)?|remove(?:r)?|substitui(?:r)?|abaixa(?:r)?|diminui(?:r)?|reduz(?:ir)?|fecha(?:r)?)\b/i.test(messageText);
-  const hasFiscalFieldTarget = /\b(?:nota|nf|nfse|nfs-e|descri[cç][aã]o|discrimina[cç][aã]o|cabe[cç]alho|h[oó]spede|acompanhante|pessoa|tomador|cpf|cnpj|endere[cç]o|cep|e-?mail|raz[aã]o\s*social|nome|valor|pre[cç]o|servi[cç]o|reais|conto)\b/i.test(messageText);
-  const isAlterationRequest = Boolean(hasAlterationVerb && hasFiscalFieldTarget);
-  const isRefToPreviousMsg = Boolean(
-    /\b(?:j[aá]\s+(?:informei|mandei|enviei|falei|disse|escrevi|coloquei|passei)|est[aá]\s+a[ií]\s+em\s+cima|a[ií]\s+em\s+cima|olha\s+a[ií]|mensagem\s+acima|acima|no\s+in[ií]cio\s+da\s+conversa|conforme\s+(?:disse|falei|passei)\s+antes|t[aá]\s+l[aá]\s+em\s+cima)\b/i.test(messageText) ||
-    /👆|⬆️|☝️/u.test(messageText) ||
-    quotedText ||
-    referenceMessageId
-  );
-
-  const isAwaitingConferenceConfirmation = Boolean(
-    conf && (
-      conf.status === "awaiting_confirmation" ||
-      Boolean(conf.pendingFieldEdit) ||
-      isRefToPreviousMsg ||
-      (conf.status === "scheduled_for_checkout" && (isAlterationRequest || isFiscalIntentMessage(messageText) || checkDeterministicValueChange(messageText, conf).hasValueChange))
-    )
-  );
-  const isFiscalRequest = isFiscalIntentMessage(messageText) || isAlterationRequest;
-  const isAwaitingFiscal = Boolean(conv?.awaitingFiscalData === true);
-
-  // Se não é pedido fiscal, nem aguardando dados, nem aguardando confirmação da conferência, ignora
-  if (!isFiscalRequest && !isAwaitingFiscal && !isAwaitingConferenceConfirmation) {
-    return { handled: false };
-  }
 
   // Helper para recuperar nome de hóspede adicional a partir de mensagem citada (quote) ou histórico recente da conversa
   const recoverGuestNameFromContext = () => {
@@ -11170,6 +11193,111 @@ export async function handleWhatsAppFiscalFlow({
     return "";
   };
 
+  // Autocura persistente de descrições poluídas (ex.: "e Já Informei 👆🏼") em conv.fiscalConferenceState e reservation.confirmedFiscalData
+  {
+    const resForHeal = Array.isArray(db.reservations)
+      ? (db.reservations.find(r =>
+          r && conf && (
+            (conf.reservationId && Number(r.id) === Number(conf.reservationId)) ||
+            (conf.reservationCode && String(r.code) === String(conf.reservationCode))
+          )
+        ) || findContactAndReservation(db, cleanTarget).matchedReservation)
+      : null;
+
+    let hadCorruptedDesc = false;
+    if (conf && typeof conf.descricaoServico === "string") {
+      const sanConf = sanitizeServiceDescriptionGuests(conf.descricaoServico);
+      if (sanConf.hadInvalid) {
+        conf.descricaoServico = sanConf.description;
+        hadCorruptedDesc = true;
+      }
+    }
+    if (resForHeal?.confirmedFiscalData && typeof resForHeal.confirmedFiscalData.descricaoServico === "string") {
+      const sanRes = sanitizeServiceDescriptionGuests(resForHeal.confirmedFiscalData.descricaoServico);
+      if (sanRes.hadInvalid) {
+        resForHeal.confirmedFiscalData.descricaoServico = sanRes.description;
+        hadCorruptedDesc = true;
+      }
+    }
+    if (resForHeal?.invoiceDetails && typeof resForHeal.invoiceDetails.descricaoServico === "string") {
+      const sanInv = sanitizeServiceDescriptionGuests(resForHeal.invoiceDetails.descricaoServico);
+      if (sanInv.hadInvalid) {
+        resForHeal.invoiceDetails.descricaoServico = sanInv.description;
+        hadCorruptedDesc = true;
+      }
+    }
+
+    const msgs = Array.isArray(conv?.messages) ? conv.messages : [];
+    const historyHadJaInformeiBug = msgs.some(m => m?.text && /j[aá]\s+informei/i.test(m.text));
+    const hasLaterRemovalInHistory = msgs.some(m => !m?.fromMe && m?.text && /\b(?:retira(?:r)?|tira(?:r)?|remove(?:r)?|exclui(?:r)?)\b/i.test(m.text));
+
+    if ((hadCorruptedDesc || historyHadJaInformeiBug) && !hasLaterRemovalInHistory) {
+      const recoveredGuest = recoverGuestNameFromContext();
+      if (recoveredGuest) {
+        if (conf && typeof conf.descricaoServico === "string") {
+          conf.descricaoServico = addGuestToServiceDescription(conf.descricaoServico, recoveredGuest, "add");
+          delete conf.pendingFieldEdit;
+        }
+        if (resForHeal) {
+          const baseDesc = conf?.descricaoServico || resForHeal.confirmedFiscalData?.descricaoServico || "";
+          const healedResDesc = baseDesc
+            ? addGuestToServiceDescription(baseDesc, recoveredGuest, "add")
+            : "";
+          if (resForHeal.confirmedFiscalData) {
+            resForHeal.confirmedFiscalData.descricaoServico = healedResDesc || resForHeal.confirmedFiscalData.descricaoServico;
+          } else if (conf && healedResDesc) {
+            resForHeal.confirmedFiscalData = {
+              ...conf,
+              descricaoServico: healedResDesc,
+              updatedAt: new Date().toISOString()
+            };
+          }
+        }
+        hadCorruptedDesc = true;
+      } else if (hadCorruptedDesc && resForHeal?.confirmedFiscalData && conf?.descricaoServico) {
+        resForHeal.confirmedFiscalData.descricaoServico = conf.descricaoServico;
+      }
+    }
+
+    if (hadCorruptedDesc && typeof saveDatabase === "function") {
+      try { saveDatabase(); } catch (_) {}
+    }
+  }
+
+  // Saudação social pura ("oi", "olá", "bom dia", "boa tarde", "boa noite", "tudo bem?") NUNCA reenvia conferência fiscal
+  if (isPureSocialGreeting(messageText)) {
+    if (conf?.pendingFieldEdit) {
+      delete conf.pendingFieldEdit;
+    }
+    return { handled: false };
+  }
+
+  const hasAlterationVerb = /\b(?:altera(?:r|[cç][aã]o)?|muda(?:r|n[cç]a)?|troca(?:r)?|acrescenta(?:r|ndo)?|acrescente|adiciona(?:r|ndo)?|adicione|inclui(?:r|ndo)?|inclua|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|corrige|corrigir|edita(?:r)?|inserir|insere|insira|tira(?:r)?|remove(?:r)?|substitui(?:r)?|abaixa(?:r)?|diminui(?:r)?|reduz(?:ir)?|fecha(?:r)?)\b/i.test(messageText);
+  const hasFiscalFieldTarget = /\b(?:nota|nf|nfse|nfs-e|descri[cç][aã]o|discrimina[cç][aã]o|cabe[cç]alho|h[oó]spede|acompanhante|pessoa|tomador|cpf|cnpj|endere[cç]o|cep|e-?mail|raz[aã]o\s*social|nome|valor|pre[cç]o|servi[cç]o|reais|conto)\b/i.test(messageText);
+  const isAlterationRequest = Boolean(hasAlterationVerb && hasFiscalFieldTarget);
+  const isRefToPreviousMsg = Boolean(
+    /\b(?:j[aá]\s+(?:informei|mandei|enviei|falei|disse|escrevi|coloquei|passei)|est[aá]\s+a[ií]\s+em\s+cima|a[ií]\s+em\s+cima|olha\s+a[ií]|mensagem\s+acima|acima|no\s+in[ií]cio\s+da\s+conversa|conforme\s+(?:disse|falei|passei)\s+antes|t[aá]\s+l[aá]\s+em\s+cima)\b/i.test(messageText) ||
+    /👆|⬆️|☝️/u.test(messageText) ||
+    quotedText ||
+    referenceMessageId
+  );
+
+  const isAwaitingConferenceConfirmation = Boolean(
+    conf && (
+      conf.status === "awaiting_confirmation" ||
+      Boolean(conf.pendingFieldEdit) ||
+      isRefToPreviousMsg ||
+      (conf.status === "scheduled_for_checkout" && (isAlterationRequest || isFiscalIntentMessage(messageText) || checkDeterministicValueChange(messageText, conf).hasValueChange))
+    )
+  );
+  const isFiscalRequest = isFiscalIntentMessage(messageText) || isAlterationRequest;
+  const isAwaitingFiscal = Boolean(conv?.awaitingFiscalData === true);
+
+  // Se não é pedido fiscal, nem aguardando dados, nem aguardando confirmação da conferência, ignora
+  if (!isFiscalRequest && !isAwaitingFiscal && !isAwaitingConferenceConfirmation) {
+    return { handled: false };
+  }
+
   // ── ETAPA 1: Usuário já está na fase de conferência e respondeu à mensagem ──
   if (isAwaitingConferenceConfirmation) {
     // Migração automática de descrições legadas fora do padrão para o padrão de /notas
@@ -11186,16 +11314,6 @@ export async function handleWhatsAppFiscalFlow({
         guestName: resForLegacy?.guestName || conf.tomadorNome,
         flatNumber: conf.flatNumber
       });
-    }
-
-    // Higienização automática caso a descrição tenha sido poluída anteriormente com texto inválido (ex: "e Já Informei 👆🏼")
-    let healedFromCorruptedDescription = false;
-    if (typeof conf.descricaoServico === "string") {
-      const sanitized = sanitizeServiceDescriptionGuests(conf.descricaoServico);
-      if (sanitized.hadInvalid) {
-        conf.descricaoServico = sanitized.description;
-        healedFromCorruptedDescription = true;
-      }
     }
 
     // 1.0 Interpretação Semântica com IA (LLM) da mensagem do hóspede (R1 & Two-Tier Architecture)
@@ -11233,6 +11351,11 @@ export async function handleWhatsAppFiscalFlow({
 
     // Se estava aguardando o nome do hóspede na descrição e a mensagem não trouxe nome válido nem confirmação
     if (conf.pendingFieldEdit === "add_guest_to_description" && !llmResult.guestNameAction?.guestName && !llmResult.isConfirmation && !llmResult.valueChange?.hasValueChange) {
+      const nonFiscalIntentType = analyzeGuestQuery(messageText, null, db)?.type || "";
+      if (!hasFiscalFieldTarget && /^(?:GREETING_ONLY|GENERIC_FAQ|PRICING_QUOTE|RESERVATION_REQUEST|FLAT_READY_STATUS|EXISTING_RESERVATION)$/.test(nonFiscalIntentType)) {
+        delete conf.pendingFieldEdit;
+        return { handled: false };
+      }
       const retryAskMsg = `Não consegui identificar o nome na mensagem anterior. Por favor, digite apenas o *nome completo* da pessoa que deseja acrescentar como hóspede na descrição do serviço (ex.: *Maria da Silva*). ✨`;
       return await respond(retryAskMsg, {
         action: "prompted_guest_name_for_description",
@@ -11606,6 +11729,12 @@ export async function handleWhatsAppFiscalFlow({
         conference: conf
       });
     }
+
+    // Se a mensagem NÃO é uma nova solicitação explícita de nota fiscal nem contém CNPJ/CPF novo,
+    // NÃO deve cair na Etapa 2 (evita reenviar o card de conferência fiscal em mensagens gerais ou fora de escopo)
+    if (!isFiscalIntentMessage(messageText) && !extractCnpj(messageText) && !extractCpf(messageText)) {
+      return { handled: false };
+    }
   }
 
   // ── ETAPA 2: Abertura / Captação de Dados para Conferência (R1) ──────────────
@@ -11884,6 +12013,9 @@ export async function handleWhatsAppFiscalFlow({
       }
       const replyText = `Perfeito! Por gentileza, nos informe seu **Nome Completo**, **CPF**, **Endereço com CEP** e **E-mail** para emissão da nota fiscal. 👤`;
       return await respond(replyText, { action: "prompted_pf_data" });
+    }
+    if (!isFiscalRequest) {
+      return { handled: false };
     }
   }
 

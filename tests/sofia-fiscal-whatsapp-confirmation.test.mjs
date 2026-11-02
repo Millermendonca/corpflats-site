@@ -2522,6 +2522,187 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.strictEqual(result.guestNameAction.action, "add");
     assert.strictEqual(result.guestNameAction.guestName, "Roberta Albuquerque dos Santos");
   });
+
+  it("Regressão 'oi' durante Conferência Fiscal: Enviar 'oi' (ou dúvida geral) NÃO reenvia card de conferência, responde saudação natural e autocura confirmedFiscalData poluído com 'Já Informei 👆🏼' recuperando 'Thamiris Maiara Santos da Silva'", async () => {
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    res605.checkoutDone = false;
+
+    const corruptedDesc = "Nota relativa à hospedagem de Miller Mendonça Pessanha e Já Informei 👆🏼, no Flat 605.\nLocal: CorpFlats.\nRua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ";
+    res605.confirmedFiscalData = {
+      reservationId: 605,
+      reservationCode: "RES-605-TEST",
+      flatNumber: "605",
+      tomadorNome: "Miller Mendonça Pessanha",
+      tomadorCpfCnpj: "12585736792",
+      tomadorTipo: "PF",
+      tomadorEmail: "millerpessanha@gmail.com",
+      descricaoServico: corruptedDesc,
+      valorOriginal: 600.00,
+      valorServico: 600.00
+    };
+
+    const conv = {
+      id: "conv_oi_regression_test",
+      phone: "5522998505276",
+      name: "Miller Mendonça Pessanha",
+      messages: [
+        {
+          messageId: "msg_prev_thamiris",
+          fromMe: false,
+          text: "tem como colocar mais uma pessoa na descrição do serviço aí? Thamiris Maiara Santos Da Silva"
+        },
+        {
+          messageId: "msg_prev_ja_informei",
+          fromMe: false,
+          text: "Já informei 👆🏼"
+        },
+        {
+          messageId: "msg_prev_bot_card",
+          fromMe: true,
+          text: `Dados cadastrais atualizados com sucesso!\n\n📋 *Conferência de Dados para Emissão de Nota Fiscal (NFS-e)*\n• *Descrição dos Serviços:* ${corruptedDesc}`
+        }
+      ],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        pendingFieldEdit: "add_guest_to_description",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Mendonça Pessanha",
+        tomadorCpfCnpj: "12585736792",
+        tomadorTipo: "PF",
+        tomadorEmail: "millerpessanha@gmail.com",
+        descricaoServico: corruptedDesc,
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    // Garante que esta seja a conversa ativa encontrada para 5522998505276
+    testDb.whatsappConversations = [
+      conv,
+      ...testDb.whatsappConversations.filter(c => c.id !== conv.id && !String(c.phone).endsWith("98505276"))
+    ];
+
+    const sentZapi = [];
+    const fiscalRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "5522998505276",
+      messageText: "oi",
+      senderName: "Miller Mendonça Pessanha",
+      conv,
+      sendZapiMessage: async (_cfg, payload) => {
+        sentZapi.push(payload);
+        return { success: true };
+      },
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(fiscalRes.handled, false, "Enviar 'oi' durante conferência fiscal aberta deve retornar handled: false (não reenviar card fiscal)");
+    assert.strictEqual(sentZapi.length, 0, "handleWhatsAppFiscalFlow não deve disparar mensagem no Z-API para 'oi'");
+    assert.strictEqual(conv.fiscalConferenceState.pendingFieldEdit, undefined, "Deve limpar pendingFieldEdit preso ao receber saudação");
+
+    // Verifica que tanto conv.fiscalConferenceState quanto res605.confirmedFiscalData foram autocurados com Thamiris
+    assert.ok(!/Já Informei/i.test(conv.fiscalConferenceState.descricaoServico), "Não deve conter 'Já Informei' em conv.fiscalConferenceState");
+    assert.ok(!/Já Informei/i.test(res605.confirmedFiscalData.descricaoServico), "Não deve conter 'Já Informei' em res605.confirmedFiscalData");
+    assert.match(
+      conv.fiscalConferenceState.descricaoServico,
+      /Nota relativa à hospedagem de Miller Mendonça Pessanha e Thamiris Maiara Santos da Silva, no Flat 605\./,
+      "Deve recuperar Thamiris Maiara Santos da Silva em conv.fiscalConferenceState.descricaoServico"
+    );
+    assert.match(
+      res605.confirmedFiscalData.descricaoServico,
+      /Nota relativa à hospedagem de Miller Mendonça Pessanha e Thamiris Maiara Santos da Silva, no Flat 605\./,
+      "Deve persistir Thamiris Maiara Santos da Silva em res605.confirmedFiscalData.descricaoServico"
+    );
+
+    // Verifica que processAiInboundMessage responde a "oi" com saudação natural e NUNCA repete a conferência fiscal
+    const inboundReplies = [];
+    const inboundRes = await processAiInboundMessage({
+      db: testDb,
+      incomingInfo: {
+        fromMe: false,
+        isGroup: false,
+        text: "oi",
+        senderName: "Miller Mendonça Pessanha",
+        messageId: "msg_oi_test_1"
+      },
+      cleanTarget: "5522998505276",
+      saveDatabase: () => {},
+      createNotification: () => {},
+      sendZapiMessage: async (_cfg, payload) => {
+        inboundReplies.push(payload);
+        return { success: true };
+      },
+      appendMessageFn: () => {}
+    });
+
+    assert.strictEqual(inboundReplies.length, 1, "Deve enviar exatamente 1 resposta de saudação");
+    assert.doesNotMatch(inboundReplies[0].message, /Conferência de Dados para Emissão de Nota Fiscal/i, "NUNCA deve repetir o card de conferência fiscal ao responder 'oi'");
+    assert.doesNotMatch(inboundReplies[0].message, /Dados cadastrais atualizados/i, "NUNCA deve repetir 'Dados cadastrais atualizados' ao responder 'oi'");
+    assert.match(inboundReplies[0].message, /Olá.*Miller/i, "Deve responder com saudação cordial natural");
+
+    // E se o hóspede pedir novamente a conferência ("quero minha nota fiscal"), ela vem com a descrição já curada com Thamiris!
+    const reRequestRes = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "5522998505276",
+      messageText: "quero minha nota fiscal",
+      senderName: "Miller Mendonça Pessanha",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(reRequestRes.handled, true);
+    assert.match(
+      reRequestRes.replyText,
+      /Nota relativa à hospedagem de Miller Mendonça Pessanha e Thamiris Maiara Santos da Silva, no Flat 605\./,
+      "Ao pedir a nota novamente, a conferência deve exibir o nome de Miller e Thamiris sem 'Já Informei'"
+    );
+
+    delete res605.confirmedFiscalData;
+  });
+
+  it("Blindagem LLM Eco Cadastral: Se o LLM ecoar os mesmos dados atuais do tomador em cadastralUpdates, não dispara falso 'Dados cadastrais atualizados'", async () => {
+    const aiClientEchoMock = async () => JSON.stringify({
+      intent: "other",
+      isConfirmation: false,
+      isCancellation: false,
+      valueChange: { hasValueChange: false, requestedValue: null },
+      guestNameAction: { action: "none", guestName: null, needsPromptForName: false },
+      cadastralUpdates: {
+        tomadorNome: "Miller Mendonça Pessanha",
+        tomadorCpfCnpj: "125.857.367-92",
+        tomadorEmail: "millerpessanha@gmail.com",
+        tomadorEndereco: "Rua Sebastião Rangel, 26",
+        tomadorTipo: "PF"
+      },
+      resolvedFromReference: false
+    });
+
+    const parsed = await interpretFiscalMessageWithLLM({
+      messageText: "qual a senha do wifi?",
+      aiClientMock: aiClientEchoMock,
+      currentConferenceState: {
+        tomadorNome: "Miller Mendonça Pessanha",
+        tomadorCpfCnpj: "12585736792",
+        tomadorEmail: "millerpessanha@gmail.com",
+        tomadorEndereco: "Rua Sebastião Rangel, 26",
+        tomadorTipo: "PF"
+      }
+    });
+
+    assert.strictEqual(parsed.cadastralUpdates.tomadorNome, null, "Deve descartar tomadorNome idêntico ao atual");
+    assert.strictEqual(parsed.cadastralUpdates.tomadorCpfCnpj, null, "Deve descartar tomadorCpfCnpj idêntico ao atual");
+    assert.strictEqual(parsed.cadastralUpdates.tomadorEmail, null, "Deve descartar tomadorEmail idêntico ao atual");
+    assert.strictEqual(parsed.cadastralUpdates.tomadorEndereco, null, "Deve descartar tomadorEndereco idêntico ao atual");
+  });
 });
 
 

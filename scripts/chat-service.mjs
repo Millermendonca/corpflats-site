@@ -551,6 +551,48 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
   // 1) Se a reserva já possui descrição confirmada/editada (e não é o formato legado antigo), preserva;
   // 2) Se db.fiscalSettings.descriptionTemplate foi personalizado pelo gestor em /notas, aplica formatarDescricaoComTemplate;
   // 3) Caso contrário, usa buildStandardDescription (mesmo padrão da tela /notas).
+  const sanitizeSavedServiceDescription = (desc = "") => {
+    const s = String(desc || "").trim();
+    if (!s) return s;
+    const stdRegex = /(Nota\s+relativa\s+[àa]\s+hospedagem\s+(?:de|do|da|dos|das)\s+)([^\n.]+?)((?:,\s*no\s+Flat\s+[^\n.]+)?\.?)(?=\r?\n|$)/i;
+    const stdMatch = s.match(stdRegex);
+    if (!stdMatch) return s;
+    const prefix = stdMatch[1];
+    let currentNames = stdMatch[2].trim();
+    let flatSuffix = stdMatch[3] || "";
+    const innerFlatMatch = currentNames.match(/^(.+?)(,\s*no\s+Flat\s+.+)$/i);
+    if (innerFlatMatch) {
+      currentNames = innerFlatMatch[1].trim();
+      flatSuffix = innerFlatMatch[2] + flatSuffix;
+    }
+    const parts = currentNames.split(/\s*(?:,|\be\b)\s*/i).map(p => p.trim()).filter(Boolean);
+    const validParts = parts.filter(part => {
+      const clean = part.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, "").trim();
+      if (!clean || clean.length < 2) return false;
+      if (/[^\p{L}\s'.-]/u.test(clean)) return false;
+      if (/\b(?:j[aá]|informei|mandei|enviei|falei|disse|escrevi|passei|coloquei|acima|cima|olha|conforme|antes|in[ií]cio|conversa|h[oó]spede|acompanhante|pessoa|descri[cç][aã]o|nota|fiscal|valor|emitir)\b/i.test(clean)) {
+        return false;
+      }
+      return true;
+    });
+    if (validParts.length > 0 && validParts.length < parts.length) {
+      const joined = validParts.length === 1
+        ? validParts[0]
+        : validParts.length === 2
+          ? `${validParts[0]} e ${validParts[1]}`
+          : `${validParts.slice(0, -1).join(", ")} e ${validParts[validParts.length - 1]}`;
+      return s.replace(stdRegex, `${prefix}${joined}${flatSuffix}`);
+    }
+    return s;
+  };
+
+  if (confFiscal?.descricaoServico) {
+    confFiscal.descricaoServico = sanitizeSavedServiceDescription(confFiscal.descricaoServico);
+  }
+  if (invDetails?.descricaoServico) {
+    invDetails.descricaoServico = sanitizeSavedServiceDescription(invDetails.descricaoServico);
+  }
+
   const hasCustomSavedDesc = Boolean(
     overlayMatchesActive &&
     confFiscal?.descricaoServico &&
