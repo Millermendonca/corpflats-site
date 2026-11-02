@@ -9096,19 +9096,71 @@ export function formatCpfOrCnpj(doc = "") {
 }
 
 /**
- * Monta descrição padrão para a estadia na NFS-e
+ * Monta descrição padrão do sistema para a estadia na NFS-e (idêntica ao padrão de /notas)
  */
-export function buildDefaultStayDescription(matchedReservation) {
-  if (!matchedReservation) {
-    return "SERVIÇOS DE HOSPEDAGEM EM FLAT MOBILIADO CORPFLATS. DIÁRIAS COM WI-FI, ENERGIA E LIMPEZA INCLUSA.";
+export function buildDefaultStayDescription(matchedReservation, options = {}) {
+  const guestName = String(
+    options.guestName ||
+    matchedReservation?.guestName ||
+    (Array.isArray(matchedReservation?.guests) && matchedReservation.guests[0]?.name) ||
+    options.tomadorNome ||
+    ""
+  ).trim();
+
+  if (!matchedReservation && !guestName && !options.flatNumber) {
+    return (
+      "Nota relativa à hospedagem de Hóspede.\n" +
+      "Local: CorpFlats.\n" +
+      "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ\n" +
+      "Quantidade de diárias: 1"
+    );
   }
-  const flat = matchedReservation.flatNumber ? `Flat ${matchedReservation.flatNumber}` : "Flat Mobiliado CorpFlats";
-  const inDate = formatDateBr(matchedReservation.checkinDate);
-  const outDate = formatDateBr(matchedReservation.checkoutDate);
-  const dates = inDate && outDate ? ` (${inDate} a ${outDate})` : "";
-  const code = matchedReservation.code || matchedReservation.id;
-  const resCode = code ? ` Reserva #${code}.` : "";
-  return `Diárias de hospedagem no ${flat}${dates}.${resCode} Serviços de hospedagem com Wi-Fi e condomínio inclusos.`;
+
+  const effectiveGuestName = guestName || "Hóspede";
+  const flat = matchedReservation?.flatNumber !== undefined && matchedReservation?.flatNumber !== null && String(matchedReservation.flatNumber).trim() !== ""
+    ? String(matchedReservation.flatNumber).trim()
+    : (options.flatNumber ? String(options.flatNumber).trim() : "");
+
+  const checkin = matchedReservation?.checkinDate
+    ? String(matchedReservation.checkinDate).substring(0, 10)
+    : (options.checkIn ? String(options.checkIn).substring(0, 10) : "");
+
+  const rawCheckout = (matchedReservation?.earlyCheckout && matchedReservation?.originalCheckoutDate)
+    ? matchedReservation.originalCheckoutDate
+    : matchedReservation?.checkoutDate;
+  const checkout = rawCheckout
+    ? String(rawCheckout).substring(0, 10)
+    : (options.checkOut ? String(options.checkOut).substring(0, 10) : "");
+
+  let diarias = Number(matchedReservation?.quantidadeDiarias || matchedReservation?.diarias || matchedReservation?.nights || options.quantidadeDiarias) || 1;
+  if (checkin && checkout) {
+    const t1 = new Date(checkin).getTime();
+    const t2 = new Date(checkout).getTime();
+    if (!isNaN(t1) && !isNaN(t2) && t2 > t1) {
+      diarias = Math.max(1, Math.round((t2 - t1) / (1000 * 60 * 60 * 24)));
+    }
+  }
+
+  let desc = `Nota relativa à hospedagem de ${effectiveGuestName}`;
+  if (flat) desc += `, no Flat ${flat}`;
+  desc += ".\nLocal: CorpFlats.";
+  desc += "\nRua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ";
+  if (diarias) desc += `\nQuantidade de diárias: ${diarias}`;
+  if (checkin) desc += `\nCheck-in: ${checkin}`;
+  if (checkout) desc += `\nCheck-out: ${checkout}`;
+
+  const idParts = [];
+  const b2bNumber = matchedReservation?.b2bReservationNumber || matchedReservation?.externalReservationNumber || options.b2bNumber;
+  const rloc = matchedReservation?.b2bLocatorRloc || options.rloc;
+  const costCenter = matchedReservation?.costCenter || options.costCenter;
+  if (b2bNumber) idParts.push(`Reserva B2B Nº ${b2bNumber}`);
+  if (rloc) idParts.push(`RLOC: ${rloc}`);
+  if (costCenter) idParts.push(`CC: ${costCenter}`);
+  if (idParts.length > 0) {
+    desc += `\nRef.: ${idParts.join(" | ")}`;
+  }
+
+  return desc;
 }
 
 /**
@@ -9225,8 +9277,17 @@ export function isReservationCheckedOutForFiscal(reservation, db = null) {
 export function buildConferencePresentationMessage(conf, { isCheckedOut = true } = {}) {
   const docFmt = formatCpfOrCnpj(conf.tomadorCpfCnpj);
   const valFmt = formatMoneyBr(conf.valorServico);
-  const addrFmt = conf.tomadorEndereco
-    ? `${conf.tomadorEndereco}${conf.tomadorNumero && conf.tomadorNumero !== "S/N" ? ", " + conf.tomadorNumero : ""}${conf.tomadorCidade ? " - " + conf.tomadorCidade + "/" + (conf.tomadorUf || "RJ") : ""}`
+  const rawEnd = String(conf.tomadorEndereco || "").trim();
+  const rawNum = String(conf.tomadorNumero || "").trim();
+  const hasNumInEnd = Boolean(rawNum && (rawEnd.endsWith(`, ${rawNum}`) || rawEnd.includes(`, ${rawNum} `) || rawEnd.includes(`, ${rawNum}-`)));
+  const numPart = rawNum && rawNum !== "S/N" && !hasNumInEnd ? `, ${rawNum}` : "";
+  const rawBairro = String(conf.tomadorBairro || "").trim();
+  const bairroPart = rawBairro && !rawEnd.toLowerCase().includes(rawBairro.toLowerCase()) ? ` - ${rawBairro}` : "";
+  const cidadeUfPart = conf.tomadorCidade ? `${bairroPart ? ", " : " - "}${conf.tomadorCidade} - ${conf.tomadorUf || "RJ"}` : "";
+  const cepDigits = String(conf.tomadorCep || "").replace(/\D/g, "");
+  const cepPart = cepDigits ? `, CEP ${cepDigits}` : "";
+  const addrFmt = rawEnd
+    ? `${rawEnd}${numPart}${bairroPart}${cidadeUfPart}${cepPart}`
     : "Endereço cadastrado";
 
   const footerPrompt = isCheckedOut
@@ -10546,6 +10607,22 @@ export async function handleWhatsAppFiscalFlow({
 
   // ── ETAPA 1: Usuário já está na fase de conferência e respondeu à mensagem ──
   if (isAwaitingConferenceConfirmation) {
+    // Migração automática de descrições legadas fora do padrão para o padrão de /notas
+    if (typeof conf.descricaoServico === "string" && conf.descricaoServico.includes("Serviços de hospedagem com Wi-Fi e condomínio inclusos")) {
+      const resForLegacy = Array.isArray(db.reservations)
+        ? db.reservations.find(r =>
+            r && (
+              (conf.reservationId && Number(r.id) === Number(conf.reservationId)) ||
+              (conf.reservationCode && String(r.code) === String(conf.reservationCode))
+            )
+          )
+        : null;
+      conf.descricaoServico = buildDefaultStayDescription(resForLegacy, {
+        guestName: resForLegacy?.guestName || conf.tomadorNome,
+        flatNumber: conf.flatNumber
+      });
+    }
+
     // 1.0 Pré-extração de dados cadastrais e descrição (R2)
     const newCnpj = extractCnpj(messageText);
     const newCpf = extractCpf(messageText);
@@ -10553,12 +10630,18 @@ export async function handleWhatsAppFiscalFlow({
     const newCep = extractCep(messageText);
     const matchName = messageText.match(/\b(?:nome|raz[aã]o\s*social|empresa|tomador)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i);
 
+    // Captura pedido de acrescentar/incluir algo na descrição padrão
+    const matchAppendDesc = messageText.match(/\b(?:adiciona(?:r)?|inclui(?:r)?|acrescenta(?:r)?|coloca(?:r)?(?:\s+tamb[eé]m)?)\s+(?:na\s+)?(?:descri[cç][aã]o|discrimina[cç][aã]o)\s*(?:que|:|=|-)?\s*([^,\n\r]+?)(?=\s*(?:,\s*|\s+e\s+(?:o\s+)?valor|\s+valor\b|$))/i);
+
     // Captura a descrição delimitando antes de comandos de valor ("e o valor...", "valor...")
-    const matchDesc = messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+?)(?=\s*(?:,\s*|\s+e\s+(?:o\s+)?valor|\s+valor\b|$))/i) ||
-      messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i);
+    const matchDesc = !matchAppendDesc && (
+      messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+?)(?=\s*(?:,\s*|\s+e\s+(?:o\s+)?valor|\s+valor\b|$))/i) ||
+      messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)\s*(?:para|e|:|=|-)+\s*([^,\n\r]+)/i)
+    );
 
     // Isola o texto fora da descrição para evitar que datas, diárias ou flats da descrição vazem para o parser monetário
-    const textWithoutDesc = matchDesc ? messageText.replace(matchDesc[0], " ") : messageText;
+    const descMatchedRaw = matchAppendDesc ? matchAppendDesc[0] : (matchDesc ? matchDesc[0] : null);
+    const textWithoutDesc = descMatchedRaw ? messageText.replace(descMatchedRaw, " ") : messageText;
 
     // 1.1 Trava de Valor (R2)
     // Exige intenção explícita de alteração de preço/valor (termos de valor ou símbolos monetários fora da descrição)
@@ -10574,7 +10657,12 @@ export async function handleWhatsAppFiscalFlow({
 
     if (isValueChange) {
       // Se houver alteração descritiva ou cadastral concomitante, registra em conf antes de gravar pendingFiscalInvoice
-      if (matchDesc) conf.descricaoServico = matchDesc[1].trim();
+      if (matchAppendDesc) {
+        const extra = matchAppendDesc[1].trim();
+        conf.descricaoServico = conf.descricaoServico ? `${conf.descricaoServico}\n${extra}` : extra;
+      } else if (matchDesc) {
+        conf.descricaoServico = matchDesc[1].trim();
+      }
       if (matchName) conf.tomadorNome = toTitleCase(matchName[1].trim());
       if (newEmail) conf.tomadorEmail = newEmail;
 
@@ -10676,7 +10764,11 @@ export async function handleWhatsAppFiscalFlow({
       conf.tomadorNome = toTitleCase(matchName[1].trim());
       hasCadastralChanges = true;
     }
-    if (matchDesc) {
+    if (matchAppendDesc) {
+      const extra = matchAppendDesc[1].trim();
+      conf.descricaoServico = conf.descricaoServico ? `${conf.descricaoServico}\n${extra}` : extra;
+      hasCadastralChanges = true;
+    } else if (matchDesc) {
       conf.descricaoServico = matchDesc[1].trim();
       hasCadastralChanges = true;
     }
@@ -10959,7 +11051,9 @@ export async function handleWhatsAppFiscalFlow({
     }
 
     const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-    const desc = buildDefaultStayDescription(matchedReservation);
+    const desc = buildDefaultStayDescription(matchedReservation, {
+      guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || contactDisplayName
+    });
 
     conv.fiscalConferenceState = {
       status: "awaiting_confirmation",
@@ -11020,7 +11114,9 @@ export async function handleWhatsAppFiscalFlow({
     const finalName = toTitleCase(nameFromText || crmPf?.tomadorNome || contactDisplayName || "Hóspede");
 
     const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-    const desc = buildDefaultStayDescription(matchedReservation);
+    const desc = buildDefaultStayDescription(matchedReservation, {
+      guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || finalName
+    });
 
     conv.fiscalConferenceState = {
       status: "awaiting_confirmation",
@@ -11068,7 +11164,9 @@ export async function handleWhatsAppFiscalFlow({
       });
       if (crmPj && crmPj.tomadorTipo === "PJ" && crmPj.tomadorCpfCnpj) {
         const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-        const desc = buildDefaultStayDescription(matchedReservation);
+        const desc = buildDefaultStayDescription(matchedReservation, {
+          guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || contactDisplayName
+        });
         conv.fiscalConferenceState = {
           status: "awaiting_confirmation",
           reservationId: matchedReservation?.id,
@@ -11102,7 +11200,9 @@ export async function handleWhatsAppFiscalFlow({
       });
       if (crmPf && crmPf.tomadorCpfCnpj) {
         const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-        const desc = buildDefaultStayDescription(matchedReservation);
+        const desc = buildDefaultStayDescription(matchedReservation, {
+          guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || crmPf.tomadorNome
+        });
         conv.fiscalConferenceState = {
           status: "awaiting_confirmation",
           reservationId: matchedReservation?.id,
@@ -11138,7 +11238,9 @@ export async function handleWhatsAppFiscalFlow({
 
   if (crmTomador && crmTomador.tomadorCpfCnpj) {
     const valTotal = Number(matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
-    const desc = buildDefaultStayDescription(matchedReservation);
+    const desc = buildDefaultStayDescription(matchedReservation, {
+      guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || crmTomador.tomadorNome
+    });
 
     conv.fiscalConferenceState = {
       status: "awaiting_confirmation",
@@ -12339,7 +12441,9 @@ export async function generateSofiaRealtimeAssistance({
         senderName: guestName
       });
       const hasCrmNfse = Boolean(crmNfseTomador && crmNfseTomador.tomadorCpfCnpj);
-      const nfseDesc = buildDefaultStayDescription(res);
+      const nfseDesc = buildDefaultStayDescription(res, {
+        guestName: res?.guestName || guestName || crmNfseTomador?.tomadorNome
+      });
       const nfseVal = Number(res?.totalAmount || res?.valorTotal || 600);
       const nfseMsg = hasCrmNfse
         ? buildConferencePresentationMessage(

@@ -232,10 +232,13 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     assert.match(result.replyText, /12\.345\.678\/0001-95/, "Deve exibir o CNPJ formatado do tomador");
     assert.match(result.replyText, /financeiro@tecnopetro\.com\.br/i, "Deve exibir o e-mail do tomador");
 
-    // 2. Descrição da estadia
-    assert.match(result.replyText, /Flat 605/i, "Deve conter a identificação do flat na descrição");
-    assert.match(result.replyText, /01\/11\/2026/i, "Deve conter a data de check-in");
-    assert.match(result.replyText, /05\/11\/2026/i, "Deve conter a data de check-out");
+    // 2. Descrição da estadia (padrão do sistema /notas)
+    assert.match(result.replyText, /Nota relativa à hospedagem de Miller Ferreira, no Flat 605\./, "Deve conter o cabeçalho padrão de /notas com hóspede e flat");
+    assert.match(result.replyText, /Local: CorpFlats\./, "Deve conter o local CorpFlats");
+    assert.match(result.replyText, /Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ/, "Deve conter o endereço do local");
+    assert.match(result.replyText, /Quantidade de diárias: 4/, "Deve conter a quantidade de diárias calculada");
+    assert.match(result.replyText, /Check-in: 2026-11-01/, "Deve conter a data de check-in no formato padrão");
+    assert.match(result.replyText, /Check-out: 2026-11-05/, "Deve conter a data de check-out no formato padrão");
 
     // 3. Valor total
     assert.match(result.replyText, /600,00/, "Deve apresentar o valor total de R$ 600,00");

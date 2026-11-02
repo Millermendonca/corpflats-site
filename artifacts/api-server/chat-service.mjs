@@ -38,7 +38,7 @@ export function formatarDescricaoComTemplate(params, templateStr = DEFAULT_FISCA
     tomadorNome = "Hóspede",
     tomadorCpfCnpj = "",
     localNome = "CorpFlats",
-    localEndereco = "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes/RJ",
+    localEndereco = "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
     flatNumber = "",
     checkIn = "",
     checkOut = "",
@@ -46,22 +46,12 @@ export function formatarDescricaoComTemplate(params, templateStr = DEFAULT_FISCA
     valorServico = "0.00"
   } = params;
 
-  function formatarData(isoDate) {
-    if (!isoDate) return "";
-    const date = new Date(isoDate + "T12:00:00");
-    if (isNaN(date.getTime())) return isoDate;
-    const diasSemana = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-    const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
-    const dia = diasSemana[date.getDay()];
-    const mes = meses[date.getMonth()];
-    return `${dia}, ${date.getDate()} de ${mes}. de ${date.getFullYear()}`;
-  }
-
-  const plural = quantidadeDiarias === 1 ? "diária" : "diárias";
-  const artigo = artigoParaNome(tomadorNome);
-  const flatInfo = flatNumber ? ` (Apartamento ${flatNumber})` : "";
-  const checkinInfo = checkIn ? `Check-in: ${formatarData(checkIn)}` : "";
-  const checkoutInfo = checkOut ? `Check-out: ${formatarData(checkOut)}` : "";
+  const cleanCheckIn = checkIn ? String(checkIn).substring(0, 10) : "";
+  const cleanCheckOut = checkOut ? String(checkOut).substring(0, 10) : "";
+  const artigo = "de";
+  const flatInfo = flatNumber ? `, no Flat ${flatNumber}` : "";
+  const checkinInfo = cleanCheckIn ? `Check-in: ${cleanCheckIn}` : "";
+  const checkoutInfo = cleanCheckOut ? `Check-out: ${cleanCheckOut}` : "";
   const valorTotalFmt = Number(valorServico || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   let result = templateStr || DEFAULT_FISCAL_TEMPLATE;
@@ -72,9 +62,9 @@ export function formatarDescricaoComTemplate(params, templateStr = DEFAULT_FISCA
   result = result.replace(/{flat_info}/g, flatInfo);
   result = result.replace(/{local_nome}/g, localNome);
   result = result.replace(/{local_endereco}/g, localEndereco);
-  result = result.replace(/{diarias}/g, `${quantidadeDiarias} ${plural}`);
-  result = result.replace(/{checkin}/g, checkIn ? formatarData(checkIn) : "");
-  result = result.replace(/{checkout}/g, checkOut ? formatarData(checkOut) : "");
+  result = result.replace(/{diarias}/g, `${quantidadeDiarias}`);
+  result = result.replace(/{checkin}/g, cleanCheckIn);
+  result = result.replace(/{checkout}/g, cleanCheckOut);
   result = result.replace(/{checkin_info}/g, checkinInfo);
   result = result.replace(/{checkout_info}/g, checkoutInfo);
   result = result.replace(/{valor_total}/g, valorTotalFmt);

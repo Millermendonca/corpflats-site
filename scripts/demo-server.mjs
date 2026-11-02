@@ -1420,132 +1420,274 @@ export function ensureSystemUsers(database) {
 export function getDefaultMinibarProducts() {
   return [
     {
-      id: "prod_agua_sem_gas",
-      name: "Água Mineral sem Gás 500ml",
-      category: "bebidas",
-      price: 6.00,
-      cost: 3.00,
-      imageUrl: "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=400&q=80",
-      description: "Água mineral natural sem gás 500ml",
+      id: "prod_achocolatado",
+      name: "Achocolatado",
+      category: "Bebidas",
+      price: 12.00,
+      cost: 6.00,
+      defaultQuantity: 1,
+      imageUrl: "/images/frigobar/achocolatado.png",
+      description: "Bebida láctea achocolatada pronta para consumo",
       active: true,
       isCourtesy: false,
       sortOrder: 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
     },
     {
-      id: "prod_agua_com_gas",
-      name: "Água Mineral com Gás 500ml",
-      category: "bebidas",
-      price: 6.00,
-      cost: 3.00,
-      imageUrl: "https://images.unsplash.com/photo-1560023907-5f339617ea30?w=400&q=80",
-      description: "Água mineral natural com gás 500ml",
+      id: "prod_agua_mineral_copo",
+      name: "Água Mineral Copo",
+      category: "Bebidas",
+      price: 5.00,
+      cost: 2.00,
+      defaultQuantity: 4,
+      imageUrl: "/images/frigobar/agua_mineral_copo.png",
+      description: "Água mineral natural em copo selado 200ml",
       active: true,
       isCourtesy: false,
       sortOrder: 2,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
     },
     {
-      id: "prod_coca_cola",
-      name: "Coca-Cola Lata 350ml",
-      category: "bebidas",
-      price: 8.00,
-      cost: 4.50,
-      imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=400&q=80",
-      description: "Refrigerante Coca-Cola original lata 350ml",
+      id: "prod_agua_mineral_garrafa",
+      name: "Água Mineral Garrafa",
+      category: "Bebidas",
+      price: 7.00,
+      cost: 3.00,
+      defaultQuantity: 5,
+      imageUrl: "/images/frigobar/agua_mineral_garrafa.png",
+      description: "Água mineral natural garrafa 500ml",
       active: true,
       isCourtesy: false,
       sortOrder: 3,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
     },
     {
-      id: "prod_coca_zero",
-      name: "Coca-Cola Sem Açúcar 350ml",
-      category: "bebidas",
-      price: 8.00,
-      cost: 4.50,
-      imageUrl: "https://images.unsplash.com/photo-1554866585-cd94860890b7?w=400&q=80",
-      description: "Refrigerante Coca-Cola sem açúcar lata 350ml",
+      id: "prod_cerveja_long_neck",
+      name: "Cerveja Long Neck",
+      category: "Bebidas",
+      price: 20.00,
+      cost: 9.00,
+      defaultQuantity: 2,
+      imageUrl: "/images/frigobar/cerveja_long_neck.png",
+      description: "Cerveja puro malte garrafa long neck 330ml",
       active: true,
       isCourtesy: false,
       sortOrder: 4,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
     },
     {
-      id: "prod_heineken",
-      name: "Cerveja Heineken Long Neck 330ml",
-      category: "cervejas",
-      price: 14.00,
-      cost: 8.00,
-      imageUrl: "https://images.unsplash.com/photo-1618886614638-80e3c103d31a?w=400&q=80",
-      description: "Cerveja Heineken puro malte garrafa 330ml",
+      id: "prod_energetico",
+      name: "Energético",
+      category: "Bebidas",
+      price: 28.00,
+      cost: 12.00,
+      defaultQuantity: 1,
+      imageUrl: "/images/frigobar/energetico.png",
+      description: "Bebida energética revigorante lata 250ml",
       active: true,
       isCourtesy: false,
       sortOrder: 5,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
     },
     {
-      id: "prod_stella",
-      name: "Cerveja Stella Artois Long Neck 330ml",
-      category: "cervejas",
+      id: "prod_refrigerante",
+      name: "Refrigerante",
+      category: "Bebidas",
       price: 12.00,
-      cost: 7.00,
-      imageUrl: "https://images.unsplash.com/photo-1608270199049-5f25ebff2783?w=400&q=80",
-      description: "Cerveja Stella Artois garrafa 330ml",
+      cost: 5.00,
+      defaultQuantity: 4,
+      imageUrl: "/images/frigobar/refrigerante.png",
+      description: "Refrigerante lata 350ml",
       active: true,
       isCourtesy: false,
       sortOrder: 6,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
     },
     {
-      id: "prod_cortesia_kit",
-      name: "Kit Cortesia Boas-Vindas (2 Nespresso + Snacks)",
-      category: "cortesias",
-      price: 0.00,
-      cost: 6.50,
-      imageUrl: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&q=80",
-      description: "Cortesia de boas-vindas CorpFlats: 2 cápsulas Nespresso + amendoim e balas (gratuito 1x por estadia)",
+      id: "prod_smirnoff_ice",
+      name: "Smirnoff Ice",
+      category: "Bebidas",
+      price: 28.00,
+      cost: 13.00,
+      defaultQuantity: 1,
+      imageUrl: "/images/frigobar/smirnoff_ice.png",
+      description: "Bebida alcoólica mista Smirnoff Ice garrafa 275ml",
       active: true,
-      isCourtesy: true,
-      courtesyLimitPerStay: 1,
-      extraPaidProductId: "prod_nespresso_extra",
+      isCourtesy: false,
       sortOrder: 7,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
     },
     {
-      id: "prod_nespresso_extra",
-      name: "Cápsula Nespresso Avulsa",
-      category: "bebidas",
-      price: 5.00,
-      cost: 3.00,
-      imageUrl: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&q=80",
-      description: "Cápsula Nespresso avulsa adicional para estadias longas",
+      id: "prod_suco_fruta",
+      name: "Suco de Fruta",
+      category: "Bebidas",
+      price: 12.00,
+      cost: 5.00,
+      defaultQuantity: 2,
+      imageUrl: "/images/frigobar/suco_fruta.png",
+      description: "Suco de fruta néctar natural garrafa 300ml",
       active: true,
       isCourtesy: false,
       sortOrder: 8,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
     },
     {
-      id: "prod_amendoim_extra",
-      name: "Amendoim Japonês Crocante 60g",
-      category: "snacks",
-      price: 6.00,
-      cost: 3.00,
-      imageUrl: "https://images.unsplash.com/photo-1563227812-0ea4c22e6cc8?w=400&q=80",
-      description: "Snack de amendoim crocante pacote 60g",
+      id: "prod_suco_uva_integral",
+      name: "Suco de Uva Integral",
+      category: "Bebidas",
+      price: 25.00,
+      cost: 12.00,
+      defaultQuantity: 1,
+      imageUrl: "/images/frigobar/suco_uva_integral.png",
+      description: "Suco de uva 100% integral garrafa 300ml",
       active: true,
       isCourtesy: false,
       sortOrder: 9,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_barra_cereal",
+      name: "Barra de Cereal",
+      category: "Petiscos",
+      price: 12.00,
+      cost: 4.50,
+      defaultQuantity: 2,
+      imageUrl: "/images/frigobar/barra_cereal.png",
+      description: "Barra de cereal nutritiva aveia e mel",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 10,
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_batata",
+      name: "Batata",
+      category: "Petiscos",
+      price: 28.00,
+      cost: 12.00,
+      defaultQuantity: 1,
+      imageUrl: "/images/frigobar/batata.png",
+      description: "Batata frita crocante aperitivo",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 11,
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_biscoito_salgado",
+      name: "Biscoito Salgado",
+      category: "Petiscos",
+      price: 12.00,
+      cost: 5.00,
+      defaultQuantity: 1,
+      imageUrl: "/images/frigobar/biscoito_salgado.png",
+      description: "Biscoito salgado crocante pacote aperitivo",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 12,
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_castanha_caju",
+      name: "Castanha de Caju",
+      category: "Petiscos",
+      price: 14.00,
+      cost: 6.00,
+      defaultQuantity: 2,
+      imageUrl: "/images/frigobar/castanha_caju.png",
+      description: "Castanha de caju torrada e salgada pacote",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 13,
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_chiclete",
+      name: "Chiclete",
+      category: "Petiscos",
+      price: 8.00,
+      cost: 3.00,
+      defaultQuantity: 2,
+      imageUrl: "/images/frigobar/chiclete.png",
+      description: "Goma de mascar refrescante menta",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 14,
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_chocolate",
+      name: "Chocolate",
+      category: "Petiscos",
+      price: 12.00,
+      cost: 5.00,
+      defaultQuantity: 2,
+      imageUrl: "/images/frigobar/chocolate.png",
+      description: "Tablete de chocolate ao leite tradicional",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 15,
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_chocolate_kinder_bueno",
+      name: "Chocolate Kinder Bueno",
+      category: "Petiscos",
+      price: 26.00,
+      cost: 12.00,
+      defaultQuantity: 1,
+      imageUrl: "/images/frigobar/chocolate_kinder_bueno.png",
+      description: "Chocolate wafer recheado com creme de avelã Kinder Bueno",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 16,
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_chocolate_kitkat_snickers",
+      name: "Chocolate Kit Kat / Snickers",
+      category: "Petiscos",
+      price: 16.00,
+      cost: 7.00,
+      defaultQuantity: 2,
+      imageUrl: "/images/frigobar/chocolate_kitkat_snickers.png",
+      description: "Chocolate crocante Kit Kat / Snickers",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 17,
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_cookies",
+      name: "Cookies",
+      category: "Petiscos",
+      price: 12.00,
+      cost: 5.00,
+      defaultQuantity: 1,
+      imageUrl: "/images/frigobar/cookies.png",
+      description: "Biscoitos cookies crocantes com gotas de chocolate",
+      active: true,
+      isCourtesy: false,
+      sortOrder: 18,
+      createdAt: "2026-11-02T05:00:00.000Z",
+      updatedAt: "2026-11-02T05:00:00.000Z"
     }
   ];
 }
@@ -1553,15 +1695,24 @@ export function getDefaultMinibarProducts() {
 export function getDefaultMinibarStock() {
   return {
     globalTemplate: [
-      { productId: "prod_agua_sem_gas", defaultQuantity: 4 },
-      { productId: "prod_agua_com_gas", defaultQuantity: 2 },
-      { productId: "prod_coca_cola", defaultQuantity: 2 },
-      { productId: "prod_coca_zero", defaultQuantity: 2 },
-      { productId: "prod_heineken", defaultQuantity: 2 },
-      { productId: "prod_stella", defaultQuantity: 2 },
-      { productId: "prod_cortesia_kit", defaultQuantity: 1, isCourtesy: true },
-      { productId: "prod_nespresso_extra", defaultQuantity: 2 },
-      { productId: "prod_amendoim_extra", defaultQuantity: 2 }
+      { productId: "prod_achocolatado", defaultQuantity: 1, quantity: 1 },
+      { productId: "prod_agua_mineral_copo", defaultQuantity: 4, quantity: 4 },
+      { productId: "prod_agua_mineral_garrafa", defaultQuantity: 5, quantity: 5 },
+      { productId: "prod_cerveja_long_neck", defaultQuantity: 2, quantity: 2 },
+      { productId: "prod_energetico", defaultQuantity: 1, quantity: 1 },
+      { productId: "prod_refrigerante", defaultQuantity: 4, quantity: 4 },
+      { productId: "prod_smirnoff_ice", defaultQuantity: 1, quantity: 1 },
+      { productId: "prod_suco_fruta", defaultQuantity: 2, quantity: 2 },
+      { productId: "prod_suco_uva_integral", defaultQuantity: 1, quantity: 1 },
+      { productId: "prod_barra_cereal", defaultQuantity: 2, quantity: 2 },
+      { productId: "prod_batata", defaultQuantity: 1, quantity: 1 },
+      { productId: "prod_biscoito_salgado", defaultQuantity: 1, quantity: 1 },
+      { productId: "prod_castanha_caju", defaultQuantity: 2, quantity: 2 },
+      { productId: "prod_chiclete", defaultQuantity: 2, quantity: 2 },
+      { productId: "prod_chocolate", defaultQuantity: 2, quantity: 2 },
+      { productId: "prod_chocolate_kinder_bueno", defaultQuantity: 1, quantity: 1 },
+      { productId: "prod_chocolate_kitkat_snickers", defaultQuantity: 2, quantity: 2 },
+      { productId: "prod_cookies", defaultQuantity: 1, quantity: 1 }
     ],
     flatOverrides: {}
   };
@@ -9245,8 +9396,8 @@ async function _loadDatabaseImpl() {
       if (!db.botActionsSettings) db.botActionsSettings = getBotActionsSettings();
       if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
       if (!db.smartFlats || typeof db.smartFlats !== "object" || Array.isArray(db.smartFlats)) db.smartFlats = {};
-      if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0) db.minibarProducts = getDefaultMinibarProducts();
-      if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate)) db.minibarDefaultStock = getDefaultMinibarStock();
+      if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0 || db.minibarProducts.length !== 18 || !db.minibarProducts.some(p => p.id === "prod_achocolatado")) db.minibarProducts = getDefaultMinibarProducts();
+      if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length !== 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
       if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
       if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
       if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
@@ -9503,8 +9654,8 @@ async function _loadDatabaseImpl() {
     if (!db.reservationCommunications) db.reservationCommunications = [];
     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
-    if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0) db.minibarProducts = getDefaultMinibarProducts();
-    if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate)) db.minibarDefaultStock = getDefaultMinibarStock();
+    if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0 || db.minibarProducts.length !== 18 || !db.minibarProducts.some(p => p.id === "prod_achocolatado")) db.minibarProducts = getDefaultMinibarProducts();
+    if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length !== 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
     if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
     if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
     if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
@@ -59480,7 +59631,7 @@ app.post("/api/minibar/products", (req, res) => {
       return res.status(403).json({ success: false, error: "Acesso restrito à administração e supervisão." });
     }
 
-    const { name, category, price, cost, imageUrl, description, active, isCourtesy, courtesyLimitPerStay, extraPaidProductId, sortOrder } = req.body || {};
+    const { name, category, price, cost, imageUrl, description, active, isCourtesy, courtesyLimitPerStay, extraPaidProductId, sortOrder, defaultQuantity } = req.body || {};
     if (!name || typeof price !== "number") {
       return res.status(400).json({ success: false, error: "Nome e preço são obrigatórios." });
     }
@@ -59490,10 +59641,11 @@ app.post("/api/minibar/products", (req, res) => {
     const newProd = {
       id,
       name: String(name).trim(),
-      category: category || "bebidas",
+      category: category || "Bebidas",
       price: Number(price) || 0,
       cost: Number(cost) || 0,
-      imageUrl: imageUrl || "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=400&q=80",
+      defaultQuantity: Number(defaultQuantity) || 1,
+      imageUrl: imageUrl || "/images/frigobar/achocolatado.png",
       description: description || "",
       active: active !== false,
       isCourtesy: Boolean(isCourtesy),
@@ -59525,7 +59677,7 @@ app.patch("/api/minibar/products/:id", (req, res) => {
       return res.status(404).json({ success: false, error: "Produto não encontrado." });
     }
 
-    const fields = ["name", "category", "price", "cost", "imageUrl", "description", "active", "isCourtesy", "courtesyLimitPerStay", "extraPaidProductId", "sortOrder"];
+    const fields = ["name", "category", "price", "cost", "imageUrl", "description", "active", "isCourtesy", "courtesyLimitPerStay", "extraPaidProductId", "sortOrder", "defaultQuantity"];
     for (const f of fields) {
       if (req.body?.[f] !== undefined) {
         prod[f] = req.body[f];
@@ -59577,14 +59729,26 @@ app.put("/api/minibar/default-stock", (req, res) => {
       return res.status(403).json({ success: false, error: "Acesso restrito à administração." });
     }
 
-    const { globalTemplate, flatOverrides } = req.body || {};
+    const { globalTemplate, flatOverrides, flatNumber, items } = req.body || {};
     if (!db.minibarDefaultStock) db.minibarDefaultStock = getDefaultMinibarStock();
 
     if (Array.isArray(globalTemplate)) {
-      db.minibarDefaultStock.globalTemplate = globalTemplate;
+      db.minibarDefaultStock.globalTemplate = globalTemplate.map(it => ({
+        productId: it.productId,
+        defaultQuantity: Number(it.defaultQuantity ?? it.quantity ?? 0),
+        quantity: Number(it.quantity ?? it.defaultQuantity ?? 0)
+      }));
     }
     if (flatOverrides && typeof flatOverrides === "object") {
       db.minibarDefaultStock.flatOverrides = flatOverrides;
+    }
+    if (flatNumber && Array.isArray(items)) {
+      if (!db.minibarDefaultStock.flatOverrides) db.minibarDefaultStock.flatOverrides = {};
+      db.minibarDefaultStock.flatOverrides[String(flatNumber)] = items.map(it => ({
+        productId: it.productId,
+        defaultQuantity: Number(it.defaultQuantity ?? it.quantity ?? 0),
+        quantity: Number(it.quantity ?? it.defaultQuantity ?? 0)
+      }));
     }
     saveDatabase("minibar_default_stock_updated");
     res.json({ success: true, defaultStock: db.minibarDefaultStock });
@@ -60497,7 +60661,7 @@ app.post("/api/minibar/flat-context", (req, res) => {
     const defaultTemplate = db.minibarDefaultStock?.flatOverrides?.[flatStr] || db.minibarDefaultStock?.globalTemplate || [];
     const defaultStock = {};
     for (const item of defaultTemplate) {
-      defaultStock[item.productId] = item.defaultQuantity;
+      defaultStock[item.productId] = item.defaultQuantity ?? item.quantity ?? 0;
     }
 
     const catalog = (db.minibarProducts || [])
@@ -60622,7 +60786,7 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
     const defaultTemplate = db.minibarDefaultStock?.flatOverrides?.[flatStr] || db.minibarDefaultStock?.globalTemplate || [];
     const defaultStock = {};
     for (const item of defaultTemplate) {
-      defaultStock[item.productId] = item.defaultQuantity;
+      defaultStock[item.productId] = item.defaultQuantity ?? item.quantity ?? 0;
     }
 
     const catalog = (db.minibarProducts || [])
