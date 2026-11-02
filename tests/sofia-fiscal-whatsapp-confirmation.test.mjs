@@ -31,7 +31,9 @@ import {
   formatMoneyBr,
   formatCpfOrCnpj,
   findContactAndReservation,
-  processAiInboundMessage
+  processAiInboundMessage,
+  interpretFiscalMessageWithLLM,
+  addGuestToServiceDescription
 } from "../artifacts/api-server/whatsapp-ai-service.mjs";
 import {
   extractIncomingMessageInfo,
@@ -1805,5 +1807,721 @@ describe("Sofia WhatsApp Fiscal Flow: Conferência, Confirmação, Trava de Valo
     );
     delete res605.confirmedFiscalData;
   });
+
+  // ─── Compreensão Semântica Inteligente com IA (LLM) no Fluxo Fiscal da Sofia ───
+
+  it("NL-CONF-1: Confirmações informais e gírias ('tá certinho, pode mandar ver', 'show de bola', 'fechou', 'por mim tá aprovado') acionam confirmação/emissão", async () => {
+    testDb.invoices = (testDb.invoices || []).filter(i => i.reservationId !== 605);
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = true;
+
+    const conv = {
+      id: "conv_nl_conf_1",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "tá certinho, pode mandar ver",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "emitted_nfse");
+    assert.strictEqual(conv.fiscalConferenceState.status, "emitted");
+
+    // Valida também variações semânticas adicionais via interpretFiscalMessageWithLLM
+    const slang1 = await interpretFiscalMessageWithLLM({ messageText: "show de bola" });
+    assert.strictEqual(slang1.isConfirmation, true, "show de bola deve ser classificado como confirmação");
+
+    const slang2 = await interpretFiscalMessageWithLLM({ messageText: "fechou" });
+    assert.strictEqual(slang2.isConfirmation, true, "fechou deve ser classificado como confirmação");
+
+    const slang3 = await interpretFiscalMessageWithLLM({ messageText: "por mim tá aprovado" });
+    assert.strictEqual(slang3.isConfirmation, true, "por mim tá aprovado deve ser classificado como confirmação");
+
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    testDb.invoices = (testDb.invoices || []).filter(i => i.reservationId !== 605);
+  });
+
+  it("NL-CONF-2: Negações retóricas e construções de dupla negação ('não tem nenhum erro, pode emitir', 'não precisa mudar nada, tá tudo perfeito') são reconhecidas como confirmação", async () => {
+    testDb.invoices = (testDb.invoices || []).filter(i => i.reservationId !== 605);
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = true;
+
+    const conv = {
+      id: "conv_nl_conf_2",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "não tem nenhum erro, pode emitir",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "emitted_nfse", "Negação retórica 'não tem nenhum erro, pode emitir' deve emitir com sucesso");
+    assert.strictEqual(conv.fiscalConferenceState.status, "emitted");
+
+    // Valida também 'não precisa mudar nada, tá tudo perfeito'
+    const negation2 = await interpretFiscalMessageWithLLM({ messageText: "não precisa mudar nada, tá tudo perfeito" });
+    assert.strictEqual(negation2.isConfirmation, true);
+    assert.strictEqual(negation2.isCancellation, false);
+
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    testDb.invoices = (testDb.invoices || []).filter(i => i.reservationId !== 605);
+  });
+
+  it("NL-CONF-3: Confirmações corporativas e formais ('Dados conferidos e aprovados pelo departamento financeiro, proceda com a emissão') confirmam com sucesso", async () => {
+    testDb.invoices = (testDb.invoices || []).filter(i => i.reservationId !== 605);
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = true;
+
+    const conv = {
+      id: "conv_nl_conf_3",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Dados conferidos e aprovados pelo departamento financeiro, proceda com a emissão",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "emitted_nfse");
+    assert.strictEqual(conv.fiscalConferenceState.status, "emitted");
+
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    testDb.invoices = (testDb.invoices || []).filter(i => i.reservationId !== 605);
+  });
+
+  it("NL-GUEST-1: Adição conversacional de hóspede ('favor acrescentar meu colega Carlos Eduardo como hóspede') atualiza descrição preservando cabeçalho oficial de /notas", async () => {
+    const conv = {
+      id: "conv_nl_guest_1",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "favor acrescentar meu colega Carlos Eduardo como hóspede",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "updated_conference_data");
+    assert.match(
+      conv.fiscalConferenceState.descricaoServico,
+      /Nota relativa à hospedagem de Miller Ferreira e Carlos Eduardo, no Flat 605\./,
+      "Cabeçalho oficial de /notas deve conter ambos os hóspedes"
+    );
+  });
+
+  it("NL-GUEST-2: Remoção de hóspede da descrição ('por favor retira o nome da Maria Silva da descrição, ela não ficou hospedada') remove o nome e reconstrói cabeçalho oficial", async () => {
+    const conv = {
+      id: "conv_nl_guest_2",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira e Maria Silva, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "por favor retira o nome da Maria Silva da descrição, ela não ficou hospedada",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "updated_conference_data");
+    assert.match(
+      conv.fiscalConferenceState.descricaoServico,
+      /Nota relativa à hospedagem de Miller Ferreira, no Flat 605\./,
+      "Deve reconstruir cabeçalho contendo apenas Miller Ferreira"
+    );
+    assert.ok(!/Maria Silva/i.test(conv.fiscalConferenceState.descricaoServico), "Não deve conter Maria Silva");
+  });
+
+  it("NL-GUEST-3: Substituição de hóspede na descrição ('na verdade quem ficou hospedado no flat foi o João Paulo da Costa, troca o nome aí') substitui o nome no cabeçalho", async () => {
+    const conv = {
+      id: "conv_nl_guest_3",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "na verdade quem ficou hospedado no flat foi o João Paulo da Costa, troca o nome aí",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "updated_conference_data");
+    assert.match(
+      conv.fiscalConferenceState.descricaoServico,
+      /Nota relativa à hospedagem de João Paulo da Costa, no Flat 605\./,
+      "Cabeçalho deve ser substituído pelo novo nome"
+    );
+    assert.ok(!/Miller Ferreira/i.test(conv.fiscalConferenceState.descricaoServico));
+  });
+
+  it("NL-CAD-1: Migração completa para PJ com CNPJ, Razão Social, E-mail e Endereço ('Preciso que a nota saia em nome da Petrobras. CNPJ 33.000.167/0001-01...') atualiza cadastro tomador", async () => {
+    const conv = {
+      id: "conv_nl_cad_1",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "Preciso que a nota saia em nome da Petrobras. CNPJ 33.000.167/0001-01, e-mail nf@petrobras.com.br, endereço Av. República do Chile, 65, Centro, Rio de Janeiro",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "updated_conference_data");
+    assert.strictEqual(conv.fiscalConferenceState.tomadorTipo, "PJ");
+    assert.strictEqual(conv.fiscalConferenceState.tomadorCpfCnpj, "33000167000101");
+    assert.strictEqual(conv.fiscalConferenceState.tomadorEmail, "nf@petrobras.com.br");
+    assert.match(conv.fiscalConferenceState.tomadorNome, /Petrobras/i);
+    assert.match(conv.fiscalConferenceState.tomadorEndereco, /República do Chile/i);
+  });
+
+  it("NL-CAD-2: Correção de CPF em linguagem natural ('o CPF tá errado, coloca o meu: 012.345.678-90') atualiza CPF do tomador sem alterar os demais campos", async () => {
+    const conv = {
+      id: "conv_nl_cad_2",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "o CPF tá errado, coloca o meu: 012.345.678-90",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "updated_conference_data");
+    assert.strictEqual(conv.fiscalConferenceState.tomadorCpfCnpj, "01234567890");
+    assert.strictEqual(conv.fiscalConferenceState.tomadorTipo, "PF");
+    assert.strictEqual(conv.fiscalConferenceState.tomadorEmail, "miller@corpflats.com.br");
+  });
+
+  it("NL-CAD-3: Ajuste isolado de e-mail de faturamento ('muda só o e-mail de envio para contas@holding.com.br') atualiza e-mail com sucesso", async () => {
+    const conv = {
+      id: "conv_nl_cad_3",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "muda só o e-mail de envio para contas@holding.com.br",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "updated_conference_data");
+    assert.strictEqual(conv.fiscalConferenceState.tomadorEmail, "contas@holding.com.br");
+  });
+
+  it("NL-CTX-1: Referência anafórica/contextual ('conforme disse antes, o nome é aquele que passei') não injeta lixo sintático no cabeçalho", async () => {
+    const conv = {
+      id: "conv_nl_ctx_1",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "conforme disse antes, o nome é aquele que passei",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.ok(!/Aquele Que Passei/i.test(conv.fiscalConferenceState.descricaoServico), "Não deve injetar 'Aquele Que Passei' como nome de hóspede");
+    assert.match(conv.fiscalConferenceState.descricaoServico, /Miller/i);
+  });
+
+  it("NL-CTX-2: Variações contextuais ('já mandei os dados no início da conversa') preservam os dados cadastrais intactos sem corrupção", async () => {
+    const conv = {
+      id: "conv_nl_ctx_2",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "já mandei os dados no início da conversa",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.ok(!/In[ií]cio/i.test(conv.fiscalConferenceState.descricaoServico), "Não deve corromper descrição com 'Início'");
+    assert.match(conv.fiscalConferenceState.tomadorNome, /Miller/i);
+    assert.ok(conv.fiscalConferenceState.tomadorCpfCnpj);
+  });
+
+  it("NL-VAL-1: Pedido informal de desconto com verbos coloquiais ('abaixa o valor pra 300', 'tem que ser 500 reais') engaja trava de valor com pending manager approval", async () => {
+    const conv = {
+      id: "conv_nl_val_1",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "abaixa o valor pra 300",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "value_lock_engaged");
+    assert.strictEqual(res.requestedValue, 300.00);
+    assert.strictEqual(conv.fiscalConferenceState.status, "pending_manager_approval");
+
+    const pending = testDb.pendingFiscalApprovals.find(p => p.id === res.pendingApprovalId);
+    assert.ok(pending, "Deve registrar a pendência de aprovação no banco de dados");
+    assert.strictEqual(pending.requestedValue, 300.00);
+
+    // Valida também 'tem que ser 500 reais' via parseFlexibleMoney
+    const val2 = parseFlexibleMoney("tem que ser 500 reais");
+    assert.strictEqual(Number(val2), 500);
+  });
+
+  it("NL-VAL-2: Cavalo de Troia (Confirmação aparente combinada com alteração de valor: 'está tudo certo, pode emitir, só muda o valor para 400 antes') dá prioridade absoluta à trava de valor e BLOQUEIA emissão", async () => {
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = true;
+
+    const conv = {
+      id: "conv_nl_val_2",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "está tudo certo, pode emitir, só muda o valor para 400 antes",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "value_lock_engaged", "Trava de valor deve sobrepor a confirmação aparente");
+    assert.notStrictEqual(res.action, "emitted_nfse", "JAMAIS deve emitir a nota fiscal quando houver alteração de valor pendente");
+    assert.strictEqual(res.requestedValue, 400.00);
+    assert.strictEqual(conv.fiscalConferenceState.status, "pending_manager_approval");
+  });
+
+  it("NL-VAL-3: Solicitação de alteração com valor por extenso ou gíria ('muda o preço para quinhentos reais', 'reduz para 400 conto') engaja trava de valor", async () => {
+    const conv = {
+      id: "conv_nl_val_3",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "muda o preço para quinhentos reais",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "value_lock_engaged");
+    assert.strictEqual(res.requestedValue, 500.00);
+
+    // Valida também 'reduz para 400 conto'
+    const valConto = parseFlexibleMoney("reduz para 400 conto");
+    assert.strictEqual(Number(valConto), 400);
+  });
+
+  it("NL-VAL-4: Falso positivo negativo de valor ('não precisa mudar o valor de 600 reais, pode emitir') NÃO engaja trava de valor e emite com sucesso", async () => {
+    testDb.invoices = (testDb.invoices || []).filter(i => i.reservationId !== 605);
+    const res605 = testDb.reservations.find(r => r.id === 605);
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    delete res605.confirmedFiscalData;
+    res605.checkoutDone = true;
+
+    const conv = {
+      id: "conv_nl_val_4",
+      phone: "22998505276",
+      name: "Miller Ferreira",
+      messages: [],
+      fiscalConferenceState: {
+        status: "awaiting_confirmation",
+        reservationId: 605,
+        reservationCode: "RES-605-TEST",
+        flatNumber: "605",
+        tomadorNome: "Miller Ferreira",
+        tomadorCpfCnpj: "11144477735",
+        tomadorTipo: "PF",
+        tomadorEmail: "miller@corpflats.com.br",
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats.",
+        valorOriginal: 600.00,
+        valorServico: 600.00
+      }
+    };
+
+    const res = await handleWhatsAppFiscalFlow({
+      db: testDb,
+      cleanTarget: "22998505276",
+      messageText: "não precisa mudar o valor de 600 reais, pode emitir",
+      senderName: "Miller Ferreira",
+      conv,
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {},
+      saveDatabase: () => {},
+      createNotification: () => {}
+    });
+
+    assert.strictEqual(res.handled, true);
+    assert.strictEqual(res.action, "emitted_nfse", "Não deve travar o valor pois a frase afirma que o valor está mantido e deve emitir");
+    assert.strictEqual(conv.fiscalConferenceState.status, "emitted");
+
+    delete res605.invoiceId;
+    delete res605.numeroNfse;
+    testDb.invoices = (testDb.invoices || []).filter(i => i.reservationId !== 605);
+  });
+
+  it("Tier 1 LLM Integration: interpretFiscalMessageWithLLM invoca aiClientMock estruturado com schema JSON e prioriza o resultado sobre o fallback local", async () => {
+    let mockCalledWith = null;
+    const aiClientMock = async (params) => {
+      mockCalledWith = params;
+      return JSON.stringify({
+        intent: "add_guest",
+        isConfirmation: false,
+        isCancellation: false,
+        valueChange: {
+          hasValueChange: false,
+          requestedValue: null
+        },
+        guestNameAction: {
+          action: "add",
+          guestName: "Roberta Albuquerque dos Santos",
+          needsPromptForName: false
+        },
+        cadastralUpdates: {
+          tomadorNome: null,
+          tomadorCpfCnpj: null,
+          tomadorEmail: null,
+          tomadorEndereco: null,
+          tomadorTipo: null
+        },
+        resolvedFromReference: false
+      });
+    };
+
+    const result = await interpretFiscalMessageWithLLM({
+      messageText: "pode colocar a Roberta na descrição",
+      aiClientMock,
+      currentConferenceState: {
+        valorOriginal: 600.00,
+        descricaoServico: "Nota relativa à hospedagem de Miller Ferreira, no Flat 605.\nLocal: CorpFlats."
+      }
+    });
+
+    assert.ok(mockCalledWith, "aiClientMock deve ter sido invocado pelo Tier 1");
+    assert.strictEqual(mockCalledWith.messageText, "pode colocar a Roberta na descrição");
+    assert.strictEqual(result.intent, "add_guest");
+    assert.strictEqual(result.guestNameAction.action, "add");
+    assert.strictEqual(result.guestNameAction.guestName, "Roberta Albuquerque dos Santos");
+  });
 });
+
 

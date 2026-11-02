@@ -9034,8 +9034,8 @@ export function parseFlexibleMoney(text = "") {
     if (val) return val;
   }
 
-  // 3. Palavras-chave explícitas de valor/total/preço OU ação de alteração ("muda para 850", "valor de 500", "valor para 850")
-  const m3 = clean.match(/\b(?:(?:para\s+o\s+)?(?:valor|total|pre[cç]o|custo|di[aá]ria)(?:\s+de|\s+do|\s+da|\s+para|\s+em)?|muda(?:r)?\s+(?:o\s+valor\s+)?para|altera(?:r)?\s+(?:o\s+valor\s+)?para|troca(?:r)?\s+(?:o\s+valor\s+)?para|passa(?:r)?\s+(?:o\s+valor\s+)?para|ajusta(?:r)?\s+(?:o\s+valor\s+)?para|coloca(?:r)?\s+(?:o\s+valor\s+)?para)\s*:?\s*(?:R\$\s*)?(?<![\d\/])((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,2})?)(?![\d\/])(?!\s*\/)/i);
+  // 3. Palavras-chave explícitas de valor/total/preço OU ação de alteração ("muda para 850", "abaixa pra 300", "fechar por 450", "valor tem que ser 500")
+  const m3 = clean.match(/\b(?:(?:para\s+o\s+)?(?:valor|total|pre[cç]o|custo|di[aá]ria)(?:\s+de|\s+do|\s+da|\s+para|\s+em|\s+pra|\s+por)?|muda(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|altera(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|troca(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|passa(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|ajusta(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|coloca(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|abaixa(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|diminui(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|reduz(?:ir)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|deixa(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|fecha(?:r)?\s+(?:o\s+valor\s+|o\s+pre[cç]o\s+)?(?:para|pra|por|em)?|consegue\s+fechar\s+por|tem\s+que\s+ser)\s*:?\s*(?:R\$\s*)?(?<![\d\/])((?:\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d{1,2})?)(?![\d\/])(?!\s*\/)/i);
   if (m3) {
     const val = parseNum(m3[1]);
     if (val) return val;
@@ -9129,6 +9129,7 @@ const FORBIDDEN_PERSON_NAME_TOKENS = new Set([
   "valor", "valores", "preco", "reais", "total", "desconto", "referente", "relativa", "projeto", "contrato", "pedido", "ordem",
   "cpf", "cnpj", "endereco", "cep", "email", "telefone", "empresa", "tomador", "razao", "social", "corporativa", "corporativo",
   "acima", "abaixo", "cima", "baixo", "ai", "ali", "aqui", "la", "isso", "isto", "aquilo", "esse", "essa", "este", "esta",
+  "aquele", "aquela", "aqueles", "aquelas", "olha", "olhe", "conforme", "mensagem", "inicio", "conversa",
   "outro", "outra", "outros", "outras", "mais", "menos", "um", "uma", "uns", "umas",
   "meu", "minha", "meus", "minhas", "seu", "sua", "dele", "dela", "nosso", "nossa", "comigo", "junto", "tambem", "tbm",
   "quem", "qual", "quando", "onde", "porque", "para", "pra", "sim", "nao", "ok", "oi", "ola", "bom", "boa", "dia", "tarde", "noite",
@@ -9249,18 +9250,18 @@ export function sanitizeServiceDescriptionGuests(currentDesc = "") {
 export function addGuestToServiceDescription(currentDesc = "", newGuestName = "", mode = "add") {
   const strippedInput = stripOuterNonNameChars(
     String(newGuestName || "")
-      .replace(/^(?:o\s+h[oó]spede|a\s+h[oó]spede|h[oó]spede|acompanhante|o\s+nome\s+d[aeo]s?|nome|sr\.?|sra\.?|dr\.?|dra\.?)\s+/i, "")
+      .replace(/^(?:o\s+h[oó]spede|a\s+h[oó]spede|h[oó]spede|o\s+acompanhante|a\s+acompanhante|acompanhante|o\s+nome\s+d[aeo]s?|nome|sr\.?|sra\.?|dr\.?|dra\.?)\s+/i, "")
       .trim()
   );
-  if (!isValidPersonNameCandidate(strippedInput)) {
+  if (mode !== "remove" && !isValidPersonNameCandidate(strippedInput)) {
     return sanitizeServiceDescriptionGuests(currentDesc).description;
   }
   const cleanGuest = toTitleCase(strippedInput);
-  if (!cleanGuest || cleanGuest.length < 2) return currentDesc;
+  if (mode !== "remove" && (!cleanGuest || cleanGuest.length < 2)) return currentDesc;
 
   const { description: desc } = sanitizeServiceDescriptionGuests(currentDesc);
   if (!desc) {
-    return `Nota relativa à hospedagem de ${cleanGuest}.`;
+    return cleanGuest ? `Nota relativa à hospedagem de ${cleanGuest}.` : "";
   }
 
   // 1. Formato Padrão Oficial /notas: "Nota relativa à hospedagem de <Nome>, no Flat <X>."
@@ -9280,6 +9281,22 @@ export function addGuestToServiceDescription(currentDesc = "", newGuestName = ""
     }
     const { validNames } = sanitizeGuestNameList(currentNames);
     const baseList = validNames.length > 0 ? validNames : [currentNames];
+    if (mode === "remove") {
+      let remaining = [];
+      if (cleanGuest && cleanGuest.length >= 2) {
+        const targetLow = cleanGuest.toLowerCase();
+        remaining = baseList.filter(n => {
+          const nLow = n.toLowerCase();
+          return nLow !== targetLow && !nLow.includes(targetLow) && !targetLow.includes(nLow);
+        });
+      } else {
+        remaining = baseList.length > 1 ? [baseList[0]] : baseList;
+      }
+      if (remaining.length === 0 && baseList.length > 0) {
+        remaining = [baseList[0]];
+      }
+      return desc.replace(stdRegex, `${prefix}${formatGuestNamesJoined(remaining)}${flatSuffix}`);
+    }
     if (baseList.some(n => n.toLowerCase() === cleanGuest.toLowerCase())) {
       return desc.replace(stdRegex, `${prefix}${formatGuestNamesJoined(baseList)}${flatSuffix}`);
     }
@@ -9303,6 +9320,23 @@ export function addGuestToServiceDescription(currentDesc = "", newGuestName = ""
     }
     const { validNames } = sanitizeGuestNameList(currentNames);
     const baseList = validNames.length > 0 ? validNames : [currentNames];
+    if (mode === "remove") {
+      let remaining = [];
+      if (cleanGuest && cleanGuest.length >= 2) {
+        const targetLow = cleanGuest.toLowerCase();
+        remaining = baseList.filter(n => {
+          const nLow = n.toLowerCase();
+          return nLow !== targetLow && !nLow.includes(targetLow) && !targetLow.includes(nLow);
+        });
+      } else {
+        remaining = baseList.length > 1 ? [baseList[0]] : baseList;
+      }
+      if (remaining.length === 0 && baseList.length > 0) {
+        remaining = [baseList[0]];
+      }
+      const prefixCorp = remaining.length > 1 ? "referente aos hóspedes/colaboradores " : "referente ao hóspede/colaborador ";
+      return desc.replace(corpRegex, `${prefixCorp}${formatGuestNamesJoined(remaining)}${flatSuffix}`);
+    }
     if (baseList.some(n => n.toLowerCase() === cleanGuest.toLowerCase())) {
       return desc.replace(corpRegex, `referente aos hóspedes/colaboradores ${formatGuestNamesJoined(baseList)}${flatSuffix}`);
     }
@@ -9311,6 +9345,12 @@ export function addGuestToServiceDescription(currentDesc = "", newGuestName = ""
   }
 
   // 3. Caso a descrição seja customizada
+  if (mode === "remove") {
+    if (cleanGuest && desc.toLowerCase().includes(cleanGuest.toLowerCase())) {
+      return desc.replace(new RegExp(`(?:\\r?\\n)?H[oó]spede:\\s*${cleanGuest}`, "gi"), "");
+    }
+    return desc;
+  }
   if (desc.toLowerCase().includes(cleanGuest.toLowerCase())) {
     return desc;
   }
@@ -9338,16 +9378,17 @@ export function extractGuestAdditionForDescription(messageText = "") {
         .replace(/^(?:tem\s+como|pode(?:ria)?|consegue|d[aá]\s+para|d[aá]\s+pra|quero|queria|gostaria\s+de|preciso|favor|por\s+favor|por\s+gentileza|pfv)\s+/i, "")
         .replace(/^(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira|p[oõ]e|por)\s+/i, "")
         .replace(/^(?:tamb[eé]m|a[ií]|l[aá]|aqui|pra\s+mim|para\s+mim|por\s+favor|por\s+gentileza|pfv)\s+/i, "")
-        .replace(/^(?:(?:na|no|da|do|em)\s+)?(?:descri[cç][aã]o|discrimina[cç][aã]o)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?(?:\s+a[ií])?\s*/i, "")
+        .replace(/^(?:(?:na|no|da|do|em)\s+)?(?:descri[cç][aã]o|discrimina[cç][aã]o|cabe[cç]alho)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?(?:\s+a[ií])?\s*/i, "")
         .replace(/^(?:(?:na|da)\s+nota(?:\s+fiscal)?)(?:\s+a[ií])?\s*/i, "")
         .replace(/^(?:(?:mais\s+)?um(?:a)?\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|que\s+[eé]\s+(?:o|a)?|:|,|-|\?|\.)?\s*)/i, "")
         .replace(/^(?:(?:outr[oa])\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|que\s+[eé]\s+(?:o|a)?|:|,|-|\?|\.)?\s*)/i, "")
         .replace(/^(?:como\s+(?:h[oó]spede|acompanhante)s?\s*)/i, "")
         .replace(/^(?:chamad[oa]|de\s+nome|que\s+se\s+chama|que\s+chama|que\s+[eé]\s+(?:o|a)?|o\s+nome\s+(?:dela|dele|da\s+pessoa|do\s+h[oó]spede)(?:\s+[eé])?|o\s+nome\s+d[aeo]s?|nome(?:\s+completo)?|[eé]\s+(?:o|a)|[eé])\s+/i, "")
         .replace(/^(?:o\s+h[oó]spede|a\s+h[oó]spede|h[oó]spede|o\s+acompanhante|a\s+acompanhante|acompanhante|a\s+pessoa|pessoa)\s+/i, "")
-        .replace(/^(?:meu\s+(?:esposo|marido|filho|pai|irm[aã]o|colega|amigo|s[oó]cio|namorado|noivo)|minha\s+(?:esposa|mulher|filha|m[aã]e|irm[aã]|colega|amiga|s[oó]cia|namorada|noiva))\s+/i, "")
+        .replace(/^(?:o\s+)?(?:dr\.?|dra\.?|doutor|doutora|sr\.?|sra\.?|senhor|senhora)\s+/i, "")
+        .replace(/^(?:meu\s+(?:esposo|marido|filho|pai|irm[aã]o|colega(?:\s+de\s+trabalho)?|amigo|s[oó]cio|namorado|noivo)|minha\s+(?:esposa|mulher|filha|m[aã]e|irm[aã]|colega(?:\s+de\s+trabalho)?|amiga|s[oó]cia|namorada|noiva))\s+/i, "")
         .replace(/^(?:o|a)\s+/i, "")
-        .replace(/\s+(?:como\s+(?:h[oó]spede|acompanhante).*|na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota).*|no\s+servi[cç]o.*|da\s+nota.*|d[eo]s?\s+servi[cç]os?.*|junto\s+comigo.*|tamb[eé]m.*|a[ií]\s*[.!?]*$|por\s+favor.*|por\s+gentileza.*|pfv.*|obrigad[oa].*|,?\s+e\s+(?:o\s+)?valor.*)$/i, "");
+        .replace(/\s+(?:como\s+(?:h[oó]spede|acompanhante).*|na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|cabe[cç]alho|nota).*|no\s+(?:servi[cç]o|cabe[cç]alho).*|da\s+nota.*|d[eo]s?\s+servi[cç]os?.*|junto\s+comigo.*|que\s+viajou\s+comigo.*|ela\s+n[aã]o\s+ficou\s+hospedada.*|ele\s+n[aã]o\s+ficou\s+hospedado.*|tamb[eé]m.*|a[ií]\s*[.!?]*$|por\s+favor.*|por\s+gentileza.*|pfv.*|obrigad[oa].*|,?\s+e\s+(?:o\s+)?valor.*)$/i, "");
       s = stripOuterNonNameChars(s);
       if (s === prev) break;
     }
@@ -9358,7 +9399,40 @@ export function extractGuestAdditionForDescription(messageText = "") {
     return !isValidPersonNameCandidate(cand);
   };
 
-  // 0. Substituição explícita do hóspede na descrição ("muda o hóspede na descrição para X")
+  // 0. Remoção de hóspede da descrição ("retira o nome da Maria Silva da descrição", "remove a Maria Silva", "tira a Maria")
+  const removeMatch =
+    text.match(/\b(?:retira(?:r)?|tira(?:r)?|remove(?:r)?|exclui(?:r)?)\s+(?:o\s+nome\s+d[aeo]s?\s+|o\s+h[oó]spede\s+|a\s+h[oó]spede\s+|o\s+acompanhante\s+|a\s+acompanhante\s+|o\s+|a\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70}?)(?:\s+(?:da\s+descri[cç][aã]o|da\s+discrimina[cç][aã]o|da\s+nota|do\s+cabe[cç]alho)|$|[.,;!?])/i) ||
+    text.match(/\b(?:o\s+|a\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70}?)\s+n[aã]o\s+(?:veio|ficou|se\s+hospedou),?\s*(?:remove|retira|tira|exclui)\b/i);
+
+  if (removeMatch) {
+    const rawCand = removeMatch[1];
+    if (/\b(?:acompanhante|h[oó]spede|pessoa)\b/i.test(rawCand)) {
+      return { type: "remove_guest_unnamed" };
+    }
+    const cand = cleanCandidateName(rawCand);
+    if (!isIndefiniteOrInvalidGuestName(cand)) {
+      return { type: "remove_guest_named", guestName: toTitleCase(cand) };
+    }
+  }
+
+  // 0.1 Remoção genérica de acompanhante ("remove o acompanhante, deixa só eu", "deixa só o titular")
+  if (
+    /\b(?:remove(?:r)?|retira(?:r)?|tira(?:r)?)\s+(?:o\s+)?acompanhante\b/i.test(text) ||
+    /\b(?:deixa|fica)\s+s[oó]\s+(?:eu|o\s+titular|o\s+h[oó]spede)\b/i.test(text)
+  ) {
+    return { type: "remove_guest_unnamed" };
+  }
+
+  // 0.2 Substituição em linguagem natural ("quem ficou hospedado no flat foi o João Paulo da Costa, troca o nome aí")
+  const nlReplaceMatch = text.match(/\b(?:quem\s+ficou\s+hospedad[oa](?:\s+no\s+flat)?\s+foi\s+(?:o|a)?\s*|troca(?:r)?\s+(?:o\s+)?(?:nome\s+do\s+)?h[oó]spede\s+para\s+)([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70}?)(?=[,.;!?]|\s+troca|\s+muda|$)/i);
+  if (nlReplaceMatch) {
+    const cand = cleanCandidateName(nlReplaceMatch[1]);
+    if (!isIndefiniteOrInvalidGuestName(cand)) {
+      return { type: "replace_guest_named", guestName: toTitleCase(cand) };
+    }
+  }
+
+  // 0.3 Substituição explícita do hóspede na descrição ("muda o hóspede na descrição para X")
   const replaceMatch = text.match(/\b(?:muda(?:r)?|altera(?:r)?|troca(?:r)?|corrige|corrigir)\s+(?:o\s+)?(?:nome\s+do\s+)?h[oó]spede\s+(?:na\s+|da\s+)?(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota)?\s+(?:para|por|:)\s*([^\n\r,;]+)/i);
   if (replaceMatch) {
     const cand = cleanCandidateName(replaceMatch[1]);
@@ -9379,7 +9453,7 @@ export function extractGuestAdditionForDescription(messageText = "") {
   }
 
   // 1. "<Verbo> [<Nome> | uma pessoa chamada <Nome>] como hóspede/acompanhante [na descrição...]"
-  const p1 = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(?:tamb[eé]m\s+)?(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota(?:\s+fiscal)?)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota)?\s*,?\s*)?([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'()-]{1,70}?)\s+como\s+(?:h[oó]spede|acompanhante)s?\b/i);
+  const p1 = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(?:tamb[eé]m\s+)?(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|cabe[cç]alho|nota(?:\s+fiscal)?)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota)?\s*,?\s*)?([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'()-]{1,70}?)\s+como\s+(?:h[oó]spede|acompanhante)s?\b/i);
   if (p1) {
     const parenMatch = p1[1].match(/\(([^)]+)\)/);
     const cand = cleanCandidateName(parenMatch ? parenMatch[1] : p1[1]);
@@ -9389,7 +9463,7 @@ export function extractGuestAdditionForDescription(messageText = "") {
   }
 
   // 2. "... como hóspede/acompanhante [na descrição do serviço] [:|-|,|?|.|a|o] <Nome>"
-  const p2 = text.match(/\bcomo\s+(?:h[oó]spede|acompanhante)s?(?:\s+(?:tamb[eé]m\s+)?na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota(?:\s+fiscal)?)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota)?(?:\s+a[ií])?)?\s*(?:[?:=.,;-]+\s*|\s+(?:chamad[oa]\s+|de\s+nome\s+|o\s+nome\s+d[aeo]s?\s+|o\s+|a\s+))([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{1,70})/i);
+  const p2 = text.match(/\bcomo\s+(?:h[oó]spede|acompanhante)s?(?:\s+(?:tamb[eé]m\s+)?na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|cabe[cç]alho|nota(?:\s+fiscal)?)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota)?(?:\s+a[ií])?)?\s*(?:[?:=.,;-]+\s*|\s+(?:chamad[oa]\s+|de\s+nome\s+|o\s+nome\s+d[aeo]s?\s+|o\s+|a\s+))([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{1,70})/i);
   if (p2) {
     const cand = cleanCandidateName(p2[1]);
     if (!isIndefiniteOrInvalidGuestName(cand)) {
@@ -9400,7 +9474,7 @@ export function extractGuestAdditionForDescription(messageText = "") {
   // 3. Nome informado APÓS "descrição [do serviço / da nota] [aí / por favor] [? / : / - / , / . / espaço] <Nome>"
   // Ex.: "tem como colocar mais uma pessoa na descrição do serviço aí? Thamiris Maiara Santos Da Silva"
   if (/\b(?:acrescenta|adiciona|inclui|coloca|bota|insere|p[oõ]e)\w*/i.test(text) || /\b(?:h[oó]spede|acompanhante|pessoa)\b/i.test(text)) {
-    const afterDescMatch = text.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?(?:\s+(?:a[ií]|tamb[eé]m|por\s+favor|por\s+gentileza|pfv|pra\s+mim|para\s+mim))*\s*(?:[?:=.,;\r\n-]+\s*|\s+)([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70}?)\s*[.!?]*$/i);
+    const afterDescMatch = text.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o|cabe[cç]alho)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?(?:\s+(?:a[ií]|tamb[eé]m|por\s+favor|por\s+gentileza|pfv|pra\s+mim|para\s+mim))*\s*(?:[?:=.,;\r\n-]+\s*|\s+)([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70}?)\s*[.!?]*$/i);
     if (afterDescMatch) {
       const cand = cleanCandidateName(afterDescMatch[1]);
       if (!isIndefiniteOrInvalidGuestName(cand)) {
@@ -9409,10 +9483,10 @@ export function extractGuestAdditionForDescription(messageText = "") {
     }
   }
 
-  // 4. "<Verbo> [mais uma pessoa / o hóspede / o nome de / também / (Nome)] <Nome> na descrição [do serviço / da nota]"
-  const p4 = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(?:tamb[eé]m\s+)?(?:(?:(?:mais\s+)?um(?:a)?|outr[oa])\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|:|,|-|\()?\s*|(?:o\s+|a\s+)?(?:h[oó]spede|acompanhante)\s+|o\s+nome\s+d[aeo]s?\s+|meu\s+\w+\s+|minha\s+\w+\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70}?)\)?(?=\s+(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)|junto\s+comigo|tamb[eé]m))?/i);
-  if (p4 && /\b(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota))\b/i.test(text)) {
-    const beforeNaDesc = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(.+?)\s+na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)\b/i);
+  // 4. "<Verbo> [mais uma pessoa / o hóspede / o nome de / também / (Nome)] <Nome> na descrição [do serviço / da nota / no cabeçalho]"
+  const p4 = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(?:tamb[eé]m\s+)?(?:(?:(?:mais\s+)?um(?:a)?|outr[oa])\s+(?:pessoa|h[oó]spede|acompanhante)\s*(?:chamad[oa]|de\s+nome|:|,|-|\()?\s*|(?:o\s+|a\s+)?(?:h[oó]spede|acompanhante)\s+|o\s+nome\s+d[aeo]s?\s+|meu\s+\w+\s+|minha\s+\w+\s+)?([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,70}?)\)?(?=\s+(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)|no\s+cabe[cç]alho|junto\s+comigo|tamb[eé]m))?/i);
+  if (p4 && /\b(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)|no\s+cabe[cç]alho)\b/i.test(text)) {
+    const beforeNaDesc = text.match(/\b(?:acrescenta(?:r|ndo)?|acrescente|inclui(?:r|ndo)?|inclua|adiciona(?:r|ndo)?|adicione|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|inserir|insere|insira)\s+(.+?)\s+(?:na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota)|no\s+cabe[cç]alho)\b/i);
     if (beforeNaDesc) {
       const parenInner = beforeNaDesc[1].match(/\(([^)]+)\)/);
       const cand = cleanCandidateName(parenInner ? parenInner[1] : beforeNaDesc[1]);
@@ -10438,6 +10512,486 @@ export function enableAutoEmitInvoiceForGuestAndReservations(db, {
 }
 
 /**
+ * Verificação determinística de solicitação de alteração de valor para preservação estrita da Trava de Valor (R2)
+ */
+function checkDeterministicValueChange(messageText = "", conf = {}) {
+  const text = String(messageText || "").trim();
+  const originalVal = Number(conf.valorOriginal || conf.valorServico || 0);
+
+  // Negação explícita de alteração de valor ("não precisa mudar o valor de 600", "não mexe no valor", "o valor está certo")
+  if (
+    /\bn[aã]o\s+precisa\s+(?:mudar|alterar|mexer)\s+(?:no\s+|o\s+)?valor\b/i.test(text) ||
+    /\bn[aã]o\s+(?:muda|altera|mexe)\s+(?:no\s+|o\s+)?valor\b/i.test(text) ||
+    /\bvalor\s+(?:est[aá]\s+certo|t[aá]\s+certo|correto)\b/i.test(text)
+  ) {
+    return { hasValueChange: false, requestedValue: null };
+  }
+
+  // Remove trechos descritivos para que datas/diárias/flats não vazem para o parser monetário
+  const descMatched = text.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?\s*(?:para|por|como\s+sendo|e|:|=|-)+\s*([^\n\r]+?)(?=\s*(?:,?\s+e\s+(?:o\s+)?valor|,\s*valor\b|\s+valor\b|$))/i);
+  const textWithoutDesc = descMatched ? text.replace(descMatched[0], " ") : text;
+
+  const mentionsValue =
+    /\b(?:muda(?:r)?\s+(?:o\s+)?(?:valor|pre[cç]o)|alterar?\s+(?:o\s+)?(?:valor|pre[cç]o)|troca(?:r)?\s+(?:o\s+)?(?:valor|pre[cç]o)|ajusta(?:r)?\s+(?:o\s+)?(?:valor|pre[cç]o)|abaixa(?:r)?\s+(?:o\s+)?(?:valor|pre[cç]o)|diminui(?:r)?\s+(?:o\s+)?(?:valor|pre[cç]o)|reduz(?:ir)?\s+(?:o\s+)?(?:valor|pre[cç]o)|novo\s*valor|valor\s*correto|valor\s*da\s*nota|valor\s*faturado|valor\s*original|o\s*valor|pre[cç]o|valor\s+t[aá]\s+errado|valor\s+tem\s+que\s+ser|consegue\s+fechar\s+por)\b/i.test(textWithoutDesc) ||
+    /\b(?:muda(?:r)?|altera(?:r)?|troca(?:r)?|ajusta(?:r)?|coloca(?:r)?|abaixa(?:r)?|reduz(?:ir)?|fecha(?:r)?)\s+(?:para|pra|por)\s*(?:R\$\s*)?\d+/i.test(textWithoutDesc);
+
+  const hasCurrencySymbol = /(?:R\$\s*[\d\.,]+|[\d\.,]+\s*(?:reais|real|conto|pila)\b)/i.test(textWithoutDesc);
+  const isPureNumber = /^\s*(?:R\$\s*)?\d{1,6}(?:[.,]\d{1,2})?\s*$/i.test(textWithoutDesc);
+  const hasExtenso = /\b(?:cem|duzentos|trezentos|quatrocentos|quinhentos|seiscentos|setecentos|oitocentos|novecentos|mil)\s*(?:reais)?\b/i.test(textWithoutDesc);
+
+  const hasValueChangeIntent = mentionsValue || hasCurrencySymbol || isPureNumber || hasExtenso;
+  if (!hasValueChangeIntent) {
+    return { hasValueChange: false, requestedValue: null };
+  }
+
+  const moneyVal = parseFlexibleMoney(textWithoutDesc);
+  const parsedNum = moneyVal ? Number(moneyVal) : null;
+  if (parsedNum && parsedNum > 0 && Math.abs(parsedNum - originalVal) > 0.01) {
+    return { hasValueChange: true, requestedValue: parsedNum };
+  }
+
+  return { hasValueChange: false, requestedValue: null };
+}
+
+/**
+ * Contingência determinística local de alta precisão (Tier 2 - Zero-Crash Fallback)
+ */
+function runDeterministicFiscalLocalFallback({
+  messageText = "",
+  history = [],
+  quotedText = "",
+  referenceMessageId = "",
+  currentConferenceState = null,
+  db = null
+}) {
+  const text = String(messageText || "").trim();
+  const conf = currentConferenceState || {};
+  let resolvedFromRef = false;
+
+  // 1. Trava de valor prioritária
+  const valCheck = checkDeterministicValueChange(text, conf);
+  if (valCheck.hasValueChange) {
+    return {
+      intent: "change_value",
+      isConfirmation: false,
+      isCancellation: false,
+      valueChange: {
+        hasValueChange: true,
+        requestedValue: valCheck.requestedValue
+      },
+      guestNameAction: { action: "none", guestName: null, needsPromptForName: false },
+      cadastralUpdates: { tomadorNome: null, tomadorCpfCnpj: null, tomadorEmail: null, tomadorEndereco: null, tomadorTipo: null },
+      resolvedFromReference: false
+    };
+  }
+
+  // 2. Negação retórica vs Cancelamento
+  const isRhetoricalNegation =
+    /\bn[aã]o\s+tem\s+(?:nenhum\s+)?erro\b/i.test(text) ||
+    /\bn[aã]o\s+precisa\s+(?:mudar|alterar|mexer)\s+nada\b/i.test(text) ||
+    /\bsem\s+erros?\b/i.test(text) ||
+    /\bn[aã]o\s+falta\s+nada\b/i.test(text) ||
+    /\bn[aã]o\s+precisa\s+mudar\s+o\s+valor\b/i.test(text);
+
+  const isCancellation = !isRhetoricalNegation && /\b(?:cancelar|cancela|n[aã]o\s*quero\s+mais\s+nota|cancela\s+a\s+nota|deixa\s*pra\s*l[aá])\b/i.test(text);
+  if (isCancellation) {
+    return {
+      intent: "cancel",
+      isConfirmation: false,
+      isCancellation: true,
+      valueChange: { hasValueChange: false, requestedValue: null },
+      guestNameAction: { action: "none", guestName: null, needsPromptForName: false },
+      cadastralUpdates: { tomadorNome: null, tomadorCpfCnpj: null, tomadorEmail: null, tomadorEndereco: null, tomadorTipo: null },
+      resolvedFromReference: false
+    };
+  }
+
+  // 3. Ações sobre hóspedes na descrição (Adição, Remoção, Substituição)
+  const isRefToPreviousMsg = Boolean(
+    /\b(?:j[aá]\s+(?:informei|mandei|enviei|falei|disse|escrevi|coloquei|passei)|est[aá]\s+a[ií]\s+em\s+cima|a[ií]\s+em\s+cima|olha\s+a[ií]|mensagem\s+acima|acima|no\s+in[ií]cio\s+da\s+conversa|conforme\s+(?:disse|falei|passei)\s+antes|t[aá]\s+l[aá]\s+em\s+cima)\b/i.test(text) ||
+    /👆|⬆️|☝️/u.test(text) ||
+    quotedText ||
+    referenceMessageId
+  );
+
+  const guestEdit = extractGuestAdditionForDescription(text);
+  let guestAction = { action: "none", guestName: null, needsPromptForName: false };
+
+  if (guestEdit) {
+    if (guestEdit.type === "remove_guest_named") {
+      guestAction = { action: "remove", guestName: guestEdit.guestName, needsPromptForName: false };
+    } else if (guestEdit.type === "remove_guest_unnamed") {
+      guestAction = { action: "remove", guestName: null, needsPromptForName: false };
+    } else if (guestEdit.type === "replace_guest_named") {
+      guestAction = { action: "replace", guestName: guestEdit.guestName, needsPromptForName: false };
+    } else if (guestEdit.type === "add_guest_named") {
+      guestAction = { action: "add", guestName: guestEdit.guestName, needsPromptForName: false };
+    } else if (guestEdit.type === "add_guest_unnamed") {
+      const candidateTexts = [];
+      if (quotedText) candidateTexts.push(quotedText);
+      const msgs = Array.isArray(history) ? history : [];
+      if (referenceMessageId) {
+        const refMsg = msgs.find(m => m && String(m.messageId) === String(referenceMessageId));
+        if (refMsg?.text) candidateTexts.push(refMsg.text);
+      }
+      for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 8); i--) {
+        const m = msgs[i];
+        if (m?.text && m.text !== text && !m.fromMe) candidateTexts.push(m.text);
+      }
+      let recovered = null;
+      for (const candText of candidateTexts) {
+        const candExtract = extractGuestAdditionForDescription(candText);
+        if (candExtract?.guestName && isValidPersonNameCandidate(candExtract.guestName)) {
+          recovered = candExtract.guestName;
+          break;
+        }
+      }
+      if (recovered) {
+        guestAction = { action: "add", guestName: recovered, needsPromptForName: false };
+        resolvedFromRef = true;
+      } else {
+        guestAction = { action: "add", guestName: null, needsPromptForName: true };
+      }
+    }
+  } else if (conf.pendingFieldEdit === "add_guest_to_description" || isRefToPreviousMsg) {
+    const candidateTexts = [];
+    if (quotedText) candidateTexts.push(quotedText);
+    const msgs = Array.isArray(history) ? history : [];
+    if (referenceMessageId) {
+      const refMsg = msgs.find(m => m && String(m.messageId) === String(referenceMessageId));
+      if (refMsg?.text) candidateTexts.push(refMsg.text);
+    }
+    for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 8); i--) {
+      const m = msgs[i];
+      if (m?.text && m.text !== text && !m.fromMe) candidateTexts.push(m.text);
+    }
+
+    let recovered = null;
+    for (const candText of candidateTexts) {
+      const candExtract = extractGuestAdditionForDescription(candText);
+      if (candExtract?.guestName && isValidPersonNameCandidate(candExtract.guestName)) {
+        recovered = candExtract.guestName;
+        break;
+      }
+      const nameMatch = candText.match(/\b(?:em\s+nome\s+(?:d[aeo]\s+)?(?:dr\.?|dra\.?|sr\.?|sra\.?)?\s*|o\s+nome\s+[eé]\s*)([A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,50})/i);
+      if (nameMatch && isValidPersonNameCandidate(nameMatch[1])) {
+        recovered = toTitleCase(stripOuterNonNameChars(nameMatch[1]));
+        break;
+      }
+    }
+
+    if (recovered) {
+      guestAction = { action: "add", guestName: recovered, needsPromptForName: false };
+      resolvedFromRef = true;
+    } else if (conf.pendingFieldEdit === "add_guest_to_description") {
+      const directCand = stripOuterNonNameChars(
+        text
+          .replace(/^(?:o\s+nome\s+(?:dela|dele|da\s+pessoa|do\s+h[oó]spede)\s+[eé]|o\s+nome\s+[eé]|[eé]\s+(?:o|a)|[eé]|pode\s+(?:colocar|acrescentar|incluir|adicionar|botar)|acrescenta(?:r)?|coloca(?:r)?|inclui(?:r)?|adiciona(?:r)?|bota(?:r)?|h[oó]spede|acompanhante|pessoa|nome(?:\s+completo)?)\s*[:=-]?\s*/i, "")
+          .replace(/^(?:o|a)\s+/i, "")
+          .replace(/\s+(?:como\s+(?:h[oó]spede|acompanhante).*|na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota).*|por\s+favor.*|por\s+gentileza.*|obrigad[oa].*)$/i, "")
+      );
+      if (isValidPersonNameCandidate(directCand)) {
+        guestAction = { action: "add", guestName: toTitleCase(directCand), needsPromptForName: false };
+      }
+    }
+  }
+
+  // 4. Extração Cadastral
+  const newCnpj = extractCnpj(text);
+  const newCpf = extractCpf(text);
+  const newEmail = extractEmail(text);
+  const newCep = extractCep(text);
+
+  let tomadorNome = null;
+  const compMatch =
+    text.match(/\b(?:em\s+nome\s+da\s+empresa\s+|em\s+nome\s+da\s+|em\s+nome\s+do\s+|para\s+a\s+empresa\s+|empresa\s*[:=]?\s*|raz[aã]o\s*social\s*[:=]?\s*)([A-Za-zÀ-ÖØ-öø-ÿ0-9\s'.-]{2,60}?)(?=[,.;\n]|CNPJ|CPF|e-?mail|$)/i) ||
+    text.match(/\b(?:nome\s+do\s+tomador|tomador)\s*(?:para|por|como|:|=|-)+\s*([^,\n\r]+)/i) ||
+    (!/\b(?:descri[cç][aã]o|discrimina[cç][aã]o|h[oó]spede|acompanhante)\b/i.test(text) ? text.match(/\b(?:muda(?:r)?|altera(?:r)?|troca(?:r)?)\s+(?:o\s+)?nome\s+(?:para|por|:|=|-)\s*([^,\n\r]+)/i) : null);
+
+  if (compMatch) {
+    const rawName = stripOuterNonNameChars(compMatch[1]);
+    if (rawName && rawName.length >= 2 && !FORBIDDEN_PERSON_NAME_TOKENS.has(rawName.toLowerCase())) {
+      tomadorNome = toTitleCase(rawName);
+    }
+  }
+
+  if (!tomadorNome && isRefToPreviousMsg && /\bnome\b/i.test(text) && guestAction.action === "none") {
+    const msgs = Array.isArray(history) ? history : [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m?.text && !m.fromMe) {
+        const prevNameMatch = m.text.match(/\b(?:em\s+nome\s+(?:d[aeo]\s+)?(?:dr\.?|dra\.?|sr\.?|sra\.?)?\s*|o\s+nome\s+[eé]\s*)([A-Za-zÀ-ÖØ-öø-ÿ\s'.-]{2,50})/i);
+        if (prevNameMatch && isValidPersonNameCandidate(prevNameMatch[1])) {
+          tomadorNome = toTitleCase(stripOuterNonNameChars(prevNameMatch[1]));
+          resolvedFromRef = true;
+          break;
+        }
+      }
+    }
+  }
+
+  let tomadorEndereco = null;
+  const addrMatch = text.match(/\bendere[cç]o\s*[:=]?\s*([^\n\r]+?)(?=\s*(?:,\s*CEP|\s*CEP|$))/i);
+  if (addrMatch) {
+    tomadorEndereco = addrMatch[1].trim();
+  }
+
+  const cadastralUpdates = {
+    tomadorNome: tomadorNome || null,
+    tomadorCpfCnpj: newCnpj ? onlyDigits(newCnpj) : (newCpf ? onlyDigits(newCpf) : null),
+    tomadorEmail: newEmail ? newEmail.toLowerCase().trim() : null,
+    tomadorEndereco: tomadorEndereco || null,
+    tomadorTipo: newCnpj ? "PJ" : (newCpf ? "PF" : null)
+  };
+
+  const hasAnyCadastral = Boolean(
+    cadastralUpdates.tomadorNome ||
+    cadastralUpdates.tomadorCpfCnpj ||
+    cadastralUpdates.tomadorEmail ||
+    cadastralUpdates.tomadorEndereco
+  );
+
+  // 5. Confirmações
+  const hasConfirmWords = (
+    /\b(?:sim|pode\s*emitir|confirmo|confirmar|correto|autorizo|autorizar|pode\s*mandar|pode\s*gerar|pode\s*enviar|est[aá]\s*correto|est[aá]\s*certo|tudo\s*certo|ok|beleza|perfeito|valeu)\b/i.test(text) ||
+    /\b(?:t[aá]\s*certinho|certinho|manda\s*ver|manda\s*bala|show(?:\s+de\s+bola)?|fechou|por\s+mim\s+fechou|por\s+mim\s+t[aá]\s+aprovado|aprovado|est[aá]\s+100%|100%|tudo\s+em\s+ordem|pode\s+prosseguir|proceda\s+com\s+a\s+emiss[aã]o|dados\s+conferidos)\b/i.test(text) ||
+    /^\s*(?:emitir|emite|pode\s*emitir)\s*[!.?]*$/i.test(text)
+  );
+
+  const hasRefusalWords = /\b(?:n[aã]o|cancela|recusa)\b/i.test(text);
+  const isConfirmation = Boolean(
+    (hasConfirmWords && (!hasRefusalWords || isRhetoricalNegation)) ||
+    (isRhetoricalNegation && /\b(?:pode\s*emitir|perfeito|correto|emite)\b/i.test(text))
+  ) && !hasAnyCadastral && guestAction.action === "none" && !guestAction.needsPromptForName;
+
+  let intent = "other";
+  if (isConfirmation) {
+    intent = "confirm_emission";
+  } else if (guestAction.action === "add") {
+    intent = "add_guest";
+  } else if (guestAction.action === "remove") {
+    intent = "remove_guest";
+  } else if (guestAction.action === "replace") {
+    intent = "replace_guest";
+  } else if (hasAnyCadastral) {
+    intent = "update_cadastral";
+  }
+
+  return {
+    intent,
+    isConfirmation,
+    isCancellation: false,
+    valueChange: { hasValueChange: false, requestedValue: null },
+    guestNameAction: guestAction,
+    cadastralUpdates,
+    resolvedFromReference: resolvedFromRef
+  };
+}
+
+/**
+ * Motor de Compreensão Semântica com IA (LLM) no Fluxo Fiscal da Sofia no WhatsApp.
+ * Segue o padrão de dois níveis (Two-Tier Pattern - Zero Crash):
+ * - Tier 1: Compreensão via IA (Google Gemini callGeminiAi ou aiClientMock) com prompt estruturado em JSON estrito.
+ * - Tier 2: Contingência determinística local (Zero-Crash Fallback) de alta precisão para testes locais e resiliência offline.
+ */
+export async function interpretFiscalMessageWithLLM({
+  messageText,
+  history = [],
+  quotedText = "",
+  referenceMessageId = "",
+  currentConferenceState = null,
+  db = null,
+  aiClientMock = null
+}) {
+  const text = String(messageText || "").trim();
+  const conf = currentConferenceState || {};
+
+  const formattedHistoryText = (Array.isArray(history) ? history.slice(-8) : [])
+    .filter(m => m && m.text)
+    .map(m => `${m.fromMe ? "Sofia (CorpFlats)" : "Hóspede"}: "${m.text}"`)
+    .join("\n");
+
+  const quotedInfo = quotedText
+    ? `Mensagem citada: "${quotedText}"`
+    : (referenceMessageId ? `Referência à mensagem ID: ${referenceMessageId}` : "Nenhuma citação direta.");
+
+  const systemInstruction = `Você é o motor de compreensão semântica fiscal da Sofia, assistente virtual da CorpFlats.
+Sua missão é analisar com inteligência e flexibilidade a mensagem de um hóspede no WhatsApp durante a etapa de conferência de sua Nota Fiscal de Serviços (NFS-e) e retornar ESTRITAMENTE um objeto JSON válido.
+
+DADOS ATUAIS DA CONFERÊNCIA FISCAL:
+- Tomador Atual: ${conf.tomadorNome || "N/A"} (${conf.tomadorCpfCnpj || "N/A"})
+- Tipo do Tomador: ${conf.tomadorTipo || "PF"}
+- E-mail: ${conf.tomadorEmail || "N/A"}
+- Descrição dos Serviços: ${conf.descricaoServico || "N/A"}
+- Valor Original: R$ ${conf.valorOriginal || conf.valorServico || 0}
+- Status: ${conf.status || "awaiting_confirmation"}
+
+MENSAGEM CITADA / REFERÊNCIA:
+${quotedInfo}
+
+HISTÓRICO RECENTE:
+${formattedHistoryText || "Sem histórico anterior."}
+
+REGRAS DE CLASSIFICAÇÃO:
+1. isConfirmation: Retorne true se o hóspede estiver confirmando, aprovando ou autorizando a emissão em linguagem natural (ex: "pode emitir", "tá certinho", "tudo certo", "ok", "confirmado", "manda bala", "show de bola", "fechou", "por mim fechou", "está 100%", "tudo em ordem", "pode prosseguir", "dados conferidos e aprovados").
+   IMPORTANTE: Frases com negações retóricas como "não tem nenhum erro, pode emitir" ou "não precisa mudar nada, tá tudo perfeito" SÃO CONFIRMAÇÕES (isConfirmation: true, isCancellation: false).
+2. valueChange: Se o hóspede solicitar mudança no valor da nota, preço das diárias ou total (ex: "abaixa o valor pra 300", "muda para 500 reais", "quinhentos reais", "400 conto"), marque hasValueChange: true e extraia requestedValue como número float.
+   ATENÇÃO PRIORITÁRIA DE TRAVA DE VALOR:
+   - Se o hóspede enviar confirmação E alteração de valor na mesma mensagem (ex: "está tudo certo, pode emitir, só muda o valor para 400 antes"), A ALTERAÇÃO DE VALOR TEM PRIORIDADE ABSOLUTA: intent = "change_value", hasValueChange: true, isConfirmation: false!
+   - NUNCA confunda datas de estadia ("de 01/11 a 05/11"), contagem de diárias ("3 diárias") ou número de flat ("flat 605", "para 501") com valor!
+   - Se o hóspede disser que "não precisa mudar o valor de 600 reais, pode emitir", hasValueChange é false.
+3. guestNameAction:
+   - action "add": Quando o hóspede solicita acrescentar/incluir alguém como hóspede na descrição do serviço (ex: "acrescentar meu colega Carlos Eduardo como hóspede", "inclui também Mariana Lima"). Extraia o guestName. Se ele referenciar mensagem anterior ("já informei 👆🏼"), resolva o nome a partir da citação ou histórico. Se ele quiser adicionar mas não informou o nome, marque needsPromptForName: true.
+   - action "remove": Quando o hóspede solicita retirar/remover alguém da descrição (ex: "retira o nome da Maria Silva da descrição, ela não ficou hospedada", "remove o acompanhante, deixa só eu"). Extraia o guestName ou deixe null se for remoção genérica.
+   - action "replace": Quando o hóspede pede para trocar ou substituir quem ficou hospedado (ex: "na verdade quem ficou hospedado no flat foi o João Paulo da Costa, troca o nome aí"). Extraia o guestName.
+   - action "none": Nenhuma ação sobre nomes na descrição.
+4. cadastralUpdates: Extraia qualquer atualização ou correção solicitada de CPF/CNPJ, Razão Social/Nome, E-mail ou Endereço em linguagem natural.
+5. isCancellation: true APENAS se o hóspede pedir explicitamente para cancelar a emissão da nota fiscal (ex: "cancela a nota", "não quero mais nota").
+
+RESPONDA EXCLUSIVAMENTE COM O OBJETO JSON NO FORMATO:
+{
+  "intent": "confirm_emission" | "change_value" | "add_guest" | "remove_guest" | "replace_guest" | "update_cadastral" | "cancel" | "clarify_question" | "other",
+  "isConfirmation": boolean,
+  "isCancellation": boolean,
+  "valueChange": {
+    "hasValueChange": boolean,
+    "requestedValue": number | null
+  },
+  "guestNameAction": {
+    "action": "add" | "remove" | "replace" | "none",
+    "guestName": string | null,
+    "needsPromptForName": boolean
+  },
+  "cadastralUpdates": {
+    "tomadorNome": string | null,
+    "tomadorCpfCnpj": string | null,
+    "tomadorEmail": string | null,
+    "tomadorEndereco": string | null,
+    "tomadorTipo": "PF" | "PJ" | null
+  },
+  "resolvedFromReference": boolean
+}`;
+
+  let parsed = null;
+
+  // ─── TIER 1: IA Online (Google Gemini via callGeminiAi ou Mock Injetado) ──────
+  if (aiClientMock) {
+    try {
+      if (typeof aiClientMock === "function") {
+        const mockRes = await aiClientMock({
+          messageText: text,
+          history,
+          quotedText,
+          referenceMessageId,
+          currentConferenceState: conf,
+          db,
+          systemInstruction
+        });
+        if (mockRes) {
+          if (typeof mockRes === "string") {
+            const cleanText = mockRes.replace(/```(?:json)?/gi, "").trim();
+            parsed = JSON.parse(cleanText);
+          } else if (typeof mockRes === "object") {
+            if (typeof mockRes.text === "string") {
+              const cleanText = mockRes.text.replace(/```(?:json)?/gi, "").trim();
+              parsed = JSON.parse(cleanText);
+            } else {
+              parsed = mockRes;
+            }
+          }
+        }
+      } else if (typeof aiClientMock.callGeminiAi === "function") {
+        const geminiRes = await aiClientMock.callGeminiAi({
+          systemInstruction,
+          prompt: `[MENSAGEM DO HÓSPEDE]:\n"${text}"`,
+          history,
+          db,
+          customPrompt: true
+        });
+        if (geminiRes?.ok && geminiRes.text) {
+          const cleanText = geminiRes.text.replace(/```(?:json)?/gi, "").trim();
+          parsed = JSON.parse(cleanText);
+        }
+      }
+    } catch (_) {}
+  } else {
+    const apiKey = process.env.GEMINI_API_KEY || db?.settings?.geminiApiKey || db?.whatsappAiSettings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+    if (apiKey) {
+      try {
+        const geminiRes = await callGeminiAi({
+          apiKey,
+          systemInstruction,
+          prompt: `[MENSAGEM DO HÓSPEDE]:\n"${text}"`,
+          history,
+          db,
+          customPrompt: true
+        });
+        if (geminiRes?.ok && geminiRes.text) {
+          const cleanText = geminiRes.text.replace(/```(?:json)?/gi, "").trim();
+          parsed = JSON.parse(cleanText);
+        }
+      } catch (_) {}
+    }
+  }
+
+  // ─── TIER 2: Contingência Determinística Local (Zero-Crash Fallback) ─────────
+  if (!parsed || typeof parsed !== "object") {
+    parsed = runDeterministicFiscalLocalFallback({
+      messageText: text,
+      history,
+      quotedText,
+      referenceMessageId,
+      currentConferenceState: conf,
+      db
+    });
+  }
+
+  // ─── Sanitização de Invariantes & Blindagem de Segurança (R2) ─────────────────
+  const result = {
+    intent: String(parsed.intent || "other"),
+    isConfirmation: Boolean(parsed.isConfirmation),
+    isCancellation: Boolean(parsed.isCancellation),
+    valueChange: {
+      hasValueChange: Boolean(parsed.valueChange?.hasValueChange),
+      requestedValue: parsed.valueChange?.requestedValue != null ? Number(parsed.valueChange.requestedValue) : null
+    },
+    guestNameAction: {
+      action: ["add", "remove", "replace", "none"].includes(parsed.guestNameAction?.action) ? parsed.guestNameAction.action : "none",
+      guestName: parsed.guestNameAction?.guestName ? String(parsed.guestNameAction.guestName).trim() : null,
+      needsPromptForName: Boolean(parsed.guestNameAction?.needsPromptForName)
+    },
+    cadastralUpdates: {
+      tomadorNome: parsed.cadastralUpdates?.tomadorNome ? String(parsed.cadastralUpdates.tomadorNome).trim() : null,
+      tomadorCpfCnpj: parsed.cadastralUpdates?.tomadorCpfCnpj ? onlyDigits(String(parsed.cadastralUpdates.tomadorCpfCnpj)) : null,
+      tomadorEmail: parsed.cadastralUpdates?.tomadorEmail ? String(parsed.cadastralUpdates.tomadorEmail).trim().toLowerCase() : null,
+      tomadorEndereco: parsed.cadastralUpdates?.tomadorEndereco ? String(parsed.cadastralUpdates.tomadorEndereco).trim() : null,
+      tomadorTipo: parsed.cadastralUpdates?.tomadorTipo === "PJ" ? "PJ" : (parsed.cadastralUpdates?.tomadorTipo === "PF" ? "PF" : null)
+    },
+    resolvedFromReference: Boolean(parsed.resolvedFromReference)
+  };
+
+  if (result.cadastralUpdates.tomadorCpfCnpj) {
+    if (result.cadastralUpdates.tomadorCpfCnpj.length === 14) result.cadastralUpdates.tomadorTipo = "PJ";
+    else if (result.cadastralUpdates.tomadorCpfCnpj.length === 11) result.cadastralUpdates.tomadorTipo = "PF";
+  }
+
+  // Trava de Valor Inviolável: se o texto contém solicitação de alteração de valor,
+  // a alteração de valor tem prioridade absoluta sobre confirmações
+  const deterministicVal = checkDeterministicValueChange(text, conf);
+  if (deterministicVal.hasValueChange) {
+    result.valueChange.hasValueChange = true;
+    result.valueChange.requestedValue = deterministicVal.requestedValue;
+    result.intent = "change_value";
+    result.isConfirmation = false;
+  } else if (result.valueChange.hasValueChange) {
+    result.intent = "change_value";
+    result.isConfirmation = false;
+  }
+
+  return result;
+}
+
+/**
  * Fluxo Central do Assistente Fiscal do WhatsApp (Features F12 a F17)
  */
 export async function handleWhatsAppFiscalFlow({
@@ -10451,7 +11005,8 @@ export async function handleWhatsAppFiscalFlow({
   sendZapiMessage,
   appendMessageFn,
   saveDatabase,
-  createNotification
+  createNotification,
+  aiClientMock = null
 }) {
   if (!db || !cleanTarget || !messageText) return { handled: false };
 
@@ -10560,11 +11115,11 @@ export async function handleWhatsAppFiscalFlow({
   };
 
   const conf = conv?.fiscalConferenceState;
-  const hasAlterationVerb = /\b(?:altera(?:r|[cç][aã]o)?|muda(?:r|n[cç]a)?|troca(?:r)?|acrescenta(?:r|ndo)?|acrescente|adiciona(?:r|ndo)?|adicione|inclui(?:r|ndo)?|inclua|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|corrige|corrigir|edita(?:r)?|inserir|insere|insira|tira(?:r)?|remove(?:r)?|substitui(?:r)?)\b/i.test(messageText);
-  const hasFiscalFieldTarget = /\b(?:nota|nf|nfse|nfs-e|descri[cç][aã]o|discrimina[cç][aã]o|h[oó]spede|acompanhante|pessoa|tomador|cpf|cnpj|endere[cç]o|cep|e-?mail|raz[aã]o\s*social|nome|valor|servi[cç]o)\b/i.test(messageText);
+  const hasAlterationVerb = /\b(?:altera(?:r|[cç][aã]o)?|muda(?:r|n[cç]a)?|troca(?:r)?|acrescenta(?:r|ndo)?|acrescente|adiciona(?:r|ndo)?|adicione|inclui(?:r|ndo)?|inclua|coloca(?:r|ndo)?|coloque|bota(?:r|ndo)?|bote|corrige|corrigir|edita(?:r)?|inserir|insere|insira|tira(?:r)?|remove(?:r)?|substitui(?:r)?|abaixa(?:r)?|diminui(?:r)?|reduz(?:ir)?|fecha(?:r)?)\b/i.test(messageText);
+  const hasFiscalFieldTarget = /\b(?:nota|nf|nfse|nfs-e|descri[cç][aã]o|discrimina[cç][aã]o|cabe[cç]alho|h[oó]spede|acompanhante|pessoa|tomador|cpf|cnpj|endere[cç]o|cep|e-?mail|raz[aã]o\s*social|nome|valor|pre[cç]o|servi[cç]o|reais|conto)\b/i.test(messageText);
   const isAlterationRequest = Boolean(hasAlterationVerb && hasFiscalFieldTarget);
   const isRefToPreviousMsg = Boolean(
-    /\b(?:j[aá]\s+(?:informei|mandei|enviei|falei|disse|escrevi|coloquei|passei)|est[aá]\s+a[ií]\s+em\s+cima|a[ií]\s+em\s+cima|olha\s+a[ií]|mensagem\s+acima|acima)\b/i.test(messageText) ||
+    /\b(?:j[aá]\s+(?:informei|mandei|enviei|falei|disse|escrevi|coloquei|passei)|est[aá]\s+a[ií]\s+em\s+cima|a[ií]\s+em\s+cima|olha\s+a[ií]|mensagem\s+acima|acima|no\s+in[ií]cio\s+da\s+conversa|conforme\s+(?:disse|falei|passei)\s+antes|t[aá]\s+l[aá]\s+em\s+cima)\b/i.test(messageText) ||
     /👆|⬆️|☝️/u.test(messageText) ||
     quotedText ||
     referenceMessageId
@@ -10575,7 +11130,7 @@ export async function handleWhatsAppFiscalFlow({
       conf.status === "awaiting_confirmation" ||
       Boolean(conf.pendingFieldEdit) ||
       isRefToPreviousMsg ||
-      (conf.status === "scheduled_for_checkout" && (isAlterationRequest || isFiscalIntentMessage(messageText)))
+      (conf.status === "scheduled_for_checkout" && (isAlterationRequest || isFiscalIntentMessage(messageText) || checkDeterministicValueChange(messageText, conf).hasValueChange))
     )
   );
   const isFiscalRequest = isFiscalIntentMessage(messageText) || isAlterationRequest;
@@ -10643,37 +11198,29 @@ export async function handleWhatsAppFiscalFlow({
       }
     }
 
-    // 1.0 Pré-extração de dados cadastrais, hóspede adicional e descrição (R2)
-    const newCnpj = extractCnpj(messageText);
-    const newCpf = extractCpf(messageText);
-    const newEmail = extractEmail(messageText);
-    const newCep = extractCep(messageText);
-    const isAboutGuestOrDescription = /\b(?:h[oó]spede|acompanhante|pessoa|descri[cç][aã]o|discrimina[cç][aã]o|servi[cç]os?|dela|dele)\b/i.test(messageText);
-    const matchName = messageText.match(/\b(?:nome\s+do\s+tomador|raz[aã]o\s*social|empresa|tomador)\s*(?:para|por|como|:|=|-)+\s*([^,\n\r]+)/i) ||
-      (!isAboutGuestOrDescription ? messageText.match(/\b(?:muda(?:r)?|altera(?:r)?|troca(?:r)?)\s+(?:o\s+)?nome\s+(?:para|por|:|=|-)\s*([^,\n\r]+)/i) : null);
+    // 1.0 Interpretação Semântica com IA (LLM) da mensagem do hóspede (R1 & Two-Tier Architecture)
+    const llmResult = await interpretFiscalMessageWithLLM({
+      messageText,
+      history: conv?.messages || [],
+      quotedText,
+      referenceMessageId,
+      currentConferenceState: conf,
+      db,
+      aiClientMock
+    });
 
-    const guestDescEdit = extractGuestAdditionForDescription(messageText);
+    // 1.1 Se o hóspede cancelou explicitamente a conferência da nota
+    if (llmResult.isCancellation) {
+      delete conf.pendingFieldEdit;
+      conf.status = "cancelled";
+      conf.updatedAt = new Date().toISOString();
+      return await respond("Entendido! Cancelei a emissão da nota fiscal. Caso precise futuramente, estou à disposição! 🏨✨", {
+        action: "cancelled_fiscal_conference"
+      });
+    }
 
-    // Se pediu para acrescentar uma pessoa/hóspede na descrição mas ainda não informou o nome da pessoa
-    if (guestDescEdit?.type === "add_guest_unnamed") {
-      const recoveredFromQuote = quotedText ? extractGuestAdditionForDescription(quotedText)?.guestName : "";
-      if (recoveredFromQuote && isValidPersonNameCandidate(recoveredFromQuote)) {
-        conf.descricaoServico = addGuestToServiceDescription(conf.descricaoServico, recoveredFromQuote, "add");
-        delete conf.pendingFieldEdit;
-        conf.status = "awaiting_confirmation";
-        conf.updatedAt = new Date().toISOString();
-        const resForUpdate = Array.isArray(db.reservations)
-          ? db.reservations.find(r => r && ((conf.reservationId && Number(r.id) === Number(conf.reservationId)) || (conf.reservationCode && String(r.code) === String(conf.reservationCode))))
-          : null;
-        if (resForUpdate) {
-          resForUpdate.confirmedFiscalData = { ...(resForUpdate.confirmedFiscalData || {}), ...conf, updatedAt: conf.updatedAt };
-        }
-        const isCheckedOutUpdate = isReservationCheckedOutForFiscal(resForUpdate, db);
-        return await respond(`Dados cadastrais atualizados com sucesso!\n\n${buildConferencePresentationMessage(conf, { isCheckedOut: isCheckedOutUpdate })}`, {
-          action: "updated_conference_data",
-          conference: conf
-        });
-      }
+    // 1.2 Pedido para acrescentar hóspede mas sem nome informado ainda
+    if (llmResult.guestNameAction?.needsPromptForName) {
       conf.pendingFieldEdit = "add_guest_to_description";
       conf.status = "awaiting_confirmation";
       conf.updatedAt = new Date().toISOString();
@@ -10684,106 +11231,54 @@ export async function handleWhatsAppFiscalFlow({
       });
     }
 
-    // Se estava aguardando o nome do hóspede adicional da pergunta anterior ou respondeu "já informei 👆🏼" / citou mensagem
-    let followUpGuestName = "";
-    const cleanFollowUpCandidate = (rawMsg = "") => {
-      return stripOuterNonNameChars(
-        String(rawMsg || "")
-          .replace(/^(?:o\s+nome\s+(?:dela|dele|da\s+pessoa|do\s+h[oó]spede)\s+[eé]|o\s+nome\s+[eé]|[eé]\s+(?:o|a)|[eé]|pode\s+(?:colocar|acrescentar|incluir|adicionar|botar)|acrescenta(?:r)?|coloca(?:r)?|inclui(?:r)?|adiciona(?:r)?|bota(?:r)?|h[oó]spede|acompanhante|pessoa|nome(?:\s+completo)?)\s*[:=-]?\s*/i, "")
-          .replace(/^(?:o|a)\s+/i, "")
-          .replace(/\s+(?:como\s+(?:h[oó]spede|acompanhante).*|na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o|nota).*|por\s+favor.*|por\s+gentileza.*|obrigad[oa].*)$/i, "")
-      );
-    };
-
-    if (!guestDescEdit && isRefToPreviousMsg) {
-      const recovered = recoverGuestNameFromContext();
-      if (recovered) {
-        followUpGuestName = recovered;
-      }
+    // Se estava aguardando o nome do hóspede na descrição e a mensagem não trouxe nome válido nem confirmação
+    if (conf.pendingFieldEdit === "add_guest_to_description" && !llmResult.guestNameAction?.guestName && !llmResult.isConfirmation && !llmResult.valueChange?.hasValueChange) {
+      const retryAskMsg = `Não consegui identificar o nome na mensagem anterior. Por favor, digite apenas o *nome completo* da pessoa que deseja acrescentar como hóspede na descrição do serviço (ex.: *Maria da Silva*). ✨`;
+      return await respond(retryAskMsg, {
+        action: "prompted_guest_name_for_description",
+        conference: conf
+      });
     }
 
-    if (conf.pendingFieldEdit === "add_guest_to_description" && !guestDescEdit && !followUpGuestName && !/\b(?:cancelar|cancela|n[aã]o\s*quero|deixa\s*pra\s*l[aá])\b/i.test(messageText)) {
-      const cleanedFollowUp = cleanFollowUpCandidate(messageText);
-      if (isValidPersonNameCandidate(cleanedFollowUp)) {
-        followUpGuestName = toTitleCase(cleanedFollowUp);
-      } else {
-        const recovered = recoverGuestNameFromContext();
-        if (recovered) {
-          followUpGuestName = recovered;
-        } else if (!/\b(?:sim|pode\s*emitir|confirmo|confirmar)\b/i.test(messageText)) {
-          const retryAskMsg = `Não consegui identificar o nome na mensagem anterior. Por favor, digite apenas o *nome completo* da pessoa que deseja acrescentar como hóspede na descrição do serviço (ex.: *Maria da Silva*). ✨`;
-          return await respond(retryAskMsg, {
-            action: "prompted_guest_name_for_description",
-            conference: conf
-          });
-        }
-      }
-    }
-
-    // Se o usuário enviou diretamente o nome da pessoa (ex: "o nome dela é X" ou apenas "Thamiris Maiara Santos Da Silva")
-    // logo após tentativa de adição de hóspede na conversa ou recuperação de descrição corrompida
-    if (!guestDescEdit && !followUpGuestName && !matchName && !newCnpj && !newCpf && !newEmail && !newCep) {
-      const directCandidate = cleanFollowUpCandidate(messageText);
-      const hasExplicitPersonPrefix = /^(?:o\s+nome\s+(?:dela|dele|da\s+pessoa|do\s+h[oó]spede)\s+[eé]|h[oó]spede\s*[:=-])/i.test(messageText.trim());
-      const hasMultiWordPersonName = isValidPersonNameCandidate(directCandidate) && directCandidate.split(/\s+/).length >= 2;
-      const hadRecentGuestPrompt = healedFromCorruptedDescription || (Array.isArray(conv?.messages) && conv.messages.slice(-6).some(m =>
-        m?.text && /(?:acrescentar como hóspede na descrição|mais uma pessoa na descrição|hóspede na descrição)/i.test(m.text)
-      ));
-      if (isValidPersonNameCandidate(directCandidate) && (hasExplicitPersonPrefix || (hasMultiWordPersonName && hadRecentGuestPrompt))) {
-        followUpGuestName = toTitleCase(directCandidate);
-      }
-    }
-
-    // Se a descrição estava corrompida (ex: "Já Informei") e ainda não extraímos o nome da mensagem atual, recupera do histórico
-    if (healedFromCorruptedDescription && !guestDescEdit && !followUpGuestName) {
-      const recovered = recoverGuestNameFromContext();
-      if (recovered) {
-        followUpGuestName = recovered;
-      }
-    }
-
-    // Captura pedido de acrescentar/incluir algo na descrição padrão
-    const matchAppendDesc = !guestDescEdit && !followUpGuestName && (
+    // Captura pedido de acrescentar/alterar descrição livremente
+    const matchAppendDesc = (
       messageText.match(/\b(?:adiciona(?:r|ndo)?|adicione|inclui(?:r|ndo)?|inclua|acrescenta(?:r|ndo)?|acrescente|coloca(?:r|ndo)?|coloque(?:\s+tamb[eé]m)?|insere|inserir)\s+(?:na\s+|no\s+)?(?:descri[cç][aã]o|discrimina[cç][aã]o)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?\s*(?:que|:|=|-)?\s*([^\n\r]+?)(?=\s*(?:,?\s+e\s+(?:o\s+)?valor|,\s*valor\b|\s+valor\b|$))/i) ||
       messageText.match(/\b(?:adiciona(?:r|ndo)?|adicione|inclui(?:r|ndo)?|inclua|acrescenta(?:r|ndo)?|acrescente|coloca(?:r|ndo)?|coloque(?:\s+tamb[eé]m)?|insere|inserir)\s+([^\n\r]+?)\s+na\s+(?:descri[cç][aã]o|discrimina[cç][aã]o)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?(?=\s*(?:,?\s+e\s+(?:o\s+)?valor|,\s*valor\b|\s+valor\b|[.!?]|$))/i)
     );
 
-    // Captura a descrição delimitando antes de comandos de valor ("e o valor...", "valor...")
-    const matchDesc = !guestDescEdit && !followUpGuestName && !matchAppendDesc && (
+    const matchDesc = !matchAppendDesc && (
       messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?\s*(?:para|por|como\s+sendo|e|:|=|-)+\s*([^\n\r]+?)(?=\s*(?:,?\s+e\s+(?:o\s+)?valor|,\s*valor\b|\s+valor\b|$))/i) ||
       messageText.match(/\b(?:descri[cç][aã]o|discrimina[cç][aã]o)(?:\s+d[eo]s?\s+servi[cç]os?|\s+da\s+nota(?:\s+fiscal)?)?\s*(?:para|por|como\s+sendo|e|:|=|-)+\s*([^\n\r]+)/i)
     );
 
-    // Isola o texto fora da descrição para evitar que datas, diárias ou flats da descrição vazem para o parser monetário
-    const descMatchedRaw = matchAppendDesc ? matchAppendDesc[0] : (matchDesc ? matchDesc[0] : null);
-    const textWithoutDesc = descMatchedRaw ? messageText.replace(descMatchedRaw, " ") : messageText;
-
-    // 1.1 Trava de Valor (R2)
-    // Exige intenção explícita de alteração de preço/valor (termos de valor ou símbolos monetários fora da descrição)
-    const mentionsValue = /\b(?:muda\s*o\s*valor|alterar?\s*o\s*valor|troca\s*o\s*valor|ajusta\s*o\s*valor|novo\s*valor|valor\s*correto|valor\s*da\s*nota|valor\s*faturado|valor\s*original|o\s*valor|pre[cç]o)\b/i.test(textWithoutDesc) ||
-      /\b(?:muda(?:r)?|altera(?:r)?|troca(?:r)?|ajusta(?:r)?|coloca(?:r)?)\s+(?:para|pra)\s*(?:R\$\s*)?\d+/i.test(textWithoutDesc);
-    const hasCurrencySymbol = /(?:R\$\s*[\d\.,]+|[\d\.,]+\s*(?:reais|real)\b)/i.test(textWithoutDesc);
-    const isPureNumber = /^\s*(?:R\$\s*)?\d{1,6}(?:[.,]\d{1,2})?\s*$/i.test(textWithoutDesc);
-    const hasValueChangeIntent = mentionsValue || hasCurrencySymbol || isPureNumber;
-
-    const moneyVal = hasValueChangeIntent ? parseFlexibleMoney(textWithoutDesc) : null;
-    const parsedNum = moneyVal ? Number(moneyVal) : null;
-    const isValueChange = Boolean(hasValueChangeIntent && parsedNum && parsedNum > 0 && Math.abs(parsedNum - Number(conf.valorOriginal || conf.valorServico)) > 0.01);
+    // 1.3 Trava de Valor Inviolável (R2)
+    // Se houve solicitação de alteração de valor (prioridade absoluta sobre confirmações)
+    const isValueChange = Boolean(
+      llmResult.valueChange?.hasValueChange &&
+      llmResult.valueChange.requestedValue &&
+      Math.abs(Number(llmResult.valueChange.requestedValue) - Number(conf.valorOriginal || conf.valorServico)) > 0.01
+    );
 
     if (isValueChange) {
-      // Se houver alteração descritiva ou cadastral concomitante, registra em conf antes de gravar pendingFiscalInvoice
-      if (guestDescEdit?.guestName) {
-        conf.descricaoServico = addGuestToServiceDescription(conf.descricaoServico, guestDescEdit.guestName, guestDescEdit.type === "replace_guest_named" ? "replace" : "add");
-      } else if (followUpGuestName) {
-        conf.descricaoServico = addGuestToServiceDescription(conf.descricaoServico, followUpGuestName, "add");
+      const parsedNum = Number(llmResult.valueChange.requestedValue);
+      // Se houver alteração concomitante de hóspede ou dados cadastrais, aplica antes de travar
+      if (["add", "remove", "replace"].includes(llmResult.guestNameAction?.action) && (llmResult.guestNameAction.guestName || llmResult.guestNameAction.action === "remove")) {
+        conf.descricaoServico = addGuestToServiceDescription(
+          conf.descricaoServico,
+          llmResult.guestNameAction.guestName || "",
+          llmResult.guestNameAction.action
+        );
+        delete conf.pendingFieldEdit;
       } else if (matchAppendDesc) {
         const extra = matchAppendDesc[1].trim();
         conf.descricaoServico = conf.descricaoServico ? `${conf.descricaoServico}\n${extra}` : extra;
       } else if (matchDesc) {
         conf.descricaoServico = matchDesc[1].trim();
       }
-      if (matchName) conf.tomadorNome = toTitleCase(matchName[1].trim());
-      if (newEmail) conf.tomadorEmail = newEmail;
+
+      if (llmResult.cadastralUpdates?.tomadorNome) conf.tomadorNome = toTitleCase(llmResult.cadastralUpdates.tomadorNome);
+      if (llmResult.cadastralUpdates?.tomadorEmail) conf.tomadorEmail = llmResult.cadastralUpdates.tomadorEmail;
+      if (llmResult.cadastralUpdates?.tomadorCpfCnpj) conf.tomadorCpfCnpj = onlyDigits(llmResult.cadastralUpdates.tomadorCpfCnpj);
 
       if (!Array.isArray(db.pendingFiscalApprovals)) db.pendingFiscalApprovals = [];
       const approvalId = `NFSE-APP-${Date.now().toString(36).toUpperCase()}`;
@@ -10811,7 +11306,6 @@ export async function handleWhatsAppFiscalFlow({
       conf.requestedValue = parsedNum;
       conf.updatedAt = new Date().toISOString();
 
-      // Notificação ao gestor (22998505276 / 5522998505276)
       const managerPhone = getManagerWhatsAppPhone(db);
       const managerAlert = `🔔 *Solicitação de Alteração de Valor de NFS-e*\n\n` +
         `Um solicitante pediu alteração de valor para emissão de nota fiscal:\n` +
@@ -10857,42 +11351,47 @@ export async function handleWhatsAppFiscalFlow({
       });
     }
 
-    // 1.2 Alteração de Dados Cadastrais ou de Descrição (R2)
+    // 1.4 Alteração de Dados Cadastrais ou de Descrição (R2)
     let hasCadastralChanges = false;
-    if (newCnpj && isValidCnpj(newCnpj)) {
-      conf.tomadorCpfCnpj = onlyDigits(newCnpj);
-      conf.tomadorTipo = "PJ";
+    if (llmResult.cadastralUpdates?.tomadorCpfCnpj) {
+      conf.tomadorCpfCnpj = onlyDigits(llmResult.cadastralUpdates.tomadorCpfCnpj);
+      conf.tomadorTipo = llmResult.cadastralUpdates.tomadorTipo || (conf.tomadorCpfCnpj.length === 14 ? "PJ" : "PF");
       hasCadastralChanges = true;
-      try {
-        const lookup = await lookupCnpj(conf.tomadorCpfCnpj, db);
-        if (lookup?.razaoSocial) conf.tomadorNome = toTitleCase(lookup.razaoSocial);
-        if (lookup?.email && !newEmail) conf.tomadorEmail = lookup.email.toLowerCase().trim();
-        if (lookup?.logradouro) conf.tomadorEndereco = `${lookup.logradouro}, ${lookup.numero || "S/N"}`;
-      } catch (_) {}
-    } else if (newCpf && isValidCpf(newCpf)) {
-      conf.tomadorCpfCnpj = onlyDigits(newCpf);
-      conf.tomadorTipo = "PF";
+      if (conf.tomadorTipo === "PJ") {
+        try {
+          const lookup = await lookupCnpj(conf.tomadorCpfCnpj, db);
+          if (lookup?.razaoSocial && !llmResult.cadastralUpdates?.tomadorNome) {
+            conf.tomadorNome = toTitleCase(lookup.razaoSocial);
+          }
+          if (lookup?.email && !conf.tomadorEmail && !llmResult.cadastralUpdates?.tomadorEmail) {
+            conf.tomadorEmail = lookup.email.toLowerCase().trim();
+          }
+          if (lookup?.logradouro && !conf.tomadorEndereco) {
+            conf.tomadorEndereco = `${lookup.logradouro}, ${lookup.numero || "S/N"}`;
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (llmResult.cadastralUpdates?.tomadorNome) {
+      conf.tomadorNome = toTitleCase(llmResult.cadastralUpdates.tomadorNome);
+      hasCadastralChanges = true;
+    }
+    if (llmResult.cadastralUpdates?.tomadorEmail) {
+      conf.tomadorEmail = llmResult.cadastralUpdates.tomadorEmail;
+      hasCadastralChanges = true;
+    }
+    if (llmResult.cadastralUpdates?.tomadorEndereco) {
+      conf.tomadorEndereco = llmResult.cadastralUpdates.tomadorEndereco;
       hasCadastralChanges = true;
     }
 
-    if (newEmail) {
-      conf.tomadorEmail = newEmail;
-      hasCadastralChanges = true;
-    }
-    if (matchName) {
-      conf.tomadorNome = toTitleCase(matchName[1].trim());
-      hasCadastralChanges = true;
-    }
-    if (guestDescEdit?.guestName) {
+    if (["add", "remove", "replace"].includes(llmResult.guestNameAction?.action) && (llmResult.guestNameAction.guestName || llmResult.guestNameAction.action === "remove")) {
       conf.descricaoServico = addGuestToServiceDescription(
         conf.descricaoServico,
-        guestDescEdit.guestName,
-        guestDescEdit.type === "replace_guest_named" ? "replace" : "add"
+        llmResult.guestNameAction.guestName || "",
+        llmResult.guestNameAction.action
       );
-      delete conf.pendingFieldEdit;
-      hasCadastralChanges = true;
-    } else if (followUpGuestName) {
-      conf.descricaoServico = addGuestToServiceDescription(conf.descricaoServico, followUpGuestName, "add");
       delete conf.pendingFieldEdit;
       hasCadastralChanges = true;
     } else if (matchAppendDesc) {
@@ -10903,6 +11402,8 @@ export async function handleWhatsAppFiscalFlow({
       conf.descricaoServico = matchDesc[1].trim();
       hasCadastralChanges = true;
     }
+
+    const newCep = extractCep(messageText);
     if (newCep && newCep.length === 8) {
       conf.tomadorCep = newCep;
       hasCadastralChanges = true;
@@ -10943,13 +11444,8 @@ export async function handleWhatsAppFiscalFlow({
       });
     }
 
-    const hasConfirmExplicit = (
-      /\b(?:sim|pode\s*emitir|confirmo|confirmar|correto|autorizo|autorizar|pode\s*mandar|pode\s*gerar|pode\s*enviar|est[aá]\s*correto|est[aá]\s*certo|tudo\s*certo|ok|beleza|perfeito|valeu)\b/i.test(messageText) ||
-      /^\s*(?:emitir|emite|pode\s*emitir)\s*[!.?]*$/i.test(messageText)
-    ) && !/\b(?:n[aã]o|cancela|recusa)\b/i.test(messageText) && !isAlterationRequest;
-
-    // 1.3 Confirmação pelo Hóspede (R1)
-    if (hasConfirmExplicit) {
+    // 1.5 Confirmação pelo Hóspede (R1 & Compreensão Semântica)
+    if (llmResult.isConfirmation) {
       const resForConf = Array.isArray(db.reservations)
         ? db.reservations.find(r =>
             r && (
@@ -11497,7 +11993,8 @@ export async function processAiInboundMessage({
   saveDatabase,
   createNotification,
   sendZapiMessage,
-  appendMessageFn
+  appendMessageFn,
+  aiClientMock = null
 }) {
   if (!incomingInfo || incomingInfo.fromMe || incomingInfo.isGroup || !incomingInfo.text || !cleanTarget) {
     return { skipped: true, reason: "not_eligible" };
@@ -11628,7 +12125,8 @@ export async function processAiInboundMessage({
     sendZapiMessage,
     appendMessageFn,
     saveDatabase,
-    createNotification
+    createNotification,
+    aiClientMock
   });
 
   if (fiscalResult && fiscalResult.handled) {
