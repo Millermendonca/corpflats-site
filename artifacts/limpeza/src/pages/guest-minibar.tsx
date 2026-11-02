@@ -5,11 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import {
   Refrigerator,
-  Package,
   Plus,
   Minus,
   CheckCircle2,
@@ -17,29 +15,23 @@ import {
   Check,
   CreditCard,
   QrCode,
-  AlertTriangle,
   RefreshCw,
   ArrowLeft,
   ArrowRight,
-  ShieldCheck,
   Sparkles,
-  Building2,
   Lock,
   Coffee,
   CheckCircle,
   ExternalLink,
   Receipt,
   FileText,
-  Mail,
   Home,
   AlertCircle,
   Clock,
   Users,
   UserCheck,
   UserPlus,
-  Phone,
   Edit3,
-  Calendar,
   LogOut,
   ChevronDown,
   ChevronUp
@@ -173,6 +165,11 @@ function formatDocMask(value: string): string {
   }
 }
 
+function isGuestPlaceholderName(name?: string): boolean {
+  const trimmed = (name || "").trim();
+  return !trimmed || /^h[óo]spede\s*\d*/i.test(trimmed) || /^\d+º\s*h[óo]spede/i.test(trimmed);
+}
+
 export default function GuestMinibar() {
   const [, setLocation] = useLocation();
 
@@ -223,7 +220,6 @@ export default function GuestMinibar() {
   const [totalLaunchedAmount, setTotalLaunchedAmount] = useState<number>(0);
   const [totalPaidAmount, setTotalPaidAmount] = useState<number>(0);
   const [confirmingCheckout, setConfirmingCheckout] = useState<boolean>(false);
-  const [checkoutBannerSuccess, setCheckoutBannerSuccess] = useState<string | null>(null);
   // Cardápio Digital recolhido por padrão e posicionado abaixo do extrato
   const [showReferenceCatalog, setShowReferenceCatalog] = useState<boolean>(false);
   const [menuCategoryFilter, setMenuCategoryFilter] = useState<string>("todos");
@@ -232,16 +228,16 @@ export default function GuestMinibar() {
   const [splitMode, setSplitMode] = useState<SplitMode>("titular");
   const [itemAssignments, setItemAssignments] = useState<Record<string, Record<number, number>>>({});
   const [splitBreakdown, setSplitBreakdown] = useState<any | null>(null);
-  const [isSavingSplit, setIsSavingSplit] = useState<boolean>(false);
-  const [splitSavedPulse, setSplitSavedPulse] = useState<boolean>(false);
+  const [, setIsSavingSplit] = useState<boolean>(false);
+  const [, setSplitSavedPulse] = useState<boolean>(false);
   const [expandedUnitItemKey, setExpandedUnitItemKey] = useState<string | null>(null);
   const [expandedDetailItemKey, setExpandedDetailItemKey] = useState<string | null>(null);
 
   // Pagamento Parcial / Individual
   const [partialMode, setPartialMode] = useState<PartialPaymentMode>("configured_split");
   const [selectedLaunchQtyMap, setSelectedLaunchQtyMap] = useState<Record<string, number>>({});
-  const [splitParts, setSplitParts] = useState<number>(2);
-  const [customPartialInput, setCustomPartialInput] = useState<string>("");
+  const [splitParts] = useState<number>(2);
+  const [customPartialInput] = useState<string>("");
 
   // Hóspedes do Flat (puxados automaticamente da reserva/FNRH + edição/adição inline na divisão)
   const [reservationGuests, setReservationGuests] = useState<FlatGuestSlot[]>([]);
@@ -280,13 +276,33 @@ export default function GuestMinibar() {
   const [orderError, setOrderError] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<any | null>(null);
   const [copiedPix, setCopiedPix] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState<"pendente" | "pago" | "falha">("pendente");
+  const [, setPaymentStatus] = useState<"pendente" | "pago" | "falha">("pendente");
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Cota configurada para o hóspede selecionado de acordo com a divisão salva na reserva
+  const activeGuestConfiguredShare = useMemo(() => {
+    const shares: any[] = Array.isArray(splitBreakdown?.shares) ? splitBreakdown.shares : [];
+    if (splitMode === "titular") {
+      return shares.find((s) => Number(s.guestIndex) === 1) || shares[0] || null;
+    }
+    const found = shares.find((s) => Number(s.guestIndex) === Number(selectedGuestIndex));
+    if (found && Number(found.amount || 0) > 0) return found;
+    const firstPending = shares.find((s) => Number(s.amount || 0) > 0);
+    if (firstPending) return firstPending;
+    return found || shares[0] || null;
+  }, [splitBreakdown, selectedGuestIndex, splitMode]);
+
   // Hóspede consumidor ativo selecionado (para pagamento / emissão da NF)
   const activeConsumerGuest = useMemo<FlatGuestSlot>(() => {
-    const found = reservationGuests.find((g) => g.index === selectedGuestIndex);
+    const targetIdx =
+      splitMode === "titular"
+        ? 1
+        : Number(activeGuestConfiguredShare?.guestIndex) || selectedGuestIndex || 1;
+    const found =
+      reservationGuests.find((g) => g.index === targetIdx) ||
+      reservationGuests.find((g) => g.index === selectedGuestIndex) ||
+      reservationGuests[0];
     if (found) return found;
     return {
       index: 1,
@@ -298,19 +314,20 @@ export default function GuestMinibar() {
       cpf: reservation?.document || "",
       role: "1º Hóspede (Titular)"
     };
-  }, [reservationGuests, selectedGuestIndex, reservation]);
+  }, [reservationGuests, selectedGuestIndex, splitMode, activeGuestConfiguredShare, reservation]);
 
   // Troca de hóspede consumidor no flat (atualiza CPF, WhatsApp e E-mail automaticamente)
   const handleSelectConsumerGuest = (guestSlot: FlatGuestSlot) => {
     setSelectedGuestIndex(guestSlot.index);
-    const gDoc = guestSlot.cpf || guestSlot.document || "";
+    setIsEditingContact(false);
+    const gDoc = (guestSlot.cpf || guestSlot.document || "").replace(/\D/g, "");
     setInvoiceEmail(guestSlot.email || "");
     setInvoicePhone(guestSlot.phone || "");
-    if (gDoc) {
+    if (gDoc.length >= 11) {
       setCustomDocument(formatDocMask(gDoc));
       setDocChoice("cadastrado");
     } else {
-      setCustomDocument("");
+      setCustomDocument(gDoc ? formatDocMask(gDoc) : "");
       setDocChoice("personalizado");
     }
     setReservation((prev) =>
@@ -390,10 +407,16 @@ export default function GuestMinibar() {
       urlGuestIndex = Number(sp.get("guestIndex") || 0);
     }
 
-    let matchedIdx = urlGuestIndex > 0 ? urlGuestIndex : Number(data.matchedGuestIndex) || 1;
-    // Se não há ?guestIndex= forçado na URL e a cota do hóspede atual já foi paga (R$ 0,00) enquanto outro hóspede ainda tem saldo pendente, pré-seleciona o hóspede com saldo pendente
+    const incomingMode = data.splitBreakdown?.mode || data.splitConfig?.mode || "titular";
+    let matchedIdx =
+      incomingMode === "titular"
+        ? 1
+        : urlGuestIndex > 0
+        ? urlGuestIndex
+        : Number(data.matchedGuestIndex) || 1;
+    // Se a cota do hóspede atual já foi paga (R$ 0,00) enquanto outro hóspede ainda tem saldo pendente, pré-seleciona o hóspede com saldo pendente
     const incomingShares: any[] = Array.isArray(data.splitBreakdown?.shares) ? data.splitBreakdown.shares : [];
-    if (urlGuestIndex <= 0 && incomingShares.length > 1) {
+    if (incomingShares.length > 1) {
       const curShare = incomingShares.find((s) => Number(s.guestIndex) === matchedIdx);
       const pendingGuestShare = incomingShares.find((s) => Number(s.amount || 0) > 0);
       if (curShare && Number(curShare.amount || 0) <= 0 && pendingGuestShare) {
@@ -435,13 +458,14 @@ export default function GuestMinibar() {
     const resolvedPhone = matchedSlot.phone || data.phone || "";
     setInvoiceEmail(resolvedEmail);
     setInvoicePhone(resolvedPhone);
-    setIsEditingContact(!resolvedEmail && !resolvedPhone);
+    setIsEditingContact(false);
 
-    const resolvedDoc = matchedSlot.cpf || matchedSlot.document || data.document || "";
-    if (resolvedDoc) {
+    const resolvedDoc = (matchedSlot.cpf || matchedSlot.document || data.document || "").replace(/\D/g, "");
+    if (resolvedDoc.length >= 11) {
       setCustomDocument(formatDocMask(resolvedDoc));
       setDocChoice("cadastrado");
     } else {
+      setCustomDocument(resolvedDoc ? formatDocMask(resolvedDoc) : "");
       setDocChoice("personalizado");
     }
   };
@@ -476,7 +500,8 @@ export default function GuestMinibar() {
             cpf: g.cpf || g.document || ""
           }));
           setReservationGuests(updatedGuests);
-          const curSlot = updatedGuests.find((g: FlatGuestSlot) => g.index === selectedGuestIndex);
+          const targetIdx = payload.mode === "titular" ? 1 : selectedGuestIndex;
+          const curSlot = updatedGuests.find((g: FlatGuestSlot) => g.index === targetIdx) || updatedGuests[0];
           if (curSlot) {
             handleSelectConsumerGuest(curSlot);
           }
@@ -505,6 +530,16 @@ export default function GuestMinibar() {
   const handleSelectSplitMode = async (newMode: SplitMode) => {
     setSplitMode(newMode);
     setPartialMode("configured_split");
+    setEditingGuestIndex(null);
+    setIsAddingNewGuest(false);
+    if (newMode === "titular") {
+      const titularSlot = reservationGuests.find((g) => g.index === 1) || reservationGuests[0];
+      if (titularSlot) {
+        handleSelectConsumerGuest(titularSlot);
+      } else {
+        setSelectedGuestIndex(1);
+      }
+    }
     // Se escolheu dividir meio a meio ou marcar por item e só há 1 hóspede listado, garante pelo menos o 2º slot visível
     if ((newMode === "half_and_half" || newMode === "by_item") && reservationGuests.length < 2) {
       const defaultSecondGuest = {
@@ -651,7 +686,7 @@ export default function GuestMinibar() {
       setEditingGuestIndex(guestSlot.index);
       setGuestEditForm({
         index: guestSlot.index,
-        name: /^\d+º\s*h[óo]spede$/i.test(guestSlot.name) ? "" : guestSlot.name,
+        name: isGuestPlaceholderName(guestSlot.name) ? "" : guestSlot.name,
         phone: guestSlot.phone || "",
         email: guestSlot.email || "",
         cpf: formatDocMask(guestSlot.cpf || guestSlot.document || "")
@@ -883,7 +918,6 @@ export default function GuestMinibar() {
     if (confirmingCheckout) return;
     setConfirmingCheckout(true);
     setOrderError(null);
-    setCheckoutBannerSuccess(null);
 
     try {
       const res = await fetch("/api/public/minibar/confirm-checkout", {
@@ -902,9 +936,6 @@ export default function GuestMinibar() {
         if (data.statement) {
           applyStatementData(data.statement);
         }
-        setCheckoutBannerSuccess(
-          data.message || "Check-out confirmado com sucesso! O pagamento do frigobar já está liberado."
-        );
       } else {
         setOrderError(data.error || "Não foi possível registrar o check-out agora.");
       }
@@ -914,44 +945,6 @@ export default function GuestMinibar() {
       setConfirmingCheckout(false);
     }
   };
-
-  // Controle de seleção de itens lançados para pagamento parcial manual
-  const handleUpdateSelectedLaunchedItemQty = (item: PendingLaunchedItem, delta: number) => {
-    const maxQty = item.remainingQuantity ?? item.quantity;
-    setSelectedLaunchQtyMap((prev) => {
-      const current = prev[item.itemKey] || 0;
-      const next = Math.max(0, Math.min(maxQty, current + delta));
-      const copy = { ...prev };
-      if (next === 0) {
-        delete copy[item.itemKey];
-      } else {
-        copy[item.itemKey] = next;
-      }
-      return copy;
-    });
-  };
-
-  const handleToggleLaunchedItemCheck = (item: PendingLaunchedItem) => {
-    const maxQty = item.remainingQuantity ?? item.quantity;
-    setSelectedLaunchQtyMap((prev) => {
-      const current = prev[item.itemKey] || 0;
-      const copy = { ...prev };
-      if (current > 0) {
-        delete copy[item.itemKey];
-      } else {
-        copy[item.itemKey] = maxQty;
-      }
-      return copy;
-    });
-  };
-
-  // Cota configurada para o hóspede selecionado de acordo com a divisão salva na reserva
-  const activeGuestConfiguredShare = useMemo(() => {
-    const shares: any[] = Array.isArray(splitBreakdown?.shares) ? splitBreakdown.shares : [];
-    const found = shares.find((s) => Number(s.guestIndex) === Number(selectedGuestIndex));
-    if (found) return found;
-    return shares[0] || null;
-  }, [splitBreakdown, selectedGuestIndex]);
 
   // Lista única e limpa de todos os itens lançados no extrato
   const allLaunchedItems = useMemo(() => {
@@ -1798,9 +1791,11 @@ export default function GuestMinibar() {
                     );
                     const guestPaidAmount = Number(share?.paidAmount || 0);
                     const isSharePaid = Boolean(share?.isSharePaid) || (guestPaidAmount > 0 && guestAmount <= 0);
-                    const gDoc = g.cpf || g.document || "";
-                    const isPlaceholderName = /^\d+º\s*h[óo]spede$/i.test((g.name || "").trim());
-                    const missingAnyFiscal = isPlaceholderName || !g.phone || !gDoc;
+                    const cleanDoc = (g.cpf || g.document || "").replace(/\D/g, "");
+                    const cleanPhone = (g.phone || "").replace(/\D/g, "");
+                    const isPlaceholderName = isGuestPlaceholderName(g.name);
+                    const missingAnyFiscal =
+                      isPlaceholderName || cleanPhone.length < 10 || cleanDoc.length < 11;
                     const isEditingThis = editingGuestIndex === g.index && !isAddingNewGuest;
 
                     return (
@@ -2276,7 +2271,8 @@ export default function GuestMinibar() {
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "checkout") {
     const checkoutAmount = paymentSelectionSummary.amountToPay;
-    const hasRegisteredCpf = Boolean(activeConsumerGuest.cpf);
+    const registeredCpfDigits = (activeConsumerGuest.cpf || activeConsumerGuest.document || "").replace(/\D/g, "");
+    const hasRegisteredCpf = registeredCpfDigits.length >= 11;
     const showCustomFiscalInputs = !hasRegisteredCpf || docChoice === "personalizado" || isEditingContact;
 
     return (
@@ -2364,13 +2360,13 @@ export default function GuestMinibar() {
               {!showCustomFiscalInputs ? (
                 <div className="flex items-center justify-between gap-2 text-xs">
                   <span className="text-slate-300">
-                    CPF na Nota: <strong className="text-white">{formatDocMask(activeConsumerGuest.cpf)}</strong>
+                    CPF na Nota: <strong className="text-white">{formatDocMask(registeredCpfDigits)}</strong>
                   </span>
                   <button
                     type="button"
                     onClick={() => {
-                      if (!customDocument && activeConsumerGuest.cpf) {
-                        setCustomDocument(formatDocMask(activeConsumerGuest.cpf));
+                      if (!customDocument && registeredCpfDigits) {
+                        setCustomDocument(formatDocMask(registeredCpfDigits));
                       }
                       setIsEditingContact(true);
                     }}
@@ -2389,6 +2385,9 @@ export default function GuestMinibar() {
                       <button
                         type="button"
                         onClick={() => {
+                          setCustomDocument(formatDocMask(registeredCpfDigits));
+                          setInvoicePhone(activeConsumerGuest.phone || "");
+                          setInvoiceEmail(activeConsumerGuest.email || "");
                           setDocChoice("cadastrado");
                           setIsEditingContact(false);
                         }}
@@ -2485,7 +2484,7 @@ export default function GuestMinibar() {
           <Button
             onClick={handleCheckoutSubmit}
             disabled={isSubmittingOrder}
-            className="w-full h-13 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-2xl text-sm shadow-xl shadow-cyan-600/20 flex items-center justify-center gap-2 active:scale-[0.99] transition-all"
+            className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-2xl text-sm shadow-xl shadow-cyan-600/20 flex items-center justify-center gap-2 active:scale-[0.99] transition-all"
           >
             {isSubmittingOrder ? (
               <>

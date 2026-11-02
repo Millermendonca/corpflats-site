@@ -107,6 +107,21 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
       /pendingBalance > 0 && splitMode !== "titular"/,
       "Lista de divisão por hóspede só deve aparecer quando houver saldo pendente e não estiver em 100% Titular"
     );
+    assert.match(
+      uiCode,
+      /function isGuestPlaceholderName/,
+      "Deve detectar nomes genéricos ('2º Hóspede (Acompanhante)') sem exigir âncora final $"
+    );
+    assert.match(
+      uiCode,
+      /if \(splitMode === "titular"\)\s*\{\s*return shares\.find\(\(s\) => Number\(s\.guestIndex\) === 1\)/,
+      "No modo '100% Titular', a cota ativa deve apontar sempre para o Hóspede 1 (Titular)"
+    );
+    assert.match(
+      uiCode,
+      /const firstPending = shares\.find\(\(s\) => Number\(s\.amount \|\| 0\) > 0\)/,
+      "Quando o hóspede selecionado tiver saldo R$ 0,00, deve fazer fallback automático para o hóspede com saldo pendente > 0"
+    );
 
     const portalCode = fs.readFileSync(
       path.join(rootDir, "artifacts/limpeza/src/pages/guest-portal.tsx"),
