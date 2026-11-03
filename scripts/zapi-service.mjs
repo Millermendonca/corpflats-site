@@ -6823,6 +6823,8 @@ export function appendMessageToConversation(db, {
   status = "delivered",
   timestamp = null,
   messageId = null,
+  referenceMessageId = null,
+  quotedText = null,
   isGroup = false,
   groupId = null,
   groupName = null
@@ -6906,14 +6908,50 @@ export function appendMessageToConversation(db, {
 
   const finalMsgId = messageId || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
+  // Se for callback eco da Z-API para mensagem recém-enviada pelo sistema (ex: msg_... ou svc_...), vincula o messageId real sem duplicar no histórico
+  if (fromMe && text) {
+    const nowCheckMs = new Date(nowIso).getTime();
+    const recentSameFromMe = [...conv.messages].reverse().find(m => {
+      if (!m || !m.fromMe || String(m.text || "").trim() !== String(text || "").trim()) return false;
+      const mMs = new Date(m.timestamp || 0).getTime();
+      return !Number.isNaN(mMs) && !Number.isNaN(nowCheckMs) && Math.abs(nowCheckMs - mMs) <= 45000;
+    });
+    if (recentSameFromMe) {
+      if (messageId && !String(messageId).startsWith("msg_")) {
+        recentSameFromMe.zapiMessageId = messageId;
+        if (String(recentSameFromMe.messageId || "").startsWith("msg_") || String(recentSameFromMe.messageId || "").startsWith("svc_")) {
+          recentSameFromMe.internalId = recentSameFromMe.id;
+          recentSameFromMe.messageId = messageId;
+        }
+      }
+      return conv;
+    }
+  }
+
   const exists = conv.messages.some(m => 
     (m.messageId && m.messageId === finalMsgId) || 
+    (m.zapiMessageId && m.zapiMessageId === finalMsgId) ||
     (m.id === finalMsgId) || 
     (m.timestamp === nowIso && m.text === text && m.fromMe === fromMe)
   );
 
   if (exists) {
     return conv;
+  }
+
+  // Resolve texto citado se houver referenceMessageId apuntando para mensagem anterior na conversa
+  let resolvedQuotedText = quotedText || null;
+  if (!resolvedQuotedText && referenceMessageId) {
+    const refMsg = conv.messages.find(m =>
+      m && (
+        String(m.messageId) === String(referenceMessageId) ||
+        String(m.zapiMessageId) === String(referenceMessageId) ||
+        String(m.id) === String(referenceMessageId)
+      )
+    );
+    if (refMsg?.text) {
+      resolvedQuotedText = refMsg.text;
+    }
   }
 
   const newMsg = {
@@ -6930,6 +6968,8 @@ export function appendMessageToConversation(db, {
     buttons: Array.isArray(buttons) ? buttons : [],
     triggerEvent: triggerEvent || null,
     reservationCode: reservationCode || null,
+    referenceMessageId: referenceMessageId || null,
+    quotedText: resolvedQuotedText || null,
     timestamp: nowIso,
     status: fromMe ? (status || "read") : "delivered"
   };
@@ -8936,6 +8976,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         status: "delivered",
         timestamp: incomingInfo.timestamp || new Date().toISOString(),
         messageId: incomingInfo.messageId,
+        referenceMessageId: incomingInfo.referenceMessageId || null,
+        quotedText: incomingInfo.quotedText || null,
         isGroup: incomingInfo.isGroup,
         groupId: incomingInfo.groupId,
         groupName: incomingInfo.groupName
@@ -9234,7 +9276,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           if (existingBuf) {
             clearTimeout(existingBuf.timer);
             existingBuf.texts.push(String(effectiveIncomingInfo.text || "").trim());
-            existingBuf.lastIncoming = effectiveIncomingInfo;
+            existingBuf.lastIncoming = {
+              ...effectiveIncomingInfo,
+              quotedText: effectiveIncomingInfo.quotedText || existingBuf.lastIncoming?.quotedText || "",
+              referenceMessageId: effectiveIncomingInfo.referenceMessageId || existingBuf.lastIncoming?.referenceMessageId || ""
+            };
           } else {
             bufMap.set(cleanTarget, {
               texts: [String(effectiveIncomingInfo.text || "").trim()],
@@ -9353,6 +9399,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             status: "delivered",
             timestamp: incomingInfo.timestamp || new Date().toISOString(),
             messageId: incomingInfo.messageId,
+            referenceMessageId: incomingInfo.referenceMessageId || "",
+            quotedText: incomingInfo.quotedText || "",
             isGroup: incomingInfo.isGroup,
             groupId: incomingInfo.groupId,
             groupName: incomingInfo.groupName
@@ -10150,7 +10198,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   app.post("/api/whatsapp/ai-simulate", async (req, res) => {
     const db = getDb();
     ensureDbDefaults();
-    const { message, phone = "22998505276", history } = req.body;
+    const { message, phone = "22998505276", history, quotedText = "", referenceMessageId = "" } = req.body;
     if (!message || typeof message !== "string") {
       return res.status(400).json({ error: "Mensagem obrigatória para simulação." });
     }
@@ -10161,7 +10209,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         phone,
         messageText: message,
         history: Array.isArray(history) ? history : [],
-        isCopilot: true
+        quotedText,
+        referenceMessageId,
+        isCopilot: true,
+        saveDatabase,
+        sendZapiMessage,
+        createNotification
       });
       res.json({
         success: true,
@@ -10170,7 +10223,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         shouldHandover: result.shouldHandover,
         matchedKeyword: result.matchedKeyword,
         source: result.source,
-        modelUsed: result.modelUsed
+        modelUsed: result.modelUsed,
+        functionCall: result.functionCall || null,
+        functionResult: result.functionResult || null,
+        geminiDiagnostics: result.geminiDiagnostics || null
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -10239,6 +10295,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     const lastIncoming = (conv?.messages || []).slice().reverse().find(m => !m.fromMe);
     const messageText = req.body.message || lastIncoming?.text || "Olá, tudo bem?";
+    const quotedText = req.body.quotedText || lastIncoming?.quotedText || "";
+    const referenceMessageId = req.body.referenceMessageId || lastIncoming?.referenceMessageId || "";
 
     try {
       const result = await generateAiWhatsAppResponse({
@@ -10246,7 +10304,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         phone: cleanPhone,
         messageText,
         history: conv?.messages || [],
-        isCopilot: true
+        quotedText,
+        referenceMessageId,
+        isCopilot: true,
+        saveDatabase,
+        sendZapiMessage,
+        createNotification,
+        conv
       });
 
       res.json({
@@ -10255,7 +10319,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         guestContext: result.guestContext,
         shouldHandover: result.shouldHandover,
         source: result.source,
-        modelUsed: result.modelUsed
+        modelUsed: result.modelUsed,
+        functionCall: result.functionCall || null,
+        functionResult: result.functionResult || null,
+        geminiDiagnostics: result.geminiDiagnostics || null
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

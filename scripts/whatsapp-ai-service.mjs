@@ -8356,12 +8356,29 @@ export function stripRedundantGreetingForOngoingConversation(replyText = "", his
 }
 
 /**
- * Executa roteamento multi-turn determinístico das Tools semânticas (ex: estender_estadia após "até amanhã só")
+ * Identifica notificações automatizadas operacionais internas (Ordens de Serviço, alertas de sistema,
+ * avisos de gestão) enviadas para o telefone do administrador para que não poluam o histórico conversacional
+ * da Sofia quando o administrador está testando como hóspede.
+ */
+function isOperationalSystemBroadcastMessage(msg) {
+  if (!msg) return false;
+  const trigger = String(msg.triggerEvent || "").toLowerCase();
+  if (trigger.startsWith("service_order")) return true;
+  const txt = String(msg.text || "").trim();
+  if (!txt) return false;
+  return /^(?:🛠️\s*\*Solicitação de Liberação de Entrada\*|🚀\s*\*Serviço iniciado\*|✅\s*\*Serviço finalizado\*|⏰\s*\*Alerta:\s*Serviço com Previsão Expirada\*|🔄\s*\*Previsão de Término Atualizada\*|🚨\s*\*ALERTA DE GESTÃO|🔄\s*\*Solicitação de Prorrogação com Conflito de Mapa\*)/i.test(txt);
+}
+
+/**
+ * Executa roteamento multi-turn determinístico das Tools semânticas (ex: estender_estadia após "até amanhã só"
+ * ou quando o hóspede responde "conseguiu verificar?" citando a mensagem anterior da Sofia)
  * quando o hóspede responde a uma pergunta anterior da conversa ou quando a API do Gemini oscila.
  */
 export async function executeMultiTurnAgenticToolFallback({
   messageText = "",
   history = [],
+  quotedText = "",
+  referenceMessageId = "",
   guestContext = {},
   db = null,
   saveDatabase = null,
@@ -8372,7 +8389,8 @@ export async function executeMultiTurnAgenticToolFallback({
   const rawText = String(messageText || "").trim();
   if (!rawText) return { handled: false };
 
-  const rawHist = Array.isArray(history) ? history.slice(-15) : [];
+  const allHist = Array.isArray(history) ? history : [];
+  const rawHist = allHist.slice(-20);
   const lastHistItem = rawHist[rawHist.length - 1];
   const historyBeforeCurrent = (
     lastHistItem &&
@@ -8380,10 +8398,29 @@ export async function executeMultiTurnAgenticToolFallback({
     String(lastHistItem.text || "").trim() === rawText
   ) ? rawHist.slice(0, -1) : rawHist;
 
-  const recentTurnsText = historyBeforeCurrent
-    .slice(-4)
-    .map(m => String(m?.text || ""))
-    .join("\n");
+  // Resolve mensagem citada/respondida (swipe-to-reply no WhatsApp)
+  let effectiveQuotedText = String(quotedText || lastHistItem?.quotedText || "").trim();
+  const effectiveRefId = String(referenceMessageId || lastHistItem?.referenceMessageId || "").trim();
+  if (!effectiveQuotedText && effectiveRefId) {
+    const refMsg = allHist.find(m =>
+      m && (
+        String(m.messageId || "") === effectiveRefId ||
+        String(m.zapiMessageId || "") === effectiveRefId ||
+        String(m.id || "") === effectiveRefId
+      )
+    );
+    if (refMsg?.text) {
+      effectiveQuotedText = String(refMsg.text).trim();
+    }
+  }
+
+  // Filtra alertas automáticos de Ordens de Serviço / sistema para não empurrar a conversa da Sofia para fora da janela
+  const conversationalHistoryBeforeCurrent = historyBeforeCurrent.filter(m => !isOperationalSystemBroadcastMessage(m));
+
+  const recentTurnsText = [
+    ...conversationalHistoryBeforeCurrent.slice(-6).map(m => String(m?.text || "")),
+    ...(effectiveQuotedText ? [effectiveQuotedText] : [])
+  ].filter(Boolean).join("\n");
 
   const sessionCtx = guestContext?.contextoSessao || injectSessionContext({
     db,
@@ -8417,21 +8454,33 @@ export async function executeMultiTurnAgenticToolFallback({
     : todayIso;
 
   const currentAsksExtension = /(?:estender|prorroga|prolongar|ficar\s+mais|mais\s+\d*\s*di[aá]ria)/i.test(rawText);
-  const previousTurnWasExtension = /(?:estender|prorroga[rç]|prolongar|at[eé]\s+(?:que|qual)\s+data\s+gostaria\s+de\s+(?:ficar|permanecer)|di[aá]ria\(s\)\s+adicionais|confirma\s+a\s+prorroga[cç][aã]o)/i.test(recentTurnsText);
+  const previousTurnWasExtension = /(?:estender|prorroga[rç]|prolongar|at[eé]\s+(?:que|qual)\s+data\s+gostaria\s+de\s+(?:ficar|permanecer)|di[aá]ria\(s\)\s+adicionais|confirma\s+a\s+prorroga[cç][aã]o|remanejar\s+a\s+programa[cç][aã]o|acionar\s+a\s+ger[eê]ncia)/i.test(recentTurnsText);
   const resolvedDateFromCurrent = resolveNaturalDateInput(rawText, isoNow, baseCheckoutRef);
-  const isConfirmReply = /^(?:sim|confirmo|pode\s*(?:sim|fazer|gerar|confirmar|prorrogar|estender)?|ok|fechado|combinado|por\s+favor|isso)[.!?\s]*$/i.test(rawText);
+  const isConfirmReply = /^(?:sim|confirmo|confirmado|pode\s*(?:sim|fazer|gerar|confirmar|prorrogar|estender|mandar|enviar)?|ok|fechado|combinado|por\s+favor|isso|quero|manda\s*(?:o\s*pix)?)(?:[\s,!.]+(?:sim|confirmo|confirmado|pode\s*(?:sim|fazer|gerar|confirmar|prorrogar|estender|mandar|enviar)?|ok|fechado|combinado|por\s+favor|isso|quero|o\s*pix))*[.!?\s]*$/i.test(rawText);
+  const isFollowUpStatusReply = /(?:conseguiu\s*verificar|ja\s*verificou|verificou|deu\s*certo|e\s*a[ií]|alguma\s*(?:novidade|resposta|posi[cç][aã]o)|ger[eê]ncia\s*(?:respondeu|liberou|autorizou)|liberou|autorizou|como\s*ficou|pode\s*(?:gerar|mandar|enviar)\s*(?:o\s*)?pix)/i.test(rawText);
 
-  if (reserva && (currentAsksExtension || (previousTurnWasExtension && (resolvedDateFromCurrent || isConfirmReply)))) {
+  if (reserva && (currentAsksExtension || (previousTurnWasExtension && (resolvedDateFromCurrent || isConfirmReply || isFollowUpStatusReply)))) {
     let targetDate = resolvedDateFromCurrent || "";
     let confirmacaoHospede = false;
 
-    if (!targetDate && isConfirmReply && previousTurnWasExtension) {
-      // Extrai a data que havia sido simulada na mensagem anterior da Sofia
-      const prevDateMatch = recentTurnsText.match(/\b(\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4})\b/);
-      if (prevDateMatch) {
-        targetDate = resolveNaturalDateInput(prevDateMatch[1], isoNow, baseCheckoutRef);
-        confirmacaoHospede = true;
+    if (!targetDate && (isConfirmReply || isFollowUpStatusReply) && previousTurnWasExtension) {
+      // Prioriza a data presente na mensagem citada (quotedText) ou nas mensagens recentes da Sofia
+      const sourceForDate = effectiveQuotedText || recentTurnsText;
+      const prevDateMatches = [...sourceForDate.matchAll(/\b(\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4})\b/g)];
+      if (prevDateMatches.length > 0) {
+        const lastMatchedDate = prevDateMatches[prevDateMatches.length - 1][1];
+        targetDate = resolveNaturalDateInput(lastMatchedDate, isoNow, baseCheckoutRef);
       }
+      if (!targetDate && Array.isArray(db?.pendingExtensionProposals)) {
+        const lastProp = [...db.pendingExtensionProposals]
+          .reverse()
+          .find(p => String(p.currentReservationId) === String(reserva.id) && p.requestedCheckoutDate);
+        if (lastProp?.requestedCheckoutDate) {
+          targetDate = lastProp.requestedCheckoutDate;
+        }
+      }
+      // Se o hóspede disse explicitamente "sim / confirmo / pode gerar o pix", confirma; se perguntou "conseguiu verificar?", revalida e apresenta status atualizado
+      confirmacaoHospede = Boolean(isConfirmReply && !isFollowUpStatusReply);
     }
 
     const toolArgs = {
@@ -8446,7 +8495,11 @@ export async function executeMultiTurnAgenticToolFallback({
     if (!targetDate) {
       replyText = `Com certeza! É totalmente possível prorrogar a sua estadia no *${reserva.nome_imovel}* (diária de R$ ${Number(dados.valor_diaria || reserva.valor_diaria || 237).toFixed(2).replace(".", ",")}), mediante disponibilidade no mapa. Até qual data (ou por mais quantos dias) você gostaria de ficar?`;
     } else if (toolRes.status === "SIMULACAO_AGUARDANDO_CONFIRMACAO") {
-      replyText = `Verifiquei aqui no mapa e o *${reserva.nome_imovel}* está livre e disponível para estender a sua estadia até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} ${Number(dados.diarias_extras || 1) === 1 ? "diária extra" : "diárias extras"})! 🏨✨\n\nO valor adicional fica em *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*. Você confirma a prorrogação para eu já registrar no sistema e gerar a chave PIX?`;
+      if (isFollowUpStatusReply) {
+        replyText = `Sim, tudo certo! Verifiquei aqui e o *${reserva.nome_imovel}* já está liberado e disponível para manter você no mesmo quarto até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} ${Number(dados.diarias_extras || 1) === 1 ? "diária extra" : "diárias extras"}, no valor de *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*)! 🏨✨\n\nPosso confirmar a prorrogação no sistema e já te enviar a chave PIX?`;
+      } else {
+        replyText = `Verifiquei aqui no mapa e o *${reserva.nome_imovel}* está livre e disponível para estender a sua estadia até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} ${Number(dados.diarias_extras || 1) === 1 ? "diária extra" : "diárias extras"})! 🏨✨\n\nO valor adicional fica em *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*. Você confirma a prorrogação para eu já registrar no sistema e gerar a chave PIX?`;
+      }
     } else if (toolRes.status === "SUCESSO_EXECUTADO" && dados.aguardando_autorizacao_gestor) {
       replyText = `O valor para estender até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} diária(s)) fica em *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*. Acabei de acionar a gerência no WhatsApp para remanejar a programação do mapa e manter você no mesmo *${reserva.nome_imovel}* sem precisar trocar de quarto! Em instantes já te envio a confirmação e o PIX por aqui.`;
     } else if (toolRes.status === "SUCESSO_EXECUTADO") {
@@ -8470,7 +8523,7 @@ export async function executeMultiTurnAgenticToolFallback({
 /**
  * Chama o Google Gemini com lista de candidatos e suporte multi-turn a Function Calling
  */
-export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false, requesterRole = "guest", requesterPhone = "", saveDatabase = null, sendZapiMessage = null, createNotification = null, conversation = null, guestContext = null }) {
+export async function callGeminiAi({ apiKey, systemInstruction, prompt, quotedText = "", history = [], db, tools = [], customPrompt = false, requesterRole = "guest", requesterPhone = "", saveDatabase = null, sendZapiMessage = null, createNotification = null, conversation = null, guestContext = null }) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
   const rawPrefModel = String(
@@ -8499,8 +8552,10 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
     return true;
   });
 
-  // Injeta as últimas 15 mensagens trocadas na conversa para memória multi-turn completa
-  const rawHistory = Array.isArray(history) ? history.slice(-15) : [];
+  // Injeta as últimas 15 mensagens conversacionais trocadas (filtrando alertas operacionais de OS/sistema)
+  const rawHistory = Array.isArray(history)
+    ? history.filter(m => !isOperationalSystemBroadcastMessage(m)).slice(-15)
+    : [];
   const lastHistItem = rawHistory[rawHistory.length - 1];
   const cleanRawHistory = (
     lastHistItem &&
@@ -8533,16 +8588,20 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
   const tomorrowIso = addDaysIso(todayIso, 1);
   const hasPreviousTurn = formattedHistory.some(t => t.role === "model");
   const continuityHint = hasPreviousTurn
-    ? `\n[CONVERSA EM ANDAMENTO — DATA ATUAL: ${todayIso} | AMANHÃ: ${tomorrowIso}]: NÃO repita "Olá, [Nome]!" nem se apresente de novo ("Sou a Sofia..."). Continue diretamente o assunto da mensagem anterior e acione a Tool correspondente se o hóspede respondeu com uma data ou confirmação.`
+    ? `\n[CONVERSA EM ANDAMENTO — DATA ATUAL: ${todayIso} | AMANHÃ: ${tomorrowIso}]: NÃO repita "Olá, [Nome]!" nem se apresente de novo ("Sou a Sofia..."). Continue diretamente o assunto da mensagem anterior e acione a Tool correspondente se o hóspede respondeu com uma data, confirmação ou pergunta de acompanhamento.`
     : `\n[DATA ATUAL: ${todayIso} | AMANHÃ: ${tomorrowIso}]`;
+
+  const quotedContextBlock = quotedText
+    ? `\n[MENSAGEM ANTERIOR CITADA/RESPONDIDA PELO HÓSPEDE NO WHATSAPP]:\n"${quotedText}"\n(O hóspede deslizou para responder especificamente à mensagem acima — interprete a pergunta atual dele como continuação direta desse assunto!)\n`
+    : "";
 
   const fullPrompt = customPrompt
     ? (systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt)
-    : `${systemInstruction}\n${continuityHint}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+    : `${systemInstruction}\n${continuityHint}${quotedContextBlock}\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
 
   const promptOnly = customPrompt
     ? prompt
-    : `${continuityHint}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+    : `${continuityHint}${quotedContextBlock}\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
 
   const geminiDiagnostics = [];
 
@@ -8581,12 +8640,26 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
         bodyPayload.tools = tools;
       }
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
+      let response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyPayload),
         signal: AbortSignal.timeout(18000)
       });
+
+      // Fallback automático se thinkingConfig ou tools causarem HTTP 400 em alguma versão específica do modelo
+      if (response.status === 400 && (bodyPayload.generationConfig?.thinkingConfig || bodyPayload.tools)) {
+        const retryPayload = {
+          ...bodyPayload,
+          generationConfig: { temperature: 0.35, maxOutputTokens: 4096 }
+        };
+        response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(retryPayload),
+          signal: AbortSignal.timeout(18000)
+        });
+      }
 
       if (!response.ok) {
         const errBody = await response.text().catch(() => "");
@@ -8765,7 +8838,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
 /**
  * Gera a resposta completa do Agente de IA para WhatsApp
  */
-export async function generateAiWhatsAppResponse({ db, phone, messageText, history = [], isCopilot = false, saveDatabase = null, sendZapiMessage = null, createNotification = null, conv: passedConv = null }) {
+export async function generateAiWhatsAppResponse({ db, phone, messageText, quotedText = "", referenceMessageId = "", history = [], isCopilot = false, saveDatabase = null, sendZapiMessage = null, createNotification = null, conv: passedConv = null }) {
   const aiConfig = getWhatsAppAiConfig(db);
 
   const conv = passedConv || (db?.whatsappConversations || []).find(c => {
@@ -8776,6 +8849,23 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
   const effectiveHistory = (history && Array.isArray(history) && history.length > 0)
     ? history
     : (conv?.messages || []);
+
+  // Resolve mensagem citada se só veio referenceMessageId ou se estava salva no último item do histórico
+  const lastHistMsg = effectiveHistory[effectiveHistory.length - 1];
+  let effectiveQuotedText = String(quotedText || lastHistMsg?.quotedText || "").trim();
+  const effectiveRefId = String(referenceMessageId || lastHistMsg?.referenceMessageId || "").trim();
+  if (!effectiveQuotedText && effectiveRefId) {
+    const refMsg = effectiveHistory.find(m =>
+      m && (
+        String(m.messageId || "") === effectiveRefId ||
+        String(m.zapiMessageId || "") === effectiveRefId ||
+        String(m.id || "") === effectiveRefId
+      )
+    );
+    if (refMsg?.text) {
+      effectiveQuotedText = String(refMsg.text).trim();
+    }
+  }
 
   const guestContext = buildGuestContext({ db, phone, history: effectiveHistory });
   guestContext.history = effectiveHistory;
@@ -8967,6 +9057,7 @@ ${systemActionsNotice}
         apiKey,
         systemInstruction: `${aiConfig.systemPrompt}\n${stateRoutedPromptBlock}\n${toneSection}${guidelinesSection}\n${flatsCatalogSection || ""}\n${contextString}`,
         prompt: messageText,
+        quotedText: effectiveQuotedText,
         history: effectiveHistory,
         db,
         tools,
@@ -8985,11 +9076,13 @@ ${systemActionsNotice}
         let finalFnCall = geminiRes.functionCall || null;
         let finalFnResult = geminiRes.functionResult || null;
 
-        // Se o modelo respondeu em texto puro para uma continuação multi-turn de prorrogação ("até amanhã só") sem acionar a tool, garante a execução da Tool!
+        // Se o modelo respondeu em texto puro para uma continuação multi-turn de prorrogação ("até amanhã só" / "conseguiu verificar?") sem acionar a tool, garante a execução da Tool!
         if (!finalFnCall) {
           const multiTurnCheck = await executeMultiTurnAgenticToolFallback({
             messageText,
             history: effectiveHistory,
+            quotedText: effectiveQuotedText,
+            referenceMessageId: effectiveRefId,
             guestContext,
             db,
             saveDatabase,
@@ -9045,6 +9138,8 @@ ${systemActionsNotice}
   const multiTurnToolFallback = await executeMultiTurnAgenticToolFallback({
     messageText,
     history: effectiveHistory,
+    quotedText: effectiveQuotedText,
+    referenceMessageId: effectiveRefId,
     guestContext,
     db,
     saveDatabase,
@@ -13279,6 +13374,8 @@ export async function processAiInboundMessage({
     db,
     phone: cleanTarget,
     messageText: incomingInfo.text,
+    quotedText: incomingInfo.quotedText || "",
+    referenceMessageId: incomingInfo.referenceMessageId || "",
     history,
     isCopilot: false,
     saveDatabase,
@@ -13428,6 +13525,7 @@ export async function processAiInboundMessage({
     balloons.push(rawParagraphs.slice(2).join("\n\n"));
   }
 
+  let lastSentZapiMessageId = "";
   for (let bIdx = 0; bIdx < balloons.length; bIdx++) {
     const balloonText = balloons[bIdx];
     if (!balloonText) continue;
@@ -13440,7 +13538,7 @@ export async function processAiInboundMessage({
     }
 
     if (typeof sendZapiMessage === "function") {
-      await sendZapiMessage(db.zapiConfig, {
+      const zapiSendRes = await sendZapiMessage(db.zapiConfig, {
         phone: cleanTarget,
         message: balloonText,
         channelId: "ai_agent",
@@ -13448,6 +13546,8 @@ export async function processAiInboundMessage({
         delayTyping: typingSec > 0 ? typingSec : undefined,
         db
       });
+      const sentId = zapiSendRes?.data?.messageId || zapiSendRes?.data?.zaapId || zapiSendRes?.messageId || "";
+      if (sentId) lastSentZapiMessageId = String(sentId);
     }
   }
 
@@ -13459,7 +13559,8 @@ export async function processAiInboundMessage({
       text: aiResult.replyText,
       type: "text",
       status: "delivered",
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      ...(lastSentZapiMessageId ? { messageId: lastSentZapiMessageId, zapiMessageId: lastSentZapiMessageId } : {})
     });
   }
 

@@ -2270,6 +2270,20 @@ export const estenderEstadiaTool = {
 
       const valorAdicional = Number((diariasExtras * tarifaDiaria).toFixed(2));
 
+      // Limpa eventuais propostas pendentes legadas que apontavam para a própria reserva como falso conflito
+      if (Array.isArray(db?.pendingExtensionProposals) && targetRes) {
+        for (const prop of db.pendingExtensionProposals) {
+          if (
+            prop &&
+            (prop.status === 'pending' || prop.status === 'pending_manager') &&
+            (String(prop.incomingReservationId) === String(targetRes.id) ||
+              String(prop.currentReservationId) === String(prop.incomingReservationId))
+          ) {
+            prop.status = 'resolved_self_conflict';
+          }
+        }
+      }
+
       // Verifica se há conflito no flat atual para o período de extensão (baseCheckoutRef até novaSaida)
       const conflitoReserva = Array.isArray(db?.reservations)
         ? db.reservations.find((r) => {
