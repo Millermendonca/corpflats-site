@@ -50,8 +50,17 @@ export default defineConfig({
         entryFileNames: 'assets/index.js',
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: (assetInfo) => {
-          if (assetInfo.name?.endsWith('.css')) return 'assets/index.css';
+          if (assetInfo.name === 'index.css' || (assetInfo.name?.endsWith('.css') && !assetInfo.name?.includes('-'))) {
+            return 'assets/index.css';
+          }
           return 'assets/[name]-[hash][extname]';
+        },
+        manualChunks: (id) => {
+          if (id.includes('node_modules')) {
+            if (id.includes('react') || id.includes('react-dom') || id.includes('scheduler')) {
+              return 'vendor-react';
+            }
+          }
         },
       },
     },

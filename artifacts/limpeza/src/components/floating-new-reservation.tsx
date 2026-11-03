@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { useLocation } from 'wouter';
 import { useGetMe } from '@workspace/api-client-react';
 import { Plus, GripVertical, CalendarPlus, Minimize2, Maximize2 } from 'lucide-react';
-import PmsCalendar from '@/pages/pms-calendar';
+
+const PmsCalendarLazy = lazy(() => import('@/pages/pms-calendar'));
 
 const POS_STORAGE_KEY = 'corpflats_floating_new_res_pos_v1';
 const COMPACT_STORAGE_KEY = 'corpflats_floating_new_res_compact_v1';
@@ -63,6 +64,8 @@ export function FloatingNewReservationButton() {
   const [pos, setPos] = useState<{ x: number; y: number }>(() => getDefaultPosition(isCompact));
   const [isDragging, setIsDragging] = useState(false);
   const [isResModalOpen, setIsResModalOpen] = useState(false);
+  const [isModalMounted, setIsModalMounted] = useState(false);
+  const unmountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
@@ -98,11 +101,28 @@ export function FloatingNewReservationButton() {
     const handleModalState = (e: Event) => {
       const customEvent = e as CustomEvent<{ open: boolean }>;
       if (customEvent.detail && typeof customEvent.detail.open === 'boolean') {
-        setIsResModalOpen(customEvent.detail.open);
+        const isOpen = customEvent.detail.open;
+        setIsResModalOpen(isOpen);
+        if (isOpen) {
+          if (unmountTimerRef.current) {
+            clearTimeout(unmountTimerRef.current);
+            unmountTimerRef.current = null;
+          }
+          setIsModalMounted(true);
+        } else {
+          if (unmountTimerRef.current) clearTimeout(unmountTimerRef.current);
+          unmountTimerRef.current = setTimeout(() => {
+            setIsModalMounted(false);
+            unmountTimerRef.current = null;
+          }, 300);
+        }
       }
     };
     window.addEventListener('gfm-res-modal-state', handleModalState);
-    return () => window.removeEventListener('gfm-res-modal-state', handleModalState);
+    return () => {
+      window.removeEventListener('gfm-res-modal-state', handleModalState);
+      if (unmountTimerRef.current) clearTimeout(unmountTimerRef.current);
+    };
   }, []);
 
   // Exclusivo para login de Administrador / Dev em qualquer tela autenticada
@@ -190,7 +210,12 @@ export function FloatingNewReservationButton() {
 
   const handleTriggerNewReservation = () => {
     if (hasMovedRef.current) return;
-    window.dispatchEvent(new CustomEvent('open-new-reservation-modal'));
+    if (isOnReservationsPage) {
+      window.dispatchEvent(new CustomEvent('open-new-reservation-modal'));
+    } else {
+      setIsModalMounted(true);
+      window.dispatchEvent(new CustomEvent('open-new-reservation-modal'));
+    }
   };
 
   const toggleCompactMode = (e: React.MouseEvent) => {
@@ -206,8 +231,12 @@ export function FloatingNewReservationButton() {
 
   return (
     <>
-      {/* Monta os modais do PMS silenciosamente quando o admin está fora da tela /reservas */}
-      {!isOnReservationsPage && <PmsCalendar modalOnly />}
+      {/* Monta os modais do PMS sob demanda apenas quando o usuário solicita abertura fora de /reservas */}
+      {!isOnReservationsPage && isModalMounted && (
+        <Suspense fallback={null}>
+          <PmsCalendarLazy modalOnly autoOpenNewRes />
+        </Suspense>
+      )}
 
       {!isResModalOpen && (
         <div

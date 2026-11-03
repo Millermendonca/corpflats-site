@@ -5,62 +5,74 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 import { cancelGoogleOneTap } from '@/lib/auth-client';
-import { useGetMe } from '@workspace/api-client-react';
+import { useGetMe, getGetMeQueryKey } from '@workspace/api-client-react';
 import { AccessDenied } from '@/components/access-denied';
-import { AdminAiCopilot } from '@/components/admin-ai-copilot';
 import { FloatingNewReservationButton } from '@/components/floating-new-reservation';
 import { hasModuleAccess } from '@/lib/permissions';
 
-// Páginas públicas e operacionais principais (Carregamento Imediato — sem dependência de chunk dinâmico no 5G)
+const AdminAiCopilot = lazy(() => import('@/components/admin-ai-copilot').then(m => ({ default: m.AdminAiCopilot })));
+
+// Páginas públicas e operacionais principais (Login e NotFound estáticos; 15 operacionais via lazyWithRetry)
 import Login from '@/pages/login';
-import Dashboard from '@/pages/dashboard';
-import PmsCalendar from '@/pages/pms-calendar';
-import WhatsappAutomation from '@/pages/whatsapp-automation';
-import WhatsappChat from '@/pages/whatsapp-chat';
-import GuestPreCheckin from '@/pages/guest-pre-checkin';
-import AgencyGuestCredential from '@/pages/agency-guest-credential';
-import VerifyFnrh from '@/pages/verify-fnrh';
-import BookingEngine from '@/pages/booking-engine';
-import GuestBreakfast from '@/pages/guest-breakfast';
-import GuestCheckout from '@/pages/guest-checkout';
-import GuestPortal from '@/pages/guest-portal';
-import GuestMinibar from '@/pages/guest-minibar';
-import MyAccount from '@/pages/my-account';
-import ServiceOrders from '@/pages/service-orders';
-import ServiceWorkerPortal from '@/pages/service-worker-portal';
 import NotFound from '@/pages/not-found';
 
 function lazyWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>
 ) {
-  return lazy(async () => {
-    const delays = [500, 1200, 2200];
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= delays.length; attempt++) {
-      try {
-        return await factory();
-      } catch (err) {
-        lastError = err;
-        if (attempt < delays.length) {
-          await new Promise((r) => setTimeout(r, delays[attempt]));
+  let factoryPromise: Promise<{ default: T }> | null = null;
+  const loadWithRetry = () => {
+    if (!factoryPromise) {
+      factoryPromise = (async () => {
+        const delays = [500, 1200, 2200];
+        let lastError: unknown;
+        for (let attempt = 0; attempt <= delays.length; attempt++) {
+          try {
+            return await factory();
+          } catch (err) {
+            lastError = err;
+            if (attempt < delays.length) {
+              await new Promise((r) => setTimeout(r, delays[attempt]));
+            }
+          }
         }
-      }
-    }
-    if (typeof window !== 'undefined') {
-      try {
-        const lastReload = Number(sessionStorage.getItem('gfm_chunk_reload_ts') || '0');
-        const now = Date.now();
-        if (now - lastReload > 10000) {
-          sessionStorage.setItem('gfm_chunk_reload_ts', String(now));
-          window.location.reload();
+        if (typeof window !== 'undefined') {
+          try {
+            const lastReload = Number(sessionStorage.getItem('gfm_chunk_reload_ts') || '0');
+            const now = Date.now();
+            if (now - lastReload > 10000) {
+              sessionStorage.setItem('gfm_chunk_reload_ts', String(now));
+              window.location.reload();
+            }
+          } catch {}
         }
-      } catch {
-        // Ignore storage errors
-      }
+        throw lastError;
+      })();
     }
-    throw lastError;
-  });
+    return factoryPromise;
+  };
+
+  const LazyComponent = lazy(loadWithRetry) as React.LazyExoticComponent<T> & { preload: () => Promise<{ default: T }> };
+  LazyComponent.preload = loadWithRetry;
+  return LazyComponent;
 }
+
+// 15 Páginas Operacionais Pesadas convertidas para lazyWithRetry com code-splitting
+const Dashboard = lazyWithRetry(() => import('@/pages/dashboard'));
+const PmsCalendar = lazyWithRetry(() => import('@/pages/pms-calendar'));
+const WhatsappAutomation = lazyWithRetry(() => import('@/pages/whatsapp-automation'));
+const WhatsappChat = lazyWithRetry(() => import('@/pages/whatsapp-chat'));
+const GuestPreCheckin = lazyWithRetry(() => import('@/pages/guest-pre-checkin'));
+const AgencyGuestCredential = lazyWithRetry(() => import('@/pages/agency-guest-credential'));
+const VerifyFnrh = lazyWithRetry(() => import('@/pages/verify-fnrh'));
+const BookingEngine = lazyWithRetry(() => import('@/pages/booking-engine'));
+const GuestBreakfast = lazyWithRetry(() => import('@/pages/guest-breakfast'));
+const GuestCheckout = lazyWithRetry(() => import('@/pages/guest-checkout'));
+const GuestPortal = lazyWithRetry(() => import('@/pages/guest-portal'));
+const GuestMinibar = lazyWithRetry(() => import('@/pages/guest-minibar'));
+const MyAccount = lazyWithRetry(() => import('@/pages/my-account'));
+// import ServiceOrders from '@/pages/service-orders';
+const ServiceOrders = lazyWithRetry(() => import('@/pages/service-orders'));
+const ServiceWorkerPortal = lazyWithRetry(() => import('@/pages/service-worker-portal'));
 
 // Páginas Administrativas e Backoffice Secundárias (Code-Splitting com Retry Automático)
 const History = lazyWithRetry(() => import('@/pages/history'));
@@ -109,6 +121,37 @@ const HrDashboard = lazyWithRetry(() => import('@/pages/hr-dashboard'));
 const PontoMobile = lazyWithRetry(() => import('@/pages/ponto-mobile'));
 
 
+const SESSION_USER_KEY = 'gfm_auth_user_session_v1';
+
+function getCachedAuthUser(): any | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(SESSION_USER_KEY) || localStorage.getItem(SESSION_USER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && parsed.id && parsed.role) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedAuthUser(user: any | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (user) {
+      const serialized = JSON.stringify(user);
+      sessionStorage.setItem(SESSION_USER_KEY, serialized);
+      localStorage.setItem(SESSION_USER_KEY, serialized);
+    } else {
+      sessionStorage.removeItem(SESSION_USER_KEY);
+      localStorage.removeItem(SESSION_USER_KEY);
+    }
+  } catch {}
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -118,6 +161,33 @@ const queryClient = new QueryClient({
   }
 });
 
+const initialUser = getCachedAuthUser();
+if (initialUser) {
+  queryClient.setQueryData(getGetMeQueryKey(), initialUser);
+}
+
+// Hook centralizado para guards com revalidação não-bloqueante
+function useSessionUser() {
+  const { data: user, isLoading, isError } = useGetMe();
+
+  useEffect(() => {
+    if (user) {
+      setCachedAuthUser(user);
+    } else if (user === null || isError) {
+      setCachedAuthUser(null);
+    }
+  }, [user, isError]);
+
+  const cached = getCachedAuthUser();
+  const effectiveUser = user !== undefined ? user : cached;
+  const isTrulyLoading = isLoading && !cached;
+
+  return {
+    user: effectiveUser,
+    isLoading: isTrulyLoading,
+  };
+}
+
 function Redirect({ to }: { to: string }) {
   const [, setLocation] = useLocation();
   useEffect(() => { setLocation(to); }, [setLocation, to]);
@@ -125,8 +195,14 @@ function Redirect({ to }: { to: string }) {
 }
 
 function AdminGuard({ component: Component, moduleName, params }: { component: React.ComponentType<any>; moduleName: string; params?: any }) {
-  const { data: user, isLoading } = useGetMe();
+  const { user, isLoading } = useSessionUser();
   const [location] = useLocation();
+
+  useEffect(() => {
+    if ((Component as any)?.preload) {
+      (Component as any).preload();
+    }
+  }, [Component]);
 
   if (isLoading) {
     return (
@@ -159,8 +235,14 @@ function AdminRoute({ path, component, moduleName }: { path: string; component: 
 }
 
 function DevGuard({ component: Component, moduleName, params }: { component: React.ComponentType<any>; moduleName: string; params?: any }) {
-  const { data: user, isLoading } = useGetMe();
+  const { user, isLoading } = useSessionUser();
   const [location] = useLocation();
+
+  useEffect(() => {
+    if ((Component as any)?.preload) {
+      (Component as any).preload();
+    }
+  }, [Component]);
 
   if (isLoading) {
     return (
@@ -193,8 +275,14 @@ function DevRoute({ path, component, moduleName }: { path: string; component: Re
 }
 
 function ReceptionGuard({ component: Component, moduleName, params }: { component: React.ComponentType<any>; moduleName: string; params?: any }) {
-  const { data: user, isLoading } = useGetMe();
+  const { user, isLoading } = useSessionUser();
   const [location] = useLocation();
+
+  useEffect(() => {
+    if ((Component as any)?.preload) {
+      (Component as any).preload();
+    }
+  }, [Component]);
 
   if (isLoading) {
     return (
@@ -227,8 +315,14 @@ function ReceptionRoute({ path, component, moduleName }: { path: string; compone
 }
 
 function StaffGuard({ component: Component, moduleName = "o módulo de governança", params }: { component: React.ComponentType<any>; moduleName?: string; params?: any }) {
-  const { data: user, isLoading } = useGetMe();
+  const { user, isLoading } = useSessionUser();
   const [location] = useLocation();
+
+  useEffect(() => {
+    if ((Component as any)?.preload) {
+      (Component as any).preload();
+    }
+  }, [Component]);
 
   if (isLoading) {
     return (
@@ -605,7 +699,9 @@ function App() {
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
             <Router />
             <FloatingNewReservationButton />
-            <AdminAiCopilot />
+            <Suspense fallback={null}>
+              <AdminAiCopilot />
+            </Suspense>
           </WouterRouter>
           <Toaster />
         </VersionGuard>

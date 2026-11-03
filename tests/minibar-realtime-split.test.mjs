@@ -939,7 +939,7 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
 
       const resHub = await fetch(`${BASE_URL}/api/minibar/invoices/hub`);
       const dataHub = await resHub.json();
-      const hubItem = (dataHub.issuedInvoices || []).find(o => o.id === orderIdG1);
+      const hubItem = (dataHub.issuedInvoices || dataHub.attachedInvoices || []).find(o => o.id === orderIdG1);
       assert.ok(hubItem);
       assert.strictEqual(hubItem.invoice?.fileData, undefined, "Hub não deve vazar fileData");
 
