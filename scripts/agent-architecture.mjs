@@ -270,9 +270,16 @@ export function injectSessionContext(params = {}) {
 }
 
 export function buildContextoSessaoJson(context) {
+  const isoNow = context?.data_hora_atual || new Date().toISOString();
+  const todayIso = String(isoNow).slice(0, 10);
+  const tomorrowIso = addDaysIso(todayIso, 1);
+  const dayAfterTomorrowIso = addDaysIso(todayIso, 2);
   const payload = {
     contexto_sessao: {
-      data_hora_atual: context?.data_hora_atual || new Date().toISOString(),
+      data_hora_atual: isoNow,
+      data_hoje_iso: todayIso,
+      data_amanha_iso: tomorrowIso,
+      data_depois_de_amanha_iso: dayAfterTomorrowIso,
       perfil_remetente:
         context?.perfil_remetente ||
         (context?.reserva_ativa ? 'HOSPEDE_ATIVO' : 'LEAD_DESCONHECIDO'),
@@ -386,6 +393,66 @@ function diffDays(dateA, dateB) {
   const b = new Date(`${dateB}T00:00:00Z`).getTime();
   if (Number.isNaN(a) || Number.isNaN(b)) return 0;
   return Math.round((b - a) / (1000 * 60 * 60 * 24));
+}
+
+export function addDaysIso(baseDateStr, days = 1) {
+  const clean = String(baseDateStr || '').slice(0, 10);
+  const [y, m, d] = clean.split('-').map(Number);
+  if (!y || !m || !d) {
+    const dt = new Date(Date.now() + days * 86400000);
+    return dt.toISOString().slice(0, 10);
+  }
+  const utc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0) + days * 86400000);
+  return utc.toISOString().slice(0, 10);
+}
+
+export function resolveNaturalDateInput(rawInput, nowIso = null, currentCheckoutIso = null) {
+  const raw = String(rawInput || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const isoPrefix = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoPrefix) return isoPrefix[1];
+
+  const todayIso = String(nowIso || getBrasiliaIsoAndDate().isoNow).slice(0, 10);
+  const refCheckout = currentCheckoutIso && currentCheckoutIso > todayIso ? currentCheckoutIso : todayIso;
+  const norm = raw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (/\bdepois\s+de\s+amanh[aã?]?\b/.test(norm)) {
+    return addDaysIso(todayIso, 2);
+  }
+  if (/\bamanh[aã?]?\b/.test(norm)) {
+    return addDaysIso(todayIso, 1);
+  }
+  if (/\bhoje\b/.test(norm)) {
+    return todayIso;
+  }
+
+  const extraDaysMatch = norm.match(/\b(?:mais\s+)?(\d{1,2})\s*(?:dias?|diarias?|noites?)\b/);
+  if (extraDaysMatch) {
+    const extra = Math.max(1, parseInt(extraDaysMatch[1], 10));
+    return addDaysIso(refCheckout, extra);
+  }
+
+  const brFull = norm.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/);
+  if (brFull) {
+    const dd = String(brFull[1]).padStart(2, '0');
+    const mm = String(brFull[2]).padStart(2, '0');
+    const yyyy = brFull[3].length === 2 ? `20${brFull[3]}` : brFull[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  const brShort = norm.match(/\b(\d{1,2})[\/\-](\d{1,2})\b/);
+  if (brShort) {
+    const dd = String(brShort[1]).padStart(2, '0');
+    const mm = String(brShort[2]).padStart(2, '0');
+    const yyyy = todayIso.slice(0, 4) || '2026';
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  return '';
 }
 
 function formatGuestListPtBr(names) {
@@ -1864,7 +1931,7 @@ export const alterarDatasReservaTool = {
   description:
     'Simula ou efetiva a alteração de datas de check-in ou check-out da reserva ativa do hóspede, ' +
     'exigindo antecedência mínima de 24 horas antes do check-in e validando disponibilidade real no calendário.',
-  allowedStates: ['PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
+  allowedStates: ['PRE_CHECKIN', 'IN_STAY_CONCIERGE', 'POS_CHECKOUT'],
   parametersSchema: {
     type: 'OBJECT',
     properties: {
@@ -1899,8 +1966,12 @@ export const alterarDatasReservaTool = {
         };
       }
 
-      const novaEntrada = String(args.nova_data_checkin || reserva.data_checkin).slice(0, 10);
-      const novaSaida = String(args.nova_data_checkout || reserva.data_checkout).slice(0, 10);
+      const novaEntrada =
+        resolveNaturalDateInput(args.nova_data_checkin, context.data_hora_atual, reserva.data_checkin) ||
+        String(args.nova_data_checkin || reserva.data_checkin).slice(0, 10);
+      const novaSaida =
+        resolveNaturalDateInput(args.nova_data_checkout, context.data_hora_atual, reserva.data_checkout) ||
+        String(args.nova_data_checkout || reserva.data_checkout).slice(0, 10);
       const confirmado = Boolean(args.efetivar_alteracao ?? args.confirmacao_hospede ?? false);
 
       // Trava de 24 horas de antecedência antes do check-in para alteração de data de entrada
@@ -2066,13 +2137,14 @@ export const estenderEstadiaTool = {
     'Prorroga a estadia do hóspede até uma nova data de saída (nova_data_checkout). ' +
     'Reaproveita o cálculo oficial de extensão da reserva, gera a cobrança PIX das diárias extras se o flat atual estiver livre, ' +
     'e caso o flat atual tenha outra reserva futura entrando no período, prioriza manter o hóspede já hospedado e consulta o gestor no WhatsApp (5522998505276) para autorizar o remanejamento do próximo hóspede para o Flat da Vez.',
-  allowedStates: ['IN_STAY_CONCIERGE', 'PRE_CHECKIN'],
+  allowedStates: ['IN_STAY_CONCIERGE', 'PRE_CHECKIN', 'POS_CHECKOUT'],
   parametersSchema: {
     type: 'OBJECT',
     properties: {
       nova_data_checkout: {
         type: 'STRING',
-        description: 'Nova data desejada de saída (check-out) no formato YYYY-MM-DD.',
+        description:
+          'Nova data desejada de saída (check-out) no formato YYYY-MM-DD (ou expressão relativa informada pelo hóspede, como "amanhã"). Se o hóspede ainda não informou a data, passe string vazia "".',
       },
       confirmacao_hospede: {
         type: 'BOOLEAN',
@@ -2097,26 +2169,6 @@ export const estenderEstadiaTool = {
         };
       }
 
-      const dataCheckin = String(reserva.data_checkin || '').slice(0, 10);
-      const dataCheckoutAtual = String(reserva.data_checkout || '').slice(0, 10);
-      const novaSaida = String(args.nova_data_checkout || '').slice(0, 10);
-      const confirmado = Boolean(args.confirmacao_hospede ?? false);
-
-      const diariasExtras = diffDays(dataCheckoutAtual, novaSaida);
-      const novasDiariasTotais = diffDays(dataCheckin, novaSaida);
-
-      if (!novaSaida || diariasExtras <= 0) {
-        const msg =
-          `Explique ao hóspede que a nova data de saída (${novaSaida || 'informada'}) precisa ser posterior à data de saída atual (${dataCheckoutAtual}).`;
-        return {
-          status: 'BLOQUEADO_PELA_REGRA',
-          codigo_regra_bloqueio: 'NOVA_DATA_SAIDA_INVALIDA',
-          dados: { data_checkout_atual: dataCheckoutAtual, nova_data_checkout: novaSaida },
-          instrucao_para_ia: msg,
-          instrucao_resposta_ia: msg,
-        };
-      }
-
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const targetRes = Array.isArray(db?.reservations)
@@ -2124,8 +2176,50 @@ export const estenderEstadiaTool = {
             (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
           )
         : null;
-
       const tarifaDiaria = Number(targetRes?.dailyRate || reserva.valor_diaria || 237.0);
+
+      const dataCheckin = String(reserva.data_checkin || '').slice(0, 10);
+      const dataCheckoutAtual = String(reserva.data_checkout || '').slice(0, 10);
+      const todayIso = String(context?.data_hora_atual || getBrasiliaIsoAndDate().isoNow).slice(0, 10);
+      const baseCheckoutRef = dataCheckoutAtual < todayIso ? todayIso : dataCheckoutAtual;
+      const rawNovaSaida = String(args.nova_data_checkout || '').trim();
+      const novaSaida =
+        resolveNaturalDateInput(rawNovaSaida, context?.data_hora_atual, baseCheckoutRef) ||
+        rawNovaSaida.slice(0, 10);
+      const confirmado = Boolean(args.confirmacao_hospede ?? false);
+
+      if (!novaSaida) {
+        const msgAskDate =
+          `Informe ao hóspede com simpatia que é totalmente possível prorrogar a estadia no *${reserva.nome_imovel}* (tarifa de R$ ${tarifaDiaria.toFixed(2)}/diária), mediante disponibilidade no mapa, ` +
+          `e pergunte diretamente até qual data (ou por mais quantos dias) ele gostaria de ficar para você verificar agora mesmo.`;
+        return {
+          status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+          dados: {
+            reserva_id: reserva.id,
+            imovel: reserva.nome_imovel,
+            data_checkout_atual: dataCheckoutAtual,
+            valor_diaria: tarifaDiaria,
+          },
+          instrucao_para_ia: msgAskDate,
+          instrucao_resposta_ia: msgAskDate,
+        };
+      }
+
+      const diariasExtras = diffDays(baseCheckoutRef, novaSaida);
+      const novasDiariasTotais = Math.max(1, diffDays(dataCheckin, novaSaida));
+
+      if (diariasExtras <= 0) {
+        const msg =
+          `Explique ao hóspede que a nova data de saída (${novaSaida || 'informada'}) precisa ser posterior à data de referência de saída (${baseCheckoutRef}).`;
+        return {
+          status: 'BLOQUEADO_PELA_REGRA',
+          codigo_regra_bloqueio: 'NOVA_DATA_SAIDA_INVALIDA',
+          dados: { data_checkout_atual: baseCheckoutRef, nova_data_checkout: novaSaida },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
       const valorAdicional = Number((diariasExtras * tarifaDiaria).toFixed(2));
 
       // Verifica se há conflito no flat atual para o período de extensão (dataCheckoutAtual até novaSaida)
@@ -4049,6 +4143,9 @@ export function ensureInstructionalToolResponse(actionName, rawResult) {
 
 export function buildStateRoutedPrompt(context, manualImovel = '') {
   const jsonContext = buildContextoSessaoJson(context);
+  const isoNow = context?.data_hora_atual || new Date().toISOString();
+  const todayIso = String(isoNow).slice(0, 10);
+  const tomorrowIso = addDaysIso(todayIso, 1);
   const estado = context?.estado_atual || 'COMERCIAL_VENDAS';
   const modoLabel =
     estado === 'IN_STAY_CONCIERGE'
@@ -4056,21 +4153,27 @@ export function buildStateRoutedPrompt(context, manualImovel = '') {
       : estado === 'PRE_CHECKIN'
       ? 'MODO_PRE_CHECKIN / PRE_CHECKIN (Hóspede com Reserva Confirmada antes da Entrada)'
       : estado === 'POS_CHECKOUT'
-      ? 'MODO_POS_CHECKOUT / POS_CHECKOUT (Pós-Check-out: foco em NFS-e, Recibo /minha-reserva/:code e Achados e Perdidos)'
+      ? 'MODO_POS_CHECKOUT / POS_CHECKOUT (Pós-Check-out: suporte a Prorrogação/Extensão de Estadia, NFS-e, Recibo /minha-reserva/:code e Achados e Perdidos)'
       : 'MODO_COMERCIAL_LEAD / COMERCIAL_VENDAS (Lead sem Reserva: foco em Cotação, Fotos Padrão e Fechamento de Pré-Reserva)';
 
   return [
     `# ARQUITETURA AUTÔNOMA DE ATENDIMENTO [ESTADO DA SESSÃO: ${modoLabel}]`,
+    `# DATA E HORA ATUAL DO SISTEMA (REFERÊNCIA ABSOLUTA PARA DATAS RELATIVAS)`,
+    `- Timestamp ISO atual: ${isoNow}`,
+    `- Hoje: ${todayIso} | Amanhã: ${tomorrowIso} | Depois de amanhã: ${addDaysIso(todayIso, 2)}`,
+    ``,
     `# CONTEXTO ATUAL DO HÓSPEDE (INJETADO PELO SISTEMA - ZERO-ASK)`,
     `Não peça ao hóspede informações que já constam abaixo (nome, flat, datas, plano com/sem café, status de pagamento, FNRH ou veículo):`,
     jsonContext,
     ``,
     `# DIRETRIZES OBRIGATÓRIAS DE EXECUÇÃO E USO DE FERRAMENTAS (TOOL CALLING)`,
     `1. **Intenção -> Ferramenta:** Sempre que o hóspede pedir algo que envolva datas (\`alterar_datas_reserva\`, \`estender_estadia\`), horários (\`solicitar_early_checkin\`, \`solicitar_late_checkout\`), disponibilidade (\`consultar_disponibilidade\`), valores/descontos (\`calcular_orcamento\`), fotos (\`enviar_midia_unidade\`), reserva (\`gerar_link_reserva\`), veículo/cadastro (\`atualizar_dados_hospede\`), cartão NFC/acesso (\`resolver_problema_cartao_nfc\`), visitas (\`autorizar_visita_temporaria\`), cancelamento (\`processar_cancelamento\`), governança (\`solicitar_limpeza_extra\`), manutenção (\`abrir_chamado_manutencao\`), achados e perdidos (\`consultar_achados_e_perdidos\`) ou nota fiscal/recibo (\`gerenciar_nota_fiscal_nfse\`), chame a ferramenta adequada antes de responder.`,
-    `2. **Acesso via Cartão NFC (Zero Senha de Porta):** Na CorpFlats (Soho Residence) o acesso aos flats é feito exclusivamente por **Cartão NFC** retirado na recepção 24h. NUNCA mencione "senha da porta" ou "senha da fechadura eletrônica".`,
-    `3. **Simulação antes da Efetivação:** Para alterações que envolvam custos ou mudanças de data, chame a ferramenta primeiro em modo de simulação/consulta (\`confirmacao_hospede: false\` ou \`efetivar_alteracao: false\`), informe as condições ao hóspede e só efetive após o "sim" explícito dele.`,
-    `4. **Obediência Estrita ao Retorno Instrucional da API:** Ao chamar uma ferramenta, leia atentamente o campo \`instrucao_para_ia\` retornado pelo sistema. Use os fatos e limites exatos daquele retorno para construir sua resposta. Nunca invente motivos técnicos e nunca contorne um status \`BLOQUEADO_PELA_REGRA\`.`,
-    `5. **Escalonamento Inteligente (\`notificar_administrador\`):** Se uma ação for bloqueada pelo sistema e o hóspede insistir, pedir uma exceção, relatar um defeito físico no imóvel ou demonstrar frustração, chame IMEDIATAMENTE a ferramenta \`notificar_administrador\` para avisar o gestor no WhatsApp dele.`,
+    `2. **Continuidade Multi-Turn (Respostas Curtas do Hóspede):** Quando o hóspede responder a uma pergunta anterior sua na conversa (ex: você perguntou "até que data gostaria de ficar?" e ele respondeu "até amanhã só" ou "mais 1 dia"), mantenha 100% do contexto, converta a expressão relativa usando a data de Hoje (${todayIso}) -> Amanhã (${tomorrowIso}) e acione IMEDIATAMENTE a ferramenta correspondente (ex: \`estender_estadia\` com \`nova_data_checkout: "${tomorrowIso}"\` e \`confirmacao_hospede: false\`).`,
+    `3. **Proibição de Repetir "Olá, [Nome]!" e Apresentação em Conversa em Andamento:** Se já houver mensagens recentes trocadas no histórico da conversa, NUNCA repita "Olá, [Nome]!", "Bom dia, [Nome]!" e NUNCA se apresente novamente dizendo "Sou a Sofia, concierge virtual da CorpFlats". Continue o diálogo diretamente do ponto onde parou, como uma pessoa real no WhatsApp.`,
+    `4. **Acesso via Cartão NFC (Zero Senha de Porta):** Na CorpFlats (Soho Residence) o acesso aos flats é feito exclusivamente por **Cartão NFC** retirado na recepção 24h. NUNCA mencione "senha da porta" ou "senha da fechadura eletrônica".`,
+    `5. **Simulação antes da Efetivação:** Para alterações que envolvam custos ou mudanças de data, chame a ferramenta primeiro em modo de simulação/consulta (\`confirmacao_hospede: false\` ou \`efetivar_alteracao: false\`), informe as condições ao hóspede e só efetive após o "sim" explícito dele.`,
+    `6. **Obediência Estrita ao Retorno Instrucional da API:** Ao chamar uma ferramenta, leia atentamente o campo \`instrucao_para_ia\` retornado pelo sistema. Use os fatos e limites exatos daquele retorno para construir sua resposta. Nunca invente motivos técnicos e nunca contorne um status \`BLOQUEADO_PELA_REGRA\`.`,
+    `7. **Escalonamento Inteligente (\`notificar_administrador\`):** Se uma ação for bloqueada pelo sistema e o hóspede insistir, pedir uma exceção, relatar um defeito físico no imóvel ou demonstrar frustração, chame IMEDIATAMENTE a ferramenta \`notificar_administrador\` para avisar o gestor no WhatsApp dele.`,
     manualImovel ? `\n# MANUAL DO IMÓVEL ATUAL\n${manualImovel}` : '',
   ]
     .filter(Boolean)

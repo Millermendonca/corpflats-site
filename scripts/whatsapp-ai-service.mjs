@@ -79,7 +79,9 @@ import {
   isRegisteredAgentTool,
   executeRegisteredAgentTool,
   ensureInstructionalToolResponse,
-  buildStateRoutedPrompt
+  buildStateRoutedPrompt,
+  addDaysIso,
+  resolveNaturalDateInput
 } from "./agent-architecture.mjs";
 
 export {
@@ -1857,16 +1859,16 @@ export function buildGeminiTools(actionsSettings = {}, estadoSessao = null) {
     });
   }
 
-  if (allowed.recordUnmetDemand === true) {
+  if (allowed.recordUnmetDemand === true && !estadoSessao && !actionsSettings.estadoSessao) {
     declarations.push({
       name: "recordUnmetDemand",
-      description: "Registra na fila de Oportunidades de Automação e Demandas Sem Acesso qualquer solicitação operacional do hóspede que o sistema não possua capacidade autônoma de realizar (ex: cancelamento de reserva, alteração de datas, solicitação de toalhas/enxoval, chamado de manutenção, troca de quarto, nota fiscal com CNPJ, solicitação de berço/itens extras).",
+      description: "Registra na fila de Oportunidades de Automação e Demandas Sem Acesso qualquer solicitação operacional do hóspede que o sistema não possua capacidade autônoma de realizar (ex: solicitação de berço/itens especiais não mapeados).",
       parameters: {
         type: "OBJECT",
         properties: {
           demandTitle: {
             type: "STRING",
-            description: "Título descritivo da demanda (ex: 'Solicitação de Berço', 'Cancelamento de Reserva')"
+            description: "Título descritivo da demanda (ex: 'Solicitação de Berço')"
           },
           guestRequest: {
             type: "STRING",
@@ -1874,7 +1876,7 @@ export function buildGeminiTools(actionsSettings = {}, estadoSessao = null) {
           },
           category: {
             type: "STRING",
-            description: "Categoria da demanda (ex: 'cancelamento_reserva', 'alteracao_datas', 'enxoval_toalhas', 'chamado_manutencao', 'emissao_nota_fiscal', 'itens_especiais_comodidades', 'outros')"
+            description: "Categoria da demanda (ex: 'itens_especiais_comodidades', 'outros')"
           },
           reason: {
             type: "STRING",
@@ -6581,8 +6583,19 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     };
   }
 
-  // 1.6 Resposta com Datas, Hóspedes ou Preferências em Fluxo de Reserva
+  // 1.6 Resposta com Datas, Hóspedes ou Preferências em Fluxo de Reserva ou Prorrogação de Estadia
   const lastBot = getLastBotMessage(hist);
+  const botAskedExtensionDate = Boolean(lastBot && (
+    /at[eé]\s+(?:que|qual)\s+data.*?(?:ficar|permanecer|estender|prorrogar)/i.test(lastBot.text) ||
+    /(?:por\s+mais\s+quantos\s+dias|prorrogar\s+a\s+sua\s+estadia|confirma\s+a\s+prorroga[cç][aã]o)/i.test(lastBot.text)
+  ));
+  if (botAskedExtensionDate && (resolveNaturalDateInput(text) || /\b(?:amanh[aã?]?|hoje|mais\s+\d+\s*dias?|\d{1,2}\/\d{1,2}|sim|confirmo)\b/i.test(text))) {
+    return {
+      type: "EXTENSION_FOLLOWUP",
+      primaryTopic: "alteracao_datas",
+      rawText: text
+    };
+  }
   const quoteRecentlySent = hasRecentlySentPricingQuote(hist);
   const botAskedDates = Boolean(lastBot && (
     /datas?\s+(?:de\s+)?entrada/i.test(lastBot.text) ||
@@ -6908,9 +6921,19 @@ export function prepareAgenticPreAnalysis({
     ? recentTriggers.map(t => `  * [${t.triggerEvent || t.templateId || "gatilho"}] ${t.summary || "Notificação automática enviada"}`).join("\n")
     : "  * Nenhum gatilho automático recente registrado.";
 
+  const botActionsActive = getBotActionsSettings(db)?.apiActionsEnabled !== false;
+  const isSemanticToolHandledDemand =
+    botActionsActive &&
+    analysis.type === "OPERATIONAL_DEMAND" &&
+    ["alteracao_datas", "enxoval_toalhas", "chamado_manutencao", "emissao_nota_fiscal", "cancelamento_reserva", "troca_quarto"].includes(
+      analysis.demandClassification?.category || analysis.primaryTopic
+    );
+
   let preAnalysisDirective = "";
   if (analysis.type === "GREETING_ONLY") {
     preAnalysisDirective = `- POSTURA DE ESCUTA ATIVA (MEMÓRIA SILENCIOSA): O hóspede enviou APENAS uma saudação ("${queryText}"). Cumprimente-o pelo nome de forma calorosa e pergunte como pode ajudar. NÃO despeje dados da reserva, NÃO cobre check-out, NÃO envie links não solicitados!`;
+  } else if (isSemanticToolHandledDemand) {
+    preAnalysisDirective = `- AUTONOMIA DE TOOL CALLING ATIVA: O hóspede solicitou uma operação suportada pelas suas ferramentas semânticas (\`estender_estadia\`, \`alterar_datas_reserva\`, \`solicitar_early_checkin\`, \`solicitar_late_checkout\`, \`solicitar_limpeza_extra\`, \`abrir_chamado_manutencao\`, \`gerenciar_nota_fiscal_nfse\`, \`processar_cancelamento\`). Acione a ferramenta correspondente imediatamente! Se o hóspede pediu para estender/prorrogar a estadia e ainda não disse a data de saída, chame \`estender_estadia\` com \`nova_data_checkout: ""\` ou pergunte diretamente até qual data ele deseja ficar.`;
   } else if (isCheckoutDone) {
     preAnalysisDirective = `- ATENÇÃO: O check-out da reserva ${guestContext?.reservation?.code || ""} (Flat ${guestContext?.flatNumber || "N/A"}) JÁ FOI CONCLUÍDO! Nunca peça para desocupar o quarto até 12h nem envie link de check-out.`;
   } else if (unmetDemand) {
@@ -7196,7 +7219,7 @@ export function validateAndRefineResponse({
     } else {
       const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
         (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("registrei") && !replyText.includes("equipe"));
-      const alreadyAcknowledged = /registrei|equipe|recep[cç][aã]o|encaminh|atender|governan[cç]a|manuten[cç][aã]o|ger[eê]ncia|gestor|dispon[ií]vel|taxa|pix|alterad[oa]|prorrogad[oa]|confirmad[oa]|placa|ve[ií]culo|garagem|cortesia|di[aá]ria|sistema|camareira/i.test(replyText);
+      const alreadyAcknowledged = /registrei|equipe|recep[cç][aã]o|encaminh|atender|governan[cç]a|manuten[cç][aã]o|ger[eê]ncia|gestor|dispon[ií]vel|taxa|pix|alterad[oa]|prorrogad[oa]|confirmad[oa]|placa|ve[ií]culo|garagem|cortesia|di[aá]ria|sistema|camareira|at[eé]\s+(?:qual|que)\s+data|quantos\s+dias|estender|prorrogar|permanecer|ficar/i.test(replyText);
 
       if (isGenericFallback || !alreadyAcknowledged) {
         replyText = ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
@@ -8257,16 +8280,164 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   // 9. Se for demanda operacional não atendida pela base de conhecimento
   if (queryAnalysis.type === "OPERATIONAL_DEMAND") {
     const demandTitle = queryAnalysis.demandClassification?.demandTitle || "esta solicitação";
-    return ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
+    return ret(`Recebi sua solicitação sobre *${demandTitle}* 🛎️. Já registrei o seu pedido no sistema para nossa equipe da recepção atender você com prioridade! ✨`);
   }
 
   // 10. Se for dúvida não mapeada
   if (queryAnalysis.type === "UNKNOWN_INQUIRY") {
-    return ret(`Olá${name}! Anotei sua dúvida. Como não tenho essa informação cadastrada no sistema, já registrei sua pergunta para a equipe da recepção te responder por aqui em instantes! 🛎️✨`);
+    return ret(`Anotei sua mensagem e já encaminhei para nossa equipe da recepção te responder por aqui em instantes! 🛎️✨`);
   }
 
-  // 11. Resposta padrão prestativa
-  return ret(`Olá${name}! Recebi sua mensagem. Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats 🏨.\n\nPosso te ajudar com informações sobre *Wi-Fi, horários de check-in/out, status do flat, garagem, café da manhã e localização*. Como posso te ajudar? Se preferir falar com um atendente da recepção, basta me avisar! ✨`);
+  // 11. Continuidade contextual sem repetir apresentação ou menu estático
+  if (effectiveHistory && effectiveHistory.some(m => m && m.fromMe)) {
+    return ret(`Perfeito! Me confirme apenas mais detalhes do que você precisa para eu já verificar agora mesmo no sistema para você.`);
+  }
+
+  return ret(`Olá${name}! Tudo bem? Como posso te ajudar hoje na CorpFlats? 😊`);
+}
+
+/**
+ * Remove saudações repetidas ("Olá, Miller!", "Bom dia, Miller!") e autoapresentações ("Sou a Sofia, concierge virtual...")
+ * quando já existe histórico recente de conversa em andamento.
+ */
+export function stripRedundantGreetingForOngoingConversation(replyText = "", history = [], currentMessageText = "", guestContext = {}) {
+  if (!replyText || typeof replyText !== "string") return replyText;
+  const rawHist = Array.isArray(history) ? history : [];
+  const cleanCurrent = String(currentMessageText || "").trim();
+
+  // Remove a mensagem atual do final do histórico se já tiver sido anexada pelo webhook
+  const lastItem = rawHist[rawHist.length - 1];
+  const historyBeforeCurrent = (
+    lastItem &&
+    !lastItem.fromMe &&
+    String(lastItem.text || "").trim() === cleanCurrent
+  ) ? rawHist.slice(0, -1) : rawHist;
+
+  // Verifica se já houve resposta da Sofia na conversa (conversa em andamento)
+  const hasPreviousBotTurn = historyBeforeCurrent.some(m => m && m.fromMe && String(m.text || "").trim().length > 0);
+  if (!hasPreviousBotTurn) {
+    return replyText;
+  }
+
+  let cleaned = replyText.trim();
+
+  // Remove "Recebi sua mensagem." e autoapresentação "Sou a Sofia, concierge virtual da CorpFlats..."
+  cleaned = cleaned
+    .replace(/^(?:Ol[aá]|Oi|Bom\s+dia|Boa\s+tarde|Boa\s+noite)(?:,\s*(?:Sr\.|Sra\.|Sr\(a\)\.)?\s*[A-Za-zÀ-ÿ]+)?[!.,\s]*/i, "")
+    .replace(/^Tudo\s+bem\??[!.,\s]*/i, "")
+    .replace(/^Recebi\s+sua\s+mensagem[.!\s]*/i, "")
+    .replace(/^Sou\s+a\s+Sofia,\s*concierge\s+virtual\s+da\s+CorpFlats\s*(?:🏨)?[.!\s]*/i, "")
+    .trim();
+
+  if (!cleaned) {
+    return replyText.trim();
+  }
+
+  // Garante primeira letra maiúscula após remover saudação redundante
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+/**
+ * Executa roteamento multi-turn determinístico das Tools semânticas (ex: estender_estadia após "até amanhã só")
+ * quando o hóspede responde a uma pergunta anterior da conversa ou quando a API do Gemini oscila.
+ */
+export async function executeMultiTurnAgenticToolFallback({
+  messageText = "",
+  history = [],
+  guestContext = {},
+  db = null,
+  saveDatabase = null,
+  sendZapiMessage = null,
+  createNotification = null,
+  conv = null
+}) {
+  const rawText = String(messageText || "").trim();
+  if (!rawText) return { handled: false };
+
+  const rawHist = Array.isArray(history) ? history.slice(-15) : [];
+  const lastHistItem = rawHist[rawHist.length - 1];
+  const historyBeforeCurrent = (
+    lastHistItem &&
+    !lastHistItem.fromMe &&
+    String(lastHistItem.text || "").trim() === rawText
+  ) ? rawHist.slice(0, -1) : rawHist;
+
+  const recentTurnsText = historyBeforeCurrent
+    .slice(-4)
+    .map(m => String(m?.text || ""))
+    .join("\n");
+
+  const sessionCtx = guestContext?.contextoSessao || injectSessionContext({
+    db,
+    phone: guestContext?.phone || "",
+    guestContext,
+    runtime: { db, saveDatabase, sendZapiMessage, createNotification, conversation: conv }
+  });
+  if (sessionCtx && !sessionCtx.runtime) {
+    Object.defineProperty(sessionCtx, "runtime", {
+      value: { db, saveDatabase, sendZapiMessage, createNotification, conversation: conv },
+      enumerable: false,
+      writable: true,
+      configurable: true
+    });
+  }
+
+  const reserva = sessionCtx?.reserva_ativa || sessionCtx?.reserva_atual || null;
+  const isoNow = sessionCtx?.data_hora_atual || new Date().toISOString();
+  const todayIso = String(isoNow).slice(0, 10);
+  const baseCheckoutRef = reserva?.data_checkout && String(reserva.data_checkout).slice(0, 10) > todayIso
+    ? String(reserva.data_checkout).slice(0, 10)
+    : todayIso;
+
+  const currentAsksExtension = /(?:estender|prorroga|prolongar|ficar\s+mais|mais\s+\d*\s*di[aá]ria)/i.test(rawText);
+  const previousTurnWasExtension = /(?:estender|prorroga[rç]|prolongar|at[eé]\s+(?:que|qual)\s+data\s+gostaria\s+de\s+(?:ficar|permanecer)|di[aá]ria\(s\)\s+adicionais|confirma\s+a\s+prorroga[cç][aã]o)/i.test(recentTurnsText);
+  const resolvedDateFromCurrent = resolveNaturalDateInput(rawText, isoNow, baseCheckoutRef);
+  const isConfirmReply = /^(?:sim|confirmo|pode\s*(?:sim|fazer|gerar|confirmar|prorrogar|estender)?|ok|fechado|combinado|por\s+favor|isso)[.!?\s]*$/i.test(rawText);
+
+  if (reserva && (currentAsksExtension || (previousTurnWasExtension && (resolvedDateFromCurrent || isConfirmReply)))) {
+    let targetDate = resolvedDateFromCurrent || "";
+    let confirmacaoHospede = false;
+
+    if (!targetDate && isConfirmReply && previousTurnWasExtension) {
+      // Extrai a data que havia sido simulada na mensagem anterior da Sofia
+      const prevDateMatch = recentTurnsText.match(/\b(\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4})\b/);
+      if (prevDateMatch) {
+        targetDate = resolveNaturalDateInput(prevDateMatch[1], isoNow, baseCheckoutRef);
+        confirmacaoHospede = true;
+      }
+    }
+
+    const toolArgs = {
+      nova_data_checkout: targetDate,
+      confirmacao_hospede: confirmacaoHospede
+    };
+    const toolRes = await executeRegisteredAgentTool("estender_estadia", toolArgs, sessionCtx);
+    const dados = toolRes?.dados || {};
+    const fmtDate = (d) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d.split("-").reverse().join("/") : d);
+
+    let replyText = "";
+    if (!targetDate) {
+      replyText = `Com certeza! É totalmente possível prorrogar a sua estadia no *${reserva.nome_imovel}* (diária de R$ ${Number(dados.valor_diaria || reserva.valor_diaria || 237).toFixed(2).replace(".", ",")}), mediante disponibilidade no mapa. Até qual data (ou por mais quantos dias) você gostaria de ficar?`;
+    } else if (toolRes.status === "SIMULACAO_AGUARDANDO_CONFIRMACAO") {
+      replyText = `Verifiquei aqui no mapa e o *${reserva.nome_imovel}* está livre e disponível para estender a sua estadia até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} ${Number(dados.diarias_extras || 1) === 1 ? "diária extra" : "diárias extras"})! 🏨✨\n\nO valor adicional fica em *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*. Você confirma a prorrogação para eu já registrar no sistema e gerar a chave PIX?`;
+    } else if (toolRes.status === "SUCESSO_EXECUTADO" && dados.aguardando_autorizacao_gestor) {
+      replyText = `O valor para estender até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} diária(s)) fica em *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*. Acabei de acionar a gerência no WhatsApp para remanejar a programação do mapa e manter você no mesmo *${reserva.nome_imovel}* sem precisar trocar de quarto! Em instantes já te envio a confirmação e o PIX por aqui.`;
+    } else if (toolRes.status === "SUCESSO_EXECUTADO") {
+      const pixStr = dados.pix_copia_e_cola || dados.chave_pix || "47.964.813/0001-65 (CNPJ - CorpFlats)";
+      replyText = `Prorrogação confirmada! Já atualizei a sua estadia no *${reserva.nome_imovel}* até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} diária(s), total de *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*).\n\nSegue o PIX para pagamento das diárias adicionais:\n\`${pixStr}\``;
+    } else {
+      replyText = String(toolRes.instrucao_para_ia || "").replace(/^Explique ao hóspede que\s*/i, "");
+    }
+
+    return {
+      handled: true,
+      replyText,
+      functionCall: { name: "estender_estadia", args: toolArgs },
+      functionResult: toolRes
+    };
+  }
+
+  return { handled: false };
 }
 
 /**
@@ -8301,8 +8472,8 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
     return true;
   });
 
-  // Remove duplicação caso a mensagem atual já tenha sido anexada ao final do histórico pelo webhook
-  const rawHistory = Array.isArray(history) ? history.slice(-8) : [];
+  // Injeta as últimas 15 mensagens trocadas na conversa para memória multi-turn completa
+  const rawHistory = Array.isArray(history) ? history.slice(-15) : [];
   const lastHistItem = rawHistory[rawHistory.length - 1];
   const cleanRawHistory = (
     lastHistItem &&
@@ -8330,13 +8501,23 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
     });
   }
 
+  const isoNow = guestContext?.contextoSessao?.data_hora_atual || new Date().toISOString();
+  const todayIso = String(isoNow).slice(0, 10);
+  const tomorrowIso = addDaysIso(todayIso, 1);
+  const hasPreviousTurn = formattedHistory.some(t => t.role === "model");
+  const continuityHint = hasPreviousTurn
+    ? `\n[CONVERSA EM ANDAMENTO — DATA ATUAL: ${todayIso} | AMANHÃ: ${tomorrowIso}]: NÃO repita "Olá, [Nome]!" nem se apresente de novo ("Sou a Sofia..."). Continue diretamente o assunto da mensagem anterior e acione a Tool correspondente se o hóspede respondeu com uma data ou confirmação.`
+    : `\n[DATA ATUAL: ${todayIso} | AMANHÃ: ${tomorrowIso}]`;
+
   const fullPrompt = customPrompt
     ? (systemInstruction ? `${systemInstruction}\n\n${prompt}` : prompt)
-    : `${systemInstruction}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+    : `${systemInstruction}\n${continuityHint}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
 
   const promptOnly = customPrompt
     ? prompt
-    : `[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+    : `${continuityHint}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
+
+  const geminiDiagnostics = [];
 
   for (const { ver, model } of candidateModels) {
     try {
@@ -8347,7 +8528,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
         parts: turn.parts.map(p => ({ ...p }))
       }));
       const lastTurn = baseContents[baseContents.length - 1];
-      if (lastTurn && lastTurn.role === "user") {
+      if (lastTurn && lastTurn.role === "user" && formattedHistory.length === 0) {
         baseContents[baseContents.length - 1] = {
           role: "user",
           parts: [{ text: `${lastTurn.parts[0].text}\n\n${effectiveUserPrompt}` }]
@@ -8356,13 +8537,17 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
         baseContents.push({ role: "user", parts: [{ text: effectiveUserPrompt }] });
       }
 
+      const isGemini25 = model.startsWith("gemini-2.5");
+      const generationConfig = {
+        temperature: 0.35,
+        maxOutputTokens: 4096,
+        ...(isGemini25 ? { thinkingConfig: { thinkingBudget: model.includes("pro") ? 512 : 256 } } : {})
+      };
+
       const bodyPayload = {
         ...(useNativeSysInst ? { system_instruction: { parts: [{ text: String(systemInstruction) }] } } : {}),
         contents: baseContents,
-        generationConfig: {
-          temperature: 0.4,
-          maxOutputTokens: 800
-        }
+        generationConfig
       };
 
       if (ver === "v1beta" && Array.isArray(tools) && tools.length > 0) {
@@ -8373,26 +8558,33 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyPayload),
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(18000)
       });
 
       if (!response.ok) {
         const errBody = await response.text().catch(() => "");
+        geminiDiagnostics.push({ model, ver, status: response.status, error: errBody.slice(0, 260) });
         console.warn(`[WhatsApp AI] Modelo "${model}" (${ver}) retornou HTTP ${response.status}: ${errBody.slice(0, 260)}`);
         continue;
       }
 
       const data = await response.json();
       const candidate = data.candidates?.[0];
+      const finishReason = candidate?.finishReason || "UNKNOWN";
       let currentParts = candidate?.content?.parts || [];
 
       let callParts = currentParts.filter(p => p.functionCall);
 
       if (callParts.length === 0) {
-        const text = currentParts.find(p => p.text)?.text || "";
-        if (text && text.trim().length > 0) {
-          return { ok: true, text: text.trim(), model };
+        const text = currentParts
+          .filter(p => typeof p.text === "string" && !p.thought)
+          .map(p => p.text)
+          .join("")
+          .trim();
+        if (text && text.length > 0) {
+          return { ok: true, text, model, geminiDiagnostics };
         }
+        geminiDiagnostics.push({ model, ver, status: 200, finishReason, error: "Empty text parts" });
         continue;
       }
 
@@ -8455,10 +8647,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
         const nextPayload = {
           ...(useNativeSysInst ? { system_instruction: { parts: [{ text: String(systemInstruction) }] } } : {}),
           contents: runningContents,
-          generationConfig: {
-            temperature: 0.4,
-            maxOutputTokens: 800
-          }
+          generationConfig
         };
 
         if (Array.isArray(tools) && tools.length > 0) {
@@ -8469,7 +8658,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(nextPayload),
-          signal: AbortSignal.timeout(8000)
+          signal: AbortSignal.timeout(18000)
         });
 
         if (!nextResponse.ok) {
@@ -8481,15 +8670,20 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
         callParts = currentParts.filter(p => p.functionCall);
 
         if (callParts.length === 0) {
-          const finalText = currentParts.find(p => p.text)?.text || "";
-          if (finalText && finalText.trim().length > 0) {
+          const finalText = currentParts
+            .filter(p => typeof p.text === "string" && !p.thought)
+            .map(p => p.text)
+            .join("")
+            .trim();
+          if (finalText && finalText.length > 0) {
             return {
               ok: true,
-              text: finalText.trim(),
+              text: finalText,
               model,
               functionCall: lastFnCall,
               functionResult: lastActionResult,
-              requiresHandover: anyRequiresHandover
+              requiresHandover: anyRequiresHandover,
+              geminiDiagnostics
             };
           }
           break;
@@ -8504,7 +8698,8 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
           model,
           functionCall: lastFnCall,
           functionResult: lastActionResult,
-          requiresHandover: true
+          requiresHandover: true,
+          geminiDiagnostics
         };
       }
 
@@ -8517,7 +8712,8 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
             model,
             functionCall: lastFnCall,
             functionResult: lastActionResult,
-            requiresHandover: false
+            requiresHandover: false,
+            geminiDiagnostics
           };
         }
         return {
@@ -8525,16 +8721,18 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
           error: "Falha ao sintetizar resposta pós-ferramenta",
           functionCall: lastFnCall,
           functionResult: lastActionResult,
-          requiresHandover: false
+          requiresHandover: false,
+          geminiDiagnostics
         };
       }
     } catch (e) {
+      geminiDiagnostics.push({ model, ver, error: e.message });
       console.warn(`[Gemini WhatsApp AI] Falha no modelo ${model}:`, e.message);
       continue;
     }
   }
 
-  return { ok: false, error: "Nenhum modelo Gemini respondeu com sucesso" };
+  return { ok: false, error: "Nenhum modelo Gemini respondeu com sucesso", geminiDiagnostics };
 }
 
 /**
@@ -8715,6 +8913,8 @@ ${systemActionsNotice}
   const apiKey = process.env.GEMINI_API_KEY || db?.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
   const { toneSection, guidelinesSection, flatsCatalogSection } = buildDynamicSystemInstruction(aiConfig, db, guestContext);
 
+  let lastGeminiDiagnostics = null;
+
   // 3. Tenta responder via Google Gemini (com Function Calling adaptativo se disponível)
   if (apiKey) {
     try {
@@ -8733,21 +8933,48 @@ ${systemActionsNotice}
         conversation: conv,
         guestContext
       });
+      lastGeminiDiagnostics = geminiRes?.geminiDiagnostics || null;
 
       if (geminiRes.ok && geminiRes.text) {
-        const validation = validateAndRefineResponse({
-          queryText: messageText,
-          candidateText: geminiRes.text,
-          guestContext,
-          db,
-          aiConfig,
-          history: effectiveHistory,
-          preRecordedUnmetDemand: preAnalysis.unmetDemand,
-          preExecutedCheckoutResult: preAnalysis.autoCheckoutActionResult,
-          preRecordedPendingFaq: preAnalysis.pendingFaq
-        });
+        let candidateText = geminiRes.text;
+        let finalFnCall = geminiRes.functionCall || null;
+        let finalFnResult = geminiRes.functionResult || null;
 
-        const finalReply = geminiRes.requiresHandover ? geminiRes.text : (validation.replyText || geminiRes.text);
+        // Se o modelo respondeu em texto puro para uma continuação multi-turn de prorrogação ("até amanhã só") sem acionar a tool, garante a execução da Tool!
+        if (!finalFnCall) {
+          const multiTurnCheck = await executeMultiTurnAgenticToolFallback({
+            messageText,
+            history: effectiveHistory,
+            guestContext,
+            db,
+            saveDatabase,
+            sendZapiMessage,
+            createNotification,
+            conv
+          });
+          if (multiTurnCheck.handled && multiTurnCheck.functionCall?.name === "estender_estadia" && multiTurnCheck.functionCall?.args?.nova_data_checkout) {
+            candidateText = multiTurnCheck.replyText;
+            finalFnCall = multiTurnCheck.functionCall;
+            finalFnResult = multiTurnCheck.functionResult;
+          }
+        }
+
+        const validation = finalFnCall
+          ? { replyText: candidateText, shouldHandover: false, requiresHandover: false, unmetDemand: null, missingDataOrCapability: false }
+          : validateAndRefineResponse({
+              queryText: messageText,
+              candidateText,
+              guestContext,
+              db,
+              aiConfig,
+              history: effectiveHistory,
+              preRecordedUnmetDemand: preAnalysis.unmetDemand,
+              preExecutedCheckoutResult: preAnalysis.autoCheckoutActionResult,
+              preRecordedPendingFaq: preAnalysis.pendingFaq
+            });
+
+        const rawFinalReply = geminiRes.requiresHandover ? candidateText : (validation.replyText || candidateText);
+        const finalReply = stripRedundantGreetingForOngoingConversation(rawFinalReply, effectiveHistory, messageText, guestContext);
 
         return {
           shouldHandover: Boolean(geminiRes.requiresHandover || validation.shouldHandover || preAnalysis.shouldHandover),
@@ -8757,8 +8984,9 @@ ${systemActionsNotice}
           preAnalysis,
           modelUsed: geminiRes.model,
           source: "gemini",
-          functionCall: geminiRes.functionCall || null,
-          functionResult: geminiRes.functionResult || null,
+          functionCall: finalFnCall,
+          functionResult: finalFnResult,
+          geminiDiagnostics: lastGeminiDiagnostics,
           unmetDemand: validation.unmetDemand || preAnalysis.unmetDemand || null,
           missingDataOrCapability: Boolean(validation.missingDataOrCapability || preAnalysis.missingDataOrCapability)
         };
@@ -8766,6 +8994,40 @@ ${systemActionsNotice}
     } catch (err) {
       console.warn("[WhatsApp AI] Falha inesperada ao invocar Gemini AI:", err?.message || err);
     }
+  }
+
+  // 3.5 Roteamento Multi-Turn Determinístico de Tools Semânticas (Garante execução de estender_estadia mesmo em contingência de API)
+  const multiTurnToolFallback = await executeMultiTurnAgenticToolFallback({
+    messageText,
+    history: effectiveHistory,
+    guestContext,
+    db,
+    saveDatabase,
+    sendZapiMessage,
+    createNotification,
+    conv
+  });
+  if (multiTurnToolFallback.handled && multiTurnToolFallback.replyText) {
+    const cleanedToolReply = stripRedundantGreetingForOngoingConversation(
+      multiTurnToolFallback.replyText,
+      effectiveHistory,
+      messageText,
+      guestContext
+    );
+    return {
+      shouldHandover: false,
+      requiresHandover: false,
+      replyText: cleanedToolReply,
+      guestContext,
+      preAnalysis,
+      modelUsed: "agentic_tool_router",
+      source: "agentic_tool",
+      functionCall: multiTurnToolFallback.functionCall,
+      functionResult: multiTurnToolFallback.functionResult,
+      geminiDiagnostics: lastGeminiDiagnostics,
+      unmetDemand: null,
+      missingDataOrCapability: false
+    };
   }
 
   // 4. Contingência Heurística Local de Alta Precisão (Zero-Crash Fallback)
@@ -8782,14 +9044,22 @@ ${systemActionsNotice}
     preRecordedPendingFaq: preAnalysis.pendingFaq
   });
 
+  const finalHeuristicReply = stripRedundantGreetingForOngoingConversation(
+    validation.replyText || heuristicText,
+    effectiveHistory,
+    messageText,
+    guestContext
+  );
+
   return {
     shouldHandover: Boolean(validation.shouldHandover || preAnalysis.shouldHandover),
     requiresHandover: Boolean(validation.requiresHandover || preAnalysis.requiresHandover),
-    replyText: validation.replyText || heuristicText,
+    replyText: finalHeuristicReply,
     guestContext,
     preAnalysis,
     modelUsed: "heuristic_fallback",
     source: "heuristic",
+    geminiDiagnostics: lastGeminiDiagnostics,
     unmetDemand: validation.unmetDemand || preAnalysis.unmetDemand || null,
     missingDataOrCapability: Boolean(validation.missingDataOrCapability || preAnalysis.missingDataOrCapability)
   };
