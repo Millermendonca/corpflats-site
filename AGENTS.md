@@ -1,5 +1,42 @@
 # Diretrizes do Projeto Guest-Flow-Manager (CorpFlats)
 
+## Velocidade de Execução & Leitura Segura (Redução de "Analyzed")
+- **Consulte o Mapa de Arquitetura antes de buscar arquivos**: Nunca faça buscas exploratórias às cegas (`find_by_name` ou listagem de diretórios) para descobrir onde fica uma tela ou serviço que já está listado no **Mapa Rápido do Repositório** abaixo. Vá direto ao arquivo correspondente.
+- **Chamadas de Leitura e Busca Sempre em Paralelo**: Quando precisar ler mais de um arquivo ou executar mais de um `grep_search`, dispare **todas as ferramentas na mesma rodada (turn)** em vez de fazer leituras sequenciais uma a uma.
+- **Leitura Cirúrgica com Contexto Completo em Arquivos Grandes**: Em arquivos extensos (como `demo-server.mjs` ou `pms-calendar.tsx`), nunca leia desde a linha 1 procurando código. Use `grep_search` para localizar a linha exata e, em seguida, leia **a rota, função ou componente completo** ao redor daquele ponto para garantir total segurança de contexto antes de editar.
+- **Regra dos Arquivos Gêmeos (`artifacts/api-server/` ↔ `scripts/`)**:
+  - Todos os arquivos `.mjs` de runtime em `artifacts/api-server/` possuem um espelho idêntico (paridade SHA-256) na pasta `scripts/`.
+  - **NUNCA leia nem edite os dois arquivos manualmente em duplicidade.** Faça toda a leitura e edição exclusivamente em `artifacts/api-server/<arquivo>.mjs` e, ao finalizar a alteração, copie o arquivo diretamente para `scripts/<arquivo>.mjs` (ex: `Copy-Item`), mantendo 100% de paridade na metade do tempo.
+
+## Mapa Rápido do Repositório (Atalhos Diretos)
+
+### 1. Backend & Serviços (`artifacts/api-server/` — espelhados em `scripts/`)
+- **Entrypoint Produção/Local**: `server.mjs` (raiz) → inicializa `artifacts/api-server/demo-server.mjs`.
+- **Servidor Principal e Rotas (`/api/*`)**: `artifacts/api-server/demo-server.mjs` (estado em memória `db`, persistência PostgreSQL `system_store`, reservas, flats, hóspedes, governança, financeiro, café, garagem, frigobar, etc.).
+- **IA do WhatsApp & Orquestração**: `artifacts/api-server/whatsapp-ai-service.mjs` e `artifacts/api-server/agent-architecture.mjs` (além das tools tipadas em `src/agent/`).
+- **WhatsApp (Z-API) & Chat**: `artifacts/api-server/zapi-service.mjs` e `artifacts/api-server/chat-service.mjs`.
+- **Automações de Camareiras**: `artifacts/api-server/maid-automation-service.mjs`.
+- **Pagamentos PIX (Banco Inter)**: `artifacts/api-server/inter-pix-service.mjs`.
+- **Notas Fiscais (NFS-e Nacional)**: `artifacts/api-server/national-nfse.mjs`.
+- **FNRH (Serpro & PDF)**: `artifacts/api-server/fnrh-serpro-service.mjs` e `artifacts/api-server/fnrh-pdf-service.mjs`.
+- **E-mails (Zoho / Microsoft Graph / SMTP)**: `artifacts/api-server/mail-service.mjs`, `zoho-mail-service.mjs`, `microsoft-graph-service.mjs`.
+- **Módulo de RH & Ponto CLT**: `artifacts/api-server/hr/` (`router.mjs`, `employees.mjs`, `timekeeping.mjs`, `schedules.mjs`, `payroll.mjs`, `compliance.mjs`, `contracts-aso.mjs`, `whatsapp-automation.mjs`).
+- **Channel Manager / OTAs / Channex**: `artifacts/api-server/wbp/` (`ari-sync.mjs`, `availability.mjs`, `pricing.mjs`, `inbox.mjs`, `reconciler.mjs`, `callbacks.mjs`, `provisional.mjs`, `vault.mjs`, `alerts.mjs`).
+- **Verificador de Paridade Twin-Server**: `scripts/check-twin-parity.mjs`.
+
+### 2. Frontend Web (`artifacts/limpeza/src/`)
+- **Roteamento e Guards**: `artifacts/limpeza/src/App.tsx` (rotas Wouter, `AdminRoute`, `ReceptionRoute`, `StaffRoute`, `DevRoute`).
+- **Menu Lateral e Layout**: `artifacts/limpeza/src/components/layout.tsx` e permissões em `artifacts/limpeza/src/lib/permissions.ts`.
+- **Componentes Globais de Reserva**: `components/floating-new-reservation.tsx`, `components/reservation-hover-card.tsx`, `components/admin-ai-copilot.tsx`.
+- **Páginas por Módulo (`artifacts/limpeza/src/pages/`)**:
+  - **Reservas, Mapa & CRM**: `pms-calendar.tsx` (`/reservas`), `pms-reports.tsx` (`/relatorios-reservas`), `crm-guests.tsx` (`/crm`, `/hospedes`), `booking-engine.tsx` (`/reservar`, `/`), `ota-inbox.tsx` (`/caixa-entrada-ota`, `/quarentena`), `reservation-journey.tsx` (`/jornada-reservas`).
+  - **Portais Públicos do Hóspede**: `guest-portal.tsx` (`/minha-reserva/:code`), `guest-pre-checkin.tsx` (`/pre-checkin/:code`), `agency-guest-credential.tsx` (`/credenciamento/:code`), `guest-checkout.tsx` (`/checkout/:code`), `guest-breakfast.tsx` (`/cafe/:code`), `guest-minibar.tsx` (`/frigobar/:flatNumber`), `my-account.tsx` (`/minha-conta`), `verify-fnrh.tsx` (`/verificar-ficha/:uuid`).
+  - **Recepção, Portaria & Operação Ao Vivo**: `live-operations-panel.tsx` (`/painel-aovivo`), `reception-tablet.tsx` (`/portaria`), `reception-checkout.tsx` (`/recepcao`), `garage-dashboard.tsx` (`/garagem`), `breakfast-production.tsx` (`/pedidos-cafe`).
+  - **Governança, Limpeza & Manutenção**: `dashboard.tsx` (`/dashboard`), `tasks.tsx` (`/tarefas`), `observations.tsx` (`/ocorrencias`, `/avarias`), `lost-and-found.tsx` (`/achados-perdidos`), `shopping-list.tsx` (`/lista-compras`), `reports.tsx` (`/extrato`, `/relatorios`), `maid-statement.tsx` (`/meu-extrato`), `history.tsx` (`/historico`), `flat-xray-hub.tsx` (`/raio-x-flats`), `service-orders.tsx` (`/servicos`), `service-worker-portal.tsx` (`/servico/:token`), `surveys.tsx` (`/vistorias`).
+  - **WhatsApp, IA & Comunicação**: `whatsapp-chat.tsx` (`/whatsapp-chat`, `/chat`), `whatsapp-automation.tsx` (`/whatsapp-automation`), `maid-whatsapp-automation.tsx` (`/automacoes-camareiras`), `zapi-connection.tsx` (`/zapi`), `email-hub.tsx` (`/emails`), `notifications-hub.tsx` (`/notificacoes`), `ai-status.tsx` (`/ia-status`), `review-insights.tsx` (`/avaliacoes-ia`).
+  - **Financeiro, Tarifas, Fiscal & Frigobar**: `financial-dashboard.tsx` (`/financeiro`), `payments.tsx` (`/pagamentos`), `fiscal-invoices.tsx` (`/notas`, `/nfse`), `tarifas.tsx` (`/tarifas`), `precificacao-sebrae.tsx` (`/precificacao-sebrae`), `minibar-admin.tsx` (`/frigobar-admin`), `minibar-invoices.tsx` (`/frigobar-notas`), `anserve-dashboard.tsx` (`/anserve`), `anserve-restock.tsx` (`/frigobar-reposicao`).
+  - **RH, Equipe, Site & Sistema**: `hr-dashboard.tsx` (`/rh`), `ponto-mobile.tsx` (`/ponto`), `equipe.tsx` (`/equipe`), `property-settings.tsx` (`/propriedade`), `site-editor.tsx` (`/editor-site`), `marketing-traffic.tsx` (`/funil-vendas`), `settings.tsx` (`/configuracoes`), `system-logs.tsx` (`/logs`), `server-monitor.tsx` (`/monitor-servidor`).
+
 ## Git & Controle de Versão
 - **Sempre fazer `git push` por padrão**: Sempre que um `git commit` for realizado para implementar ou corrigir uma funcionalidade, execute imediatamente o `git push` para o repositório remoto (`origin main` ou a branch ativa). Nunca deixe commits pendentes localmente sem envio.
 - **Build de Verificação**: Ao alterar arquivos em `artifacts/limpeza/src`, rode o build (`npm run build` na pasta `artifacts/limpeza`) e inclua os arquivos gerados em `artifacts/limpeza/dist/` no commit quando aplicável para garantir o deploy contínuo em produção.
