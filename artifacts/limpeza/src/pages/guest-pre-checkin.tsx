@@ -425,9 +425,11 @@ export default function GuestPreCheckin() {
   // Opção B: Auto-colar código ao voltar do WhatsApp para a aba do navegador (visibilitychange / focus)
   useEffect(() => {
     if (step !== 3 || otpVerified || isCompleted || isGovTriagemMode || isReadOnlyDocument) return
+    if (typeof window === "undefined" || !window.document) return
+    const domDoc = window.document
 
     const tryAutoReadClipboard = async () => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") return
+      if (domDoc.visibilityState && domDoc.visibilityState !== "visible") return
       if (whatsappOtpInput.length === 6) return
       try {
         if (!navigator.clipboard?.readText) return
@@ -443,16 +445,16 @@ export default function GuestPreCheckin() {
     }
 
     const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
+      if (domDoc.visibilityState === "visible") {
         tryAutoReadClipboard()
       }
     }
 
     window.addEventListener("focus", tryAutoReadClipboard)
-    document.addEventListener("visibilitychange", handleVisibility)
+    domDoc.addEventListener("visibilitychange", handleVisibility)
     return () => {
       window.removeEventListener("focus", tryAutoReadClipboard)
-      document.removeEventListener("visibilitychange", handleVisibility)
+      domDoc.removeEventListener("visibilitychange", handleVisibility)
     }
   }, [step, otpVerified, isCompleted, isGovTriagemMode, isReadOnlyDocument, whatsappOtpInput.length])
 
