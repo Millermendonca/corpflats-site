@@ -8,6 +8,9 @@ export interface AtualizarDadosHospedeArgs {
   email?: string;
   horario_previsto_chegada?: string;
   placa_veiculo?: string;
+  marca_veiculo?: string;
+  modelo_veiculo?: string;
+  cor_veiculo?: string;
   nomes_acompanhantes?: string[];
 }
 
@@ -15,10 +18,10 @@ export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHosped
   name: 'atualizar_dados_hospede',
 
   description:
-    'Atualiza os dados cadastrais e operacionais do hóspede na reserva ativa (CPF/CNPJ, e-mail, horário previsto de chegada, ' +
-    'placa do veículo para garagem e nomes de acompanhantes).',
+    'Atualiza os dados cadastrais e operacionais do hóspede ou lead (CPF/CNPJ, e-mail, horário previsto de chegada, ' +
+    'placa/marca/modelo/cor do veículo para garagem e nomes de acompanhantes).',
 
-  allowedStates: ['PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
+  allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
 
   parametersSchema: {
     type: 'object',

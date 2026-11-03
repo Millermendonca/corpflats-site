@@ -7096,6 +7096,39 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
     if (!Array.isArray(db.whatsappAiSettings.developerGuidelines)) {
       db.whatsappAiSettings.developerGuidelines = [];
+    } else {
+      // Sanitiza diretrizes antigas que estavam truncadas ou com rule/text dessincronizados
+      for (const g of db.whatsappAiSettings.developerGuidelines) {
+        if (!g) continue;
+        const rawRule = String(g.rule || g.text || "").trim();
+        const isBrokenTemplate = rawRule.includes('Atue sempre de forma prestativa, concisa e acolhedora ao responder sobre: "') ||
+          rawRule.includes('Seguir o padrão de resposta do operador para situações similares a:');
+        if (isBrokenTemplate && g.operatorInstruction) {
+          const cleanInst = String(g.operatorInstruction).trim();
+          g.rule = cleanInst;
+          g.text = cleanInst;
+        } else {
+          if (g.text && !g.rule) g.rule = g.text;
+          if (g.rule && !g.text) g.text = g.rule;
+        }
+        if (g.sample && String(g.sample).includes('O hóspede perguntou sobre: "')) {
+          const cleanBase = String(g.rule || g.text || "").replace(/^Diretriz operacional:\s*/i, "").trim();
+          g.sample = cleanBase ? `Claro! ${cleanBase.charAt(0).toUpperCase() + cleanBase.slice(1)}` : "";
+          g.sampleResponse = g.sample;
+        }
+      }
+    }
+    if (db.settings?.geminiModel && db.settings.geminiModel.includes("lite")) {
+      db.settings.geminiModel = "gemini-2.5-flash";
+    }
+    if (db.whatsappAiSettings?.preferredModel && db.whatsappAiSettings.preferredModel.includes("lite")) {
+      db.whatsappAiSettings.preferredModel = "gemini-2.5-flash";
+    }
+    if (db.whatsappAiSettings?.geminiModel && db.whatsappAiSettings.geminiModel.includes("lite")) {
+      db.whatsappAiSettings.geminiModel = "gemini-2.5-flash";
+    }
+    if (db.whatsappAiConfig?.preferredModel && db.whatsappAiConfig.preferredModel.includes("lite")) {
+      db.whatsappAiConfig.preferredModel = "gemini-2.5-flash";
     }
     if (!db.whatsappAiSettings.toneSettings) {
       db.whatsappAiSettings.toneSettings = {
@@ -9792,7 +9825,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const aiConfig = getWhatsAppAiConfig(db);
     const geminiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
     const aiCh = db.zapiConfig?.channels?.ai_agent;
-    const resolvedModel = aiConfig.preferredModel || db.whatsappAiSettings?.preferredModel || db.settings?.geminiModel || "gemini-2.5-pro";
+    const rawModel = aiConfig.preferredModel || db.whatsappAiSettings?.preferredModel || db.settings?.geminiModel || "gemini-2.5-flash";
+    const resolvedModel = String(rawModel).includes("lite") ? "gemini-2.5-flash" : rawModel;
     res.json({
       success: true,
       aiConfig: {
@@ -10326,10 +10360,32 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (!item) {
       return res.status(404).json({ error: "Diretriz não encontrada." });
     }
-    if (req.body.text !== undefined) item.text = String(req.body.text).trim();
+    const newText = req.body.text !== undefined ? String(req.body.text).trim() : (req.body.rule !== undefined ? String(req.body.rule).trim() : undefined);
+    if (newText !== undefined) {
+      item.text = newText;
+      item.rule = newText;
+      if (req.body.sample === undefined && req.body.sampleResponse === undefined) {
+        const cleanSample = newText.replace(/^(Sempre informe que|Informe que|Diretriz operacional:|Regra:)\s*/i, "").trim();
+        const naturalSample = cleanSample ? `Com certeza! ${cleanSample.charAt(0).toUpperCase() + cleanSample.slice(1)}` : newText;
+        item.sample = naturalSample;
+        item.sampleResponse = naturalSample;
+      }
+    }
+    if (req.body.sample !== undefined || req.body.sampleResponse !== undefined) {
+      const sVal = String(req.body.sample ?? req.body.sampleResponse ?? "").trim();
+      item.sample = sVal;
+      item.sampleResponse = sVal;
+    }
     if (req.body.category !== undefined) item.category = req.body.category;
-    if (req.body.targetFlat !== undefined) item.targetFlat = req.body.targetFlat;
-    if (req.body.active !== undefined) item.active = Boolean(req.body.active);
+    if (req.body.targetFlat !== undefined) {
+      item.targetFlat = req.body.targetFlat;
+      item.flatNumber = req.body.targetFlat === "all" ? null : req.body.targetFlat;
+    }
+    if (req.body.active !== undefined || req.body.enabled !== undefined) {
+      const isAct = Boolean(req.body.active !== undefined ? req.body.active : req.body.enabled);
+      item.active = isAct;
+      item.enabled = isAct;
+    }
     item.updatedAt = new Date().toISOString();
     saveDatabase();
     res.json({ success: true, guideline: item });

@@ -8,7 +8,8 @@ export interface GerenciarNotaFiscalNfseArgs {
     | 'CONSULTAR_OU_INICIAR_CONFERENCIA'
     | 'ATUALIZAR_DADOS_NOTA'
     | 'CONFIRMAR_DADOS_NOTA'
-    | 'CANCELAR_CONFERENCIA';
+    | 'CANCELAR_CONFERENCIA'
+    | 'SOLICITAR_RECIBO_COMPROVANTE';
   tomador_nome?: string;
   tomador_cpf_cnpj?: string;
   tomador_email?: string;

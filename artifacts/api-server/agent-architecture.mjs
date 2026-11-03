@@ -166,6 +166,10 @@ export function injectSessionContext(params = {}) {
 
     const wifiPassword =
       db?.whatsappAiSettings?.knowledgeBase?.wifiPassword || '1234567890123';
+    const baseUrl =
+      db?.settings?.baseUrl ||
+      (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
+      'https://corpflats.com.br';
 
     reservaSessao = {
       id: resCode,
@@ -177,12 +181,24 @@ export function injectSessionContext(params = {}) {
       check_in: `${checkinDate}T${sourceRes.checkinTime || '14:00'}:00`,
       check_out: `${checkoutDate}T${sourceRes.lateCheckoutTime || sourceRes.checkoutTime || '12:00'}:00`,
       status_pagamento: isPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE',
-      quantidade_hospedes: Number(sourceRes.guestsCount || sourceRes.guests || 1),
+      canal_reserva: String(sourceRes.channel || 'whatsapp').toLowerCase(),
+      valor_diaria: Number(sourceRes.dailyRate || 237),
+      valor_total: Number(sourceRes.totalAmount || 0),
+      quantidade_hospedes: Number(sourceRes.guestCount || sourceRes.guestsCount || sourceRes.adults || 1),
       senha_fechadura: sourceRes.doorCode || sourceRes.lockPassword || undefined,
       wifi_rede: `apto ${flatNum}`,
       wifi_senha: wifiPassword,
+      veiculo: sourceRes.vehicle || null,
+      link_pre_checkin: `${baseUrl}/pre-checkin/${resCode}`,
+      link_comprovante_pagamento: `${baseUrl}/minha-reserva/${resCode}`,
+      link_agendamento_cafe: `${baseUrl}/minha-reserva/${resCode}/cafe`,
     };
   }
+
+  const veiculoPendente =
+    runtime?.conversation?.pendingVehicle ||
+    matchedGuest?.pendingVehicle ||
+    null;
 
   return {
     data_hora_atual: isoNow,
@@ -193,6 +209,7 @@ export function injectSessionContext(params = {}) {
     dados_hospede: dadosHospede,
     reserva_ativa: reservaSessao,
     reserva_atual: reservaSessao,
+    veiculo_pendente: veiculoPendente,
     runtime: {
       db,
       ...runtime,
@@ -325,6 +342,40 @@ function formatGuestListPtBr(names) {
   if (clean.length === 1) return clean[0];
   if (clean.length === 2) return `${clean[0]} e ${clean[1]}`;
   return `${clean.slice(0, -1).join(', ')} e ${clean[clean.length - 1]}`;
+}
+
+async function generatePixChargeForService({ amount, description, debtorName, debtorDocument, reservationCode, context }) {
+  const valor = Number(Number(amount || 0).toFixed(2));
+  const createCobFn = context?.runtime?.createInterPixCob || globalThis.createInterPixCob;
+  if (typeof createCobFn === 'function') {
+    try {
+      const res = await createCobFn({
+        amount: valor,
+        description,
+        debtorName: debtorName || 'Hospede CorpFlats',
+        debtorDocument: debtorDocument || '',
+        reservationCode: reservationCode || '',
+      });
+      if (res && res.pixCopiaECola) {
+        return {
+          txid: res.txid,
+          pixCopiaECola: res.pixCopiaECola,
+          chavePix: '47.964.813/0001-65 (CNPJ - Rental Millers / CorpFlats)',
+          valor,
+        };
+      }
+    } catch (err) {
+      console.warn('[Sofia PIX Service] Fallback para chave PIX estática:', err?.message || err);
+    }
+  }
+  const fallbackTxId = `PIX_SOFIA_${Date.now()}_${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const chavePix = context?.runtime?.db?.settings?.pixKey || '47.964.813/0001-65 (CNPJ - Rental Millers / CorpFlats)';
+  return {
+    txid: fallbackTxId,
+    pixCopiaECola: chavePix,
+    chavePix,
+    valor,
+  };
 }
 
 export function buildStandardStayDescription(params) {
@@ -638,6 +689,16 @@ export const gerarLinkReservaTool = {
       const linkPagamento = `${baseUrl}/reservar/${codigoPreReserva}`;
       const chavePix = db?.settings?.pixKey || '47.964.813/0001-65 (CNPJ - Rental Millers / CorpFlats)';
 
+      // Se o cliente enviou dados de veículo no WhatsApp antes da criação da reserva, vincula automaticamente agora
+      let veiculoVinculado = null;
+      if (typeof globalThis.consumePendingVehicleForPhone === 'function') {
+        veiculoVinculado = globalThis.consumePendingVehicleForPhone(db, context.telefone_remetente);
+      }
+      if (!veiculoVinculado && context.runtime?.conversation?.pendingVehicle?.plate) {
+        veiculoVinculado = { ...context.runtime.conversation.pendingVehicle };
+        delete context.runtime.conversation.pendingVehicle;
+      }
+
       if (db) {
         if (!Array.isArray(db.preReservations)) db.preReservations = [];
         db.preReservations.push({
@@ -649,6 +710,7 @@ export const gerarLinkReservaTool = {
           guests: hospedes,
           withBreakfast: comCafe,
           totalAmount: valorTotal,
+          vehicle: veiculoVinculado || null,
           status: 'pending_payment',
           expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
           createdAt: new Date().toISOString(),
@@ -658,9 +720,12 @@ export const gerarLinkReservaTool = {
         }
       }
 
+      const infoVeiculo = veiculoVinculado?.plate
+        ? ` Informe também que o veículo placa *${veiculoVinculado.plate}* informado anteriormente já foi vinculado automaticamente à reserva.`
+        : '';
       const msg =
         `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* foi bloqueada por 30 minutos para *${nomeTitular}* (${checkin} a ${checkout}) ` +
-        `no valor de *R$ ${valorTotal.toFixed(2)}*. Envie o link (${linkPagamento}) e a chave PIX oficial (${chavePix}) e peça o comprovante por aqui para confirmação imediata.`;
+        `no valor de *R$ ${valorTotal.toFixed(2)}*. Envie o link (${linkPagamento}) e a chave PIX oficial (${chavePix}) e peça o comprovante por aqui para confirmação imediata.${infoVeiculo}`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -672,6 +737,7 @@ export const gerarLinkReservaTool = {
           valor_total: valorTotal,
           link_reserva: linkPagamento,
           chave_pix: chavePix,
+          veiculo_vinculado: veiculoVinculado || null,
           validade_bloqueio_minutos: 30,
         },
         instrucao_para_ia: msg,
@@ -731,17 +797,16 @@ export const consultarDetalhesReservaTool = {
         context.runtime?.db?.settings?.baseUrl ||
         (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
         'https://corpflats.com.br';
-      const linkPreCheckin =
-        context.estado_atual === 'PRE_CHECKIN'
-          ? `${baseUrl}/pre-checkin/${reserva.id}`
-          : null;
+      const linkPreCheckin = `${baseUrl}/pre-checkin/${reserva.id}`;
+      const linkPortalReserva = `${baseUrl}/minha-reserva/${reserva.id}`;
+      const linkCafe = `${baseUrl}/minha-reserva/${reserva.id}/cafe`;
 
       const msg =
         `Apresente ao hóspede com clareza os detalhes da reserva *${reserva.id}* no *${reserva.nome_imovel}*: ` +
         `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, ` +
-        `Status de pagamento: ${reserva.status_pagamento}, Wi-Fi rede "${reserva.wifi_rede}" (senha: "${reserva.wifi_senha}")` +
-        (linkPreCheckin ? `, Link do Pré-Check-in Digital: ${linkPreCheckin}` : '') +
-        `.`;
+        `Status de pagamento: ${reserva.status_pagamento}, Wi-Fi rede "${reserva.wifi_rede}" (senha: "${reserva.wifi_senha}"), ` +
+        `Link oficial para Pré-Check-in Digital (FNRH, foto do documento e assinatura): ${linkPreCheckin}, ` +
+        `Link do Portal do Hóspede / Comprovante de Pagamento (Recibo): ${linkPortalReserva}.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -755,6 +820,8 @@ export const consultarDetalhesReservaTool = {
           wifi_rede: reserva.wifi_rede,
           wifi_senha: reserva.wifi_senha,
           link_pre_checkin: linkPreCheckin,
+          link_comprovante_pagamento: linkPortalReserva,
+          link_agendamento_cafe: linkCafe,
         },
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,
@@ -782,16 +849,20 @@ export const consultarDetalhesReservaTool = {
 export const atualizarDadosHospedeTool = {
   name: 'atualizar_dados_hospede',
   description:
-    'Atualiza os dados cadastrais e operacionais do hóspede na reserva ativa (CPF/CNPJ, e-mail, horário previsto de chegada, ' +
-    'placa do veículo para garagem e nomes de acompanhantes).',
-  allowedStates: ['PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
+    'Atualiza os dados cadastrais e operacionais do hóspede ou lead (CPF/CNPJ, e-mail, horário previsto de chegada, ' +
+    'placa/marca/modelo/cor do veículo para garagem e nomes de acompanhantes). Caso o cliente envie os dados do veículo antes de ter reserva criada, ' +
+    'grava vinculado ao WhatsApp dele para anexar automaticamente assim que a reserva for criada. Para FNRH e documento, envia sempre o link /pre-checkin/:code.',
+  allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
   parametersSchema: {
     type: 'OBJECT',
     properties: {
       cpf_cnpj: { type: 'STRING', description: 'CPF ou CNPJ informado pelo hóspede.' },
       email: { type: 'STRING', description: 'Endereço de e-mail do hóspede.' },
       horario_previsto_chegada: { type: 'STRING', description: 'Horário previsto de chegada para o check-in no formato HH:MM.' },
-      placa_veiculo: { type: 'STRING', description: 'Placa do veículo caso o hóspede vá utilizar a garagem.' },
+      placa_veiculo: { type: 'STRING', description: 'Placa do veículo caso o hóspede vá utilizar a garagem (ex: ABC1D23).' },
+      marca_veiculo: { type: 'STRING', description: 'Marca do veículo (ex: Toyota, Honda, VW).' },
+      modelo_veiculo: { type: 'STRING', description: 'Modelo do veículo (ex: Corolla, Civic, Nivus).' },
+      cor_veiculo: { type: 'STRING', description: 'Cor do veículo (ex: Prata, Preto, Branco).' },
       nomes_acompanhantes: {
         type: 'ARRAY',
         items: { type: 'STRING' },
@@ -803,32 +874,111 @@ export const atualizarDadosHospedeTool = {
   async execute(args, context) {
     try {
       const reserva = context.reserva_ativa || context.reserva_atual;
-      if (!reserva) {
-        const msg =
-          'Explique educadamente que não localizamos uma reserva ativa vinculada a este número para atualizar os dados e peça o código da reserva.';
-        return {
-          status: 'BLOQUEADO_PELA_REGRA',
-          codigo_regra_bloqueio: 'SEM_RESERVA_ATIVA',
-          instrucao_para_ia: msg,
-          instrucao_resposta_ia: msg,
-        };
-      }
-
-      const camposAtualizados = [];
       const db = context.runtime?.db;
+      const camposAtualizados = [];
+
+      const cleanPlate = args.placa_veiculo ? String(args.placa_veiculo).toUpperCase().replace(/[^A-Z0-9-]/g, '').trim() : '';
+      const cleanBrand = args.marca_veiculo ? String(args.marca_veiculo).trim() : '';
+      const cleanModel = args.modelo_veiculo ? String(args.modelo_veiculo).trim() : '';
+      const cleanColor = args.cor_veiculo ? String(args.cor_veiculo).trim() : '';
 
       if (args.cpf_cnpj) camposAtualizados.push(`CPF/CNPJ: ${args.cpf_cnpj}`);
       if (args.email) camposAtualizados.push(`E-mail: ${args.email}`);
       if (args.horario_previsto_chegada)
         camposAtualizados.push(`Horário previsto de chegada: ${args.horario_previsto_chegada}`);
-      if (args.placa_veiculo) camposAtualizados.push(`Placa do veículo: ${args.placa_veiculo}`);
+      if (cleanPlate) {
+        const descCarro = [cleanBrand, cleanModel, cleanColor].filter(Boolean).join(' ');
+        camposAtualizados.push(`Veículo: Placa ${cleanPlate}${descCarro ? ` (${descCarro})` : ''}`);
+      }
       if (Array.isArray(args.nomes_acompanhantes) && args.nomes_acompanhantes.length > 0) {
         camposAtualizados.push(`Acompanhantes: ${args.nomes_acompanhantes.join(', ')}`);
       }
 
+      // CENÁRIO 1: Cliente enviou dados (ex: placa/carro) ANTES de ter uma reserva criada para ele
+      if (!reserva) {
+        if (camposAtualizados.length === 0) {
+          const msg =
+            'Explique educadamente que você não localizou uma reserva ativa vinculada a este número no momento e pergunte se ele deseja fazer uma reserva ou informar os dados do veículo/cadastro.';
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: 'SEM_RESERVA_ATIVA',
+            instrucao_para_ia: msg,
+            instrucao_resposta_ia: msg,
+          };
+        }
+
+        const cleanPhone = normalizePhoneDigits(context.telefone_remetente);
+        const vehiclePayload = cleanPlate
+          ? {
+              plate: cleanPlate,
+              brand: cleanBrand,
+              model: cleanModel,
+              color: cleanColor,
+              updatedAt: new Date().toISOString(),
+            }
+          : null;
+
+        if (context.runtime?.conversation && vehiclePayload) {
+          context.runtime.conversation.pendingVehicle = vehiclePayload;
+        }
+
+        if (db) {
+          if (!Array.isArray(db.guests)) db.guests = [];
+          let guestRec = db.guests.find((g) => phonesMatch(g?.phone || g?.whatsapp, cleanPhone));
+          if (!guestRec && cleanPhone) {
+            guestRec = {
+              id: db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1,
+              name: context.hospede?.nome || 'Cliente WhatsApp',
+              fullName: context.hospede?.nome || 'Cliente WhatsApp',
+              phone: cleanPhone,
+              email: args.email ? String(args.email).trim().toLowerCase() : '',
+              document: args.cpf_cnpj ? String(args.cpf_cnpj).replace(/\D+/g, '') : '',
+              createdAt: new Date().toISOString(),
+            };
+            db.guests.push(guestRec);
+          }
+          if (guestRec) {
+            if (vehiclePayload) {
+              guestRec.pendingVehicle = vehiclePayload;
+              guestRec.vehicle = vehiclePayload;
+            }
+            if (args.cpf_cnpj) guestRec.document = String(args.cpf_cnpj).replace(/\D+/g, '');
+            if (args.email) guestRec.email = String(args.email).trim().toLowerCase();
+          }
+
+          if (vehiclePayload && Array.isArray(db.pendingPreReservationProposals)) {
+            for (const prop of db.pendingPreReservationProposals) {
+              if (phonesMatch(prop?.guestPhone, cleanPhone) && prop.status === 'pending_manager') {
+                prop.vehicle = vehiclePayload;
+              }
+            }
+          }
+
+          if (typeof context.runtime?.saveDatabase === 'function') {
+            await context.runtime.saveDatabase();
+          }
+        }
+
+        const msg =
+          `Confirme com cordialidade que os dados informados (${camposAtualizados.join(' | ')}) já foram salvos e vinculados ao seu número de WhatsApp. ` +
+          `Explique que, assim que a reserva dele for criada no sistema, esses dados do veículo/cadastro serão anexados automaticamente à reserva e à liberação da garagem!`;
+
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            reserva_id: null,
+            pre_captura_whatsapp: true,
+            campos_atualizados: camposAtualizados,
+            veiculo_pendente: vehiclePayload,
+          },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
       if (camposAtualizados.length === 0) {
         const msg =
-          'Pergunte educadamente ao hóspede qual informação ele gostaria de cadastrar ou atualizar na reserva (ex: horário de chegada, CPF, e-mail, placa do carro ou nome de acompanhante).';
+          'Pergunte educadamente ao hóspede qual informação ele gostaria de cadastrar ou atualizar na reserva (ex: placa/modelo/cor do veículo, horário de chegada, CPF, e-mail ou nome de acompanhante).';
         return {
           status: 'BLOQUEADO_PELA_REGRA',
           codigo_regra_bloqueio: 'NENHUM_CAMPO_INFORMADO',
@@ -837,19 +987,64 @@ export const atualizarDadosHospedeTool = {
         };
       }
 
+      let garageDispatchResult = null;
+      let jaTinhaDisparadoGatilhos = false;
+
       if (Array.isArray(db?.reservations)) {
         const targetRes = db.reservations.find(
           (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
         );
         if (targetRes) {
-          if (args.cpf_cnpj) targetRes.guestCpf = String(args.cpf_cnpj).replace(/\D+/g, '');
+          jaTinhaDisparadoGatilhos = Boolean(
+            targetRes.morningEmailSentAt ||
+              targetRes.receptionNotifiedAt ||
+              targetRes.vehicle?.garageNotifiedAt
+          );
+
+          if (args.cpf_cnpj) {
+            const docClean = String(args.cpf_cnpj).replace(/\D+/g, '');
+            targetRes.guestCpf = docClean;
+            targetRes.guestDocument = docClean;
+          }
           if (args.email) targetRes.guestEmail = String(args.email).trim().toLowerCase();
           if (args.horario_previsto_chegada)
             targetRes.estimatedArrivalTime = args.horario_previsto_chegada;
-          if (args.placa_veiculo) targetRes.vehiclePlate = args.placa_veiculo.toUpperCase();
           if (Array.isArray(args.nomes_acompanhantes) && args.nomes_acompanhantes.length > 0) {
             targetRes.companions = args.nomes_acompanhantes;
           }
+
+          if (cleanPlate) {
+            const nextVehicle = {
+              plate: cleanPlate,
+              brand: cleanBrand || targetRes.vehicle?.brand || '',
+              model: cleanModel || targetRes.vehicle?.model || '',
+              color: cleanColor || targetRes.vehicle?.color || '',
+              updatedAt: new Date().toISOString(),
+            };
+            targetRes.vehicle = { ...(targetRes.vehicle || {}), ...nextVehicle };
+            targetRes.vehiclePlate = cleanPlate;
+
+            const triggerGarageFn =
+              context.runtime?.triggerGarageEmailNotification ||
+              globalThis.triggerGarageEmailNotification;
+            if (typeof triggerGarageFn === 'function') {
+              garageDispatchResult = triggerGarageFn(
+                db,
+                context.runtime?.saveDatabase,
+                targetRes,
+                nextVehicle,
+                {
+                  trigger: jaTinhaDisparadoGatilhos
+                    ? 'sofia_whatsapp_vehicle_retrigger'
+                    : 'sofia_whatsapp_vehicle',
+                  source: 'Sofia IA (WhatsApp)',
+                  retriggerIfAlreadySent: true,
+                  retriggerReceptionIfAlreadyNotified: jaTinhaDisparadoGatilhos,
+                }
+              );
+            }
+          }
+
           targetRes.updatedAt = new Date().toISOString();
           if (typeof context.runtime?.saveDatabase === 'function') {
             await context.runtime.saveDatabase();
@@ -857,13 +1052,41 @@ export const atualizarDadosHospedeTool = {
         }
       }
 
+      const baseUrl =
+        db?.settings?.baseUrl ||
+        (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
+        'https://corpflats.com.br';
+      const linkPreCheckin = `${baseUrl}/pre-checkin/${reserva.id}`;
+
+      let detalheGaragem = '';
+      if (cleanPlate) {
+        if (garageDispatchResult?.deferred && garageDispatchResult.reason === 'pre_reservation_unpaid') {
+          detalheGaragem =
+            ' Informe que o veículo já está salvo na reserva e a liberação da garagem será enviada automaticamente assim que o pagamento da reserva for confirmado.';
+        } else if (garageDispatchResult?.deferred && garageDispatchResult.reason === 'future_reservation') {
+          detalheGaragem =
+            ' Informe que o veículo já está cadastrado e o e-mail de liberação para a garagem será disparado automaticamente na manhã do dia do check-in.';
+        } else {
+          detalheGaragem = jaTinhaDisparadoGatilhos
+            ? ' Informe que, como os avisos de chegada já haviam sido enviados, o sistema já reenviou a autorização atualizada com os dados do veículo para a garagem e portaria!'
+            : ' Informe que a autorização de estacionamento já foi enviada para a garagem!';
+        }
+      }
+
       const msg =
         `Confirme com cordialidade que os dados da reserva *${reserva.id}* (${reserva.nome_imovel}) foram atualizados no sistema: ` +
-        `${camposAtualizados.join(' | ')}.`;
+        `${camposAtualizados.join(' | ')}.${detalheGaragem} ` +
+        `Caso o hóspede precise preencher a FNRH e enviar a foto do documento/assinatura digital do pré-check-in, envie sempre o link oficial: ${linkPreCheckin}.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
-        dados: { reserva_id: reserva.id, campos_atualizados: camposAtualizados },
+        dados: {
+          reserva_id: reserva.id,
+          campos_atualizados: camposAtualizados,
+          garagem_reenviada: Boolean(cleanPlate && jaTinhaDisparadoGatilhos),
+          garagem_status: garageDispatchResult || null,
+          link_pre_checkin: linkPreCheckin,
+        },
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,
       };
@@ -890,19 +1113,22 @@ export const atualizarDadosHospedeTool = {
 export const solicitarEarlyCheckinTool = {
   name: 'solicitar_early_checkin',
   description:
-    'Verifica a disponibilidade do flat na governança e autoriza ou bloqueia a entrada antecipada (early check-in) na reserva do hóspede. ' +
-    'Deve ser chamada sempre que o hóspede perguntar se pode entrar mais cedo antes das 14:00.',
+    'Verifica a disponibilidade de flat desocupado e limpo na governança e aplica as regras oficiais de entrada antecipada (early check-in): ' +
+    'hóspedes WhatsApp/Direto têm cortesia a partir das 10:00; demais canais têm cortesia a partir das 12:00; ' +
+    'antes desses horários até o limite de 07:00 cobra meia diária (50%); antes das 07:00 cobra diária inteira (100%).',
   allowedStates: ['PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
   parametersSchema: {
     type: 'OBJECT',
     properties: {
       horario_solicitado: {
         type: 'STRING',
-        description: 'Horário desejado pelo hóspede para entrar no imóvel no formato HH:MM (ex: "10:30").',
+        description: 'Horário desejado pelo hóspede para entrar no imóvel no formato HH:MM (ex: "10:30" ou "08:00").',
       },
       confirmacao_hospede: {
         type: 'BOOLEAN',
-        description: 'True se o hóspede já concordou com eventual taxa (quando aplicável); False na primeira consulta.',
+        description:
+          'Passe FALSE na primeira consulta quando houver cobrança (meia diária ou diária inteira) para informar o valor ao hóspede. ' +
+          'Passe TRUE somente após o hóspede concordar explicitamente com a taxa informada.',
       },
     },
     required: ['horario_solicitado'],
@@ -922,23 +1148,18 @@ export const solicitarEarlyCheckinTool = {
       }
 
       const horarioFormatado = normalizeTimeHHMM(args.horario_solicitado, '14:00');
+      const confirmado = Boolean(args.confirmacao_hospede ?? false);
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const dataCheckin = String(reserva.data_checkin || '').slice(0, 10);
 
-      if (horarioFormatado < '09:00') {
-        const msg =
-          `Explique ao hóspede com cordialidade que para entrada às ${horarioFormatado} (antes das 09h00) o sistema contabiliza a diária da noite anterior para garantir o apartamento bloqueado desde a madrugada. ` +
-          `Informe que o nosso early check-in opera a partir das 10h00 (mediante disponibilidade da governança) e pergunte como ele prefere prosseguir.`;
-        return {
-          status: 'BLOQUEADO_PELA_REGRA',
-          codigo_regra_bloqueio: 'HORARIO_ANTERIOR_LIMITE_EARLY_CHECKIN',
-          dados: { horario_minimo_early_checkin: '10:00', horario_padrao: '14:00' },
-          instrucao_para_ia: msg,
-          instrucao_resposta_ia: msg,
-        };
-      }
+      const targetRes = Array.isArray(db?.reservations)
+        ? db.reservations.find(
+            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
+          )
+        : null;
 
+      // 1. Verifica disponibilidade: flat desocupado e limpo
       let conflitoSaidaMesmoDia = false;
       if (Array.isArray(db?.reservations)) {
         conflitoSaidaMesmoDia = db.reservations.some((r) => {
@@ -947,14 +1168,31 @@ export const solicitarEarlyCheckinTool = {
           if (rCode === reserva.id) return false;
           const sameFlat = String(r.flatNumber || '') === flatNumber;
           const sameDayCheckout = String(r.checkoutDate || '').slice(0, 10) === dataCheckin;
-          return sameFlat && sameDayCheckout && !r.checkoutCompleted;
+          return sameFlat && sameDayCheckout && !r.checkoutCompleted && !r.checkoutDone;
         });
       }
 
-      if (conflitoSaidaMesmoDia) {
+      let flatSujoNaGovernanca = false;
+      if (Array.isArray(db?.cleaningRequests)) {
+        flatSujoNaGovernanca = db.cleaningRequests.some((c) => {
+          if (!c || c.isDeleted || c.status === 'deleted' || c.isInstructionOnly || c.source === 'manual_instruction') {
+            return false;
+          }
+          return (
+            String(c.flatNumber || '') === flatNumber &&
+            c.requestDate === dataCheckin &&
+            c.status !== 'clean'
+          );
+        });
+      }
+
+      if (conflitoSaidaMesmoDia || flatSujoNaGovernanca) {
+        const motivoBloqueio = conflitoSaidaMesmoDia
+          ? 'há um hóspede em estadia com saída prevista até as 12h00 e a equipe de governança fará a higienização completa logo em seguida'
+          : 'o apartamento ainda está em programação de limpeza na governança e o early check-in está sempre sujeito a haver flat desocupado e limpo';
         const msg =
-          `Informe ao hóspede com muita empatia que no momento não conseguimos confirmar a entrada às ${horarioFormatado} no ${reserva.nome_imovel} ` +
-          `porque há um hóspede em estadia com saída prevista até as 12h00 e a equipe de governança fará a higienização completa logo em seguida. ` +
+          `Informe ao hóspede com muita empatia que no momento não conseguimos liberar a entrada antecipada às ${horarioFormatado} no ${reserva.nome_imovel} ` +
+          `porque ${motivoBloqueio}. ` +
           `Diga que já deixamos prioridade máxima na limpeza para liberar o quanto antes e que ele pode guardar as malas na recepção se chegar mais cedo!`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
@@ -965,27 +1203,136 @@ export const solicitarEarlyCheckinTool = {
         };
       }
 
-      if (Array.isArray(db?.reservations)) {
-        const targetRes = db.reservations.find(
-          (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-        );
+      // 2. Regra de canal e faixas de horário da CorpFlats:
+      // - Hóspedes WhatsApp / Direto: cortesia a partir das 10:00
+      // - Demais canais (Booking, Airbnb, B2B, etc.): cortesia a partir das 12:00
+      // - Antes do horário gratuito até 07:00: cobra meia diária (50%)
+      // - Antes das 07:00: cobra diária inteira (100%)
+      const rawChannel = String(targetRes?.channel || reserva.canal_reserva || 'whatsapp').toLowerCase();
+      const isOtaOrB2b =
+        rawChannel.includes('booking') ||
+        rawChannel.includes('airbnb') ||
+        rawChannel.includes('expedia') ||
+        rawChannel.includes('decolar') ||
+        rawChannel.includes('b2b');
+      const isWhatsappGuest = !isOtaOrB2b;
+      const horarioGratuito = isWhatsappGuest ? '10:00' : '12:00';
+      const valorDiaria = Number(targetRes?.dailyRate || reserva.valor_diaria || 237.0);
+
+      let valorTaxa = 0;
+      let tipoTaxa = 'CORTESIA';
+      let labelTaxa = 'Cortesia';
+
+      if (horarioFormatado < '07:00') {
+        valorTaxa = Number(valorDiaria.toFixed(2));
+        tipoTaxa = 'DIARIA_INTEIRA';
+        labelTaxa = 'Diária Inteira (entrada antes das 07:00)';
+      } else if (horarioFormatado < horarioGratuito) {
+        valorTaxa = Number((valorDiaria / 2).toFixed(2));
+        tipoTaxa = 'MEIA_DIARIA';
+        labelTaxa = `Meia Diária (entrada entre 07:00 e ${horarioGratuito})`;
+      }
+
+      // Se exige taxa (meia diária ou diária inteira) e o hóspede ainda não confirmou:
+      if (valorTaxa > 0 && !confirmado) {
+        const msg =
+          `Informe ao hóspede que o ${reserva.nome_imovel} está desocupado e disponível! Explique com clareza nossa regra de Early Check-in:\n` +
+          `• A partir das *${horarioGratuito}*: *Cortesia (gratuito)* para a reserva dele.\n` +
+          `• Entre *07:00 e ${horarioGratuito}*: taxa de *meia diária* (R$ ${(valorDiaria / 2).toFixed(2)}).\n` +
+          `• Antes das *07:00*: taxa de *diária inteira* (R$ ${valorDiaria.toFixed(2)}).\n` +
+          `Para o horário solicitado das *${horarioFormatado}*, aplica-se *${labelTaxa}* no valor de *R$ ${valorTaxa.toFixed(2)}*. ` +
+          `Pergunte se ele confirma esse valor para você gerar o PIX de liberação ou se prefere entrar sem custo a partir das ${horarioGratuito}.`;
+        return {
+          status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+          dados: {
+            reserva_id: reserva.id,
+            horario_solicitado: horarioFormatado,
+            horario_gratuito_canal: horarioGratuito,
+            tipo_taxa: tipoTaxa,
+            valor_taxa: valorTaxa,
+            valor_diaria_referencia: valorDiaria,
+            moeda: 'BRL',
+          },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
+      // Se exige taxa e o hóspede JÁ confirmou: gera a cobrança PIX primeiro
+      if (valorTaxa > 0 && confirmado) {
+        const pixCharge = await generatePixChargeForService({
+          amount: valorTaxa,
+          description: `Early Check-in ${horarioFormatado} (${labelTaxa}) - Reserva ${reserva.id}`,
+          debtorName: targetRes?.guestName || context.hospede?.nome || 'Hospede CorpFlats',
+          debtorDocument: targetRes?.guestDocument || targetRes?.guestCpf || '',
+          reservationCode: reserva.id,
+          context,
+        });
+
         if (targetRes) {
-          targetRes.earlyCheckinTime = horarioFormatado;
-          targetRes.checkinTime = horarioFormatado;
+          targetRes.pendingEarlyCheckin = {
+            txid: pixCharge.txid,
+            pixCopiaECola: pixCharge.pixCopiaECola,
+            amount: valorTaxa,
+            requestedTime: horarioFormatado,
+            feeType: tipoTaxa,
+            feeLabel: labelTaxa,
+            status: 'pending_payment',
+            requestedAt: new Date().toISOString(),
+          };
           targetRes.updatedAt = new Date().toISOString();
           if (typeof context.runtime?.saveDatabase === 'function') {
             await context.runtime.saveDatabase();
           }
         }
+
+        const msg =
+          `Envie ao hóspede o código PIX Copia e Cola (${pixCharge.pixCopiaECola}) referente à taxa de *${labelTaxa}* (*R$ ${valorTaxa.toFixed(2)}*) ` +
+          `para o early check-in às *${horarioFormatado}* no *${reserva.nome_imovel}*. ` +
+          `Explique que, assim que o pagamento for confirmado, o sistema libera automaticamente a entrada antecipada para as ${horarioFormatado}!`;
+
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            reserva_id: reserva.id,
+            novo_horario_checkin: horarioFormatado,
+            cortesia: false,
+            tipo_taxa: tipoTaxa,
+            valor_taxa: valorTaxa,
+            aguardando_pagamento_pix: true,
+            txid: pixCharge.txid,
+            pix_copia_e_cola: pixCharge.pixCopiaECola,
+          },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
+      // Caso Cortesia (a partir das 10:00 para WhatsApp/Direto ou 12:00 para demais canais):
+      if (targetRes) {
+        targetRes.earlyCheckin = true;
+        targetRes.earlyCheckinAuthorized = true;
+        targetRes.earlyCheckinTime = horarioFormatado;
+        targetRes.checkinTime = horarioFormatado;
+        targetRes.earlyCheckinFee = 0;
+        targetRes.updatedAt = new Date().toISOString();
+        if (typeof context.runtime?.saveDatabase === 'function') {
+          await context.runtime.saveDatabase();
+        }
       }
 
       const msg =
-        `Confirme com entusiasmo que o early check-in para as ${horarioFormatado} no ${reserva.nome_imovel} foi registrado como cortesia na reserva ${reserva.id} ` +
-        `e que a equipe de governança já foi avisada da chegada nesse horário.`;
+        `Confirme com entusiasmo que o early check-in para as ${horarioFormatado} no ${reserva.nome_imovel} foi autorizado como cortesia na reserva ${reserva.id} ` +
+        `e que a recepção e governança já estão cientes da chegada nesse horário.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
-        dados: { reserva_id: reserva.id, novo_horario_checkin: horarioFormatado, cortesia: true },
+        dados: {
+          reserva_id: reserva.id,
+          novo_horario_checkin: horarioFormatado,
+          cortesia: true,
+          valor_taxa: 0,
+        },
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,
       };
@@ -1390,24 +1737,28 @@ export const estenderEstadiaTool = {
 export const solicitarLimpezaExtraTool = {
   name: 'solicitar_limpeza_extra',
   description:
-    'Agenda limpeza adicional no apartamento, troca de enxoval/toalhas ou reposição de amenidades na governança para o hóspede em estadia.',
+    'Atende pedidos de governança durante a estadia: ' +
+    '1) Para LIMPEZA_COMPLETA (limpeza durante a estadia + troca de roupa de cama e banho), cobra R$ 70,00: gera primeiro a cobrança PIX e só cria o card de limpeza após a confirmação do pagamento. ' +
+    '2) Para entrega avulsa de toalha extra, travesseiro, papel higiênico ou sabonete (REPOSICAO_ITENS ou TROCA_TOALHAS_ENXOVAL), é cortesia (gratuito) e gera imediatamente um card de instrução deixando claro que é APENAS entrega do item para a camareira não limpar o flat por engano.',
   allowedStates: ['IN_STAY_CONCIERGE'],
   parametersSchema: {
     type: 'OBJECT',
     properties: {
       tipo_solicitacao: {
         type: 'STRING',
-        description: 'Tipo de serviço de governança: LIMPEZA_COMPLETA, TROCA_TOALHAS_ENXOVAL ou REPOSICAO_ITENS.',
+        description:
+          'Tipo de serviço: LIMPEZA_COMPLETA (limpeza do flat + troca completa de roupa de cama e banho por R$ 70,00), ' +
+          'TROCA_TOALHAS_ENXOVAL (entrega cortesia de toalha extra ou travesseiro) ou REPOSICAO_ITENS (entrega cortesia de papel higiênico, sabonete, etc.).',
       },
       observacoes: {
         type: 'STRING',
-        description: 'Detalhes adicionais informados pelo hóspede (ex: horário de preferência ou itens específicos).',
+        description: 'Itens específicos solicitados pelo hóspede (ex: "1 toalha extra e 2 papéis higiênicos", "1 travesseiro") ou horário de preferência.',
       },
       confirmacao_hospede: {
         type: 'BOOLEAN',
         description:
-          'Passe FALSE na primeira chamada caso seja LIMPEZA_COMPLETA extra (para confirmar a taxa de R$ 70,00). ' +
-          'Para TROCA_TOALHAS_ENXOVAL ou REPOSICAO_ITENS (cortesia) ou após o hóspede confirmar, passe TRUE.',
+          'Passe FALSE na primeira chamada caso seja LIMPEZA_COMPLETA (para informar a taxa de R$ 70,00 que inclui limpeza + troca de cama e banho). ' +
+          'Para entrega avulsa de toalha extra, travesseiro, papel higiênico ou sabonete (cortesia) ou após o hóspede confirmar a taxa de R$ 70,00, passe TRUE.',
       },
     },
     required: ['tipo_solicitacao', 'confirmacao_hospede'],
@@ -1428,42 +1779,122 @@ export const solicitarLimpezaExtraTool = {
 
       const taxaLimpezaExtra = 70.0;
       const exigeTaxa = args.tipo_solicitacao === 'LIMPEZA_COMPLETA';
+      const db = context.runtime?.db;
+      const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
+      const todayStr = String(context.data_hora_atual || new Date().toISOString()).slice(0, 10);
+      const protocolo = `GOV-${Date.now().toString(36).slice(-5).toUpperCase()}`;
 
-      if (exigeTaxa && !args.confirmacao_hospede) {
+      const targetRes = Array.isArray(db?.reservations)
+        ? db.reservations.find(
+            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
+          )
+        : null;
+
+      // CASO 1: Limpeza durante a estadia (R$ 70,00 - inclui limpeza + troca de roupa de cama e banho)
+      if (exigeTaxa) {
+        if (!args.confirmacao_hospede) {
+          const msg =
+            `Informe ao hóspede que a limpeza durante a estadia para o ${reserva.nome_imovel} tem o valor de *R$ ${taxaLimpezaExtra.toFixed(2)}* e já inclui a limpeza completa do flat mais a troca de roupa de cama e banho. ` +
+            `(Informe também que se ele precisar apenas de uma toalha extra, travesseiro, papel higiênico ou sabonete avulso, entregamos como cortesia!). ` +
+            `Pergunte se ele confirma a limpeza completa de R$ ${taxaLimpezaExtra.toFixed(2)} para você gerar a cobrança PIX.`;
+          return {
+            status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+            dados: {
+              imovel: reserva.nome_imovel,
+              tipo_solicitacao: args.tipo_solicitacao,
+              valor_taxa: taxaLimpezaExtra,
+              inclui: 'Limpeza completa do flat + troca de roupa de cama e banho',
+              moeda: 'BRL',
+            },
+            instrucao_para_ia: msg,
+            instrucao_resposta_ia: msg,
+          };
+        }
+
+        // Hóspede confirmou a limpeza de R$ 70,00: gera a cobrança PIX primeiro e SÓ solicita a limpeza na governança após o pagamento!
+        const pixCharge = await generatePixChargeForService({
+          amount: taxaLimpezaExtra,
+          description: `Limpeza durante estadia + Troca cama/banho - ${reserva.nome_imovel} (${reserva.id})`,
+          debtorName: targetRes?.guestName || context.hospede?.nome || 'Hospede CorpFlats',
+          debtorDocument: targetRes?.guestDocument || targetRes?.guestCpf || '',
+          reservationCode: reserva.id,
+          context,
+        });
+
+        if (targetRes) {
+          targetRes.pendingStayoverCleaning = {
+            protocolo,
+            txid: pixCharge.txid,
+            pixCopiaECola: pixCharge.pixCopiaECola,
+            amount: taxaLimpezaExtra,
+            requestDate: todayStr,
+            notes: args.observacoes || '',
+            status: 'pending_payment',
+            requestedAt: new Date().toISOString(),
+          };
+          targetRes.updatedAt = new Date().toISOString();
+          if (typeof context.runtime?.saveDatabase === 'function') {
+            await context.runtime.saveDatabase();
+          }
+        }
+
         const msg =
-          `Informe ao hóspede que podemos agendar a limpeza completa extra para o ${reserva.nome_imovel} com a nossa equipe de governança, ` +
-          `mediante a taxa avulsa de R$ ${taxaLimpezaExtra.toFixed(2)}. Pergunte se ele confirma o agendamento (ou informe que a simples reposição de toalhas/amenidades é cortesia).`;
+          `Envie ao hóspede o código PIX Copia e Cola (${pixCharge.pixCopiaECola}) no valor de *R$ ${taxaLimpezaExtra.toFixed(2)}* referente à limpeza durante a estadia (com troca de roupa de cama e banho) do *${reserva.nome_imovel}*. ` +
+          `Explique claramente que a cobrança foi gerada e que, assim que o pagamento PIX for confirmado, o card de limpeza será enviado automaticamente para a camareira!`;
+
         return {
-          status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+          status: 'SUCESSO_EXECUTADO',
           dados: {
+            protocolo,
+            reserva_id: reserva.id,
             imovel: reserva.nome_imovel,
             tipo_solicitacao: args.tipo_solicitacao,
             valor_taxa: taxaLimpezaExtra,
-            moeda: 'BRL',
+            aguardando_pagamento_pix: true,
+            card_gerado_apos_pagamento: true,
+            txid: pixCharge.txid,
+            pix_copia_e_cola: pixCharge.pixCopiaECola,
           },
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
       }
 
-      const db = context.runtime?.db;
-      const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
-      const todayStr = String(context.data_hora_atual || new Date().toISOString()).slice(0, 10);
-      const protocolo = `GOV-${Date.now().toString(36).slice(-5).toUpperCase()}`;
+      // CASO 2: Entrega de item avulso de cortesia (toalha extra, travesseiro, papel higiênico, sabonete)
+      // Gera o card na governança deixando MUITO CLARO que é APENAS entrega do item para a camareira NÃO limpar o flat por engano!
+      const descricaoItem = String(
+        args.observacoes ||
+          (args.tipo_solicitacao === 'TROCA_TOALHAS_ENXOVAL'
+            ? 'Toalha extra / travesseiro'
+            : 'Papel higiênico / sabonete')
+      ).trim();
+      const instrucaoCamareira = `⚠️ APENAS ENTREGA DE ITEM (NÃO LIMPAR O FLAT): Entregar [${descricaoItem}] no Flat ${flatNumber}.`;
 
       if (db) {
         if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
         db.cleaningRequests.push({
           id: protocolo,
+          protocolo,
+          flatId: targetRes?.flatId || Number(flatNumber) || 1,
           flatNumber,
           reservationId: reserva.id,
-          guestName: context.hospede?.nome || 'Hóspede',
-          type: args.tipo_solicitacao,
-          notes: args.observacoes || '',
-          fee: exigeTaxa ? taxaLimpezaExtra : 0,
+          reservationCode: reserva.id,
+          guestName: context.hospede?.nome || targetRes?.guestName || 'Hóspede',
+          leavingGuest: '⚠️ SÓ ENTREGA DE ITEM (NÃO LIMPAR)',
+          arrivingGuest: null,
+          type: 'instruction',
+          source: 'manual_instruction',
+          isInstructionOnly: true,
+          isPaidCleaning: false,
+          instructionText: instrucaoCamareira,
+          adminNote: instrucaoCamareira,
+          notes: instrucaoCamareira,
+          pendingObservation: instrucaoCamareira,
+          fee: 0,
           requestDate: todayStr,
-          status: 'pending',
+          status: 'dirty',
           createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         });
         if (typeof context.runtime?.saveDatabase === 'function') {
           await context.runtime.saveDatabase();
@@ -1471,8 +1902,8 @@ export const solicitarLimpezaExtraTool = {
       }
 
       const msg =
-        `Confirme com cordialidade que a solicitação de ${String(args.tipo_solicitacao).replace(/_/g, ' ').toLowerCase()} para o ${reserva.nome_imovel} ` +
-        `já foi registrada no quadro da governança (protocolo *${protocolo}*)${args.observacoes ? ` com a observação: "${args.observacoes}"` : ''}.`;
+        `Confirme com cordialidade que o pedido de *${descricaoItem}* para o *${reserva.nome_imovel}* já foi registrado como *cortesia (sem custo)* ` +
+        `no quadro da governança (protocolo *${protocolo}*), com aviso expresso para a camareira realizar apenas a entrega do item solicitado.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -1481,7 +1912,9 @@ export const solicitarLimpezaExtraTool = {
           reserva_id: reserva.id,
           imovel: reserva.nome_imovel,
           tipo_solicitacao: args.tipo_solicitacao,
-          valor_taxa: exigeTaxa ? taxaLimpezaExtra : 0,
+          item_solicitado: descricaoItem,
+          apenas_entrega_item: true,
+          valor_taxa: 0,
         },
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,
@@ -1509,8 +1942,8 @@ export const solicitarLimpezaExtraTool = {
 export const abrirChamadoManutencaoTool = {
   name: 'abrir_chamado_manutencao',
   description:
-    'Abre uma Ordem de Serviço (OS) de manutenção para o flat atual do hóspede e, em casos urgentes ou críticos, ' +
-    'notifica automaticamente o WhatsApp do administrador/gestor.',
+    'Registra uma ocorrência de manutenção para o flat atual do hóspede e avisa imediatamente o gestor no WhatsApp com os 3 planos de ação prontos ' +
+    '(1: Remanejar para o Flat da Vez + Abrir OS; 2: Apenas abrir a Ordem de Serviço; 3: Não fazer nada e o gestor assume) para execução imediata mediante resposta do gestor.',
   allowedStates: ['IN_STAY_CONCIERGE'],
   parametersSchema: {
     type: 'OBJECT',
@@ -1548,42 +1981,117 @@ export const abrirChamadoManutencaoTool = {
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const protocoloOs = `OS-${Date.now().toString(36).slice(-5).toUpperCase()}`;
+      const todayStr = String(context.data_hora_atual || new Date().toISOString()).slice(0, 10);
+      const checkoutStr = String(reserva.data_checkout || todayStr).slice(0, 10);
+
+      // Identifica o "Flat da Vez" (desocupado e limpo) para sugerir remanejamento imediato ao gestor
+      let flatSugerido = null;
+      if (typeof context.runtime?.selectFairShareFlat === 'function' && db) {
+        try {
+          const picked = context.runtime.selectFairShareFlat(db, todayStr, checkoutStr > todayStr ? checkoutStr : todayStr);
+          if (picked && String(picked.number || picked) !== flatNumber) {
+            flatSugerido = String(picked.number || picked);
+          }
+        } catch {}
+      }
+      if (!flatSugerido && Array.isArray(db?.flats)) {
+        const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
+        const candidate = db.flats.find((f) => {
+          const fNum = String(f?.number || f?.id || '');
+          if (!fNum || fNum === flatNumber || f.isActive === false || f.status === 'maintenance') return false;
+          const hasConflict = reservations.some((r) => {
+            if (!r || r.status === 'cancelada' || r.status === 'cancelled') return false;
+            if (String(r.flatNumber || '') !== fNum) return false;
+            const rIn = String(r.checkinDate || '').slice(0, 10);
+            const rOut = String(r.checkoutDate || '').slice(0, 10);
+            return todayStr < rOut && checkoutStr > rIn;
+          });
+          return !hasConflict;
+        });
+        if (candidate) {
+          flatSugerido = String(candidate.number || candidate.id);
+        }
+      }
+
+      const targetRes = Array.isArray(db?.reservations)
+        ? db.reservations.find(
+            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
+          )
+        : null;
 
       if (db) {
         if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
         db.serviceOrders.unshift({
           id: protocoloOs,
           code: protocoloOs,
+          flatId: targetRes?.flatId || Number(flatNumber) || 1,
           flatNumber,
           reservationId: reserva.id,
-          guestName: context.hospede?.nome || 'Hóspede',
+          guestName: context.hospede?.nome || targetRes?.guestName || 'Hóspede',
           guestPhone: context.telefone_remetente,
           category: args.categoria_item,
           description: args.descricao_problema,
           priority: args.urgencia,
-          status: 'open',
+          status: 'pending_manager_approval',
+          suggestedRelocationFlat: flatSugerido,
           createdAt: new Date().toISOString(),
         });
+
+        if (!Array.isArray(db.pendingMaintenanceProposals)) {
+          db.pendingMaintenanceProposals = [];
+        }
+        db.pendingMaintenanceProposals.unshift({
+          id: `maint_${Date.now()}`,
+          protocoloOs,
+          status: 'pending_manager',
+          reservationId: targetRes?.id || reserva.id,
+          reservationCode: reserva.id,
+          guestName: context.hospede?.nome || targetRes?.guestName || 'Hóspede',
+          guestPhone: context.telefone_remetente,
+          currentFlatNumber: flatNumber,
+          suggestedFlatNumber: flatSugerido,
+          category: args.categoria_item,
+          description: args.descricao_problema,
+          urgency: args.urgencia || 'MEDIA',
+          checkinDate: reserva.data_checkin,
+          checkoutDate: reserva.data_checkout,
+          createdAt: new Date().toISOString(),
+        });
+
         if (typeof context.runtime?.saveDatabase === 'function') {
           await context.runtime.saveDatabase();
         }
       }
 
-      if (args.urgencia === 'CRITICA' || args.urgencia === 'MEDIA') {
-        await notifyAdminWhatsApp({
-          nivel_urgencia: args.urgencia,
-          categoria: 'MANUTENCAO',
-          hospede_nome: context.hospede?.nome || 'Hóspede',
-          telefone: context.telefone_remetente,
-          imovel: reserva.nome_imovel,
-          resumo: `[${protocoloOs}] ${args.categoria_item}: ${args.descricao_problema}`,
-          context,
-        });
-      }
+      const plano1Texto = flatSugerido
+        ? `1️⃣ *Remanejar para o Flat da Vez (Flat ${flatSugerido})* + Abrir OS no Flat ${flatNumber}`
+        : `1️⃣ *Remanejar hóspede* (informe o nº do flat desejado) + Abrir OS no Flat ${flatNumber}`;
+      const plano2Texto = `2️⃣ *Apenas abrir a Ordem de Serviço (OS)* para manutenção no Flat ${flatNumber} (sem remanejar)`;
+      const plano3Texto = `3️⃣ *Não fazer nada no sistema* (deixar que você assume o atendimento diretamente)`;
+
+      const resumoPlanos = [
+        `[${protocoloOs}] ${args.categoria_item}: ${args.descricao_problema}`,
+        ``,
+        `📋 *PLANOS DE AÇÃO PRONTOS (Responda 1, 2 ou 3 neste WhatsApp para a Sofia executar):*`,
+        plano1Texto,
+        plano2Texto,
+        plano3Texto,
+      ].join('\n');
+
+      await notifyAdminWhatsApp({
+        nivel_urgencia: args.urgencia || 'MEDIA',
+        categoria: 'MANUTENCAO',
+        hospede_nome: context.hospede?.nome || 'Hóspede',
+        telefone: context.telefone_remetente,
+        imovel: reserva.nome_imovel,
+        resumo: resumoPlanos,
+        context,
+      });
 
       const msg =
-        `Peça desculpas pelo inconveniente com muita empatia, informe ao hóspede que a Ordem de Serviço *${protocoloOs}* ` +
-        `já foi aberta para o *${reserva.nome_imovel}* (${args.categoria_item}) e que a gerência/manutenção já recebeu um alerta prioritário no WhatsApp para resolver o quanto antes.`;
+        `Peça desculpas pelo inconveniente com muita empatia, informe ao hóspede que a ocorrência *${protocoloOs}* ` +
+        `no *${reserva.nome_imovel}* (${args.categoria_item}) já foi enviada com prioridade diretamente para o WhatsApp da gerência ` +
+        `com o plano de atendimento/manutenção pronto e que em instantes daremos o retorno imediato para solucionar.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -1592,7 +2100,9 @@ export const abrirChamadoManutencaoTool = {
           imovel: reserva.nome_imovel,
           categoria_item: args.categoria_item,
           urgencia: args.urgencia,
-          administrador_notificado: args.urgencia === 'CRITICA' || args.urgencia === 'MEDIA',
+          flat_sugerido_remanejamento: flatSugerido,
+          planos_enviados_ao_gestor: [plano1Texto, plano2Texto, plano3Texto],
+          administrador_notificado: true,
         },
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,
@@ -1621,7 +2131,8 @@ export const gerenciarNotaFiscalNfseTool = {
   name: 'gerenciar_nota_fiscal_nfse',
   description:
     'Gerencia a conferência, personalização (tomador, CPF/CNPJ, endereço, e-mail, inclusão/remoção de hóspedes acompanhantes na descrição ' +
-    'ou observações livres na discriminação dos serviços) e confirmação para emissão automática da Nota Fiscal (NFS-e) da reserva ativa.',
+    'ou observações livres na discriminação dos serviços) e confirmação para emissão automática da Nota Fiscal (NFS-e) da reserva ativa. ' +
+    'Caso o hóspede peça apenas Recibo simples ou Comprovante de Pagamento/Hospedagem (sem ser NFS-e), use acao=SOLICITAR_RECIBO_COMPROVANTE para enviar o link oficial do portal.',
   allowedStates: ['PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
   parametersSchema: {
     type: 'OBJECT',
@@ -1629,7 +2140,7 @@ export const gerenciarNotaFiscalNfseTool = {
       acao: {
         type: 'STRING',
         description:
-          'Ação desejada: CONSULTAR_OU_INICIAR_CONFERENCIA, ATUALIZAR_DADOS_NOTA, CONFIRMAR_DADOS_NOTA ou CANCELAR_CONFERENCIA.',
+          'Ação desejada: CONSULTAR_OU_INICIAR_CONFERENCIA, ATUALIZAR_DADOS_NOTA, CONFIRMAR_DADOS_NOTA, CANCELAR_CONFERENCIA ou SOLICITAR_RECIBO_COMPROVANTE.',
       },
       tomador_nome: { type: 'STRING', description: 'Nome completo ou Razão Social do tomador do serviço.' },
       tomador_cpf_cnpj: { type: 'STRING', description: 'CPF ou CNPJ do tomador do serviço.' },
@@ -1678,6 +2189,26 @@ export const gerenciarNotaFiscalNfseTool = {
             (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
           )
         : null;
+
+      if (args.acao === 'SOLICITAR_RECIBO_COMPROVANTE') {
+        const baseUrl =
+          db?.settings?.baseUrl ||
+          (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
+          'https://corpflats.com.br';
+        const linkComprovante = `${baseUrl}/minha-reserva/${reserva.id}`;
+        const msg =
+          `Envie ao hóspede o link oficial do Portal do Hóspede (${linkComprovante}) onde ele pode visualizar e baixar imediatamente o *Comprovante de Pagamento / Reserva* oficial da estadia no ${reserva.nome_imovel}. ` +
+          `Pergunte também se ele deseja agendar a emissão da Nota Fiscal de Serviço Eletrônica (NFS-e).`;
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            reserva_id: reserva.id,
+            link_comprovante_pagamento: linkComprovante,
+          },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
 
       if (args.acao === 'CANCELAR_CONFERENCIA') {
         if (conv?.fiscalConferenceState) {

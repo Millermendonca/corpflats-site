@@ -12692,18 +12692,22 @@ export function checkYouthLocalRisk({ birthDate, city, address, phone, state, or
 async function getGeminiCandidateEndpoints(apiKey) {
   const candidates = [];
 
-  // Modelos estáveis com alta quota no Free Tier do Google
+  // Modelos oficiais de alta capacidade para Tool Calling e raciocínio
   const preferredModels = [
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
     "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
     "gemini-1.5-pro",
-    "gemini-pro"
+    "gemini-1.5-flash"
   ];
 
-  const savedModel = db.settings?.geminiModel;
+  let savedModel = db.settings?.geminiModel;
   const savedVer = db.settings?.geminiApiVersion || "v1beta";
+  // Sanitiza modelos legados ou lite que degradam o raciocínio da Sofia
+  if (savedModel && (savedModel.includes("lite") || savedModel.includes("8b") || savedModel === "gemini-1.5-flash")) {
+    savedModel = "gemini-2.5-flash";
+    if (db.settings) db.settings.geminiModel = "gemini-2.5-flash";
+  }
   if (savedModel && !savedModel.includes("tts") && !savedModel.includes("embed")) {
     candidates.push({ ver: savedVer, model: savedModel });
   }
@@ -12714,13 +12718,15 @@ async function getGeminiCandidateEndpoints(apiKey) {
       const res = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${apiKey}`);
       if (res.ok) {
         const data = await res.json();
-        // Filtra estritamente apenas modelos de geração de texto/chat, excluindo TTS, embeddings, aqa, etc.
+        // Filtra estritamente apenas modelos principais de geração de texto/chat (exclui lite, tts, embed, etc.)
         const available = (data.models || [])
           .filter(m => {
             const name = (m.name || "").toLowerCase();
             const methods = m.supportedGenerationMethods || [];
             return (
               methods.includes("generateContent") &&
+              !name.includes("lite") &&
+              !name.includes("8b") &&
               !name.includes("tts") &&
               !name.includes("embed") &&
               !name.includes("aqa") &&
@@ -12750,13 +12756,11 @@ async function getGeminiCandidateEndpoints(apiKey) {
   // 2. Fallbacks padrões estáveis em ordem de preferência
   const defaultFallbacks = [
     { ver: "v1beta", model: "gemini-2.5-flash" },
+    { ver: "v1beta", model: "gemini-2.5-pro" },
     { ver: "v1beta", model: "gemini-2.0-flash" },
-    { ver: "v1beta", model: "gemini-2.0-flash-lite" },
-    { ver: "v1beta", model: "gemini-1.5-flash" },
-    { ver: "v1", model: "gemini-1.5-flash" },
-    { ver: "v1beta", model: "gemini-1.5-flash-8b" },
     { ver: "v1beta", model: "gemini-1.5-pro" },
-    { ver: "v1beta", model: "gemini-pro" }
+    { ver: "v1beta", model: "gemini-1.5-flash" },
+    { ver: "v1", model: "gemini-1.5-flash" }
   ];
 
   for (const fb of defaultFallbacks) {
@@ -12783,10 +12787,10 @@ async function callGeminiGenerateContent(apiKey, contents) {
 
       if (response.ok) {
         const data = await response.json();
-        // Salva o modelo funcional no banco para acelerar chamadas futuras
+        // Mantém o modelo principal configurado sem sobrescrever por fallbacks lite
         if (!db.settings) db.settings = {};
-        if (db.settings.geminiModel !== model || db.settings.geminiApiVersion !== ver) {
-          db.settings.geminiModel = model;
+        if (!db.settings.geminiModel || db.settings.geminiModel.includes("lite")) {
+          db.settings.geminiModel = model.includes("lite") ? "gemini-2.5-flash" : model;
           db.settings.geminiApiVersion = ver;
           saveDatabase();
         }
@@ -16060,6 +16064,61 @@ export function vehicleDetailsDiffer(a, b) {
   return getVehicleSignature(a) !== getVehicleSignature(b);
 }
 
+// Recupera e consome veículo pré-informado via WhatsApp antes da criação da reserva (identificável pelo telefone)
+export function consumePendingVehicleForPhone(dbInstance, rawPhone) {
+  try {
+    const activeDb = dbInstance || (typeof db !== "undefined" ? db : null);
+    if (!activeDb || !rawPhone) return null;
+    const digits = String(rawPhone).replace(/\D/g, "");
+    if (digits.length < 8) return null;
+    const suffix = digits.slice(-8);
+
+    let foundVehicle = null;
+
+    if (Array.isArray(activeDb.whatsappConversations)) {
+      for (const conv of activeDb.whatsappConversations) {
+        const cDigits = String(conv?.phone || "").replace(/\D/g, "");
+        if (cDigits.length >= 8 && cDigits.slice(-8) === suffix && conv.pendingVehicle?.plate) {
+          foundVehicle = {
+            plate: String(conv.pendingVehicle.plate).toUpperCase().trim(),
+            brand: String(conv.pendingVehicle.brand || "").trim(),
+            model: String(conv.pendingVehicle.model || "").trim(),
+            color: String(conv.pendingVehicle.color || "").trim(),
+            updatedAt: conv.pendingVehicle.updatedAt || new Date().toISOString()
+          };
+          conv.lastConsumedVehicle = { ...foundVehicle };
+          delete conv.pendingVehicle;
+          break;
+        }
+      }
+    }
+
+    if (!foundVehicle && Array.isArray(activeDb.guests)) {
+      for (const g of activeDb.guests) {
+        const gDigits = String(g?.phone || "").replace(/\D/g, "");
+        if (gDigits.length >= 8 && gDigits.slice(-8) === suffix && g.pendingVehicle?.plate) {
+          foundVehicle = {
+            plate: String(g.pendingVehicle.plate).toUpperCase().trim(),
+            brand: String(g.pendingVehicle.brand || "").trim(),
+            model: String(g.pendingVehicle.model || "").trim(),
+            color: String(g.pendingVehicle.color || "").trim(),
+            updatedAt: g.pendingVehicle.updatedAt || new Date().toISOString()
+          };
+          g.vehicle = { ...foundVehicle };
+          delete g.pendingVehicle;
+          break;
+        }
+      }
+    }
+
+    return foundVehicle;
+  } catch (err) {
+    console.warn("[consumePendingVehicleForPhone] Aviso:", err.message);
+    return null;
+  }
+}
+globalThis.consumePendingVehicleForPhone = consumePendingVehicleForPhone;
+
 // ── Serviço de Notificação & Autorização Automática de Garagem ───────────────
 export function triggerGarageEmailNotification(db, saveDatabase, reservation, vehicleInput = null, options = {}) {
   try {
@@ -16112,9 +16171,9 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
       };
     }
 
-    // Evita duplicatas idênticas (mesma placa E mesmos marca/modelo/cor), a não ser que forçado explicitamente.
-    // Se os detalhes do veículo mudaram para a mesma placa, reenviamos com os dados completos.
-    const force = Boolean(options.force);
+    // Evita duplicatas idênticas (mesma placa E mesmos marca/modelo/cor), a não ser que forçado explicitamente
+    // ou quando reenviado porque os gatilhos já haviam sido disparados antes da adição/atualização.
+    const force = Boolean(options.force || options.retriggerIfAlreadySent);
     const currentSignature = getVehicleSignature(vehicleData);
     const lastSignature = reservation.vehicle?.lastNotifiedSignature
       ?? (reservation.vehicle?.lastNotifiedPlate ? `${String(reservation.vehicle.lastNotifiedPlate).toUpperCase().trim()}|||` : "");
@@ -16160,6 +16219,48 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
         garageEmail
       }
     });
+
+    // Caso os gatilhos da recepção já tivessem sido disparados anteriormente para esta reserva,
+    // reenvia também o aviso de atualização à recepção com os dados do veículo adicionados.
+    if (options.retriggerReceptionIfAlreadyNotified && typeof hasReceptionReceivedReservation === "function" && hasReceptionReceivedReservation(reservation, db)) {
+      try {
+        const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+        const newVehStr = `${cleanPlate}${[vehicleData.brand, vehicleData.model, vehicleData.color].filter(Boolean).length ? ` (${[vehicleData.brand, vehicleData.model, vehicleData.color].filter(Boolean).join(" / ")})` : ""}`;
+        const changes = [
+          {
+            field: "vehiclePlate",
+            label: "Veículo / Garagem Adicionado",
+            oldValue: previousPlate && previousPlate !== cleanPlate ? `Placa ${previousPlate}` : "(atualização de veículo)",
+            newValue: `Placa ${newVehStr}`
+          }
+        ];
+        const { subject: recSubject, bodyHtml: recBodyHtml } = renderReservationUpdateEmail({
+          reservation,
+          flat,
+          changes,
+          settings: db.settings
+        });
+        sendEmailAsync({
+          db,
+          saveDatabase,
+          reservationId: reservation.code || reservation.id,
+          recipient: receptionEmail,
+          subject: recSubject,
+          bodyHtml: recBodyHtml,
+          type: "email",
+          direction: "outbound",
+          metadata: {
+            trigger: "vehicle_added_after_reception_trigger",
+            flatNumber: flatNum,
+            guestName,
+            plate: cleanPlate,
+            changes
+          }
+        });
+      } catch (recErr) {
+        console.warn("[GarageService] Aviso ao reenviar atualização de veículo para a recepção:", recErr.message);
+      }
+    }
 
     // Registra ou atualiza histórico em db.garageAuthorizations
     if (!db.garageAuthorizations) db.garageAuthorizations = [];
@@ -25255,7 +25356,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       paymentMethod: paymentMethod === "card" ? "cartao_credito" : (paymentMethod || "pix"),
       isWorkTrip: Boolean(isWorkTrip),
       companyData: isWorkTrip ? companyData : null,
-      vehicle: vehicle || null,
+      vehicle: vehicle || consumePendingVehicleForPhone(db, guestPhone) || null,
       calendarSequence: 0,
       createdBy: {
         userName: guestName.trim(),
@@ -27399,7 +27500,7 @@ app.post("/api/pms/reservations", async (req, res) => {
     brand: req.body.vehicleBrand || "",
     model: req.body.vehicleModel || "",
     color: req.body.vehicleColor || ""
-  } : null);
+  } : null) || consumePendingVehicleForPhone(db, primaryPhone || newReservation.guestPhone);
 
   if (vehicleInput && vehicleInput.plate) {
     newReservation.vehicle = {
@@ -39446,7 +39547,11 @@ app.get("/api/settings/gemini", (req, res) => {
   const key = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
   const configured = !!key;
   const keyMasked = key ? key.substring(0, 6) + "••••••••••••••••••••••••••" + key.slice(-4) : "";
-  const model = db.settings?.geminiModel || "gemini-2.0-flash";
+  if (db.settings?.geminiModel && (db.settings.geminiModel.includes("lite") || db.settings.geminiModel.includes("8b"))) {
+    db.settings.geminiModel = "gemini-2.5-flash";
+    saveDatabase();
+  }
+  const model = db.settings?.geminiModel || "gemini-2.5-flash";
   const apiVersion = db.settings?.geminiApiVersion || "v1beta";
   res.json({ configured, keyMasked, model, apiVersion });
 });
@@ -39468,9 +39573,9 @@ app.post("/api/settings/gemini/test", async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
   if (!apiKey) return res.status(400).json({ error: "Nenhuma chave Gemini configurada." });
 
-  // Limpa modelo salvo se for TTS ou inválido
-  if (db.settings?.geminiModel && (db.settings.geminiModel.includes("tts") || db.settings.geminiModel.includes("embed"))) {
-    delete db.settings.geminiModel;
+  // Limpa modelo salvo se for TTS, lite ou inválido
+  if (db.settings?.geminiModel && (db.settings.geminiModel.includes("tts") || db.settings.geminiModel.includes("embed") || db.settings.geminiModel.includes("lite"))) {
+    db.settings.geminiModel = "gemini-2.5-flash";
     saveDatabase();
   }
 
@@ -55104,6 +55209,8 @@ async function createInterPixCob({ amount, description, debtorName, debtorDocume
     req.end();
   });
 }
+globalThis.createInterPixCob = createInterPixCob;
+globalThis.triggerGarageEmailNotification = triggerGarageEmailNotification;
 
 // 6.1 Criar Cobrança Pix Oficial Inter para Reserva
 app.post("/api/pms/inter/create-charge", async (req, res) => {
@@ -55163,6 +55270,193 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
         const valorPago = Number(item.valor || 0);
 
         if (txid) {
+          // 0. Verifica se o pagamento é referente a Limpeza Durante a Estadia (R$ 70,00) ou Early Check-in / Late Check-out avulso
+          const resServiceOrder = (db.reservations || []).find(resItem =>
+            resItem.pendingStayoverCleaning?.txid === txid ||
+            resItem.pendingEarlyCheckin?.txid === txid ||
+            resItem.pendingLateCheckout?.txid === txid
+          );
+
+          if (resServiceOrder) {
+            const paidIso = item.horario || new Date().toISOString();
+            if (resServiceOrder.pendingStayoverCleaning?.txid === txid && resServiceOrder.pendingStayoverCleaning.status !== "paid") {
+              const cleanMeta = resServiceOrder.pendingStayoverCleaning;
+              const cleanAmt = valorPago > 0 ? valorPago : (Number(cleanMeta.amount) || 70);
+              cleanMeta.status = "paid";
+              cleanMeta.paidAt = paidIso;
+              cleanMeta.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
+
+              if (!Array.isArray(resServiceOrder.charges)) resServiceOrder.charges = [];
+              resServiceOrder.charges.push({
+                id: `chg_clean_${Date.now()}`,
+                description: `Limpeza durante a estadia + Troca de enxoval (${cleanMeta.requestDate || getBrasiliaTodayStr()})`,
+                amount: cleanAmt,
+                category: "cleaning",
+                date: paidIso
+              });
+              if (!Array.isArray(resServiceOrder.payments)) resServiceOrder.payments = [];
+              resServiceOrder.payments.push({
+                id: `pay_clean_${Date.now()}`,
+                amount: cleanAmt,
+                method: "pix",
+                date: paidIso,
+                notes: `PIX Limpeza durante a estadia (${txid})`
+              });
+              resServiceOrder.totalAmount = Math.round(((Number(resServiceOrder.totalAmount) || 0) + cleanAmt) * 100) / 100;
+              resServiceOrder.paidAmount = Math.round(((Number(resServiceOrder.paidAmount) || 0) + cleanAmt) * 100) / 100;
+
+              // Gera o card de limpeza para a camareira somente APÓS a confirmação do pagamento
+              if (!db.cleaningRequests) db.cleaningRequests = [];
+              const targetDate = cleanMeta.requestDate || getBrasiliaTodayStr();
+              const cleanFlatNum = String(resServiceOrder.flatNumber || "");
+              const cleanNote = `🧹 LIMPEZA DURANTE A ESTADIA (PAGA R$ ${cleanAmt.toFixed(2).replace(".", ",")}) • Inclui limpeza completa + troca de roupa de cama e banho${cleanMeta.notes ? ` • Obs: ${cleanMeta.notes}` : ""}`;
+              const newCleaningCard = {
+                id: db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) + 1 : 1,
+                flatId: resServiceOrder.flatId || Number(cleanFlatNum) || 1,
+                flatNumber: cleanFlatNum,
+                requestDate: targetDate,
+                status: "dirty",
+                type: "stayover_cleaning",
+                source: "whatsapp_ai_paid",
+                isInstructionOnly: false,
+                isPaidCleaning: true,
+                cleaningFeeCharged: cleanAmt,
+                leavingGuest: resServiceOrder.guestName || "Hóspede em Estadia",
+                arrivingGuest: null,
+                isSameDayCheckin: false,
+                adminNote: cleanNote,
+                notes: cleanNote,
+                pendingObservation: cleanNote,
+                requestedBy: "Sofia IA (WhatsApp - Pago via PIX)",
+                reservationCode: resServiceOrder.code,
+                reservationId: resServiceOrder.id,
+                createdAt: paidIso,
+                updatedAt: paidIso
+              };
+              db.cleaningRequests.push(newCleaningCard);
+              cleanMeta.cleaningRequestId = newCleaningCard.id;
+
+              createNotification({
+                category: "cleaning",
+                title: `🧹 Limpeza em Estadia Paga (R$ ${cleanAmt.toFixed(2)}): Flat ${cleanFlatNum}`,
+                message: `Pagamento PIX confirmado para limpeza durante a estadia do Flat ${cleanFlatNum} (${resServiceOrder.guestName}). Card de limpeza #${newCleaningCard.id} gerado para a camareira!`,
+                severity: "success",
+                metadata: { reservationCode: resServiceOrder.code, txid, cleaningRequestId: newCleaningCard.id },
+                targetUrl: `/limpeza`
+              });
+
+              if (resServiceOrder.guestPhone && typeof sendZapiMessage === "function") {
+                sendZapiMessage(
+                  resServiceOrder.guestPhone,
+                  `✅ *Pagamento Confirmado!* Recebemos o seu PIX de R$ ${cleanAmt.toFixed(2).replace(".", ",")} referente à limpeza durante a estadia do *Flat ${cleanFlatNum}*.\n\nA programação da limpeza completa com troca de roupa de cama e banho já foi enviada automaticamente para a nossa governança!`,
+                  { isAutomated: true, skipQueue: true }
+                ).catch(() => {});
+              }
+              continue;
+            }
+
+            if (resServiceOrder.pendingEarlyCheckin?.txid === txid && resServiceOrder.pendingEarlyCheckin.status !== "paid") {
+              const earlyMeta = resServiceOrder.pendingEarlyCheckin;
+              const earlyAmt = valorPago > 0 ? valorPago : (Number(earlyMeta.amount) || 0);
+              earlyMeta.status = "paid";
+              earlyMeta.paidAt = paidIso;
+              earlyMeta.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
+
+              resServiceOrder.earlyCheckin = true;
+              resServiceOrder.earlyCheckinAuthorized = true;
+              resServiceOrder.earlyCheckinTime = earlyMeta.requestedTime || "10:00";
+              resServiceOrder.checkinTime = earlyMeta.requestedTime || resServiceOrder.checkinTime || "10:00";
+              resServiceOrder.earlyCheckinFee = earlyAmt;
+
+              if (!Array.isArray(resServiceOrder.charges)) resServiceOrder.charges = [];
+              resServiceOrder.charges.push({
+                id: `chg_early_${Date.now()}`,
+                description: `Taxa de Early Check-in (${earlyMeta.requestedTime} - ${earlyMeta.feeLabel || "Antecipação"})`,
+                amount: earlyAmt,
+                category: "early_checkin",
+                date: paidIso
+              });
+              if (!Array.isArray(resServiceOrder.payments)) resServiceOrder.payments = [];
+              resServiceOrder.payments.push({
+                id: `pay_early_${Date.now()}`,
+                amount: earlyAmt,
+                method: "pix",
+                date: paidIso,
+                notes: `PIX Early Check-in (${txid})`
+              });
+              resServiceOrder.totalAmount = Math.round(((Number(resServiceOrder.totalAmount) || 0) + earlyAmt) * 100) / 100;
+              resServiceOrder.paidAmount = Math.round(((Number(resServiceOrder.paidAmount) || 0) + earlyAmt) * 100) / 100;
+
+              createNotification({
+                category: "checkin",
+                title: `🌅 Early Check-in Pago (R$ ${earlyAmt.toFixed(2)}): Flat ${resServiceOrder.flatNumber}`,
+                message: `Early Check-in às ${earlyMeta.requestedTime} confirmado via PIX para ${resServiceOrder.guestName} (${resServiceOrder.code}).`,
+                severity: "success",
+                metadata: { reservationCode: resServiceOrder.code, txid, requestedTime: earlyMeta.requestedTime },
+                targetUrl: `/reservas`
+              });
+
+              if (resServiceOrder.guestPhone && typeof sendZapiMessage === "function") {
+                sendZapiMessage(
+                  resServiceOrder.guestPhone,
+                  `✅ *Early Check-in Confirmado!* Recebemos o seu PIX de R$ ${earlyAmt.toFixed(2).replace(".", ",")}. Sua entrada antecipada para as *${earlyMeta.requestedTime}* no *Flat ${resServiceOrder.flatNumber}* já está liberada no sistema!`,
+                  { isAutomated: true, skipQueue: true }
+                ).catch(() => {});
+              }
+              continue;
+            }
+
+            if (resServiceOrder.pendingLateCheckout?.txid === txid && resServiceOrder.pendingLateCheckout.status !== "paid") {
+              const lateMeta = resServiceOrder.pendingLateCheckout;
+              const lateAmt = valorPago > 0 ? valorPago : (Number(lateMeta.amount) || 0);
+              lateMeta.status = "paid";
+              lateMeta.paidAt = paidIso;
+              lateMeta.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
+
+              resServiceOrder.lateCheckout = true;
+              resServiceOrder.lateCheckoutTime = lateMeta.requestedTime || "16:00";
+              resServiceOrder.checkoutTime = lateMeta.requestedTime || "16:00";
+              resServiceOrder.lateCheckoutFee = lateAmt;
+
+              if (!Array.isArray(resServiceOrder.charges)) resServiceOrder.charges = [];
+              resServiceOrder.charges.push({
+                id: `chg_late_${Date.now()}`,
+                description: `Taxa de Late Check-out (${lateMeta.requestedTime})`,
+                amount: lateAmt,
+                category: "late_checkout",
+                date: paidIso
+              });
+              if (!Array.isArray(resServiceOrder.payments)) resServiceOrder.payments = [];
+              resServiceOrder.payments.push({
+                id: `pay_late_${Date.now()}`,
+                amount: lateAmt,
+                method: "pix",
+                date: paidIso,
+                notes: `PIX Late Check-out (${txid})`
+              });
+              resServiceOrder.totalAmount = Math.round(((Number(resServiceOrder.totalAmount) || 0) + lateAmt) * 100) / 100;
+              resServiceOrder.paidAmount = Math.round(((Number(resServiceOrder.paidAmount) || 0) + lateAmt) * 100) / 100;
+
+              createNotification({
+                category: "checkout",
+                title: `🕒 Late Check-out Pago (R$ ${lateAmt.toFixed(2)}): Flat ${resServiceOrder.flatNumber}`,
+                message: `Late Check-out até as ${lateMeta.requestedTime} confirmado via PIX para ${resServiceOrder.guestName} (${resServiceOrder.code}).`,
+                severity: "success",
+                metadata: { reservationCode: resServiceOrder.code, txid, requestedTime: lateMeta.requestedTime },
+                targetUrl: `/reservas`
+              });
+
+              if (resServiceOrder.guestPhone && typeof sendZapiMessage === "function") {
+                sendZapiMessage(
+                  resServiceOrder.guestPhone,
+                  `✅ *Late Check-out Confirmado!* Recebemos o seu PIX de R$ ${lateAmt.toFixed(2).replace(".", ",")}. Sua saída estendida até as *${lateMeta.requestedTime}* no *Flat ${resServiceOrder.flatNumber}* já está liberada no sistema!`,
+                  { isAutomated: true, skipQueue: true }
+                ).catch(() => {});
+              }
+              continue;
+            }
+          }
+
           const r = (db.reservations || []).find(resItem => 
             resItem.pixTxId === txid ||
             resItem.code === txid ||
@@ -56403,6 +56697,8 @@ async function createMercadoPagoPreference({
     req.end();
   });
 }
+globalThis.createInterPixCob = createInterPixCob;
+globalThis.triggerGarageEmailNotification = triggerGarageEmailNotification;
 
 // 7.1 Criar Preferência de Pagamento no Mercado Pago
 app.post("/api/pms/mercadopago/create-preference", async (req, res) => {

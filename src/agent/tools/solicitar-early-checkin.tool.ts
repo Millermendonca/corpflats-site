@@ -21,8 +21,9 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
   name: 'solicitar_early_checkin',
 
   description:
-    'Verifica a disponibilidade do flat na governança e autoriza ou bloqueia a entrada antecipada (early check-in) na reserva do hóspede. ' +
-    'Deve ser chamada sempre que o hóspede perguntar se pode entrar mais cedo antes das 14:00.',
+    'Verifica a disponibilidade de flat desocupado e limpo na governança e aplica as regras oficiais de entrada antecipada (early check-in): ' +
+    'hóspedes WhatsApp/Direto têm cortesia a partir das 10:00; demais canais têm cortesia a partir das 12:00; ' +
+    'antes desses horários até o limite de 07:00 cobra meia diária (50%); antes das 07:00 cobra diária inteira (100%).',
 
   allowedStates: ['PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
 
@@ -31,11 +32,13 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
     properties: {
       horario_solicitado: {
         type: 'string',
-        description: 'Horário desejado pelo hóspede para entrar no imóvel no formato HH:MM (ex: "10:30").',
+        description: 'Horário desejado pelo hóspede para entrar no imóvel no formato HH:MM (ex: "10:30" ou "08:00").',
       },
       confirmacao_hospede: {
         type: 'boolean',
-        description: 'True se o hóspede já concordou com eventual taxa (quando aplicável); False na primeira consulta.',
+        description:
+          'Passe FALSE na primeira consulta quando houver cobrança (meia diária ou diária inteira) para informar o valor ao hóspede. ' +
+          'Passe TRUE somente após o hóspede concordar explicitamente com a taxa informada.',
       },
     },
     required: ['horario_solicitado'],
@@ -59,25 +62,18 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
       }
 
       const horarioFormatado = normalizeTimeHHMM(args.horario_solicitado);
+      const confirmado = Boolean(args.confirmacao_hospede ?? false);
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const dataCheckin = String(reserva.data_checkin || '').slice(0, 10);
 
-      // TRAVA 1: Antes das 09:00 contabiliza diária anterior
-      if (horarioFormatado < '09:00') {
-        const msg =
-          `Explique ao hóspede com cordialidade que para entrada às ${horarioFormatado} (antes das 09h00) o sistema contabiliza a diária da noite anterior para garantir o apartamento bloqueado desde a madrugada. ` +
-          `Informe que o nosso early check-in opera a partir das 10h00 (mediante disponibilidade da governança) e pergunte como ele prefere prosseguir.`;
-        return {
-          status: 'BLOQUEADO_PELA_REGRA',
-          codigo_regra_bloqueio: 'HORARIO_ANTERIOR_LIMITE_EARLY_CHECKIN',
-          dados: { horario_minimo_early_checkin: '10:00', horario_padrao: '14:00' },
-          instrucao_para_ia: msg,
-          instrucao_resposta_ia: msg,
-        };
-      }
+      const targetRes = Array.isArray(db?.reservations)
+        ? db.reservations.find(
+            (r: any) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
+          )
+        : null;
 
-      // TRAVA 2: Existe outro hóspede saindo do mesmo flat no dia do check-in?
+      // TRAVA 1: Disponibilidade de flat desocupado e limpo
       let conflitoSaidaMesmoDia = false;
       if (Array.isArray(db?.reservations)) {
         conflitoSaidaMesmoDia = db.reservations.some((r: any) => {
@@ -86,14 +82,31 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
           if (rCode === reserva.id) return false;
           const sameFlat = String(r.flatNumber || '') === flatNumber;
           const sameDayCheckout = String(r.checkoutDate || '').slice(0, 10) === dataCheckin;
-          return sameFlat && sameDayCheckout && !r.checkoutCompleted;
+          return sameFlat && sameDayCheckout && !r.checkoutCompleted && !r.checkoutDone;
         });
       }
 
-      if (conflitoSaidaMesmoDia) {
+      let flatSujoNaGovernanca = false;
+      if (Array.isArray(db?.cleaningRequests)) {
+        flatSujoNaGovernanca = db.cleaningRequests.some((c: any) => {
+          if (!c || c.isDeleted || c.status === 'deleted' || c.isInstructionOnly || c.source === 'manual_instruction') {
+            return false;
+          }
+          return (
+            String(c.flatNumber || '') === flatNumber &&
+            c.requestDate === dataCheckin &&
+            c.status !== 'clean'
+          );
+        });
+      }
+
+      if (conflitoSaidaMesmoDia || flatSujoNaGovernanca) {
+        const motivoBloqueio = conflitoSaidaMesmoDia
+          ? 'há um hóspede em estadia com saída prevista até as 12h00 e a equipe de governança fará a higienização completa logo em seguida'
+          : 'o apartamento ainda está em programação de limpeza na governança e o early check-in está sempre sujeito a haver flat desocupado e limpo';
         const msg =
           `Informe ao hóspede com muita empatia que no momento não conseguimos confirmar a entrada às ${horarioFormatado} no ${reserva.nome_imovel} ` +
-          `porque há um hóspede em estadia com saída prevista até as 12h00 e a equipe de governança fará a higienização completa logo em seguida. ` +
+          `porque ${motivoBloqueio}. ` +
           `Diga que já deixamos prioridade máxima na limpeza para liberar o quanto antes e que ele pode guardar as malas na recepção se chegar mais cedo!`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
@@ -104,18 +117,103 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
         };
       }
 
-      // Efetiva registro de early check-in autorizado
-      if (Array.isArray(db?.reservations)) {
-        const targetRes = db.reservations.find(
-          (r: any) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-        );
+      // TRAVA 2: Faixas de horário por canal (WhatsApp/Direto a partir de 10:00; demais a partir de 12:00)
+      const rawChannel = String(targetRes?.channel || (reserva as any).canal_reserva || 'whatsapp').toLowerCase();
+      const isOtaOrB2b =
+        rawChannel.includes('booking') ||
+        rawChannel.includes('airbnb') ||
+        rawChannel.includes('expedia') ||
+        rawChannel.includes('decolar') ||
+        rawChannel.includes('b2b');
+      const horarioGratuito = !isOtaOrB2b ? '10:00' : '12:00';
+      const valorDiaria = Number(targetRes?.dailyRate || (reserva as any).valor_diaria || 237.0);
+
+      let valorTaxa = 0;
+      let tipoTaxa = 'CORTESIA';
+      let labelTaxa = 'Cortesia';
+
+      if (horarioFormatado < '07:00') {
+        valorTaxa = Number(valorDiaria.toFixed(2));
+        tipoTaxa = 'DIARIA_INTEIRA';
+        labelTaxa = 'Diária Inteira (entrada antes das 07:00)';
+      } else if (horarioFormatado < horarioGratuito) {
+        valorTaxa = Number((valorDiaria / 2).toFixed(2));
+        tipoTaxa = 'MEIA_DIARIA';
+        labelTaxa = `Meia Diária (entrada entre 07:00 e ${horarioGratuito})`;
+      }
+
+      if (valorTaxa > 0 && !confirmado) {
+        const msg =
+          `Informe ao hóspede que o ${reserva.nome_imovel} está desocupado e disponível! Explique com clareza nossa regra de Early Check-in:\n` +
+          `• A partir das *${horarioGratuito}*: *Cortesia (gratuito)* para a reserva dele.\n` +
+          `• Entre *07:00 e ${horarioGratuito}*: taxa de *meia diária* (R$ ${(valorDiaria / 2).toFixed(2)}).\n` +
+          `• Antes das *07:00*: taxa de *diária inteira* (R$ ${valorDiaria.toFixed(2)}).\n` +
+          `Para o horário solicitado das *${horarioFormatado}*, aplica-se *${labelTaxa}* no valor de *R$ ${valorTaxa.toFixed(2)}*. ` +
+          `Pergunte se ele confirma esse valor para você gerar o PIX de liberação ou se prefere entrar sem custo a partir das ${horarioGratuito}.`;
+        return {
+          status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
+          dados: {
+            reserva_id: reserva.id,
+            horario_solicitado: horarioFormatado,
+            horario_gratuito_canal: horarioGratuito,
+            tipo_taxa: tipoTaxa,
+            valor_taxa: valorTaxa,
+            valor_diaria_referencia: valorDiaria,
+            moeda: 'BRL',
+          },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
+      if (valorTaxa > 0 && confirmado) {
+        const chavePix = db?.settings?.pixKey || '47.964.813/0001-65 (CNPJ - Rental Millers / CorpFlats)';
+        const txid = `PIX_EARLY_${Date.now()}`;
         if (targetRes) {
-          targetRes.earlyCheckinTime = horarioFormatado;
-          targetRes.checkinTime = horarioFormatado;
+          targetRes.pendingEarlyCheckin = {
+            txid,
+            pixCopiaECola: chavePix,
+            amount: valorTaxa,
+            requestedTime: horarioFormatado,
+            feeType: tipoTaxa,
+            feeLabel: labelTaxa,
+            status: 'pending_payment',
+            requestedAt: new Date().toISOString(),
+          };
           targetRes.updatedAt = new Date().toISOString();
           if (typeof context.runtime?.saveDatabase === 'function') {
             await context.runtime.saveDatabase();
           }
+        }
+        const msg =
+          `Envie ao hóspede o PIX (${chavePix}) referente à taxa de *${labelTaxa}* (*R$ ${valorTaxa.toFixed(2)}*) ` +
+          `para o early check-in às *${horarioFormatado}* no *${reserva.nome_imovel}* e informe que a entrada antecipada será liberada assim que o pagamento for confirmado.`;
+        return {
+          status: 'SUCESSO_EXECUTADO',
+          dados: {
+            reserva_id: reserva.id,
+            novo_horario_checkin: horarioFormatado,
+            cortesia: false,
+            tipo_taxa: tipoTaxa,
+            valor_taxa: valorTaxa,
+            aguardando_pagamento_pix: true,
+            txid,
+            pix_copia_e_cola: chavePix,
+          },
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
+      if (targetRes) {
+        targetRes.earlyCheckin = true;
+        targetRes.earlyCheckinAuthorized = true;
+        targetRes.earlyCheckinTime = horarioFormatado;
+        targetRes.checkinTime = horarioFormatado;
+        targetRes.earlyCheckinFee = 0;
+        targetRes.updatedAt = new Date().toISOString();
+        if (typeof context.runtime?.saveDatabase === 'function') {
+          await context.runtime.saveDatabase();
         }
       }
 
@@ -129,6 +227,7 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
           reserva_id: reserva.id,
           novo_horario_checkin: horarioFormatado,
           cortesia: true,
+          valor_taxa: 0,
         },
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,

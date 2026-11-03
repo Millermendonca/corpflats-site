@@ -271,8 +271,11 @@ export function getWhatsAppAiConfig(db) {
         ? Boolean(db.zapiConfig.channels.ai_agent.testMode)
         : Boolean(db.zapiConfig?.testModeOnly);
     }
-    if (!current.preferredModel) {
-      current.preferredModel = db.whatsappAiSettings?.geminiModel || db.settings?.geminiModel || DEFAULT_AI_CONFIG.preferredModel;
+    if (!current.preferredModel || String(current.preferredModel).toLowerCase().includes("lite")) {
+      const candidateModel = db.whatsappAiSettings?.geminiModel || db.settings?.geminiModel || DEFAULT_AI_CONFIG.preferredModel;
+      current.preferredModel = String(candidateModel).toLowerCase().includes("lite")
+        ? DEFAULT_AI_CONFIG.preferredModel
+        : candidateModel;
     }
     if (!current.mode) current.mode = DEFAULT_AI_CONFIG.mode;
     if (!current.agentName) current.agentName = DEFAULT_AI_CONFIG.agentName;
@@ -2957,6 +2960,34 @@ function createPreReservationSync(db, args = {}) {
   };
 
   if (!Array.isArray(db.reservations)) db.reservations = [];
+
+  // Anexa veículo pendente capturado no WhatsApp antes da criação da reserva (se houver)
+  const cleanResPhone = cleanWhatsAppPhone(guestPhone || "");
+  if (cleanResPhone) {
+    if (typeof globalThis.consumePendingVehicleForPhone === "function") {
+      const pendingVeh = globalThis.consumePendingVehicleForPhone(db, cleanResPhone);
+      if (pendingVeh && pendingVeh.plate) {
+        newReservation.vehicle = { ...pendingVeh, updatedAt: new Date().toISOString() };
+        newReservation.vehiclePlate = pendingVeh.plate;
+        newReservation.vehicleModel = pendingVeh.model || "";
+        newReservation.vehicleColor = pendingVeh.color || "";
+      }
+    } else {
+      const matchedConv = (db?.whatsappConversations || []).find(c => {
+        const cp = cleanWhatsAppPhone(c.phone);
+        return cp && (cp.endsWith(cleanResPhone.slice(-8)) || cleanResPhone.endsWith(cp.slice(-8)));
+      });
+      const pendingVeh = matchedConv?.pendingVehicle;
+      if (pendingVeh && pendingVeh.plate) {
+        newReservation.vehicle = { ...pendingVeh, updatedAt: new Date().toISOString() };
+        newReservation.vehiclePlate = pendingVeh.plate;
+        newReservation.vehicleModel = pendingVeh.model || "";
+        newReservation.vehicleColor = pendingVeh.color || "";
+        delete matchedConv.pendingVehicle;
+      }
+    }
+  }
+
   db.reservations.unshift(newReservation);
 
   return {
@@ -4211,7 +4242,9 @@ export async function executeBotAction(db, actionName, args = {}) {
         saveDatabase: args.saveDatabase,
         sendZapiMessage: args.sendZapiMessage,
         createNotification: args.createNotification,
-        conversation: args.conversation
+        conversation: args.conversation,
+        selectFairShareFlat,
+        triggerGarageEmailNotification: args.triggerGarageEmailNotification || globalThis.triggerGarageEmailNotification
       }
     });
     return executeRegisteredAgentTool(actionName, args, sessionCtx);
@@ -7081,7 +7114,7 @@ export function validateAndRefineResponse({
     } else {
       const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
         (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("registrei") && !replyText.includes("equipe"));
-      const alreadyAcknowledged = /registrei|equipe|recep[cç][aã]o|encaminh|atender/i.test(replyText);
+      const alreadyAcknowledged = /registrei|equipe|recep[cç][aã]o|encaminh|atender|governan[cç]a|manuten[cç][aã]o|ger[eê]ncia|gestor|dispon[ií]vel|taxa|pix|alterad[oa]|prorrogad[oa]|confirmad[oa]|placa|ve[ií]culo|garagem|cortesia|di[aá]ria|sistema|camareira/i.test(replyText);
 
       if (isGenericFallback || !alreadyAcknowledged) {
         replyText = ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
@@ -8157,23 +8190,22 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 /**
  * Chama o Google Gemini com lista de candidatos e suporte multi-turn a Function Calling
  */
-export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false, requesterRole = "guest", requesterPhone = "" }) {
+export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [], customPrompt = false, requesterRole = "guest", requesterPhone = "", saveDatabase = null, sendZapiMessage = null, createNotification = null, conversation = null, guestContext = null }) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
-  const preferredModel = String(
+  const rawPrefModel = String(
     db?.zapiConfig?.aiAgent?.preferredModel ||
     db?.settings?.geminiModel ||
     db?.whatsappAiSettings?.geminiModel ||
     "gemini-2.5-pro"
   ).trim();
+  const preferredModel = rawPrefModel.toLowerCase().includes("lite") ? "gemini-2.5-flash" : rawPrefModel;
 
   const rawCandidates = [
     ...(preferredModel ? [{ ver: "v1beta", model: preferredModel }] : []),
     { ver: "v1beta", model: "gemini-2.5-pro" },
     { ver: "v1beta", model: "gemini-2.5-flash" },
-    { ver: "v1beta", model: "gemini-2.5-flash-lite" },
     { ver: "v1beta", model: "gemini-2.0-flash" },
-    { ver: "v1beta", model: "gemini-2.0-flash-lite" },
     { ver: "v1beta", model: "gemini-1.5-pro" },
     { ver: "v1beta", model: "gemini-1.5-flash" },
     { ver: "v1", model: "gemini-1.5-flash" }
@@ -8304,7 +8336,12 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
             actionResult = await executeBotAction(db, fnName, {
               ...fnArgs,
               requesterRole: authorizedRole,
-              requesterPhone: effectivePhone
+              requesterPhone: effectivePhone,
+              saveDatabase,
+              sendZapiMessage,
+              createNotification,
+              conversation,
+              guestContext
             });
           } catch (actErr) {
             actionResult = {
@@ -8422,10 +8459,10 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
 /**
  * Gera a resposta completa do Agente de IA para WhatsApp
  */
-export async function generateAiWhatsAppResponse({ db, phone, messageText, history = [], isCopilot = false }) {
+export async function generateAiWhatsAppResponse({ db, phone, messageText, history = [], isCopilot = false, saveDatabase = null, sendZapiMessage = null, createNotification = null, conv: passedConv = null }) {
   const aiConfig = getWhatsAppAiConfig(db);
 
-  const conv = (db?.whatsappConversations || []).find(c => {
+  const conv = passedConv || (db?.whatsappConversations || []).find(c => {
     const p = cleanWhatsAppPhone(c.phone);
     const target = cleanWhatsAppPhone(phone);
     return p && target && (p.endsWith(target.slice(-8)) || target.endsWith(p.slice(-8)));
@@ -8608,7 +8645,12 @@ ${systemActionsNotice}
         db,
         tools,
         requesterRole: "guest",
-        requesterPhone: phone
+        requesterPhone: phone,
+        saveDatabase,
+        sendZapiMessage,
+        createNotification,
+        conversation: conv,
+        guestContext
       });
 
       if (geminiRes.ok && geminiRes.text) {
@@ -12487,6 +12529,20 @@ export async function processAiInboundMessage({
     const hasExplicitFiscalApprovalCmd = /\b(?:aprovar|aprovo|aprovado|reprovar|recusar|nfse-app|nfse-pre|aprovar\s+fiscal)\b/i.test(incomingInfo.text);
 
     if (!isAwaitingFiscalConfForDev || hasExplicitPreResCmd) {
+      const maintReply = await handleManagerMaintenanceReply({
+        db,
+        cleanTarget,
+        messageText: incomingInfo.text,
+        conv,
+        sendZapiMessage,
+        appendMessageFn,
+        saveDatabase,
+        createNotification
+      });
+      if (maintReply && maintReply.handled) {
+        return maintReply;
+      }
+
       const preResReply = await handleManagerPreReservationReply({
         db,
         cleanTarget,
@@ -12800,7 +12856,11 @@ export async function processAiInboundMessage({
     phone: cleanTarget,
     messageText: incomingInfo.text,
     history,
-    isCopilot: false
+    isCopilot: false,
+    saveDatabase,
+    sendZapiMessage,
+    createNotification,
+    conv
   });
 
   // 6.5. Auto-Aprendizado: Detecção e Registro de Perguntas Não Mapeadas (R2)
@@ -15267,6 +15327,33 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
     ]
   };
 
+  // Anexa veículo pendente capturado no WhatsApp antes da criação da reserva (se houver)
+  if (cleanGuestPhone) {
+    if (typeof globalThis.consumePendingVehicleForPhone === "function") {
+      const pendingVeh = globalThis.consumePendingVehicleForPhone(db, cleanGuestPhone);
+      if (pendingVeh && pendingVeh.plate) {
+        newReservation.vehicle = { ...pendingVeh, updatedAt: nowIso };
+        newReservation.vehiclePlate = pendingVeh.plate;
+        newReservation.vehicleModel = pendingVeh.model || "";
+        newReservation.vehicleColor = pendingVeh.color || "";
+      }
+    } else {
+      const matchedConv = (db?.whatsappConversations || []).find(c => {
+        const cp = cleanWhatsAppPhone(c.phone);
+        return cp && (cp.endsWith(cleanGuestPhone.slice(-8)) || cleanGuestPhone.endsWith(cp.slice(-8)));
+      });
+      const pendingVeh = matchedConv?.pendingVehicle || guestRecord?.pendingVehicle;
+      if (pendingVeh && pendingVeh.plate) {
+        newReservation.vehicle = { ...pendingVeh, updatedAt: nowIso };
+        newReservation.vehiclePlate = pendingVeh.plate;
+        newReservation.vehicleModel = pendingVeh.model || "";
+        newReservation.vehicleColor = pendingVeh.color || "";
+        if (matchedConv) delete matchedConv.pendingVehicle;
+        if (guestRecord) delete guestRecord.pendingVehicle;
+      }
+    }
+  }
+
   db.reservations.unshift(newReservation);
 
   if (typeof saveDatabase === "function") {
@@ -15800,4 +15887,319 @@ export async function handleManagerPreReservationReply({
     replyText: confirmReply
   };
 }
+
+/**
+ * Processa a resposta do gestor (no WhatsApp 5522998505276) para planos de contingência de manutenção:
+ * - Plano 1 ("1", "plano 1", "remanejar", "trocar", "remaneja pro flat X"): Remaneja o hóspede para o Flat da Vez (ou flat informado) + abre Ordem de Serviço no flat antigo.
+ * - Plano 2 ("2", "plano 2", "abrir os", "ordem de servico", "solicitar os"): Abre Ordem de Serviço (db.serviceOrders) no flat atual sem remanejar.
+ * - Plano 3 ("3", "plano 3", "eu assumo", "deixa comigo", "nao fazer nada"): Não altera o sistema e pausa a IA na conversa do hóspede para o gestor assumir.
+ */
+export async function handleManagerMaintenanceReply({
+  db,
+  cleanTarget,
+  messageText,
+  conv = null,
+  sendZapiMessage = null,
+  appendMessageFn = null,
+  saveDatabase = null,
+  createNotification = null
+}) {
+  if (!db || !messageText || !isDeveloperPhone(cleanTarget, db)) {
+    return { handled: false };
+  }
+
+  const pendingList = (db.pendingMaintenanceProposals || []).filter(p => p && p.status === "pending_manager");
+  if (pendingList.length === 0) {
+    return { handled: false };
+  }
+
+  const trimmed = String(messageText).trim();
+  if (isAutomatedOrSofiaMessage({ text: trimmed })) {
+    return { handled: false };
+  }
+
+  const norm = trimmed.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // Seleciona a proposta pendente (por ID #MAINT-..., número do flat ou a mais recente)
+  let targetProposal = pendingList[0];
+  const matchedById = pendingList.find(p => p.id && norm.includes(String(p.id).toLowerCase()));
+  if (matchedById) {
+    targetProposal = matchedById;
+  } else {
+    for (const p of pendingList) {
+      const firstName = String(p.guestName || "").split(/\s+/)[0].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (firstName.length >= 3 && norm.includes(firstName)) {
+        targetProposal = p;
+        break;
+      }
+    }
+  }
+
+  const cleanCmd = norm.replace(/^#?maint-[a-z0-9\-]+\s*[,:\-]?\s*/i, "").trim();
+
+  let chosenPlan = null;
+  let customTargetFlatNum = null;
+
+  const flatOverrideMatch = cleanCmd.match(/\b(?:flat|apto|apartamento|pro|para\s+o)\s*(\d{3,4})\b/);
+  if (flatOverrideMatch) {
+    customTargetFlatNum = flatOverrideMatch[1];
+  }
+
+  if (
+    /^(?:1|plano\s*1|op[cç][aã]o\s*1)\b/.test(cleanCmd) ||
+    /\b(?:remaneja|remanejar|troca\s+de\s+flat|trocar\s+de\s+flat|troca\s+pro|muda\s+pro\s+flat|plano\s*1)\b/.test(cleanCmd)
+  ) {
+    chosenPlan = 1;
+  } else if (
+    /^(?:2|plano\s*2|op[cç][aã]o\s*2)\b/.test(cleanCmd) ||
+    /\b(?:abrir\s+os|abre\s+os|abrir\s+ordem|solicitar\s+os|solicitar\s+ordem|ordem\s+de\s+servi[cç]o|plano\s*2)\b/.test(cleanCmd)
+  ) {
+    chosenPlan = 2;
+  } else if (
+    /^(?:3|plano\s*3|op[cç][aã]o\s*3)\b/.test(cleanCmd) ||
+    /\b(?:eu\s+assumo|deixa\s+que\s+eu\s+assumo|deixa\s+comigo|nao\s+fazer\s+nada|nao\s+faz\s+nada|plano\s*3)\b/.test(cleanCmd)
+  ) {
+    chosenPlan = 3;
+  }
+
+  if (!chosenPlan) {
+    return { handled: false };
+  }
+
+  const aiConfig = getWhatsAppAiConfig(db);
+  const managerPhone = cleanWhatsAppPhone(cleanTarget) || getManagerWhatsAppPhone(db);
+  const now = new Date().toISOString();
+
+  const sendManagerReply = async (replyText, eventTag = "sofia_maintenance_manager_reply") => {
+    if (typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig, {
+        phone: managerPhone,
+        message: replyText,
+        channelId: "ai_agent",
+        recipientRole: "developer",
+        bypassTestMode: true,
+        triggerEvent: eventTag,
+        db
+      });
+    }
+    if (typeof appendMessageFn === "function") {
+      appendMessageFn(db, {
+        phone: managerPhone,
+        senderName: aiConfig.agentName || "Sofia",
+        fromMe: true,
+        text: replyText,
+        type: "text",
+        status: "delivered",
+        timestamp: now,
+        messageId: `sofia_maint_reply_${Date.now()}`
+      });
+    }
+  };
+
+  const sendGuestUpdate = async (guestText) => {
+    const gPhone = cleanWhatsAppPhone(targetProposal.guestPhone);
+    if (!gPhone) return;
+    if (typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig, {
+        phone: gPhone,
+        message: guestText,
+        channelId: "ai_agent",
+        recipientRole: "guest",
+        triggerEvent: "sofia_maintenance_guest_update",
+        db
+      });
+    }
+    if (typeof appendMessageFn === "function") {
+      appendMessageFn(db, {
+        phone: gPhone,
+        senderName: aiConfig.agentName || "Sofia",
+        fromMe: true,
+        text: guestText,
+        type: "text",
+        status: "delivered",
+        timestamp: now,
+        messageId: `sofia_maint_guest_${Date.now()}`
+      });
+    }
+  };
+
+  const createServiceOrderRecord = (flatNum, flatId, extraNote = "") => {
+    if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+    const nextId = db.serviceOrders.length > 0
+      ? Math.max(...db.serviceOrders.map(o => Number(o.id) || 0)) + 1
+      : 1;
+    const osNumber = `OS-${String(nextId).padStart(4, "0")}`;
+    const newOrder = {
+      id: nextId,
+      code: osNumber,
+      flatId: flatId || flatNum,
+      flatNumber: String(flatNum),
+      reservationId: targetProposal.reservationId,
+      category: targetProposal.category || "outros",
+      priority: targetProposal.urgency === "EMERGENCIA_IMEDIATA" ? "urgent" : (targetProposal.urgency === "ALTA" ? "high" : "normal"),
+      status: "pending",
+      title: `Manutenção (${targetProposal.category || "geral"}) - Flat ${flatNum}`,
+      description: `${targetProposal.description}${extraNote ? ` — ${extraNote}` : ""}`,
+      reportedBy: `Sofia (Aprovado pelo Gestor via WhatsApp - Hóspede: ${targetProposal.guestName})`,
+      guestPhone: targetProposal.guestPhone,
+      createdAt: now,
+      updatedAt: now
+    };
+    db.serviceOrders.unshift(newOrder);
+    return newOrder;
+  };
+
+  // PLANO 1: Remanejar para o Flat da Vez (ou flat escolhido) + Abrir OS no flat antigo
+  if (chosenPlan === 1) {
+    const desiredFlatNum = customTargetFlatNum || targetProposal.recommendedFlatNumber;
+    const newFlatObj = (db.flats || []).find(f => String(f.number) === String(desiredFlatNum));
+    if (!desiredFlatNum || !newFlatObj) {
+      const noFlatReply = `⚠️ Não foi possível identificar um flat livre para o remanejamento (Flat sugerido: ${desiredFlatNum || "Nenhum"}). Informe o número do flat desejado (ex: *"remanejar para o flat 509"*) ou responda *2* para abrir apenas a Ordem de Serviço.`;
+      await sendManagerReply(noFlatReply, "sofia_maintenance_error");
+      return {
+        handled: true,
+        processed: true,
+        mode: "maintenance_assistant",
+        action: "flat_not_found",
+        proposal: targetProposal,
+        replyText: noFlatReply
+      };
+    }
+
+    const oldFlatNum = targetProposal.flatNumber;
+    const oldFlatObj = (db.flats || []).find(f => String(f.number) === String(oldFlatNum) || String(f.id) === String(targetProposal.flatId));
+    const resObj = (db.reservations || []).find(r =>
+      String(r.id) === String(targetProposal.reservationId) ||
+      (targetProposal.reservationCode && String(r.code) === String(targetProposal.reservationCode))
+    );
+
+    if (resObj) {
+      resObj.flatId = newFlatObj.id;
+      resObj.flatNumber = String(newFlatObj.number);
+      resObj.updatedAt = now;
+      if (!Array.isArray(resObj.auditLogs)) resObj.auditLogs = [];
+      resObj.auditLogs.push({
+        id: `audit_${Date.now()}`,
+        timestamp: now,
+        action: "reallocated_maintenance",
+        actor: { id: null, name: "Sofia / Gestor (WhatsApp)", role: "admin", type: "user" },
+        source: "Assistente de Manutenção WhatsApp",
+        description: `Hóspede remanejado do Flat ${oldFlatNum} para o Flat ${newFlatObj.number} devido a manutenção (${targetProposal.description})`,
+        changes: [
+          { field: "flatNumber", label: "Apartamento", oldValue: `Flat ${oldFlatNum}`, newValue: `Flat ${newFlatObj.number}` }
+        ]
+      });
+    }
+
+    if (oldFlatObj) {
+      oldFlatObj.isOccupied = false;
+      oldFlatObj.updatedAt = now;
+    }
+    newFlatObj.isOccupied = true;
+    newFlatObj.updatedAt = now;
+
+    const createdOs = createServiceOrderRecord(
+      oldFlatNum,
+      targetProposal.flatId,
+      `Hóspede remanejado para o Flat ${newFlatObj.number}`
+    );
+
+    targetProposal.status = "executed_plan_1";
+    targetProposal.executedPlan = 1;
+    targetProposal.reallocatedToFlat = String(newFlatObj.number);
+    targetProposal.serviceOrderCode = createdOs.code;
+    targetProposal.resolvedAt = now;
+    targetProposal.updatedAt = now;
+
+    if (typeof saveDatabase === "function") {
+      try { saveDatabase("maintenance_plan_1_reallocated_and_os"); } catch (_) {}
+    }
+
+    const guestFirstName = String(targetProposal.guestName || "Hóspede").split(" ")[0];
+    const guestMsg = `Olá, *${guestFirstName}*! Tenho uma ótima notícia: nossa gerência já autorizou a sua troca imediata para o *Flat ${newFlatObj.number}*, que já está 100% revisado, limpo e pronto para recebê-lo(a)! 🏨✨\n\nVocê já pode retirar a chave do *Flat ${newFlatObj.number}* na recepção/portaria 24h e devolver a do Flat ${oldFlatNum}. Enquanto isso, nossa manutenção cuidará do reparo na unidade anterior (${createdOs.code}). Qualquer dúvida, estou à disposição!`;
+    await sendGuestUpdate(guestMsg);
+
+    const managerMsg = `✅ *Plano 1 Executado com Sucesso!*\n\n• 🔄 *Remanejamento:* *${targetProposal.guestName}* transferido(a) do *Flat ${oldFlatNum}* para o *Flat ${newFlatObj.number}*.\n• 🛠️ *Ordem de Serviço:* *${createdOs.code}* aberta para o *Flat ${oldFlatNum}* (${targetProposal.description}).\n• 💬 *Hóspede avisado:* Já comuniquei a troca de apartamento ao hóspede pelo WhatsApp.`;
+    await sendManagerReply(managerMsg, "sofia_maintenance_plan_1");
+
+    return {
+      handled: true,
+      processed: true,
+      mode: "maintenance_assistant",
+      action: "reallocated_and_os_created",
+      plan: 1,
+      proposal: targetProposal,
+      serviceOrder: createdOs,
+      replyText: managerMsg
+    };
+  }
+
+  // PLANO 2: Apenas Abrir Ordem de Serviço (OS) no flat atual
+  if (chosenPlan === 2) {
+    const createdOs = createServiceOrderRecord(targetProposal.flatNumber, targetProposal.flatId);
+
+    targetProposal.status = "executed_plan_2";
+    targetProposal.executedPlan = 2;
+    targetProposal.serviceOrderCode = createdOs.code;
+    targetProposal.resolvedAt = now;
+    targetProposal.updatedAt = now;
+
+    if (typeof saveDatabase === "function") {
+      try { saveDatabase("maintenance_plan_2_os_created"); } catch (_) {}
+    }
+
+    const guestFirstName = String(targetProposal.guestName || "Hóspede").split(" ")[0];
+    const guestMsg = `Olá, *${guestFirstName}*! Nossa gerência já confirmou e abriu a Ordem de Serviço prioritária (*${createdOs.code}*) para a equipe técnica realizar o reparo no seu *Flat ${targetProposal.flatNumber}*. 🛠️✨\n\nQualquer novidade ou se precisar de algo adicional, seguimos à disposição por aqui!`;
+    await sendGuestUpdate(guestMsg);
+
+    const managerMsg = `✅ *Plano 2 Executado com Sucesso!*\n\n• 🛠️ *Ordem de Serviço:* *${createdOs.code}* aberta no sistema para o *Flat ${targetProposal.flatNumber}* (${targetProposal.description}).\n• 💬 *Hóspede avisado:* Já confirmei a abertura do chamado para *${targetProposal.guestName}* no WhatsApp.`;
+    await sendManagerReply(managerMsg, "sofia_maintenance_plan_2");
+
+    return {
+      handled: true,
+      processed: true,
+      mode: "maintenance_assistant",
+      action: "os_created",
+      plan: 2,
+      proposal: targetProposal,
+      serviceOrder: createdOs,
+      replyText: managerMsg
+    };
+  }
+
+  // PLANO 3: Não fazer nada no sistema e deixar o gestor assumir
+  targetProposal.status = "manager_assumed";
+  targetProposal.executedPlan = 3;
+  targetProposal.resolvedAt = now;
+  targetProposal.updatedAt = now;
+
+  const gPhone = cleanWhatsAppPhone(targetProposal.guestPhone);
+  const guestConv = (db.whatsappConversations || []).find(c => {
+    const cp = cleanWhatsAppPhone(c.phone);
+    return cp && gPhone && (cp.endsWith(gPhone.slice(-8)) || gPhone.endsWith(cp.slice(-8)));
+  });
+  if (guestConv) {
+    guestConv.aiPaused = true;
+    guestConv.aiPausedAt = now;
+    guestConv.aiPausedReason = "manager_assumed_maintenance";
+  }
+
+  if (typeof saveDatabase === "function") {
+    try { saveDatabase("maintenance_plan_3_manager_assumed"); } catch (_) {}
+  }
+
+  const managerMsg = `✅ *Plano 3 Confirmado (Atendimento Assumido pelo Gestor)*\n\nNenhuma alteração ou OS foi gerada no sistema para o *Flat ${targetProposal.flatNumber}* (*${targetProposal.guestName}*), e pausei minhas respostas automáticas na conversa do hóspede para você assumir diretamente.`;
+  await sendManagerReply(managerMsg, "sofia_maintenance_plan_3");
+
+  return {
+    handled: true,
+    processed: true,
+    mode: "maintenance_assistant",
+    action: "manager_assumed",
+    plan: 3,
+    proposal: targetProposal,
+    replyText: managerMsg
+  };
+}
+
 
