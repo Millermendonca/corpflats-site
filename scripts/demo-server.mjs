@@ -41094,6 +41094,39 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
     });
   }
 
+  // Verifica se já existe OTP ativo (gerado nos últimos 10 min e não utilizado) para cada hóspede
+  const nowOtpCheck = Date.now();
+  const getGuestActiveOtpStatus = (gIndex) => {
+    if (!Array.isArray(db.fnrhWhatsappOtps)) return null;
+    const activeOtp = db.fnrhWhatsappOtps.find(t =>
+      (t.reservationCode === r.code || String(t.reservationId) === String(r.id)) &&
+      Number(t.guestIndex) === Number(gIndex) &&
+      !t.verified &&
+      !t.superseded &&
+      new Date(t.expiresAt).getTime() > nowOtpCheck
+    );
+    if (!activeOtp) return null;
+    const elapsedSec = Math.floor((nowOtpCheck - new Date(activeOtp.createdAt).getTime()) / 1000);
+    const cooldownRemaining = Math.max(0, 60 - elapsedSec);
+    const phoneDigits = String(activeOtp.phone || "").replace(/\D/g, "");
+    const maskedPhone = phoneDigits.length >= 8 ? `(••) •••••-${phoneDigits.slice(-4)}` : (activeOtp.phone || "");
+    const maskedEmail = activeOtp.email ? String(activeOtp.email).replace(/(.{2})(.*)(@.*)/, "$1•••$3") : null;
+    return {
+      hasActiveOtp: true,
+      channel: activeOtp.channel || "whatsapp",
+      maskedPhone,
+      maskedEmail,
+      expiresAt: activeOtp.expiresAt,
+      cooldownRemaining
+    };
+  };
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      g.activeOtpStatus = getGuestActiveOtpStatus(g.index || 1);
+    });
+  }
+  const activeOtpStatus = getGuestActiveOtpStatus(1);
+
   const preCheckinBlocked = isPreReservationBlocked(r);
   const activeCheckinProvider = db.settings?.checkinProvider || "proprio";
   const resolvedSerproUrl = r.serproPrecheckinUrl || r.link_precheckin || null;
@@ -41108,6 +41141,7 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
     guestCount,
     guests: r.guests,
     tokenStatus,
+    activeOtpStatus,
     checkinProvider: activeCheckinProvider,
     serproPrecheckinUrl: resolvedSerproUrl,
     serproStatus: r.serproStatus || null,

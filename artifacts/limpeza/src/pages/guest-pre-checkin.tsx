@@ -398,22 +398,6 @@ export default function GuestPreCheckin() {
     }
   }
 
-  // Disparo automático do código OTP no WhatsApp ao chegar no Passo 3 (Assinatura)
-  useEffect(() => {
-    if (isGovTriagemMode || isReadOnlyDocument || isCompleted || !isEditing || !reservation) return
-    const resStatus = String(reservation?.status || "").toLowerCase()
-    if (resStatus === "completed" || resStatus === "cancelada" || resStatus === "cancelled" || reservation?.checkoutDone) return
-    if (reservation?.checkoutDate) {
-      const todayBrasilia = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date())
-      if (String(reservation.checkoutDate).slice(0, 10) < todayBrasilia) return
-    }
-    const isTitular = selectedGuestIndex === 1
-    const targetPhone = phone || (isTitular ? reservation?.guestPhone : "")
-    if (step === 3 && !otpSent && targetPhone && !isTokenSessionExpired) {
-      handleSendOtp("whatsapp")
-    }
-  }, [step, otpSent, phone, selectedGuestIndex, reservation, isTokenSessionExpired, isGovTriagemMode, isReadOnlyDocument, isCompleted, isEditing])
-
   // Canvas for signature
 
   useEffect(() => {
@@ -602,13 +586,15 @@ export default function GuestPreCheckin() {
     setMinorAuthDocPhoto(null)
     setMinorKinship("filho")
 
-    // Isolamento estrito de 2FA / OTP entre titular e acompanhantes
+    // Isolamento estrito de 2FA / OTP entre titular e acompanhantes (preserva status de OTP ativo se gerado nos últimos 10 min)
+    const activeOtp = currentG?.activeOtpStatus || (gIdx === 1 ? resData.activeOtpStatus : null) || null
     setWhatsappOtpInput("")
-    setOtpSent(false)
+    setOtpSent(Boolean(activeOtp?.hasActiveOtp))
     setOtpLoading(false)
-    setOtpCooldown(0)
-    setOtpMaskedPhone("")
-    setOtpMaskedEmail("")
+    setOtpCooldown(activeOtp?.cooldownRemaining || 0)
+    setOtpMaskedPhone(activeOtp?.maskedPhone || "")
+    setOtpMaskedEmail(activeOtp?.maskedEmail || "")
+    setOtpChannel(activeOtp?.channel === "email" ? "email" : "whatsapp")
     setOtpVerified(false)
     setOtpError(null)
     setOtpSuccessMessage(null)
@@ -1251,8 +1237,8 @@ export default function GuestPreCheckin() {
   }
 
   const handleSubmit = async () => {
-    if (!isGovTriagemMode && otpSent && whatsappOtpInput.trim().length !== 6) {
-      alert("Por favor, informe o código de 6 dígitos recebido no seu WhatsApp para confirmar a assinatura.")
+    if (!isGovTriagemMode && whatsappOtpInput.trim().length !== 6) {
+      alert("Por favor, clique em 'Enviar Código no WhatsApp' e informe o código de 6 dígitos recebido para confirmar a assinatura.")
       return
     }
     setLoading(true)
@@ -4008,9 +3994,11 @@ export default function GuestPreCheckin() {
                         Código de Segurança no WhatsApp (2FA)
                       </span>
                       <span className="text-[11px] text-slate-600 block mt-0.5">
-                        {otpChannel === "whatsapp" 
-                          ? `Enviado para o WhatsApp ${otpMaskedPhone || phone || ""}` 
-                          : `Enviado para o e-mail ${otpMaskedEmail || email || ""}`}
+                        {otpSent
+                          ? (otpChannel === "whatsapp" 
+                              ? `Enviado para o WhatsApp ${otpMaskedPhone || phone || ""}` 
+                              : `Enviado para o e-mail ${otpMaskedEmail || email || ""}`)
+                          : `Clique no botão abaixo para enviar o código para ${phone || "seu WhatsApp"}`}
                       </span>
                     </div>
                   </div>
@@ -4032,7 +4020,9 @@ export default function GuestPreCheckin() {
                 </div>
 
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Para conferir validade jurídica à sua assinatura (Lei 14.063/2020), enviamos um código de 6 dígitos no seu WhatsApp. Digite-o abaixo:
+                  {otpSent
+                    ? "Para conferir validade jurídica à sua assinatura (Lei 14.063/2020), enviamos um código de 6 dígitos. Digite-o abaixo:"
+                    : "Para conferir validade jurídica à sua assinatura (Lei 14.063/2020), clique em 'Enviar Código no WhatsApp' abaixo (ou digite o código caso já tenha recebido nos últimos 10 minutos):"}
                 </p>
 
                 {/* Mensagens de Sucesso ou Erro do OTP */}
@@ -4099,14 +4089,30 @@ export default function GuestPreCheckin() {
 
                     <Button
                       type="button"
-                      variant="outline"
+                      variant={otpSent ? "outline" : "default"}
                       size="sm"
                       disabled={otpCooldown > 0 || otpLoading}
-                      onClick={() => handleSendOtp("whatsapp", true)}
-                      className="text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border-slate-200 rounded-xl h-auto min-h-12 py-2 px-3 whitespace-normal leading-tight gap-1.5 flex-1 sm:flex-none"
+                      onClick={() => handleSendOtp("whatsapp", otpSent)}
+                      className={
+                        otpSent
+                          ? "text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border-slate-200 rounded-xl h-auto min-h-12 py-2 px-3 whitespace-normal leading-tight gap-1.5 flex-1 sm:flex-none"
+                          : "text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 border-emerald-600 rounded-xl h-auto min-h-12 py-2 px-4 whitespace-normal leading-tight gap-1.5 flex-1 sm:flex-none shadow-sm"
+                      }
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${otpLoading ? "animate-spin" : ""}`} />
-                      <span>{otpCooldown > 0 ? `Reenviar (${otpCooldown}s)` : "Reenviar no WhatsApp"}</span>
+                      {otpSent ? (
+                        <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${otpLoading ? "animate-spin" : ""}`} />
+                      ) : (
+                        <MessageCircle className={`w-4 h-4 shrink-0 ${otpLoading ? "animate-pulse" : ""}`} />
+                      )}
+                      <span>
+                        {otpLoading
+                          ? "Enviando..."
+                          : otpCooldown > 0
+                          ? `Reenviar (${otpCooldown}s)`
+                          : otpSent
+                          ? "Reenviar no WhatsApp"
+                          : "📲 Enviar Código no WhatsApp"}
+                      </span>
                     </Button>
                   </div>
                 </div>
@@ -4232,7 +4238,7 @@ export default function GuestPreCheckin() {
                   <ArrowLeft className="w-4 h-4 mr-1 shrink-0" /> Voltar
                 </Button>
                 <Button 
-                  disabled={loading || !legalDeclarationAccepted || (!isGovTriagemMode && (!signatureData || isTokenSessionExpired || (otpSent && whatsappOtpInput.trim().length !== 6)))}
+                  disabled={loading || !legalDeclarationAccepted || (!isGovTriagemMode && (!signatureData || isTokenSessionExpired || whatsappOtpInput.trim().length !== 6))}
                   onClick={handleSubmit} 
                   className="w-full sm:w-auto sm:flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
