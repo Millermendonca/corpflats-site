@@ -60,11 +60,21 @@ src/
     ├── services/
     │   └── admin-notifier.ts        # Disparo de alertas para o WhatsApp pessoal do gestor
     └── tools/
-        ├── index.ts                 # Registro central que exporta as tools por Estado
-        ├── _molde-padrao.tool.ts    # Arquivo de referência arquitetural
-        ├── solicitar-late-checkout.tool.ts
-        ├── alterar-datas-reserva.tool.ts
-        └── notificar-administrador.tool.ts
+        ├── index.ts                              # Registro central que exporta as tools por Estado
+        ├── _molde-padrao.tool.ts                 # Arquivo de referência arquitetural
+        ├── consultar-disponibilidade.tool.ts     # [COMERCIAL / PRE / IN_STAY] Disponibilidade de flats
+        ├── calcular-orcamento.tool.ts            # [COMERCIAL / PRE / IN_STAY] Cotação de diárias e taxas
+        ├── gerar-link-reserva.tool.ts            # [COMERCIAL] Pré-reserva 30min + chave PIX (2 etapas)
+        ├── consultar-detalhes-reserva.tool.ts    # [PRE / IN_STAY] Detalhes da reserva ativa (Zero-Ask)
+        ├── atualizar-dados-hospede.tool.ts       # [PRE / IN_STAY] Atualização cadastral e acompanhantes
+        ├── solicitar-early-checkin.tool.ts       # [PRE / IN_STAY] Entrada antecipada com trava de governança
+        ├── solicitar-late-checkout.tool.ts       # [PRE / IN_STAY] Saída estendida com trava de agenda e taxa
+        ├── alterar-datas-reserva.tool.ts         # [PRE / IN_STAY] Alteração de datas (simulação + efetivação)
+        ├── estender-estadia.tool.ts              # [PRE / IN_STAY] Prorrogação de estadia
+        ├── solicitar-limpeza-extra.tool.ts       # [IN_STAY] Governança, enxoval e limpeza extra
+        ├── abrir-chamado-manutencao.tool.ts      # [IN_STAY] Ordem de Serviço (OS) + alerta ao gestor
+        ├── gerenciar-nota-fiscal-nfse.tool.ts    # [PRE / IN_STAY] Conferência, edição e confirmação de NFS-e
+        └── notificar-administrador.tool.ts       # [TODOS OS ESTADOS] Transbordo imediato para o WhatsApp do gestor
 ```
 
 ---

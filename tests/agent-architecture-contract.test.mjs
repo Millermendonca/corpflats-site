@@ -3,8 +3,18 @@ import assert from "node:assert/strict";
 import {
   injectSessionContext,
   buildContextoSessaoJson,
+  consultarDisponibilidadeTool,
+  calcularOrcamentoTool,
+  gerarLinkReservaTool,
+  consultarDetalhesReservaTool,
+  atualizarDadosHospedeTool,
+  solicitarEarlyCheckinTool,
   solicitarLateCheckoutTool,
   alterarDatasReservaTool,
+  estenderEstadiaTool,
+  solicitarLimpezaExtraTool,
+  abrirChamadoManutencaoTool,
+  gerenciarNotaFiscalNfseTool,
   notificarAdministradorTool,
   getToolsForState,
   executeBotAction,
@@ -64,11 +74,26 @@ test("Pilar 1 & 2: Middleware injectSessionContext e State Router (COMERCIAL_VEN
 
   // Tools por estado
   const comercialTools = getToolsForState("COMERCIAL_VENDAS").map((t) => t.name);
-  assert.deepEqual(comercialTools, ["notificar_administrador"]);
+  assert.deepEqual(comercialTools, [
+    "consultar_disponibilidade",
+    "calcular_orcamento",
+    "gerar_link_reserva",
+    "notificar_administrador",
+  ]);
+
+  const preCheckinTools = getToolsForState("PRE_CHECKIN").map((t) => t.name);
+  assert.ok(preCheckinTools.includes("consultar_detalhes_reserva"));
+  assert.ok(preCheckinTools.includes("atualizar_dados_hospede"));
+  assert.ok(preCheckinTools.includes("solicitar_early_checkin"));
+  assert.ok(preCheckinTools.includes("gerenciar_nota_fiscal_nfse"));
 
   const inStayTools = getToolsForState("IN_STAY_CONCIERGE").map((t) => t.name);
   assert.ok(inStayTools.includes("solicitar_late_checkout"));
   assert.ok(inStayTools.includes("alterar_datas_reserva"));
+  assert.ok(inStayTools.includes("estender_estadia"));
+  assert.ok(inStayTools.includes("solicitar_limpeza_extra"));
+  assert.ok(inStayTools.includes("abrir_chamado_manutencao"));
+  assert.ok(inStayTools.includes("gerenciar_nota_fiscal_nfse"));
   assert.ok(inStayTools.includes("notificar_administrador"));
 });
 
@@ -139,56 +164,128 @@ test("Pilar 3 & 4: Tool Molde solicitar_late_checkout com travas determinística
   assert.ok(resConflito.instrucao_para_ia.includes("outro hóspede"));
 });
 
-test("Pilar 5 & Integração executeBotAction: notificar_administrador e alterar_datas_reserva", async () => {
+test("Catálogo Completo: Comercial, Pré-Check-in, Manutenção, Limpeza e Nota Fiscal (NFS-e)", async () => {
   const sentMessages = [];
   const db = {
     settings: { adminWhatsapp: "5522998505276" },
+    flats: [{ number: "212", isActive: true }, { number: "304", isActive: true }],
     reservations: [
       {
         id: 587,
         code: "RES-212-0587",
         flatNumber: "212",
         guestName: "Miller Mendonça Pessanha",
+        guestCpf: "12585736792",
+        guestEmail: "millerpessanha@gmail.com",
+        guestAddress: "Rua Sebastião Rangel, 26 - Parque Turf Club, Campos dos Goytacazes - RJ",
         guestPhone: "5522999991111",
         checkinDate: "2026-11-02",
         checkoutDate: "2026-11-03",
+        totalAmount: 2.0,
         paymentStatus: "paid",
         status: "confirmada",
       },
     ],
   };
 
-  const conv = { phone: "5522999991111", aiPaused: false };
+  // 1. Comercial: consultar_disponibilidade + calcular_orcamento + gerar_link_reserva
+  const leadCtx = injectSessionContext({ db, phone: "21988880000", now: new Date("2026-11-02T14:00:00-03:00") });
+  const disp = await consultarDisponibilidadeTool.execute(
+    { data_checkin: "2026-11-10", data_checkout: "2026-11-12", quantidade_hospedes: 2 },
+    leadCtx
+  );
+  assert.equal(disp.status, "SUCESSO_EXECUTADO");
+  assert.equal(disp.dados.unidades_disponiveis, 2);
 
-  const resNotify = await executeBotAction(db, "notificar_administrador", {
-    requesterPhone: "5522999991111",
-    nivel_urgencia: "CRITICA",
-    categoria: "MANUTENCAO",
-    resumo_ocorrencia: "Ar-condicionado do Flat 212 parou de gelar.",
-    conversation: conv,
-    sendZapiMessage: async (phone, text) => {
-      sentMessages.push({ phone, text });
+  const orc = await calcularOrcamentoTool.execute(
+    { data_checkin: "2026-11-10", data_checkout: "2026-11-12", quantidade_hospedes: 2 },
+    leadCtx
+  );
+  assert.equal(orc.status, "SUCESSO_EXECUTADO");
+  assert.equal(orc.dados.opcao_com_cafe.valor_total, 614);
+
+  const linkSim = await gerarLinkReservaTool.execute(
+    { data_checkin: "2026-11-10", data_checkout: "2026-11-12", nome_hospede: "João Silva", confirmacao_hospede: false },
+    leadCtx
+  );
+  assert.equal(linkSim.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
+
+  const linkExec = await gerarLinkReservaTool.execute(
+    { data_checkin: "2026-11-10", data_checkout: "2026-11-12", nome_hospede: "João Silva", confirmacao_hospede: true },
+    leadCtx
+  );
+  assert.equal(linkExec.status, "SUCESSO_EXECUTADO");
+  assert.ok(linkExec.dados.codigo_pre_reserva.startsWith("CF-"));
+
+  // 2. In-Stay: gerenciar_nota_fiscal_nfse (conferência + adição de acompanhante na descrição + confirmação)
+  const conv = { phone: "5522999991111", aiPaused: false };
+  const inStayCtx = injectSessionContext({
+    db,
+    phone: "5522999991111",
+    now: new Date("2026-11-02T15:00:00-03:00"),
+    runtime: {
+      db,
+      conversation: conv,
+      sendZapiMessage: async (phone, text) => sentMessages.push({ phone, text }),
     },
   });
 
-  assert.equal(resNotify.status, "ADMINISTRADOR_NOTIFICADO");
-  assert.ok(resNotify.instrucao_para_ia.includes("WhatsApp da gerência"));
-  assert.equal(conv.aiPaused, true);
-  assert.equal(sentMessages.length, 1);
-  assert.ok(sentMessages[0].text.includes("MANUTENCAO"));
-
-  const guestCtx = buildGuestContext({ db, phone: "5522999991111", now: new Date("2026-11-02T15:00:00-03:00") });
-  assert.equal(guestCtx.estadoAtual, "IN_STAY_CONCIERGE");
-  assert.equal(guestCtx.contextoSessao.reserva_ativa.id, "RES-212-0587");
-
-  const resAlterarSim = await alterarDatasReservaTool.execute(
+  const nfseUpdate = await gerenciarNotaFiscalNfseTool.execute(
     {
-      nova_data_checkin: "2026-11-02",
-      nova_data_checkout: "2026-11-04",
-      efetivar_alteracao: false,
+      acao: "ATUALIZAR_DADOS_NOTA",
+      hospedes_na_descricao: ["Miller Mendonça Pessanha", "Thamiris Maiara Santos Da Silva"],
     },
-    guestCtx.contextoSessao
+    inStayCtx
   );
-  assert.equal(resAlterarSim.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
-  assert.ok(resAlterarSim.instrucao_para_ia.includes("2026-11-04"));
+  assert.equal(nfseUpdate.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
+  assert.ok(
+    nfseUpdate.dados.descricaoServico.includes(
+      "Nota relativa à hospedagem de Miller Mendonça Pessanha e Thamiris Maiara Santos Da Silva, no Flat 212."
+    )
+  );
+
+  // Trava de valor da nota fiscal -> BLOQUEADO_PELA_REGRA + alerta ao administrador
+  const nfseValorBlock = await gerenciarNotaFiscalNfseTool.execute(
+    {
+      acao: "ATUALIZAR_DADOS_NOTA",
+      novo_valor_solicitado: 500,
+    },
+    inStayCtx
+  );
+  assert.equal(nfseValorBlock.status, "BLOQUEADO_PELA_REGRA");
+  assert.equal(nfseValorBlock.codigo_regra_bloqueio, "ALTERACAO_VALOR_REQUER_APROVACAO_GESTOR");
+
+  // Confirmação final da nota fiscal
+  const nfseConfirm = await gerenciarNotaFiscalNfseTool.execute(
+    { acao: "CONFIRMAR_DADOS_NOTA" },
+    inStayCtx
+  );
+  assert.equal(nfseConfirm.status, "SUCESSO_EXECUTADO");
+  assert.equal(db.reservations[0].autoEmitInvoice, true);
+
+  // 3. Manutenção crítica -> abre OS + aciona notifyAdminWhatsApp
+  const osRes = await abrirChamadoManutencaoTool.execute(
+    {
+      categoria_item: "AR_CONDICIONADO",
+      descricao_problema: "Ar-condicionado parou de gelar",
+      urgencia: "CRITICA",
+    },
+    inStayCtx
+  );
+  assert.equal(osRes.status, "SUCESSO_EXECUTADO");
+  assert.equal(osRes.dados.administrador_notificado, true);
+  assert.equal(db.serviceOrders.length, 1);
+
+  // 4. Limpeza extra -> simulação de taxa (LIMPEZA_COMPLETA) e cortesia (TROCA_TOALHAS_ENXOVAL)
+  const limpSim = await solicitarLimpezaExtraTool.execute(
+    { tipo_solicitacao: "LIMPEZA_COMPLETA", confirmacao_hospede: false },
+    inStayCtx
+  );
+  assert.equal(limpSim.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
+
+  const limpToalhas = await solicitarLimpezaExtraTool.execute(
+    { tipo_solicitacao: "TROCA_TOALHAS_ENXOVAL", confirmacao_hospede: true },
+    inStayCtx
+  );
+  assert.equal(limpToalhas.status, "SUCESSO_EXECUTADO");
 });

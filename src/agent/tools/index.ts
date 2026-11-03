@@ -6,19 +6,53 @@ import {
   ContextoSessaoInjetado,
   EstadoSessao,
 } from '../types/tool-contract';
+import { consultarDisponibilidadeTool } from './consultar-disponibilidade.tool';
+import { calcularOrcamentoTool } from './calcular-orcamento.tool';
+import { gerarLinkReservaTool } from './gerar-link-reserva.tool';
+import { consultarDetalhesReservaTool } from './consultar-detalhes-reserva.tool';
+import { atualizarDadosHospedeTool } from './atualizar-dados-hospede.tool';
+import { solicitarEarlyCheckinTool } from './solicitar-early-checkin.tool';
 import { solicitarLateCheckoutTool } from './solicitar-late-checkout.tool';
 import { alterarDatasReservaTool } from './alterar-datas-reserva.tool';
+import { estenderEstadiaTool } from './estender-estadia.tool';
+import { solicitarLimpezaExtraTool } from './solicitar-limpeza-extra.tool';
+import { abrirChamadoManutencaoTool } from './abrir-chamado-manutencao.tool';
+import {
+  gerenciarNotaFiscalNfseTool,
+  buildStandardStayDescription,
+} from './gerenciar-nota-fiscal-nfse.tool';
 import { notificarAdministradorTool } from './notificar-administrador.tool';
 
 export {
+  consultarDisponibilidadeTool,
+  calcularOrcamentoTool,
+  gerarLinkReservaTool,
+  consultarDetalhesReservaTool,
+  atualizarDadosHospedeTool,
+  solicitarEarlyCheckinTool,
   solicitarLateCheckoutTool,
   alterarDatasReservaTool,
+  estenderEstadiaTool,
+  solicitarLimpezaExtraTool,
+  abrirChamadoManutencaoTool,
+  gerenciarNotaFiscalNfseTool,
+  buildStandardStayDescription,
   notificarAdministradorTool,
 };
 
 export const ALL_AGENT_TOOLS: AgentToolDefinition<any>[] = [
+  consultarDisponibilidadeTool,
+  calcularOrcamentoTool,
+  gerarLinkReservaTool,
+  consultarDetalhesReservaTool,
+  atualizarDadosHospedeTool,
+  solicitarEarlyCheckinTool,
   solicitarLateCheckoutTool,
   alterarDatasReservaTool,
+  estenderEstadiaTool,
+  solicitarLimpezaExtraTool,
+  abrirChamadoManutencaoTool,
+  gerenciarNotaFiscalNfseTool,
   notificarAdministradorTool,
 ];
 
