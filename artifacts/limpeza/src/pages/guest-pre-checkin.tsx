@@ -380,6 +380,7 @@ export default function GuestPreCheckin() {
       const data = await res.json()
       if (res.ok && data.success) {
         setOtpSent(true)
+        setOtpVerified(false)
         setOtpChannel(channel)
         setOtpCooldown(data.cooldownSeconds || 60)
         if (data.maskedPhone) setOtpMaskedPhone(data.maskedPhone)
@@ -397,6 +398,99 @@ export default function GuestPreCheckin() {
       setOtpLoading(false)
     }
   }
+
+  // Opção A: Polling em tempo real para detectar confirmação 1-toque ou resposta direto no WhatsApp
+  useEffect(() => {
+    if (step !== 3 || !otpSent || otpVerified || isCompleted || isGovTriagemMode || isReadOnlyDocument) return
+    const resCode = code || reservation?.code
+    if (!resCode) return
+
+    const pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/pms/pre-checkin/${encodeURIComponent(resCode)}/otp-status?guestIndex=${selectedGuestIndex}`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (data.verified && data.otpCode) {
+          setWhatsappOtpInput(String(data.otpCode))
+          setOtpVerified(true)
+          setOtpError(null)
+          setOtpSuccessMessage("✓ Código preenchido e autenticado automaticamente via WhatsApp!")
+        }
+      } catch {}
+    }, 2500)
+
+    return () => clearInterval(pollTimer)
+  }, [step, otpSent, otpVerified, isCompleted, isGovTriagemMode, isReadOnlyDocument, code, reservation?.code, selectedGuestIndex])
+
+  // Opção B: Auto-colar código ao voltar do WhatsApp para a aba do navegador (visibilitychange / focus)
+  useEffect(() => {
+    if (step !== 3 || otpVerified || isCompleted || isGovTriagemMode || isReadOnlyDocument) return
+
+    const tryAutoReadClipboard = async () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return
+      if (whatsappOtpInput.length === 6) return
+      try {
+        if (!navigator.clipboard?.readText) return
+        const text = await navigator.clipboard.readText()
+        const clean = String(text || "").trim()
+        if (/^\d{6}$/.test(clean)) {
+          setWhatsappOtpInput(clean)
+          setOtpError(null)
+        }
+      } catch {
+        // Silencioso caso o navegador exija gesto explícito para área de transferência
+      }
+    }
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        tryAutoReadClipboard()
+      }
+    }
+
+    window.addEventListener("focus", tryAutoReadClipboard)
+    document.addEventListener("visibilitychange", handleVisibility)
+    return () => {
+      window.removeEventListener("focus", tryAutoReadClipboard)
+      document.removeEventListener("visibilitychange", handleVisibility)
+    }
+  }, [step, otpVerified, isCompleted, isGovTriagemMode, isReadOnlyDocument, whatsappOtpInput.length])
+
+  // Opção C: Validação instantânea no servidor assim que o 6º dígito for preenchido
+  useEffect(() => {
+    if (step !== 3 || isCompleted || isGovTriagemMode || isReadOnlyDocument) return
+    if (whatsappOtpInput.length !== 6 || otpVerified) return
+    const resCode = code || reservation?.code
+    if (!resCode) return
+
+    let cancelled = false
+    fetch(`/api/pms/pre-checkin/${encodeURIComponent(resCode)}/verify-whatsapp-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        guestIndex: selectedGuestIndex,
+        otp: whatsappOtpInput
+      })
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}))
+        if (cancelled) return
+        if (res.ok && data.verified) {
+          setOtpVerified(true)
+          setOtpError(null)
+          setOtpSuccessMessage("✓ Código de 6 dígitos autenticado com sucesso!")
+        } else if (!res.ok && data.error) {
+          setOtpVerified(false)
+          setOtpError(data.error)
+          setOtpSuccessMessage(null)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [whatsappOtpInput, otpVerified, step, isCompleted, isGovTriagemMode, isReadOnlyDocument, code, reservation?.code, selectedGuestIndex])
 
   // Canvas for signature
 
@@ -588,16 +682,21 @@ export default function GuestPreCheckin() {
 
     // Isolamento estrito de 2FA / OTP entre titular e acompanhantes (preserva status de OTP ativo se gerado nos últimos 10 min)
     const activeOtp = currentG?.activeOtpStatus || (gIdx === 1 ? resData.activeOtpStatus : null) || null
-    setWhatsappOtpInput("")
-    setOtpSent(Boolean(activeOtp?.hasActiveOtp))
+    const urlOtp = typeof window !== "undefined"
+      ? (new URLSearchParams(window.location.search).get("otp") || "").replace(/\D/g, "").slice(0, 6)
+      : ""
+    const initialOtp = urlOtp.length === 6 ? urlOtp : (activeOtp?.verifiedOtpCode || "")
+    const isInitialOtpVerified = Boolean(activeOtp?.verified && initialOtp.length === 6)
+    setWhatsappOtpInput(initialOtp)
+    setOtpSent(Boolean(activeOtp?.hasActiveOtp || initialOtp))
     setOtpLoading(false)
     setOtpCooldown(activeOtp?.cooldownRemaining || 0)
     setOtpMaskedPhone(activeOtp?.maskedPhone || "")
     setOtpMaskedEmail(activeOtp?.maskedEmail || "")
     setOtpChannel(activeOtp?.channel === "email" ? "email" : "whatsapp")
-    setOtpVerified(false)
+    setOtpVerified(isInitialOtpVerified)
     setOtpError(null)
-    setOtpSuccessMessage(null)
+    setOtpSuccessMessage(isInitialOtpVerified ? "✓ Código confirmado e preenchido automaticamente via WhatsApp!" : null)
 
     const isTitular = gIdx === 1
 
@@ -4002,7 +4101,12 @@ export default function GuestPreCheckin() {
                       </span>
                     </div>
                   </div>
-                  {whatsappOtpInput.length === 6 ? (
+                  {otpVerified && whatsappOtpInput.length === 6 ? (
+                    <Badge className="bg-emerald-600 text-white border-emerald-600 text-[10px] font-bold py-0.5 px-2.5 flex items-center gap-1 shadow-2xs">
+                      <CheckCircle2 className="w-3 h-3 text-white" />
+                      ✓ Código Autenticado
+                    </Badge>
+                  ) : whatsappOtpInput.length === 6 ? (
                     <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold py-0.5 px-2 flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                       Código Preenchido
@@ -4021,7 +4125,7 @@ export default function GuestPreCheckin() {
 
                 <p className="text-xs text-slate-600 leading-relaxed">
                   {otpSent
-                    ? "Para conferir validade jurídica à sua assinatura (Lei 14.063/2020), enviamos um código de 6 dígitos. Digite-o abaixo:"
+                    ? "Para conferir validade jurídica à sua assinatura (Lei 14.063/2020), enviamos um código de 6 dígitos. Toque em 'Preencher na Tela' no seu WhatsApp (ou responda a mensagem com o código) para preenchimento automático, ou digite abaixo:"
                     : "Para conferir validade jurídica à sua assinatura (Lei 14.063/2020), clique em 'Enviar Código no WhatsApp' abaixo (ou digite o código caso já tenha recebido nos últimos 10 minutos):"}
                 </p>
 
@@ -4052,6 +4156,7 @@ export default function GuestPreCheckin() {
                       onChange={e => {
                         const val = e.target.value.replace(/\D/g, "").slice(0, 6)
                         setWhatsappOtpInput(val)
+                        if (val.length < 6) setOtpVerified(false)
                         setOtpError(null)
                       }}
                       placeholder="000000"

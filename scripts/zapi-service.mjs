@@ -4958,6 +4958,8 @@ export async function sendZapiOtpButton(config, {
   message,
   code,
   buttonText = "📋 Copiar Código",
+  confirmUrl = null,
+  confirmLabel = "✅ Preencher na Tela",
   channelId = "transactional_chat",
   recipientRole = "guest",
   triggerEvent = "pre_checkin_otp",
@@ -5017,47 +5019,63 @@ export async function sendZapiOtpButton(config, {
   const cleanCode = String(code || "").trim();
   const cleanLabel = String(buttonText || "📋 Copiar Código").trim().substring(0, 25);
 
-  // 1. Tenta via /send-button-actions com parâmetro nativo COPY_CODE do WhatsApp (suporta texto rico multi-linha e renderiza botão nativo de cópia)
+  // 1. Tenta via /send-button-actions com parâmetro nativo COPY_CODE do WhatsApp (suporta texto rico multi-linha e renderiza botão nativo de cópia + 1-toque opcional)
   const isPixCode = cleanCode.startsWith("000201");
   if (!isPixCode && cleanCode) {
     const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
-    const buttonActionsPayload = {
-      phone: targetPhone,
-      message: finalMessage,
-      buttonActions: [
-        {
-          id: "btn_otp_copy",
-          type: "URL",
-          label: cleanLabel,
-          url: `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(cleanCode)}`
-        }
-      ]
+    const copyAction = {
+      id: "btn_otp_copy",
+      type: "URL",
+      label: cleanLabel,
+      url: `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(cleanCode)}`
     };
+    const actionsVariants = confirmUrl
+      ? [
+          [
+            copyAction,
+            {
+              id: "btn_otp_confirm",
+              type: "URL",
+              label: String(confirmLabel || "✅ Preencher na Tela").trim().substring(0, 25),
+              url: confirmUrl
+            }
+          ],
+          [copyAction]
+        ]
+      : [[copyAction]];
 
-    try {
-      const resActions = await fetch(buttonActionsUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(buttonActionsPayload)
-      });
-      const dataActions = await resActions.json().catch(() => ({}));
-      if (resActions.ok && !dataActions.error && (dataActions.zaapId || dataActions.id || dataActions.messageId || dataActions.value)) {
-        const msgId = dataActions.zaapId || dataActions.id || dataActions.messageId || "ok";
-        recordBotSentMessage({ messageId: msgId, phone: targetPhone, text: finalMessage });
-        return {
-          success: true,
-          method: "button_actions_otp",
-          messageId: msgId,
-          data: dataActions,
-          phone: targetPhone,
-          originalPhone: cleanPhone,
-          redirected: Boolean(policy.redirected),
-          channelId: policy.channelId
-        };
+    for (const buttonActions of actionsVariants) {
+      const buttonActionsPayload = {
+        phone: targetPhone,
+        message: finalMessage,
+        buttonActions
+      };
+
+      try {
+        const resActions = await fetch(buttonActionsUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(buttonActionsPayload)
+        });
+        const dataActions = await resActions.json().catch(() => ({}));
+        if (resActions.ok && !dataActions.error && (dataActions.zaapId || dataActions.id || dataActions.messageId || dataActions.value)) {
+          const msgId = dataActions.zaapId || dataActions.id || dataActions.messageId || "ok";
+          recordBotSentMessage({ messageId: msgId, phone: targetPhone, text: finalMessage });
+          return {
+            success: true,
+            method: "button_actions_otp",
+            messageId: msgId,
+            data: dataActions,
+            phone: targetPhone,
+            originalPhone: cleanPhone,
+            redirected: Boolean(policy.redirected),
+            channelId: policy.channelId
+          };
+        }
+        console.warn(`[Z-API OTP] /send-button-actions (${buttonActions.length} botões) retornou HTTP ${resActions.status}, tentando fallback...`, dataActions);
+      } catch (actErr) {
+        console.warn(`[Z-API OTP] Exceção em /send-button-actions:`, actErr.message);
       }
-      console.warn(`[Z-API OTP] /send-button-actions retornou HTTP ${resActions.status}, tentando /send-button-otp...`, dataActions);
-    } catch (actErr) {
-      console.warn(`[Z-API OTP] Exceção em /send-button-actions:`, actErr.message);
     }
   }
 
@@ -9032,6 +9050,35 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     // 3. Processamento em Tempo Real de Sentimento e NPS de Hóspedes
     let npsInboundResult = null;
     if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
+      // 3.0. Auto-Confirmação de Código OTP de Check-in via Resposta no WhatsApp
+      if (Array.isArray(db.fnrhWhatsappOtps)) {
+        const nowOtpMs = Date.now();
+        const rawReply = String(incomingInfo.text || "").trim();
+        const digitsInReply = rawReply.replace(/\D/g, "");
+        const isConfirmWord = /^(?:ok|confirmar|confirmo|sim|validar|autorizo)$/i.test(rawReply);
+        const matchingOtp = db.fnrhWhatsappOtps.find(t => {
+          if (t.superseded || t.consumedByCheckin || new Date(t.expiresAt).getTime() <= nowOtpMs) return false;
+          const otpPhone = cleanWhatsAppPhone(t.phone || "");
+          const phoneMatches = otpPhone && (cleanTarget.endsWith(otpPhone.slice(-8)) || otpPhone.endsWith(cleanTarget.slice(-8)));
+          if (!phoneMatches) return false;
+          return digitsInReply === t.code || rawReply.includes(t.code) || isConfirmWord;
+        });
+        if (matchingOtp) {
+          matchingOtp.verified = true;
+          matchingOtp.verifiedAt = new Date().toISOString();
+          matchingOtp.verifiedByWhatsapp = true;
+          matchingOtp.verifiedByWhatsappAt = new Date().toISOString();
+          if (typeof saveDatabase === "function") saveDatabase();
+          return res.status(200).json({
+            success: true,
+            otpAutoVerified: true,
+            reservationCode: matchingOtp.reservationCode,
+            guestIndex: matchingOtp.guestIndex,
+            chatUpdated: Boolean(updatedConv)
+          });
+        }
+      }
+
       try {
         npsInboundResult = await processInboundSentimentAndNps({
           db,

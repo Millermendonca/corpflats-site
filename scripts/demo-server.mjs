@@ -41280,14 +41280,14 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
     });
   }
 
-  // Verifica se já existe OTP ativo (gerado nos últimos 10 min e não utilizado) para cada hóspede
+  // Verifica se já existe OTP ativo (gerado nos últimos 10 min e não consumido pelo check-in) para cada hóspede
   const nowOtpCheck = Date.now();
   const getGuestActiveOtpStatus = (gIndex) => {
     if (!Array.isArray(db.fnrhWhatsappOtps)) return null;
     const activeOtp = db.fnrhWhatsappOtps.find(t =>
       (t.reservationCode === r.code || String(t.reservationId) === String(r.id)) &&
       Number(t.guestIndex) === Number(gIndex) &&
-      !t.verified &&
+      !t.consumedByCheckin &&
       !t.superseded &&
       new Date(t.expiresAt).getTime() > nowOtpCheck
     );
@@ -41297,13 +41297,16 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
     const phoneDigits = String(activeOtp.phone || "").replace(/\D/g, "");
     const maskedPhone = phoneDigits.length >= 8 ? `(••) •••••-${phoneDigits.slice(-4)}` : (activeOtp.phone || "");
     const maskedEmail = activeOtp.email ? String(activeOtp.email).replace(/(.{2})(.*)(@.*)/, "$1•••$3") : null;
+    const isAlreadyVerified = Boolean(activeOtp.verified || activeOtp.verifiedByWhatsapp);
     return {
       hasActiveOtp: true,
       channel: activeOtp.channel || "whatsapp",
       maskedPhone,
       maskedEmail,
       expiresAt: activeOtp.expiresAt,
-      cooldownRemaining
+      cooldownRemaining,
+      verified: isAlreadyVerified,
+      verifiedOtpCode: isAlreadyVerified ? activeOtp.code : undefined
     };
   };
   if (Array.isArray(r.guests)) {
@@ -41505,7 +41508,9 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
   let sendResult = { success: true };
 
   if (channel === "whatsapp") {
-    const otpMessage = `🏢 *CorpFlats • Confirmação de Check-in*\n\nOlá, *${guestName}*! 👋\nSeu código de segurança para confirmar o check-in digital no *Flat ${flatNumber}* é:\n\n🔑 *${otpCode}*\n\n⏳ _Este código expira em 10 minutos._\nDigite-o na tela para autenticar sua assinatura e liberar o acesso.`;
+    const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.com.br");
+    const confirmTapUrl = `${originHeader}/api/pms/pre-checkin/${encodeURIComponent(r.code || code)}/confirm-otp-tap?otp=${encodeURIComponent(otpCode)}&guest=${encodeURIComponent(guestIndex)}`;
+    const otpMessage = `🏢 *CorpFlats • Confirmação de Check-in*\n\nOlá, *${guestName}*! 👋\nSeu código de segurança para confirmar o check-in digital no *Flat ${flatNumber}* é:\n\n🔑 *${otpCode}*\n\n⏳ _Este código expira em 10 minutos._\n✨ _Toque em *Preencher na Tela* abaixo (ou responda esta mensagem com o código) para preenchimento automático!_`;
 
     try {
       sendResult = await sendZapiOtpButton(db.zapiConfig, {
@@ -41513,6 +41518,8 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
         message: otpMessage,
         code: otpCode,
         buttonText: "📋 Copiar Código",
+        confirmUrl: confirmTapUrl,
+        confirmLabel: "✅ Preencher na Tela",
         channelId: "transactional_chat",
         recipientRole: "guest",
         triggerEvent: "whatsapp_otp",
@@ -41644,7 +41651,105 @@ app.post("/api/pms/pre-checkin/:code/verify-whatsapp-otp", (req, res) => {
     });
   }
 
-  res.json({ success: true, verified: true, message: "Código validado com sucesso!" });
+  validRecord.verified = true;
+  validRecord.verifiedAt = new Date().toISOString();
+  saveDatabase("otp_verified");
+
+  res.json({ success: true, verified: true, otpCode: validRecord.code, message: "Código validado com sucesso!" });
+});
+
+// Endpoint para Polling em Tempo Real do Status do OTP (Opção A - Auto-preenchimento na tela)
+app.get("/api/pms/pre-checkin/:code/otp-status", (req, res) => {
+  const code = req.params.code;
+  const guestIndex = Number(req.query.guestIndex || req.query.guest || 1);
+  const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+  if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  const now = Date.now();
+  const activeRecord = (db.fnrhWhatsappOtps || []).find(t =>
+    (t.reservationCode === (r.code || code) || String(t.reservationId) === String(r.id)) &&
+    Number(t.guestIndex) === guestIndex &&
+    !t.superseded &&
+    !t.consumedByCheckin &&
+    new Date(t.expiresAt).getTime() > now
+  );
+
+  if (!activeRecord) {
+    return res.json({ hasActiveOtp: false, verified: false });
+  }
+
+  const isVerified = Boolean(activeRecord.verified || activeRecord.verifiedByWhatsapp);
+  res.json({
+    hasActiveOtp: true,
+    verified: isVerified,
+    otpCode: isVerified ? activeRecord.code : undefined,
+    expiresAt: activeRecord.expiresAt,
+    message: isVerified ? "Código confirmado automaticamente via WhatsApp!" : undefined
+  });
+});
+
+// Endpoint de Confirmação 1-Toque direto pelo botão do WhatsApp (Opção A)
+app.get("/api/pms/pre-checkin/:code/confirm-otp-tap", (req, res) => {
+  const code = req.params.code;
+  const guestIndex = Number(req.query.guest || req.query.guestIndex || 1);
+  const cleanOtp = String(req.query.otp || "").replace(/\D/g, "").trim();
+  const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+  if (!r) {
+    return res.status(404).send("Reserva não encontrada.");
+  }
+
+  const now = Date.now();
+  const validRecord = (db.fnrhWhatsappOtps || []).find(t =>
+    (t.reservationCode === (r.code || code) || String(t.reservationId) === String(r.id)) &&
+    Number(t.guestIndex) === guestIndex &&
+    !t.superseded &&
+    t.code === cleanOtp &&
+    new Date(t.expiresAt).getTime() > now
+  );
+
+  const returnUrl = `/pre-checkin/${encodeURIComponent(r.code || code)}?step=3&guest=${guestIndex}&otp=${encodeURIComponent(cleanOtp)}`;
+
+  if (validRecord) {
+    validRecord.verified = true;
+    validRecord.verifiedAt = new Date().toISOString();
+    validRecord.verifiedByWhatsapp = true;
+    validRecord.verifiedByWhatsappAt = new Date().toISOString();
+    saveDatabase("otp_tap_confirmed");
+  }
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  return res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Código Confirmado • CorpFlats</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; box-sizing: border-box; }
+    .card { max-width: 420px; width: 100%; background: #ffffff; color: #0f172a; border-radius: 24px; padding: 28px 24px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.35); }
+    .icon { width: 64px; height: 64px; border-radius: 20px; background: #ecfdf5; color: #059669; display: flex; align-items: center; justify-content: center; font-size: 32px; margin: 0 auto 16px; border: 2px solid #a7f3d0; }
+    h1 { font-size: 20px; margin: 0 0 8px; font-weight: 800; }
+    p { font-size: 14px; color: #475569; line-height: 1.5; margin: 0 0 20px; }
+    .code { font-family: monospace; font-size: 28px; font-weight: 900; letter-spacing: 6px; color: #047857; background: #ecfdf5; border: 2px dashed #6ee7b7; border-radius: 14px; padding: 12px; margin-bottom: 20px; }
+    .btn { display: block; width: 100%; box-sizing: border-box; background: #059669; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 14px; padding: 14px 18px; border-radius: 14px; margin-bottom: 10px; }
+    .hint { font-size: 12px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✓</div>
+    <h1>${validRecord ? "Código Preenchido na Tela!" : "Link Expirado ou Inválido"}</h1>
+    ${validRecord ? `<div class="code">${cleanOtp}</div>` : ""}
+    <p>${
+      validRecord
+        ? "Seu código de segurança já foi preenchido e autenticado automaticamente na aba do seu Check-in Digital. Você já pode voltar para a tela anterior ou tocar abaixo:"
+        : "Este código expirou ou já foi substituído. Volte à tela de check-in para solicitar um novo código."
+    }</p>
+    <a class="btn" href="${returnUrl}">Voltar para o Check-in Digital →</a>
+    <div class="hint">Se você estava fazendo o check-in em outra aba ou no computador, a tela já foi atualizada sozinha!</div>
+  </div>
+</body>
+</html>`);
 });
 
 app.post("/api/pms/pre-checkin", async (req, res) => {
@@ -41732,6 +41837,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       whatsapp2faVerified = true;
       verifiedOtpRecord.verified = true;
       verifiedOtpRecord.verifiedAt = new Date().toISOString();
+      verifiedOtpRecord.consumedByCheckin = true;
     } else if (!isGovTriagemMode) {
       return res.status(400).json({
         error: "Código de confirmação do WhatsApp incorreto ou expirado. Por favor, confira o código de 6 dígitos recebido ou solicite um novo."
