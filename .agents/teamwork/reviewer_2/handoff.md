@@ -1,130 +1,153 @@
-# Review & Adversarial Quality Report — reviewer_2
+# Handoff Report: Review & Adversarial Critic — Milestone M1 (Emissão de NFS-e no WhatsApp da Sofia)
 
-**Verdict**: **APPROVE**
+**Agente**: reviewer_2 (Roles: reviewer, critic)  
+**Parent**: orchestrator_21 (Conversation ID: `d148d17c-b644-4690-94c7-bab73af837cc`)  
+**Data**: 2026-11-02  
+**Milestone**: M1  
+**Verdict**: **REQUEST_CHANGES**  
+**Overall Risk Assessment**: **HIGH** (Falha funcional crítica na confirmação com datas e em alterações descritivas)
+
+---
 
 ## 1. Observation
-1. **Execution of Audit Script (`scripts/restore-and-audit-contacts.mjs`)**:
-   - Command executed:
-     ```bash
-     node scripts/restore-and-audit-contacts.mjs --audit-only
-     ```
-   - Verbatim console output:
-     ```
-     ================================================================
-      CorpFlats - Auditoria e Restauração de Contatos (Google & CRM)
-     ================================================================
-     Carregando banco de dados de: C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\data\database.json
 
-     [1/4] Executando auditoria do estado inicial (Before State)...
-     - Hóspedes corrompidos detectados: 0
-     - additionalPhones com vazamento cruzado: 0
-     - Reservas com slots corrompidos: 0
-     - Conversas WhatsApp desvinculadas: 0
+### 1.1 Verificação de Paridade de Arquivos Gêmeos (Twin Parity)
+- **Comando**:
+  ```powershell
+  Set-Location 'c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager'; Get-FileHash 'artifacts/api-server/whatsapp-ai-service.mjs', 'scripts/whatsapp-ai-service.mjs' | Format-Table -AutoSize
+  ```
+- **Resultado Observado**:
+  - `artifacts/api-server/whatsapp-ai-service.mjs`: `A2CEA7E72AD642E6505ED7298F9D630DE9572EF58411107955191AAF0B4784BC`
+  - `scripts/whatsapp-ai-service.mjs`: `A2CEA7E72AD642E6505ED7298F9D630DE9572EF58411107955191AAF0B4784BC`
+  - *Paridade byte-a-byte confirmada (100% idênticos)*.
 
-     [INFO] Modo --audit-only ativo. Nenhuma alteração aplicada.
-     {
-       "timestamp": "2026-10-29T17:54:23.996Z",
-       "corruptedGuests": [],
-       "contaminatedAdditionalPhones": [],
-       "corruptedReservations": [],
-       "mislinkedConversations": [],
-       "sharedPhoneGroups": [],
-       "googleContactsIssues": []
-     }
-     ```
-   - Zero corrupted guests, zero cross-contaminated additional phones, zero corrupted reservation slots, zero mislinked WhatsApp conversations.
+### 1.2 Execução do Teste Automatizado Pontual (R4 & AGENTS.md)
+- **Comando**:
+  ```powershell
+  Set-Location 'c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager'; node --test tests/sofia-fiscal-whatsapp-confirmation.test.mjs
+  ```
+- **Resultado Observado**:
+  - TAP version 13, 6 subtestes executados, 6 passaram, 0 falhas, duração ~2.4s.
+  - Regra de ouro de AGENTS.md estritamente cumprida: nenhum teste global ou varredura de diretório executado.
+  - `data/database.json` de produção preservado (SHA-256 e mtime inalterados).
 
-2. **Database Verification in `data/database.json`**:
-   - **Roselene (Guest 143) vs Sintia (Guest 203)**:
-     - Guest 143: `name: "Roselene"`, `phone: "21976403551"`, `additionalPhones: []`, `googleContactDisplayName: "Roselene • CorpFlats"`.
-     - Reservation `RES-712-0012`: `guestPhone: "21976403551"`, `guests[0].phone: "21976403551"`, `guests[0].guestId: 143`.
-     - Guest 203: `name: "Sintia"`, `phone: "21997598289"`, `additionalPhones: []`.
-   - **Fabiana (Guest 359) vs João Eduardo Leal Correa (Guest 20)**:
-     - Guest 359: `name: "Fabiana"`, `phone: "28999136926"`, `additionalPhones: []`, `reservationIds: [539]`, `googleContactDisplayName: "Fabiana • CorpFlats [UH 509]"`.
-     - Reservation `RES-509-0539`: `guestId: 359`, `guestName: "Fabiana"`, `guestPhone: "28999136926"`, `guests[0].phone: "28999136926"`.
-     - Guest 20: `name: "João Eduardo Leal Correa"`, `phone: "19982405600"`, `additionalPhones: []`, `reservationIds: [373]`. (Excludes `28999136926` and reservation 539).
-   - **Gustavo (Guest 144) vs Guido (Guest 204)**:
-     - Guest 144: `phone: "22981149914"`, `additionalPhones: []`, `RES-715-0013`: `guestPhone: "22981149914"`.
-     - Guest 204: `phone: "27999682556"`, `additionalPhones: []`.
-   - **Dayana (Guest 141) vs Aline (Guest 202)**:
-     - Guest 141: `phone: "21965567043"`, `additionalPhones: []`, `RES-313-0002`: `guestPhone: "21965567043"`.
-     - Guest 202: `phone: "22998622492"`, `additionalPhones: []`.
-   - **Luiz Carlos (Guest 154) & Selma (Guest 188)**:
-     - Guest 154: `additionalPhones: []`.
-     - Guest 188: `additionalPhones: []`.
-   - **WhatsApp Conversations (`db.whatsappConversations`)**:
-     - `5521997598289`: `name: "Sintia"`, `reservationCode: "RES-313-0025"`, `flatNumber: "313"`.
-     - `5521967401502`: `name: "Mathaus"`, `reservationCode: "RES-907-0258"`, `flatNumber: "907"`.
-     - `5522998622492`: `name: "Aline"`, `reservationCode: "RES-116-0032"`, `flatNumber: "116"`.
-     - `5521967558194`: `name: "Sergio"`, `reservationCode: "RES-904-0014"`, `flatNumber: "904"`.
-     - `5521976403551`: `name: "Roselene"`, `reservationCode: "RES-712-0012"`, `flatNumber: "712"`.
-     - `5528999136926`: `name: "Fabiana"`, `reservationCode: "RES-509-0539"`, `flatNumber: "509"`.
-     - `5521996701988`: `name: "Marco"`, `reservationCode: "RES-512-0295"`, `flatNumber: "512"`.
+### 1.3 Inspeção de Código e Descobertas Forenses
+Inspecionando diretamente `artifacts/api-server/whatsapp-ai-service.mjs`:
+- **Linhas 8971-9013 (`parseFlexibleMoney`)**:
+  ```javascript
+  const m1 = clean.match(/(?:R\$|valor|total|de|diaria|diária|custo|preco|preço|para)\s*:?\s*(?:R\$\s*)?([\d\.,]+)/i);
+  if (m1) {
+    const v = m1[1].replace(/\./g, "").replace(",", ".");
+    const num = parseFloat(v);
+    if (!isNaN(num) && num > 0) return num.toFixed(2);
+  }
+  ```
+  - A regex inclui preposições genéricas em português (`de` e `para`) sem exigir símbolo de moeda (`R$`) nem unidade (`reais`), e sem olhar adiante para descartar barras de datas (`/`).
+  - Como `[\d\.,]+` para na barra `/`, qualquer data como `01/11/2026` após a preposição `de` casa `de 01` e é interpretada como **R$ 1,00** (`parseFlexibleMoney("... de 01/11/2026") === "1.00"`).
 
-3. **Inspection of Before/After Report (`docs/google-contacts-audit-before-after.md`)**:
-   - Complete 115-line report detailing:
-     - Section 1: Executive Summary of the incident and root causes.
-     - Section 2: Detailed comparative table of all 10 affected guests before and after restoration.
-     - Section 3: WhatsApp conversation alignment table for all 6 re-linked conversations.
-     - Section 4: Google People API operations list (PATCH unmerges for João Eduardo and Raiza; POST creates for 7 dedicated contacts).
-     - Section 5: Programmatic verification results covering all 9 automated assertions (100% PASS).
-     - Section 6: Independent verification command (`node scripts/restore-and-audit-contacts.mjs --audit-only`).
+- **Linhas 9621-9626 (`handleWhatsAppFiscalFlow` - Trava de Valor)**:
+  ```javascript
+  // 1.1 Trava de Valor (R2)
+  const moneyVal = parseFlexibleMoney(messageText);
+  const mentionsValue = /\b(?:valor|pre[cç]o|total|di[aá]ria|muda\s*o\s*valor|alterar\s*o\s*valor|muda\s*para|coloca|troca\s*o\s*valor)\b/i.test(messageText);
+  const parsedNum = moneyVal ? Number(moneyVal) : null;
+  const isValueChange = parsedNum && parsedNum > 0 && Math.abs(parsedNum - Number(conf.valorOriginal || conf.valorServico)) > 0.01;
+  ```
+  - A variável `mentionsValue` foi declarada na linha 9623, mas **NÃO É UTILIZADA** na condição `isValueChange` na linha 9625!
+  - O bloco de Trava de Valor (linhas 9621-9698) é executado **antes** da checagem de alteração cadastral/descritiva (linhas 9700-9762) e da confirmação explícita (linhas 9764-9818).
 
-4. **Dedicated Test Suite & Parity Check**:
-   - Command: `node --test tests/google-contacts-sync-fix.test.mjs`
-   - Output: 8 passing tests, 0 failures. Confirms byte-for-byte SHA256 parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`, and verifies that caller ID and contact sync functions reject mismatched DDD suffixes and incompatible names.
+### 1.4 Testes de Estresse Adversarial (Comprovados via Execução Pontual)
 
-5. **Git Status & Remote Push Verification**:
-   - Commands:
-     - `git status -uno` -> `On branch main. Your branch is up to date with 'origin/main'. no changes added to commit`.
-     - `git log -n 3 --oneline` ->
-       ```
-       74d8110 test(contacts): add adversarial stress test suite for google contacts sync and caller id isolation
-       1cff83b fix(contacts): automated audit and restoration of contaminated CRM records and Google contacts (M3/M4)
-       a559a25 fix(contacts): harden Google Contacts sync and caller ID isolation (M2)
-       ```
-   - Confirmed all code changes are pushed to `origin/main`.
+1. **Cenário Adversarial A: Confirmação legítima contendo datas de estadia**
+   - Entrada: `"Confirmo, pode emitir a nota de 01/11 a 05/11"`
+   - Esperado (R1): Emitir a nota fiscal (`action: "emitted_nfse"`).
+   - **Resultado Real Obtido**:
+     `action: "value_lock_engaged"`, `requestedValue: 1`
+     *Impacto*: A emissão é travada, a Sofia não emite a nota e envia um alerta falso para o gestor informando que o cliente solicitou alteração do valor para R$ 1,00!
+
+2. **Cenário Adversarial B: Retificação de descrição contendo datas**
+   - Entrada: `"Muda a descrição para Diárias de 01/11 a 05/11"`
+   - Esperado (R2): Atualizar a descrição (`action: "updated_conference_data"`).
+   - **Resultado Real Obtido**:
+     `action: "value_lock_engaged"`, `requestedValue: 1`
+     *Impacto*: A Sofia não atualiza a descrição e dispara alerta falso de segurança de valor.
+
+3. **Cenário Adversarial C: Retificação de descrição contendo número de diárias**
+   - Entrada: `"Muda a descrição para Hospedagem de 3 diárias no flat 605"`
+   - Esperado (R2): Atualizar a descrição (`action: "updated_conference_data"`).
+   - **Resultado Real Obtido**:
+     `action: "value_lock_engaged"`, `requestedValue: 3`
+     *Impacto*: `de 3` é capturado como R$ 3,00, bloqueando a emissão.
+
+4. **Cenário Adversarial D: Confirmação mencionando número do flat diretamente**
+   - Entrada: `"Pode emitir para 501"`
+   - Esperado (R1): Emitir a nota fiscal.
+   - **Resultado Real Obtido**:
+     `action: "value_lock_engaged"`, `requestedValue: 501`
+     *Impacto*: `para 501` é capturado como R$ 501,00, bloqueando a emissão da reserva de R$ 600,00.
+
+---
 
 ## 2. Logic Chain
-1. **Rigor of Audit Verification**:
-   - Observation 1 demonstrates that running `node scripts/restore-and-audit-contacts.mjs --audit-only` directly against `data/database.json` evaluates all corrupted guest definitions, additional phone cross-references, reservation slot phone mismatches, and WhatsApp conversation links.
-   - The returned JSON contains exclusively empty arrays (`"corruptedGuests": []`, `"contaminatedAdditionalPhones": []`, `"corruptedReservations": []`, `"mislinkedConversations": []`), confirming that the CRM state is 100% clean.
-2. **True Restoration vs Facade Implementation**:
-   - Observation 2 confirms that values in `data/database.json` are not simulated or mocked:
-     - Phone `21976403551` belongs solely to Roselene (Guest 143).
-     - Phone `28999136926` belongs solely to Fabiana (Guest 359).
-     - Extraneous numbers in `additionalPhones` have been completely expunged for João Eduardo, Luiz Carlos, and Selma.
-     - WhatsApp conversations map directly to valid, existing reservation codes and flat numbers.
-3. **Report Fidelity**:
-   - Observation 3 shows that `docs/google-contacts-audit-before-after.md` documents every corrupted contact ID, previous wrong numbers, correct phone numbers, and post-restoration status. The documented details match the actual database state and code logic exactly.
-4. **Compliance with Safety Rules**:
-   - No global test suites (`tests/*.test.mjs`) were executed.
-   - No external WhatsApp messages were sent.
-   - All commits are pushed to `origin/main`.
+
+1. **Premissa de Requisito (R1 & R2)**:
+   - R1 estipula que a Sofia deve emitir a nota fiscal mediante confirmação do solicitante.
+   - R2 estipula que alterações cadastrais ou de descrição devem ser aplicadas diretamente sem travar a emissão, e que **apenas pedidos reais de alteração de valor** devem acionar a trava de segurança e a aprovação do gestor.
+
+2. **Causa Raiz do Falso Positivo**:
+   - `parseFlexibleMoney` inclui as preposições `de` e `para` sem restringir se o número seguinte é uma data (ex.: `01/11`) ou quantidade/apartamento (ex.: `3 diárias`, `501`), extraindo falsos valores monetários (`1.00`, `3.00`, `501.00`).
+   - `handleWhatsAppFiscalFlow` não exige menção explícita a termos monetários (`valor`, `preço`, `R$`, `reais`), pois `mentionsValue` foi declarada mas ignorada em `isValueChange`.
+   - O teste do worker (`tests/sofia-fiscal-whatsapp-confirmation.test.mjs`) testou apenas `"Diárias executivas Flat 501"` (sem a preposição `de` seguida de números ou datas), contornando acidentalmente o bug e permitindo falso positivo na suíte pontual.
+
+3. **Dedução Lógica**:
+   - No uso real em hotelaria, é extremamente frequente o hóspede ou o gestor dizer: `"Confirmo a nota de 01/11 a 05/11"` ou `"Muda a descrição para Diárias de 01/11 a 05/11"`.
+   - No estado atual, o sistema falha tanto no R1 quanto no R2 para essas interações cotidianas, gerando falsa sensação de segurança e sobrecarregando o gestor com notificações espúrias de R$ 1,00.
+
+---
 
 ## 3. Caveats
-- No caveats. The database records, audit script, sync logic, test suite, and before/after documentation were all inspected and verified directly on the filesystem.
 
-## 4. Conclusion
-The implementation of Milestones 3 & 4 (Comprehensive Data Audit & Automated Restoration) satisfies all requirements from `ORIGINAL_REQUEST.md` (R1-R4, lines 890–930) and strictly complies with `AGENTS.md`. No integrity violations, facades, or regressions were detected.
+- **Integridade**: Não se trata de uma violação intencional de integridade (não há dados marretados ou facadas deliberadas); o motor nacional e o restante do fluxo fiscal estão bem estruturados. Trata-se de uma falha de regex e precedência lógica (oversight) na extração monetária.
+- **Isolamento e Segurança**: A validação em ambiente `NODE_ENV === "test"` e o isolamento de `data/database.json` foram estritamente cumpridos.
+- **R3**: A restrição por telefone (`isDeveloperPhone`) funciona perfeitamente para números não autorizados (`handled: false`).
 
-**Explicit Verdict**: **APPROVE**
+---
+
+## 4. Conclusion & Findings
+
+### Verdict: **REQUEST_CHANGES**
+
+### [Critical] Finding 1: Trava de Valor Falsa em Confirmações e Alterações Descritivas com Datas/Quantidades
+- **Onde**: `artifacts/api-server/whatsapp-ai-service.mjs` (linhas 8976 e 9621-9626) e `scripts/whatsapp-ai-service.mjs`.
+- **Por que**:
+  1. `parseFlexibleMoney` interpreta `de 01/11/2026` como `R$ 1,00`, `de 3 diárias` como `R$ 3,00` e `para 501` como `R$ 501,00`.
+  2. `mentionsValue` é declarada na linha 9623 mas não utilizada na linha 9625.
+  3. Mensagens legítimas de confirmação ou de alteração de descrição são capturadas indevidamente pela trava de valor, bloqueando a emissão e disparando alertas espúrios de alteração de valor de R$ 1,00 para o gestor.
+- **Sugestão de Correção**:
+  1. Em `parseFlexibleMoney`:
+     - Não permitir que preposições soltas `de` ou `para` casem números monetários a menos que venham acompanhadas de `R$` ou seguidas de `reais`/`real` ou de palavras de valor (`valor de`, `total de`, `para o valor de`, etc.).
+     - Adicionar negative lookahead para não casar dígitos que fazem parte de datas com barras (`(?!\s*\/)`).
+  2. Em `handleWhatsAppFiscalFlow`:
+     - Exigir que `mentionsValue` (ou intenção inequívoca de preço/valor) seja verdadeira para disparar `isValueChange`.
+     - Se `matchDesc` estiver presente, garantir que o texto da descrição não seja interpretado como novo valor faturado, a menos que haja comando explícito de alteração de valor monetário (ex.: `"muda o valor para..."`).
+  3. Replicar correções no arquivo gêmeo `scripts/whatsapp-ai-service.mjs` mantendo paridade SHA-256.
+  4. Adicionar testes pontuais em `tests/sofia-fiscal-whatsapp-confirmation.test.mjs` cobrindo explicitamente:
+     - Confirmação com menção a datas: `"Confirmo, pode emitir a nota de 01/11 a 05/11"`.
+     - Alteração de descrição com datas: `"Muda a descrição para Diárias de 01/11 a 05/11"`.
+
+---
 
 ## 5. Verification Method
-To independently reproduce and verify this review:
-1. Run the audit script in audit-only mode:
-   ```bash
-   node scripts/restore-and-audit-contacts.mjs --audit-only
+
+Para reproduzir a falha de forma pontual e independente:
+
+1. **Reprodução do Falso Positivo com Datas**:
+   ```powershell
+   Set-Location 'c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager'; node --input-type=module -e "import { handleWhatsAppFiscalFlow } from './artifacts/api-server/whatsapp-ai-service.mjs'; const conv = { id: 'c1', phone: '22998505276', fiscalConferenceState: { status: 'awaiting_confirmation', valorOriginal: 600, valorServico: 600 } }; const db = { zapiConfig: { developerPhone: '22998505276' }, whatsappAiSettings: { developerPhone: '22998505276' }, whatsappConversations: [conv] }; handleWhatsAppFiscalFlow({ db, cleanTarget: '22998505276', messageText: 'Confirmo, pode emitir a nota de 01/11 a 05/11', conv }).then(r => console.log('Resultado:', r.action, 'Valor Solicitado:', r.requestedValue));"
    ```
-   *Expected output:* 0 corrupted guests, 0 contaminated additional phones, 0 corrupted reservations, 0 mislinked conversations. All arrays empty.
-2. Run the dedicated unit test suite:
-   ```bash
-   node --test tests/google-contacts-sync-fix.test.mjs
+   *Comportamento observado antes do fix*: Imprime `Resultado: value_lock_engaged Valor Solicitado: 1` em vez de emitir a nota fiscal.
+
+2. **Validação da Paridade dos Arquivos Gêmeos**:
+   ```powershell
+   Set-Location 'c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager'; Get-FileHash 'artifacts/api-server/whatsapp-ai-service.mjs', 'scripts/whatsapp-ai-service.mjs' | Format-Table -AutoSize
    ```
-   *Expected output:* 8 passed tests, 0 failed.
-3. Verify git synchronization:
-   ```bash
-   git status
-   git log -n 3 --oneline
-   ```
-   *Expected output:* Working tree clean, up to date with `origin/main`.

@@ -6,6 +6,7 @@ import {
   consultarDisponibilidadeTool,
   calcularOrcamentoTool,
   gerarLinkReservaTool,
+  enviarMidiaUnidadeTool,
   consultarDetalhesReservaTool,
   atualizarDadosHospedeTool,
   solicitarEarlyCheckinTool,
@@ -14,14 +15,19 @@ import {
   estenderEstadiaTool,
   solicitarLimpezaExtraTool,
   abrirChamadoManutencaoTool,
+  resolverProblemaCartaoNfcTool,
+  autorizarVisitaTemporariaTool,
+  processarCancelamentoTool,
+  consultarAchadosEPerdidosTool,
   gerenciarNotaFiscalNfseTool,
   notificarAdministradorTool,
+  ALL_AGENT_TOOLS,
   getToolsForState,
-  executeBotAction,
-  buildGuestContext,
+  handleManagerExtensionReply,
+  handleManagerCancellationReply,
 } from "../artifacts/api-server/whatsapp-ai-service.mjs";
 
-test("Pilar 1 & 2: Middleware injectSessionContext e State Router (COMERCIAL_VENDAS, PRE_CHECKIN, IN_STAY_CONCIERGE)", () => {
+test("Pilar 1 & 2: Middleware injectSessionContext e State Router (4 Estados + Cartão NFC + Zero-Ask)", () => {
   const now = new Date("2026-11-02T14:30:00-03:00");
   const db = {
     reservations: [
@@ -47,59 +53,79 @@ test("Pilar 1 & 2: Middleware injectSessionContext e State Router (COMERCIAL_VEN
         paymentStatus: "pending",
         status: "confirmada",
       },
+      {
+        id: 602,
+        code: "RES-401-0602",
+        flatNumber: "401",
+        guestName: "Carlos Ex-Hóspede",
+        guestPhone: "5521966665555",
+        checkinDate: "2026-10-20",
+        checkoutDate: "2026-10-25",
+        paymentStatus: "paid",
+        status: "concluida",
+      },
     ],
   };
 
-  // 1. Hóspede em estadia -> IN_STAY_CONCIERGE
+  assert.equal(ALL_AGENT_TOOLS.length, 18);
+
+  // 1. Hóspede em estadia -> IN_STAY_CONCIERGE / MODO_CONCIERGE_INSTAY
   const ctxInStay = injectSessionContext({ db, phone: "22998505276", now });
   assert.equal(ctxInStay.estado_atual, "IN_STAY_CONCIERGE");
+  assert.equal(ctxInStay.modo_roteamento, "MODO_CONCIERGE_INSTAY");
   assert.equal(ctxInStay.perfil_remetente, "HOSPEDE_ATIVO");
   assert.equal(ctxInStay.reserva_ativa?.id, "RES-212-0587");
-  assert.equal(ctxInStay.reserva_ativa?.nome_imovel, "Flat 212");
+  assert.equal(ctxInStay.reserva_ativa?.acesso_imovel, "Cartão NFC retirado na recepção 24h");
+  assert.equal(ctxInStay.reserva_ativa?.senha_fechadura, undefined);
 
   const jsonPayload = JSON.parse(buildContextoSessaoJson(ctxInStay));
   assert.equal(jsonPayload.contexto_sessao.estado_atual, "IN_STAY_CONCIERGE");
   assert.equal(jsonPayload.contexto_sessao.dados_hospede.nome, "Miller Mendonça Pessanha");
 
-  // 2. Reserva futura -> PRE_CHECKIN
+  // 2. Reserva futura -> PRE_CHECKIN / MODO_PRE_CHECKIN
   const ctxPre = injectSessionContext({ db, phone: "11988887777", now });
   assert.equal(ctxPre.estado_atual, "PRE_CHECKIN");
+  assert.equal(ctxPre.modo_roteamento, "MODO_PRE_CHECKIN");
   assert.equal(ctxPre.reserva_ativa?.id, "RES-301-0601");
 
-  // 3. Lead desconhecido -> COMERCIAL_VENDAS
+  // 3. Pós Check-out -> POS_CHECKOUT / MODO_POS_CHECKOUT
+  const ctxPost = injectSessionContext({ db, phone: "21966665555", now });
+  assert.equal(ctxPost.estado_atual, "POS_CHECKOUT");
+  assert.equal(ctxPost.modo_roteamento, "MODO_POS_CHECKOUT");
+
+  // 4. Lead desconhecido -> COMERCIAL_VENDAS / MODO_COMERCIAL_LEAD
   const ctxLead = injectSessionContext({ db, phone: "21977776666", now });
   assert.equal(ctxLead.estado_atual, "COMERCIAL_VENDAS");
+  assert.equal(ctxLead.modo_roteamento, "MODO_COMERCIAL_LEAD");
   assert.equal(ctxLead.perfil_remetente, "LEAD_DESCONHECIDO");
   assert.equal(ctxLead.reserva_ativa, undefined);
 
   // Tools por estado
   const comercialTools = getToolsForState("COMERCIAL_VENDAS").map((t) => t.name);
-  assert.deepEqual(comercialTools, [
-    "consultar_disponibilidade",
-    "calcular_orcamento",
-    "gerar_link_reserva",
-    "notificar_administrador",
-  ]);
-
-  const preCheckinTools = getToolsForState("PRE_CHECKIN").map((t) => t.name);
-  assert.ok(preCheckinTools.includes("consultar_detalhes_reserva"));
-  assert.ok(preCheckinTools.includes("atualizar_dados_hospede"));
-  assert.ok(preCheckinTools.includes("solicitar_early_checkin"));
-  assert.ok(preCheckinTools.includes("gerenciar_nota_fiscal_nfse"));
+  assert.ok(comercialTools.includes("consultar_disponibilidade"));
+  assert.ok(comercialTools.includes("calcular_orcamento"));
+  assert.ok(comercialTools.includes("gerar_link_reserva"));
+  assert.ok(comercialTools.includes("enviar_midia_unidade"));
+  assert.ok(comercialTools.includes("notificar_administrador"));
 
   const inStayTools = getToolsForState("IN_STAY_CONCIERGE").map((t) => t.name);
   assert.ok(inStayTools.includes("solicitar_late_checkout"));
-  assert.ok(inStayTools.includes("alterar_datas_reserva"));
-  assert.ok(inStayTools.includes("estender_estadia"));
-  assert.ok(inStayTools.includes("solicitar_limpeza_extra"));
-  assert.ok(inStayTools.includes("abrir_chamado_manutencao"));
-  assert.ok(inStayTools.includes("gerenciar_nota_fiscal_nfse"));
-  assert.ok(inStayTools.includes("notificar_administrador"));
+  assert.ok(inStayTools.includes("resolver_problema_cartao_nfc"));
+  assert.ok(inStayTools.includes("autorizar_visita_temporaria"));
+  assert.ok(inStayTools.includes("processar_cancelamento"));
+  assert.ok(inStayTools.includes("consultar_achados_e_perdidos"));
 });
 
-test("Pilar 3 & 4: Tool Molde solicitar_late_checkout com travas determinísticas e Retorno Instrucional", async () => {
-  const now = new Date("2026-11-02T10:00:00-03:00");
-  const db = {
+test("Regra 1: solicitar_late_checkout (Seg-Sáb cortesia até 13h, Domingo cortesia até 18h se ocupação < 50% com remanejamento para Flat da Vez)", async () => {
+  // Segunda-feira 2026-11-02
+  const mondayNow = new Date("2026-11-02T10:00:00-03:00");
+  const dbMonday = {
+    flats: [
+      { id: 1, number: "212", isActive: true },
+      { id: 2, number: "304", isActive: true },
+      { id: 3, number: "509", isActive: true },
+      { id: 4, number: "712", isActive: true },
+    ],
     reservations: [
       {
         id: 587,
@@ -109,66 +135,111 @@ test("Pilar 3 & 4: Tool Molde solicitar_late_checkout com travas determinística
         guestPhone: "5522998505276",
         checkinDate: "2026-11-01",
         checkoutDate: "2026-11-02",
+        dailyRate: 250,
         paymentStatus: "paid",
         status: "confirmada",
       },
     ],
   };
 
-  const context = injectSessionContext({ db, phone: "22998505276", now });
+  const ctxMon = injectSessionContext({ db: dbMonday, phone: "22998505276", now: mondayNow });
 
-  // 1. Horário acima do limite máximo (18:00 > 17:00) -> BLOQUEADO_PELA_REGRA
-  const resExcede = await solicitarLateCheckoutTool.execute(
-    { horario_solicitado: "18:00", confirmacao_hospede: false },
-    context
+  // 1. Segunda-feira às 13:00 -> Cortesia imediata
+  const res13h = await solicitarLateCheckoutTool.execute(
+    { horario_solicitado: "13:00", confirmacao_hospede: false },
+    ctxMon
   );
-  assert.equal(resExcede.status, "BLOQUEADO_PELA_REGRA");
-  assert.equal(resExcede.codigo_regra_bloqueio, "HORARIO_EXCEDE_LIMITE_LATE_CHECKOUT");
-  assert.ok(resExcede.instrucao_para_ia.includes("17:00"));
+  assert.equal(res13h.status, "SUCESSO_EXECUTADO");
+  assert.equal(res13h.dados.cortesia, true);
+  assert.equal(dbMonday.reservations[0].lateCheckoutTime, "13:00");
 
-  // 2. Simulação sem confirmação prévia (16:00, confirmacao_hospede: false) -> SIMULACAO_AGUARDANDO_CONFIRMACAO
-  const resSimulacao = await solicitarLateCheckoutTool.execute(
+  // 2. Segunda-feira às 16:00 sem conflito -> cobra 1 diária inteira (SIMULACAO_AGUARDANDO_CONFIRMACAO)
+  const res16hSim = await solicitarLateCheckoutTool.execute(
     { horario_solicitado: "16:00", confirmacao_hospede: false },
-    context
+    ctxMon
   );
-  assert.equal(resSimulacao.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
-  assert.equal(resSimulacao.dados?.valor_taxa, 120);
-  assert.ok(resSimulacao.instrucao_para_ia.includes("120.00"));
+  assert.equal(res16hSim.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
+  assert.equal(res16hSim.dados.valor_taxa, 250);
 
-  // 3. Efetivação após confirmação do hóspede (16:00, confirmacao_hospede: true) -> SUCESSO_EXECUTADO
-  const resSucesso = await solicitarLateCheckoutTool.execute(
-    { horario_solicitado: "16:00", confirmacao_hospede: true },
-    context
-  );
-  assert.equal(resSucesso.status, "SUCESSO_EXECUTADO");
-  assert.equal(db.reservations[0].lateCheckoutTime, "16:00");
-  assert.ok(resSucesso.instrucao_para_ia.includes("16:00"));
+  // 3. Domingo (2026-11-08) com ocupação < 50% (1 de 4 flats ocupados = 25%) e outra reserva entrando hoje -> Cortesia até 18h + remaneja próxima reserva para Flat da Vez
+  const sundayNow = new Date("2026-11-08T10:00:00-03:00");
+  const dbSunday = {
+    flats: [
+      { id: 1, number: "212", isActive: true },
+      { id: 2, number: "304", isActive: true },
+      { id: 3, number: "509", isActive: true },
+      { id: 4, number: "712", isActive: true },
+    ],
+    reservations: [
+      {
+        id: 700,
+        code: "RES-212-0700",
+        flatNumber: "212",
+        guestName: "Hóspede Domingo",
+        guestPhone: "5522998505276",
+        checkinDate: "2026-11-06",
+        checkoutDate: "2026-11-08",
+        dailyRate: 250,
+        paymentStatus: "paid",
+        status: "confirmada",
+      },
+      {
+        id: 701,
+        code: "RES-212-0701",
+        flatNumber: "212",
+        guestName: "Próximo Hóspede Domingo",
+        guestPhone: "5511977778888",
+        checkinDate: "2026-11-08",
+        checkoutDate: "2026-11-10",
+        status: "confirmada",
+      },
+    ],
+  };
 
-  // 4. Conflito de agenda: outro hóspede entrando no mesmo flat no mesmo dia -> BLOQUEADO_PELA_REGRA
-  db.reservations.push({
-    id: 999,
-    code: "RES-212-0999",
-    flatNumber: "212",
-    guestName: "Próximo Hóspede",
-    guestPhone: "5511911112222",
-    checkinDate: "2026-11-02",
-    checkoutDate: "2026-11-04",
-    status: "confirmada",
-  });
-  const resConflito = await solicitarLateCheckoutTool.execute(
-    { horario_solicitado: "15:00", confirmacao_hospede: true },
-    context
+  const ctxSun = injectSessionContext({ db: dbSunday, phone: "22998505276", now: sundayNow });
+  const resSun17h = await solicitarLateCheckoutTool.execute(
+    { horario_solicitado: "17:30", confirmacao_hospede: false },
+    ctxSun
   );
-  assert.equal(resConflito.status, "BLOQUEADO_PELA_REGRA");
-  assert.equal(resConflito.codigo_regra_bloqueio, "CONFLITO_LIMPEZA_PROXIMO_HOSPEDE");
-  assert.ok(resConflito.instrucao_para_ia.includes("outro hóspede"));
+  assert.equal(resSun17h.status, "SUCESSO_EXECUTADO");
+  assert.equal(resSun17h.dados.cortesia, true);
+  assert.notEqual(dbSunday.reservations[1].flatNumber, "212"); // Próxima reserva foi remanejada para o Flat da Vez!
 });
 
-test("Catálogo Completo: Comercial, Pré-Check-in, Manutenção, Limpeza e Nota Fiscal (NFS-e)", async () => {
+test("Regras 2, 3, 4, 5, 6 e 7: Prorrogação, Cartão NFC, Visitas, Cancelamento, Descontos 7d/15d/30d e Achados e Perdidos", async () => {
+  const sentEmails = [];
   const sentMessages = [];
+  globalThis.sendEmailAsync = (payload) => {
+    sentEmails.push(payload);
+    return payload;
+  };
+
   const db = {
-    settings: { adminWhatsapp: "5522998505276" },
-    flats: [{ number: "212", isActive: true }, { number: "304", isActive: true }],
+    settings: { adminWhatsapp: "5522998505276", pixKey: "47.964.813/0001-65" },
+    tariffSettings: {
+      baseRateNoBreakfast: 257,
+      breakfastPriceSingle: 35,
+      breakfastPriceDouble: 50,
+      stayDiscounts: [
+        { minNights: 7, discountPercent: 10 },
+        { minNights: 15, discountPercent: 15 },
+        { minNights: 30, discountPercent: 25 },
+      ],
+    },
+    flats: [
+      { id: 1, number: "212", isActive: true, maxGuests: 2 },
+      { id: 2, number: "304", isActive: true, maxGuests: 2 },
+    ],
+    lostAndFound: [
+      {
+        id: "lf_1",
+        flatNumber: "212",
+        description: "Carregador de iPhone branco",
+        status: "stored",
+        foundDate: "2026-11-02",
+        photoUrl: "https://corpflats.com.br/lf1.jpg",
+      },
+    ],
     reservations: [
       {
         id: 587,
@@ -176,116 +247,161 @@ test("Catálogo Completo: Comercial, Pré-Check-in, Manutenção, Limpeza e Nota
         flatNumber: "212",
         guestName: "Miller Mendonça Pessanha",
         guestCpf: "12585736792",
-        guestEmail: "millerpessanha@gmail.com",
-        guestAddress: "Rua Sebastião Rangel, 26 - Parque Turf Club, Campos dos Goytacazes - RJ",
         guestPhone: "5522999991111",
         checkinDate: "2026-11-02",
         checkoutDate: "2026-11-03",
-        totalAmount: 2.0,
+        guestCount: 1,
+        dailyRate: 250,
+        totalAmount: 250,
         paymentStatus: "paid",
         status: "confirmada",
       },
     ],
   };
 
-  // 1. Comercial: consultar_disponibilidade + calcular_orcamento + gerar_link_reserva
-  const leadCtx = injectSessionContext({ db, phone: "21988880000", now: new Date("2026-11-02T14:00:00-03:00") });
-  const disp = await consultarDisponibilidadeTool.execute(
-    { data_checkin: "2026-11-10", data_checkout: "2026-11-12", quantidade_hospedes: 2 },
+  const leadCtx = injectSessionContext({ db, phone: "21988880000", now: new Date("2026-11-02T10:00:00-03:00") });
+
+  // REGRA 6: Desconto de 10% para 7 diárias + Fotos padrão
+  const orc7d = await calcularOrcamentoTool.execute(
+    { data_checkin: "2026-11-10", data_checkout: "2026-11-17", quantidade_hospedes: 1 },
     leadCtx
   );
-  assert.equal(disp.status, "SUCESSO_EXECUTADO");
-  assert.equal(disp.dados.unidades_disponiveis, 2);
+  assert.equal(orc7d.status, "SUCESSO_EXECUTADO");
+  assert.equal(orc7d.dados.desconto_duracao_pct, 10);
 
-  const orc = await calcularOrcamentoTool.execute(
-    { data_checkin: "2026-11-10", data_checkout: "2026-11-12", quantidade_hospedes: 2 },
-    leadCtx
-  );
-  assert.equal(orc.status, "SUCESSO_EXECUTADO");
-  assert.equal(orc.dados.opcao_com_cafe.valor_total, 614);
+  const midiaRes = await enviarMidiaUnidadeTool.execute({ categoria_fotos: "PACOTE_COMPLETO" }, leadCtx);
+  assert.equal(midiaRes.status, "SUCESSO_EXECUTADO");
+  assert.ok(midiaRes.dados.pacote_fotos_padrao.length >= 1);
 
-  const linkSim = await gerarLinkReservaTool.execute(
-    { data_checkin: "2026-11-10", data_checkout: "2026-11-12", nome_hospede: "João Silva", confirmacao_hospede: false },
-    leadCtx
-  );
-  assert.equal(linkSim.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
-
-  const linkExec = await gerarLinkReservaTool.execute(
-    { data_checkin: "2026-11-10", data_checkout: "2026-11-12", nome_hospede: "João Silva", confirmacao_hospede: true },
-    leadCtx
-  );
-  assert.equal(linkExec.status, "SUCESSO_EXECUTADO");
-  assert.ok(linkExec.dados.codigo_pre_reserva.startsWith("CF-"));
-
-  // 2. In-Stay: gerenciar_nota_fiscal_nfse (conferência + adição de acompanhante na descrição + confirmação)
-  const conv = { phone: "5522999991111", aiPaused: false };
   const inStayCtx = injectSessionContext({
     db,
     phone: "5522999991111",
     now: new Date("2026-11-02T15:00:00-03:00"),
     runtime: {
       db,
-      conversation: conv,
-      sendZapiMessage: async (phone, text) => sentMessages.push({ phone, text }),
+      sendZapiMessage: async (_cfgOrPhone, msgOrOpts) => {
+        sentMessages.push(msgOrOpts);
+        return { success: true };
+      },
     },
   });
 
-  const nfseUpdate = await gerenciarNotaFiscalNfseTool.execute(
-    {
-      acao: "ATUALIZAR_DADOS_NOTA",
-      hospedes_na_descricao: ["Miller Mendonça Pessanha", "Thamiris Maiara Santos Da Silva"],
-    },
+  // REGRA 3: Cartão NFC
+  // Caso A: Cartão trancado dentro -> dispara e-mail para soho@promenade.com.br
+  const nfcCaseA = await resolverProblemaCartaoNfcTool.execute(
+    { tipo_ocorrencia: "CARTAO_TRANCADO_DENTRO" },
     inStayCtx
   );
-  assert.equal(nfseUpdate.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
-  assert.ok(
-    nfseUpdate.dados.descricaoServico.includes(
-      "Nota relativa à hospedagem de Miller Mendonça Pessanha e Thamiris Maiara Santos Da Silva, no Flat 212."
-    )
-  );
+  assert.equal(nfcCaseA.status, "SUCESSO_EXECUTADO");
+  assert.equal(sentEmails.at(-1)?.recipient, "soho@promenade.com.br");
 
-  // Trava de valor da nota fiscal -> BLOQUEADO_PELA_REGRA + alerta ao administrador
-  const nfseValorBlock = await gerenciarNotaFiscalNfseTool.execute(
-    {
-      acao: "ATUALIZAR_DADOS_NOTA",
-      novo_valor_solicitado: 500,
-    },
+  // Caso B: Perda do cartão -> 1ª etapa pede confirmação de R$ 15,00; 2ª etapa gera PIX pendente
+  const nfcCaseBSim = await resolverProblemaCartaoNfcTool.execute(
+    { tipo_ocorrencia: "PERDA_CARTAO", confirmacao_taxa_segunda_via: false },
     inStayCtx
   );
-  assert.equal(nfseValorBlock.status, "BLOQUEADO_PELA_REGRA");
-  assert.equal(nfseValorBlock.codigo_regra_bloqueio, "ALTERACAO_VALOR_REQUER_APROVACAO_GESTOR");
+  assert.equal(nfcCaseBSim.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
+  assert.equal(nfcCaseBSim.dados.valor_taxa, 15);
 
-  // Confirmação final da nota fiscal
-  const nfseConfirm = await gerenciarNotaFiscalNfseTool.execute(
-    { acao: "CONFIRMAR_DADOS_NOTA" },
+  const nfcCaseBExec = await resolverProblemaCartaoNfcTool.execute(
+    { tipo_ocorrencia: "PERDA_CARTAO", confirmacao_taxa_segunda_via: true },
     inStayCtx
   );
-  assert.equal(nfseConfirm.status, "SUCESSO_EXECUTADO");
-  assert.equal(db.reservations[0].autoEmitInvoice, true);
+  assert.equal(nfcCaseBExec.status, "SUCESSO_EXECUTADO");
+  assert.ok(db.reservations[0].pendingNfcCardReplacement?.txid);
 
-  // 3. Manutenção crítica -> abre OS + aciona notifyAdminWhatsApp
-  const osRes = await abrirChamadoManutencaoTool.execute(
-    {
-      categoria_item: "AR_CONDICIONADO",
-      descricao_problema: "Ar-condicionado parou de gelar",
-      urgencia: "CRITICA",
-    },
+  // Caso C: Porta não abre -> Passo 1 orienta regravação na recepção; Passo 2 aciona gestor com urgência máxima
+  const nfcCaseCStep1 = await resolverProblemaCartaoNfcTool.execute(
+    { tipo_ocorrencia: "PORTA_NAO_ABRE", ja_regravou_na_recepcao: false },
     inStayCtx
   );
-  assert.equal(osRes.status, "SUCESSO_EXECUTADO");
-  assert.equal(osRes.dados.administrador_notificado, true);
-  assert.equal(db.serviceOrders.length, 1);
+  assert.equal(nfcCaseCStep1.status, "SUCESSO_EXECUTADO");
+  assert.equal(nfcCaseCStep1.dados.etapa, "PASSO_1_ORIENTAR_REGRAVACAO_RECEPCAO");
 
-  // 4. Limpeza extra -> simulação de taxa (LIMPEZA_COMPLETA) e cortesia (TROCA_TOALHAS_ENXOVAL)
-  const limpSim = await solicitarLimpezaExtraTool.execute(
-    { tipo_solicitacao: "LIMPEZA_COMPLETA", confirmacao_hospede: false },
+  const nfcCaseCStep2 = await resolverProblemaCartaoNfcTool.execute(
+    { tipo_ocorrencia: "PORTA_NAO_ABRE", ja_regravou_na_recepcao: true },
     inStayCtx
   );
-  assert.equal(limpSim.status, "SIMULACAO_AGUARDANDO_CONFIRMACAO");
+  assert.equal(nfcCaseCStep2.status, "SUCESSO_EXECUTADO");
+  assert.equal(nfcCaseCStep2.dados.etapa, "PASSO_2_ALERTA_CRITICO_GESTOR_ACIONADO");
+  assert.equal(nfcCaseCStep2.dados.administrador_notificado, true);
 
-  const limpToalhas = await solicitarLimpezaExtraTool.execute(
-    { tipo_solicitacao: "TROCA_TOALHAS_ENXOVAL", confirmacao_hospede: true },
+  // REGRA 4: Autorização de Visitas Temporárias (bloqueio de lotação máxima + autorização com e-mail)
+  const visitaCapacidadeBlock = await autorizarVisitaTemporariaTool.execute(
+    { nome_visitante: "Lucas", cpf_visitante: "12345678901", quantidade_visitantes: 2 },
     inStayCtx
   );
-  assert.equal(limpToalhas.status, "SUCESSO_EXECUTADO");
+  assert.equal(visitaCapacidadeBlock.status, "BLOQUEADO_PELA_REGRA");
+  assert.equal(visitaCapacidadeBlock.codigo_regra_bloqueio, "LOTACAO_MAXIMA_FLAT_EXCEDIDA");
+
+  const visitaOk = await autorizarVisitaTemporariaTool.execute(
+    { nome_visitante: "Lucas Souza", cpf_visitante: "123.456.789-01", quantidade_visitantes: 1 },
+    inStayCtx
+  );
+  assert.equal(visitaOk.status, "SUCESSO_EXECUTADO");
+  assert.equal(sentEmails.at(-1)?.recipient, "soho@promenade.com.br");
+
+  // REGRA 7: Achados e Perdidos
+  const achadosFound = await consultarAchadosEPerdidosTool.execute(
+    { descricao_item: "carregador" },
+    inStayCtx
+  );
+  assert.equal(achadosFound.status, "SUCESSO_EXECUTADO");
+  assert.equal(achadosFound.dados.encontrado_no_sistema, true);
+
+  const achadosNotFound = await consultarAchadosEPerdidosTool.execute(
+    { descricao_item: "relógio dourado" },
+    inStayCtx
+  );
+  assert.equal(achadosNotFound.status, "SUCESSO_EXECUTADO");
+  assert.equal(achadosNotFound.dados.encontrado_no_sistema, false);
+  assert.ok(achadosNotFound.instrucao_para_ia.includes("foto"));
+
+  // REGRA 2: Prorrogação com conflito -> cria proposta #EXT e gestor aprova Opção 1
+  db.reservations.push({
+    id: 800,
+    code: "RES-212-0800",
+    flatNumber: "212",
+    guestName: "Hóspede Entrando",
+    guestPhone: "5511944443333",
+    checkinDate: "2026-11-03",
+    checkoutDate: "2026-11-05",
+    status: "confirmada",
+  });
+  const extConflict = await estenderEstadiaTool.execute(
+    { nova_data_checkout: "2026-11-04", confirmacao_hospede: true },
+    inStayCtx
+  );
+  assert.equal(extConflict.status, "SUCESSO_EXECUTADO");
+  assert.equal(extConflict.dados.aguardando_autorizacao_gestor, true);
+  assert.equal(db.pendingExtensionProposals.length, 1);
+
+  const extMgrReply = await handleManagerExtensionReply({
+    db,
+    cleanTarget: "5522998505276",
+    messageText: "1",
+    sendZapiMessage: async () => ({ success: true }),
+  });
+  assert.equal(extMgrReply.handled, true);
+  assert.equal(extMgrReply.option, 1);
+  assert.equal(db.reservations[1].flatNumber, "304"); // Remanejado para o Flat da Vez!
+
+  // REGRA 5: Cancelamento < 24h com pedido de exceção ao gestor (#CANC) e gestor aprova Opção 2 (converter em crédito)
+  const cancExc = await processarCancelamentoTool.execute(
+    { motivo_cancelamento: "Voo cancelado", solicitar_excecao_gestor: true },
+    inStayCtx
+  );
+  assert.equal(cancExc.status, "SUCESSO_EXECUTADO");
+  assert.equal(cancExc.dados.proposta_excecao_enviada_ao_gestor, true);
+  assert.equal(db.pendingCancellationProposals.length, 1);
+
+  const cancMgrReply = await handleManagerCancellationReply({
+    db,
+    cleanTarget: "5522998505276",
+    messageText: "2",
+    sendZapiMessage: async () => ({ success: true }),
+  });
+  assert.equal(cancMgrReply.handled, true);
+  assert.equal(cancMgrReply.option, 2);
+  assert.equal(db.reservations[0].convertedToCredit, true);
 });

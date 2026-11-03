@@ -1,50 +1,64 @@
-# BRIEFING — 2026-10-29T17:55:00Z
+# BRIEFING — 2026-11-02T02:18:00Z
 
 ## Mission
-Objectively and rigorously review the data audit and restoration artifacts from Milestones 3 & 4 (Roselene, Fabiana, contaminated Google Contacts & CRM database, before/after audit report).
+Review Milestone M1: Sofia Fiscal WhatsApp Confirmation & Approval flow.
 
 ## 🔒 My Identity
-- Archetype: reviewer & critic
+- Archetype: reviewer_critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_2
-- Original parent: 77bac84a-2c7b-483b-8533-2e30a6efd40e
-- Milestone: Milestone 5 - High-Reliability Review
-- Instance: 2 of 2
+- Original parent: d148d17c-b644-4690-94c7-bab73af837cc
+- Milestone: M1
+- Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never send WhatsApp messages
-- Check for integrity violations (hardcoded falsifications, bypasses, facades)
+- AGENTS.md STRICT RULE: Do not run global test suites or batch tests (`tests/*.test.mjs`), only run the punctual test `node --test tests/sofia-fiscal-whatsapp-confirmation.test.mjs`
+- Verify twin parity between artifacts/api-server/whatsapp-ai-service.mjs and scripts/whatsapp-ai-service.mjs
+- Actively check for integrity violations: hardcoded results, dummy facades, bypassed requirements
 
 ## Current Parent
-- Conversation ID: 77bac84a-2c7b-483b-8533-2e30a6efd40e
+- Conversation ID: d148d17c-b644-4690-94c7-bab73af837cc
 - Updated: not yet
 
 ## Review Scope
-- **Files to review**: `scripts/restore-and-audit-contacts.mjs`, `data/database.json`, `docs/google-contacts-audit-before-after.md`, git commit history (`1cff83b`, `a559a25`)
-- **Interface contracts**: `ORIGINAL_REQUEST.md`, `AGENTS.md`
-- **Review criteria**: Correctness, completeness, separation of contaminated numbers, audit-only verification, git cleanliness
+- **Files to review**:
+  - `artifacts/api-server/whatsapp-ai-service.mjs`
+  - `scripts/whatsapp-ai-service.mjs`
+  - `tests/sofia-fiscal-whatsapp-confirmation.test.mjs`
+- **Interface contracts**:
+  - `ORIGINAL_REQUEST.md` (lines 974-1011)
+  - `orchestrator_21/PROJECT.md`
+  - `worker_m1/handoff.md`
+- **Review criteria**:
+  - R1: Conference (tomador, description, value), confirmation, emission, DANFSE delivery
+  - R2: Cadastral/description edits autonomous vs value change security lock + manager approval
+  - R3: Test phone restriction (silent discard { handled: false } for non-22998505276)
+  - R4: Punctual test suite passing and covering cases
+  - Twin parity (SHA-256)
 
 ## Review Checklist
-- **Items reviewed**: `scripts/restore-and-audit-contacts.mjs`, `data/database.json`, `docs/google-contacts-audit-before-after.md`, `tests/google-contacts-sync-fix.test.mjs`, git status / log
-- **Verdict**: APPROVE
-- **Unverified claims**: None. All 6 review requirements verified independently via programmatic checks and inspection.
+- **Items reviewed**: `whatsapp-ai-service.mjs` (both twin files), `tests/sofia-fiscal-whatsapp-confirmation.test.mjs`, `worker_m1/handoff.md`
+- **Verdict**: REQUEST_CHANGES
+- **Unverified claims**: Resolved. Twin parity verified (SHA256: A2CEA7E72AD642E6505ED7298F9D630DE9572EF58411107955191AAF0B4784BC). Punctual tests pass.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - H1: Are phones `21976403551` and `28999136926` genuinely isolated in `database.json`? -> Verified true.
-  - H2: Does `--audit-only` run deterministically and output zero corruption? -> Verified true (0 corrupted guests, 0 contaminated additional phones, 0 corrupted reservations, 0 mislinked conversations).
-  - H3: Are other guests (Gustavo, Dayana, Luiz Carlos, Selma, WhatsApp chats) restored without lingering cross-contamination? -> Verified true.
-  - H4: Are git commits pushed to remote `origin/main`? -> Verified true (`origin/main` up to date).
-- **Vulnerabilities found**: None.
-- **Untested angles**: Live Google People API REST calls with production OAuth token require live Google credentials (script supports both live token and deterministic prepared payloads).
+  - Phone format variations with DDD/DDI: verified robust.
+  - Non-authorized phone rejection: verified robust.
+  - Hybrid confirmation with price change: verified value lock takes precedence.
+  - Inadvertent false value lock triggers: confirmed severe vulnerability!
+- **Vulnerabilities found**:
+  - Critical Finding 1: `parseFlexibleMoney` matches `de 01/11` as R$ 1,00, `de 3 diárias` as R$ 3,00, and `para 501` as R$ 501,00.
+  - In `handleWhatsAppFiscalFlow`, `mentionsValue` was declared but omitted from `isValueChange`.
+  - Result: Common confirmation messages containing dates (e.g. "Confirmo, pode emitir a nota de 01/11 a 05/11") and description retifications with dates/quantities are hijacked by the value lock and trigger false manager alerts for R$ 1,00 instead of emitting/updating.
+- **Untested angles**:
+  - Addressed.
 
 ## Key Decisions Made
-- Confirmed full alignment with AGENTS.md (no global test sweeps, no WhatsApp dispatches).
-- Issued APPROVE verdict for Milestones 3 & 4 data restoration artifacts.
+- Issued verdict: REQUEST_CHANGES due to Critical Finding 1.
+- Documented reproducible reproduction script and mitigation steps in handoff report.
 
 ## Artifact Index
-- DISPATCH.md — incoming dispatch instructions
-- BRIEFING.md — working memory and state
-- progress.md — liveness heartbeat and progress
-- handoff.md — final review verdict and 5-component report
+- handoff.md — Final review report with findings and verdict
+- progress.md — Liveness heartbeat

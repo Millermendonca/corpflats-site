@@ -65,6 +65,11 @@ import {
   estenderEstadiaTool,
   solicitarLimpezaExtraTool,
   abrirChamadoManutencaoTool,
+  resolverProblemaCartaoNfcTool,
+  autorizarVisitaTemporariaTool,
+  processarCancelamentoTool,
+  enviarMidiaUnidadeTool,
+  consultarAchadosEPerdidosTool,
   gerenciarNotaFiscalNfseTool,
   buildStandardStayDescription,
   notificarAdministradorTool,
@@ -92,6 +97,11 @@ export {
   estenderEstadiaTool,
   solicitarLimpezaExtraTool,
   abrirChamadoManutencaoTool,
+  resolverProblemaCartaoNfcTool,
+  autorizarVisitaTemporariaTool,
+  processarCancelamentoTool,
+  enviarMidiaUnidadeTool,
+  consultarAchadosEPerdidosTool,
   gerenciarNotaFiscalNfseTool,
   buildStandardStayDescription,
   notificarAdministradorTool,
@@ -918,6 +928,11 @@ export function getBotActionsSettings(db) {
         estender_estadia: s.allowedActions?.estender_estadia !== false,
         solicitar_limpeza_extra: s.allowedActions?.solicitar_limpeza_extra !== false,
         abrir_chamado_manutencao: s.allowedActions?.abrir_chamado_manutencao !== false,
+        resolver_problema_cartao_nfc: s.allowedActions?.resolver_problema_cartao_nfc !== false,
+        autorizar_visita_temporaria: s.allowedActions?.autorizar_visita_temporaria !== false,
+        processar_cancelamento: s.allowedActions?.processar_cancelamento !== false,
+        enviar_midia_unidade: s.allowedActions?.enviar_midia_unidade !== false,
+        consultar_achados_e_perdidos: s.allowedActions?.consultar_achados_e_perdidos !== false,
         gerenciar_nota_fiscal_nfse: s.allowedActions?.gerenciar_nota_fiscal_nfse !== false,
         ...(s.allowedActions || {})
       },
@@ -953,6 +968,11 @@ export function getBotActionsSettings(db) {
       estender_estadia: true,
       solicitar_limpeza_extra: true,
       abrir_chamado_manutencao: true,
+      resolver_problema_cartao_nfc: true,
+      autorizar_visita_temporaria: true,
+      processar_cancelamento: true,
+      enviar_midia_unidade: true,
+      consultar_achados_e_perdidos: true,
       gerenciar_nota_fiscal_nfse: true
     },
     preReservationHoldMinutes: 30,
@@ -4462,6 +4482,21 @@ export function synthesizeGuidelineFromText(rawText, category = "geral") {
   if (synthesized.length > 0) {
     synthesized = synthesized.charAt(0).toUpperCase() + synthesized.slice(1);
     if (!synthesized.endsWith(".")) synthesized += ".";
+    if (!synthesized.includes("->")) {
+      const triggerMap = {
+        checkout: "Hóspede em dia de check-out ou solicitando saída",
+        checkin: "Hóspede consultando horário ou procedimento de check-in",
+        saudacao: "Saudação inicial do hóspede no WhatsApp",
+        malas: "Dúvida sobre guarda ou transporte de malas/bagagens",
+        reserva: "Consulta sobre status ou confirmação de reserva",
+        cafe: "Dúvida sobre horário ou funcionamento do café da manhã",
+        wifi: "Dúvida sobre rede ou senha do Wi-Fi",
+        garagem: "Dúvida sobre vaga de garagem ou liberação de veículo",
+        pet: "Dúvida sobre hospedagem de animais de estimação (pets)"
+      };
+      const triggerLabel = triggerMap[category] || (category.startsWith("flat_") ? `Atendimento referente ao Flat ${category.replace("flat_", "")}` : "Situação operacional no atendimento");
+      synthesized = `${triggerLabel} -> ${synthesized}`;
+    }
   }
 
   return synthesized;
@@ -4860,22 +4895,20 @@ export async function synthesizeDeveloperCoachingWithAi({
   if (!apiKey || !rawText) return null;
 
   const systemInstruction = `Você é o assistente sênior de calibração do sistema hoteleiro CorpFlats no Edifício Soho Residence Service.
-O desenvolvedor ou gestor do sistema (Miller) enviou uma orientação/crítica de treinamento informal pelo WhatsApp:
+O desenvolvedor ou gestor do sistema (Miller) enviou uma orientação/crítica de treinamento pelo WhatsApp:
 "${rawText}"
 
-Sua missão é sintetizar essa instrução de forma conceitual, profissional e não-literal ("Anti-Papagaio"):
-1. "ruleText": Diretriz operacional formal e limpa em terceira pessoa para a base de conhecimento da Sofia (concierge virtual).
+Sua missão é extrair e salvar uma diretriz limpa e estruturada ("Anti-Papagaio", NUNCA salvando a mensagem crua como resposta literal):
+1. "ruleText": Diretriz operacional limpa OBRIGATORIAMENTE no formato:
+   "Situação/Gatilho -> Como a Sofia deve agir/responder"
    - NUNCA inclua meta-conversa ou termos de teste (PROIBIDO usar "estou testando", "sou Miller", "você errou", "segundo o teste", etc.).
-   - Deve ser uma diretriz abstrata de alto nível da operação.
-   - Exemplo para checkout: "Para hóspedes já hospedados ou em dia de check-out, priorizar procedimentos de check-out (horário limite até 12:00h) e verificar se o hóspede deseja estender a estadia ou se já desocupou o flat, sem envio de link de pré-check-in."
-2. "sampleResponse": Amostra REALISTA e PRÁTICA de resposta direta da Sofia a um HÓSPEDE no WhatsApp sob essa regra.
-   - Deve ser um atendimento acolhedor e impecável ao hóspede ("Olá! ...").
-   - NUNCA use frases internas ou diga "Conforme nossa política atualizada: Estou testando...".
+   - Exemplo: "Hóspede já hospedado ou em dia de check-out -> Priorizar procedimentos de check-out (horário limite até 12:00h) e verificar se o hóspede deseja estender a estadia ou se já desocupou o flat, sem envio de link de pré-check-in."
+2. "sampleResponse": Amostra REALISTA, humana e natural de resposta direta da Sofia a um HÓSPEDE no WhatsApp aplicando essa regra (sem clichês robóticos como "Com certeza!" ou "Espero ter ajudado").
 3. "category": Categoria da diretriz (ex: "checkout", "checkin", "reserva", "cafe", "saudacao", "garagem", "wifi", "pet", "geral").
 
 Retorne EXCLUSIVAMENTE um objeto JSON no formato:
 {
-  "ruleText": "...",
+  "ruleText": "Situação/Gatilho -> Como a Sofia deve agir/responder",
   "sampleResponse": "...",
   "category": "..."
 }`;
@@ -5204,6 +5237,49 @@ export function buildDynamicSystemInstruction(aiConfig, dbOrContext, contextOrDb
     guidelinesSection = `\n[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]\nAs seguintes instruções foram ensinadas pelo gestor/desenvolvedor e POSSUEM PRIORIDADE ABSOLUTA sobre regras gerais anteriores:\n${blocks.join("\n\n")}\n${antiCopyPasteRule}`;
   } else {
     guidelinesSection = antiCopyPasteRule;
+  }
+
+  // Injeção dos 3 Blocos Limpos de Treinamento (Bloco A: Fichas Técnicas, Bloco B: Fatos Operacionais, Bloco C: Exemplos de Ouro + Lista Negra)
+  const trainingBlocks = db?.whatsappAiSettings?.trainingBlocks;
+  if (trainingBlocks && typeof trainingBlocks === "object") {
+    const extraTrainingParts = [];
+    if (Array.isArray(trainingBlocks.blocoA_fichasTecnicas) && trainingBlocks.blocoA_fichasTecnicas.length > 0) {
+      extraTrainingParts.push(
+        `[BLOCO A — FICHAS TÉCNICAS DOS FLATS E CONDOMÍNIO SOHO RESIDENCE]\n` +
+        trainingBlocks.blocoA_fichasTecnicas
+          .filter(item => item && (item.titulo || item.conteudo))
+          .map(item => `• ${item.titulo || item.topico || "Ficha"}: ${item.conteudo}`)
+          .join("\n")
+      );
+    }
+    if (Array.isArray(trainingBlocks.blocoB_fatosOperacionais) && trainingBlocks.blocoB_fatosOperacionais.length > 0) {
+      extraTrainingParts.push(
+        `[BLOCO B — FAQS E FATOS OPERACIONAIS PUROS (SITUAÇÃO -> FATO)]\n` +
+        trainingBlocks.blocoB_fatosOperacionais
+          .filter(item => item && (item.situacao || item.fato))
+          .map(item => `• ${item.situacao} -> ${item.fato}`)
+          .join("\n")
+      );
+    }
+    if (Array.isArray(trainingBlocks.blocoC_exemplosDeOuro) && trainingBlocks.blocoC_exemplosDeOuro.length > 0) {
+      extraTrainingParts.push(
+        `[BLOCO C — EXEMPLOS DE OURO (FEW-SHOT PROMPTING DE TOM HUMANO)]\n` +
+        trainingBlocks.blocoC_exemplosDeOuro
+          .filter(item => item && item.perguntaHospede && item.respostaIdealSofia)
+          .map(item => `Hóspede: "${item.perguntaHospede}"\nSofia (Ideal): "${item.respostaIdealSofia}"`)
+          .join("\n\n")
+      );
+    }
+    if (Array.isArray(trainingBlocks.listaNegraCliches) && trainingBlocks.listaNegraCliches.length > 0) {
+      extraTrainingParts.push(
+        `[🚫 LISTA NEGRA DE CLICHÊS DE IA (ESTRITAMENTE PROIBIDO USAR)]\n` +
+        `NUNCA utilize as expressões robóticas abaixo e evite listas com marcadores (bullet points) na conversa com o hóspede:\n` +
+        trainingBlocks.listaNegraCliches.map(c => `• Proibido: "${c}"`).join("\n")
+      );
+    }
+    if (extraTrainingParts.length > 0) {
+      guidelinesSection += `\n${extraTrainingParts.join("\n\n")}\n`;
+    }
   }
 
   let flatsCatalogSection = "";
@@ -12543,6 +12619,34 @@ export async function processAiInboundMessage({
         return maintReply;
       }
 
+      const extReply = await handleManagerExtensionReply({
+        db,
+        cleanTarget,
+        messageText: incomingInfo.text,
+        conv,
+        sendZapiMessage,
+        appendMessageFn,
+        saveDatabase,
+        createNotification
+      });
+      if (extReply && extReply.handled) {
+        return extReply;
+      }
+
+      const cancReply = await handleManagerCancellationReply({
+        db,
+        cleanTarget,
+        messageText: incomingInfo.text,
+        conv,
+        sendZapiMessage,
+        appendMessageFn,
+        saveDatabase,
+        createNotification
+      });
+      if (cancReply && cancReply.handled) {
+        return cancReply;
+      }
+
       const preResReply = await handleManagerPreReservationReply({
         db,
         cleanTarget,
@@ -12986,21 +13090,45 @@ export async function processAiInboundMessage({
     };
   }
 
-  // 8. Resposta Autônoma Normal:
+  // 8. Resposta Autônoma Normal (com Quebra em até 3 Balões Separados e Indicador de Digitação Humanizado):
   const delaySec = typeof aiConfig.responseDelaySeconds === "number" ? aiConfig.responseDelaySeconds : 3;
-  const delayMs = (process.env.NODE_ENV === "test" || delaySec === 0) ? 0 : Math.max(500, delaySec * 1000);
-  if (delayMs > 0) {
-    await new Promise(resolve => setTimeout(resolve, delayMs));
+  const isTestEnv = process.env.NODE_ENV === "test" || delaySec === 0;
+  const rawParagraphs = String(aiResult.replyText || "")
+    .split(/\n\s*\n/)
+    .map(p => p.trim())
+    .filter(Boolean);
+
+  // Agrupa em no máximo 3 balões curtos para conversa natural de WhatsApp
+  const balloons = [];
+  if (rawParagraphs.length <= 3) {
+    balloons.push(...(rawParagraphs.length > 0 ? rawParagraphs : [String(aiResult.replyText || "").trim()]));
+  } else {
+    balloons.push(rawParagraphs[0]);
+    balloons.push(rawParagraphs[1]);
+    balloons.push(rawParagraphs.slice(2).join("\n\n"));
   }
 
-  if (typeof sendZapiMessage === "function") {
-    await sendZapiMessage(db.zapiConfig, {
-      phone: cleanTarget,
-      message: aiResult.replyText,
-      channelId: "ai_agent",
-      recipientRole: "guest",
-      db
-    });
+  for (let bIdx = 0; bIdx < balloons.length; bIdx++) {
+    const balloonText = balloons[bIdx];
+    if (!balloonText) continue;
+
+    // Calcula tempo de digitação proporcional ao tamanho do balão (1 a 4s em produção, 0 em teste)
+    const typingSec = isTestEnv ? 0 : Math.min(4, Math.max(1, Math.ceil(balloonText.length / 70)));
+    const waitMs = isTestEnv ? 0 : (bIdx === 0 ? Math.max(500, delaySec * 1000) : Math.max(600, typingSec * 600));
+    if (waitMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
+
+    if (typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig, {
+        phone: cleanTarget,
+        message: balloonText,
+        channelId: "ai_agent",
+        recipientRole: "guest",
+        delayTyping: typingSec > 0 ? typingSec : undefined,
+        db
+      });
+    }
   }
 
   if (typeof appendMessageFn === "function") {
@@ -16200,6 +16328,321 @@ export async function handleManagerMaintenanceReply({
     proposal: targetProposal,
     replyText: managerMsg
   };
+}
+
+/**
+ * Processa a resposta do gestor (5522998505276) para propostas de Prorrogação de Estadia com Conflito (#EXT-...)
+ * Opção 1: Remanejar a reserva futura conflitante para o Flat da Vez e enviar PIX de prorrogação ao hóspede atual no mesmo flat.
+ * Opção 2: Manter a reserva futura e oferecer ao hóspede atual mudar para o Flat da Vez + PIX.
+ * Opção 3: Recusar a prorrogação por indisponibilidade.
+ */
+export async function handleManagerExtensionReply({
+  db,
+  cleanTarget,
+  messageText,
+  conv = null,
+  sendZapiMessage = null,
+  appendMessageFn = null,
+  saveDatabase = null,
+  createNotification = null
+}) {
+  if (!db || !messageText || !isDeveloperPhone(cleanTarget, db)) {
+    return { handled: false };
+  }
+
+  const pendingList = (db.pendingExtensionProposals || []).filter(p => p && p.status === "pending_manager");
+  if (pendingList.length === 0) {
+    return { handled: false };
+  }
+
+  const trimmed = String(messageText).trim();
+  if (isAutomatedOrSofiaMessage({ text: trimmed })) {
+    return { handled: false };
+  }
+
+  const norm = trimmed.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const hasExplicitExtId = pendingList.some(p => p.id && norm.includes(String(p.id).toLowerCase()));
+  const hasExtKeyword = /\b(?:ext-|prorroga|remaneja\s+futur|mudar\s+h[oó]spede\s+atual|recusar\s+prorroga)/i.test(norm);
+
+  // Se houver propostas de manutenção abertas mais recentes e o comando não mencionar #EXT, prioriza apenas quando for explícito ou único
+  if (!hasExplicitExtId && !hasExtKeyword && (db.pendingMaintenanceProposals || []).some(p => p && p.status === "pending_manager")) {
+    return { handled: false };
+  }
+
+  let targetProposal = pendingList[0];
+  const matchedById = pendingList.find(p => p.id && norm.includes(String(p.id).toLowerCase()));
+  if (matchedById) {
+    targetProposal = matchedById;
+  }
+
+  const cleanCmd = norm.replace(/^#?ext-[a-z0-9\-]+\s*[,:\-]?\s*/i, "").trim();
+  let chosenOption = null;
+  if (/^(?:1|op[cç][aã]o\s*1|plano\s*1)\b/.test(cleanCmd) || /\b(?:remanejar\s+reserva\s+futura|manter\s+h[oó]spede)\b/.test(cleanCmd)) {
+    chosenOption = 1;
+  } else if (/^(?:2|op[cç][aã]o\s*2|plano\s*2)\b/.test(cleanCmd) || /\b(?:mudar\s+h[oó]spede\s+atual|trocar\s+h[oó]spede)\b/.test(cleanCmd)) {
+    chosenOption = 2;
+  } else if (/^(?:3|op[cç][aã]o\s*3|plano\s*3)\b/.test(cleanCmd) || /\b(?:recusar|negar\s+prorroga)\b/.test(cleanCmd)) {
+    chosenOption = 3;
+  }
+
+  if (!chosenOption) {
+    return { handled: false };
+  }
+
+  const aiConfig = getWhatsAppAiConfig(db);
+  const managerPhone = cleanWhatsAppPhone(cleanTarget) || getManagerWhatsAppPhone(db);
+  const now = new Date().toISOString();
+
+  const sendMsg = async (phone, text, role = "guest", eventTag = "sofia_extension_reply") => {
+    if (!phone) return;
+    if (typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig, {
+        phone,
+        message: text,
+        channelId: "ai_agent",
+        recipientRole: role,
+        bypassTestMode: role === "developer",
+        triggerEvent: eventTag,
+        db
+      });
+    }
+    if (typeof appendMessageFn === "function") {
+      appendMessageFn(db, {
+        phone,
+        senderName: aiConfig.agentName || "Sofia",
+        fromMe: true,
+        text,
+        type: "text",
+        status: "delivered",
+        timestamp: now
+      });
+    }
+  };
+
+  const curResId = targetProposal.currentReservationId || targetProposal.reservationId;
+  const curResCode = targetProposal.currentReservationCode || targetProposal.reservationCode;
+  const incResId = targetProposal.incomingReservationId || targetProposal.conflictingReservationId;
+  const incResCode = targetProposal.incomingReservationCode || targetProposal.conflictingReservationCode;
+  const swapFlatNum = targetProposal.recommendedSwapFlat || targetProposal.recommendedAltFlatNumber;
+  const extraAmt = Number(targetProposal.additionalAmount ?? targetProposal.totalExtraAmount ?? 0);
+  const reqCheckout = targetProposal.newCheckoutDate || targetProposal.requestedCheckoutDate;
+  const incGuestName = targetProposal.incomingGuestName || targetProposal.conflictingGuestName || "Próximo Hóspede";
+
+  const currentRes = (db.reservations || []).find(r => String(r.id) === String(curResId) || String(r.code) === String(curResCode));
+  const incomingRes = (db.reservations || []).find(r => String(r.id) === String(incResId) || String(r.code) === String(incResCode));
+  const altFlatObj = (db.flats || []).find(f => String(f.number) === String(swapFlatNum));
+
+  if (chosenOption === 1) {
+    if (incomingRes && altFlatObj) {
+      incomingRes.flatId = altFlatObj.id;
+      incomingRes.flatNumber = String(altFlatObj.number);
+      incomingRes.updatedAt = now;
+    }
+    if (currentRes) {
+      const txid = `EXT_${currentRes.code || currentRes.id}_${Date.now()}`;
+      currentRes.pendingStayExtension = {
+        txid,
+        status: "pending_payment",
+        amount: extraAmt,
+        extraNights: targetProposal.extraNights,
+        newCheckoutDate: reqCheckout,
+        createdAt: now
+      };
+    }
+    targetProposal.status = "approved_option_1";
+    targetProposal.resolvedAt = now;
+    if (typeof saveDatabase === "function") saveDatabase("extension_option_1");
+
+    const pixKey = db?.settings?.pixKey || "47.964.813/0001-65";
+    const guestMsg = `Ótima notícia, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Nossa gerência aprovou a prorrogação da sua estadia no mesmo *Flat ${targetProposal.flatNumber}* até *${String(reqCheckout).split("-").reverse().join("/")}* (+${targetProposal.extraNights} diária(s)).\n\nO valor adicional é de *R$ ${extraAmt.toFixed(2).replace(".", ",")}*. Para confirmar imediatamente no sistema, basta realizar o PIX para a chave CNPJ *${pixKey}* (CorpFlats) e nos enviar o comprovante por aqui!`;
+    await sendMsg(cleanWhatsAppPhone(targetProposal.guestPhone), guestMsg, "guest", "sofia_ext_guest_opt1");
+
+    const mgrMsg = `✅ *Opção 1 Executada (#${targetProposal.id})*\n• Reserva futura (${incGuestName}) remanejada para o *Flat ${swapFlatNum || "da Vez"}*.\n• Hóspede atual (*${targetProposal.guestName}*) mantido no *Flat ${targetProposal.flatNumber}* e cobrança PIX de R$ ${extraAmt.toFixed(2)} enviada!`;
+    await sendMsg(managerPhone, mgrMsg, "developer", "sofia_ext_mgr_opt1");
+    return { handled: true, processed: true, option: 1, proposal: targetProposal, replyText: mgrMsg };
+  }
+
+  if (chosenOption === 2) {
+    if (currentRes) {
+      const txid = `EXT_SWAP_${currentRes.code || currentRes.id}_${Date.now()}`;
+      currentRes.pendingStayExtension = {
+        txid,
+        status: "pending_payment",
+        amount: extraAmt,
+        extraNights: targetProposal.extraNights,
+        newCheckoutDate: reqCheckout,
+        newFlatNumber: swapFlatNum,
+        createdAt: now
+      };
+    }
+    targetProposal.status = "approved_option_2";
+    targetProposal.resolvedAt = now;
+    if (typeof saveDatabase === "function") saveDatabase("extension_option_2");
+
+    const pixKey = db?.settings?.pixKey || "47.964.813/0001-65";
+    const guestMsg = `Olá, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Para prorrogarmos sua estadia até *${String(reqCheckout).split("-").reverse().join("/")}*, nossa gerência disponibilizou o *Flat ${swapFlatNum}* (já que o Flat ${targetProposal.flatNumber} possui reserva fixa entrando hoje).\n\nO valor das +${targetProposal.extraNights} diária(s) é *R$ ${extraAmt.toFixed(2).replace(".", ",")}* (Chave PIX CNPJ: *${pixKey}*). Confirma a prorrogação com mudança para o Flat ${swapFlatNum}?`;
+    await sendMsg(cleanWhatsAppPhone(targetProposal.guestPhone), guestMsg, "guest", "sofia_ext_guest_opt2");
+
+    const mgrMsg = `✅ *Opção 2 Executada (#${targetProposal.id})*\n• Oferta de prorrogação com mudança para o *Flat ${swapFlatNum}* (+ PIX R$ ${extraAmt.toFixed(2)}) enviada para *${targetProposal.guestName}*.`;
+    await sendMsg(managerPhone, mgrMsg, "developer", "sofia_ext_mgr_opt2");
+    return { handled: true, processed: true, option: 2, proposal: targetProposal, replyText: mgrMsg };
+  }
+
+  targetProposal.status = "rejected_option_3";
+  targetProposal.resolvedAt = now;
+  if (typeof saveDatabase === "function") saveDatabase("extension_option_3");
+
+  const guestMsg = `Olá, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Verificamos com a nossa gerência e, infelizmente, estamos com 100% das unidades comprometidas para o período solicitado, não sendo possível estender a estadia desta vez. O seu check-out permanece programado até as 12:00h. Se precisar guardar as malas na recepção, estamos à disposição!`;
+  await sendMsg(cleanWhatsAppPhone(targetProposal.guestPhone), guestMsg, "guest", "sofia_ext_guest_opt3");
+
+  const mgrMsg = `✅ *Opção 3 Executada (#${targetProposal.id})*\n• Prorrogação recusada e hóspede *${targetProposal.guestName}* avisado com empatia.`;
+  await sendMsg(managerPhone, mgrMsg, "developer", "sofia_ext_mgr_opt3");
+  return { handled: true, processed: true, option: 3, proposal: targetProposal, replyText: mgrMsg };
+}
+
+/**
+ * Processa a resposta do gestor (5522998505276) para propostas de Exceção de Cancelamento (#CANC-...)
+ * Opção 1: Autorizar cancelamento gratuito por exceção.
+ * Opção 2: Converter valor em crédito para datas futuras.
+ * Opção 3: Manter cobrança integral (100%) conforme política (< 24h).
+ */
+export async function handleManagerCancellationReply({
+  db,
+  cleanTarget,
+  messageText,
+  conv = null,
+  sendZapiMessage = null,
+  appendMessageFn = null,
+  saveDatabase = null,
+  createNotification = null
+}) {
+  if (!db || !messageText || !isDeveloperPhone(cleanTarget, db)) {
+    return { handled: false };
+  }
+
+  const pendingList = (db.pendingCancellationProposals || []).filter(p => p && p.status === "pending_manager");
+  if (pendingList.length === 0) {
+    return { handled: false };
+  }
+
+  const trimmed = String(messageText).trim();
+  if (isAutomatedOrSofiaMessage({ text: trimmed })) {
+    return { handled: false };
+  }
+
+  const norm = trimmed.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const hasExplicitCancId = pendingList.some(p => p.id && norm.includes(String(p.id).toLowerCase()));
+  const hasCancKeyword = /\b(?:canc-|autorizar\s+cancelamento|converter\s+em\s+cr[eé]dito|manter\s+cobran[cç]a)/i.test(norm);
+
+  if (!hasExplicitCancId && !hasCancKeyword && (
+    (db.pendingMaintenanceProposals || []).some(p => p && p.status === "pending_manager") ||
+    (db.pendingExtensionProposals || []).some(p => p && p.status === "pending_manager")
+  )) {
+    return { handled: false };
+  }
+
+  let targetProposal = pendingList[0];
+  const matchedById = pendingList.find(p => p.id && norm.includes(String(p.id).toLowerCase()));
+  if (matchedById) {
+    targetProposal = matchedById;
+  }
+
+  const cleanCmd = norm.replace(/^#?canc-[a-z0-9\-]+\s*[,:\-]?\s*/i, "").trim();
+  let chosenOption = null;
+  if (/^(?:1|op[cç][aã]o\s*1|plano\s*1)\b/.test(cleanCmd) || /\b(?:autorizar\s+cancelamento|cancelar\s+sem\s+multa|isentar)\b/.test(cleanCmd)) {
+    chosenOption = 1;
+  } else if (/^(?:2|op[cç][aã]o\s*2|plano\s*2)\b/.test(cleanCmd) || /\b(?:cr[eé]dito|remarcar|deixar\s+de\s+cr[eé]dito)\b/.test(cleanCmd)) {
+    chosenOption = 2;
+  } else if (/^(?:3|op[cç][aã]o\s*3|plano\s*3)\b/.test(cleanCmd) || /\b(?:manter\s+cobran[cç]a|negar\s+exce[cç][aã]o|cobrar\s+100)\b/.test(cleanCmd)) {
+    chosenOption = 3;
+  }
+
+  if (!chosenOption) {
+    return { handled: false };
+  }
+
+  const aiConfig = getWhatsAppAiConfig(db);
+  const managerPhone = cleanWhatsAppPhone(cleanTarget) || getManagerWhatsAppPhone(db);
+  const now = new Date().toISOString();
+
+  const sendMsg = async (phone, text, role = "guest", eventTag = "sofia_cancel_reply") => {
+    if (!phone) return;
+    if (typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig, {
+        phone,
+        message: text,
+        channelId: "ai_agent",
+        recipientRole: role,
+        bypassTestMode: role === "developer",
+        triggerEvent: eventTag,
+        db
+      });
+    }
+    if (typeof appendMessageFn === "function") {
+      appendMessageFn(db, {
+        phone,
+        senderName: aiConfig.agentName || "Sofia",
+        fromMe: true,
+        text,
+        type: "text",
+        status: "delivered",
+        timestamp: now
+      });
+    }
+  };
+
+  const resObj = (db.reservations || []).find(r => String(r.id) === String(targetProposal.reservationId) || String(r.code) === String(targetProposal.reservationCode));
+
+  if (chosenOption === 1) {
+    if (resObj) {
+      resObj.status = "cancelada";
+      resObj.cancelledAt = now;
+      resObj.cancelReason = `Exceção autorizada pelo gestor via WhatsApp (${targetProposal.reason || "Solicitação do hóspede"})`;
+      resObj.updatedAt = now;
+    }
+    targetProposal.status = "approved_exception_1";
+    targetProposal.resolvedAt = now;
+    if (typeof saveDatabase === "function") saveDatabase("cancel_option_1");
+
+    const guestMsg = `Olá, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Nossa gerência analisou o seu caso e autorizou em caráter de exceção o cancelamento sem multa da sua reserva *${targetProposal.reservationCode}* no *Flat ${targetProposal.flatNumber}*. Esperamos recebê-lo(a) em uma próxima oportunidade na CorpFlats!`;
+    await sendMsg(cleanWhatsAppPhone(targetProposal.guestPhone), guestMsg, "guest", "sofia_canc_guest_opt1");
+
+    const mgrMsg = `✅ *Opção 1 Executada (#${targetProposal.id})*\n• Reserva *${targetProposal.reservationCode}* cancelada sem multa por exceção e hóspede avisado.`;
+    await sendMsg(managerPhone, mgrMsg, "developer", "sofia_canc_mgr_opt1");
+    return { handled: true, processed: true, option: 1, proposal: targetProposal, replyText: mgrMsg };
+  }
+
+  if (chosenOption === 2) {
+    if (resObj) {
+      resObj.status = "cancelada";
+      resObj.cancelledAt = now;
+      resObj.convertedToCredit = true;
+      resObj.creditAmount = Number(resObj.paidAmount || resObj.totalAmount || 0);
+      resObj.cancelReason = `Convertida em crédito para datas futuras por autorização do gestor`;
+      resObj.updatedAt = now;
+    }
+    targetProposal.status = "converted_credit_2";
+    targetProposal.resolvedAt = now;
+    if (typeof saveDatabase === "function") saveDatabase("cancel_option_2");
+
+    const guestMsg = `Olá, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Nossa gerência autorizou a liberação da sua reserva *${targetProposal.reservationCode}* convertendo o valor integral em *crédito* para você utilizar em uma nova estadia futura conosco na CorpFlats! Quando tiver as novas datas, basta nos chamar por aqui.`;
+    await sendMsg(cleanWhatsAppPhone(targetProposal.guestPhone), guestMsg, "guest", "sofia_canc_guest_opt2");
+
+    const mgrMsg = `✅ *Opção 2 Executada (#${targetProposal.id})*\n• Reserva *${targetProposal.reservationCode}* convertida em crédito para datas futuras e hóspede avisado.`;
+    await sendMsg(managerPhone, mgrMsg, "developer", "sofia_canc_mgr_opt2");
+    return { handled: true, processed: true, option: 2, proposal: targetProposal, replyText: mgrMsg };
+  }
+
+  targetProposal.status = "maintained_charge_3";
+  targetProposal.resolvedAt = now;
+  if (typeof saveDatabase === "function") saveDatabase("cancel_option_3");
+
+  const guestMsg = `Olá, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Consultamos a nossa gerência e, como o apartamento já estava bloqueado e preparado para a sua entrada hoje (menos de 24h para o check-in), infelizmente não conseguimos isentar a retenção da reserva *${targetProposal.reservationCode}*. Caso ainda consiga comparecer, o seu flat permanece reservado e à sua disposição!`;
+  await sendMsg(cleanWhatsAppPhone(targetProposal.guestPhone), guestMsg, "guest", "sofia_canc_guest_opt3");
+
+  const mgrMsg = `✅ *Opção 3 Executada (#${targetProposal.id})*\n• Mantida a política de cobrança integral (< 24h) para a reserva *${targetProposal.reservationCode}* e hóspede comunicado.`;
+  await sendMsg(managerPhone, mgrMsg, "developer", "sofia_canc_mgr_opt3");
+  return { handled: true, processed: true, option: 3, proposal: targetProposal, replyText: mgrMsg };
 }
 
 

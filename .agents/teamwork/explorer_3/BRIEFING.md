@@ -1,49 +1,48 @@
-# BRIEFING — 2026-10-11T23:24:30Z
+# BRIEFING — 2026-11-02T23:36:00Z
 
 ## Mission
-Investigate frontend components in artifacts/limpeza/src for Web Chat UI, WhatsApp Automation UI, API client/service calls, and build process to support the "Ensinar Sofia / Diretrizes & Calibrações Aprendidas" feature.
+Investigate and produce comprehensive implementation plan for Backend demo-server.mjs Latency & Stability Optimizations (Priorities 2 and 3).
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: Teamwork explorer
-- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_3
-- Original parent: d9d088c2-767a-4f5a-9d52-d234243c2f9b
-- Milestone: Sofia Continuous Learning & Calibration UI Investigation
+- Roles: investigation, synthesis
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_3\
+- Original parent: 960bd884-3e1c-4b5c-abb1-b3a053aa63cc
+- Milestone: Priorities 2 and 3 Backend Performance Investigation
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement
-- Do NOT modify source code files
-- Do NOT run global test suites
-- Write only to .agents/teamwork/explorer_3/
-- Produce a structured handoff.md report with 5 components
+- Read-only investigation — do NOT implement directly in source files
+- Strict adherence to project rules: NO global test suite execution (tests/*.test.mjs forbidden)
+- Document exact file locations, line numbers, and proposed modifications in handoff.md
 
 ## Current Parent
-- Conversation ID: d9d088c2-767a-4f5a-9d52-d234243c2f9b
-- Updated: 2026-10-11T23:24:30Z
+- Conversation ID: 960bd884-3e1c-4b5c-abb1-b3a053aa63cc
+- Updated: 2026-11-02T23:36:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/limpeza/package.json` & `vite.config.ts`
-  - `artifacts/limpeza/src/pages/whatsapp-chat.tsx`
-  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
-  - `artifacts/limpeza/src/hooks/use-bot-demands.ts`
-  - `scripts/whatsapp-ai-service.mjs` & `scripts/zapi-service.mjs`
-  - `artifacts/limpeza/dist/` (build output verification)
+  - `artifacts/api-server/demo-server.mjs`
+  - `scripts/demo-server.mjs`
+  - `server.mjs`
+  - `tests/room-ready-605-dedup-and-pg-surrogate.test.mjs`
+  - `tests/challenger-m1-1.test.mjs`
+  - `tests/challenger-m4-demographics-ltv.test.mjs`
 - **Key findings**:
-  - `whatsapp-chat.tsx` renders message bubbles at lines 1261-1386. Sofia's messages are identified by `isFromMe && (msg.senderName?.toLowerCase().includes('sofia') || msg.sender === 'system')`. Button "✏️ Corrigir / Ensinar Sofia" fits directly inside Sofia's bubble header or footer.
-  - Dialog modal for correction can use `@/components/ui/dialog` (already imported). It collects guideline + cordial rectification text for guest with a single-click action to execute both.
-  - Target endpoint is `POST /api/whatsapp/chat/:phone/correct-message`.
-  - `whatsapp-automation.tsx` has `TabsContent value="ai_agent"` at lines 1752-2461. The "Diretrizes & Calibrações Aprendidas" Card fits in the left column (`lg:col-span-7`) around line 2282.
-  - Testing guidelines can leverage the existing `/api/whatsapp/ai-simulate` endpoint.
-  - Build command `npm --prefix artifacts/limpeza run build` succeeds cleanly in 27s, outputting to `artifacts/limpeza/dist/public`.
-- **Unexplored areas**: None for frontend scope.
+  1. Identified exact lines for `reconcileAndMergeGuests` (line 11881) and its synchronous calls in 5 GET endpoints (lines 34823, 36408, 36675, 36711, 37012).
+  2. Identified exact lines for `reconcileUniversalIntegrity` (line 4967) and its synchronous invocations in `GET /api/flats` (line 17905) and `GET /api/reservations/checkouts` (line 19334).
+  3. Identified recursive and duplicate calls to `getRequestsForDate` (line 18668), including 50x loops via `getFlatRealtimeStatus` in `GET /api/flats`.
+  4. Identified O(N^2) bottlenecks in `computePeriodicTaskStatus` (line 6118) and `regularizeHousekeepingPreventiveTasks` (line 6205) due to unindexed execution filters and reservation date expansions.
+  5. Identified Event Loop locking in `flushPgState` (line 14159) caused by regex in `sanitizeJsonSerialized` (line 14151) and missing event loop yields.
+  6. Identified pure Base64 strings slipping past `walkAndOffloadResidualDataUrls` and unoptimized comparator sorting in `pruneDatabase` (line 14245).
+- **Unexplored areas**: None within scope. All 5 assigned items investigated and resolved.
 
 ## Key Decisions Made
-- Mapped exact insertion points and component code templates for `whatsapp-chat.tsx` and `whatsapp-automation.tsx`.
-- Formulated the exact data models and endpoint payloads needed for integration with backend.
+- Designed a non-intrusive dirty flag and cooldown system for `reconcileAndMergeGuests` and `reconcileUniversalIntegrity`.
+- Designed a short-lived request-level memoization cache for `getRequestsForDate`.
+- Designed O(1) Map lookups for latest periodic executions and flat reservations.
+- Designed a fast-path surrogate check in `sanitizeJsonSerialized` bypassing multi-second regex backtracking.
+- Flagged the critical test constraint that `tests/room-ready-605-dedup-and-pg-surrogate.test.mjs` uses `extractFunctionSlice` with exact string markers that must not be renamed.
 
 ## Artifact Index
-- DISPATCH.md — Task instruction
-- BRIEFING.md — Context memory
-- progress.md — Heartbeat and step log
-- handoff.md — Comprehensive 5-component report
+- handoff.md — Comprehensive handoff report with exact code references and proposed implementation strategy for the worker agent.
+- progress.md — Liveness heartbeat and investigation progress tracking.

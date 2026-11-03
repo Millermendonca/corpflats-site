@@ -17,6 +17,11 @@ import { alterarDatasReservaTool } from './alterar-datas-reserva.tool';
 import { estenderEstadiaTool } from './estender-estadia.tool';
 import { solicitarLimpezaExtraTool } from './solicitar-limpeza-extra.tool';
 import { abrirChamadoManutencaoTool } from './abrir-chamado-manutencao.tool';
+import { resolverProblemaCartaoNfcTool } from './resolver-problema-cartao-nfc.tool';
+import { autorizarVisitaTemporariaTool } from './autorizar-visita-temporaria.tool';
+import { processarCancelamentoTool } from './processar-cancelamento.tool';
+import { enviarMidiaUnidadeTool } from './enviar-midia-unidade.tool';
+import { consultarAchadosEPerdidosTool } from './consultar-achados-e-perdidos.tool';
 import {
   gerenciarNotaFiscalNfseTool,
   buildStandardStayDescription,
@@ -35,6 +40,11 @@ export {
   estenderEstadiaTool,
   solicitarLimpezaExtraTool,
   abrirChamadoManutencaoTool,
+  resolverProblemaCartaoNfcTool,
+  autorizarVisitaTemporariaTool,
+  processarCancelamentoTool,
+  enviarMidiaUnidadeTool,
+  consultarAchadosEPerdidosTool,
   gerenciarNotaFiscalNfseTool,
   buildStandardStayDescription,
   notificarAdministradorTool,
@@ -52,6 +62,11 @@ export const ALL_AGENT_TOOLS: AgentToolDefinition<any>[] = [
   estenderEstadiaTool,
   solicitarLimpezaExtraTool,
   abrirChamadoManutencaoTool,
+  resolverProblemaCartaoNfcTool,
+  autorizarVisitaTemporariaTool,
+  processarCancelamentoTool,
+  enviarMidiaUnidadeTool,
+  consultarAchadosEPerdidosTool,
   gerenciarNotaFiscalNfseTool,
   notificarAdministradorTool,
 ];

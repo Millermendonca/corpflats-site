@@ -1,13 +1,12 @@
-# Progress — Explorer 1
+# Progress — Explorer 1 (Frontend Bundle Explorer)
 
-Last visited: 2026-10-11T23:26:30Z
-Status: Completed investigation
+Last visited: 2026-11-02T23:28:30Z
+Status: Completed investigation and handoff
 
 - [x] Received dispatch and initialized BRIEFING.md
-- [x] Investigate incoming WhatsApp message flow (scripts/zapi-service.mjs, scripts/whatsapp-ai-service.mjs, scripts/demo-server.mjs)
-- [x] Investigate aiPaused mechanism, storage, and developer immunity bypass (22998505276 / 5522998505276)
-- [x] Investigate database.json structure for WhatsApp settings, AI config, chats, and db.whatsappAiSettings.developerGuidelines
-- [x] Investigate Twin-Server Parity between scripts/ and artifacts/api-server/
-- [x] Map out exact lines, functions, and recommendations for R1 and R3 endpoint (/api/whatsapp/chat/:phone/correct-message)
-- [ ] Compile handoff.md
-- [ ] Send completion message
+- [x] Investigate smart asset caching in `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and `artifacts/limpeza/vite.config.ts`
+- [x] Investigate 17 heavy page imports in `artifacts/limpeza/src/App.tsx` and design `lazyWithRetry` pattern
+- [x] Identify cross-module dependency leak in `floating-new-reservation.tsx` importing `PmsCalendar`
+- [x] Investigate Route Guards (`AdminGuard`, `DevGuard`, `ReceptionGuard`, `StaffGuard`) waterfall and session cache solution
+- [x] Compile comprehensive `handoff.md` with exact lines, proposed edits, caveats, and verification methods
+- [x] Send completion message to orchestrator

@@ -4653,10 +4653,14 @@ export async function sendZapiMessage(config, {
 
       try {
         console.log(`[Z-API] Enviando mensagem em texto formatado para ${targetPhone}...`);
+        const textPayload = { phone: targetPhone, message: textWithLinks };
+        if (options.delayTyping && Number(options.delayTyping) > 0) {
+          textPayload.delayTyping = Math.min(15, Math.max(1, Math.round(Number(options.delayTyping))));
+        }
         const res = await fetch(textUrl, {
           method: "POST",
           headers,
-          body: JSON.stringify({ phone: targetPhone, message: textWithLinks })
+          body: JSON.stringify(textPayload)
         });
         const data = await res.json().catch(() => ({}));
 
@@ -7096,6 +7100,116 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
     if (!Array.isArray(db.whatsappAiSettings.developerGuidelines)) {
       db.whatsappAiSettings.developerGuidelines = [];
+    } else {
+      // Remove registros quebrados de teste (ex: R$ 195,00 truncado, testes de fotos de ar-condicionado, "estou testando") e unifica rule/text
+      db.whatsappAiSettings.developerGuidelines = db.whatsappAiSettings.developerGuidelines.filter(g => {
+        if (!g) return false;
+        const raw = String(g.rule || g.text || "").trim();
+        if (!raw) return false;
+        const isCorruptedTestRecord =
+          /195[,.]00\s*e\s*com|valor\s+da\s+di[aá]ria\s+[eé]\s+195|teste\s+de\s+foto.*ar[\s-]*condicionado|mandar\s+foto\s+do\s+ar|estou\s+testando|sou\s+miller/i.test(raw);
+        return !isCorruptedTestRecord;
+      });
+      // Sanitiza diretrizes antigas que estavam truncadas ou com rule/text dessincronizados
+      for (const g of db.whatsappAiSettings.developerGuidelines) {
+        if (!g) continue;
+        const rawRule = String(g.rule || g.text || "").trim();
+        const isBrokenTemplate = rawRule.includes('Atue sempre de forma prestativa, concisa e acolhedora ao responder sobre: "') ||
+          rawRule.includes('Seguir o padrão de resposta do operador para situações similares a:');
+        if (isBrokenTemplate && g.operatorInstruction) {
+          const cleanInst = String(g.operatorInstruction).trim();
+          g.rule = cleanInst;
+          g.text = cleanInst;
+        } else {
+          const unified = String(g.text || g.rule || "").trim();
+          g.rule = unified;
+          g.text = unified;
+        }
+        if (g.sample && String(g.sample).includes('O hóspede perguntou sobre: "')) {
+          const cleanBase = String(g.rule || g.text || "").replace(/^Diretriz operacional:\s*/i, "").trim();
+          g.sample = cleanBase ? `${cleanBase.charAt(0).toUpperCase() + cleanBase.slice(1)}` : "";
+          g.sampleResponse = g.sample;
+        }
+      }
+    }
+    if (!db.whatsappAiSettings.trainingBlocks || typeof db.whatsappAiSettings.trainingBlocks !== "object") {
+      db.whatsappAiSettings.trainingBlocks = {
+        blocoA_fichasTecnicas: [
+          {
+            id: "ft_wifi",
+            titulo: "Wi-Fi dos Flats",
+            topico: "wifi",
+            conteudo: "Rede: CorpFlats-Hospedes | Senha: corpflats2026 (sinal dedicado de alta velocidade em todos os flats)."
+          },
+          {
+            id: "ft_acesso_nfc",
+            titulo: "Acesso ao Prédio e aos Flats (Cartão NFC)",
+            topico: "acesso",
+            conteudo: "Acesso 100% via cartão magnético NFC retirado diretamente na recepção 24h do Edifício Soho Residence (Rua Conselheiro Otaviano, 209 - Centro). Não utilizamos senha numérica na porta."
+          },
+          {
+            id: "ft_voltagem_equipamentos",
+            titulo: "Voltagem e Equipamentos dos Flats",
+            topico: "equipamentos",
+            conteudo: "Voltagem padrão 110V (127V). Todos os flats contam com ar-condicionado, Smart TV, frigobar, bancada de trabalho, enxoval completo (cama e banho), ferro de passar e secador de cabelo."
+          },
+          {
+            id: "ft_condominio_lazer",
+            titulo: "Regras da Piscina, Academia e Visitas (Soho Residence)",
+            topico: "condominio",
+            conteudo: "Piscina e academia funcionam das 06:00h às 22:00h e são de uso exclusivo dos hóspedes cadastrados na reserva. Visitantes temporários devem ser autorizados por e-mail na portaria (Nome completo + CPF), não podem pernoitar e não podem utilizar piscina ou academia."
+          }
+        ],
+        blocoB_fatosOperacionais: [
+          {
+            id: "fo_horarios",
+            situacao: "Horários de Check-in, Early Check-in e Late Check-out",
+            fato: "Check-in padrão às 14:00h e check-out às 12:00h. Early check-in gratuito a partir das 10:00h (WhatsApp/Direto) ou 12:00h (OTAs) se o flat estiver limpo. Late check-out gratuito até 13:00h de segunda a sábado; aos domingos, gratuito até 18:00h quando a ocupação ativa for menor que 50%."
+          },
+          {
+            id: "fo_limpeza_insumos",
+            situacao: "Limpeza durante a estadia vs. reposição de itens",
+            fato: "Toalha extra, travesseiro, papel higiênico e sabonete são entregues como cortesia (card de entrega avulsa). Limpeza completa durante a estadia com troca de enxoval custa R$ 70,00 via PIX antecipado."
+          },
+          {
+            id: "fo_cartao_nfc",
+            situacao: "Perda de cartão NFC ou chave trancada dentro do flat",
+            fato: "Se trancou o cartão dentro do flat, enviamos e-mail para soho@promenade.com.br liberando cartão reserva sem custo. Em caso de perda/extravio, há taxa de R$ 15,00 via PIX e o e-mail de 2ª via é disparado automaticamente após confirmação do pagamento."
+          }
+        ],
+        blocoC_exemplosDeOuro: [
+          {
+            id: "ex_wifi_checkout",
+            perguntaHospede: "Bom dia! Qual é a senha do wi-fi mesmo? E amanhã consigo sair às 13h?",
+            respostaIdealSofia: "Bom dia, Sr. Carlos! A rede do Wi-Fi é *CorpFlats-Hospedes* e a senha é *corpflats2026*.\n\nSobre amanhã, já deixei registrado aqui no sistema a sua saída estendida como cortesia até as 13:00h no Flat 212, pode ficar tranquilo!"
+          },
+          {
+            id: "ex_toalha",
+            perguntaHospede: "Oi Sofia, tem como mandar mais uma toalha de banho e dois papéis higiênicos pro 304?",
+            respostaIdealSofia: "Oi, Sra. Mariana! Já avisei nossa governança para levar 1 toalha de banho extra e 2 rolos de papel higiênico aí no Flat 304 como cortesia para você."
+          }
+        ],
+        listaNegraCliches: [
+          "Com certeza!",
+          "Espero ter ajudado",
+          "Fico feliz em ajudar",
+          "Não hesite em entrar em contato",
+          "Como uma inteligência artificial",
+          "Prezado(a) cliente"
+        ]
+      };
+    }
+    if (db.settings?.geminiModel && db.settings.geminiModel.includes("lite")) {
+      db.settings.geminiModel = "gemini-2.5-flash";
+    }
+    if (db.whatsappAiSettings?.preferredModel && db.whatsappAiSettings.preferredModel.includes("lite")) {
+      db.whatsappAiSettings.preferredModel = "gemini-2.5-flash";
+    }
+    if (db.whatsappAiSettings?.geminiModel && db.whatsappAiSettings.geminiModel.includes("lite")) {
+      db.whatsappAiSettings.geminiModel = "gemini-2.5-flash";
+    }
+    if (db.whatsappAiConfig?.preferredModel && db.whatsappAiConfig.preferredModel.includes("lite")) {
+      db.whatsappAiConfig.preferredModel = "gemini-2.5-flash";
     }
     if (!db.whatsappAiSettings.toneSettings) {
       db.whatsappAiSettings.toneSettings = {
@@ -9169,18 +9283,60 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
                         /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(incomingInfo.senderName || "").trim()) ||
                         isRecentBotSentMessage({ messageId: incomingInfo.messageId, phone: cleanTarget, text: incomingInfo.text });
           if (!incomingInfo.fromMe || (isDeveloperPhone(cleanTarget, db) && !isBot)) {
-            try {
-              await processAiInboundMessage({
-                db,
-                incomingInfo: incomingInfo.fromMe ? { ...incomingInfo, fromMe: false, senderName: "Miller" } : incomingInfo,
-                cleanTarget,
-                saveDatabase,
-                createNotification,
-                sendZapiMessage,
-                appendMessageFn: appendMessageToConversation
-              });
-            } catch (aiErr) {
-              console.warn("[WhatsApp AI Fallback Webhook Error]:", aiErr.message);
+            const effectiveIncoming = incomingInfo.fromMe ? { ...incomingInfo, fromMe: false, senderName: "Miller" } : incomingInfo;
+            const debounceWindowMs = req.body?.debounceMs !== undefined
+              ? Number(req.body.debounceMs)
+              : ((process.env.NODE_ENV === "test" || req.body?.bypassDebounce || isDeveloperPhone(cleanTarget, db)) ? 0 : 5000);
+
+            if (debounceWindowMs > 0) {
+              if (!globalThis.__sofiaWebhookDebounceBuffers) {
+                globalThis.__sofiaWebhookDebounceBuffers = new Map();
+              }
+              const bufMap = globalThis.__sofiaWebhookDebounceBuffers;
+              const existingBuf = bufMap.get(cleanTarget);
+              if (existingBuf) {
+                clearTimeout(existingBuf.timer);
+                existingBuf.texts.push(String(effectiveIncoming.text || "").trim());
+                existingBuf.lastIncoming = effectiveIncoming;
+              } else {
+                bufMap.set(cleanTarget, {
+                  texts: [String(effectiveIncoming.text || "").trim()],
+                  lastIncoming: effectiveIncoming,
+                  timer: null
+                });
+              }
+              const entry = bufMap.get(cleanTarget);
+              entry.timer = setTimeout(async () => {
+                bufMap.delete(cleanTarget);
+                const combinedText = entry.texts.filter(Boolean).join("\n");
+                try {
+                  await processAiInboundMessage({
+                    db,
+                    incomingInfo: { ...entry.lastIncoming, text: combinedText },
+                    cleanTarget,
+                    saveDatabase,
+                    createNotification,
+                    sendZapiMessage,
+                    appendMessageFn: appendMessageToConversation
+                  });
+                } catch (aiErr) {
+                  console.warn("[WhatsApp AI Debounced Webhook Error]:", aiErr.message);
+                }
+              }, debounceWindowMs);
+            } else {
+              try {
+                await processAiInboundMessage({
+                  db,
+                  incomingInfo: effectiveIncoming,
+                  cleanTarget,
+                  saveDatabase,
+                  createNotification,
+                  sendZapiMessage,
+                  appendMessageFn: appendMessageToConversation
+                });
+              } catch (aiErr) {
+                console.warn("[WhatsApp AI Fallback Webhook Error]:", aiErr.message);
+              }
             }
           }
         }
@@ -9792,15 +9948,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const aiConfig = getWhatsAppAiConfig(db);
     const geminiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
     const aiCh = db.zapiConfig?.channels?.ai_agent;
-    const resolvedModel = aiConfig.preferredModel || db.whatsappAiSettings?.preferredModel || db.settings?.geminiModel || "gemini-2.5-pro";
+    const rawModel = aiConfig.preferredModel || db.whatsappAiSettings?.preferredModel || db.settings?.geminiModel || "gemini-2.5-flash";
+    const resolvedModel = String(rawModel).includes("lite") ? "gemini-2.5-flash" : rawModel;
     res.json({
       success: true,
       aiConfig: {
         ...aiConfig,
         preferredModel: resolvedModel,
+        trainingBlocks: db.whatsappAiSettings?.trainingBlocks || null,
         testModeOnly: aiCh ? Boolean(aiCh.testMode) : (aiConfig.testModeOnly ?? true),
         testAllowedPhones: aiCh && Array.isArray(aiCh.whitelist) ? aiCh.whitelist.join(", ") : (aiConfig.testAllowedPhones || "22998505276")
       },
+      trainingBlocks: db.whatsappAiSettings?.trainingBlocks || null,
       geminiConfigured: Boolean(geminiKey),
       geminiModel: resolvedModel,
       preferredModel: resolvedModel,
@@ -9832,12 +9991,23 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (Array.isArray(updates.handoverKeywords)) current.handoverKeywords = updates.handoverKeywords;
     if (updates.systemPrompt) current.systemPrompt = String(updates.systemPrompt);
     if (updates.preferredModel || updates.geminiModel) {
-      const modelVal = String(updates.preferredModel || updates.geminiModel).trim();
+      const rawModelVal = String(updates.preferredModel || updates.geminiModel).trim();
+      const modelVal = rawModelVal.toLowerCase().includes("lite") || rawModelVal === "gemini-4-argon"
+        ? "gemini-2.5-pro"
+        : rawModelVal;
       current.preferredModel = modelVal;
       if (!db.whatsappAiSettings) db.whatsappAiSettings = {};
       db.whatsappAiSettings.preferredModel = modelVal;
       db.whatsappAiSettings.geminiModel = modelVal;
       if (db.settings) db.settings.geminiModel = modelVal;
+    }
+    if (updates.trainingBlocks && typeof updates.trainingBlocks === "object") {
+      if (!db.whatsappAiSettings) db.whatsappAiSettings = {};
+      db.whatsappAiSettings.trainingBlocks = {
+        ...(db.whatsappAiSettings.trainingBlocks || {}),
+        ...updates.trainingBlocks
+      };
+      current.trainingBlocks = db.whatsappAiSettings.trainingBlocks;
     }
     if (updates.knowledgeBase && typeof updates.knowledgeBase === "object") {
       current.knowledgeBase = { ...current.knowledgeBase, ...updates.knowledgeBase };
@@ -10292,7 +10462,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
     if (search) {
       const s = String(search).toLowerCase();
-      list = list.filter(g => (g.text || "").toLowerCase().includes(s));
+      list = list.filter(g => String(g.text || g.rule || "").toLowerCase().includes(s));
     }
     res.json({ success: true, guidelines: list });
   });
@@ -10301,12 +10471,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   app.post(["/api/whatsapp/developer-guidelines", "/api/whatsapp/ai/developer-guidelines", "/api/whatsapp/ai-guidelines"], (req, res) => {
     const db = getDb();
     ensureDbDefaults();
-    const text = (req.body.text || req.body.correctionText || "").trim();
+    const text = String(req.body.text || req.body.rule || req.body.correctionText || "").trim();
     if (!text) {
       return res.status(400).json({ error: "O texto da diretriz é obrigatório." });
     }
     const newGuideline = saveDeveloperGuideline(db, {
       text,
+      rule: text,
+      sample: req.body.sample || req.body.sampleResponse || undefined,
       category: req.body.category || inferFaqCategory(text) || "factual",
       targetFlat: req.body.targetFlat || req.body.flatNumber || null,
       active: req.body.active !== undefined ? Boolean(req.body.active) : true,
@@ -10326,10 +10498,32 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (!item) {
       return res.status(404).json({ error: "Diretriz não encontrada." });
     }
-    if (req.body.text !== undefined) item.text = String(req.body.text).trim();
+    const newText = req.body.text !== undefined ? String(req.body.text).trim() : (req.body.rule !== undefined ? String(req.body.rule).trim() : undefined);
+    if (newText !== undefined) {
+      item.text = newText;
+      item.rule = newText;
+      if (req.body.sample === undefined && req.body.sampleResponse === undefined) {
+        const cleanSample = newText.replace(/^(Sempre informe que|Informe que|Diretriz operacional:|Regra:)\s*/i, "").trim();
+        const naturalSample = cleanSample ? `${cleanSample.charAt(0).toUpperCase() + cleanSample.slice(1)}` : newText;
+        item.sample = naturalSample;
+        item.sampleResponse = naturalSample;
+      }
+    }
+    if (req.body.sample !== undefined || req.body.sampleResponse !== undefined) {
+      const sVal = String(req.body.sample ?? req.body.sampleResponse ?? "").trim();
+      item.sample = sVal;
+      item.sampleResponse = sVal;
+    }
     if (req.body.category !== undefined) item.category = req.body.category;
-    if (req.body.targetFlat !== undefined) item.targetFlat = req.body.targetFlat;
-    if (req.body.active !== undefined) item.active = Boolean(req.body.active);
+    if (req.body.targetFlat !== undefined) {
+      item.targetFlat = req.body.targetFlat;
+      item.flatNumber = req.body.targetFlat === "all" ? null : req.body.targetFlat;
+    }
+    if (req.body.active !== undefined || req.body.enabled !== undefined) {
+      const isAct = Boolean(req.body.active !== undefined ? req.body.active : req.body.enabled);
+      item.active = isAct;
+      item.enabled = isAct;
+    }
     item.updatedAt = new Date().toISOString();
     saveDatabase();
     res.json({ success: true, guideline: item });
@@ -10351,6 +10545,41 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
     saveDatabase();
     res.json({ success: true, deletedId: id });
+  });
+
+  // 5.6. Blocos Estruturados de Treinamento (Bloco A: Fichas Técnicas, Bloco B: Fatos Operacionais, Bloco C: Exemplos de Ouro + Lista Negra)
+  app.get("/api/whatsapp/ai-training-blocks", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    res.json({
+      success: true,
+      trainingBlocks: db.whatsappAiSettings?.trainingBlocks || {}
+    });
+  });
+
+  app.put("/api/whatsapp/ai-training-blocks", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const body = req.body || {};
+    const currentBlocks = db.whatsappAiSettings?.trainingBlocks || {};
+    if (Array.isArray(body.blocoA_fichasTecnicas)) {
+      currentBlocks.blocoA_fichasTecnicas = body.blocoA_fichasTecnicas;
+    }
+    if (Array.isArray(body.blocoB_fatosOperacionais)) {
+      currentBlocks.blocoB_fatosOperacionais = body.blocoB_fatosOperacionais;
+    }
+    if (Array.isArray(body.blocoC_exemplosDeOuro)) {
+      currentBlocks.blocoC_exemplosDeOuro = body.blocoC_exemplosDeOuro;
+    }
+    if (Array.isArray(body.listaNegraCliches)) {
+      currentBlocks.listaNegraCliches = body.listaNegraCliches;
+    }
+    db.whatsappAiSettings.trainingBlocks = currentBlocks;
+    saveDatabase();
+    res.json({
+      success: true,
+      trainingBlocks: db.whatsappAiSettings.trainingBlocks
+    });
   });
 
   // 5.6. Consultar e Atualizar Calibração de Tom (/api/whatsapp/tone-settings)

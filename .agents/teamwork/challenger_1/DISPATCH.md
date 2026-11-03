@@ -1,17 +1,23 @@
-## 2026-10-29T17:47:01Z
-You are challenger_1, an adversarial code-executing verifier.
-Your working directory is:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_1`
+## 2026-11-02T02:11:36Z
+You are a teamwork_challenger verifying Milestone M1.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_1
+Your parent is orchestrator_21 (ID: d148d17c-b644-4690-94c7-bab73af837cc).
 
-CRITICAL REQUIREMENTS:
-1. Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (lines 890 to 930) and `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`.
-2. Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never send WhatsApp messages.
+MANDATORY READINGS:
+1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically lines 974-1011)
+2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md` (STRICT: no global test suites, git commit + push)
+3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_21\PROJECT.md`
+4. Worker handoff: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
 
-TASK OBJECTIVE:
-Adversarially challenge and stress-test the synchronization logic fixes:
-- Attempt to break or bypass the 8-digit suffix isolation: Can two Brazilian phone numbers with different DDDs sharing the same local 8 digits (e.g. `21976403551` vs `28976403551` vs `11976403551`) ever collide or overwrite in the new code?
-- Attempt to inject companion phones into `buildGuestCallerIdContactData`: Verify that reservation companions (`r.guests`) can never leak their numbers into the main guest's Caller ID contact payload.
-- Attempt to trigger an overwrite of a Google Contact with an incompatible name or mismatched CRM_ID: Verify that the update is strictly blocked and an isolated contact is created instead.
-- Run targeted checks without modifying production source code files.
-- Record your findings and explicit verdict: APPROVE or REQUEST_CHANGES in `handoff.md`.
-- Send completion message to parent orchestrator.
+YOUR CHALLENGE SCOPE:
+Empirically verify the correctness, robustness, edge cases, and security of the fiscal flow in `artifacts/api-server/whatsapp-ai-service.mjs`:
+- Does an unauthorized phone number (e.g. `5521999998888`, `5522988887777`, random numbers) ever enter or trigger any part of the fiscal workflow? Verify silent ignore (`{ handled: false }`).
+- Does a value alteration attempt (e.g. "muda para 100", "altera valor para R$ 1.500,00", "cobrar 0") ever bypass the security lock? Verify emission is strictly blocked until manager approval.
+- Does manager approval from any other number get rejected?
+- Does explicit confirmation from 22998505276 reliably emit and deliver the document/link?
+- Run the dedicated punctual test: `node --test tests/sofia-fiscal-whatsapp-confirmation.test.mjs`.
+- If you write an empirical stress harness, put it in your working directory and run it isolated (mock in-memory DB or tmp copy, delete DATABASE_URL). DO NOT modify `data/database.json`.
+- STRICT AGENTS.md RULE: DO NOT run global tests or batch tests (`tests/*.test.mjs`).
+- Conclude with an explicit verdict: APPROVE or REQUEST_CHANGES.
+- Write your handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_1\handoff.md`.
+- Send a message to your parent with your verdict and empirical findings.

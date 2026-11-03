@@ -16200,6 +16200,7 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
     });
 
     // Disparo imediato e assíncrono via Nodemailer SMTP CorpFlats (exclusivo para a garagem)
+    globalThis.sendEmailAsync = sendEmailAsync;
     const commLog = sendEmailAsync({
       db,
       saveDatabase,
@@ -55270,11 +55271,13 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
         const valorPago = Number(item.valor || 0);
 
         if (txid) {
-          // 0. Verifica se o pagamento é referente a Limpeza Durante a Estadia (R$ 70,00) ou Early Check-in / Late Check-out avulso
+          // 0. Verifica se o pagamento é referente a Limpeza Durante a Estadia (R$ 70,00), Early Check-in, Late Check-out, 2ª via de Cartão NFC (R$ 15,00) ou Prorrogação de Estadia
           const resServiceOrder = (db.reservations || []).find(resItem =>
             resItem.pendingStayoverCleaning?.txid === txid ||
             resItem.pendingEarlyCheckin?.txid === txid ||
-            resItem.pendingLateCheckout?.txid === txid
+            resItem.pendingLateCheckout?.txid === txid ||
+            resItem.pendingNfcCardReplacement?.txid === txid ||
+            resItem.pendingStayExtension?.txid === txid
           );
 
           if (resServiceOrder) {
@@ -55450,6 +55453,130 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
                 sendZapiMessage(
                   resServiceOrder.guestPhone,
                   `✅ *Late Check-out Confirmado!* Recebemos o seu PIX de R$ ${lateAmt.toFixed(2).replace(".", ",")}. Sua saída estendida até as *${lateMeta.requestedTime}* no *Flat ${resServiceOrder.flatNumber}* já está liberada no sistema!`,
+                  { isAutomated: true, skipQueue: true }
+                ).catch(() => {});
+              }
+              continue;
+            }
+
+            if (resServiceOrder.pendingNfcCardReplacement?.txid === txid && resServiceOrder.pendingNfcCardReplacement.status !== "paid") {
+              const nfcMeta = resServiceOrder.pendingNfcCardReplacement;
+              const nfcAmt = valorPago > 0 ? valorPago : (Number(nfcMeta.amount) || 15);
+              nfcMeta.status = "paid";
+              nfcMeta.paidAt = paidIso;
+              nfcMeta.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
+
+              if (!Array.isArray(resServiceOrder.charges)) resServiceOrder.charges = [];
+              resServiceOrder.charges.push({
+                id: `chg_nfc_${Date.now()}`,
+                description: `2ª Via de Cartão de Acesso NFC (Flat ${resServiceOrder.flatNumber})`,
+                amount: nfcAmt,
+                category: "nfc_card_replacement",
+                date: paidIso
+              });
+              if (!Array.isArray(resServiceOrder.payments)) resServiceOrder.payments = [];
+              resServiceOrder.payments.push({
+                id: `pay_nfc_${Date.now()}`,
+                amount: nfcAmt,
+                method: "pix",
+                date: paidIso,
+                notes: `PIX 2ª Via Cartão NFC (${txid})`
+              });
+              resServiceOrder.totalAmount = Math.round(((Number(resServiceOrder.totalAmount) || 0) + nfcAmt) * 100) / 100;
+              resServiceOrder.paidAmount = Math.round(((Number(resServiceOrder.paidAmount) || 0) + nfcAmt) * 100) / 100;
+
+              const flatNum = String(resServiceOrder.flatNumber || "");
+              const guestName = resServiceOrder.guestName || "Hóspede";
+              const nfcEmailSubject = `Solicitação de nova via de cartão do flat ${flatNum}`;
+              const nfcEmailBodyText = `Solicito por gentileza uma nova via do cartão de acesso do flat ${flatNum}, o(a) hóspede ${guestName} irá pegar aí. Descontar no condomínio do flat 212.`;
+
+              sendEmailAsync({
+                db,
+                saveDatabase,
+                reservationId: resServiceOrder.code || resServiceOrder.id,
+                recipient: "soho@promenade.com.br",
+                subject: nfcEmailSubject,
+                bodyHtml: `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #1e293b; line-height: 1.6;"><p>${nfcEmailBodyText}</p></div>`,
+                type: "email",
+                direction: "outbound",
+                metadata: {
+                  trigger: "nfc_card_replacement_paid",
+                  flatNumber: flatNum,
+                  guestName,
+                  txid
+                }
+              });
+
+              createNotification({
+                category: "checkin",
+                title: `💳 2ª Via Cartão NFC Paga (R$ ${nfcAmt.toFixed(2)}): Flat ${flatNum}`,
+                message: `PIX de R$ ${nfcAmt.toFixed(2)} confirmado para ${guestName}. E-mail enviado automaticamente para soho@promenade.com.br autorizando a retirada da nova via!`,
+                severity: "success",
+                metadata: { reservationCode: resServiceOrder.code, txid, flatNumber: flatNum },
+                targetUrl: `/reservas`
+              });
+
+              if (resServiceOrder.guestPhone && typeof sendZapiMessage === "function") {
+                sendZapiMessage(
+                  resServiceOrder.guestPhone,
+                  `✅ *Pagamento de R$ ${nfcAmt.toFixed(2).replace(".", ",")} Confirmado!* Já enviamos o e-mail de autorização para a recepção do Soho Residence (*soho@promenade.com.br*).\n\nVocê já pode retirar a sua nova via do cartão de acesso NFC do *Flat ${flatNum}* diretamente na portaria 24h!`,
+                  { isAutomated: true, skipQueue: true }
+                ).catch(() => {});
+              }
+              continue;
+            }
+
+            if (resServiceOrder.pendingStayExtension?.txid === txid && resServiceOrder.pendingStayExtension.status !== "paid") {
+              const extMeta = resServiceOrder.pendingStayExtension;
+              const extAmt = valorPago > 0 ? valorPago : (Number(extMeta.amount) || 0);
+              extMeta.status = "paid";
+              extMeta.paidAt = paidIso;
+              extMeta.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
+
+              const oldCheckout = resServiceOrder.checkoutDate;
+              if (extMeta.newCheckoutDate) {
+                resServiceOrder.checkoutDate = extMeta.newCheckoutDate;
+              }
+              if (extMeta.newFlatNumber && String(extMeta.newFlatNumber) !== String(resServiceOrder.flatNumber)) {
+                const targetFlatObj = (db.flats || []).find(f => String(f.number) === String(extMeta.newFlatNumber));
+                if (targetFlatObj) {
+                  resServiceOrder.flatId = targetFlatObj.id;
+                  resServiceOrder.flatNumber = String(targetFlatObj.number);
+                }
+              }
+
+              if (!Array.isArray(resServiceOrder.charges)) resServiceOrder.charges = [];
+              resServiceOrder.charges.push({
+                id: `chg_ext_${Date.now()}`,
+                description: `Prorrogação de Estadia (+${extMeta.extraNights || 1} diária(s): ${oldCheckout} -> ${resServiceOrder.checkoutDate})`,
+                amount: extAmt,
+                category: "stay_extension",
+                date: paidIso
+              });
+              if (!Array.isArray(resServiceOrder.payments)) resServiceOrder.payments = [];
+              resServiceOrder.payments.push({
+                id: `pay_ext_${Date.now()}`,
+                amount: extAmt,
+                method: "pix",
+                date: paidIso,
+                notes: `PIX Prorrogação de Estadia (${txid})`
+              });
+              resServiceOrder.totalAmount = Math.round(((Number(resServiceOrder.totalAmount) || 0) + extAmt) * 100) / 100;
+              resServiceOrder.paidAmount = Math.round(((Number(resServiceOrder.paidAmount) || 0) + extAmt) * 100) / 100;
+
+              createNotification({
+                category: "reservation",
+                title: `📅 Prorrogação Paga (R$ ${extAmt.toFixed(2)}): Flat ${resServiceOrder.flatNumber}`,
+                message: `Estadia de ${resServiceOrder.guestName} prorrogada até ${resServiceOrder.checkoutDate} após confirmação do PIX!`,
+                severity: "success",
+                metadata: { reservationCode: resServiceOrder.code, txid, newCheckoutDate: resServiceOrder.checkoutDate },
+                targetUrl: `/reservas`
+              });
+
+              if (resServiceOrder.guestPhone && typeof sendZapiMessage === "function") {
+                sendZapiMessage(
+                  resServiceOrder.guestPhone,
+                  `✅ *Prorrogação Confirmada!* Recebemos o seu PIX de R$ ${extAmt.toFixed(2).replace(".", ",")}. Sua estadia no *Flat ${resServiceOrder.flatNumber}* foi estendida com sucesso até *${String(resServiceOrder.checkoutDate).split("-").reverse().join("/")}*!`,
                   { isAutomated: true, skipQueue: true }
                 ).catch(() => {});
               }

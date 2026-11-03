@@ -1,255 +1,557 @@
-# Relatório de Investigação Técnica: Motor de IA WhatsApp, Prompt Orchestration e Modo Desenvolvedor (Sofia)
+# Handoff Report: Prioridade 2 — Frontend UI Performance in PMS Components
 
-**Data**: 2026-10-11T23:26:00Z  
-**Autor**: Explorer 2 (`explorer_2`)  
-**Contexto**: Milestone Modo Desenvolvedor & Treinamento Inteligente no WhatsApp (CorpFlats)  
-**Arquivo de Origem**: `ORIGINAL_REQUEST.md` (Seção `## Follow-up — 2026-10-11T23:13:31Z`)  
+- **Date**: 2026-11-02T23:26:00Z
+- **Author**: Teamwork Explorer 2 (`explorer_2`)
+- **Target Audience**: Orchestrator & Worker Agent
+- **Topic**: Dynamic Mounting of `<PmsCalendar modalOnly />` in `floating-new-reservation.tsx` & Polling / Computation Optimization in `pms-calendar.tsx`
 
 ---
 
-## 1. Observation (Observações Diretas)
+## 1. Observation
 
-### 1.1 Arquitetura Atual do Motor de IA e Montagem do Prompt
-- **Arquivo**: `scripts/whatsapp-ai-service.mjs` (linhas 44-86 e 1852-1897)
-  - `DEFAULT_AI_CONFIG`: contém `enabled`, `mode`, `agentName: "Sofia"`, `agentRole: "Concierge Virtual CorpFlats"`, `responseDelaySeconds: 3`, `systemPrompt`, `knowledgeBase`, `handoverKeywords`.
-  - Linha 58: `systemPrompt` padrão define a identidade:
-    > *"Você é a Sofia, concierge virtual inteligente e acolhedora dos flats de alto padrão da CorpFlats no Edifício Soho Residence Service em Campos dos Goytacazes/RJ. Seu objetivo é encantar os hóspedes, responder dúvidas com precisão e fornecer assistência ágil e atenciosa..."*
-  - Linhas 1852-1883: `contextString` concatena quatro blocos estruturados:
-    1. `[CONTEXTO EM TEMPO REAL]` (data/hora de Brasília UTC-3, telefone, nome do hóspede, status da estadia, flat, check-in/out, status de limpeza da governança, room ready, link de pré-check-in).
-    2. `[BASE DE CONHECIMENTO OFICIAL CORPFLATS]` (endereço, check-in, check-out, políticas, Wi-Fi `apto {{quarto}}`, senha, café no quarto via bandeja, garagem rotativa, pets, fumo, comodidades, lazer na cobertura).
-    3. `dynamicFaqPromptSection`: perguntas e respostas de `db.faqItems` filtradas por `isFaqApplicableToClient(faq, phone)`.
-    4. `systemActionsNotice`: aviso sobre ferramentas do sistema (Function Calling ativo ou pausado).
-  - Linha 1892: a chamada ao Gemini combina o prompt do sistema e o contexto via:
-    ```javascript
-    systemInstruction: `${aiConfig.systemPrompt}\n\n${contextString}`
-    ```
-  - Linha 1641 (`callGeminiAi`): monta o turno com:
-    ```javascript
-    const fullPrompt = `${systemInstruction}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
-    ```
-  - Linha 1917: fallback para `generateHeuristicResponse(messageText, guestContext, aiConfig, applicableFaqs)`.
-
-### 1.2 Lacuna de Calibração de Tom e Diretrizes de Desenvolvedor
-- Não existem atualmente no banco ou código os campos `aiConfig.toneSettings` nem `db.whatsappAiSettings.developerGuidelines`.
-- Nem `callGeminiAi` nem `generateHeuristicResponse` possuem injeção dinâmica de calibração estilística (concisão, emojis, formalidade) ou de fatos ensinados pelo desenvolvedor.
-
-### 1.3 Paridade dos Arquivos Gêmeos (Twin Servers)
-- Execução do comando de verificação:
-  `powershell -Command "(Get-FileHash scripts/whatsapp-ai-service.mjs).Hash -eq (Get-FileHash artifacts/api-server/whatsapp-ai-service.mjs).Hash"`
-  Retornou: **`False`**.
-- Análise de `git diff`:
-  - `scripts/whatsapp-ai-service.mjs` possui a versão atualizada (Edifício Soho Residence Service, Wi-Fi por quarto, café da manhã via bandeja no quarto das 05h às 09h30).
-  - `artifacts/api-server/whatsapp-ai-service.mjs` possui versão antiga (Av. Pelinca, Wi-Fi único CorpFlats-Hospedes, café buffet das 06h30 às 10h).
-  - Ambos os arquivos gêmeos de `zapi-service.mjs` e `demo-server.mjs` estão com paridade 100% íntegra (`True`).
-
-### 1.4 Identificação do Desenvolvedor e Bloqueio de IA
-- Em `scripts/zapi-service.mjs` (linha 1298): `22998505276` e `5522998505276` constam na lista `DEFAULT_TEST_ALLOWED_PHONES` identificados como "Miller Mendonça (gestor / desenvolvedor)".
-- Em `scripts/whatsapp-ai-service.mjs` (linhas 2185-2189):
-  ```javascript
-  if (conv && conv.aiPaused === true) {
-    console.log(`[WhatsApp AI] Conversa com ${cleanTarget} com IA pausada. Aguardando atendimento humano.`);
-    return { skipped: true, reason: "conversation_ai_paused" };
-  }
+### 1.1. Root Cause of Unconditional Mount in `floating-new-reservation.tsx`
+- **File**: `artifacts/limpeza/src/components/floating-new-reservation.tsx`
+- **Lines 5 & 208–210**:
+  ```tsx
+  5: import PmsCalendar from '@/pages/pms-calendar';
+  ...
+  208:     <>
+  209:       {/* Monta os modais do PMS silenciosamente quando o admin está fora da tela /reservas */}
+  210:       {!isOnReservationsPage && <PmsCalendar modalOnly />}
   ```
-  Se `conv.aiPaused === true`, todas as mensagens são descartadas pela IA. Para o número do desenvolvedor, isso provoca silenciamento involuntário durante testes e feedbacks.
+- **File**: `artifacts/limpeza/src/App.tsx` (Lines 11 & 607):
+  ```tsx
+  11: import { FloatingNewReservationButton } from '@/components/floating-new-reservation';
+  ...
+  607:            <FloatingNewReservationButton />
+  ```
+- **Observed Behavior**:
+  1. `FloatingNewReservationButton` is rendered globally on all authenticated pages (outside `/login`) for Admin and Dev users.
+  2. Because of static `import PmsCalendar from '@/pages/pms-calendar'`, the entire 687 KB (12,497 lines) of `pms-calendar.tsx` is bundled into the main chunk and imported immediately on page startup.
+  3. Whenever `!isOnReservationsPage` (i.e. on Dashboard `/`, Limpeza `/limpeza`, Manutenção `/manutencao`, WhatsApp Chat `/chat`, etc.), `<PmsCalendar modalOnly />` is mounted directly in the React DOM tree, even when the modal is closed and the user has not clicked "+ Nova Reserva".
+  4. The component listens to `gfm-res-modal-state` (lines 98–105) to track `isResModalOpen`, but never unmounts `<PmsCalendar modalOnly />` when closed.
 
-### 1.5 Fluxo do Webhook Z-API e Rotas de Chat
-- Em `scripts/zapi-service.mjs` (linhas 6118-6131): o webhook invoca assincronamente `processAiInboundMessage`.
-- Rotas existentes de IA em `scripts/zapi-service.mjs`:
-  - `POST /api/whatsapp/ai-simulate` (linha 6810)
-  - `POST /api/whatsapp/chat/:phone/ai-toggle` (linha 6841)
-  - `POST /api/whatsapp/chat/:phone/ai-suggest` (linha 6873)
-- Rota para retificação de mensagens (`/api/whatsapp/chat/:phone/correct-message`) ainda não existe.
+### 1.2. Unconditional Network Fetch Storm on Mount in `pms-calendar.tsx`
+- **File**: `artifacts/limpeza/src/pages/pms-calendar.tsx`
+- **Lines 2015–2021**:
+  ```tsx
+  2015:   useEffect(() => {
+  2016:     if (modalOnly) {
+  2017:       const t = setTimeout(() => fetchData(false), 600);
+  2018:       return () => clearTimeout(t);
+  2019:     }
+  2020:     fetchData(true);
+  2021:   }, [modalOnly]);
+  ```
+- **Lines 1956–2005 (`fetchData`) & Lines 941–951**:
+  - Exactly 600ms after mounting on ANY page, `<PmsCalendar modalOnly />` unconditionally calls `fetchData(false)`.
+  - `fetchData(false)` triggers requests to:
+    - `GET /api/pms/calendar?startDate=...&endDate=...&_t=...`
+    - `GET /api/pms/companies`
+    - `GET /api/pms/agencies`
+    - `GET /api/pms/guests`
+    - `GET /api/finance/payment-methods`
+    - `GET /api/breakfast/orders?date=today`
+    - `GET /api/breakfast/orders?date=tomorrow`
+    - `GET /api/pms/fair-share...`
+  - In addition, lines 941–951 trigger `GET /api/pms/amenities/essential-tags` on mount.
+- **Observed Impact**: An administrator visiting `/` or `/limpeza` immediately fires 8+ heavy backend requests in the background, saturating Node.js and PostgreSQL connection pools.
+
+### 1.3. Heavy Computations Running Unconditionally in `pms-calendar.tsx`
+- **File**: `artifacts/limpeza/src/pages/pms-calendar.tsx`
+- **Lines 1809–1836 (Timeline Layout)**:
+  ```tsx
+  1809:   const timelineStart = subDays(new Date(), 30)
+  1810:   const timelineEnd = addDays(new Date(), 90)
+  1811:   const daysInView = eachDayOfInterval({ start: timelineStart, end: timelineEnd })
+  1819:   const gridTemplateColumns = `${FLAT_COL_WIDTH}px ${daysInView.map(day => `${getDayColWidth(day)}px`).join(" ")}`
+  1820:   const totalGridMinWidth = FLAT_COL_WIDTH + daysInView.reduce((acc, day) => acc + getDayColWidth(day), 0)
+  1822:   const timelineStartStr = format(daysInView[0], "yyyy-MM-dd")
+  1823:   const timelineEndStr = format(daysInView[daysInView.length - 1], "yyyy-MM-dd")
+  1826:   const dayLayoutMap = useMemo(() => { ... }, [daysInView])
+  ```
+- **Lines 4650–4709 (Flats & Reservations Filters)**:
+  - `reservationsTodayWithBf` and `reservationsTomorrowWithBf` (filtering all reservations).
+  - `dirtyFlatsCount` and `cleanFlatsCount` (filtering all flats).
+  - `minorReservationsCount` and `riskAttentionCount` (filtering reservations with nested guest lookup).
+  - `displayedFlats` (iterating over all flats with nested `.some()` loops across all reservations).
+- **Observed Impact**: When `modalOnly` is true, lines 4720–5800 hide the entire calendar timeline grid and filter controls (`{!modalOnly && (...)`). None of these values are ever rendered, but they execute repeatedly on every render cycle of `PmsCalendar`.
+
+### 1.4. Polling Mechanism & Tab Visibility in `pms-calendar.tsx`
+- **File**: `artifacts/limpeza/src/pages/pms-calendar.tsx`
+- **Lines 2217–2268**:
+  ```tsx
+  2218:   useEffect(() => {
+  2219:     if (modalOnly) return;
+  2220:     const doSilentSync = () => {
+  2221:       if (typeof document !== "undefined" && document.hidden) return;
+  2222:       if (resDragStateRef.current) return;
+  2223:       if (isDraggingRef.current) return;
+  2224:       if (isAnyModalOpenRef.current) return;
+  2225: 
+  2226:       fetchData(false);
+  2227:     };
+  2228: 
+  2229:     const intervalId = setInterval(doSilentSync, 4000);
+  ...
+  2268:   }, []);
+  ```
+- **Observed Defects**:
+  1. Polling interval is hardcoded to 4000ms (4 seconds).
+  2. While `doSilentSync` returns early when `document.hidden` is true, the `setInterval` timer is NEVER stopped or cleared. JavaScript keeps waking the event loop every 4s.
+  3. The dependency array `[]` at line 2268 omits `modalOnly`.
+  4. Tooltip at line 4740 still states `sincronização automática em tempo real a cada 4s`.
 
 ---
 
-## 2. Logic Chain (Cadeia Lógica de Raciocínio)
+## 2. Logic Chain & Recommended Strategy
 
-### Passo 1: Montagem Unificada do Prompt da Sofia
-A partir das observações em 1.1 e 1.2, o prompt da Sofia precisa manter sua estrutura modular e hierárquica para permitir que calibrações de tom e novas diretrizes sobreponham regras padrão sem apagar a identidade fundamental da Sofia.
-A função de montagem dinâmica deve produzir:
+### Step 1: Code-Splitting and On-Demand Mounting in `floating-new-reservation.tsx`
+- **Logic**:
+  1. When on `/reservas`, `PmsCalendar` is already mounted as the main page route. `FloatingNewReservationButton` does not need to mount anything; clicking the button merely dispatches `window.dispatchEvent(new CustomEvent('open-new-reservation-modal'))`.
+  2. When outside `/reservas`, `<PmsCalendar />` should NOT be rendered while closed.
+  3. Replace the static import with `React.lazy`:
+     `const PmsCalendarLazy = React.lazy(() => import('@/pages/pms-calendar'));`
+     This removes 687 KB of source code from the main bundle on all other pages.
+  4. Add state `const [isModalMounted, setIsModalMounted] = useState(false);`.
+  5. In `handleTriggerNewReservation`:
+     - If `isOnReservationsPage`: dispatch `'open-new-reservation-modal'`.
+     - If `!isOnReservationsPage`: `setIsModalMounted(true)` and dispatch `'open-new-reservation-modal'`.
+  6. In `handleModalState`:
+     - When `customEvent.detail.open === true`: `setIsResModalOpen(true)`, `setIsModalMounted(true)`.
+     - When `customEvent.detail.open === false`: `setIsResModalOpen(false)`. Set a 300ms timeout (`setTimeout(() => setIsModalMounted(false), 300)`) so the Radix Dialog fade-out animation completes smoothly before the component is completely unmounted.
+  7. Render:
+     ```tsx
+     {!isOnReservationsPage && isModalMounted && (
+       <Suspense fallback={null}>
+         <PmsCalendarLazy modalOnly autoOpenNewRes />
+       </Suspense>
+     )}
+     ```
+
+### Step 2: Auto-Open & Fetch Deactivation in `pms-calendar.tsx`
+- **Logic**:
+  1. Accept `autoOpenNewRes?: boolean` in `PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRes?: boolean; ... })`.
+  2. In the mount effect (lines 2015–2021):
+     ```tsx
+     useEffect(() => {
+       if (modalOnly) {
+         if (autoOpenNewRes) {
+           handleOpenNewResRef.current();
+           fetchData(false);
+         } else if (resModalOpen) {
+           fetchData(false);
+         }
+         return;
+       }
+       fetchData(true);
+     }, [modalOnly, autoOpenNewRes]);
+     ```
+  3. If `modalOnly` is true and `!autoOpenNewRes` and `!resModalOpen`:
+     NO network calls run. Zero data fetching on mount.
+  4. Skip `fetch("/api/pms/amenities/essential-tags")` at line 941 when `modalOnly` is true:
+     `if (modalOnly) return;`.
+
+### Step 3: Deactivating Heavy Layout & Filter Computations when `modalOnly`
+- **Logic**:
+  1. Wrap `daysInView`, `gridTemplateColumns`, `totalGridMinWidth`, and `dayLayoutMap` in `useMemo` with an early exit if `modalOnly` is true:
+     - `daysInView`: returns `[]` when `modalOnly`.
+     - `gridTemplateColumns`: returns `""` when `modalOnly`.
+     - `totalGridMinWidth`: returns `0` when `modalOnly`.
+     - `timelineStartStr` / `timelineEndStr`: returns `""` when `modalOnly || daysInView.length === 0`.
+     - `dayLayoutMap`: returns `{}` when `modalOnly`.
+  2. Memoize header metrics (`reservationsTodayWithBf`, `reservationsTomorrowWithBf`, `dirtyFlatsCount`, `cleanFlatsCount`, `minorReservationsCount`, `riskAttentionCount`, `displayedFlats`) with `useMemo` and return empty/0 if `modalOnly` is true.
+
+### Step 4: 12s Polling and Tab Visibility Pausing in `pms-calendar.tsx`
+- **Logic**:
+  1. Update polling interval from 4,000ms to 12,000ms (within the 10s–15s requirement). This reduces background requests by 67%.
+  2. Introduce active timer management (`startPolling()` and `stopPolling()`):
+     ```tsx
+     let pollIntervalId: ReturnType<typeof setInterval> | null = null;
+     const startPolling = () => {
+       if (pollIntervalId) clearInterval(pollIntervalId);
+       pollIntervalId = setInterval(doSilentSync, 12000);
+     };
+     const stopPolling = () => {
+       if (pollIntervalId) {
+         clearInterval(pollIntervalId);
+         pollIntervalId = null;
+       }
+     };
+     ```
+  3. Start polling ONLY when the tab is visible:
+     `if (typeof document === "undefined" || !document.hidden) startPolling();`
+  4. In `handleVisibilityChange`:
+     - When `document.hidden === true`: call `stopPolling()`. The timer is cleared completely.
+     - When `document.hidden === false`: call `doSilentSync()` immediately and `startPolling()`.
+  5. Include `modalOnly` in the `useEffect` dependencies: `[modalOnly]`.
+  6. Update tooltip at line 4740 to:
+     `title="Sincronizar dados agora (sincronização automática em tempo real a cada 12s)"`.
+
+---
+
+## 3. Concrete Code Changes (For Worker)
+
+### Modification A: `artifacts/limpeza/src/components/floating-new-reservation.tsx`
+
+```diff
+--- a/artifacts/limpeza/src/components/floating-new-reservation.tsx
++++ b/artifacts/limpeza/src/components/floating-new-reservation.tsx
+@@ -1,6 +1,8 @@
+-import React, { useState, useEffect, useRef, useCallback } from 'react';
++import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
+ import { useLocation } from 'wouter';
+ import { useGetMe } from '@workspace/api-client-react';
+ import { Plus, GripVertical, CalendarPlus, Minimize2, Maximize2 } from 'lucide-react';
+-import PmsCalendar from '@/pages/pms-calendar';
++
++const PmsCalendarLazy = lazy(() => import('@/pages/pms-calendar'));
+ 
+@@ -65,2 +67,4 @@
+   const [isResModalOpen, setIsResModalOpen] = useState(false);
++  const [isModalMounted, setIsModalMounted] = useState(false);
++  const unmountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+ 
+@@ -98,6 +102,19 @@
+     const handleModalState = (e: Event) => {
+       const customEvent = e as CustomEvent<{ open: boolean }>;
+       if (customEvent.detail && typeof customEvent.detail.open === 'boolean') {
+-        setIsResModalOpen(customEvent.detail.open);
++        const isOpen = customEvent.detail.open;
++        setIsResModalOpen(isOpen);
++        if (isOpen) {
++          if (unmountTimerRef.current) {
++            clearTimeout(unmountTimerRef.current);
++            unmountTimerRef.current = null;
++          }
++          setIsModalMounted(true);
++        } else {
++          if (unmountTimerRef.current) clearTimeout(unmountTimerRef.current);
++          unmountTimerRef.current = setTimeout(() => {
++            setIsModalMounted(false);
++            unmountTimerRef.current = null;
++          }, 300);
++        }
+       }
+     };
+     window.addEventListener('gfm-res-modal-state', handleModalState);
+-    return () => window.removeEventListener('gfm-res-modal-state', handleModalState);
++    return () => {
++      window.removeEventListener('gfm-res-modal-state', handleModalState);
++      if (unmountTimerRef.current) clearTimeout(unmountTimerRef.current);
++    };
+   }, []);
+ 
+@@ -192,3 +209,7 @@
+     if (hasMovedRef.current) return;
++    if (isOnReservationsPage) {
++      window.dispatchEvent(new CustomEvent('open-new-reservation-modal'));
++    } else {
++      setIsModalMounted(true);
++      window.dispatchEvent(new CustomEvent('open-new-reservation-modal'));
++    }
+-    window.dispatchEvent(new CustomEvent('open-new-reservation-modal'));
+   };
+ 
+@@ -209,3 +230,7 @@
+-      {/* Monta os modais do PMS silenciosamente quando o admin está fora da tela /reservas */}
+-      {!isOnReservationsPage && <PmsCalendar modalOnly />}
++      {/* Monta os modais do PMS sob demanda apenas quando o usuário solicita abertura fora de /reservas */}
++      {!isOnReservationsPage && isModalMounted && (
++        <Suspense fallback={null}>
++          <PmsCalendarLazy modalOnly autoOpenNewRes />
++        </Suspense>
++      )}
 ```
-[PROMPT BASE DA SOFIA]
-(Identidade fixa: Sofia, CorpFlats Soho Residence, regras de cordialidade e honestidade)
 
-[DIRETRIZES DE ESTILO & CALIBRAÇÃO DE TOM EM VIGOR]
-(Regras extraídas de aiConfig.toneSettings: nível de concisão, política de emojis, grau de formalidade)
+---
 
-[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]
-(Lista de db.whatsappAiSettings.developerGuidelines ativas: fatos, horários, correções de flats)
+### Modification B: `artifacts/limpeza/src/pages/pms-calendar.tsx`
 
-[CONTEXTO EM TEMPO REAL]
-(Dados do hóspede e estadia em Brasília UTC-3)
-
-[BASE DE CONHECIMENTO OFICIAL CORPFLATS]
-(Políticas institucionais, Wi-Fi, garagem, café, lazer)
-
-[FAQS ATIVAS DINÂMICAS]
-[STATUS DE FERRAMENTAS / OPERAÇÕES]
+#### 1. Props Definition (Line 227–228)
+```tsx
+export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRes?: boolean; [key: string]: any }) {
+  const modalOnly = Boolean(props?.modalOnly)
+  const autoOpenNewRes = Boolean(props?.autoOpenNewRes)
 ```
-Ao montar o prompt dessa forma:
-- A injeção ocorre no momento da execução de cada mensagem em `generateAiWhatsAppResponse`.
-- Qualquer alteração feita pelo desenvolvedor no WhatsApp ou pelo operador no painel entra em vigor em **milissegundos** para todos os hóspedes reais.
-- O prompt base `aiConfig.systemPrompt` permanece intacto, sem risco de deleção acidental de diretrizes vitais de hotelaria.
 
-### Passo 2: Classificação Tri-Modal de Mensagens do Desenvolvedor
-A partir da observação 1.4, quando a mensagem provém de `22998505276` ou `5522998505276` (validado por `isDeveloperPhone`):
-1. **Bypass Obrigatório**: se `isDeveloperPhone` for verdadeiro, o verificador de `conv.aiPaused === true` é ignorado. O chat com o desenvolvedor nunca pausa nem silencia.
-2. **Motor de Classificação (`classifyDeveloperMessage`)**:
-   - **Fluxo A — Simulação de Hóspede (`guest_simulation`)**:
-     - *Critério*: O desenvolvedor está testando perguntas típicas de clientes.
-     - *Exemplos*: *"Qual o horário de check-in?"*, *"O flat 408 está liberado?"*, *"Tem Wi-Fi no flat 605?"*, *"Como funciona o café da manhã?"*, *"Tem vaga para caminhonete?"*, *"Qual a taxa do pet?"*.
-     - *Ação da Sofia*: Responde como Concierge Virtual acolhedora, utilizando o contexto real, a base de conhecimento e as ferramentas, aplicando o tom atualmente calibrado.
-   - **Fluxo B — Calibração de Tom & Persona (`tone_calibration`)**:
-     - *Critério*: Comandos não literais orientando estilo, concisão, emojis, formalidade ou ritmo.
-     - *Exemplos*: *"responda de forma mais curta por favor"*, *"seja mais concisa"*, *"use menos emojis"*, *"sem emojis"*, *"adote um tom mais descontraído"*, *"seja mais executiva"*, *"ajuste seu tom para ser mais direta"*.
-     - *Processamento*:
-       1. Extração da regra estilística e dimensões afetadas (`conciseness: "compact"`, `emojiUsage: "minimal"|"none"`, `formality: "casual"|"formal"`).
-       2. Atualização persistente de `db.whatsappAiSettings.toneSettings` e `aiConfig.toneSettings`.
-       3. Atualização sutil da seção de estilo em `aiConfig.systemPrompt` no banco (`database.json`).
-       4. Resposta cordial anti-papagaio confirmando o ajuste + resumo da regra + amostra ao vivo no novo tom.
-   - **Fluxo C — Treinamento Factual / Aprendizado de Diretriz (`factual_coaching`)**:
-     - *Critério*: O desenvolvedor informa correções factuais, novos horários, regras específicas de apartamento ou políticas comerciais.
-     - *Exemplos*: *"Sofia, o horário do café mudou para 06:30"*, *"Sofia, para o flat 905 a informação correta é que tem micro-ondas e cafeteira Nespresso"*, *"Sofia, o early check-in para reservas diretas agora é a partir das 09h quando liberado"*, *"Não diga que temos restaurante presencial"*.
-     - *Processamento*:
-       1. Extração do fato/regra, identificação da categoria (`cafe`, `flat_905`, `checkin`, `pet`, `geral`) e eventual número de flat associado.
-       2. Registro em `db.whatsappAiSettings.developerGuidelines` com `{ id, text, category, targetFlat, active: true, createdAt, source: "whatsapp_developer" }`.
-       3. Resposta inteligente confirmando a assimilação da regra + explicação de como será aplicada aos hóspedes + amostra de resposta.
+#### 2. Essential Tags fetch (Line 941–951)
+```tsx
+  useEffect(() => {
+    if (modalOnly) return;
+    fetch("/api/pms/amenities/essential-tags")
+      .then(r => r.json())
+      .then(d => {
+        if (d.essentialTagIds && Array.isArray(d.essentialTagIds)) {
+          setEssentialTagIds(d.essentialTagIds);
+          localStorage.setItem("gfm_essential_tags", JSON.stringify(d.essentialTagIds));
+        }
+      })
+      .catch(() => {});
+  }, [modalOnly]);
+```
 
-### Passo 3: Dinâmica Anti-Papagaio (Resposta Inteligente do Assistente)
-Por que a Sofia não pode agir como um papagaio literal?
-- Se Miller enviar *"responda de forma mais curta por favor"*, responder *"Olá! Claro, vou responder de forma mais curta"* seria uma falha de compreensão contextual.
-- Para demonstrar inteligência genuína, a Sofia deve estruturar a confirmação em 4 blocos:
-  1. **Reconhecimento do Desenvolvedor/Criador**: Tratar Miller cordialmente como criador do sistema (*"Entendido perfeitamente, Miller! ⚙️ Diretriz de estilo atualizada no sistema."*).
-  2. **Resumo da Calibração Realizada**: Destacar de forma pontual o que mudou (*"• Nova calibração: Respostas mais concisas e objetivas, reduzindo extensões e preservando a agilidade para WhatsApp."*).
-  3. **Amostra Imediata no Novo Tom**: Apresentar uma simulação prática de como ela responderá a uma dúvida padrão de hóspede usando o novo estilo (*"Veja uma amostra de resposta para dúvida de check-in no novo tom: 👉 'Olá! Nosso check-in inicia às 14h. Se o seu flat estiver liberado antes pela governança, avisamos você imediatamente! 🔑'"*).
-  4. **Feedback de Ativação**: Confirmar que a regra já está valendo para todos os atendimentos e convidar a enviar mais testes.
+#### 3. Timeline Heavy Computations (Lines 1809–1836)
+```tsx
+  // Timeline Contínua Multi-Mês (desativada quando modalOnly para evitar overhead pesado)
+  const timelineStart = useMemo(() => modalOnly ? new Date() : subDays(new Date(), 30), [modalOnly])
+  const timelineEnd = useMemo(() => modalOnly ? new Date() : addDays(new Date(), 90), [modalOnly])
+  const daysInView = useMemo(() => {
+    if (modalOnly) return []
+    return eachDayOfInterval({ start: timelineStart, end: timelineEnd })
+  }, [modalOnly, timelineStart, timelineEnd])
 
-### Passo 4: Retificação de Mensagens para Hóspedes Reais (Web e WhatsApp)
-A partir da observação 1.5 e dos requisitos R3.1 e R3.2:
-- **No Chat Web (`/whatsapp-chat`)**:
-  - Em cada balão onde `msg.fromMe === true` (com tag Sofia ou régua), renderizar o botão discreto `✏️ Corrigir / Ensinar Sofia`.
-  - Ao clicar, abre modal com:
-    1. Texto original enviado.
-    2. Campo para a nova informação correta / ensinamento.
-    3. Checkbox "Enviar retificação ao hóspede no WhatsApp" (marcado por padrão) com prévia gerada automaticamente da mensagem gentil de retificação.
-  - O endpoint `POST /api/whatsapp/chat/:phone/correct-message` processa em 1 clique:
-    - Salva a regra em `developerGuidelines`.
-    - Se marcado, dispara a retificação para o cliente via Z-API e grava no histórico do chat.
-- **Pelo WhatsApp do Desenvolvedor**:
-  - Quando Miller cita um quarto ou hóspede (ex: *"Sofia, para o flat 905 a informação correta é..."*), a Sofia detecta o hóspede associado ao flat 905, grava a diretriz e informa a Miller: *"Diretriz salva! Deseja que eu retifique com o hóspede Carlos do flat 905? Posso enviar: '...' ou já enviei se confirmado."*
+  // Configuração de larguras das colunas da agenda
+  const EXPANDED_COL_WIDTH = 100 // Coluna de 100px no dia atual e dia anterior
+  const NORMAL_COL_WIDTH = 48    // Largura padrão dos demais dias
+  const FLAT_COL_WIDTH = 145     // Largura da coluna fixa de apartamentos
 
-### Passo 5: Painel Administrativo de Diretrizes (`/whatsapp-automation`)
-A partir da observação 1.2 e requisito R4.2:
-- Criar na aba de IA em `/whatsapp-automation` o card dedicado:
-  **"🧠 Diretrizes & Calibrações Aprendidas (Modo Treinador)"**.
-- Exibe:
-  - Status do tom ativo (Concisão, Emojis, Estilo).
-  - Tabela/lista de diretrizes com status Ativo/Inativo, Categoria, Origem, Data e botão de Excluir.
-  - Botão de adicionar diretriz manual.
-  - Simulador com campo de teste.
+  const getDayColWidth = (day: Date) => (isToday(day) || isYesterday(day) ? EXPANDED_COL_WIDTH : NORMAL_COL_WIDTH)
+  const gridTemplateColumns = useMemo(() => {
+    if (modalOnly || daysInView.length === 0) return ""
+    return `${FLAT_COL_WIDTH}px ${daysInView.map(day => `${getDayColWidth(day)}px`).join(" ")}`
+  }, [modalOnly, daysInView])
+  const totalGridMinWidth = useMemo(() => {
+    if (modalOnly || daysInView.length === 0) return 0
+    return FLAT_COL_WIDTH + daysInView.reduce((acc, day) => acc + getDayColWidth(day), 0)
+  }, [modalOnly, daysInView])
 
----
+  const timelineStartStr = modalOnly || daysInView.length === 0 ? "" : format(daysInView[0], "yyyy-MM-dd")
+  const timelineEndStr = modalOnly || daysInView.length === 0 ? "" : format(daysInView[daysInView.length - 1], "yyyy-MM-dd")
 
-## 3. Caveats (Ressalvas e Limitações)
+  // Mapa cumulativo de posições horizontais (left e width) de cada dia na linha
+  const dayLayoutMap = useMemo(() => {
+    if (modalOnly || daysInView.length === 0) return {}
+    const map: Record<string, { left: number; width: number; idx: number }> = {}
+    let currentLeft = FLAT_COL_WIDTH
+    daysInView.forEach((day, idx) => {
+      const dayStr = format(day, "yyyy-MM-dd")
+      const width = getDayColWidth(day)
+      map[dayStr] = { left: currentLeft, width, idx }
+      currentLeft += width
+    })
+    return map
+  }, [modalOnly, daysInView])
+```
 
-1. **Paridade SHA-256 Pré-Existente Rompida**:
-   - `artifacts/api-server/whatsapp-ai-service.mjs` divergiu de `scripts/whatsapp-ai-service.mjs` em commits anteriores (mantendo dados desatualizados de Pelinca e café buffet). O implementador precisará sincronizar os dois arquivos integralmente para atingir 100% de paridade de hash SHA-256.
-2. **Ambiente Sem Conexão / Testes Mockados**:
-   - Em ambiente de testes de integração sem chave do Gemini ativa (`GEMINI_API_KEY`), o sistema recorre a `generateHeuristicResponse`. A contingência heurística precisa ser adaptada para obedecer às diretrizes de tom e regras do desenvolvedor de modo determinístico.
-3. **Escopo Estrito de Testes**:
-   - Conforme as regras mandatadas em `AGENTS.md`, NUNCA rodar testes globais (`tests/*.test.mjs`). Apenas o arquivo pontual dedicado `tests/developer-ai-coaching.test.mjs` deve ser executado.
-
----
-
-## 4. Conclusion (Conclusão e Diretrizes de Implementação)
-
-A implementação do **Modo Desenvolvedor & Treinamento Inteligente** deve ser executada pelo Agente Implementador seguindo esta estrutura técnica:
-
-### 4.1 Estrutura de Dados no Banco (`database.json`)
-```json
-{
-  "whatsappAiSettings": {
-    "developerPhone": "22998505276",
-    "toneSettings": {
-      "conciseness": "compact",
-      "emojiUsage": "minimal",
-      "formality": "casual_professional",
-      "customRules": [
-        "Responda de forma curta e objetiva (ideal 1 a 3 frases)."
-      ],
-      "updatedAt": "2026-10-11T23:20:00.000Z"
-    },
-    "developerGuidelines": [
-      {
-        "id": "guideline_1728691200000",
-        "text": "O horário do café da manhã mudou para 06:30 às 09:30.",
-        "category": "cafe",
-        "targetFlat": null,
-        "createdAt": "2026-10-11T23:20:00.000Z",
-        "active": true,
-        "source": "whatsapp_developer"
+#### 4. Initial Fetch Effect (Lines 2015–2021)
+```tsx
+  useEffect(() => {
+    if (modalOnly) {
+      if (autoOpenNewRes) {
+        handleOpenNewResRef.current();
+        fetchData(false);
+      } else if (resModalOpen) {
+        fetchData(false);
       }
-    ]
-  }
-}
+      return;
+    }
+    fetchData(true);
+  }, [modalOnly, autoOpenNewRes]);
 ```
 
-### 4.2 Métodos a Adicionar em `scripts/whatsapp-ai-service.mjs` e `artifacts/api-server/`
-1. `isDeveloperPhone(phone, db)`: reconhece `22998505276`, `5522998505276` ou o telefone configurado.
-2. `classifyDeveloperMessage(messageText, db)`: retorna `{ type: "guest_simulation" | "tone_calibration" | "factual_coaching", ... }`.
-3. `applyToneCalibration(db, updates)`: extrai parâmetros estilísticos, atualiza `toneSettings` e a seção de estilo em `systemPrompt`.
-4. `saveDeveloperGuideline(db, guideline)`: persiste a regra em `developerGuidelines`.
-5. `buildDynamicSystemInstruction(aiConfig, db, guestContext)`: monta o prompt combinando prompt base, calibração de tom, diretrizes do desenvolvedor e contexto dinâmico.
-6. `formatDeveloperToneConfirmation({ toneUpdates, db })`: gera a confirmação cordial com amostra no novo tom.
-7. `formatDeveloperCoachingConfirmation({ newGuideline, db })`: gera a confirmação de aprendizado de regra com amostra de resposta ao hóspede.
+#### 5. Polling and Visibility Handling (Lines 2217–2268)
+```tsx
+  // Sincronização em tempo real entre múltiplos dispositivos (PC, Tablet, Celular)
+  // Desativado completamente se modalOnly. Polling reduzido de 4s para 12s e pausado quando a aba estiver oculta.
+  useEffect(() => {
+    if (modalOnly) return;
+    const doSilentSync = () => {
+      // Se a aba estiver oculta/minimizada, não executa o poll para economizar recursos
+      if (typeof document !== "undefined" && document.hidden) return;
+      // Não atualiza se o usuário estiver ativamente arrastando/redimensionando reserva
+      if (resDragStateRef.current) return;
+      // Não atualiza se estiver selecionando período com arrasto
+      if (isDraggingRef.current) return;
+      // Não atualiza se algum modal de formulário/edição estiver aberto
+      if (isAnyModalOpenRef.current) return;
 
-### 4.3 Endpoints REST a Adicionar em `scripts/zapi-service.mjs` e `artifacts/api-server/`
-1. `POST /api/whatsapp/chat/:phone/correct-message`:
-   - Recebe `{ messageId, originalText, correction, sendToGuest, rectificationMessage }`.
-   - Cria a diretriz em `developerGuidelines`.
-   - Se `sendToGuest === true`, despacha a retificação via Z-API para o hóspede e registra no chat.
-2. `GET /api/whatsapp/ai/developer-guidelines`: lista diretrizes ativas/inativas.
-3. `POST /api/whatsapp/ai/developer-guidelines`: criação manual via painel.
-4. `PUT /api/whatsapp/ai/developer-guidelines/:id`: ativa/desativa ou edita texto.
-5. `DELETE /api/whatsapp/ai/developer-guidelines/:id`: remove diretriz.
-6. `GET /api/whatsapp/ai/tone-settings`: consulta calibração de tom.
-7. `POST /api/whatsapp/ai/tone-settings`: atualiza calibração de tom via interface.
+      fetchData(false);
+    };
 
-### 4.4 Ajustes Frontend
-1. Em `artifacts/limpeza/src/pages/whatsapp-chat.tsx`:
-   - Adicionar botão `✏️ Corrigir / Ensinar Sofia` nos balões de mensagem de saída.
-   - Popover/Modal com campo de retificação e botão de 1 clique "Ensinar & Retificar".
-2. Em `artifacts/limpeza/src/pages/whatsapp-automation.tsx`:
-   - Inserir Card "🧠 Diretrizes & Calibrações Aprendidas" com gerenciamento de regras e visualização do tom ativo.
-3. Build obrigatório: `npm --prefix artifacts/limpeza run build` e inclusão de `dist/` no commit.
+    let pollIntervalId: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (pollIntervalId) clearInterval(pollIntervalId);
+      // Reduz frequência de polling de 4s para 12s (intervalo de 10s–15s)
+      pollIntervalId = setInterval(doSilentSync, 12000);
+    };
+
+    const stopPolling = () => {
+      if (pollIntervalId) {
+        clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
+    };
+
+    // Inicia polling caso a aba esteja visível
+    if (typeof document === "undefined" || !document.hidden) {
+      startPolling();
+    }
+
+    // 2. Pausa o polling quando a aba estiver oculta e retoma/sincroniza imediatamente ao focar
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && document.hidden) {
+        stopPolling();
+      } else {
+        doSilentSync();
+        startPolling();
+      }
+    };
+    const handleFocus = () => {
+      doSilentSync();
+      startPolling();
+    };
+    const handlePageShow = () => {
+      doSilentSync();
+      startPolling();
+    };
+
+    // 3. Sincronização instantânea entre abas no mesmo computador via StorageEvent
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "pms_calendar_sync_trigger") {
+        doSilentSync();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, [modalOnly]);
+```
+
+#### 6. Memoized Filters & Metrics (Lines 4650–4709)
+```tsx
+  const reservationsTodayWithBf = useMemo(() => {
+    if (modalOnly) return []
+    return data.reservations.filter(r => 
+      r.status !== "cancelada" && 
+      r.checkinDate <= todayStr && 
+      r.checkoutDate >= todayStr && 
+      Boolean(r.includeBreakfast || r.hasBreakfast)
+    )
+  }, [modalOnly, data.reservations, todayStr])
+  const todayReservationsWithBfCount = reservationsTodayWithBf.length
+  const todayBreakfastOrdersCount = breakfastStats !== null ? breakfastStats.todayOrders : 0
+
+  const reservationsTomorrowWithBf = useMemo(() => {
+    if (modalOnly) return []
+    return data.reservations.filter(r => 
+      r.status !== "cancelada" && 
+      r.checkinDate <= tomorrowStr && 
+      r.checkoutDate >= tomorrowStr && 
+      Boolean(r.includeBreakfast || r.hasBreakfast)
+    )
+  }, [modalOnly, data.reservations, tomorrowStr])
+  const tomorrowReservationsWithBfCount = reservationsTomorrowWithBf.length
+  const tomorrowBreakfastOrdersCount = breakfastStats !== null ? breakfastStats.tomorrowOrders : 0
+
+  // Regra das 09:00 para o Café da Manhã: até 08:59 foca em HOJE; a partir das 09:00 foca em AMANHÃ
+  const brasiliaHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Sao_Paulo", hour: "numeric", hour12: false }).format(new Date()))
+  const isAfter9Am = brasiliaHour >= 9
+
+  // Contagem e filtro de quartos sujos vs. limpos (desativados quando modalOnly)
+  const dirtyFlatsCount = useMemo(() => {
+    if (modalOnly) return 0
+    return data.flats.filter(f => (f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now").length
+  }, [modalOnly, data.flats])
+
+  const cleanFlatsCount = useMemo(() => {
+    if (modalOnly) return 0
+    return data.flats.filter(f => (f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus).length
+  }, [modalOnly, data.flats])
+
+  // Contagem de reservas com menores de idade e com alerta de atenção (< 30a locais)
+  const minorReservationsCount = useMemo(() => {
+    if (modalOnly) return 0
+    return data.reservations.filter(r => r.status !== "cancelada" && r.hasMinor).length
+  }, [modalOnly, data.reservations])
+
+  const riskAttentionCount = useMemo(() => {
+    if (modalOnly) return 0
+    return data.reservations.filter(r => {
+      if (r.status === "cancelada") return false
+      const matched = data.guests.find(g => g.id === r.guestId)
+      return isResCamposResident(r, matched)
+    }).length
+  }, [modalOnly, data.reservations, data.guests])
+
+  const displayedFlats = useMemo(() => {
+    if (modalOnly) return []
+    return data.flats.filter(f => {
+      if (cleaningFilter === "dirty") {
+        if (!((f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now")) return false
+      } else if (cleaningFilter === "clean") {
+        if (!((f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus)) return false
+      }
+
+      if (specialFilter === "minors") {
+        const hasMinorInFlat = data.reservations.some(r => 
+          (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
+          r.status !== "cancelada" &&
+          r.hasMinor
+        )
+        if (!hasMinorInFlat) return false
+      } else if (specialFilter === "risk") {
+        const hasRiskInFlat = data.reservations.some(r => 
+          (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
+          r.status !== "cancelada" &&
+          isResCamposResident(r, data.guests.find(g => g.id === r.guestId))
+        )
+        if (!hasRiskInFlat) return false
+      }
+
+      return true
+    })
+  }, [modalOnly, data.flats, data.reservations, data.guests, cleaningFilter, specialFilter])
+```
+
+#### 7. Tooltip update (Line 4740)
+```tsx
+title="Sincronizar dados agora (sincronização automática em tempo real a cada 12s)"
+```
 
 ---
 
-## 5. Verification Method (Método de Verificação Independente)
+## 4. Caveats
 
-1. **Teste Automatizado Dedicado**:
-   Executar exclusivamente o teste pontual da funcionalidade:
+1. **Radix Dialog Exit Animation**: Unmounting immediately on `open === false` would cut off the smooth fade-out / zoom-out exit transition of the dialog. A 300ms timeout preserves the native UI feel before removing the DOM elements.
+2. **First-Time Chunk Download**: When a user clicks "+ Nova Reserva" from another screen for the very first time in their browser session, there is a sub-second network download for the `pms-calendar` lazy chunk. Because `autoOpenNewRes` is passed as a prop, once the chunk mounts, it immediately opens the modal without requiring a second click. Subsequent clicks in the same session open instantaneously as Vite caches the chunk.
+3. **No Breaking Changes on `/reservas`**: On the main `/reservas` route, `isOnReservationsPage` is true, so `floating-new-reservation.tsx` does not mount `PmsCalendarLazy`. The main page component handles its own display and modal states exactly as before, with the enhanced 12s polling and tab visibility pause.
+
+---
+
+## 5. Conclusion
+
+1. `<PmsCalendar modalOnly />` was previously mounted continuously across all authenticated pages, generating an initial burst of 8+ backend requests and continuous re-render CPU overhead even though the modal was closed.
+2. Replacing static import with `React.lazy` and mounting `<PmsCalendarLazy modalOnly autoOpenNewRes />` strictly when `isModalMounted` is true completely eliminates this burden on non-reservations routes.
+3. In `pms-calendar.tsx`, polling is reduced from 4s to 12s (within the 10s–15s requirement) and completely halted via `clearInterval` when the tab is hidden (`document.hidden`), resuming with an immediate sync when the tab is refocused.
+4. Heavy calendar computations (`daysInView`, `gridTemplateColumns`, `displayedFlats`, and filter counters) are deactivated when `modalOnly` is true.
+
+---
+
+## 6. Verification Method
+
+To verify the implementation without running forbidden global test suites:
+1. **Build Verification**:
    ```powershell
-   node --test tests/developer-ai-coaching.test.mjs
+   Set-Location "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza"
+   npm run build
    ```
-   Cobrindo:
-   - Tri-modalidade de mensagens de `22998505276` (simulação de check-in vs "responda de forma mais curta" vs "café mudou para 06:30").
-   - Imunidade a `aiPaused` para o número do desenvolvedor.
-   - Injeção dinâmica imediata de `developerGuidelines` e `toneSettings` para chamadas subsequentes de outros hóspedes.
-   - Chamada a `POST /api/whatsapp/chat/:phone/correct-message` com envio de mensagem retificadora e persistência da diretriz.
-2. **Verificação de Paridade SHA-256 Twin-Server**:
-   ```powershell
-   powershell -Command "(Get-FileHash scripts/whatsapp-ai-service.mjs).Hash -eq (Get-FileHash artifacts/api-server/whatsapp-ai-service.mjs).Hash; (Get-FileHash scripts/zapi-service.mjs).Hash -eq (Get-FileHash artifacts/api-server/zapi-service.mjs).Hash"
-   ```
-   Ambos devem retornar `True`.
-3. **Verificação de Compilação do Frontend**:
-   ```powershell
-   npm --prefix artifacts/limpeza run build
-   ```
-   Deve concluir com 0 erros.
-4. **Condições de Invalidação**:
-   - Se mensagens de tom resultarem em repetições literais de papagaio.
-   - Se o chat do desenvolvedor for pausado por detecção de "humano".
-   - Se uma calibração de tom apagar regras do prompt base (Soho Residence, proibições de inventar códigos).
-   - Se diretrizes salvas não forem refletidas no atendimento de hóspedes subsequentes.
+   Confirm build finishes with exit code 0 and outputs chunked assets in `dist/`.
+2. **Bundle Chunking Check**:
+   Inspect `artifacts/limpeza/dist/assets/` to verify that `pms-calendar` is split into its own chunk and not bundled in `index.js`.
+3. **Manual / Unit Verification**:
+   - Verify that navigating to `/` or `/limpeza` does NOT trigger `/api/pms/calendar` in the network log.
+   - Verify that clicking "+ Nova Reserva" dynamically loads and opens the reservation dialog.
+   - Verify that closing the dialog unmounts the component after 300ms.
+   - Verify that on `/reservas`, polling runs at 12s intervals and stops when `document.hidden` is true.

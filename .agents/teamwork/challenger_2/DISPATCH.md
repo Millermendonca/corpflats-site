@@ -1,16 +1,24 @@
-## 2026-10-29T17:47:01Z
-You are challenger_2, an adversarial code-executing verifier.
-Your working directory is:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2`
+## 2026-11-02T02:11:48Z
+You are a teamwork_challenger verifying Milestone M1.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2
+Your parent is orchestrator_21 (ID: d148d17c-b644-4690-94c7-bab73af837cc).
 
-CRITICAL REQUIREMENTS:
-1. Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (lines 890 to 930) and `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`.
-2. Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never send WhatsApp messages.
+MANDATORY READINGS:
+1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically lines 974-1011)
+2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md` (STRICT: no global test suites, git commit + push)
+3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_21\PROJECT.md`
+4. Worker handoff: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
 
-TASK OBJECTIVE:
-Adversarially challenge and stress-test the database state and restoration logic:
-- Test idempotency: Run `node scripts/restore-and-audit-contacts.mjs --audit-only` and verify that running it repeatedly produces 0 errors and 0 detected contaminations.
-- Check database consistency: Are there any orphan guests, corrupted reservation arrays, or broken references in `data/database.json`?
-- Verify that genuine historical reservation data, payments, and WhatsApp messages were preserved without unintended regressions.
-- Record your findings and explicit verdict: APPROVE or REQUEST_CHANGES in `handoff.md`.
-- Send completion message to parent orchestrator.
+YOUR CHALLENGE SCOPE:
+Empirically verify the correctness, robustness, edge cases, and security of the fiscal flow in `artifacts/api-server/whatsapp-ai-service.mjs`:
+- Test conference presentation with missing or partial fields (does it fall back cleanly?).
+- Test confirmation keywords variations ("Sim", "Correto", "Confirmo", "Pode emitir", "Autorizo").
+- Test value tampering and injection resistance.
+- Test that non-manager phone numbers cannot approve pending fiscal alterations.
+- Test that phone restriction silently drops any fiscal intent from non-22998505276 numbers.
+- Run the dedicated punctual test: `node --test tests/sofia-fiscal-whatsapp-confirmation.test.mjs`.
+- If you write an empirical stress harness, put it in your working directory and run it isolated (mock in-memory DB or tmp copy, delete DATABASE_URL). DO NOT modify `data/database.json`.
+- STRICT AGENTS.md RULE: DO NOT run global tests or batch tests (`tests/*.test.mjs`).
+- Conclude with an explicit verdict: APPROVE or REQUEST_CHANGES.
+- Write your handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2\handoff.md`.
+- Send a message to your parent with your verdict and empirical findings.

@@ -1,18 +1,33 @@
-# Explorer 1 Task: Backend WhatsApp Routing, AI Pause Bypass & Data Models
+# Dispatch Task for Explorer 1: Frontend Bundle, Code Splitting & Caching (Prioridade 1)
 
-Working Directory: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_1`
-Root Directory: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
+## Objective
+Investigate codebase regarding Priority 1 requirements:
+1. Smart asset caching in `artifacts/api-server/demo-server.mjs` and `artifacts/limpeza/vite.config.ts`.
+2. Convert 17 heavy pages in `artifacts/limpeza/src/App.tsx` to `lazyWithRetry`.
+3. Eliminate sequential waterfall in Route Guards (`AdminGuard`, `DevGuard`, `ReceptionGuard`, `StaffGuard` in `App.tsx`) to prevent blocking chunk downloads while waiting for `/api/auth/me`.
 
-## 2026-10-11T23:18:12Z
-Investigate the backend WhatsApp architecture for CorpFlats in c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager.
-Authoritative requirements: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (Seção ## Follow-up — 2026-10-11T23:13:31Z).
-Your working directory is c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_1.
-You are a read-only exploration agent. Do NOT modify source code files. Do NOT run global test suites.
+## Authoritative User Request
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
 
-Analyze:
-1. Where and how incoming WhatsApp messages are received and processed (scripts/whatsapp-routes.mjs, scripts/whatsapp-service.mjs, scripts/whatsapp-ai.mjs, scripts/zapi-service.mjs, scripts/demo-server.mjs, etc.).
-2. How aiPaused is currently checked, set, and stored for chats/threads. How to implement the persistent developer immunity/bypass for phone numbers 22998505276 and 5522998505276 (both normalized and unnormalized formats) so that this number is NEVER muted by aiPaused: true.
-3. How database.json stores WhatsApp settings, AI config, chats, and where db.whatsappAiSettings.developerGuidelines should reside.
-4. Twin-Server Parity requirements: which files in scripts/ correspond to artifacts/api-server/ and how changes should be synchronized.
-5. Provide precise line numbers, function names, and recommendations for implementing R1 (developer identification & pause bypass) and supporting endpoints for R3 (message rectification endpoint /api/whatsapp/chat/:phone/correct-message).
-Write your complete report to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_1\handoff.md and send a message when done.
+## Instructions
+- Inspect existing implementations of `artifacts/api-server/demo-server.mjs` (static file serving middleware), `artifacts/limpeza/vite.config.ts`, and `artifacts/limpeza/src/App.tsx`.
+- Examine how `lazyWithRetry` is implemented (or create a robust pattern for it).
+- Examine current guard implementations and session caching mechanisms.
+- Produce a structured handoff report at `.agents/teamwork/explorer_1/handoff.md` with:
+  - Observation (exact current lines/blocks)
+  - Logic Chain & Proposed Fix Strategy (precise edits for Worker)
+  - Caveats & Risks
+  - Verification Method (how Worker will verify, respecting project rules)
+- Send message to orchestrator when completed.
+
+
+## 2026-11-02T23:18:36Z
+Sender: 960bd884-3e1c-4b5c-abb1-b3a053aa63cc
+Content:
+Your identity is teamwork_explorer (Frontend Bundle Explorer).
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_1\
+Scope: Prioridade 1 — Frontend Bundle, Code Splitting & Caching.
+Investigate:
+1. Smart asset caching in `artifacts/api-server/demo-server.mjs` (static file serving middleware) and `artifacts/limpeza/vite.config.ts`.
+2. Converting the 17 heavy pages in `artifacts/limpeza/src/App.tsx` to `lazyWithRetry`.
+3. Eliminating sequential waterfall in Route Guards (`AdminGuard`, `DevGuard`, `ReceptionGuard`, `StaffGuard` in `App.tsx`) using non-blocking session cache while preserving route protection.

@@ -1,390 +1,384 @@
-# Relatório de Investigação Técnica do Frontend (Explorer 3)
-**Data/Hora**: 2026-10-11T23:25:00Z  
-**Autor**: explorer_3  
-**Escopo**: Interface Web do Chat (`/whatsapp-chat`), Automação WhatsApp (`/whatsapp-automation`), Chamadas de API e Processo de Build em `artifacts/limpeza`.
+# Handoff Report — Explorer 3: Backend Performance & Stability (Priorities 2 & 3)
+
+## 1. Observation
+
+### 1.1 Context & File Mirroring
+- **Primary Target File**: `artifacts/api-server/demo-server.mjs` (size: 2,830,718 bytes, 66,057 lines).
+- **Secondary Mirror File**: `scripts/demo-server.mjs` is byte-for-byte identical (SHA-1 / SHA-256 hash match confirmed: `(Get-FileHash "artifacts/api-server/demo-server.mjs").Hash -eq (Get-FileHash "scripts/demo-server.mjs").Hash` returned `True`). Both files must remain synchronized to avoid runtime drift.
+- **Boot Entrypoint**: `server.mjs` line 103 imports `./artifacts/api-server/demo-server.mjs`.
 
 ---
 
-## 1. Observação
+### 1.2 Item 1: Synchronous `reconcileAndMergeGuests` & `reconcileUniversalIntegrity` on GET Requests
 
-### 1.1 Interface do Web Chat (`/whatsapp-chat`)
-- **Arquivo**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza\src\pages\whatsapp-chat.tsx`
-- **Componente Principal**: `WhatsAppChatPage` (linhas 188–2123).
-- **Gerenciamento de Estado**:
-  - `activePhone`: `string | null` (linha 197).
-  - `activeConversation`: `ChatConversation | null` (linha 198).
-  - `messages`: `ChatMessage[]` (linha 199).
-- **Renderização dos Balões de Mensagem**:
-  - Linhas 1261–1386: `messages.map((msg, index) => { ... })`.
-  - Distinção de remetente (linha 1262): `const isFromMe = msg.fromMe`.
-  - Balão do operador/sistema: `isFromMe ? 'bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-200/80 ...' : 'bg-white dark:bg-slate-900 ...'` (linhas 1280–1285).
-  - Cabeçalho do balão (linhas 1287–1295):
-    - Exibe `msg.senderName || 'CorpFlats'`.
-    - Se houver `msg.triggerEvent`, exibe badge `🤖 Régua Automática`.
-- **Identificação de Mensagens da Sofia**:
-  - No backend (`artifacts/api-server/whatsapp-ai-service.mjs`, linhas 2298 e 2349), mensagens geradas pela Sofia são salvas com:
-    `senderName: aiConfig.agentName || "Sofia"`, `fromMe: true`, `type: "text"`.
-  - Portanto, a condição canônica no frontend é:
-    ```ts
-    const isSofia = Boolean(
-      isFromMe &&
-      !msg.triggerEvent &&
-      (
-        msg.senderName?.toLowerCase().includes('sofia') ||
-        msg.sender === 'system'
-      )
-    );
+#### `reconcileAndMergeGuests(database)`
+- **Declaration**: `artifacts/api-server/demo-server.mjs:11881`:
+  ```javascript
+  11881: export function reconcileAndMergeGuests(database) {
+  11882:   const currentDb = database || db;
+  ...
+  11962:   // 1. Deduplica a base de hóspedes existente
+  11964:   for (const g of currentDb.guests) { ... findMatchingGuest(g, deduplicated); ... }
+  11976:   for (const acc of currentDb.guestAccounts) { ... }
+  11999:   for (const r of currentDb.reservations) { ... for (const rg of r.guests) { ... } }
+  12107:   for (const inv of currentDb.invoices) { ... }
+  12244:   for (const r of (currentDb.reservations || [])) { ... }
+  ...
+  12416:   currentDb.guests = deduplicated;
+  12456:   return didHeal;
+  12457: }
+  ```
+- **Synchronous Invocations on GET Routes**:
+  - `Line 34823`: `app.get("/api/pms/guests", ...)`
+    ```javascript
+    34822:   if (!db.guests) db.guests = [];
+    34823:   reconcileAndMergeGuests(db);
     ```
-- **Diálogos e Modais Existentes**:
-  - `Dialog`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter` já estão importados de `@/components/ui/dialog` (linhas 10–11).
-  - Modais já existentes no arquivo: `newChatModalOpen` (linhas 1931–2045) e `attachModalOpen` (linhas 2048–2118).
+  - `Line 36408`: `app.get("/api/pms/guests/google-contacts/status", ...)`
+    ```javascript
+    36408:   reconcileAndMergeGuests(db);
+    ```
+  - `Line 36675`: `app.get("/api/pms/guests/google-contacts/export.vcf", ...)`
+    ```javascript
+    36675:   reconcileAndMergeGuests(db);
+    ```
+  - `Line 36711`: `app.get("/api/pms/guests/:id", ...)`
+    ```javascript
+    36710:   if (!db.guests) db.guests = [];
+    36711:   reconcileAndMergeGuests(db);
+    ```
+  - `Line 37012`: `app.get("/api/pms/guests/export/csv", ...)`
+    ```javascript
+    37012:   reconcileAndMergeGuests(db);
+    ```
+- **Impact**: Every CRM request triggers an $O(N \cdot M)$ deduplication and reconciliation scan through thousands of records (guests, accounts, reservations, companions, invoices), blocking the single-threaded Node.js event loop for 300ms–2000ms per request.
+
+#### `reconcileUniversalIntegrity(incomingState = null)`
+- **Declaration**: `artifacts/api-server/demo-server.mjs:4967`:
+  ```javascript
+  4967: export function reconcileUniversalIntegrity(incomingState = null) {
+  ...
+  5581:   // 3. Auditoria Universal de Integridade de Reservas em TODOS os Flats
+  5812:   // 4. Garantir que para TODO checkout de QUALQUER flat, exista a solicitação de limpeza correspondente
+  6082:   if (regularizeHousekeepingPreventiveTasks()) { changed = true; }
+  6086:   return changed;
+  6087: }
+  ```
+- **Synchronous Invocations on GET Routes**:
+  - `Line 17905`: `app.get("/api/flats", ...)`
+    ```javascript
+    17903: app.get("/api/flats", (req, res) => {
+    17904:   res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    17905:   if (reconcileUniversalIntegrity()) saveDatabase();
+    ```
+  - `Line 19334`: `app.get("/api/reservations/checkouts", ...)`
+    ```javascript
+    19332: app.get("/api/reservations/checkouts", (req, res) => {
+    19333:   triggerBackgroundSync();
+    19334:   if (reconcileUniversalIntegrity()) saveDatabase();
+    ```
+  - `Line 26034`: `app.get("/api/pms/calendar", ...)`
+    *(Already guarded by a 15-second cooldown at line 26032, but calls `saveDatabase()` via `setImmediate`)*:
+    ```javascript
+    26032:   if (now - lastCalendarReconcileTime > 15000) {
+    26033:     lastCalendarReconcileTime = now;
+    26034:     if (reconcileUniversalIntegrity()) {
+    26035:       setImmediate(() => saveDatabase());
+    26036:     }
+    26037:   }
+    ```
+- **Impact**: Neither `/api/flats` nor `/api/reservations/checkouts` had any cooldown or dirty check. Both ran `reconcileUniversalIntegrity()` on every GET, which in turn executed Section 3, Section 4, and `regularizeHousekeepingPreventiveTasks()`, and if `changed === true`, invoked synchronous disk/PG persistence triggers via `saveDatabase()` directly on the HTTP GET path.
 
 ---
 
-### 1.2 Interface de Automação do WhatsApp (`/whatsapp-automation`)
-- **Arquivo**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza\src\pages\whatsapp-automation.tsx`
-- **Aba do Agente de IA**:
-  - Gatilho da aba (linha 1706): `<TabsTrigger value="ai_agent" ...>`
-  - Conteúdo da aba (linhas 1752–2461): `<TabsContent value="ai_agent" className="space-y-6">`
-- **Layout Interno da Aba `ai_agent`**:
-  - Banner superior com 4 cards de métricas (linhas 1754–1845): Motor de IA, Modelo LLM, Ambiente de Disparo, Status Operacional.
-  - Card da Chave Mestra Global de Ações (linhas 1850–2095).
-  - Grid de 2 colunas (a partir da linha 2098):
-    - **Coluna Esquerda (`lg:col-span-7 space-y-6`)**:
-      - Card 1: *Modo de Atuação & Parâmetros Principais* (linhas 2102–2281): modo (autônomo/copiloto/noturno), delay de digitação, modo teste, telefones autorizados, nome do agente, papel e Prompt Base do Sistema (`systemPrompt`).
-      - Card 2: *Base de Conhecimento & FAQ Oficial* (linhas 2284–2342).
-    - **Coluna Direita (`lg:col-span-5 space-y-6`)**:
-      - Card: *Simulador do Agente de IA* (linhas 2347–2455): aciona `POST /api/whatsapp/ai-simulate` com `{ message, phone }` para testar respostas em tempo real.
-- **Ponto de Inserção Ideal do Novo Card**:
-  - Na Coluna Esquerda (`lg:col-span-7`), imediatamente após o Card 1 (linha 2282), antes da Base de Conhecimento.
-  - O card de "Diretrizes & Calibrações Aprendidas" complementa o Prompt do Sistema exibido acima dele.
-
----
-
-### 1.3 Chamadas de API e Clientes HTTP no Frontend
-- **Padrão de Comunicação**:
-  - Ao contrário de tabelas PMS gerais que usam `@workspace/api-client-react`, os módulos de WhatsApp, IA, Z-API e Demands utilizam `fetch` nativo assíncrono diretamente nos componentes/hooks (ex: `whatsapp-chat.tsx`, `whatsapp-automation.tsx`, `use-bot-demands.ts`).
-  - No `vite.config.ts` (linhas 67–72), o proxy encaminha `/api` para `http://127.0.0.1:5000`. Em produção, o servidor Node.js entrega `artifacts/limpeza/dist/public` e responde `/api` no mesmo domínio.
-- **Endpoints Existentes**:
-  - `GET /api/whatsapp/ai-config`: Retorna `{ success: true, aiConfig, geminiConfigured, geminiModel, testModeOnly, testAllowedPhones }`.
-  - `POST /api/whatsapp/ai-config`: Atualiza parâmetros gerais de `aiConfig`.
-  - `POST /api/whatsapp/ai-simulate`: Simula a resposta da Sofia para `{ message, phone }`.
-  - `GET /api/whatsapp/chat/conversations/:phone`: Retorna `{ conversation, reservation, otherReservations }`.
-  - `POST /api/whatsapp/chat/send`: Dispara mensagem manual do operador.
-  - `POST /api/whatsapp/chat/:phone/ai-toggle`: Alterna `aiPaused`.
-- **Endpoints a Adicionar / Suportar para o Requisito**:
-  1. `POST /api/whatsapp/chat/:phone/correct-message`:
-     - Exigido pelo plano de testes do `ORIGINAL_REQUEST.md`.
-     - Payload:
-       ```json
-       {
-         "messageId": "string",
-         "originalMessageText": "string",
-         "guideline": "string",
-         "rectificationText": "string | null",
-         "sendToGuest": true,
-         "category": "factual | tone"
-       }
-       ```
-     - Ação no backend:
-       - Adiciona a regra a `db.whatsappAiSettings.developerGuidelines`.
-       - Atualiza `aiConfig.systemPrompt`.
-       - Se `sendToGuest: true`, dispara mensagem cordial pelo WhatsApp do hóspede e adiciona no histórico do chat.
-  2. `GET /api/whatsapp/ai-config` (estendido) ou `GET /api/whatsapp/ai-guidelines`:
-     - Retorna array de `developerGuidelines: Array<{ id, rule, category, source, createdAt, active }>`.
-  3. `POST /api/whatsapp/ai-guidelines` / `DELETE /api/whatsapp/ai-guidelines/:id` / `PATCH /api/whatsapp/ai-guidelines/:id/toggle`:
-     - Gerenciamento CRUD de diretrizes pelo painel.
-
----
-
-### 1.4 Processo de Build de `artifacts/limpeza`
-- **Configuração**:
-  - `artifacts/limpeza/package.json`: `"build": "vite build --config vite.config.ts"`.
-  - `artifacts/limpeza/vite.config.ts`: `outDir: path.resolve(import.meta.dirname, 'dist/public')`, `emptyOutDir: true`.
-- **Teste de Execução**:
-  - Executado: `npm --prefix artifacts/limpeza run build`.
-  - Resultado: **Exit code 0** em 27.05s.
-  - Artefatos compilados em `dist/public/`:
-    - `index.html` (2.65 kB)
-    - `assets/index.css` (400.93 kB)
-    - `assets/index.js` (3,361.96 kB)
-    - Chunks auxiliares do PDF Worker.
-- **Regra de Conformidade (`AGENTS.md`)**:
-  - Todo commit com alterações em `artifacts/limpeza/src` deve executar `npm run build` e incluir os arquivos de `artifacts/limpeza/dist/` no commit antes de realizar `git push`.
-
----
-
-## 2. Cadeia Lógica de Raciocínio (Logic Chain)
-
-1. **Localização Precisa nos Balões de Mensagem**:
-   - `whatsapp-chat.tsx` itera sobre `messages` (linha 1261).
-   - O balão da Sofia tem `isFromMe = true` e `msg.senderName` correspondente ao nome do agente (padrão "Sofia").
-   - Adicionar o botão `✏️ Corrigir / Ensinar Sofia` diretamente no rodapé interno do balão da Sofia garante visibilidade imediata para o operador exatamente no ponto onde o erro ocorreu.
-
-2. **Fluxo Integrado em 1 Clique (Modal de Retificação)**:
-   - Ao clicar no botão, o operador precisa de rapidez: não deve ter que ir a outra tela para ensinar a IA e depois voltar para digitar uma mensagem para o cliente.
-   - O modal apresenta 2 campos:
-     a) **Diretriz de Aprendizado**: a regra que a Sofia deve assimilar (ex: "O flat 905 tem cafeteira e o checkout é às 11:00").
-     b) **Mensagem Cordial ao Hóspede**: pré-preenchida com mensagem amigável pronta (ex: "Olá! Gostaria de retificar a informação anterior: ...") com toggle para ativar/desativar o envio.
-   - Ao clicar em "Salvar Diretriz & Retificar Hóspede", a requisição única `POST /api/whatsapp/chat/:phone/correct-message` resolve ambos os requisitos simultaneamente.
-
-3. **Card Administrativo na Automação (`/whatsapp-automation`)**:
-   - A aba `ai_agent` é a central administrativa da Sofia.
-   - O novo Card "Diretrizes & Calibrações Aprendidas" consolida o aprendizado contínuo originado tanto de comandos de WhatsApp do Miller (`22998505276`) quanto de correções feitas por operadores no Web Chat.
-   - O card deve permitir:
-     - Visualização clara com tags de categoria (`Tom & Estilo` vs `Fato / Regra`) e origem (`WhatsApp Dev` vs `Chat Web`).
-     - Ativar/Desativar individualmente cada regra (útil para testes A/B).
-     - Exclusão com confirmação.
-     - Botão "Testar no Simulador" que injeta uma pergunta de teste diretamente no card adjacente do simulador.
-
-4. **Compatibilidade de Build e Deploy**:
-   - Os componentes de UI do Radix/Tailwind (`Dialog`, `Card`, `Badge`, `Button`, `Switch`, `Textarea`, `Input`) já estão todos disponíveis e instalados em `artifacts/limpeza`.
-   - Nenhuma nova biblioteca externa é necessária.
-   - O build de produção já foi testado e gera os bundles sem erros de tipagem ou empacotamento.
-
----
-
-## 3. Ressalvas e Limitações (Caveats)
-
-- **Paridade com o Backend**:
-  - A interface depende de o backend expor o endpoint `POST /api/whatsapp/chat/:phone/correct-message` e incluir `developerGuidelines` nas respostas de `/api/whatsapp/ai-config`.
-  - Esta investigação confirma a estrutura exata necessária para o frontend, permitindo que o implementador do backend e o implementador do frontend atuem de forma 100% coordenada.
-- **Tratamento de Nome Personalizado do Agente**:
-  - Se um operador alterar o nome da Sofia para outro nome no painel (ex: "Clara"), a detecção `msg.senderName?.toLowerCase().includes('sofia')` ainda deve cobrir nomes alternativos checando `isFromMe && !msg.triggerEvent && msg.senderName !== 'Operador'`. Recomenda-se essa verificação robusta.
-
----
-
-## 4. Conclusão & Especificação Pronta para Implementação
-
-### 4.1 Especificação para `artifacts/limpeza/src/pages/whatsapp-chat.tsx`
-
-#### A. Detecção da Sofia e Inclusão do Botão
-No bloco de renderização do balão (em torno da linha 1364):
-```tsx
-{/* Botão de Ensinar / Corrigir Sofia */}
-{isFromMe && !msg.triggerEvent && (msg.senderName?.toLowerCase().includes('sofia') || msg.sender === 'system') && (
-  <div className="pt-1.5 mt-1 border-t border-emerald-200/60 dark:border-emerald-800/40 flex items-center justify-between">
-    <button
-      type="button"
-      onClick={() => handleOpenCorrectionModal(msg)}
-      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10.5px] font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-100/90 dark:bg-emerald-900/50 hover:bg-emerald-200 dark:hover:bg-emerald-800 transition-colors shadow-2xs hover:scale-102 cursor-pointer"
-      title="Corrigir resposta da Sofia e retificar com o hóspede"
-    >
-      <span>✏️</span> Corrigir / Ensinar Sofia
-    </button>
-  </div>
-)}
-```
-
-#### B. Componente do Modal de Correção
-Inserir antes do fechamento do componente (`</Shell>`):
-```tsx
-{/* Modal de Correção & Aprendizado da Sofia */}
-<Dialog open={correctModalOpen} onOpenChange={setCorrectModalOpen}>
-  <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
-    <DialogHeader>
-      <DialogTitle className="flex items-center gap-2 text-base font-black text-emerald-800 dark:text-emerald-300">
-        <span>✏️</span> Corrigir Resposta & Ensinar Sofia
-      </DialogTitle>
-      <DialogDescription className="text-xs text-slate-500">
-        Ensine a regra correta para a IA e retifique cordialmente com o hóspede no WhatsApp em 1 clique.
-      </DialogDescription>
-    </DialogHeader>
-
-    <div className="space-y-4 py-2 text-xs overflow-y-auto">
-      {/* Mensagem Original */}
-      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-1">
-        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-          Mensagem Original da Sofia:
-        </span>
-        <p className="italic text-slate-700 dark:text-slate-300 leading-relaxed">
-          "{selectedMsgForCorrection?.text}"
-        </p>
-      </div>
-
-      {/* Orientação para a IA */}
-      <div className="space-y-1.5">
-        <label className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1">
-          <span>🧠</span> O que a Sofia deve aprender? (Diretriz / Regra)
-        </label>
-        <Textarea
-          rows={3}
-          value={correctionGuideline}
-          onChange={e => setCorrectionGuideline(e.target.value)}
-          placeholder="Ex: O flat 905 tem cama queen e o checkout é às 11:00. O café da manhã inicia às 06:00 nos finais de semana."
-          className="text-xs"
-        />
-        <p className="text-[10px] text-muted-foreground">
-          Esta regra será assimilada na base de diretrizes ativas da Sofia.
-        </p>
-      </div>
-
-      {/* Retificação para o Hóspede */}
-      <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-800">
-        <div className="flex items-center justify-between">
-          <label className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1">
-            <span>💬</span> Mensagem Cordial de Retificação para o WhatsApp
-          </label>
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold text-slate-500">Enviar ao Hóspede</span>
-            <input
-              type="checkbox"
-              checked={sendToGuest}
-              onChange={e => setSendToGuest(e.target.checked)}
-              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-            />
-          </div>
-        </div>
-        <Textarea
-          rows={3}
-          value={rectificationText}
-          onChange={e => setRectificationText(e.target.value)}
-          disabled={!sendToGuest}
-          className="text-xs"
-          placeholder="Mensagem cordial a ser enviada ao hóspede..."
-        />
-      </div>
-    </div>
-
-    <DialogFooter className="gap-2 sm:gap-0 pt-2">
-      <Button variant="outline" size="sm" onClick={() => setCorrectModalOpen(false)}>
-        Cancelar
-      </Button>
-      <Button
-        size="sm"
-        onClick={handleSaveCorrection}
-        disabled={savingCorrection || !correctionGuideline.trim()}
-        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5"
-      >
-        {savingCorrection ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-        {sendToGuest ? 'Salvar Diretriz & Enviar Retificação' : 'Salvar Apenas na IA'}
-      </Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>
-```
-
----
-
-### 4.2 Especificação para `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
-
-#### Card de Diretrizes & Calibrações Aprendidas
-Inserir na Coluna Esquerda (`lg:col-span-7`), imediatamente antes do Card da Base de Conhecimento (linha 2282):
-```tsx
-{/* Card: Diretrizes & Calibrações Aprendidas (developerGuidelines) */}
-<Card className="border border-purple-200/80 dark:border-purple-900/60 bg-gradient-to-br from-purple-50/40 via-white to-indigo-50/30 dark:from-slate-900 dark:to-purple-950/20 shadow-xs">
-  <CardHeader className="pb-3">
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <CardTitle className="text-base font-bold flex items-center gap-2 text-purple-950 dark:text-purple-200">
-          <Sparkles className="w-4 h-4 text-purple-600" />
-          Diretrizes & Calibrações Aprendidas
-        </CardTitle>
-        <Badge variant="outline" className="bg-purple-100 text-purple-800 dark:bg-purple-950 border-purple-200 text-[10px] font-bold">
-          {aiConfig.developerGuidelines?.length || 0} Ativas
-        </Badge>
-      </div>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={() => handleOpenAddGuidelineModal()}
-        className="h-7 text-xs font-bold border-purple-300 text-purple-700 hover:bg-purple-100/60 dark:hover:bg-purple-950 gap-1"
-      >
-        <Plus className="w-3.5 h-3.5" />
-        Nova Diretriz
-      </Button>
-    </div>
-    <CardDescription className="text-xs text-purple-900/70 dark:text-purple-300/70">
-      Regras de tom, estilo e correções factuais ensinadas via WhatsApp pelo Desenvolvedor (22998505276) ou pelo Web Chat.
-    </CardDescription>
-  </CardHeader>
-  <CardContent className="space-y-3 pt-1">
-    {(!aiConfig.developerGuidelines || aiConfig.developerGuidelines.length === 0) ? (
-      <div className="p-4 text-center rounded-xl border border-dashed border-purple-200 dark:border-purple-800 text-xs text-muted-foreground space-y-1">
-        <p className="font-semibold text-purple-800 dark:text-purple-300">Nenhuma diretriz aprendida registrada</p>
-        <p className="text-[11px]">
-          Envie comandos via WhatsApp para a Sofia do número 22998505276 (ex: <em>"responda de forma mais curta por favor"</em>) ou utilize o botão <strong>✏️ Corrigir / Ensinar Sofia</strong> no Web Chat.
-        </p>
-      </div>
-    ) : (
-      <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-        {aiConfig.developerGuidelines.map((guide: any, idx: number) => (
-          <div
-            key={guide.id || idx}
-            className="p-3 rounded-xl bg-white/90 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700/80 flex items-start justify-between gap-3 shadow-2xs hover:border-purple-400 transition-colors"
-          >
-            <div className="space-y-1 flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <Badge className={
-                  guide.category === 'tone' 
-                    ? "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200 text-[9px] font-bold"
-                    : "bg-blue-100 text-blue-800 border-blue-200 text-[9px] font-bold"
-                }>
-                  {guide.category === 'tone' ? '🎨 Tom & Estilo' : '📌 Fato / Regra'}
-                </Badge>
-                <Badge variant="outline" className="text-[9px] text-slate-500">
-                  {guide.source === 'whatsapp_developer' ? '📱 WhatsApp Dev' : guide.source === 'web_chat_operator' ? '🖥️ Chat Web' : '⚙️ Manual'}
-                </Badge>
-                {guide.createdAt && (
-                  <span className="text-[10px] text-slate-400">
-                    {new Date(guide.createdAt).toLocaleDateString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                )}
-              </div>
-              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-relaxed">
-                {guide.rule}
-              </p>
-              {guide.sample && (
-                <p className="text-[11px] text-slate-500 italic">
-                  Amostra: "{guide.sample}"
-                </p>
-              )}
-            </div>
-
-            <div className="flex items-center gap-1 shrink-0">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => handleTestGuidelineInSimulator(guide)}
-                className="h-7 w-7 p-0 text-blue-600 hover:bg-blue-50"
-                title="Testar no Simulador"
-              >
-                <Play className="w-3.5 h-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => handleDeleteGuideline(guide.id || idx)}
-                className="h-7 w-7 p-0 text-rose-600 hover:bg-rose-50"
-                title="Excluir Diretriz"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </Button>
-            </div>
-          </div>
-        ))}
-      </div>
-    )}
-  </CardContent>
-</Card>
-```
-
----
-
-## 5. Método de Verificação Independente
-
-1. **Inspeção de Código e Arquivos**:
-   - Inspecionar `artifacts/limpeza/src/pages/whatsapp-chat.tsx` na linha 1261 em diante para confirmar a integração do botão no balão.
-   - Inspecionar `artifacts/limpeza/src/pages/whatsapp-automation.tsx` na linha 2282 para confirmar o posicionamento do Card de Diretrizes.
-2. **Verificação de Compilação de Produção**:
-   - Executar:
-     ```powershell
-     npm --prefix artifacts/limpeza run build
+### 1.3 Item 2: Duplicate Calls to `getRequestsForDate(dateStr)` in `GET /api/reservations/checkouts`
+- **Declaration**: `artifacts/api-server/demo-server.mjs:18668`:
+  ```javascript
+  18668: function getRequestsForDate(dateStr, isNested = false) {
+  ...
+  18683:   if (!isNested && typeof getTodayStr === "function" && dateStr > getTodayStr()) {
+  18684:     getRequestsForDate(getTodayStr(), true);
+  18685:   }
+  ...
+  19310:   if (shouldSaveDb) {
+  19311:     saveDatabase();
+  19312:   }
+  19314:   return requestsForDate;
+  19315: }
+  ```
+- **Observations**:
+  1. `Line 19336` inside `app.get("/api/reservations/checkouts")`:
+     ```javascript
+     19335:   const dateStr = req.query.date || getTodayStr();
+     19336:   const requestsForDate = getRequestsForDate(dateStr);
      ```
-   - Condição de Sucesso: Exit code 0, saída em `artifacts/limpeza/dist/public/` sem erros de TypeScript ou Rollup.
-3. **Condições de Invalidação**:
-   - Quebra na compilação do Vite por tipagem incorreta de `ChatMessage` ou `aiConfig`.
-   - Modificação acidental em arquivos fora do escopo ou execução indevida de testes globais proibidos por `AGENTS.md`.
+  2. In `getRequestsForDate`: When querying a future date (e.g. tomorrow or next weekend), line 18684 recursively calls `getRequestsForDate(getTodayStr(), true)`, scanning all reservations and cleanings twice in a single request.
+  3. In `getFlatRealtimeStatus` (`line 17055`):
+     ```javascript
+     17054:   // 2. Status de Higienização em Tempo Real (Apenas data consultada ou checkout recente)
+     17055:   const dailyRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(dateStr) : (db.cleaningRequests || []);
+     ```
+     In `app.get("/api/flats")` (`line 17908`), `getFlatRealtimeStatus` is called for every flat in `db.flats` (up to 50 flats), triggering `getRequestsForDate(todayStr)` up to 50 times in a single HTTP request!
+  4. Concurrent Dashboard requests: When `Dashboard` mounts, it queries `/api/reservations/checkouts`, `/api/dashboard/summary` (which calls `getRequestsForDate` at `line 19782`), and `/api/pms/calendar` (which calls `getRequestsForDate` at `line 26044`) within the same tick, resulting in duplicate full scans without memoization.
+
+---
+
+### 1.4 Item 3: `computePeriodicTaskStatus` and `regularizeHousekeepingPreventiveTasks` O(N^2) Loops
+- **`computePeriodicTaskStatus`** (`demo-server.mjs:6118`):
+  ```javascript
+  6124:   const executions = (db.periodicExecutions || []).filter(e => 
+  6125:     Number(e.periodicTaskId) === Number(task.id) && Number(e.flatId) === flatId
+  6126:   );
+  6127:   executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
+  6128:   const lastExec = executions[0] || null;
+  ...
+  6143:     currentOccupiedDays = getFlatOccupiedDays(flatId, flatNumber, sinceDateStr, referenceDateStr);
+  ...
+  6154:     const futureReservations = (db.reservations || [])
+  6155:       .filter(r => 
+  6156:         (Number(r.flatId) === flatId || String(r.flatNumber) === flatNumber) &&
+  6157:         r.status !== 'cancelada' && r.status !== 'cancelado' && r.status !== 'cancelled' &&
+  6158:         r.checkoutDate > referenceDateStr
+  6159:       )
+  6160:       .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate));
+  ```
+  - For every task and flat, it runs an unindexed filter across all `db.periodicExecutions` and sorts them.
+  - In `getFlatOccupiedDays` (`line 6096`), it filters all `db.reservations` globally, and creates `new Date()` instances iterating day-by-day.
+  - In `futureReservations`, it filters all `db.reservations` globally again and sorts.
+- **`regularizeHousekeepingPreventiveTasks`** (`demo-server.mjs:6205`):
+  ```javascript
+  6216:   for (const flat of activeFlats) {
+  6217:     for (const t of housekeepingTasks) {
+  ...
+  6222:       const status = computePeriodicTaskStatus(t, flat, todayStr);
+  ```
+  - Nested loops: 50 flats $\times$ 20 tasks = 1,000 iterations.
+  - In each iteration: full filtering of `periodicExecutions`, day-by-day loop of `reservations`, and future reservations sort.
+  - Total operations: $> 1,000,000$ loop operations executed on every call to `reconcileUniversalIntegrity()` (which was running on every GET request to `/api/flats` and `/api/reservations/checkouts`).
+
+---
+
+### 1.5 Item 4: `flushPgState()` Event Loop Starvation and OOM on Render
+- **`flushPgState`** (`demo-server.mjs:14159`):
+  ```javascript
+  14180:     reconcileCleaningRequests();
+  14181:     pruneDatabase();
+  14182:     await offloadHistoricalBase64Media();
+  14183:     stateToSave = sanitizeJsonSerialized(JSON.stringify(db));
+  ...
+  14187:     const stateHash = crypto.createHash("sha1").update(stateToSave).digest("hex");
+  ...
+  14195:     await pgPool.query(
+  14196:       "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+  14197:       [stateToSave]
+  14198:     );
+  ```
+- **`sanitizeJsonSerialized`** (`demo-server.mjs:14151`):
+  ```javascript
+  14151: export function sanitizeJsonSerialized(jsonStr) {
+  14152:   if (typeof jsonStr !== "string") return jsonStr;
+  14153:   return jsonStr.replace(
+  14154:     /((?<!\\)(?:\\\\)*)(?:\\u[dD][89abAB][0-9a-fA-F]{2}(?!\\u[dD][cdefCDEF][0-9a-fA-F]{2})|(?<!\\u[dD][89abAB][0-9a-fA-F]{2})\\u[dD][cdefCDEF][0-9a-fA-F]{2}|\\u0000)/g,
+  14155:     "$1"
+  14156:   );
+  14157: }
+  ```
+- **Observations**:
+  1. `JSON.stringify(db)` serializes the entire in-memory state into a 20MB–50MB string.
+  2. `sanitizeJsonSerialized` executes a backtracking regular expression with negative lookbehinds and lookaheads across this entire multi-megabyte string, locking the Node.js event loop synchronously for 1.5–4.0 seconds!
+  3. `stateToSave` is sent over TCP to PostgreSQL where `$1::jsonb` forces PostgreSQL to parse and allocate ~4x memory for JSONB representations. On Render free/starter tiers with 256MB–512MB RAM, this causes PostgreSQL backend worker OOM kills.
+  4. There are no `setImmediate` yields between CPU serialization, regex, and I/O query execution.
+
+---
+
+### 1.6 Item 5: `offloadHistoricalBase64Media()` & `pruneDatabase()`
+- **`offloadHistoricalBase64Media`** (`demo-server.mjs:14007`):
+  - In `walkAndOffloadResidualDataUrls` (`line 14103` & `line 14115`):
+    ```javascript
+    if (typeof v === "string" && v.length >= 3072 && /^data:(image\/|application\/pdf)/i.test(v))
+    ```
+    Only tests for the literal prefix `^data:(image\/|application\/pdf)`. Pure Base64 strings (starting with `JVBERi0...` for PDFs or `/9j/4AAQSkZJRg...` for JPEGs without a `data:` prefix) are completely ignored by the tree walker!
+  - The recursive traversal walks the entire deep object hierarchy without yielding (`setImmediate`) to the event loop, causing event loop delays during deep sweeps.
+- **`pruneDatabase`** (`demo-server.mjs:14245`):
+  - Inside the collection pruning loop (`lines 14308-14356`):
+    The array sort comparator calls `toComparableIso(...)` on every comparison step (`line 14320` and `line 14336`), invoking regexes and `new Date()` allocations $O(N \log N)$ times rather than extracting the sort key in a single $O(N)$ pass.
+  - Oversized payloads inside `db.auditLogs[i].details` can accumulate megabytes of unpruned metadata.
+
+---
+
+## 2. Logic Chain & Recommended Strategy
+
+### 2.1 Cooldown & Dirty Flag for `reconcileAndMergeGuests`
+1. **Premise**: In 99% of GET requests, guest and reservation records have not changed since the last request. Re-running $O(N^2)$ merge logic on every GET is completely redundant.
+2. **Strategy**:
+   - Define module-level flags:
+     ```javascript
+     let isGuestReconciliationDirty = true;
+     let lastGuestReconcileTimestamp = 0;
+     const GUEST_RECONCILE_COOLDOWN_MS = 60000; // 60s cooldown for GET routes unless dirty
+
+     export function markGuestReconciliationDirty() {
+       isGuestReconciliationDirty = true;
+     }
+     ```
+   - In `reconcileAndMergeGuests(database, force = false)`:
+     If `!force && !isGuestReconciliationDirty && (Date.now() - lastGuestReconcileTimestamp < GUEST_RECONCILE_COOLDOWN_MS)`, immediately return `false`.
+     Upon running: set `isGuestReconciliationDirty = false; lastGuestReconcileTimestamp = Date.now();`.
+   - Call `markGuestReconciliationDirty()` on state mutations: `POST /api/pms/guests`, `PUT/PATCH /api/pms/guests/:id`, `DELETE /api/pms/guests/:id`, `POST /api/reservations`, and on boot/hydration.
+   - In `GET /api/pms/guests`, `GET /api/pms/guests/:id`, etc., calling `reconcileAndMergeGuests(db)` will execute in $O(1)$ (0ms) when clean.
+
+### 2.2 Cooldown & Dirty Flag for `reconcileUniversalIntegrity`
+1. **Premise**: `reconcileUniversalIntegrity` does broad consistency audits (Flat 502, checkout cleanings, preventive tasks). Running this on every GET to `/api/flats` and `/api/reservations/checkouts` causes event loop lag and triggers unneeded database saves.
+2. **Strategy**:
+   - Define module-level flags:
+     ```javascript
+     let isUniversalIntegrityDirty = true;
+     let lastUniversalIntegrityTimestamp = 0;
+     const UNIVERSAL_INTEGRITY_COOLDOWN_MS = 30000; // 30s cooldown for GET routes unless dirty
+
+     export function markUniversalIntegrityDirty() {
+       isUniversalIntegrityDirty = true;
+     }
+     ```
+   - In `reconcileUniversalIntegrity(incomingState = null, force = false)`:
+     If `!incomingState && !force && !isUniversalIntegrityDirty && (Date.now() - lastUniversalIntegrityTimestamp < UNIVERSAL_INTEGRITY_COOLDOWN_MS)`, immediately return `false`.
+     Upon running: set `isUniversalIntegrityDirty = false; lastUniversalIntegrityTimestamp = Date.now();`.
+   - In `GET /api/flats` (`line 17905`) and `GET /api/reservations/checkouts` (`line 19334`):
+     Replace synchronous `if (reconcileUniversalIntegrity()) saveDatabase();` with:
+     ```javascript
+     if (isUniversalIntegrityDirty && reconcileUniversalIntegrity()) {
+       setImmediate(() => saveDatabase("integrity_reconciled"));
+     }
+     ```
+   - Mark dirty on reservation/flat/cleaning mutations: `markUniversalIntegrityDirty()`.
+
+### 2.3 Elimination of Duplicate Calls & Memoization of `getRequestsForDate(dateStr)`
+1. **Premise**: When `Dashboard` or tasks view loads, multiple endpoints (`checkouts`, `dashboard/summary`, `calendar`, `getFlatRealtimeStatus`) query the same date within a 1-3 second window.
+2. **Strategy**:
+   - Add a short-lived request cache for `getRequestsForDate`:
+     ```javascript
+     const requestsForDateCache = new Map(); // dateStr -> { timestamp, data, version }
+     let requestsForDateVersion = 0;
+
+     export function invalidateRequestsForDateCache() {
+       requestsForDateVersion++;
+       requestsForDateCache.clear();
+     }
+     ```
+   - Inside `getRequestsForDate(dateStr, isNested = false)`:
+     Check cache: if `!isNested && cached && cached.version === requestsForDateVersion && (Date.now() - cached.timestamp < 3000)`, return `cached.data`.
+     Before returning, save to cache.
+   - In `getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr(), precomputedRequests = null)`:
+     Accept optional `precomputedRequests`. In `GET /api/flats`, compute `const dailyRequests = getRequestsForDate(todayStr);` ONCE before iterating flats, and pass it into `getFlatRealtimeStatus`. This replaces 50 separate calls with 1 call!
+
+### 2.4 O(1) Indexing for `computePeriodicTaskStatus` and Housekeeping Preventives
+1. **Premise**: In `computePeriodicTaskStatus`, filtering all executions and all reservations per flat/task turns regularization into an $O(F \cdot T \cdot (E + R))$ bottleneck.
+2. **Strategy**:
+   - **Index 1: Latest Execution Map**:
+     Build a `Map<"${taskId}_${flatId}", lastExecution>` in $O(E)$ time. `computePeriodicTaskStatus` looks up `lastExec` in $O(1)$.
+   - **Index 2: Reservations by Flat**:
+     Build a `Map<flatId | flatNumber, reservation[]>` in $O(R)$ time. `getFlatOccupiedDays` and `futureReservations` iterate only that flat's 5-10 reservations instead of all 3,000 reservations.
+   - **Preventive Regularization Daily Guard**:
+     In `regularizeHousekeepingPreventiveTasks(force = false)`:
+     Track `lastRegularizeHousekeepingDate`. If `!force && lastRegularizeHousekeepingDate === todayStr`, return `false`. Regularization only needs to run once per calendar day or when explicitly requested by an admin.
+
+### 2.5 `flushPgState()` Optimization & Fast-Path Surrogate Sanitization
+1. **Premise**: `sanitizeJsonSerialized` spends 1.5–4.0s evaluating a backtracking regex on 30MB strings even when the string contains zero invalid surrogates.
+2. **Strategy**:
+   - Fast-path check in `sanitizeJsonSerialized`:
+     ```javascript
+     export function sanitizeJsonSerialized(jsonStr) {
+       if (typeof jsonStr !== "string" || jsonStr.length === 0) return jsonStr;
+       // Fast path: bypass regex if no lone surrogate escapes or NUL bytes exist
+       if (!jsonStr.includes("\\u0000") && !/\\u[dD][89abABcdefCDEF]/.test(jsonStr)) {
+         return jsonStr;
+       }
+       return jsonStr.replace(
+         /((?<!\\)(?:\\\\)*)(?:\\u[dD][89abAB][0-9a-fA-F]{2}(?!\\u[dD][cdefCDEF][0-9a-fA-F]{2})|(?<!\\u[dD][89abAB][0-9a-fA-F]{2})\\u[dD][cdefCDEF][0-9a-fA-F]{2}|\\u0000)/g,
+         "$1"
+       );
+     }
+     ```
+   - Add `await new Promise(resolve => setImmediate(resolve))` yields before `JSON.stringify`, before regex, and before `pgPool.query` in `flushPgState()`.
+   - Call `global.gc()` if heap used $> 900$ MB after flushing.
+
+### 2.6 Enhanced Base64 Detection & Efficient Pruning
+1. **Premise**: Pure Base64 strings (without `data:` URI header) were slipping past `walkAndOffloadResidualDataUrls`. Pruning sorting was calling `toComparableIso` $O(N \log N)$ times.
+2. **Strategy**:
+   - Update `walkAndOffloadResidualDataUrls` to recognize pure Base64 strings:
+     ```javascript
+     const isOffloadableBase64 = (val) => {
+       if (typeof val !== "string" || val.length < 2048) return false;
+       if (val.startsWith("http://") || val.startsWith("https://") || val.startsWith("/api/")) return false;
+       if (/^data:(image\/|application\/pdf)/i.test(val)) return true;
+       const sample = val.slice(0, 128).trim();
+       return /^[A-Za-z0-9+/=\r\n]+$/.test(sample) && (sample.startsWith("JVBERi0") || sample.startsWith("/9j/") || sample.startsWith("iVBORw0KGgo"));
+     };
+     ```
+   - In `walkAndOffloadResidualDataUrls`, yield to the event loop every 50 nodes.
+   - In `pruneDatabase()`, use Schwartzian transform (decorate-sort-undecorate) to compute `toComparableIso` only once per item ($O(N)$ instead of $O(N \log N)$).
+   - In `pruneDatabase()`, truncate oversized strings in `auditLogs[i].details` to $\le 500$ characters.
+
+---
+
+## 3. Caveats & Edge Cases
+
+1. **Test Marker Preservation (`extractFunctionSlice`)**:
+   - The test `tests/room-ready-605-dedup-and-pg-surrogate.test.mjs` uses `indexOf` with exact string markers:
+     - `"export function sanitizeSafeJsonString(str, maxLen = 0)"`
+     - `"async function flushPgState()"`
+     - `"export function reconcileUniversalIntegrity(incomingState = null)"`
+     - `"// Alias de retrocompatibilidade"`
+   - **CRITICAL**: The Worker agent MUST NOT alter these exact marker lines, function names, or parameter signatures, otherwise `room-ready-605-dedup-and-pg-surrogate.test.mjs` will fail on test boot!
+2. **File Mirror Synchronization**:
+   - `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` are identical copies. Any changes made to `artifacts/api-server/demo-server.mjs` must also be reflected in `scripts/demo-server.mjs`.
+3. **Data Loss & Mutation Safety**:
+   - Do NOT disable `reconcileAndMergeGuests` or `reconcileUniversalIntegrity` completely. They must remain fully functional and run on boot, on hydration, when dirty, and after cooldown.
+4. **Strict Compliance with Testing Rules**:
+   - DO NOT run `npm test`, `tests/*.test.mjs`, or global test suites. Only run strictly targeted, point tests (e.g. `node --test tests/room-ready-605-dedup-and-pg-surrogate.test.mjs` or `tests/challenger-m1-1.test.mjs`).
+5. **PostgreSQL JSONB Compatibility**:
+   - The fast path in `sanitizeJsonSerialized` must correctly identify surrogate escape sequences (`\\u[dD][89abABcdefCDEF]`) and null bytes (`\\u0000`). If any are found, it must fall back to the complete regex replacement to protect PostgreSQL.
+
+---
+
+## 4. Conclusion & Actionable Implementation Plan
+
+The backend bottlenecks are clearly identified with exact line numbers in `artifacts/api-server/demo-server.mjs`:
+1. **Item 1**: Synchronous $O(N^2)$ reconciliation in `GET /api/pms/guests` (line 34823), `GET /api/pms/guests/:id` (line 36711), `GET /api/flats` (line 17905), and `GET /api/reservations/checkouts` (line 19334).
+   *Fix*: Add cooldowns (60s and 30s) and dirty flags (`isGuestReconciliationDirty`, `isUniversalIntegrityDirty`). Replace synchronous `saveDatabase()` on GET paths with `setImmediate`.
+2. **Item 2**: `getRequestsForDate(dateStr)` duplicate execution and 50x redundant loops in `GET /api/flats`.
+   *Fix*: Add a 3-second memoization cache (`requestsForDateCache`) and pass `precomputedRequests` into `getFlatRealtimeStatus` from `GET /api/flats`.
+3. **Item 3**: $O(N^2)$ unindexed loops in `computePeriodicTaskStatus` and preventive tasks.
+   *Fix*: Index `periodicExecutions` by `${taskId}_${flatId}` ($O(1)$ lookup), index active reservations by flat, and add a once-per-day guard to `regularizeHousekeepingPreventiveTasks`.
+4. **Item 4**: Event loop blocking in `flushPgState()` due to regex in `sanitizeJsonSerialized` and missing yields.
+   *Fix*: Add fast-path surrogate check, yield event loop before heavy operations with `await new Promise(r => setImmediate(r))`, and add garbage collection hints.
+5. **Item 5**: Base64 residual offloading and pruning overhead.
+   *Fix*: Add pure Base64 detection to `walkAndOffloadResidualDataUrls`, add yields in tree walk, pre-map sort keys in `pruneDatabase()`, and truncate deep audit log details.
+
+---
+
+## 5. Verification Method
+
+To verify these changes, the Worker agent must execute only the strictly targeted point tests:
+1. **Verification of Surrogate Sanitization & Integrity Slice Markers**:
+   ```powershell
+   node --test tests/room-ready-605-dedup-and-pg-surrogate.test.mjs
+   ```
+   *Expected*: All tests pass without marker slice errors.
+2. **Verification of Checkouts Card Generation**:
+   ```powershell
+   node --test tests/challenger-m1-1.test.mjs
+   ```
+   *Expected*: Checkouts scenarios 1, 2, 3 pass without error.
+3. **Verification of PMS Guests LTV / Metrics**:
+   ```powershell
+   node --test tests/challenger-m4-demographics-ltv.test.mjs
+   ```
+   *Expected*: Demographics and guest endpoints respond correctly.
+4. **Verification of File Synchronization**:
+   ```powershell
+   (Get-FileHash "artifacts/api-server/demo-server.mjs").Hash -eq (Get-FileHash "scripts/demo-server.mjs").Hash
+   ```
+   *Expected*: Output is `True`.
+5. **Git Push**:
+   After committing, execute `git push origin <branch>`.

@@ -1,15 +1,15 @@
-# Progress - Explorer 2
+# Progress - Explorer 2 (PMS UI Explorer)
 
-Last visited: 2026-10-11T23:24:30Z
+Last visited: 2026-11-02T23:28:30Z
 
 ## Status
-- [x] Initialized DISPATCH.md and BRIEFING.md
-- [x] Read ORIGINAL_REQUEST.md (Follow-up 2026-10-11T23:13:31Z)
-- [x] Inspected scripts/whatsapp-ai-service.mjs and artifacts/api-server/ prompt assembly
-- [x] Detected parity gap: scripts/whatsapp-ai-service.mjs vs artifacts/api-server/whatsapp-ai-service.mjs
-- [x] Analyzed classification of developer messages (simulation vs calibration vs factual coaching)
-- [x] Analyzed dynamic injection of developerGuidelines & toneSettings into systemInstruction
-- [x] Designed anti-parrot developer confirmation response with practical sample generation
-- [x] Analyzed frontend UI requirements (/whatsapp-chat popover & /whatsapp-automation card)
-- [x] Synthesized findings into handoff.md
-- [ ] Send handoff message to parent orchestrator
+- [x] Initialized DISPATCH.md and BRIEFING.md with Priority 2 PMS UI task
+- [x] Reviewed ORIGINAL_REQUEST.md and task requirements
+- [x] Inspected `artifacts/limpeza/src/components/floating-new-reservation.tsx`
+- [x] Inspected `artifacts/limpeza/src/pages/pms-calendar.tsx`
+- [x] Formulated concrete strategy for dynamic mounting and inactive state optimization
+- [x] Formulated concrete strategy for 10s-15s polling (12s) and active `visibilitychange` pausing
+- [x] Verified baseline build completes cleanly
+- [x] Drafted 5-component handoff.md report with exact code diffs
+- [x] Updated BRIEFING.md
+- [x] Sent handoff message to parent orchestrator

@@ -1,6 +1,14 @@
 // src/agent/types/tool-contract.ts
 
-export type EstadoSessao = 'COMERCIAL_VENDAS' | 'PRE_CHECKIN' | 'IN_STAY_CONCIERGE';
+export type EstadoSessao =
+  | 'COMERCIAL_VENDAS'
+  | 'PRE_CHECKIN'
+  | 'IN_STAY_CONCIERGE'
+  | 'POS_CHECKOUT'
+  | 'MODO_COMERCIAL_LEAD'
+  | 'MODO_PRE_CHECKIN'
+  | 'MODO_CONCIERGE_INSTAY'
+  | 'MODO_POS_CHECKOUT';
 
 export type PerfilRemetente = 'HOSPEDE_ATIVO' | 'LEAD_DESCONHECIDO';
 

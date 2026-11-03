@@ -313,20 +313,13 @@ const TAG_GROUPS = [
 
 interface BotActionsSettings {
   apiActionsEnabled: boolean
-  allowedActions: {
-    checkAvailability: boolean
-    calculateQuote: boolean
-    generatePayment: boolean
-    createPreReservation: boolean
-    commitReservation: boolean
-    reallocateReservationFlat: boolean
-  }
+  allowedActions: Record<string, boolean>
   preReservationHoldMinutes: number
   handoverMessage: string
   updatedAt?: string
 }
 
-type BotActionKey = keyof BotActionsSettings["allowedActions"]
+type BotActionKey = string
 
 interface BotActionMeta {
   key: BotActionKey
@@ -341,64 +334,184 @@ interface BotActionMeta {
 
 const BOT_ACTIONS_METADATA: BotActionMeta[] = [
   {
-    key: "checkAvailability",
-    title: "Consultar Disponibilidade",
-    endpoint: "/api/bot-actions/availability",
+    key: "consultar_disponibilidade",
+    title: "Consultar Disponibilidade de Flats",
+    endpoint: "Tool: consultar_disponibilidade",
     method: "GET",
-    description: "Consulta flats livres no período informado (check-in/check-out) e capacidade de hóspedes diretamente no PMS.",
+    description: "Consulta flats livres no período informado (check-in/check-out), capacidade e particularidades de cada unidade no PMS.",
     iconName: "Calendar",
-    badgeText: "PMS Query",
+    badgeText: "Comercial / Estadia",
     colorClass: "blue"
   },
   {
-    key: "calculateQuote",
-    title: "Calcular Orçamento & Tarifas",
-    endpoint: "/api/bot-actions/quote",
+    key: "calcular_orcamento",
+    title: "Calcular Orçamento & Descontos (7d/15d/30d)",
+    endpoint: "Tool: calcular_orcamento",
     method: "POST",
-    description: "Simula cotação detalhada com diárias do Motor Tarifário Inteligente (custos fixos/variáveis SEBRAE + markups por canal).",
+    description: "Calcula diárias com café e sem café, aplicando descontos automáticos de duração (7+ dias: 10%, 15+ dias: 15%, 30+ dias: 25%).",
     iconName: "Sliders",
     badgeText: "Tariff Engine",
     colorClass: "emerald"
   },
   {
-    key: "generatePayment",
-    title: "Gerar Pagamento PIX",
-    endpoint: "/api/bot-actions/payment-link",
+    key: "gerar_link_reserva",
+    title: "Criar Pré-Reserva 30min + PIX (2 Etapas)",
+    endpoint: "Tool: gerar_link_reserva",
     method: "POST",
-    description: "Emite payload BACEN BR Code copia-e-cola e QR Code base64 em tempo real para liquidação instantânea.",
+    description: "Bloqueia o flat por 30 minutos no calendário após confirmação do plano pelo hóspede e fornece a chave PIX CNPJ.",
     iconName: "QrCode",
-    badgeText: "PIX BACEN",
+    badgeText: "Hold PMS + PIX",
     colorClass: "purple"
   },
   {
-    key: "createPreReservation",
-    title: "Criar Pré-Reserva (Hold Provisório)",
-    endpoint: "/api/bot-actions/pre-reserve",
+    key: "enviar_midia_unidade",
+    title: "Enviar Fotos Padrão dos Flats",
+    endpoint: "Tool: enviar_midia_unidade",
     method: "POST",
-    description: "Bloqueia temporariamente o flat no calendário pelo tempo configurado (ex: 30 min) para garantir o quarto durante o PIX.",
-    iconName: "Clock",
-    badgeText: "Hold PMS",
-    colorClass: "amber"
+    description: "Envia o pacote de fotos padrão da estrutura dos flats CorpFlats quando o cliente pede fotos da acomodação.",
+    iconName: "Sparkles",
+    badgeText: "Mídia WhatsApp",
+    colorClass: "blue"
   },
   {
-    key: "commitReservation",
-    title: "Efetivar Reserva Confirmada",
-    endpoint: "/api/bot-actions/commit-reservation",
-    method: "POST",
-    description: "Converte a pré-reserva em reserva confirmada definitiva no PMS, gerando código e travando permanentemente o calendário.",
+    key: "consultar_detalhes_reserva",
+    title: "Consultar Detalhes da Reserva (Zero-Ask)",
+    endpoint: "Tool: consultar_detalhes_reserva",
+    method: "GET",
+    description: "Lê automaticamente a reserva vinculada ao WhatsApp do hóspede (flat, datas, café, status FNRH, cartão NFC e veículo).",
     iconName: "CheckCheck",
-    badgeText: "PMS Lock",
+    badgeText: "Zero-Ask Context",
     colorClass: "emerald"
   },
   {
-    key: "reallocateReservationFlat",
-    title: "Remanejamento / Troca de Flat",
-    endpoint: "/api/bot-actions/reallocate-flat",
+    key: "atualizar_dados_hospede",
+    title: "Atualizar Cadastro, Acompanhantes & Veículo",
+    endpoint: "Tool: atualizar_dados_hospede",
     method: "POST",
-    description: "Permite à Sofia trocar ou remanejar o flat de um hóspede (inclusive deslocando reserva futura não-fixa), respeitando quartos bloqueados/preferenciais.",
-    iconName: "ArrowLeftRight",
-    badgeText: "PMS Reallocation",
+    description: "Salva CPF, e-mail, acompanhantes e placa/modelo/cor do veículo, disparando e-mail para a garagem respeitando a trava de pagamento.",
+    iconName: "ShieldCheck",
+    badgeText: "Cadastro & Garagem",
+    colorClass: "blue"
+  },
+  {
+    key: "solicitar_early_checkin",
+    title: "Solicitar Early Check-in",
+    endpoint: "Tool: solicitar_early_checkin",
+    method: "POST",
+    description: "Valida se o flat está limpo e aplica a regra CorpFlats (cortesia 10h WhatsApp / 12h OTA, meia diária 07h–10h, diária inteira <07h).",
+    iconName: "Clock",
+    badgeText: "Regras Check-in",
     colorClass: "amber"
+  },
+  {
+    key: "solicitar_late_checkout",
+    title: "Solicitar Late Check-out (Seg-Sáb 13h / Dom 18h)",
+    endpoint: "Tool: solicitar_late_checkout",
+    method: "POST",
+    description: "Cortesia até 13h de segunda a sábado; aos domingos cortesia até 18h se ocupação < 50% (remanejando próxima entrada para o Flat da Vez).",
+    iconName: "Clock",
+    badgeText: "Regras Check-out",
+    colorClass: "amber"
+  },
+  {
+    key: "alterar_datas_reserva",
+    title: "Alterar Datas da Reserva (Trava 24h)",
+    endpoint: "Tool: alterar_datas_reserva",
+    method: "POST",
+    description: "Permite alterar datas com no mínimo 24h de antecedência do check-in, recalculando tarifas e disponibilidade.",
+    iconName: "Calendar",
+    badgeText: "Trava >= 24h",
+    colorClass: "blue"
+  },
+  {
+    key: "estender_estadia",
+    title: "Prorrogar Estadia & Remanejamento Inteligente",
+    endpoint: "Tool: estender_estadia",
+    method: "POST",
+    description: "Gera PIX para diárias extras ou consulta o gestor no WhatsApp (#EXT) para remanejar reserva futura para o Flat da Vez.",
+    iconName: "ArrowLeftRight",
+    badgeText: "Prorrogação + PIX",
+    colorClass: "emerald"
+  },
+  {
+    key: "solicitar_limpeza_extra",
+    title: "Insumos Cortesia vs. Limpeza em Estadia (R$ 70)",
+    endpoint: "Tool: solicitar_limpeza_extra",
+    method: "POST",
+    description: "Gera card de entrega avulsa gratuita (toalha, papel, sabonete) ou cobrança PIX de R$ 70 para limpeza completa durante a estadia.",
+    iconName: "Sparkles",
+    badgeText: "Governança",
+    colorClass: "purple"
+  },
+  {
+    key: "abrir_chamado_manutencao",
+    title: "Contingência de Manutenção (3 Planos ao Gestor)",
+    endpoint: "Tool: abrir_chamado_manutencao",
+    method: "POST",
+    description: "Notifica o gestor no WhatsApp com 3 planos prontos: (1) Remanejar para o Flat da Vez + OS, (2) Apenas abrir OS, (3) Gestor assume.",
+    iconName: "Sliders",
+    badgeText: "OS & Contingência",
+    colorClass: "amber"
+  },
+  {
+    key: "resolver_problema_cartao_nfc",
+    title: "Contingência de Acesso & Cartão NFC (Soho)",
+    endpoint: "Tool: resolver_problema_cartao_nfc",
+    method: "POST",
+    description: "Cartão trancado dentro (e-mail recepção), perda de cartão (PIX R$ 15 + e-mail 2ª via descontando no flat 212) ou falha na fechadura.",
+    iconName: "ShieldCheck",
+    badgeText: "Cartão NFC",
+    colorClass: "purple"
+  },
+  {
+    key: "autorizar_visita_temporaria",
+    title: "Autorizar Visita Temporária na Portaria",
+    endpoint: "Tool: autorizar_visita_temporaria",
+    method: "POST",
+    description: "Valida limite do flat, alerta proibição de pernoite/piscina/academia, coleta Nome + CPF e envia e-mail para soho@promenade.com.br.",
+    iconName: "CheckCheck",
+    badgeText: "Portaria Soho",
+    colorClass: "blue"
+  },
+  {
+    key: "processar_cancelamento",
+    title: "Processar Cancelamento (Regra 24h + Exceção)",
+    endpoint: "Tool: processar_cancelamento",
+    method: "POST",
+    description: "Cancelamento gratuito >= 24h do check-in; < 24h retém 100% ou envia proposta de exceção (#CANC) ao WhatsApp do gestor.",
+    iconName: "AlertCircle",
+    badgeText: "Cancelamento",
+    colorClass: "amber"
+  },
+  {
+    key: "gerenciar_nota_fiscal_nfse",
+    title: "Conferência e Emissão de Nota Fiscal (NFS-e)",
+    endpoint: "Tool: gerenciar_nota_fiscal_nfse",
+    method: "POST",
+    description: "Consulta dados do tomador PF/PJ, atualiza cadastro fiscal e registra aprovação para emissão da NFS-e Nacional.",
+    iconName: "CheckCheck",
+    badgeText: "Fiscal NFS-e",
+    colorClass: "emerald"
+  },
+  {
+    key: "consultar_achados_e_perdidos",
+    title: "Consultar Achados e Perdidos",
+    endpoint: "Tool: consultar_achados_e_perdidos",
+    method: "GET",
+    description: "Verifica itens registrados pela governança com foto em db.lostAndFound ou orienta sobre o alerta automático com foto no WhatsApp.",
+    iconName: "HelpCircle",
+    badgeText: "Governança",
+    colorClass: "blue"
+  },
+  {
+    key: "notificar_administrador",
+    title: "Transbordo Inteligente para WhatsApp do Gestor",
+    endpoint: "Tool: notificar_administrador",
+    method: "POST",
+    description: "Aciona alerta prioritário direto no WhatsApp pessoal do administrador (5522998505276) em casos críticos ou exceções.",
+    iconName: "Smartphone",
+    badgeText: "Alerta Admin",
+    colorClass: "purple"
   }
 ]
 
@@ -788,16 +901,68 @@ export default function WhatsappAutomation() {
   const [savingGuideline, setSavingGuideline] = useState<boolean>(false)
   const [guidelineFilterCategory, setGuidelineFilterCategory] = useState<string>("all")
 
+  // Estado dos 3 Blocos Limpos de Treinamento (Bloco A: Fichas Técnicas, Bloco B: Fatos Operacionais, Bloco C: Exemplos de Ouro + Lista Negra)
+  const [trainingBlocks, setTrainingBlocks] = useState<{
+    blocoA_fichasTecnicas: Array<{ id: string; titulo: string; topico: string; conteudo: string }>
+    blocoB_fatosOperacionais: Array<{ id: string; situacao: string; fato: string }>
+    blocoC_exemplosDeOuro: Array<{ id: string; perguntaHospede: string; respostaIdealSofia: string }>
+    listaNegraCliches: string[]
+  }>({
+    blocoA_fichasTecnicas: [],
+    blocoB_fatosOperacionais: [],
+    blocoC_exemplosDeOuro: [],
+    listaNegraCliches: ["Com certeza!", "Espero ter ajudado", "Fico feliz em ajudar", "Não hesite em entrar em contato"]
+  })
+  const [savingTrainingBlocks, setSavingTrainingBlocks] = useState<boolean>(false)
+  const [newBlacklistPhrase, setNewBlacklistPhrase] = useState<string>("")
+
+  const handleSaveTrainingBlocks = async (updatedBlocks = trainingBlocks) => {
+    try {
+      setSavingTrainingBlocks(true)
+      const res = await fetch("/api/whatsapp/ai-training-blocks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedBlocks)
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.trainingBlocks) setTrainingBlocks(data.trainingBlocks)
+        toast({
+          title: "📚 Base Estruturada Salva!",
+          description: "Os 3 Blocos de Treinamento e a Lista Negra foram atualizados no motor da Sofia."
+        })
+      } else {
+        toast({ title: "Erro ao salvar blocos de treinamento", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Falha ao salvar", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingTrainingBlocks(false)
+    }
+  }
+
   // Estado das Chaves de Ação do Bot (Bot Actions API)
   const [botActionsSettings, setBotActionsSettings] = useState<BotActionsSettings>({
     apiActionsEnabled: true,
     allowedActions: {
-      checkAvailability: true,
-      calculateQuote: true,
-      generatePayment: true,
-      createPreReservation: true,
-      commitReservation: true,
-      reallocateReservationFlat: true
+      consultar_disponibilidade: true,
+      calcular_orcamento: true,
+      gerar_link_reserva: true,
+      enviar_midia_unidade: true,
+      consultar_detalhes_reserva: true,
+      atualizar_dados_hospede: true,
+      solicitar_early_checkin: true,
+      solicitar_late_checkout: true,
+      alterar_datas_reserva: true,
+      estender_estadia: true,
+      solicitar_limpeza_extra: true,
+      abrir_chamado_manutencao: true,
+      resolver_problema_cartao_nfc: true,
+      autorizar_visita_temporaria: true,
+      processar_cancelamento: true,
+      gerenciar_nota_fiscal_nfse: true,
+      consultar_achados_e_perdidos: true,
+      notificar_administrador: true
     },
     preReservationHoldMinutes: 30,
     handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano."
@@ -1087,6 +1252,15 @@ export default function WhatsappAutomation() {
           }))
           if (Array.isArray(data.aiConfig.developerGuidelines)) {
             setDeveloperGuidelines(data.aiConfig.developerGuidelines)
+          }
+          if (data.trainingBlocks || data.aiConfig.trainingBlocks) {
+            const tb = data.trainingBlocks || data.aiConfig.trainingBlocks
+            setTrainingBlocks(prev => ({
+              blocoA_fichasTecnicas: Array.isArray(tb.blocoA_fichasTecnicas) ? tb.blocoA_fichasTecnicas : prev.blocoA_fichasTecnicas,
+              blocoB_fatosOperacionais: Array.isArray(tb.blocoB_fatosOperacionais) ? tb.blocoB_fatosOperacionais : prev.blocoB_fatosOperacionais,
+              blocoC_exemplosDeOuro: Array.isArray(tb.blocoC_exemplosDeOuro) ? tb.blocoC_exemplosDeOuro : prev.blocoC_exemplosDeOuro,
+              listaNegraCliches: Array.isArray(tb.listaNegraCliches) ? tb.listaNegraCliches : prev.listaNegraCliches
+            }))
           }
         }
         setGeminiStatus({
@@ -3023,9 +3197,312 @@ export default function WhatsappAutomation() {
               </div>
             </div>
 
-            {/* SUB-ABA 1: BASE DE CONHECIMENTO & TREINAMENTO (FAQ + DEMANDAS) */}
+            {/* SUB-ABA 1: BASE DE CONHECIMENTO & TREINAMENTO (3 BLOCOS LIMPOS + FAQ + DEMANDAS) */}
             {aiSubTab === "training" && (
               <div className="space-y-6 animate-in fade-in-50 duration-200">
+                <Card className="border-indigo-200 dark:border-indigo-900/60 bg-gradient-to-br from-indigo-50/40 via-background to-background shadow-xs">
+                  <CardHeader className="pb-3 border-b">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-base font-black flex items-center gap-2 text-indigo-950 dark:text-indigo-100">
+                          <Sparkles className="w-4 h-4 text-indigo-600" />
+                          Arquitetura de Treinamento em 3 Blocos Limpos (Zero Textos Engessados)
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Alimente os fatos puros e exemplos de tom humano para a Sofia consultar em tempo real sem soar robótica.
+                        </CardDescription>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveTrainingBlocks(trainingBlocks)}
+                        disabled={savingTrainingBlocks}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold gap-1.5 shrink-0"
+                      >
+                        {savingTrainingBlocks ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                        Salvar 3 Blocos de Treinamento
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-4 sm:p-6 space-y-6">
+                    {/* BLOCO A: Fichas Técnicas dos Flats e Condomínio */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-xs font-black uppercase tracking-wider text-indigo-900 dark:text-indigo-200">
+                            🏢 Bloco A — Fichas Técnicas dos Flats e Condomínio Soho Residence
+                          </h4>
+                          <p className="text-[11px] text-muted-foreground">
+                            Wi-Fi, voltagem, cartão NFC, regras da piscina/academia e itens disponíveis nos apartamentos.
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setTrainingBlocks(prev => ({
+                              ...prev,
+                              blocoA_fichasTecnicas: [
+                                ...prev.blocoA_fichasTecnicas,
+                                { id: `ft_${Date.now()}`, titulo: "Nova Ficha Técnica", topico: "geral", conteudo: "" }
+                              ]
+                            }))
+                          }
+                          className="h-7 text-[11px] font-bold gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> + Ficha Técnica
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {trainingBlocks.blocoA_fichasTecnicas.map((item, idx) => (
+                          <div key={item.id || idx} className="p-3 rounded-xl border bg-card space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <Input
+                                value={item.titulo}
+                                onChange={e => {
+                                  const next = [...trainingBlocks.blocoA_fichasTecnicas]
+                                  next[idx] = { ...next[idx], titulo: e.target.value }
+                                  setTrainingBlocks(prev => ({ ...prev, blocoA_fichasTecnicas: next }))
+                                }}
+                                placeholder="Título (ex: Wi-Fi, Piscina, Voltagem)"
+                                className="h-7 text-xs font-bold"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  setTrainingBlocks(prev => ({
+                                    ...prev,
+                                    blocoA_fichasTecnicas: prev.blocoA_fichasTecnicas.filter((_, i) => i !== idx)
+                                  }))
+                                }
+                                className="h-7 w-7 p-0 text-rose-500"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                            <Textarea
+                              rows={2}
+                              value={item.conteudo}
+                              onChange={e => {
+                                const next = [...trainingBlocks.blocoA_fichasTecnicas]
+                                next[idx] = { ...next[idx], conteudo: e.target.value }
+                                setTrainingBlocks(prev => ({ ...prev, blocoA_fichasTecnicas: next }))
+                              }}
+                              placeholder="Informação técnica objetiva para consulta em tempo real..."
+                              className="text-xs"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* BLOCO B: FAQs e Fatos Operacionais Limpos */}
+                    <div className="space-y-3 pt-4 border-t">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-xs font-black uppercase tracking-wider text-emerald-900 dark:text-emerald-200">
+                            📌 Bloco B — FAQs e Fatos Operacionais Limpos (Situação ➔ Fato Puro)
+                          </h4>
+                          <p className="text-[11px] text-muted-foreground">
+                            Pares de Situação/Pergunta ➔ Informação Factual Pura, sem textos robóticos pré-formatados.
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setTrainingBlocks(prev => ({
+                              ...prev,
+                              blocoB_fatosOperacionais: [
+                                ...prev.blocoB_fatosOperacionais,
+                                { id: `fo_${Date.now()}`, situacao: "", fato: "" }
+                              ]
+                            }))
+                          }
+                          className="h-7 text-[11px] font-bold gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> + Fato Operacional
+                        </Button>
+                      </div>
+                      <div className="space-y-2.5">
+                        {trainingBlocks.blocoB_fatosOperacionais.map((item, idx) => (
+                          <div key={item.id || idx} className="p-3 rounded-xl border bg-card grid grid-cols-1 md:grid-cols-12 gap-2 items-start">
+                            <div className="md:col-span-4">
+                              <Input
+                                value={item.situacao}
+                                onChange={e => {
+                                  const next = [...trainingBlocks.blocoB_fatosOperacionais]
+                                  next[idx] = { ...next[idx], situacao: e.target.value }
+                                  setTrainingBlocks(prev => ({ ...prev, blocoB_fatosOperacionais: next }))
+                                }}
+                                placeholder="Situação / Pergunta..."
+                                className="h-8 text-xs font-semibold"
+                              />
+                            </div>
+                            <div className="md:col-span-7">
+                              <Input
+                                value={item.fato}
+                                onChange={e => {
+                                  const next = [...trainingBlocks.blocoB_fatosOperacionais]
+                                  next[idx] = { ...next[idx], fato: e.target.value }
+                                  setTrainingBlocks(prev => ({ ...prev, blocoB_fatosOperacionais: next }))
+                                }}
+                                placeholder="Fato operacional puro..."
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                            <div className="md:col-span-1 flex justify-end">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  setTrainingBlocks(prev => ({
+                                    ...prev,
+                                    blocoB_fatosOperacionais: prev.blocoB_fatosOperacionais.filter((_, i) => i !== idx)
+                                  }))
+                                }
+                                className="h-8 w-8 p-0 text-rose-500"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* BLOCO C: Exemplos de Ouro (Few-Shot) + Lista Negra de Clichês */}
+                    <div className="space-y-4 pt-4 border-t">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-xs font-black uppercase tracking-wider text-purple-900 dark:text-purple-200">
+                            ✨ Bloco C — Exemplos de Ouro (Few-Shot Prompting) + Lista Negra de Clichês
+                          </h4>
+                          <p className="text-[11px] text-muted-foreground">
+                            Exemplos reais de como uma recepcionista humana de alto padrão responde no WhatsApp e expressões proibidas.
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setTrainingBlocks(prev => ({
+                              ...prev,
+                              blocoC_exemplosDeOuro: [
+                                ...prev.blocoC_exemplosDeOuro,
+                                { id: `ex_${Date.now()}`, perguntaHospede: "", respostaIdealSofia: "" }
+                              ]
+                            }))
+                          }
+                          className="h-7 text-[11px] font-bold gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> + Exemplo de Ouro
+                        </Button>
+                      </div>
+
+                      <div className="space-y-2.5">
+                        {trainingBlocks.blocoC_exemplosDeOuro.map((item, idx) => (
+                          <div key={item.id || idx} className="p-3 rounded-xl border bg-card space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <Input
+                                value={item.perguntaHospede}
+                                onChange={e => {
+                                  const next = [...trainingBlocks.blocoC_exemplosDeOuro]
+                                  next[idx] = { ...next[idx], perguntaHospede: e.target.value }
+                                  setTrainingBlocks(prev => ({ ...prev, blocoC_exemplosDeOuro: next }))
+                                }}
+                                placeholder="Pergunta do Hóspede..."
+                                className="h-8 text-xs font-semibold"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  setTrainingBlocks(prev => ({
+                                    ...prev,
+                                    blocoC_exemplosDeOuro: prev.blocoC_exemplosDeOuro.filter((_, i) => i !== idx)
+                                  }))
+                                }
+                                className="h-8 w-8 p-0 text-rose-500"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                            <Textarea
+                              rows={2}
+                              value={item.respostaIdealSofia}
+                              onChange={e => {
+                                const next = [...trainingBlocks.blocoC_exemplosDeOuro]
+                                next[idx] = { ...next[idx], respostaIdealSofia: e.target.value }
+                                setTrainingBlocks(prev => ({ ...prev, blocoC_exemplosDeOuro: next }))
+                              }}
+                              placeholder="Resposta ideal humana da Sofia (natural, sem listas robóticas)..."
+                              className="text-xs"
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Lista Negra de Clichês */}
+                      <div className="p-3 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/40 dark:bg-rose-950/20 space-y-2">
+                        <Label className="text-xs font-black text-rose-900 dark:text-rose-200">
+                          🚫 Lista Negra de Clichês Proibidos (A Sofia NUNCA usará estas frases)
+                        </Label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {trainingBlocks.listaNegraCliches.map((phrase, idx) => (
+                            <Badge key={idx} variant="secondary" className="text-[11px] bg-white dark:bg-slate-900 border border-rose-200 text-rose-800 dark:text-rose-200 gap-1.5 py-1 px-2.5">
+                              <span>"{phrase}"</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setTrainingBlocks(prev => ({
+                                    ...prev,
+                                    listaNegraCliches: prev.listaNegraCliches.filter((_, i) => i !== idx)
+                                  }))
+                                }
+                                className="text-rose-500 hover:text-rose-700 font-bold"
+                              >
+                                ×
+                              </button>
+                            </Badge>
+                          ))}
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                          <Input
+                            value={newBlacklistPhrase}
+                            onChange={e => setNewBlacklistPhrase(e.target.value)}
+                            placeholder='Adicionar frase proibida (ex: "Fico à disposição para eventuais dúvidas")'
+                            className="h-8 text-xs bg-white dark:bg-slate-900"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              if (!newBlacklistPhrase.trim()) return
+                              setTrainingBlocks(prev => ({
+                                ...prev,
+                                listaNegraCliches: [...prev.listaNegraCliches, newBlacklistPhrase.trim()]
+                              }))
+                              setNewBlacklistPhrase("")
+                            }}
+                            className="h-8 text-xs font-bold border-rose-300 text-rose-700"
+                          >
+                            + Bloquear Expressão
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
                 <FaqKnowledgeBase />
 
                 <div className="pt-2">
@@ -3172,12 +3649,17 @@ export default function WhatsappAutomation() {
                               <div className={`p-1.5 rounded-lg text-xs font-bold ${
                                 isAllowed ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" : "bg-muted text-muted-foreground"
                               }`}>
-                                {action.key === "checkAvailability" && <Calendar className="w-4 h-4" />}
-                                {action.key === "calculateQuote" && <Sliders className="w-4 h-4" />}
-                                {action.key === "generatePayment" && <QrCode className="w-4 h-4" />}
-                                {action.key === "createPreReservation" && <Clock className="w-4 h-4" />}
-                                {action.key === "commitReservation" && <CheckCheck className="w-4 h-4" />}
-                                {action.key === "reallocateReservationFlat" && <ArrowLeftRight className="w-4 h-4" />}
+                                {action.iconName === "Calendar" && <Calendar className="w-4 h-4" />}
+                                {action.iconName === "Sliders" && <Sliders className="w-4 h-4" />}
+                                {action.iconName === "QrCode" && <QrCode className="w-4 h-4" />}
+                                {action.iconName === "Clock" && <Clock className="w-4 h-4" />}
+                                {action.iconName === "CheckCheck" && <CheckCheck className="w-4 h-4" />}
+                                {action.iconName === "ArrowLeftRight" && <ArrowLeftRight className="w-4 h-4" />}
+                                {action.iconName === "Sparkles" && <Sparkles className="w-4 h-4" />}
+                                {action.iconName === "ShieldCheck" && <ShieldCheck className="w-4 h-4" />}
+                                {action.iconName === "AlertCircle" && <AlertCircle className="w-4 h-4" />}
+                                {action.iconName === "HelpCircle" && <HelpCircle className="w-4 h-4" />}
+                                {action.iconName === "Smartphone" && <Smartphone className="w-4 h-4" />}
                               </div>
                               <div>
                                 <h5 className="text-xs font-bold text-foreground leading-snug">{action.title}</h5>
@@ -3318,39 +3800,34 @@ export default function WhatsappAutomation() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4 pt-2">
-                    {/* Seletor de Modelo de IA (R3: Upgrade para Gemini 2.5 Pro / Gemini 4 Argon) */}
+                    {/* Seletor de Modelo de IA (Apenas Modelos Reais Gemini 2.5 Pro e 2.5 Flash + Trava Anti-Lite) */}
                     <div className="p-3.5 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/30 dark:bg-purple-950/20 space-y-2">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
                         <Label className="text-xs font-black text-purple-950 dark:text-purple-200 flex items-center gap-1.5">
                           <Sparkles className="w-4 h-4 text-purple-600" />
                           Motor de Inteligência Artificial (Modelo Principal Gemini)
                         </Label>
-                        <Badge variant="outline" className="text-[10px] font-bold border-purple-400 text-purple-800 dark:text-purple-200">
-                          Fallback Automático Ativo
+                        <Badge variant="outline" className="text-[10px] font-bold border-emerald-500 text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40">
+                          🔒 Trava Anti-Lite Ativa (Downgrade Bloqueado)
                         </Badge>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         {[
                           {
                             id: "gemini-2.5-pro",
                             title: "Gemini 2.5 Pro",
-                            badge: "Recomendado • Padrão",
-                            desc: "Máxima inteligência contextual, interpretação de reservas e zero alucinação."
-                          },
-                          {
-                            id: "gemini-4-argon",
-                            title: "Gemini 4 Argon",
-                            badge: "Experimental • Ultra",
-                            desc: "Raciocínio de última geração com fallback transparente para Gemini 2.5 Pro."
+                            badge: "Recomendado • Máxima Precisão",
+                            desc: "Máxima inteligência contextual, Tool Calling semântico rigoroso e zero alucinação."
                           },
                           {
                             id: "gemini-2.5-flash",
                             title: "Gemini 2.5 Flash",
-                            badge: "Rápido • Econômico",
-                            desc: "Respostas de baixa latência para triagem rápida."
+                            badge: "Rápido • Alta Capacidade",
+                            desc: "Respostas ágeis com suporte completo às 18 ferramentas do PMS CorpFlats."
                           }
                         ].map(m => {
-                          const selected = (aiConfig.preferredModel || "gemini-2.5-pro") === m.id
+                          const currentModel = aiConfig.preferredModel === "gemini-2.5-flash" ? "gemini-2.5-flash" : "gemini-2.5-pro"
+                          const selected = currentModel === m.id
                           return (
                             <div
                               key={m.id}

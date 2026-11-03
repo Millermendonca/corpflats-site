@@ -1,20 +1,42 @@
-# Explorer 2 Task: WhatsApp AI Coaching Engine & Tone Calibration
+# Dispatch Task for Explorer 2: Frontend UI Mount & Polling Optimizations (Prioridade 2)
 
-Working Directory: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_2`
-Root Directory: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
+## Objective
+Investigate codebase regarding Priority 2 frontend requirements:
+1. `<PmsCalendar modalOnly />` in `artifacts/limpeza/src/components/floating-new-reservation.tsx`:
+   - Investigate why and how it's rendered.
+   - Plan how to mount on-demand only when modal is open (`isOpen`), and avoid loading/rendering when closed.
+2. `artifacts/limpeza/src/components/pms-calendar.tsx`:
+   - Deactivate 4s polling and heavy computations when closed / inactive.
+   - Reduce polling frequency of `GET /api/pms/calendar` from 4s to 10s–15s.
+   - Pause polling when tab is hidden (`document.hidden` / `visibilitychange`).
 
-## 2026-10-11T23:18:12Z
-Investigate the WhatsApp AI engine and prompt orchestration in c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager.
-Authoritative requirements: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (Seção ## Follow-up — 2026-10-11T23:13:31Z).
-Your working directory is c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_2.
-You are a read-only exploration agent. Do NOT modify source code files. Do NOT run global test suites.
+## Authoritative User Request
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
 
-Analyze:
-1. How Sofia's prompt is assembled in scripts/whatsapp-ai.mjs (and twin in artifacts/api-server/). Where system prompt, tone settings, and dynamic instructions are combined.
-2. How to classify incoming messages from the developer (22998505276 / 5522998505276) into:
-   a) Guest simulation (FAQ, availability, check-in, wifi questions -> normal Sofia concierge response)
-   b) Tone & persona calibration (non-literal commands like "responda de forma mais curta por favor", "use menos emojis", "adote um tom mais descontraído" -> extracts stylistic rule, updates aiConfig.toneSettings/aiConfig.systemPrompt without wiping core rules, responds with cordial confirmation + summary of calibration + immediate sample in new tone)
-   c) Factual coaching / guideline learning ("Sofia, o horário do café mudou para 06:30", "Sofia, para o flat 905 a informação correta é..." -> saves to developerGuidelines, confirms).
-3. How developer guidelines are dynamically injected into the system prompt for all guests and how tone calibrations take effect immediately.
-4. How to format the developer feedback response so it never acts literally as a dumb parrot, but truly as an intelligent assistant confirming calibration and showing a practical sample.
-Write your complete report to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_2\handoff.md and send a message when done.
+## Instructions
+- Inspect existing implementations of `artifacts/limpeza/src/components/floating-new-reservation.tsx` and `artifacts/limpeza/src/components/pms-calendar.tsx`.
+- Identify exact state hooks, intervals, and rendering conditions.
+- Produce a structured handoff report at `.agents/teamwork/explorer_2/handoff.md` with:
+  - Observation (exact current lines/blocks)
+  - Logic Chain & Proposed Fix Strategy (precise edits for Worker)
+  - Caveats & Risks
+  - Verification Method (how Worker will verify, respecting project rules)
+- Send message to orchestrator when completed.
+
+
+## 2026-11-02T23:19:08Z
+Your identity is teamwork_explorer (PMS UI Explorer).
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_2\
+Scope: Prioridade 2 — Frontend UI Performance in PMS components.
+Investigate:
+1. `<PmsCalendar modalOnly />` in `artifacts/limpeza/src/components/floating-new-reservation.tsx`:
+   - Why is it mounted while modal is closed?
+   - How to dynamically mount/render it only when `isOpen` is true.
+2. `artifacts/limpeza/src/components/pms-calendar.tsx`:
+   - Polling logic for `GET /api/pms/calendar`: reduce 4s to 10s–15s.
+   - Pause polling when tab is hidden (`document.hidden` / `visibilitychange`).
+   - Deactivate 4s polling and heavy computations when closed or modalOnly and not active.
+Constraints:
+- Read-only investigation.
+- Produce detailed findings and proposed implementation plan at: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_2\handoff.md
+- Update progress in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_2\progress.md

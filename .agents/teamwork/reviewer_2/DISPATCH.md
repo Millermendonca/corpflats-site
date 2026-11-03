@@ -1,23 +1,24 @@
-## 2026-10-29T17:47:01Z
-You are reviewer_2, a high-reliability reviewer.
-Your working directory is:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_2`
+## 2026-11-02T02:11:26Z
+You are a teamwork_reviewer reviewing Milestone M1.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_2
+Your parent is orchestrator_21 (ID: d148d17c-b644-4690-94c7-bab73af837cc).
 
-CRITICAL REQUIREMENTS:
-1. Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (lines 890 to 930) and `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`.
-2. Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never send WhatsApp messages.
-3. You are read-only: do NOT modify source code files.
+MANDATORY READINGS:
+1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically lines 974-1011)
+2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md` (STRICT: no global test suites, git commit + push)
+3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_21\PROJECT.md`
+4. Worker handoff: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`
 
-TASK OBJECTIVE:
-Objectively and rigorously review the data audit and restoration artifacts from Milestones 3 & 4:
-- Inspect `scripts/restore-and-audit-contacts.mjs`, `data/database.json`, and `docs/google-contacts-audit-before-after.md`.
-- Verify:
-  1. Phone `21976403551` is restored to Roselene in both CRM database and Google Contacts, separated from unrelated numbers (Raiza Castro Tavares, Sintia).
-  2. Phone `28999136926` is restored to Fabiana in both CRM database and Google Contacts, separated from unrelated numbers (João Eduardo Leal Correa).
-  3. All other contaminated records (Gustavo vs Guido, Dayana vs Aline, Luiz Carlos, Selma, WhatsApp mislinked chats) are clean and restored.
-  4. The Before/After report in `docs/google-contacts-audit-before-after.md` is complete, accurate, and thorough.
-- Run:
-  `node scripts/restore-and-audit-contacts.mjs --audit-only`
-- Verify git status is clean and pushed (`git status`, `git log -n 3`).
-- Record your explicit verdict: APPROVE or REQUEST_CHANGES in `handoff.md`.
-- Send completion message to parent orchestrator.
+YOUR REVIEW SCOPE:
+1. Review the changes made in `artifacts/api-server/whatsapp-ai-service.mjs` and `scripts/whatsapp-ai-service.mjs`:
+   - R1: Data conference (tomador, description, value), confirmation flow, NFS-e emission, link and DANFSE delivery via WhatsApp.
+   - R2: Cadastral/description edits processed autonomously vs value change triggering security lock, creating `db.pendingFiscalApprovals`, notifying manager 22998505276, and releasing emission upon manager approval.
+   - R3: Test phone restriction: silent discard (`{ handled: false }`) for non-22998505276 numbers, maintaining regular bot conversation.
+   - R4: Punctual test in `tests/sofia-fiscal-whatsapp-confirmation.test.mjs`.
+2. Run ONLY the punctual test command:
+   `node --test tests/sofia-fiscal-whatsapp-confirmation.test.mjs`
+   STRICT RULE from AGENTS.md: DO NOT run global tests or batch tests (`tests/*.test.mjs`).
+3. Verify twin parity (SHA-256) between `artifacts/api-server/whatsapp-ai-service.mjs` and `scripts/whatsapp-ai-service.mjs`.
+4. Conclude with an explicit verdict: APPROVE or REQUEST_CHANGES.
+5. Write your handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_2\handoff.md`.
+6. Send a message to your parent with your verdict and key findings.

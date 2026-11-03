@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-11T23:25:00Z
+# BRIEFING — 2026-11-02T23:28:00Z
 
 ## Mission
-Investigate WhatsApp AI engine & prompt orchestration for developer calibration, guidelines learning, dynamic tone adaptation, and message rectification.
+Investigate Priority 2 frontend UI performance in PMS components: <PmsCalendar modalOnly /> dynamic mounting in floating-new-reservation.tsx and pms-calendar.tsx polling frequency and tab visibility pausing.
 
 ## 🔒 My Identity
 - Archetype: Teamwork explorer
@@ -9,41 +9,36 @@ Investigate WhatsApp AI engine & prompt orchestration for developer calibration,
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_2
 - Original parent: d9d088c2-767a-4f5a-9d52-d234243c2f9b
 - Milestone: WhatsApp AI Coaching Engine & Tone Calibration
+- Current Milestone: Prioridade 2 — Frontend UI Performance in PMS components
+- Current Parent: 960bd884-3e1c-4b5c-abb1-b3a053aa63cc
 
 ## 🔒 Key Constraints
 - Read-only investigation — do NOT implement
 - Do NOT modify source code files
 - Do NOT run global test suites
 - Strictly obey AGENTS.md
+- Output path discipline: write only to .agents/teamwork/explorer_2/
 
 ## Current Parent
-- Conversation ID: d9d088c2-767a-4f5a-9d52-d234243c2f9b
-- Updated: 2026-10-11T23:25:00Z
+- Conversation ID: 960bd884-3e1c-4b5c-abb1-b3a053aa63cc
+- Updated: 2026-11-02T23:28:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `scripts/whatsapp-ai-service.mjs`
-  - `artifacts/api-server/whatsapp-ai-service.mjs`
-  - `scripts/zapi-service.mjs`
-  - `artifacts/api-server/zapi-service.mjs`
-  - `scripts/demo-server.mjs`
-  - `artifacts/api-server/demo-server.mjs`
-  - `artifacts/limpeza/src/pages/whatsapp-chat.tsx`
-  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
-  - `tests/whatsapp-ai-agent.test.mjs`
-  - `.agents/teamwork/ORIGINAL_REQUEST.md` (Follow-up 2026-10-11T23:13:31Z)
+  - `artifacts/limpeza/src/components/floating-new-reservation.tsx`
+  - `artifacts/limpeza/src/pages/pms-calendar.tsx`
+  - `artifacts/limpeza/src/App.tsx`
 - **Key findings**:
-  - Prompt assembly merges `DEFAULT_AI_CONFIG.systemPrompt`, `contextString` (real-time guest context, official KB, dynamic FAQs, actions notice). No current support for `toneSettings` or `developerGuidelines`.
-  - Discovered parity mismatch between `scripts/whatsapp-ai-service.mjs` and `artifacts/api-server/whatsapp-ai-service.mjs` (the artifact twin was left behind from older milestones and lacks Soho/bandeja details).
-  - Tri-modal classification architecture formulated: `guest_simulation`, `tone_calibration`, and `factual_coaching` with comprehensive heuristic regex matching and fallback safety.
-  - Anti-parrot response protocol designed: 4-part structure (acknowledgment as creator, extraction summary, live sample in new tone, confirmation of global immediate validity).
-  - Dynamic injection mechanism designed: combines active guidelines and tone settings into `systemInstruction` for all incoming guest conversations without wiping core prompt rules.
-- **Unexplored areas**: None for read-only exploration scope; all 4 prompt questions fully answered.
+  - Discovered root cause of `<PmsCalendar modalOnly />` mounting: `FloatingNewReservationButton` statically imported `PmsCalendar` and rendered it on all pages when `!isOnReservationsPage`.
+  - Discovered that at 600ms after mount, `<PmsCalendar modalOnly />` fired a burst of 8+ backend requests (`/api/pms/calendar`, `/api/pms/companies`, `/api/pms/agencies`, `/api/pms/guests`, breakfast orders, fair-share, essential tags) even when the modal remained closed.
+  - Discovered heavy layout calculations (`daysInView`, `gridTemplateColumns`, `totalGridMinWidth`, `dayLayoutMap`) and filter iterations (`reservationsTodayWithBf`, `minorReservationsCount`, `riskAttentionCount`, `displayedFlats`) running unconditionally on every render despite being hidden when `modalOnly`.
+  - Discovered polling in `pms-calendar.tsx` was fixed at 4s and kept firing `setInterval` even when `document.hidden` was true.
+  - Designed clean `React.lazy` on-demand mounting strategy with `isModalMounted`, `autoOpenNewRes`, 300ms transition unmount, 12s polling interval, active `stopPolling`/`startPolling` on `visibilitychange`, and computational memoization.
+- **Unexplored areas**: None. All questions in dispatch and user requirements investigated with exact line numbers and proposed code diffs.
 
 ## Key Decisions Made
-- Outlined complete data structures for `db.whatsappAiSettings.toneSettings` and `db.whatsappAiSettings.developerGuidelines`.
-- Designed bypass logic for `aiPaused` when the sender is Miller (`22998505276` / `5522998505276`).
-- Specified REST endpoint `/api/whatsapp/chat/:phone/correct-message` and frontend UI components for `/whatsapp-chat` and `/whatsapp-automation`.
+- Formulated complete proposed diffs for `floating-new-reservation.tsx` and `pms-calendar.tsx` in `handoff.md`.
+- Confirmed baseline build executes successfully.
 
 ## Artifact Index
 - DISPATCH.md — record of incoming task dispatches
