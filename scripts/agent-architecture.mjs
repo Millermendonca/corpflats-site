@@ -214,6 +214,7 @@ export function injectSessionContext(params = {}) {
     reservaSessao = {
       id: resCode,
       reserva_id: resCode,
+      raw_id: sourceRes.id ?? null,
       imovel_id: String(sourceRes.flatId || `flat_${flatNum}`),
       nome_imovel: `Flat ${flatNum}`,
       data_checkin: checkinDate,
@@ -311,6 +312,29 @@ export function formatAdminAlertMessage(payload) {
   ].join('\n');
 }
 
+export function matchesSessionReservation(r, reserva) {
+  if (!r || !reserva) return false;
+  const targetId = String(reserva.id || reserva.reserva_id || '').trim();
+  const rawId = r.id != null ? String(r.id).trim() : '';
+  const flatNum = String(
+    r.flatNumber ||
+      String(reserva.nome_imovel || '')
+        .replace(/^Flat\s+/i, '')
+        .trim() ||
+      'S/N'
+  );
+  const synthCode = rawId ? `RES-${flatNum}-${rawId.padStart(4, '0')}` : '';
+  const synthShort = rawId ? `RES-${rawId}` : '';
+  return Boolean(
+    (r.code && String(r.code).trim() === targetId) ||
+      (r.reservationCode && String(r.reservationCode).trim() === targetId) ||
+      (rawId && rawId === targetId) ||
+      (synthCode && synthCode === targetId) ||
+      (synthShort && synthShort === targetId) ||
+      (reserva.raw_id != null && rawId === String(reserva.raw_id).trim())
+  );
+}
+
 export async function notifyAdminWhatsApp(payload) {
   const formattedMessage = formatAdminAlertMessage(payload);
   const runtime = payload.context?.runtime;
@@ -357,11 +381,49 @@ export async function notifyAdminWhatsApp(payload) {
     }
 
     if (typeof runtime?.sendZapiMessage === 'function' && adminPhone) {
-      await runtime.sendZapiMessage(adminPhone, formattedMessage, {
+      const zapiRes = await runtime.sendZapiMessage(adminPhone, formattedMessage, {
         channel: 'ai_agent',
+        channelId: 'ai_agent',
+        recipientRole: 'developer',
+        bypassTestMode: true,
         isAdminAlert: true,
+        db,
       });
-      sent = true;
+      sent = zapiRes?.success !== false;
+    }
+
+    if (db && adminPhone && Array.isArray(db.whatsappConversations)) {
+      const targetLast8 = adminPhone.slice(-8);
+      let adminConv = db.whatsappConversations.find((c) => {
+        const cp = String(c?.phone || '').replace(/\D+/g, '');
+        return cp && targetLast8 && (cp.endsWith(targetLast8) || adminPhone.endsWith(cp.slice(-8)));
+      });
+      if (!adminConv) {
+        adminConv = {
+          id: `conv_admin_${Date.now()}`,
+          phone: adminPhone,
+          name: 'Gestor CorpFlats',
+          messages: [],
+          unreadCount: 0,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        db.whatsappConversations.push(adminConv);
+      }
+      if (!Array.isArray(adminConv.messages)) adminConv.messages = [];
+      adminConv.messages.push({
+        id: `msg_admin_alert_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        fromMe: true,
+        senderName: 'Sofia (Alerta Gestor)',
+        text: formattedMessage,
+        type: 'text',
+        status: 'delivered',
+        isAdminAlert: true,
+        timestamp,
+      });
+      adminConv.lastMessage = formattedMessage.slice(0, 140);
+      adminConv.lastMessageAt = timestamp;
+      adminConv.updatedAt = timestamp;
     }
 
     if (typeof runtime?.saveDatabase === 'function') {
@@ -1282,9 +1344,7 @@ export const atualizarDadosHospedeTool = {
       let jaTinhaDisparadoGatilhos = false;
 
       if (Array.isArray(db?.reservations)) {
-        const targetRes = db.reservations.find(
-          (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-        );
+        const targetRes = db.reservations.find((r) => matchesSessionReservation(r, reserva));
         if (targetRes) {
           jaTinhaDisparadoGatilhos = Boolean(
             targetRes.morningEmailSentAt ||
@@ -1445,9 +1505,7 @@ export const solicitarEarlyCheckinTool = {
       const dataCheckin = String(reserva.data_checkin || '').slice(0, 10);
 
       const targetRes = Array.isArray(db?.reservations)
-        ? db.reservations.find(
-            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-          )
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
 
       // 1. Verifica disponibilidade: flat desocupado e limpo
@@ -1455,8 +1513,7 @@ export const solicitarEarlyCheckinTool = {
       if (Array.isArray(db?.reservations)) {
         conflitoSaidaMesmoDia = db.reservations.some((r) => {
           if (!r || r.status === 'cancelada' || r.status === 'cancelled') return false;
-          const rCode = String(r.code || r.reservationCode || r.id || '');
-          if (rCode === reserva.id) return false;
+          if (matchesSessionReservation(r, reserva)) return false;
           const sameFlat = String(r.flatNumber || '') === flatNumber;
           const sameDayCheckout = String(r.checkoutDate || '').slice(0, 10) === dataCheckin;
           return sameFlat && sameDayCheckout && !r.checkoutCompleted && !r.checkoutDone;
@@ -1693,9 +1750,8 @@ export const solicitarLateCheckoutTool = {
 
       const targetRes = Array.isArray(db?.reservations)
         ? db.reservations.find((r) => {
-            const rCode = String(r?.code || r?.reservationCode || r?.id || '');
             return (
-              rCode === reserva.id ||
+              matchesSessionReservation(r, reserva) ||
               (String(r?.flatNumber) === flatNumber &&
                 String(r?.checkoutDate || '').slice(0, 10) === dataCheckout)
             );
@@ -1705,8 +1761,7 @@ export const solicitarLateCheckoutTool = {
       const incomingSameDayRes = Array.isArray(db?.reservations)
         ? db.reservations.find((r) => {
             if (!r || r.status === 'cancelada' || r.status === 'cancelled') return false;
-            const rCode = String(r.code || r.reservationCode || r.id || '');
-            if (rCode === reserva.id) return false;
+            if (matchesSessionReservation(r, reserva)) return false;
             const sameFlat =
               String(r.flatNumber || '') === flatNumber ||
               String(r.flatId || '') === String(reserva.imovel_id);
@@ -1731,8 +1786,7 @@ export const solicitarLateCheckoutTool = {
         const occupiedSet = new Set();
         for (const r of allRes) {
           if (!r || r.status === 'cancelada' || r.status === 'cancelled' || r.checkoutCompleted) continue;
-          const rCode = String(r.code || r.reservationCode || r.id || '');
-          if (rCode === reserva.id) continue;
+          if (matchesSessionReservation(r, reserva)) continue;
           const rIn = String(r.checkinDate || '').slice(0, 10);
           const rOut = String(r.checkoutDate || '').slice(0, 10);
           if (rIn <= dataCheckout && rOut > dataCheckout) {
@@ -2016,9 +2070,8 @@ export const alterarDatasReservaTool = {
       let conflitoReserva = null;
       if (Array.isArray(db?.reservations)) {
         conflitoReserva = db.reservations.find((r) => {
-          if (!r || r.status === 'cancelada' || r.status === 'cancelled') return false;
-          const rCode = String(r.code || r.reservationCode || r.id || '');
-          if (rCode === reserva.id) return false;
+          if (!r || r.status === 'cancelada' || r.status === 'cancelled' || r.status === 'completed' || r.status === 'concluida' || r.status === 'checked_out' || r.checkoutCompleted || r.checkoutDone) return false;
+          if (matchesSessionReservation(r, reserva)) return false;
           const sameFlat =
             String(r.flatNumber || '') === flatNumber ||
             String(r.flatId || '') === String(reserva.imovel_id);
@@ -2076,10 +2129,7 @@ export const alterarDatasReservaTool = {
       }
 
       if (Array.isArray(db?.reservations)) {
-        const targetRes = db.reservations.find((r) => {
-          const rCode = String(r?.code || r?.reservationCode || r?.id || '');
-          return rCode === reserva.id;
-        });
+        const targetRes = db.reservations.find((r) => matchesSessionReservation(r, reserva));
         if (targetRes) {
           targetRes.checkinDate = novaEntrada;
           targetRes.checkoutDate = novaSaida;
@@ -2172,9 +2222,7 @@ export const estenderEstadiaTool = {
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const targetRes = Array.isArray(db?.reservations)
-        ? db.reservations.find(
-            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-          )
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
       const tarifaDiaria = Number(targetRes?.dailyRate || reserva.valor_diaria || 237.0);
 
@@ -2222,19 +2270,18 @@ export const estenderEstadiaTool = {
 
       const valorAdicional = Number((diariasExtras * tarifaDiaria).toFixed(2));
 
-      // Verifica se há conflito no flat atual para o período de extensão (dataCheckoutAtual até novaSaida)
+      // Verifica se há conflito no flat atual para o período de extensão (baseCheckoutRef até novaSaida)
       const conflitoReserva = Array.isArray(db?.reservations)
         ? db.reservations.find((r) => {
-            if (!r || r.status === 'cancelada' || r.status === 'cancelled' || r.checkoutCompleted) return false;
-            const rCode = String(r.code || r.reservationCode || r.id || '');
-            if (rCode === reserva.id) return false;
+            if (!r || r.status === 'cancelada' || r.status === 'cancelled' || r.status === 'completed' || r.status === 'concluida' || r.status === 'checked_out' || r.checkoutCompleted || r.checkoutDone) return false;
+            if (matchesSessionReservation(r, reserva)) return false;
             const sameFlat =
               String(r.flatNumber || '') === flatNumber ||
               String(r.flatId || '') === String(reserva.imovel_id);
             if (!sameFlat) return false;
             const rIn = String(r.checkinDate || '').slice(0, 10);
             const rOut = String(r.checkoutDate || '').slice(0, 10);
-            return dataCheckoutAtual < rOut && novaSaida > rIn;
+            return baseCheckoutRef < rOut && novaSaida > rIn;
           })
         : null;
 
@@ -2479,9 +2526,7 @@ export const solicitarLimpezaExtraTool = {
       const protocolo = `GOV-${Date.now().toString(36).slice(-5).toUpperCase()}`;
 
       const targetRes = Array.isArray(db?.reservations)
-        ? db.reservations.find(
-            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-          )
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
 
       // CASO 1: Limpeza durante a estadia (R$ 70,00 - inclui limpeza + troca de roupa de cama e banho)
@@ -2708,9 +2753,7 @@ export const abrirChamadoManutencaoTool = {
       }
 
       const targetRes = Array.isArray(db?.reservations)
-        ? db.reservations.find(
-            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-          )
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
 
       if (db) {
@@ -2879,9 +2922,7 @@ export const gerenciarNotaFiscalNfseTool = {
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
 
       const targetRes = Array.isArray(db?.reservations)
-        ? db.reservations.find(
-            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-          )
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
 
       if (args.acao === 'SOLICITAR_RECIBO_COMPROVANTE') {
@@ -3212,9 +3253,7 @@ export const resolverProblemaCartaoNfcTool = {
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const targetRes = Array.isArray(db?.reservations)
-        ? db.reservations.find(
-            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-          )
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
       const hospedeNome = targetRes?.guestName || context.hospede?.nome || 'Hóspede';
       const tipo = String(args.tipo_ocorrencia || '').toUpperCase().trim();
@@ -3466,9 +3505,7 @@ export const autorizarVisitaTemporariaTool = {
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const targetRes = Array.isArray(db?.reservations)
-        ? db.reservations.find(
-            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-          )
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
       const flatObj = Array.isArray(db?.flats)
         ? db.flats.find((f) => String(f?.number) === flatNumber)
@@ -3637,9 +3674,7 @@ export const processarCancelamentoTool = {
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const targetRes = Array.isArray(db?.reservations)
-        ? db.reservations.find(
-            (r) => String(r?.code || r?.reservationCode || r?.id || '') === reserva.id
-          )
+        ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
 
       const nowMs = new Date(context.data_hora_atual || Date.now()).getTime();

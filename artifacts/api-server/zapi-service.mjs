@@ -4443,24 +4443,39 @@ export async function sendZapiDocument(config, {
 }
 
 // ── Disparo Oficial Z-API ──────────────────────────────────────────────────────
-export async function sendZapiMessage(config, {
-  phone,
-  message,
-  title = "",
-  footer = "",
-  buttons = [],
-  sendMode = "auto",
-  documentUrl = "",
-  documentName = "",
-  documentCaption = "",
-  fileBase64 = "",
-  bypassTestMode = false,
-  recipientRole = "",
-  channelId = "",
-  triggerEvent = "",
-  delayTyping = 0,
-  db = null
-}) {
+export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thirdOpts = {}) {
+  let config = configOrPhone;
+  let rawOpts = optionsOrMessage && typeof optionsOrMessage === "object" ? optionsOrMessage : {};
+  if (typeof configOrPhone === "string" && typeof optionsOrMessage === "string") {
+    const extra = thirdOpts && typeof thirdOpts === "object" ? thirdOpts : {};
+    config = extra.config || extra.db?.zapiConfig || null;
+    rawOpts = {
+      ...extra,
+      phone: configOrPhone,
+      message: optionsOrMessage,
+      channelId: extra.channelId || extra.channel || "ai_agent",
+      recipientRole: extra.recipientRole || (extra.isAdminAlert ? "developer" : "guest"),
+      bypassTestMode: extra.bypassTestMode !== undefined ? extra.bypassTestMode : Boolean(extra.isAdminAlert)
+    };
+  }
+  const {
+    phone,
+    message,
+    title = "",
+    footer = "",
+    buttons = [],
+    sendMode = "auto",
+    documentUrl = "",
+    documentName = "",
+    documentCaption = "",
+    fileBase64 = "",
+    bypassTestMode = false,
+    recipientRole = "",
+    channelId = "",
+    triggerEvent = "",
+    delayTyping = 0,
+    db = null
+  } = rawOpts;
   let cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };

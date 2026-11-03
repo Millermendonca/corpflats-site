@@ -4261,7 +4261,7 @@ export async function executeBotAction(db, actionName, args = {}) {
     }
 
     const senderPhone = args.requesterPhone || args.phone || args.guestPhone || "";
-    const sessionCtx = args.contextoSessao || injectSessionContext({
+    const sessionCtx = args.contextoSessao || args.guestContext?.contextoSessao || injectSessionContext({
       db,
       phone: senderPhone,
       guestContext: args.guestContext || null,
@@ -4275,6 +4275,24 @@ export async function executeBotAction(db, actionName, args = {}) {
         triggerGarageEmailNotification: args.triggerGarageEmailNotification || globalThis.triggerGarageEmailNotification
       }
     });
+    if (sessionCtx) {
+      const mergedRuntime = {
+        ...(sessionCtx.runtime || {}),
+        db: db || sessionCtx.runtime?.db,
+        saveDatabase: args.saveDatabase || sessionCtx.runtime?.saveDatabase,
+        sendZapiMessage: args.sendZapiMessage || sessionCtx.runtime?.sendZapiMessage,
+        createNotification: args.createNotification || sessionCtx.runtime?.createNotification,
+        conversation: args.conversation || sessionCtx.runtime?.conversation,
+        selectFairShareFlat: sessionCtx.runtime?.selectFairShareFlat || selectFairShareFlat,
+        triggerGarageEmailNotification: args.triggerGarageEmailNotification || sessionCtx.runtime?.triggerGarageEmailNotification || globalThis.triggerGarageEmailNotification
+      };
+      Object.defineProperty(sessionCtx, "runtime", {
+        value: mergedRuntime,
+        enumerable: false,
+        writable: true,
+        configurable: true
+      });
+    }
     return executeRegisteredAgentTool(actionName, args, sessionCtx);
   }
 
@@ -8371,11 +8389,20 @@ export async function executeMultiTurnAgenticToolFallback({
     db,
     phone: guestContext?.phone || "",
     guestContext,
-    runtime: { db, saveDatabase, sendZapiMessage, createNotification, conversation: conv }
+    runtime: { db, saveDatabase, sendZapiMessage, createNotification, conversation: conv, selectFairShareFlat }
   });
-  if (sessionCtx && !sessionCtx.runtime) {
+  if (sessionCtx) {
+    const mergedRuntime = {
+      ...(sessionCtx.runtime || {}),
+      db: db || sessionCtx.runtime?.db,
+      saveDatabase: saveDatabase || sessionCtx.runtime?.saveDatabase,
+      sendZapiMessage: sendZapiMessage || sessionCtx.runtime?.sendZapiMessage,
+      createNotification: createNotification || sessionCtx.runtime?.createNotification,
+      conversation: conv || sessionCtx.runtime?.conversation,
+      selectFairShareFlat: sessionCtx.runtime?.selectFairShareFlat || selectFairShareFlat
+    };
     Object.defineProperty(sessionCtx, "runtime", {
-      value: { db, saveDatabase, sendZapiMessage, createNotification, conversation: conv },
+      value: mergedRuntime,
       enumerable: false,
       writable: true,
       configurable: true
@@ -8752,6 +8779,24 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
 
   const guestContext = buildGuestContext({ db, phone, history: effectiveHistory });
   guestContext.history = effectiveHistory;
+  if (guestContext?.contextoSessao) {
+    const mergedRuntime = {
+      ...(guestContext.contextoSessao.runtime || {}),
+      db,
+      saveDatabase,
+      sendZapiMessage,
+      createNotification,
+      conversation: conv,
+      selectFairShareFlat,
+      triggerGarageEmailNotification: globalThis.triggerGarageEmailNotification
+    };
+    Object.defineProperty(guestContext.contextoSessao, "runtime", {
+      value: mergedRuntime,
+      enumerable: false,
+      writable: true,
+      configurable: true
+    });
+  }
 
   // 1. Verifica intenção de transbordo humano
   const handoverCheck = detectHandoverIntent(messageText, aiConfig.handoverKeywords);
