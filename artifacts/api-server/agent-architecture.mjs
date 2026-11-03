@@ -243,7 +243,7 @@ export function injectSessionContext(params = {}) {
     matchedGuest?.pendingVehicle ||
     null;
 
-  return {
+  const sessionCtx = {
     data_hora_atual: isoNow,
     telefone_remetente: cleanPhone ? `+${cleanPhone}` : String(phone || ''),
     perfil_remetente,
@@ -254,11 +254,19 @@ export function injectSessionContext(params = {}) {
     reserva_ativa: reservaSessao,
     reserva_atual: reservaSessao,
     veiculo_pendente: veiculoPendente,
-    runtime: {
+  };
+
+  Object.defineProperty(sessionCtx, 'runtime', {
+    value: {
       db,
       ...runtime,
     },
-  };
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+
+  return sessionCtx;
 }
 
 export function buildContextoSessaoJson(context) {
@@ -3918,11 +3926,17 @@ export function getToolsForState(estado = 'COMERCIAL_VENDAS') {
 }
 
 export function getGeminiFunctionDeclarationsForState(estado = 'COMERCIAL_VENDAS') {
-  return getToolsForState(estado).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parametersSchema,
-  }));
+  return getToolsForState(estado).map((tool) => {
+    const schema = { ...(tool.parametersSchema || { type: 'OBJECT', properties: {} }) };
+    if (Array.isArray(schema.required) && schema.required.length === 0) {
+      delete schema.required;
+    }
+    return {
+      name: tool.name,
+      description: tool.description,
+      parameters: schema,
+    };
+  });
 }
 
 export function isRegisteredAgentTool(toolName) {

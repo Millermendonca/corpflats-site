@@ -1976,7 +1976,13 @@ export function buildGeminiTools(actionsSettings = {}, estadoSessao = null) {
           },
           filters: {
             type: "OBJECT",
-            description: "Filtros adicionais opcionais (ex: status, flatNumber, date, category)."
+            description: "Filtros adicionais opcionais (ex: status, flatNumber, date, category).",
+            properties: {
+              status: { type: "STRING", description: "Filtro de status (opcional)" },
+              flatNumber: { type: "STRING", description: "Número do flat (opcional)" },
+              date: { type: "STRING", description: "Data no formato YYYY-MM-DD (opcional)" },
+              category: { type: "STRING", description: "Categoria (opcional)" }
+            }
           }
         },
         required: ["module"]
@@ -7748,7 +7754,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       const qTokens = qNorm.split(/\s+/).filter(w => w.length > 2 && !PORTUGUESE_STOP_WORDS.has(w));
 
       // Coincidência com pergunta principal (match dominante)
-      if (cleanQuery.includes(qNorm) || (qNorm.length > 5 && qNorm.includes(cleanQuery))) {
+      if ((qNorm.length >= 4 && cleanQuery.includes(qNorm)) || (cleanQuery.length >= 10 && qNorm.length > 5 && qNorm.includes(cleanQuery))) {
         score += 200;
       } else {
         const commonWithQ = qTokens.filter(t => queryTokens.includes(t));
@@ -7770,7 +7776,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
             .replace(/[\u0300-\u036f]/g, "")
             .replace(/[^\w\s]/g, " ")
             .trim();
-          if (cleanQuery.includes(vNorm) || (vNorm.length > 5 && vNorm.includes(cleanQuery))) {
+          if ((vNorm.length >= 4 && cleanQuery.includes(vNorm)) || (cleanQuery.length >= 10 && vNorm.length > 5 && vNorm.includes(cleanQuery))) {
             bestVarScore = Math.max(bestVarScore, 150);
             break;
           }
@@ -8359,7 +8365,7 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
         }
       };
 
-      if (Array.isArray(tools) && tools.length > 0) {
+      if (ver === "v1beta" && Array.isArray(tools) && tools.length > 0) {
         bodyPayload.tools = tools;
       }
 
@@ -8371,9 +8377,8 @@ export async function callGeminiAi({ apiKey, systemInstruction, prompt, history 
       });
 
       if (!response.ok) {
-        if (model === "gemini-4-argon") {
-          console.log(`[WhatsApp AI] Modelo experimental "${model}" retornou HTTP ${response.status}; realizando fallback automático para gemini-2.5-pro.`);
-        }
+        const errBody = await response.text().catch(() => "");
+        console.warn(`[WhatsApp AI] Modelo "${model}" (${ver}) retornou HTTP ${response.status}: ${errBody.slice(0, 260)}`);
         continue;
       }
 

@@ -4458,6 +4458,7 @@ export async function sendZapiMessage(config, {
   recipientRole = "",
   channelId = "",
   triggerEvent = "",
+  delayTyping = 0,
   db = null
 }) {
   let cleanPhone = cleanWhatsAppPhone(phone);
@@ -4654,8 +4655,8 @@ export async function sendZapiMessage(config, {
       try {
         console.log(`[Z-API] Enviando mensagem em texto formatado para ${targetPhone}...`);
         const textPayload = { phone: targetPhone, message: textWithLinks };
-        if (options.delayTyping && Number(options.delayTyping) > 0) {
-          textPayload.delayTyping = Math.min(15, Math.max(1, Math.round(Number(options.delayTyping))));
+        if (delayTyping && Number(delayTyping) > 0) {
+          textPayload.delayTyping = Math.min(15, Math.max(1, Math.round(Number(delayTyping))));
         }
         const res = await fetch(textUrl, {
           method: "POST",
@@ -9158,15 +9159,57 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
                 : incomingInfo.senderName
             }
           : incomingInfo;
-        aiProcessResult = await processAiInboundMessage({
-          db,
-          incomingInfo: effectiveIncomingInfo,
-          cleanTarget,
-          saveDatabase,
-          createNotification,
-          sendZapiMessage,
-          appendMessageFn: appendMessageToConversation
-        });
+        const debounceWindowMs = req.body?.debounceMs !== undefined
+          ? Number(req.body.debounceMs)
+          : ((process.env.NODE_ENV === "test" || req.body?.bypassDebounce || isDeveloperPhone(cleanTarget, db)) ? 0 : 5000);
+
+        if (debounceWindowMs > 0) {
+          if (!globalThis.__sofiaWebhookDebounceBuffers) {
+            globalThis.__sofiaWebhookDebounceBuffers = new Map();
+          }
+          const bufMap = globalThis.__sofiaWebhookDebounceBuffers;
+          const existingBuf = bufMap.get(cleanTarget);
+          if (existingBuf) {
+            clearTimeout(existingBuf.timer);
+            existingBuf.texts.push(String(effectiveIncomingInfo.text || "").trim());
+            existingBuf.lastIncoming = effectiveIncomingInfo;
+          } else {
+            bufMap.set(cleanTarget, {
+              texts: [String(effectiveIncomingInfo.text || "").trim()],
+              lastIncoming: effectiveIncomingInfo,
+              timer: null
+            });
+          }
+          const entry = bufMap.get(cleanTarget);
+          entry.timer = setTimeout(async () => {
+            bufMap.delete(cleanTarget);
+            const combinedText = entry.texts.filter(Boolean).join("\n");
+            try {
+              await processAiInboundMessage({
+                db,
+                incomingInfo: { ...entry.lastIncoming, text: combinedText },
+                cleanTarget,
+                saveDatabase,
+                createNotification,
+                sendZapiMessage,
+                appendMessageFn: appendMessageToConversation
+              });
+            } catch (aiErr) {
+              console.warn("[WhatsApp AI Debounced Received Webhook Error]:", aiErr.message);
+            }
+          }, debounceWindowMs);
+          aiProcessResult = { debounced: true, debounceWindowMs, bufferedMessages: entry.texts.length };
+        } else {
+          aiProcessResult = await processAiInboundMessage({
+            db,
+            incomingInfo: effectiveIncomingInfo,
+            cleanTarget,
+            saveDatabase,
+            createNotification,
+            sendZapiMessage,
+            appendMessageFn: appendMessageToConversation
+          });
+        }
       } catch (aiErr) {
         console.warn("[WhatsApp AI Processing Error]:", aiErr.message);
       }
