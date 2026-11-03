@@ -6674,7 +6674,15 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           const conflictList = (flatStat?.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
                           const conflictName = conflictList[0]?.guestName || localResConflict?.guestName;
                           const blockItem = flatStat?.blocks?.[0] || localBlockConflict;
-                          const isBlockedOnly = !isAvail && !conflictName && Boolean(blockItem);
+                          const isServiceOrMaintBlock = Boolean(
+                            blockItem?.isServiceBlock ||
+                            blockItem?.reason === "service_order" ||
+                            flatStat?.hasServiceOrderConflict
+                          );
+                          const isBlockedOnly =
+                            !isAvail &&
+                            !conflictName &&
+                            Boolean(blockItem || flatStat?.hasServiceOrderConflict || flatStat?.isFlatBlockedStatus);
                           const hasSameDayTurnover = flatStat ? Boolean(flatStat.hasCheckoutOnCheckinDay) : localSameDayCheckout;
                           const hasCompletedSameDayCheckout = Boolean(flatStat?.hasCompletedSameDayCheckout);
                           const cleaningStatus = flatStat?.cleaningStatus || (f as any).cleaningStatus || "clean";
@@ -6718,7 +6726,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                 {!isAvail && (
                                   <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
                                     {isBlockedOnly
-                                      ? `🔒 Bloqueado (${blockItem?.isServiceBlock || blockItem?.reason === "service_order" ? "OS" : "Manutenção"})`
+                                      ? `🔒 Bloqueado (${isServiceOrMaintBlock ? "OS" : "Manutenção"})`
                                       : `⚠️ Ocupado ${conflictName ? `(${conflictName})` : ""}`}
                                   </span>
                                 )}

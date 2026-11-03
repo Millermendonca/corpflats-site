@@ -282,7 +282,7 @@ export function checkFlatBlockedOnNight(flat, nightDate, db = {}, options = {}) 
     const orderFlats = Array.isArray(order.flats) ? order.flats : [];
     for (const oflat of orderFlats) {
       const oStatus = oflat.status || "in_progress";
-      if (oStatus !== "in_progress" && oStatus !== "pending" && oStatus !== "active") {
+      if (oStatus !== "in_progress" && oStatus !== "active" && !(oStatus === "pending" && (order.blockFlats || order.interdictFlats))) {
         continue;
       }
 

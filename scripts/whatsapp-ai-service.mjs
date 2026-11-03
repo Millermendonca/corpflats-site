@@ -14055,26 +14055,33 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
         return o.flats.some(oflat => {
           if (!oflat) return false;
           const oflatSt = String(oflat.status || "").toLowerCase();
-          if (oflatSt !== "in_progress" && oflatSt !== "pending" && oflatSt !== "pendente" && oflatSt !== "em_andamento") return false;
           const sameNestedFlat =
             (oflat.flatId != null && String(oflat.flatId) === String(flat.id)) ||
             (oflat.flatNumber != null && String(oflat.flatNumber) === String(flat.number));
           if (!sameNestedFlat) return false;
-          const sDate = String(oflat.startedAt || o.blockStartDate || o.startDate || o.scheduledDate || "").slice(0, 10);
-          const estDate = String(oflat.estimatedFinishAt || o.blockEndDate || o.endDate || o.expectedCompletionDate || "2099-12-31").slice(0, 10);
-          const eDate = oflatSt === "in_progress"
-            ? ([sDate || todayStr, estDate, todayStr].filter(Boolean).sort().pop() || todayStr)
-            : estDate;
-          return (!sDate || sDate <= checkoutDate) && (!eDate || eDate >= checkinDate);
+          if (oflatSt === "in_progress" || oflatSt === "em_andamento") {
+            const sDate = String(oflat.startedAt || o.blockStartDate || o.startDate || o.scheduledDate || todayStr).slice(0, 10);
+            const estDate = String(oflat.estimatedFinishAt || o.blockEndDate || o.endDate || o.expectedCompletionDate || sDate).slice(0, 10);
+            const eDate = [sDate || todayStr, estDate, todayStr].filter(Boolean).sort().pop() || todayStr;
+            return sDate <= checkoutDate && eDate >= checkinDate;
+          }
+          if (oflatSt === "pending" || oflatSt === "pendente") {
+            if (!o.blockFlats && !o.interdictFlats) return false;
+            const sDate = String(oflat.startedAt || o.blockStartDate || o.startDate || o.scheduledDate || todayStr).slice(0, 10);
+            const eDate = String(oflat.estimatedFinishAt || o.blockEndDate || o.endDate || o.expectedCompletionDate || sDate).slice(0, 10);
+            return sDate < checkoutDate && eDate >= checkinDate;
+          }
+          return false;
         });
       }
+      if (!o.blockFlats && !o.interdictFlats && orderSt !== "in_progress" && orderSt !== "em_andamento") return false;
       const sameFlat =
         (o.flatId != null && String(o.flatId) === String(flat.id)) ||
         (o.flatNumber != null && String(o.flatNumber) === String(flat.number));
       if (!sameFlat) return false;
       const sDate = String(o.startDate || o.scheduledDate || o.createdAt || "").slice(0, 10);
-      const eDate = String(o.endDate || o.expectedCompletionDate || o.scheduledDate || "2099-12-31").slice(0, 10);
-      return (!sDate || sDate <= checkoutDate) && (!eDate || eDate >= checkinDate);
+      const eDate = String(o.endDate || o.expectedCompletionDate || o.scheduledDate || sDate).slice(0, 10);
+      return (!sDate || sDate < checkoutDate) && (!eDate || eDate >= checkinDate);
     });
 
     // Verifica se o flat possui check-out pendente previsto para o mesmo dia do check-in

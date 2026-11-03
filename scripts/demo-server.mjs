@@ -25931,6 +25931,7 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
       b.endDate >= effectiveCheckin
     );
 
+    const activeServiceOrderConflicts = [];
     const hasServiceOrderConflict = (db.serviceOrders || []).some(order => {
       if (!order) return false;
       const orderSt = String(order.status || "").toLowerCase();
@@ -25941,22 +25942,52 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
         return order.flats.some(oflat => {
           if (!oflat) return false;
           const oflatSt = String(oflat.status || "").toLowerCase();
-          if (oflatSt !== "in_progress" && oflatSt !== "pending" && oflatSt !== "pendente" && oflatSt !== "em_andamento") return false;
           if (Number(oflat.flatId) !== Number(flat.id) && String(oflat.flatNumber) !== fNum) return false;
-          if (oflatSt === "in_progress") {
+          if (oflatSt === "in_progress" || oflatSt === "em_andamento") {
             const range = getActiveServiceFlatBlockRange(oflat, todayStr);
             if (!range) return false;
-            return range.startDate <= effectiveCheckout && range.endDate >= effectiveCheckin;
+            const overlaps = range.startDate <= effectiveCheckout && range.endDate >= effectiveCheckin;
+            if (overlaps) {
+              activeServiceOrderConflicts.push({
+                id: `service_block_${order.id}_${flat.id}`,
+                flatId: flat.id,
+                flatNumber: fNum,
+                startDate: range.startDate,
+                endDate: range.endDate,
+                reason: "service_order",
+                isServiceBlock: true,
+                title: order.title || "Ordem de Serviço"
+              });
+            }
+            return overlaps;
           }
-          const sDate = String(oflat.startedAt || order.blockStartDate || order.startDate || order.scheduledDate || "").slice(0, 10);
-          const eDate = String(oflat.estimatedFinishAt || order.blockEndDate || order.endDate || order.expectedCompletionDate || "2099-12-31").slice(0, 10);
-          return (!sDate || sDate <= effectiveCheckout) && (!eDate || eDate >= effectiveCheckin);
+          if (oflatSt === "pending" || oflatSt === "pendente") {
+            if (!order.blockFlats && !order.interdictFlats) return false;
+            const sDate = String(oflat.startedAt || order.blockStartDate || order.startDate || order.scheduledDate || todayStr).slice(0, 10);
+            const eDate = String(oflat.estimatedFinishAt || order.blockEndDate || order.endDate || order.expectedCompletionDate || sDate).slice(0, 10);
+            const overlaps = sDate < effectiveCheckout && eDate >= effectiveCheckin;
+            if (overlaps) {
+              activeServiceOrderConflicts.push({
+                id: `service_block_${order.id}_${flat.id}`,
+                flatId: flat.id,
+                flatNumber: fNum,
+                startDate: sDate,
+                endDate: eDate,
+                reason: "service_order",
+                isServiceBlock: true,
+                title: order.title || "Ordem de Serviço"
+              });
+            }
+            return overlaps;
+          }
+          return false;
         });
       }
+      if (!order.blockFlats && !order.interdictFlats && orderSt !== "in_progress" && orderSt !== "em_andamento") return false;
       if (Number(order.flatId) !== Number(flat.id) && String(order.flatNumber) !== fNum) return false;
       const sDate = String(order.startDate || order.scheduledDate || order.createdAt || "").slice(0, 10);
-      const eDate = String(order.endDate || order.expectedCompletionDate || order.scheduledDate || "2099-12-31").slice(0, 10);
-      return (!sDate || sDate <= effectiveCheckout) && (!eDate || eDate >= effectiveCheckin);
+      const eDate = String(order.endDate || order.expectedCompletionDate || order.scheduledDate || sDate).slice(0, 10);
+      return (!sDate || sDate < effectiveCheckout) && (!eDate || eDate >= effectiveCheckin);
     });
 
     const isAvailable =
@@ -26101,8 +26132,8 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
         checkoutDate: c.checkoutDate,
         channel: c.channel
       })),
-      blocks: blockConflicts,
-      blockConflicts,
+      blocks: [...blockConflicts, ...activeServiceOrderConflicts],
+      blockConflicts: [...blockConflicts, ...activeServiceOrderConflicts],
       monthOccupiedDays,
       daysSinceLastCheckout,
       reservationsCountMonth: monthReservations.length
