@@ -114,10 +114,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
     cancelGoogleOneTap()
   }, [location])
 
+  const isAuthenticated = !isLoading && !!user && location !== "/login"
+
   // Pending shopping count — fetched directly (no modal needed)
   const [pendingShoppingCount, setPendingShoppingCount] = useState(0)
   useEffect(() => {
+    if (!isAuthenticated) return
     const loadCount = () => {
+      if (typeof document !== "undefined" && document.hidden) return
       fetch("/api/shopping-list")
         .then(r => r.json())
         .then((d: any[]) => { if (Array.isArray(d)) setPendingShoppingCount(d.filter(i => !i.completed).length) })
@@ -126,12 +130,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
     loadCount()
     const interval = setInterval(loadCount, 60000)
     return () => clearInterval(interval)
-  }, [])
+  }, [isAuthenticated])
 
   // Pending quarantine count for WBP integration
   const [quarantineCount, setQuarantineCount] = useState<number>(0)
   useEffect(() => {
+    if (!isAuthenticated) return
     const loadQuarantine = () => {
+      if (typeof document !== "undefined" && document.hidden) return
       fetch("/api/wbp/quarantine")
         .then(r => r.json())
         .then((d: any) => {
@@ -146,7 +152,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     loadQuarantine()
     const interval = setInterval(loadQuarantine, 30000)
     return () => clearInterval(interval)
-  }, [])
+  }, [isAuthenticated])
 
   // Change password modal state
   const [pwModalOpen, setPwModalOpen] = useState(false)
@@ -172,7 +178,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
     }
   })
 
-  const isAuthenticated = !isLoading && !!user && location !== "/login"
   const { data: alerts } = useGetAlerts({
     query: {
       enabled: isAuthenticated,
@@ -192,6 +197,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isAuthenticated) return
     const checkNotifs = async () => {
+      if (!isInitialPollRef.current && typeof document !== "undefined" && document.hidden) return
       try {
         const res = await fetch("/api/notifications")
         if (res.ok) {

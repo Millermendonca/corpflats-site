@@ -6575,6 +6575,41 @@ export function formatPhoneDisplay(phone = "") {
 }
 
 // ── Extrator e Localizador de Telefones de Reserva e Hóspede ──────────────────
+let _zapiGuestCacheDb = null;
+let _zapiGuestCacheLen = -1;
+let _zapiGuestCacheTs = 0;
+let _zapiGuestById = null;
+let _zapiGuestByCode = null;
+let _zapiGuestByName = null;
+
+function getZapiGuestLookup(db) {
+  const guests = db?.guests;
+  if (!Array.isArray(guests)) return null;
+  const now = Date.now();
+  if (_zapiGuestById && _zapiGuestCacheDb === guests && _zapiGuestCacheLen === guests.length && (now - _zapiGuestCacheTs < 10000)) {
+    return { byId: _zapiGuestById, byCode: _zapiGuestByCode, byName: _zapiGuestByName };
+  }
+  const byId = new Map();
+  const byCode = new Map();
+  const byName = new Map();
+  for (const g of guests) {
+    if (!g) continue;
+    if (g.id !== undefined && g.id !== null) byId.set(String(g.id), g);
+    if (g.guestCode) byCode.set(g.guestCode, g);
+    if (g.name) {
+      const norm = String(g.name).trim().toLowerCase();
+      if (norm.length >= 3 && !byName.has(norm)) byName.set(norm, g);
+    }
+  }
+  _zapiGuestCacheDb = guests;
+  _zapiGuestCacheLen = guests.length;
+  _zapiGuestCacheTs = now;
+  _zapiGuestById = byId;
+  _zapiGuestByCode = byCode;
+  _zapiGuestByName = byName;
+  return { byId, byCode, byName };
+}
+
 export function getReservationPhones(r, db) {
   if (!r) return [];
   const phones = new Set();
@@ -6598,18 +6633,19 @@ export function getReservationPhones(r, db) {
     }
   }
 
-  if (db?.guests && Array.isArray(db.guests)) {
+  const lookup = getZapiGuestLookup(db);
+  if (lookup) {
     let guest = null;
-    if (r.guestId) {
-      guest = db.guests.find(g => g.id === r.guestId || String(g.id) === String(r.guestId));
+    if (r.guestId !== undefined && r.guestId !== null) {
+      guest = lookup.byId.get(String(r.guestId)) || null;
     }
     if (!guest && r.guestCode) {
-      guest = db.guests.find(g => g.guestCode === r.guestCode);
+      guest = lookup.byCode.get(r.guestCode) || null;
     }
     if (!guest && r.guestName) {
       const norm = String(r.guestName).trim().toLowerCase();
       if (norm.length >= 3) {
-        guest = db.guests.find(g => g.name && String(g.name).trim().toLowerCase() === norm);
+        guest = lookup.byName.get(norm) || null;
       }
     }
     if (guest) {
@@ -6882,10 +6918,20 @@ export function appendMessageToConversation(db, {
 }
 
 // ── Sincronização & Migração Inicial do Repositório de Conversas ────────────────
-export function syncWhatsappConversationsStore(db) {
+let _lastWaSyncTs = 0;
+let _lastWaSyncSig = "";
+
+export function syncWhatsappConversationsStore(db, force = false) {
   if (!db) return;
   if (!db.whatsappConversations) db.whatsappConversations = [];
 
+  const now = Date.now();
+  const sig = `${(db.reservations || []).length}_${(db.whatsappHistory || []).length}_${db.whatsappConversations.length}`;
+  if (!force && sig === _lastWaSyncSig && (now - _lastWaSyncTs < 10000)) {
+    return;
+  }
+
+  const convByPhone = new Map();
   for (const conv of db.whatsappConversations) {
     if (conv && !conv.isGroup && conv.phone) {
       const healed = cleanWhatsAppPhone(conv.phone);
@@ -6895,16 +6941,24 @@ export function syncWhatsappConversationsStore(db) {
         conv.formattedPhone = formatPhoneDisplay(healed);
       }
     }
+    if (conv?.phone && !convByPhone.has(conv.phone)) {
+      convByPhone.set(conv.phone, conv);
+    }
   }
 
+  const bestResByPhoneCache = new Map();
   for (const r of (db.reservations || [])) {
     const phones = getReservationPhones(r, db);
     for (const rawP of phones) {
       const cleanP = cleanWhatsAppPhone(rawP);
       if (!cleanP) continue;
 
-      let conv = db.whatsappConversations.find(c => c.phone === cleanP);
-      const bestRes = findReservationByPhone(db, cleanP) || r;
+      let conv = convByPhone.get(cleanP);
+      let bestRes = bestResByPhoneCache.get(cleanP);
+      if (bestRes === undefined) {
+        bestRes = findReservationByPhone(db, cleanP) || r;
+        bestResByPhoneCache.set(cleanP, bestRes);
+      }
 
       if (!conv) {
         conv = {
@@ -6928,6 +6982,7 @@ export function syncWhatsappConversationsStore(db) {
           messages: []
         };
         db.whatsappConversations.push(conv);
+        convByPhone.set(cleanP, conv);
       } else {
         if (bestRes) {
           conv.reservationCode = bestRes.code;
@@ -6950,7 +7005,7 @@ export function syncWhatsappConversationsStore(db) {
     const cleanP = cleanWhatsAppPhone(hist.guestPhone);
     if (!cleanP) continue;
 
-    let conv = db.whatsappConversations.find(c => c.phone === cleanP);
+    let conv = convByPhone.get(cleanP);
     if (!conv) {
       conv = {
         id: cleanP,
@@ -6973,6 +7028,7 @@ export function syncWhatsappConversationsStore(db) {
         messages: []
       };
       db.whatsappConversations.push(conv);
+      convByPhone.set(cleanP, conv);
     }
 
     const msgId = hist.id || `msg_hist_${hist.sentAt}`;
@@ -7013,6 +7069,8 @@ export function syncWhatsappConversationsStore(db) {
   }
 
   db.whatsappConversations.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+  _lastWaSyncTs = Date.now();
+  _lastWaSyncSig = `${(db.reservations || []).length}_${(db.whatsappHistory || []).length}_${db.whatsappConversations.length}`;
 }
 
 // ── Gerenciador da Fila & Background Scheduler ────────────────────────────────
@@ -9274,7 +9332,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     });
 
     const total = list.length;
-    const paginated = list.slice(Number(offset), Number(offset) + Number(limit));
+    const rawPaginated = list.slice(Number(offset), Number(offset) + Number(limit));
+    const paginated = req.query.summary === "1"
+      ? rawPaginated.map(({ messages, ...rest }) => ({ ...rest, messagesCount: Array.isArray(messages) ? messages.length : 0 }))
+      : rawPaginated;
     const totalUnread = (db.whatsappConversations || []).reduce((acc, c) => acc + (c.unreadCount || 0), 0);
     const isConnected = db.zapiConfig?.connectionState === "connected";
 

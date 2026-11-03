@@ -618,7 +618,7 @@ export default function WhatsappChat() {
   const fetchConversations = useCallback(async (silent = false) => {
     if (!silent) setLoadingConversations(true)
     try {
-      const res = await fetch('/api/whatsapp/chat/conversations?limit=80')
+      const res = await fetch('/api/whatsapp/chat/conversations?limit=80&summary=1')
       if (res.ok) {
         const data = await res.json()
         const list: ChatConversation[] = data.conversations || []

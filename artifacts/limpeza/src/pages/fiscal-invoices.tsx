@@ -270,7 +270,7 @@ export default function FiscalInvoicesPage() {
 
   const fetchReservations = async () => {
     try {
-      const res = await fetch("/api/pms/calendar?startDate=2026-01-01&endDate=2027-12-31", { credentials: "include" })
+      const res = await fetch("/api/pms/calendar?startDate=2026-01-01&endDate=2027-12-31&lite=1", { credentials: "include" })
       const data = await res.json()
       if (data && Array.isArray(data.reservations)) {
         setReservations(data.reservations)

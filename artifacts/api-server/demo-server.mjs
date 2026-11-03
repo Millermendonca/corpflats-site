@@ -732,7 +732,22 @@ app.get("/api/system/db-status", async (req, res) => {
       flatsCount: db.flats?.length || 0,
       usersCount: db.users?.length || 0,
       notificationsCount: db.notifications?.length || 0
-    }
+    },
+    topCollectionsKB: req.query.breakdown === "1"
+      ? Object.entries(db || {})
+          .map(([k, v]) => {
+            try {
+              const kb = Math.round(Buffer.byteLength(JSON.stringify(v) || "", "utf8") / 1024);
+              const count = Array.isArray(v) ? v.length : (v && typeof v === "object" ? Object.keys(v).length : 1);
+              return { key: k, kb, count };
+            } catch {
+              return { key: k, kb: 0, count: 0 };
+            }
+          })
+          .filter(x => x.kb > 0)
+          .sort((a, b) => b.kb - a.kb)
+          .slice(0, 30)
+      : undefined
   });
 });
 
@@ -11987,7 +12002,7 @@ export function reconcileAndMergeGuests(database, force = false) {
   const isDirty = (typeof isGuestReconciliationDirty !== "undefined") ? isGuestReconciliationDirty : true;
   const lastTs = (typeof lastGuestReconcileTimestamp !== "undefined") ? lastGuestReconcileTimestamp : 0;
   const now = Date.now();
-  if (!force && !isDirty && (now - lastTs < GUEST_RECONCILE_COOLDOWN_MS)) {
+  if (!force && (!isDirty || (now - lastTs < GUEST_RECONCILE_COOLDOWN_MS))) {
     return false;
   }
 
@@ -14210,7 +14225,7 @@ async function offloadHistoricalBase64Media() {
     let visitedNodes = 0;
     const isPureOrDataUriBase64 = (val) => {
       if (typeof val !== "string" || val.length < 2048) return false;
-      if (/^data:(image\/|application\/pdf)/i.test(val)) return true;
+      if (/^data:[a-zA-Z0-9+.\-\/]+;base64,/i.test(val)) return true;
       return (val.startsWith("JVBERi0") || val.startsWith("/9j/") || val.startsWith("iVBORw0KGgo"));
     };
 
@@ -14522,6 +14537,9 @@ function pruneDatabase() {
       if (Array.isArray(r?.guests)) {
         for (const g of r.guests) stripBase64R2AndTempFields(g);
       }
+      if (Array.isArray(r?.auditLogs) && r.auditLogs.length > 25) {
+        r.auditLogs = r.auditLogs.slice(-25);
+      }
     }
   }
   if (Array.isArray(db.guests)) {
@@ -14625,6 +14643,8 @@ function pruneDatabase() {
       if (eq.status === "sent" || eq.status === "cancelled" || eq.status === "failed") {
         delete eq.attachments;
         if (typeof eq.html === "string") eq.html = sanitizeSafeJsonString(eq.html, 1500);
+        if (typeof eq.bodyHtml === "string") eq.bodyHtml = sanitizeSafeJsonString(eq.bodyHtml, 1500);
+        if (typeof eq.body === "string") eq.body = sanitizeSafeJsonString(eq.body, 1500);
       }
     }
   }
@@ -14693,10 +14713,18 @@ export function atomicWriteFileSync(filePath, content) {
 }
 
 // ── Caches Reutilizáveis de Alta Performance (Redução de Alocação de Memória) ──
+const requestsForDateCache = new Map(); // dateStr -> { timestamp, data, version }
+let requestsForDateVersion = 0;
+
 let cachedGuestIndexes = null;
 let cachedGuestSource = null;
 let cachedGuestLength = -1;
 let cachedGuestTimestamp = 0;
+
+let cachedEnrichedGuests = null;
+let cachedEnrichedGuestsSource = null;
+let cachedEnrichedGuestsLength = -1;
+let cachedEnrichedGuestsTimestamp = 0;
 
 let cachedFlatsByNumber = null;
 let cachedFlatsSource = null;
@@ -14708,6 +14736,10 @@ export function invalidateGuestCache() {
   cachedGuestSource = null;
   cachedGuestLength = -1;
   cachedGuestTimestamp = 0;
+  cachedEnrichedGuests = null;
+  cachedEnrichedGuestsSource = null;
+  cachedEnrichedGuestsLength = -1;
+  cachedEnrichedGuestsTimestamp = 0;
 }
 
 export function invalidateFlatsCache() {
@@ -14731,6 +14763,7 @@ export function getGuestIndexes() {
   const guestsById = new Map();
   const guestsByDoc = new Map();
   const guestsByPhone = new Map();
+  const guestsByPhoneSuffix8 = new Map();
   const guestsByName = new Map();
 
   for (const g of current) {
@@ -14747,7 +14780,18 @@ export function getGuestIndexes() {
     }
     if (g.phone) {
       const cleanPhone = String(g.phone).replace(/\D/g, "");
-      if (cleanPhone) guestsByPhone.set(cleanPhone, g);
+      if (cleanPhone) {
+        guestsByPhone.set(cleanPhone, g);
+        if (cleanPhone.length >= 8) {
+          const s8 = cleanPhone.slice(-8);
+          let arr = guestsByPhoneSuffix8.get(s8);
+          if (!arr) {
+            arr = [];
+            guestsByPhoneSuffix8.set(s8, arr);
+          }
+          arr.push(g);
+        }
+      }
     }
     if (g.name) guestsByName.set(String(g.name).toLowerCase().trim(), g);
     if (g.fullName) guestsByName.set(String(g.fullName).toLowerCase().trim(), g);
@@ -14756,7 +14800,7 @@ export function getGuestIndexes() {
   cachedGuestSource = current;
   cachedGuestLength = current.length;
   cachedGuestTimestamp = now;
-  cachedGuestIndexes = { guestsById, guestsByDoc, guestsByPhone, guestsByName };
+  cachedGuestIndexes = { guestsById, guestsByDoc, guestsByPhone, guestsByPhoneSuffix8, guestsByName };
   return cachedGuestIndexes;
 }
 
@@ -18807,9 +18851,6 @@ function computeLinenTracking(reservation, dateStr, db) {
     doNotDisturb
   };
 }
-
-const requestsForDateCache = new Map(); // dateStr -> { timestamp, data, version }
-let requestsForDateVersion = 0;
 
 export function invalidateRequestsForDateCache() {
   requestsForDateVersion++;
@@ -26406,7 +26447,7 @@ app.get("/api/pms/calendar", (req, res) => {
       isCheckingOutToday || (Boolean(r.actualCheckoutAt) && String(r.actualCheckoutAt).substring(0, 10) === todayStr)
     );
 
-    return {
+    const mappedRes = {
       ...r,
       code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
       paidAmount: sanitizedPaid,
@@ -26432,6 +26473,11 @@ app.get("/api/pms/calendar", (req, res) => {
       checkoutReportedBy: r.checkoutReportedBy || r.earlyCheckoutReportedBy || null,
       minibarOrders: getVisibleReservationMinibarOrders(r)
     };
+    if (req.query.lite === "1") {
+      delete mappedRes.auditLogs;
+      delete mappedRes.fnrhAuditTrail;
+    }
+    return mappedRes;
   });
   const serviceOrderBlocks = [];
   for (const order of (db.serviceOrders || []).filter(o => o.status === "active")) {
@@ -26470,16 +26516,17 @@ app.get("/api/pms/calendar", (req, res) => {
     ...(db.roomBlocks || []).filter(b => b.startDate <= end && b.endDate >= start),
     ...serviceOrderBlocks
   ];
+  const isLiteMode = req.query.lite === "1";
 
   res.json({
     startDate: start,
     endDate: end,
-    flats,
+    flats: isLiteMode ? [] : flats,
     reservations,
-    blocks,
-    guests: db.guests || [],
-    companies: db.companies || [],
-    agencies: db.agencies || [],
+    blocks: isLiteMode ? [] : blocks,
+    guests: isLiteMode ? [] : (db.guests || []),
+    companies: isLiteMode ? [] : (db.companies || []),
+    agencies: isLiteMode ? [] : (db.agencies || []),
     settings: {
       checkinTime: db.settings?.checkinTime || "14:00",
       checkoutTime: db.settings?.checkoutTime || "12:00"
@@ -35010,9 +35057,93 @@ app.get("/api/pms/guests", (req, res) => {
     return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção têm acesso à base de hóspedes." });
   }
   if (!db.guests) db.guests = [];
-  reconcileAndMergeGuests(db);
+  const now = Date.now();
+  if (
+    cachedEnrichedGuests &&
+    cachedEnrichedGuestsSource === db.guests &&
+    cachedEnrichedGuestsLength === db.guests.length &&
+    now - cachedEnrichedGuestsTimestamp < 15000
+  ) {
+    return res.json(cachedEnrichedGuests);
+  }
+  if (isGuestReconciliationDirty && (now - lastGuestReconcileTimestamp >= GUEST_RECONCILE_COOLDOWN_MS)) {
+    setImmediate(() => {
+      try { reconcileAndMergeGuests(db); } catch (_) {}
+    });
+  }
   const reservations = db.reservations || [];
   const invoices = db.invoices || [];
+  const allMinibarOrders = Array.isArray(db.minibarOrders) ? db.minibarOrders : [];
+  const companiesById = new Map((db.companies || []).map(c => [Number(c.id), c]));
+
+  const addToMapList = (map, key, val) => {
+    if (!key) return;
+    let arr = map.get(key);
+    if (!arr) {
+      arr = [];
+      map.set(key, arr);
+    }
+    arr.push(val);
+  };
+
+  const resByGuestId = new Map();
+  const resByDoc = new Map();
+  const resByPhone = new Map();
+  const resByEmail = new Map();
+  const resByName = new Map();
+  for (const r of reservations) {
+    if (!r) continue;
+    if (r.guestId) addToMapList(resByGuestId, r.guestId, r);
+    const rDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
+    if (rDoc) addToMapList(resByDoc, rDoc, r);
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        const rgCpf = (rg?.cpf || "").replace(/\D/g, "");
+        if (rgCpf && rgCpf !== rDoc) addToMapList(resByDoc, rgCpf, r);
+      }
+    }
+    const rPhone = normalizePhone(r.guestPhone || "");
+    if (rPhone && rPhone.length >= 8) addToMapList(resByPhone, rPhone, r);
+    const rEmail = (r.guestEmail || "").trim().toLowerCase();
+    if (rEmail && rEmail.includes("@")) addToMapList(resByEmail, rEmail, r);
+    const rName = normalizeName(r.guestName || "");
+    if (rName && rName.length >= 5) addToMapList(resByName, rName, r);
+  }
+
+  const invByDoc = new Map();
+  const invByName = new Map();
+  for (const inv of invoices) {
+    if (!inv) continue;
+    const invDoc = (inv.tomadorCpfCnpj || "").replace(/\D/g, "");
+    if (invDoc) addToMapList(invByDoc, invDoc, inv);
+    const invName = normalizeName(inv.tomadorNome || "");
+    if (invName) addToMapList(invByName, invName, inv);
+  }
+
+  const mbByDoc = new Map();
+  const mbByPhone = new Map();
+  const mbByResCode = new Map();
+  const mbByResId = new Map();
+  const mbByName = new Map();
+  for (const o of allMinibarOrders) {
+    if (!o) continue;
+    const oDoc = (o.guestDocument || "").replace(/\D/g, "");
+    if (oDoc) addToMapList(mbByDoc, oDoc, o);
+    const oPhone = normalizePhone(o.guestPhone || "");
+    if (oPhone && oPhone.length >= 8) addToMapList(mbByPhone, oPhone, o);
+    if (o.reservationCode) addToMapList(mbByResCode, o.reservationCode, o);
+    if (o.reservationId) addToMapList(mbByResId, String(o.reservationId), o);
+    const oName = normalizeName(o.guestName || "");
+    if (oName && oName.length >= 5) addToMapList(mbByName, oName, o);
+  }
+
+  const statusPriority = (st) => {
+    const s = String(st || "").toLowerCase();
+    if (s === "hospedado" || s === "checked_in" || s === "in_house") return 100;
+    if (s === "confirmada" || s === "confirmed") return 80;
+    if (s === "pre_reserva" || s === "pendente" || s === "pending") return 50;
+    return 10;
+  };
 
   // Mapeia e enriquece cada hóspede com métricas 360º e dados de check-in digital em tempo real
   const enrichedGuests = db.guests.map(g => {
@@ -35021,30 +35152,34 @@ app.get("/api/pms/guests", (req, res) => {
     const cleanEmail = (g.email || "").trim().toLowerCase();
     const guestNameLower = normalizeName(g.fullName || g.name || "");
 
-    // Localiza todas as reservas deste hóspede (por ID, CPF, Telefone ou Nome composto, respeitando compatibilidade nominal)
+    // Localiza todas as reservas deste hóspede via índices em memória O(1)
     const guestNameTokenCount = guestNameLower.split(/\s+/).filter(Boolean).length;
-    const guestReservations = reservations.filter(r => {
-      if (!areGuestNamesCompatible(r.guestName, g.fullName || g.name)) {
-        return false;
-      }
-      const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
-      const resPhone = normalizePhone(r.guestPhone || "");
-      const resEmail = (r.guestEmail || "").trim().toLowerCase();
-      const resName = normalizeName(r.guestName || "");
-      return (r.guestId && r.guestId === g.id) ||
-             (cleanDoc && resDoc === cleanDoc) ||
-             (cleanPhone && cleanPhone.length >= 8 && resPhone === cleanPhone) ||
-             (cleanEmail && cleanEmail.includes("@") && resEmail === cleanEmail) ||
-             (guestNameLower && guestNameTokenCount >= 2 && guestNameLower.length >= 5 && resName === guestNameLower) ||
-             (cleanDoc && Array.isArray(r.guests) && r.guests.some(rg => (rg.cpf || "").replace(/\D/g, "") === cleanDoc));
-    });
+    const candResSet = new Set();
+    const appendResCands = (arr) => { if (arr) for (const item of arr) candResSet.add(item); };
+    if (g.id) appendResCands(resByGuestId.get(g.id));
+    if (cleanDoc) appendResCands(resByDoc.get(cleanDoc));
+    if (cleanPhone && cleanPhone.length >= 8) appendResCands(resByPhone.get(cleanPhone));
+    if (cleanEmail && cleanEmail.includes("@")) appendResCands(resByEmail.get(cleanEmail));
+    if (guestNameLower && guestNameTokenCount >= 2 && guestNameLower.length >= 5) appendResCands(resByName.get(guestNameLower));
 
-    // Localiza todas as notas fiscais emitidas para este hóspede
-    const guestInvoices = invoices.filter(inv => {
-      const invDoc = (inv.tomadorCpfCnpj || "").replace(/\D/g, "");
-      const invName = normalizeName(inv.tomadorNome || "");
-      return (cleanDoc && invDoc === cleanDoc) || (guestNameLower && invName === guestNameLower);
-    });
+    const guestReservations = [];
+    for (const r of candResSet) {
+      if (areGuestNamesCompatible(r.guestName, g.fullName || g.name)) {
+        guestReservations.push(r);
+      }
+    }
+
+    // Localiza todas as notas fiscais emitidas para este hóspede via índice O(1)
+    const candInvSet = new Set();
+    if (cleanDoc) {
+      const byD = invByDoc.get(cleanDoc);
+      if (byD) for (const inv of byD) candInvSet.add(inv);
+    }
+    if (guestNameLower) {
+      const byN = invByName.get(guestNameLower);
+      if (byN) for (const inv of byN) candInvSet.add(inv);
+    }
+    const guestInvoices = Array.from(candInvSet);
 
     // Cálculos de LTV e Métricas de Hospedagem
     let totalSpent = 0;
@@ -35082,21 +35217,17 @@ app.get("/api/pms/guests", (req, res) => {
       });
     }
 
-    // Localiza pedidos de frigobar deste hóspede (por Documento, Telefone, Código de Reserva ou Nome)
-    const guestResCodes = new Set(guestReservations.map(r => r.code).filter(Boolean));
-    const guestResIds = new Set(guestReservations.map(r => String(r.id)).filter(Boolean));
-    const allMinibarOrders = Array.isArray(db.minibarOrders) ? db.minibarOrders : [];
-    const guestMinibarOrders = allMinibarOrders.filter(o => {
-      if (!o) return false;
-      const oDoc = (o.guestDocument || "").replace(/\D/g, "");
-      const oPhone = normalizePhone(o.guestPhone || "");
-      const oName = normalizeName(o.guestName || "");
-      return (cleanDoc && oDoc === cleanDoc) ||
-             (cleanPhone && cleanPhone.length >= 8 && oPhone === cleanPhone) ||
-             (o.reservationCode && guestResCodes.has(o.reservationCode)) ||
-             (o.reservationId && guestResIds.has(String(o.reservationId))) ||
-             (guestNameLower && guestNameLower.length >= 5 && oName === guestNameLower);
-    });
+    // Localiza pedidos de frigobar deste hóspede via índices O(1)
+    const candMbSet = new Set();
+    const appendMbCands = (arr) => { if (arr) for (const item of arr) candMbSet.add(item); };
+    if (cleanDoc) appendMbCands(mbByDoc.get(cleanDoc));
+    if (cleanPhone && cleanPhone.length >= 8) appendMbCands(mbByPhone.get(cleanPhone));
+    for (const r of guestReservations) {
+      if (r.code) appendMbCands(mbByResCode.get(r.code));
+      if (r.id !== undefined && r.id !== null) appendMbCands(mbByResId.get(String(r.id)));
+    }
+    if (guestNameLower && guestNameLower.length >= 5) appendMbCands(mbByName.get(guestNameLower));
+    const guestMinibarOrders = Array.from(candMbSet);
 
     // Filtra pedidos de frigobar pagos para somar ao LTV e gerar tags de preferência
     const paidMinibarOrders = guestMinibarOrders.filter(o => o.paymentStatus === "pago");
@@ -35172,8 +35303,8 @@ app.get("/api/pms/guests", (req, res) => {
 
     // Verifica se possui empresa parceira associada
     let companyName = g.companyName || "";
-    if (g.companyId && db.companies) {
-      const comp = db.companies.find(c => c.id === Number(g.companyId));
+    if (g.companyId) {
+      const comp = companiesById.get(Number(g.companyId));
       if (comp) companyName = comp.tradeName || comp.corporateName;
     }
 
@@ -35205,6 +35336,37 @@ app.get("/api/pms/guests", (req, res) => {
       tomadorCep: g.cep,
       tomadorCodigoMunicipio: g.ibgeCode || g.codigoMunicipio
     });
+
+    // Cálculo O(1) direto do callerIdPreview sem varrer todos os hóspedes
+    const activeGuestRes = guestReservations
+      .filter(r => r && r.status !== "cancelada" && r.status !== "cancelled")
+      .sort((a, b) => {
+        const pDiff = statusPriority(b.status) - statusPriority(a.status);
+        if (pDiff !== 0) return pDiff;
+        const dB = new Date(b.checkinDate || b.createdAt || 0).getTime();
+        const dA = new Date(a.checkinDate || a.createdAt || 0).getTime();
+        return dB - dA;
+      })[0] || null;
+    const rawCallerFlat = String(
+      activeGuestRes?.flatNumber ||
+      activeGuestRes?.unitNumber ||
+      g.activeFlat ||
+      favoriteFlat ||
+      ""
+    ).trim();
+    const cleanCallerFlatNum = rawCallerFlat.replace(/^(uh|flat|apt|apto)\s*/i, "").trim();
+    const callerUnitLabel = cleanCallerFlatNum ? `UH ${cleanCallerFlatNum}` : "";
+    const callerCompanyName = String(companyName || g.companyData?.companyName || activeGuestRes?.companyData?.companyName || "").trim();
+    const callerIsMonthly = Boolean(g.isMonthlyGuest || g.clientType === "mensalista" || activeGuestRes?.isMonthlyGuest);
+    let callerMiddleBadge = "CorpFlats";
+    if (callerCompanyName && callerIsMonthly) {
+      callerMiddleBadge = `${callerCompanyName} (Mensalista)`;
+    } else if (callerCompanyName) {
+      callerMiddleBadge = callerCompanyName;
+    } else if (callerIsMonthly) {
+      callerMiddleBadge = "Mensalista";
+    }
+    const callerIdPreview = `${String(g.fullName || g.name || "Hóspede").trim()} • ${callerMiddleBadge}${callerUnitLabel ? ` [${callerUnitLabel}]` : ""}`;
 
     return {
       ...g,
@@ -35250,7 +35412,7 @@ app.get("/api/pms/guests", (req, res) => {
       reservationsCount: guestReservations.length,
       minibarSpent: Number(minibarSpent.toFixed(2)),
       minibarOrdersCount: guestMinibarOrders.length,
-      callerIdPreview: buildGuestCallerIdContactData(db, { ...g, companyName, favoriteFlat, tags }).displayName,
+      callerIdPreview,
       googleContactResourceName: g.googleContactResourceName || null,
       googleContactSyncedAt: g.googleContactSyncedAt || null,
       googleContactDisplayName: g.googleContactDisplayName || null
@@ -35258,6 +35420,10 @@ app.get("/api/pms/guests", (req, res) => {
   });
 
   enrichedGuests.sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0));
+  cachedEnrichedGuests = enrichedGuests;
+  cachedEnrichedGuestsSource = db.guests;
+  cachedEnrichedGuestsLength = db.guests.length;
+  cachedEnrichedGuestsTimestamp = Date.now();
   res.json(enrichedGuests);
 });
 
@@ -35432,7 +35598,12 @@ export function buildGuestCallerIdContactData(database, guest) {
 
   const isPhoneOwnedByIncompatibleGuest = (candPhone) => {
     if (!candPhone || !Array.isArray(targetDb?.guests)) return false;
-    return targetDb.guests.some(other =>
+    const normCand = normalizePhone(candPhone);
+    if (!normCand || normCand.length < 8) return false;
+    const candidates = (targetDb === db && getGuestIndexes().guestsByPhoneSuffix8)
+      ? (getGuestIndexes().guestsByPhoneSuffix8.get(normCand.slice(-8)) || [])
+      : targetDb.guests;
+    return candidates.some(other =>
       other &&
       other.id !== g.id &&
       other.phone &&
