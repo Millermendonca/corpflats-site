@@ -7136,7 +7136,7 @@
       "requestDate": "2026-11-03",
       "effectiveDate": "2026-11-03",
       "source": "checkout",
-      "status": "dirty",
+      "status": "deleted",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -7152,9 +7152,12 @@
       "pendingObservation": null,
       "willCleanAt": "2026-11-03T13:00:00.000Z",
       "createdAt": "2026-11-03T08:00:00.000Z",
-      "updatedAt": "2026-11-03T13:00:00.000Z",
+      "updatedAt": "2026-11-03T18:00:00.000Z",
       "autoReservationCode": null,
-      "autoReservationId": null
+      "autoReservationId": null,
+      "isDeleted": true,
+      "deletedAt": "2026-11-03T18:00:00.000Z",
+      "deletedBy": "auto_orphan_checkout_cleanup"
     },
     {
       "id": 1384,
@@ -30285,7 +30288,7 @@
       "checkinTime": "14:00",
       "checkoutTime": "12:00",
       "channel": "b2b",
-      "status": "confirmada",
+      "status": "cancelada",
       "paymentStatus": "pendente",
       "paymentMethod": "vcn_b2b",
       "totalAmount": 300,
@@ -30355,7 +30358,7 @@
         }
       ],
       "createdAt": "2026-10-23T12:00:00.000Z",
-      "updatedAt": "2026-10-23T12:00:00.000Z",
+      "updatedAt": "2026-11-03T18:00:00.000Z",
       "b2bCredentialEmailSentAt": "2026-10-24T13:12:56.619Z",
       "b2bCredentialEmailRecipient": "carrefour@copastur.com.br, conciliacao@copastur.com.br",
       "cardTotalAmount": 315
@@ -46871,5 +46874,9 @@
     "lastSyncAt": null,
     "totalSyncedCount": 0,
     "syncLogs": []
-  }
+  },
+  "deletedB2bSeeds": [
+    "25078591",
+    "B2B-25078591"
+  ]
 }

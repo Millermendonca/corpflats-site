@@ -6010,6 +6010,63 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     }
   }
 
+  // Cancelamento definitivo da reserva B2B-25078591 (Fernanda Oliveira - Flat 408 em 03/11) excluída pelo gestor
+  for (const r of (db.reservations || [])) {
+    if (
+      (r.code === "B2B-25078591" || String(r.b2bReservationNumber) === "25078591") &&
+      r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      !r.checkedInAt
+    ) {
+      r.status = "cancelada";
+      r.updatedAt = new Date().toISOString();
+      if (!Array.isArray(db.deletedB2bSeeds)) db.deletedB2bSeeds = [];
+      if (!db.deletedB2bSeeds.includes("25078591")) db.deletedB2bSeeds.push("25078591");
+      if (!db.deletedB2bSeeds.includes("B2B-25078591")) db.deletedB2bSeeds.push("B2B-25078591");
+      changed = true;
+    }
+  }
+
+  // Descarte automático de cards de limpeza de check-out órfãos (quando a reserva de saída foi cancelada, no_show ou remarcada):
+  for (const c of (db.cleaningRequests || [])) {
+    if (!c || c.isDeleted || c.status === "deleted" || c.status === "clean") continue;
+    const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+    if (isInst) continue;
+    if (c.source !== "checkout" || c.isVacantExplicitlySet || c.markedByAdmin) continue;
+    const fNum = String(c.flatNumber || (db.flats.find(f => f.id === c.flatId)?.number || ""));
+    if (fNum === "509" && c.requestDate === "2026-10-28") continue;
+
+    const hasActiveCheckout = (db.reservations || []).some(r =>
+      r.status !== "cancelada" &&
+      r.status !== "cancelado" &&
+      r.status !== "cancelled" &&
+      r.status !== "no_show" &&
+      String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === fNum &&
+      (r.checkoutDate === c.requestDate || r.earlyCheckoutDate === c.requestDate)
+    );
+    if (!hasActiveCheckout) {
+      const hasCancelledOrMovedCheckout = (db.reservations || []).some(r => {
+        const rFlat = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
+        const isCanc = r.status === "cancelada" || r.status === "cancelado" || r.status === "cancelled" || r.status === "no_show";
+        if (isCanc && rFlat === fNum && (r.checkoutDate === c.requestDate || r.earlyCheckoutDate === c.requestDate)) return true;
+        if (c.leavingGuest && r.guestName && r.guestName.trim().toLowerCase() === c.leavingGuest.trim().toLowerCase()) {
+          if (isCanc || rFlat !== fNum || (r.checkoutDate !== c.requestDate && r.earlyCheckoutDate !== c.requestDate)) return true;
+        }
+        return false;
+      });
+      if (hasCancelledOrMovedCheckout) {
+        const nowIso = new Date().toISOString();
+        c.isDeleted = true;
+        c.status = "deleted";
+        c.deletedAt = nowIso;
+        c.deletedBy = "auto_orphan_checkout_cleanup";
+        c.updatedAt = nowIso;
+        changed = true;
+        console.log(`[Universal Integrity] Descartando automaticamente card de check-out órfão do Flat ${fNum} em ${c.requestDate} (${c.leavingGuest || "sem hóspede"})`);
+      }
+    }
+  }
+
   // Auto-correção: Se uma limpeza de checkout recente (últimos 7 dias) foi gerada automaticamente como "clean"
   // sem ter sido realizada por nenhuma camareira (sem assignedUserId e sem completedAt, como o Flat 408 da Danielle), ela deve ser "dirty"!
   const recentWindow = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
@@ -19514,6 +19571,47 @@ function getRequestsForDate(dateStr, isNested = false) {
     existingFlatNumbersForDate.add(flatNumber);
   }
 
+  // Helper: Descarta automaticamente cards de checkout órfãos (reserva cancelada, no_show, excluída ou remarcada)
+  const isOrphanCheckoutRequest = (r, fNumber) => {
+    if (!r || r.source !== "checkout" || r.status === "clean" || r.isVacantExplicitlySet || r.markedByAdmin) return false;
+    if (String(fNumber) === "509" && r.requestDate === "2026-10-28") return false;
+    const hasActiveCheckoutOnReqDate = (db.reservations || []).some(res =>
+      res.status !== "cancelada" &&
+      res.status !== "cancelado" &&
+      res.status !== "cancelled" &&
+      res.status !== "no_show" &&
+      String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber &&
+      (res.checkoutDate === r.requestDate || res.earlyCheckoutDate === r.requestDate)
+    );
+    if (hasActiveCheckoutOnReqDate) return false;
+
+    const hasCancelledOrMovedCheckout = (db.reservations || []).some(res => {
+      const resFlat = String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || ""));
+      const isCancelledOrNoShow = res.status === "cancelada" || res.status === "cancelado" || res.status === "cancelled" || res.status === "no_show";
+      if (isCancelledOrNoShow && resFlat === fNumber && (res.checkoutDate === r.requestDate || res.earlyCheckoutDate === r.requestDate)) {
+        return true;
+      }
+      if (r.leavingGuest && res.guestName && res.guestName.trim().toLowerCase() === r.leavingGuest.trim().toLowerCase()) {
+        if (isCancelledOrNoShow || resFlat !== fNumber || (res.checkoutDate !== r.requestDate && res.earlyCheckoutDate !== r.requestDate)) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    if (hasCancelledOrMovedCheckout) {
+      const nowIso = new Date().toISOString();
+      r.isDeleted = true;
+      r.status = "deleted";
+      r.deletedAt = nowIso;
+      r.deletedBy = "auto_orphan_checkout_cleanup";
+      r.updatedAt = nowIso;
+      shouldSaveDb = true;
+      return true;
+    }
+    return false;
+  };
+
   // 4. Garante que qualquer solicitação existente no banco de dados para a data apareça na listagem
   for (const r of (db.cleaningRequests || [])) {
     if (r.isDeleted || r.status === "deleted") continue;
@@ -19526,6 +19624,7 @@ function getRequestsForDate(dateStr, isNested = false) {
     const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
     // Instrução: concluiu, sumiu! Não exibe no painel de pendências ativas
     if (isInst && r.status === "clean") continue;
+    if (!isInst && isOrphanCheckoutRequest(r, fNumber)) continue;
     if (r.requestDate === dateStr && (!existingFlatNumbersForDate.has(fNumber) || isInst)) {
       if (stayoverFlatNumbers.has(fNumber) && r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation) continue;
       requestsForDate.push(r);
@@ -19539,6 +19638,7 @@ function getRequestsForDate(dateStr, isNested = false) {
     const fNumber = String(r.flatNumber || "");
     const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
     if (isInst) continue; // Instruções nunca são transferidas para outra data
+    if (isOrphanCheckoutRequest(r, fNumber)) continue;
     if (!existingFlatNumbersForDate.has(fNumber)) {
       const execDate = r.effectiveDate ||
         (r.completedAt ? r.completedAt.substring(0, 10) : null) ||
@@ -19582,23 +19682,8 @@ function getRequestsForDate(dateStr, isNested = false) {
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
 
-      // Descarta cards de checkout órfãos cuja reserva associada na data foi cancelada ou marcada como no_show
-      if (r.source === "checkout" && !r.isVacantExplicitlySet) {
-        const hasActiveCheckoutOnReqDate = (db.reservations || []).some(res =>
-          res.status !== "cancelada" &&
-          res.status !== "cancelado" &&
-          res.status !== "cancelled" &&
-          res.status !== "no_show" &&
-          String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber &&
-          (res.checkoutDate === r.requestDate || res.earlyCheckoutDate === r.requestDate)
-        );
-        const hasCancelledCheckoutOnReqDate = (db.reservations || []).some(res =>
-          (res.status === "cancelada" || res.status === "cancelado" || res.status === "cancelled" || res.status === "no_show") &&
-          String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber &&
-          res.checkoutDate === r.requestDate
-        );
-        if (!hasActiveCheckoutOnReqDate && hasCancelledCheckoutOnReqDate) return false;
-      }
+      // Descarta cards de checkout órfãos cuja reserva associada na data foi cancelada, no_show ou remarcada
+      if (isOrphanCheckoutRequest(r, fNumber)) return false;
 
       // Se o flat já possui qualquer limpeza concluída (status === "clean") ou excluída (status === "deleted") nessa mesma data ou em data posterior,
       // ele já foi resolvido e NÃO deve ser considerado pendência nem reaparecer para limpar!
@@ -29970,7 +30055,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const newFlatNum = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
 
   // Se o check-in mudou de data ou mudou de flat, ou a reserva foi cancelada, limpa instruções automáticas da data/flat anterior
-  if ((oldCheckin && oldCheckin !== r.checkinDate) || (oldFlatNum && oldFlatNum !== newFlatNum) || r.status === "cancelada" || r.status === "cancelled") {
+  if ((oldCheckin && oldCheckin !== r.checkinDate) || (oldFlatNum && oldFlatNum !== newFlatNum) || r.status === "cancelada" || r.status === "cancelled" || r.status === "no_show") {
     const clearDate = (oldCheckin && oldCheckin !== r.checkinDate) ? oldCheckin : r.checkinDate;
     const clearFlatNum = (oldFlatNum && oldFlatNum !== newFlatNum) ? oldFlatNum : newFlatNum;
     const oldCleanReq = (db.cleaningRequests || []).find(c =>
@@ -29991,6 +30076,58 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       oldCleanReq.autoReservationCode = null;
       oldCleanReq.autoReservationId = null;
       oldCleanReq.updatedAt = new Date().toISOString();
+    }
+  }
+
+  // Se a reserva foi cancelada ou marcada como no_show, descarta automaticamente cards de check-out não realizados vinculados a ela
+  if (r.status === "cancelada" || r.status === "cancelled" || r.status === "no_show") {
+    if (r.b2bReservationNumber || (r.code && String(r.code).startsWith("B2B-"))) {
+      if (!Array.isArray(db.deletedB2bSeeds)) db.deletedB2bSeeds = [];
+      if (r.b2bReservationNumber && !db.deletedB2bSeeds.includes(String(r.b2bReservationNumber))) {
+        db.deletedB2bSeeds.push(String(r.b2bReservationNumber));
+      }
+      if (r.code && !db.deletedB2bSeeds.includes(String(r.code))) {
+        db.deletedB2bSeeds.push(String(r.code));
+      }
+    }
+    const checkoutDatesToClear = Array.from(new Set([oldCheckout, r.checkoutDate, r.earlyCheckoutDate].filter(Boolean)));
+    const flatNumsToClear = Array.from(new Set([oldFlatNum, newFlatNum].filter(Boolean)));
+    const nowIso = new Date().toISOString();
+    for (const chkFlat of flatNumsToClear) {
+      for (const chkDate of checkoutDatesToClear) {
+        const hasOtherActiveCheckout = (db.reservations || []).some(other =>
+          other.id !== r.id &&
+          other.status !== "cancelada" &&
+          other.status !== "cancelado" &&
+          other.status !== "cancelled" &&
+          other.status !== "no_show" &&
+          String(other.flatNumber || (db.flats.find(f => f.id === other.flatId)?.number || "")) === chkFlat &&
+          (other.checkoutDate === chkDate || other.earlyCheckoutDate === chkDate)
+        );
+        if (!hasOtherActiveCheckout) {
+          for (const c of (db.cleaningRequests || [])) {
+            const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+            if (isInst) continue;
+            if (
+              String(c.flatNumber) === chkFlat &&
+              c.requestDate === chkDate &&
+              c.source === "checkout" &&
+              c.status !== "clean" &&
+              c.status !== "deleted" &&
+              !c.isDeleted &&
+              !c.isVacantExplicitlySet &&
+              !c.markedByAdmin
+            ) {
+              c.isDeleted = true;
+              c.status = "deleted";
+              c.deletedAt = nowIso;
+              c.deletedBy = "reservation_cancelled";
+              c.deletedReservationId = r.id;
+              c.updatedAt = nowIso;
+            }
+          }
+        }
+      }
     }
   }
 
@@ -34945,8 +35082,20 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
   const id = Number(req.params.id);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+  const nowIso = new Date().toISOString();
   r.status = "cancelada";
+  r.updatedAt = nowIso;
   r.calendarSequence = (r.calendarSequence || 0) + 1;
+
+  if (r.b2bReservationNumber || (r.code && String(r.code).startsWith("B2B-"))) {
+    if (!Array.isArray(db.deletedB2bSeeds)) db.deletedB2bSeeds = [];
+    if (r.b2bReservationNumber && !db.deletedB2bSeeds.includes(String(r.b2bReservationNumber))) {
+      db.deletedB2bSeeds.push(String(r.b2bReservationNumber));
+    }
+    if (r.code && !db.deletedB2bSeeds.includes(String(r.code))) {
+      db.deletedB2bSeeds.push(String(r.code));
+    }
+  }
 
   // Limpa instruções automáticas da governança na data de check-in
   const flatNum = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
@@ -34967,7 +35116,44 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
     cleanReq.arrivingGuest = null;
     cleanReq.autoReservationCode = null;
     cleanReq.autoReservationId = null;
-    cleanReq.updatedAt = new Date().toISOString();
+    cleanReq.updatedAt = nowIso;
+  }
+
+  // Descarta automaticamente cards de limpeza de check-out não realizados na data de saída da reserva cancelada
+  const checkoutDatesToClear = Array.from(new Set([r.checkoutDate, r.earlyCheckoutDate].filter(Boolean)));
+  for (const chkDate of checkoutDatesToClear) {
+    const hasOtherActiveCheckout = (db.reservations || []).some(other =>
+      other.id !== r.id &&
+      other.status !== "cancelada" &&
+      other.status !== "cancelado" &&
+      other.status !== "cancelled" &&
+      other.status !== "no_show" &&
+      String(other.flatNumber || (db.flats.find(f => f.id === other.flatId)?.number || "")) === flatNum &&
+      (other.checkoutDate === chkDate || other.earlyCheckoutDate === chkDate)
+    );
+    if (!hasOtherActiveCheckout) {
+      for (const c of (db.cleaningRequests || [])) {
+        const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+        if (isInst) continue;
+        if (
+          (String(c.flatNumber) === flatNum || (r.flatId && c.flatId === r.flatId)) &&
+          c.requestDate === chkDate &&
+          c.source === "checkout" &&
+          c.status !== "clean" &&
+          c.status !== "deleted" &&
+          !c.isDeleted &&
+          !c.isVacantExplicitlySet &&
+          !c.markedByAdmin
+        ) {
+          c.isDeleted = true;
+          c.status = "deleted";
+          c.deletedAt = nowIso;
+          c.deletedBy = "reservation_cancelled";
+          c.deletedReservationId = r.id;
+          c.updatedAt = nowIso;
+        }
+      }
+    }
   }
 
   // Marca pedidos de café da manhã vinculados como cancelados
