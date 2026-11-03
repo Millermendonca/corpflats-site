@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import os from "node:os";
+import http from "node:http";
 import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +20,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 
 const TEST_PORT = 4398;
+const MOCK_ZAPI_PORT = 4498;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
 const isolatedDbPath = path.join(
   os.tmpdir(),
@@ -26,6 +28,8 @@ const isolatedDbPath = path.join(
 );
 
 let serverProcess = null;
+let mockZapiServer = null;
+const zapiCapturedRequests = [];
 
 function killProcessTree(pid) {
   if (!pid) return;
@@ -45,6 +49,14 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
     const hashA = crypto.createHash("sha256").update(fileA).digest("hex");
     const hashB = crypto.createHash("sha256").update(fileB).digest("hex");
     assert.strictEqual(hashA, hashB, "demo-server.mjs deve manter paridade SHA-256 exata entre artifacts/ e scripts/");
+
+    const zapiA = fs.readFileSync(path.join(rootDir, "artifacts/api-server/zapi-service.mjs"));
+    const zapiB = fs.readFileSync(path.join(rootDir, "scripts/zapi-service.mjs"));
+    assert.strictEqual(
+      crypto.createHash("sha256").update(zapiA).digest("hex"),
+      crypto.createHash("sha256").update(zapiB).digest("hex"),
+      "zapi-service.mjs deve manter paridade SHA-256 exata entre artifacts/ e scripts/"
+    );
 
     const uiCode = fs.readFileSync(
       path.join(rootDir, "artifacts/limpeza/src/pages/guest-minibar.tsx"),
@@ -240,9 +252,38 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
           }
         ],
         guests: [],
+        users: [{ id: 1, username: "admin_test", role: "admin", name: "Admin Teste" }],
         minibarOrders: [],
-        minibarInspections: []
+        minibarInspections: [],
+        zapiConfig: {},
+        settings: {
+          zapiConfig: {
+            baseUrl: `http://127.0.0.1:${MOCK_ZAPI_PORT}`,
+            instanceId: "MOCK_INSTANCE_215",
+            token: "MOCK_TOKEN_215",
+            clientToken: "MOCK_CLIENT_TOKEN_215",
+            enabled: true
+          }
+        }
       };
+
+      mockZapiServer = http.createServer((req, res) => {
+        let body = "";
+        req.on("data", chunk => { body += chunk; });
+        req.on("end", () => {
+          let parsed = {};
+          try { parsed = JSON.parse(body); } catch (_) {}
+          zapiCapturedRequests.push({
+            method: req.method,
+            url: req.url,
+            headers: req.headers,
+            body: parsed
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ zaapId: `MOCK_ZAAP_${Date.now()}`, messageId: `MOCK_MSG_${Date.now()}` }));
+        });
+      });
+      await new Promise(resolve => mockZapiServer.listen(MOCK_ZAPI_PORT, "127.0.0.1", resolve));
 
       fs.writeFileSync(isolatedDbPath, JSON.stringify(initialDb, null, 2), "utf-8");
 
@@ -256,6 +297,7 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
           PORT: String(TEST_PORT),
           DATA_FILE: isolatedDbPath,
           DATABASE_FILE: isolatedDbPath,
+          AUTH_SECRET: "test-secret-minibar-215",
           NODE_ENV: "test"
         },
         stdio: "pipe"
@@ -281,6 +323,9 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
     after(async () => {
       if (serverProcess?.pid) {
         killProcessTree(serverProcess.pid);
+      }
+      if (mockZapiServer) {
+        await new Promise(resolve => mockZapiServer.close(resolve));
       }
       try {
         if (fs.existsSync(isolatedDbPath)) {
@@ -783,6 +828,144 @@ describe("Frigobar — Divisão em Tempo Real, Vistoria Final e WhatsApp Pós-Vi
       assert.strictEqual(dataFinal.whatsappMessagesSent[0].guestIndex, 1);
       assert.strictEqual(dataFinal.whatsappMessagesSent[0].guestName, "Marcos Vinicius Alves");
       assert.strictEqual(dataFinal.whatsappMessagesSent[0].amount, 27.0);
+    });
+
+    it("2.4 Anexo de Nota Fiscal, Disparo WhatsApp Z-API (com fallback db.settings.zapiConfig e 2º Hóspede), Higienização de fileData e Acesso na Reserva/Portal", async () => {
+      const resCode = "RES-HALF-215";
+      const orderIdG1 = `ORD-MB-SPLIT-${resCode}-G1`;
+      const orderIdG2 = `ORD-MB-SPLIT-${resCode}-G2`;
+      const zapiBefore = zapiCapturedRequests.length;
+
+      const mockPdfContent = "%PDF-1.4 Mock NF Frigobar CorpFlats Flat 215";
+      const mockPdfBase64 = Buffer.from(mockPdfContent).toString("base64");
+
+      // 1. Anexa NF no pedido do 1º Hóspede com header data:application/octet-stream;base64,
+      const resInvG1 = await fetch(`${BASE_URL}/api/minibar/orders/${orderIdG1}/invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileData: `data:application/octet-stream;base64,${mockPdfBase64}`,
+          fileName: "NF_Frigobar_215_G1.pdf",
+          invoiceNumber: "2026001"
+        })
+      });
+      assert.strictEqual(resInvG1.status, 200);
+      const dataInvG1 = await resInvG1.json();
+      assert.strictEqual(dataInvG1.success, true);
+      assert.strictEqual(dataInvG1.invoice.status, "anexada");
+      assert.ok(dataInvG1.invoice.invoiceFileUrl);
+      assert.strictEqual(dataInvG1.invoice.fileData, undefined, "POST /invoice não deve vazar fileData em Base64");
+      assert.strictEqual(dataInvG1.order?.invoice?.fileData, undefined, "order.invoice não deve vazar fileData");
+
+      // 2. Verifica se a Z-API recebeu POST /send-document/pdf com MIME normalizado para data:application/pdf;base64,
+      const pdfCalls = zapiCapturedRequests.slice(zapiBefore).filter(r => r.url.includes("/send-document/pdf"));
+      assert.ok(pdfCalls.length >= 1, "Z-API mock deve receber POST /send-document/pdf mesmo quando db.zapiConfig = {}");
+      assert.strictEqual(pdfCalls[0].body.phone, "5521999113344");
+      assert.ok(
+        pdfCalls[0].body.document.startsWith("data:application/pdf;base64,"),
+        "Header MIME enviado à Z-API deve ser normalizado para application/pdf"
+      );
+      assert.strictEqual(dataInvG1.deliveryMonitor?.whatsapp?.status, "enviado");
+
+      // 3. Verifica reconstrução do PDF a partir da memória quando o arquivo físico não está no disco
+      const relPath = dataInvG1.invoice.invoiceFileUrl.replace(/^\/api\/storage\/files\//, "");
+      const absDiskPath = path.join(rootDir, "uploads", relPath);
+      try {
+        if (fs.existsSync(absDiskPath)) fs.unlinkSync(absDiskPath);
+      } catch (_) {}
+      const resDownload = await fetch(`${BASE_URL}${dataInvG1.invoice.invoiceFileUrl}`);
+      assert.strictEqual(resDownload.status, 200, "GET /api/storage/files/invoices/... deve servir o PDF da memória");
+      const textDownload = await resDownload.text();
+      assert.strictEqual(textDownload, mockPdfContent);
+
+      // 4. Verifica que a NF aparece na Gestão da Reserva (GET /api/pms/calendar e PUT /api/pms/reservations/:id) sem duplicar ORD-MB-LANC
+      const tokenPayloadB64 = Buffer.from(JSON.stringify({ id: 1, role: "admin", v: 2 }), "utf-8").toString("base64url");
+      const tokenSig = crypto.createHmac("sha256", "test-secret-minibar-215").update(tokenPayloadB64).digest("base64url");
+      const adminAuthHeader = `Bearer ${tokenPayloadB64}.${tokenSig}`;
+
+      const resCal = await fetch(`${BASE_URL}/api/pms/calendar`, {
+        headers: { Authorization: adminAuthHeader }
+      });
+      const dataCal = await resCal.json();
+      const calRes = (dataCal.reservations || []).find(r => r.code === resCode);
+      assert.ok(calRes, "Reserva RES-HALF-215 deve estar no calendário PMS");
+      assert.ok(
+        !calRes.minibarOrders.some(o => String(o.id).startsWith("ORD-MB-LANC-")),
+        "minibarOrders da reserva não deve exibir registros internos de lançamento quitado duplicados"
+      );
+      const calOrdG1 = calRes.minibarOrders.find(o => o.id === orderIdG1);
+      assert.ok(calOrdG1, "Pedido pago do Hóspede 1 deve estar em calRes.minibarOrders");
+      assert.strictEqual(calOrdG1.invoiceFileUrl, dataInvG1.invoice.invoiceFileUrl);
+      assert.strictEqual(calOrdG1.invoice?.fileData, undefined);
+
+      const resPut = await fetch(`${BASE_URL}/api/pms/reservations/${calRes.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: adminAuthHeader },
+        body: JSON.stringify({ notes: "NF testada na gestão da reserva" })
+      });
+      assert.strictEqual(resPut.status, 200);
+      const dataPut = await resPut.json();
+      assert.ok(Array.isArray(dataPut.minibarOrders), "PUT /api/pms/reservations/:id deve retornar minibarOrders");
+      assert.ok(dataPut.minibarOrders.some(o => o.id === orderIdG1 && o.invoiceFileUrl === dataInvG1.invoice.invoiceFileUrl));
+
+      // 5. Verifica que a NF aparece no Portal do Hóspede (/api/pms/guest-portal/:code) e na tela de Frigobar (/api/minibar/reservation-context/:code)
+      const resPortal = await fetch(`${BASE_URL}/api/pms/guest-portal/${resCode}`);
+      const dataPortal = await resPortal.json();
+      const portalOrdG1 = (dataPortal.minibarOrders || []).find(o => o.id === orderIdG1);
+      assert.ok(portalOrdG1, "Portal do Hóspede deve listar o pedido com NF");
+      assert.strictEqual(portalOrdG1.invoiceFileUrl, dataInvG1.invoice.invoiceFileUrl);
+      assert.strictEqual(portalOrdG1.invoice?.fileData, undefined);
+
+      const resMinibarCtx = await fetch(`${BASE_URL}/api/minibar/reservation-context/${resCode}`);
+      const dataMinibarCtx = await resMinibarCtx.json();
+      const histOrdG1 = (dataMinibarCtx.paidOrdersHistory || []).find(o => o.id === orderIdG1);
+      assert.ok(histOrdG1, "paidOrdersHistory na tela do frigobar deve listar o pedido pago");
+      assert.strictEqual(histOrdG1.invoiceFileUrl, dataInvG1.invoice.invoiceFileUrl);
+      assert.strictEqual(histOrdG1.invoice?.fileData, undefined);
+
+      // 6. Verifica inferência de extensão (.png) sem fileName no pedido do 2º Hóspede e higienização no Hub/Retry/Relatórios
+      const mockPngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+      const resInvG2 = await fetch(`${BASE_URL}/api/minibar/orders/${orderIdG2}/invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileData: `data:image/png;base64,${mockPngB64}`,
+          invoiceNumber: "2026002"
+        })
+      });
+      assert.strictEqual(resInvG2.status, 200);
+      const dataInvG2 = await resInvG2.json();
+      assert.ok(dataInvG2.invoice.invoiceFileUrl.endsWith(".png"), "Upload de PNG sem fileName deve usar extensão .png");
+
+      const resHub = await fetch(`${BASE_URL}/api/minibar/invoices/hub`);
+      const dataHub = await resHub.json();
+      const hubItem = (dataHub.issuedInvoices || []).find(o => o.id === orderIdG1);
+      assert.ok(hubItem);
+      assert.strictEqual(hubItem.invoice?.fileData, undefined, "Hub não deve vazar fileData");
+
+      const resAnserveRep = await fetch(`${BASE_URL}/api/minibar/anserve-reports`);
+      const dataAnserveRep = await resAnserveRep.json();
+      const repItem = (dataAnserveRep.salesSummary?.orders || []).find(o => o.id === orderIdG1);
+      assert.ok(repItem);
+      assert.strictEqual(repItem.invoiceFileUrl, dataInvG1.invoice.invoiceFileUrl);
+
+      const resRetry = await fetch(`${BASE_URL}/api/minibar/orders/${orderIdG1}/invoice/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "whatsapp" })
+      });
+      assert.strictEqual(resRetry.status, 200);
+      const dataRetry = await resRetry.json();
+      assert.strictEqual(dataRetry.success, true);
+      assert.strictEqual(dataRetry.invoice?.fileData, undefined);
+      assert.strictEqual(dataRetry.order?.invoice?.fileData, undefined);
+
+      try {
+        if (fs.existsSync(absDiskPath)) fs.unlinkSync(absDiskPath);
+        const relPathG2 = dataInvG2.invoice.invoiceFileUrl.replace(/^\/api\/storage\/files\//, "");
+        const absDiskPathG2 = path.join(rootDir, "uploads", relPathG2);
+        if (fs.existsSync(absDiskPathG2)) fs.unlinkSync(absDiskPathG2);
+      } catch (_) {}
     });
   });
 });

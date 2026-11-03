@@ -8992,13 +8992,19 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       </div>
                     </div>
 
-                    {Array.isArray((selectedRes as any).minibarOrders) &&
-                      (selectedRes as any).minibarOrders.filter((o: any) => o && o.paymentStatus !== "cancelado").length > 0 && (
+                    {(() => {
+                      const liveRes = (data?.reservations || []).find((r: any) => Number(r.id) === Number(selectedRes.id))
+                      const rawOrders = Array.isArray((liveRes as any)?.minibarOrders)
+                        ? (liveRes as any).minibarOrders
+                        : Array.isArray((selectedRes as any).minibarOrders)
+                          ? (selectedRes as any).minibarOrders
+                          : []
+                      const visibleOrders = rawOrders.filter((o: any) => o && o.paymentStatus !== "cancelado")
+                      if (visibleOrders.length === 0) return null
+                      return (
                         <div className="pt-2 border-t border-cyan-500/20 space-y-1.5">
-                          {(selectedRes as any).minibarOrders
-                            .filter((o: any) => o && o.paymentStatus !== "cancelado")
-                            .map((ord: any) => {
-                              const invUrl = ord.invoice?.invoiceFileUrl || ord.invoiceFileUrl || ""
+                          {visibleOrders.map((ord: any) => {
+                              const invUrl = ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || ord.invoiceFileUrl || ""
                               const invName = ord.invoice?.invoiceFileName || ord.invoiceFileName || "Nota_Fiscal_Frigobar.pdf"
                               const invNum = ord.invoice?.invoiceNumber || ord.invoiceNumber || ""
                               const isOrdPaid =
@@ -9070,7 +9076,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               )
                             })}
                         </div>
-                      )}
+                      )
+                    })()}
                   </div>
                 )}
 

@@ -2016,7 +2016,7 @@ export default function GuestMinibar() {
               </div>
               <div className="space-y-2">
                 {paidOrdersHistory.map((ord: any) => {
-                  const invoiceUrl = ord.invoice?.invoiceFileUrl || ord.invoiceFileUrl || "";
+                  const invoiceUrl = ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || ord.invoiceFileUrl || "";
                   const invoiceName =
                     ord.invoice?.invoiceFileName || ord.invoiceFileName || "Nota_Fiscal_Frigobar.pdf";
                   const invoiceNum = ord.invoice?.invoiceNumber || ord.invoiceNumber || "";
@@ -2663,6 +2663,20 @@ export default function GuestMinibar() {
           <p className="text-xs text-slate-300 leading-relaxed">
             Sua Nota Fiscal será enviada automaticamente para o seu WhatsApp e e-mail cadastrados.
           </p>
+
+          {(activeOrder?.invoice?.invoiceFileUrl || activeOrder?.invoice?.fileUrl || activeOrder?.invoiceFileUrl) && (
+            <a
+              href={activeOrder?.invoice?.invoiceFileUrl || activeOrder?.invoice?.fileUrl || activeOrder?.invoiceFileUrl}
+              target="_blank"
+              rel="noreferrer"
+              download={activeOrder?.invoice?.invoiceFileName || activeOrder?.invoiceFileName || "Nota_Fiscal_Frigobar.pdf"}
+              className="w-full h-11 inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm shadow-md shadow-emerald-500/20 transition-all"
+            >
+              <FileText className="w-4 h-4" />
+              <span>Baixar Nota Fiscal Agora</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          )}
 
           <div className="space-y-2 pt-2">
             <Button

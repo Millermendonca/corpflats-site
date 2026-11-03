@@ -534,7 +534,8 @@ function tryServeMinibarInvoiceFromMemory(req, res) {
   if (!matchedOrder?.invoice?.fileData) return false;
   try {
     const rawStr = String(matchedOrder.invoice.fileData).trim();
-    const base64Clean = rawStr.replace(/^data:.*?;base64,/, "");
+    if (!rawStr || rawStr.startsWith("/") || rawStr.startsWith("http")) return false;
+    const base64Clean = rawStr.replace(/^data:.*?;base64,/i, "").trim();
     const buf = Buffer.from(base64Clean, "base64");
     const diskTarget = path.join(UPLOADS_DIR, req.path.replace(/^\/+/, ""));
     try {
@@ -14205,14 +14206,25 @@ async function offloadHistoricalBase64Media() {
       }
     }
 
-    // 4. Varredura recursiva de segurança: captura qualquer data:image/ ou data:application/pdf residual >= 3KB em qualquer coleção do db
+    // 4. Varredura recursiva de segurança: captura qualquer data:image/, data:application/pdf ou Base64 puro residual em qualquer coleção do db
+    let visitedNodes = 0;
+    const isPureOrDataUriBase64 = (val) => {
+      if (typeof val !== "string" || val.length < 2048) return false;
+      if (/^data:(image\/|application\/pdf)/i.test(val)) return true;
+      return (val.startsWith("JVBERi0") || val.startsWith("/9j/") || val.startsWith("iVBORw0KGgo"));
+    };
+
     const walkAndOffloadResidualDataUrls = async (node, pathKey, depth = 0) => {
       if (!node || typeof node !== "object" || depth > 6 || offloadedCount >= MAX_OFFLOAD_PER_CYCLE) return;
+      visitedNodes++;
+      if (visitedNodes % 50 === 0) {
+        await new Promise(r => setImmediate(r));
+      }
       if (Array.isArray(node)) {
         for (let i = 0; i < node.length; i++) {
           if (offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
           const v = node[i];
-          if (typeof v === "string" && v.length >= 3072 && /^data:(image\/|application\/pdf)/i.test(v)) {
+          if (typeof v === "string" && isPureOrDataUriBase64(v)) {
             node[i] = await offloadSingleBase64Field("deep", `${pathKey}_${i}`, "arr", v);
             offloadedCount++;
           } else if (v && typeof v === "object") {
@@ -14223,8 +14235,8 @@ async function offloadHistoricalBase64Media() {
       }
       for (const [k, v] of Object.entries(node)) {
         if (offloadedCount >= MAX_OFFLOAD_PER_CYCLE) break;
-        if (k === "pfxBase64" || k === "certificadoA1") continue;
-        if (typeof v === "string" && v.length >= 3072 && /^data:(image\/|application\/pdf)/i.test(v)) {
+        if (k === "pfxBase64" || k === "certificadoA1" || k === "fileData") continue;
+        if (typeof v === "string" && isPureOrDataUriBase64(v)) {
           node[k] = await offloadSingleBase64Field("deep", pathKey, k, v);
           offloadedCount++;
         } else if (v && typeof v === "object") {
@@ -14262,6 +14274,9 @@ export function sanitizeSafeJsonString(str, maxLen = 0) {
 
 export function sanitizeJsonSerialized(jsonStr) {
   if (typeof jsonStr !== "string") return jsonStr;
+  if (!jsonStr.includes("\\u0000") && !/\\u[dD][89abABcdefCDEF]/i.test(jsonStr)) {
+    return jsonStr;
+  }
   return jsonStr.replace(
     /((?<!\\)(?:\\\\)*)(?:\\u[dD][89abAB][0-9a-fA-F]{2}(?!\\u[dD][cdefCDEF][0-9a-fA-F]{2})|(?<!\\u[dD][89abAB][0-9a-fA-F]{2})\\u[dD][cdefCDEF][0-9a-fA-F]{2}|\\u0000)/g,
     "$1"
@@ -14292,6 +14307,7 @@ async function flushPgState() {
     reconcileCleaningRequests();
     pruneDatabase();
     await offloadHistoricalBase64Media();
+    await new Promise(r => setImmediate(r));
     stateToSave = sanitizeJsonSerialized(JSON.stringify(db));
     pendingPgDirty = false;
     pendingPgStateJson = null;
@@ -14303,6 +14319,7 @@ async function flushPgState() {
       return;
     }
 
+    await new Promise(r => setImmediate(r));
     const t0 = Date.now();
     await pgPool.query(
       "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
@@ -14346,6 +14363,12 @@ async function flushPgState() {
     pendingPgDirty = true;
   } finally {
     isPgSaving = false;
+    try {
+      const heapUsed = process.memoryUsage?.().heapUsed || 0;
+      if (heapUsed > 900 * 1024 * 1024 && typeof global.gc === "function") {
+        global.gc();
+      }
+    } catch (_) {}
     if (pendingPgDirty || pendingPgStateJson) {
       // Usa exclusivamente scheduleNextPgFlush para nunca multiplicar timers órfãos
       scheduleNextPgFlush(hadError ? 30000 : MIN_PG_SAVE_INTERVAL_MS);
@@ -14419,51 +14442,49 @@ function pruneDatabase() {
 
   for (const [key, max] of Object.entries(LIMITS)) {
     if (Array.isArray(db[key]) && db[key].length > max) {
-      // Ordena por data mais recente primeiro e mantém os N mais recentes (null-safe e sem overhead de ICU/localeCompare)
-      db[key] = db[key]
-        .filter(Boolean)
-        .sort((a, b) => {
-          if (key === "whatsappConversations") {
-            const pA = Boolean(a?.isDeveloper || a?.pinned || a?.fiscalConferenceState || a?.awaitingFiscalData || String(a?.phone || "").includes("98505276"));
-            const pB = Boolean(b?.isDeveloper || b?.pinned || b?.fiscalConferenceState || b?.awaitingFiscalData || String(b?.phone || "").includes("98505276"));
-            if (pA && !pB) return -1;
-            if (!pA && pB) return 1;
-          }
-          const dateA = toComparableIso(
-            a?.updatedAt ||
-            a?.updated_at ||
-            a?.lastMessageAt ||
-            a?.createdAt ||
-            a?.created_at ||
-            a?.executedAt ||
-            a?.sentAt ||
-            a?.metadata?.sentAt ||
-            a?.metadata?.queuedAt ||
-            a?.scheduledFor ||
-            a?.date ||
-            a?.timestamp ||
-            a?.id ||
-            ""
-          );
-          const dateB = toComparableIso(
-            b?.updatedAt ||
-            b?.updated_at ||
-            b?.lastMessageAt ||
-            b?.createdAt ||
-            b?.created_at ||
-            b?.executedAt ||
-            b?.sentAt ||
-            b?.metadata?.sentAt ||
-            b?.metadata?.queuedAt ||
-            b?.scheduledFor ||
-            b?.date ||
-            b?.timestamp ||
-            b?.id ||
-            ""
-          );
-          return dateB > dateA ? 1 : (dateB < dateA ? -1 : 0);
-        })
-        .slice(0, max);
+      // Decorate & sort (Schwartzian transform) para evitar re-extrair e re-converter datas a cada comparação
+      const decorated = db[key].filter(Boolean).map(item => {
+        let isPriority = false;
+        if (key === "whatsappConversations") {
+          isPriority = Boolean(item?.isDeveloper || item?.pinned || item?.fiscalConferenceState || item?.awaitingFiscalData || String(item?.phone || "").includes("98505276"));
+        }
+        const dateKey = toComparableIso(
+          item?.updatedAt ||
+          item?.updated_at ||
+          item?.lastMessageAt ||
+          item?.createdAt ||
+          item?.created_at ||
+          item?.executedAt ||
+          item?.sentAt ||
+          item?.metadata?.sentAt ||
+          item?.metadata?.queuedAt ||
+          item?.scheduledFor ||
+          item?.date ||
+          item?.timestamp ||
+          item?.id ||
+          ""
+        );
+        return { item, isPriority, dateKey };
+      });
+
+      decorated.sort((a, b) => {
+        if (key === "whatsappConversations") {
+          if (a.isPriority && !b.isPriority) return -1;
+          if (!a.isPriority && b.isPriority) return 1;
+        }
+        return b.dateKey > a.dateKey ? 1 : (b.dateKey < a.dateKey ? -1 : 0);
+      });
+
+      db[key] = decorated.slice(0, max).map(d => d.item);
+    }
+  }
+
+  // Trunca detalhes extensos em auditLogs para no máximo 500 caracteres para poupar memória
+  if (Array.isArray(db.auditLogs)) {
+    for (const log of db.auditLogs) {
+      if (log && typeof log.details === "string" && log.details.length > 500) {
+        log.details = log.details.slice(0, 500);
+      }
     }
   }
 
@@ -26205,8 +26226,8 @@ app.get("/api/pms/calendar", (req, res) => {
   const now = Date.now();
   if (now - lastCalendarReconcileTime > 15000) {
     lastCalendarReconcileTime = now;
-    if (reconcileUniversalIntegrity()) {
-      setImmediate(() => saveDatabase());
+    if (isUniversalIntegrityDirty && reconcileUniversalIntegrity()) {
+      setImmediate(() => saveDatabase("integrity_reconciled"));
     }
   }
 
@@ -26409,24 +26430,7 @@ app.get("/api/pms/calendar", (req, res) => {
       earlyCheckoutReportedBy: r.earlyCheckoutReportedBy || r.checkoutReportedBy || null,
       earlyCheckoutNote: r.earlyCheckoutNote || null,
       checkoutReportedBy: r.checkoutReportedBy || r.earlyCheckoutReportedBy || null,
-      minibarOrders: (db.minibarOrders || [])
-        .filter(o => o && o.paymentStatus !== "cancelado" && doesMinibarOrderMatchReservation(o, r))
-        .map(o => ({
-          id: o.id,
-          guestName: o.guestName || r.guestName,
-          guestIndex: o.guestIndex || 1,
-          createdAt: o.createdAt,
-          paidAt: o.paidAt || null,
-          totalAmount: o.totalAmount,
-          paymentStatus: o.paymentStatus,
-          paymentMethod: o.paymentMethod,
-          items: o.items || [],
-          invoice: sanitizeMinibarInvoiceForResponse(o.invoice),
-          invoiceFileUrl: o.invoice?.invoiceFileUrl || null,
-          invoiceFileName: o.invoice?.invoiceFileName || null,
-          invoiceNumber: o.invoice?.invoiceNumber || null,
-          invoiceStatus: o.invoice?.status || null
-        }))
+      minibarOrders: getVisibleReservationMinibarOrders(r)
     };
   });
   const serviceOrderBlocks = [];
@@ -30365,7 +30369,10 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     if (syncedMainGuest) triggerAutoGoogleContactSync(db, syncedMainGuest);
   } catch (_) {}
 
-  res.json(r);
+  res.json({
+    ...r,
+    minibarOrders: getVisibleReservationMinibarOrders(r)
+  });
 });
 
 // ── Portal do Hóspede (Guest Hub & Área do Cliente) ─────────────────────────
@@ -31166,7 +31173,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       checkedInAt: r.checkedInAt || null,
       actualCheckinAt: r.actualCheckinAt || null,
       guestSelfCheckin: Boolean(r.guestSelfCheckin),
-      doNotDisturb: Boolean(r.doNotDisturb)
+      doNotDisturb: Boolean(r.doNotDisturb),
+      minibarOrders: getVisibleReservationMinibarOrders(r)
     },
     hasBreakfast,
     breakfastLink,
@@ -31212,24 +31220,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
     contractTerms: db.settings.contractTerms || DEFAULT_CONTRACT_TERMS,
     adminWhatsApp: db.settings.adminWhatsApp || "5522997124021",
-    minibarOrders: (db.minibarOrders || [])
-      .filter(o => o && o.paymentStatus !== "cancelado" && doesMinibarOrderMatchReservation(o, r))
-      .map(o => ({
-        id: o.id,
-        guestName: o.guestName || r.guestName,
-        guestIndex: o.guestIndex || 1,
-        createdAt: o.createdAt,
-        paidAt: o.paidAt || null,
-        totalAmount: o.totalAmount,
-        paymentStatus: o.paymentStatus,
-        paymentMethod: o.paymentMethod,
-        items: o.items || [],
-        invoice: sanitizeMinibarInvoiceForResponse(o.invoice),
-        invoiceFileUrl: o.invoice?.invoiceFileUrl || null,
-        invoiceFileName: o.invoice?.invoiceFileName || null,
-        invoiceNumber: o.invoice?.invoiceNumber || null,
-        invoiceStatus: o.invoice?.status || null
-      })),
+    minibarOrders: getVisibleReservationMinibarOrders(r),
     minibarUrl: `/minha-reserva/${r.code}/frigobar`,
     b2bHousekeeping: isB2b ? {
       isB2b: true,
@@ -57633,15 +57624,33 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   return res.send(pageHtml);
 });
 
+export function setSmartAssetCacheHeaders(res, filePath) {
+  const normalized = String(filePath || "").replace(/\\/g, "/");
+  const fileName = path.basename(normalized);
+
+  // 1. HTML principal, Service Worker e páginas críticas: sempre sem cache para garantir atualizações imediatas
+  if (fileName === "index.html" || fileName === "sw.js" || normalized.endsWith(".html")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    return;
+  }
+
+  // 2. Chunks versionados com hash imutável gerados pelo bundler (Vite/Rollup): Cache imutável por 1 ano
+  if (/-[a-zA-Z0-9_-]{6,}\.(js|mjs|css|png|jpg|jpeg|gif|svg|webp|woff|woff2|ttf|eot|ico)$/i.test(fileName)) {
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    return;
+  }
+
+  // 3. Arquivos estáticos sem hash (index.js legado, manifest.json, favicons, etc): revalidação ETag sem travar no cliente
+  res.setHeader("Cache-Control", "no-cache");
+}
+
 if (fs.existsSync(distPath)) {
   const assetsDir = path.join(distPath, "assets");
   if (fs.existsSync(assetsDir)) {
     app.use("/assets", express.static(assetsDir, {
-      setHeaders: (res) => {
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      }
+      setHeaders: setSmartAssetCacheHeaders
     }));
     // Fallback para chunks JS com hash antigo (evita Failed to fetch dynamically imported module após deploy)
     app.get("/assets/:filename", (req, res, next) => {
@@ -57652,12 +57661,15 @@ if (fs.existsSync(distPath)) {
           const prefix = match[1] + "-";
           const files = fs.readdirSync(assetsDir);
           const candidate = files.find(f => f.startsWith(prefix) && f.endsWith(".js"));
-          res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
           if (candidate) {
-            return res.sendFile(path.join(assetsDir, candidate));
+            const candidatePath = path.join(assetsDir, candidate);
+            res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+            setSmartAssetCacheHeaders(res, candidatePath);
+            return res.sendFile(candidatePath);
           }
           // Se o chunk foi incorporado ao bundle principal (ex: pms-calendar), instrui o navegador a atualizar suavemente
+          res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
           return res.status(200).send(
             'if(typeof window!=="undefined"){window.location.reload();}export default function(){return null;}\n'
           );
@@ -57667,13 +57679,7 @@ if (fs.existsSync(distPath)) {
     });
   }
   app.use(express.static(distPath, {
-    setHeaders: (res, filePath) => {
-      if (filePath.endsWith('.html') || filePath.endsWith('/index.js') || filePath.endsWith('\\index.js') || filePath.endsWith('/index.css') || filePath.endsWith('\\index.css')) {
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      }
-    }
+    setHeaders: setSmartAssetCacheHeaders
   }));
   app.use((req, res, next) => {
     if (req.method === "GET" && !req.path.startsWith("/api") && !path.extname(req.path)) {
@@ -57684,13 +57690,7 @@ if (fs.existsSync(distPath)) {
   console.log(`[Production Server] Servindo frontend em: ${distPath}`);
 } else if (fs.existsSync(fallbackDistPath)) {
   app.use(express.static(fallbackDistPath, {
-    setHeaders: (res, filePath) => {
-      if (filePath.endsWith('.html')) {
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      }
-    }
+    setHeaders: setSmartAssetCacheHeaders
   }));
   app.use((req, res, next) => {
     if (req.method === "GET" && !req.path.startsWith("/api") && !path.extname(req.path)) {
@@ -60823,7 +60823,19 @@ function formatMinibarDateBr(ymdOrIso) {
 function sanitizeMinibarInvoiceForResponse(inv) {
   if (!inv || typeof inv !== "object") return null;
   const { fileData, ...safeInv } = inv;
+  if (!safeInv.invoiceFileUrl && safeInv.fileUrl) {
+    safeInv.invoiceFileUrl = safeInv.fileUrl;
+  }
   return safeInv;
+}
+
+function sanitizeMinibarOrderForResponse(order) {
+  if (!order || typeof order !== "object") return order;
+  if (!order.invoice) return order;
+  return {
+    ...order,
+    invoice: sanitizeMinibarInvoiceForResponse(order.invoice)
+  };
 }
 
 function doesMinibarOrderMatchReservation(order, reservation) {
@@ -60849,6 +60861,51 @@ function doesMinibarOrderMatchReservation(order, reservation) {
     }
   }
   return false;
+}
+
+function getVisibleReservationMinibarOrders(reservation) {
+  if (!reservation) return [];
+  const rawOrders = (db.minibarOrders || []).filter(
+    o => o && o.paymentStatus !== "cancelado" && doesMinibarOrderMatchReservation(o, reservation)
+  );
+  const hasSeparatePaidOrder = rawOrders.some(
+    o =>
+      o.paymentStatus === "pago" &&
+      !String(o.id || "").startsWith("ORD-MB-LANC-") &&
+      !String(o.id || "").startsWith("ORD-MB-DIV-")
+  );
+  return rawOrders
+    .filter(o => {
+      const hasDirectInvoice = Boolean(
+        o.invoice?.invoiceFileUrl || o.invoice?.fileUrl || o.invoice?.status === "anexada"
+      );
+      if (
+        o.paymentStatus === "lancamento_quitado" &&
+        !hasDirectInvoice &&
+        (o.settledByOrderId || hasSeparatePaidOrder)
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map(o => ({
+      id: o.id,
+      source: o.source || "",
+      guestName: o.guestName || reservation.guestName,
+      guestIndex: o.guestIndex || 1,
+      createdAt: o.createdAt,
+      paidAt: o.paidAt || null,
+      totalAmount: o.totalAmount,
+      remainingAmount: o.remainingAmount,
+      paymentStatus: o.paymentStatus,
+      paymentMethod: o.paymentMethod,
+      items: o.items || [],
+      invoice: sanitizeMinibarInvoiceForResponse(o.invoice),
+      invoiceFileUrl: o.invoice?.invoiceFileUrl || o.invoice?.fileUrl || null,
+      invoiceFileName: o.invoice?.invoiceFileName || null,
+      invoiceNumber: o.invoice?.invoiceNumber || null,
+      invoiceStatus: o.invoice?.status || null
+    }));
 }
 
 function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
@@ -61446,40 +61503,74 @@ async function notifyAdminMinibarInvoiceFailure(order, channelLabel, errorReason
 }
 
 async function dispatchMinibarInvoiceWithMonitoring(order, { channels = ["whatsapp", "email"], isRetry = false } = {}) {
-  if (!order || !order.invoice || !order.invoice.invoiceFileUrl) {
+  if (!order || !order.invoice || !(order.invoice.invoiceFileUrl || order.invoice.fileUrl)) {
     return null;
   }
 
-  const invoiceFileUrl = order.invoice.invoiceFileUrl;
+  const invoiceFileUrl = order.invoice.invoiceFileUrl || order.invoice.fileUrl;
+  order.invoice.invoiceFileUrl = invoiceFileUrl;
   const safeFileName = order.invoice.invoiceFileName || `NF_Frigobar_${order.flatNumber}_${order.id}.pdf`;
 
-  // Fallback para telefone/e-mail na reserva vinculada se ausente no pedido
+  const hasValidPhone = (p) => cleanWhatsAppPhone(String(p || "")).length >= 10;
+  const hasValidEmail = (e) => {
+    const s = String(e || "").trim();
+    return s.includes("@") && s.includes(".");
+  };
+
+  // Fallback para telefone/e-mail na reserva vinculada, FNRH/preCheckin e CRM se ausente ou inválido no pedido
   const linkedRes = (db.reservations || []).find(r => doesMinibarOrderMatchReservation(order, r)) ||
     (order.flatNumber ? findActiveOrRecentReservationForFlat(String(order.flatNumber)) : null);
-  let resolvedPhone = String(order.fiscalPreferences?.phone || order.guestPhone || "").trim();
-  let resolvedEmail = String(order.fiscalPreferences?.email || order.guestEmail || "").trim();
+  let resolvedPhone = [order.fiscalPreferences?.phone, order.guestPhone].find(hasValidPhone) || "";
+  let resolvedEmail = [order.fiscalPreferences?.email, order.guestEmail].find(hasValidEmail) || "";
 
-  if (linkedRes && (!resolvedPhone || !resolvedEmail)) {
+  if (linkedRes && (!hasValidPhone(resolvedPhone) || !hasValidEmail(resolvedEmail))) {
     const resGuests = getReservationAllGuests(linkedRes);
     const consumerSlot =
       resGuests.find(g => Number(g.index) === Number(order.guestIndex || 1)) ||
       resGuests[0] ||
       null;
-    if (!resolvedPhone) {
-      resolvedPhone = String(consumerSlot?.phone || linkedRes.guestPhone || "").trim();
-      if (resolvedPhone) order.guestPhone = resolvedPhone;
+    if (!hasValidPhone(resolvedPhone)) {
+      const candidatePhone = [consumerSlot?.phone, linkedRes.guestPhone, ...(resGuests.map(g => g.phone))].find(hasValidPhone) || "";
+      if (candidatePhone) {
+        resolvedPhone = String(candidatePhone).trim();
+        order.guestPhone = resolvedPhone;
+      }
     }
-    if (!resolvedEmail) {
-      resolvedEmail = String(consumerSlot?.email || linkedRes.guestEmail || "").trim();
-      if (resolvedEmail) order.guestEmail = resolvedEmail;
+    if (!hasValidEmail(resolvedEmail)) {
+      const candidateEmail = [consumerSlot?.email, linkedRes.guestEmail, ...(resGuests.map(g => g.email))].find(hasValidEmail) || "";
+      if (candidateEmail) {
+        resolvedEmail = String(candidateEmail).trim();
+        order.guestEmail = resolvedEmail;
+      }
     }
   }
 
-  const targetPhone = resolvedPhone;
-  const targetEmail = resolvedEmail;
+  if (!hasValidPhone(resolvedPhone) || !hasValidEmail(resolvedEmail)) {
+    const cleanDoc = String(order.fiscalPreferences?.documentNumber || order.guestDocument || linkedRes?.guestDocument || "").replace(/\D/g, "");
+    const crmGuest = (db.guests || []).find(g =>
+      (order.guestId && Number(g.id) === Number(order.guestId)) ||
+      (linkedRes?.guestId && Number(g.id) === Number(linkedRes.guestId)) ||
+      (cleanDoc.length >= 11 && String(g.document || g.documentNumber || "").replace(/\D/g, "") === cleanDoc)
+    );
+    if (crmGuest) {
+      if (!hasValidPhone(resolvedPhone) && hasValidPhone(crmGuest.phone)) {
+        resolvedPhone = String(crmGuest.phone).trim();
+        order.guestPhone = resolvedPhone;
+      }
+      if (!hasValidEmail(resolvedEmail) && hasValidEmail(crmGuest.email)) {
+        resolvedEmail = String(crmGuest.email).trim();
+        order.guestEmail = resolvedEmail;
+      }
+    }
+  }
+
+  const targetPhone = String(resolvedPhone || "").trim();
+  const targetEmail = String(resolvedEmail || "").trim();
   const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
   const fullDownloadUrl = invoiceFileUrl.startsWith("http") ? invoiceFileUrl : `${serverBaseUrl}${invoiceFileUrl}`;
-  const zapiConfig = db.zapiConfig || db.settings?.zapiConfig || {};
+  const zapiConfig = (db.zapiConfig && db.zapiConfig.instanceId && db.zapiConfig.token)
+    ? db.zapiConfig
+    : (db.settings?.zapiConfig || db.zapiConfig || {});
 
   if (!order.invoice.deliveryMonitor) {
     order.invoice.deliveryMonitor = {
@@ -61599,9 +61690,9 @@ async function dispatchMinibarInvoiceWithMonitoring(order, { channels = ["whatsa
         const candidate = path.join(UPLOADS_DIR, rel);
         if (fs.existsSync(candidate)) {
           diskFilePath = candidate;
-        } else if (order.invoice?.fileData) {
+        } else if (order.invoice?.fileData && !String(order.invoice.fileData).trim().startsWith("/") && !String(order.invoice.fileData).trim().startsWith("http")) {
           try {
-            const rawB64 = String(order.invoice.fileData).replace(/^data:.*?;base64,/, "").trim();
+            const rawB64 = String(order.invoice.fileData).replace(/^data:.*?;base64,/i, "").trim();
             const dir = path.dirname(candidate);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
             fs.writeFileSync(candidate, Buffer.from(rawB64, "base64"));
@@ -61784,9 +61875,9 @@ app.post("/api/minibar/flat-context", (req, res) => {
       doesMinibarOrderMatchReservation(o, reservation) &&
       o.paymentStatus !== "cancelado"
     );
-    const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago" || o.invoice?.status === "anexada" || Boolean(o.invoice?.invoiceFileUrl));
+    const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago" || o.invoice?.status === "anexada" || Boolean(o.invoice?.invoiceFileUrl || o.invoice?.fileUrl));
     const statement = buildReservationMinibarStatement(reservation, flatStr);
-    const pendingDiscrepancyOrder = statement.primaryPendingOrder;
+    const pendingDiscrepancyOrder = sanitizeMinibarOrderForResponse(statement.primaryPendingOrder);
 
     const paidItemsMap = {};
     for (const ord of paidOrders) {
@@ -61819,7 +61910,7 @@ app.post("/api/minibar/flat-context", (req, res) => {
       paymentMethod: ord.paymentMethod,
       items: ord.items || [],
       invoice: sanitizeMinibarInvoiceForResponse(ord.invoice),
-      invoiceFileUrl: ord.invoice?.invoiceFileUrl || null,
+      invoiceFileUrl: ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || null,
       invoiceFileName: ord.invoice?.invoiceFileName || null,
       invoiceNumber: ord.invoice?.invoiceNumber || null,
       invoiceStatus: ord.invoice?.status || null
@@ -61873,6 +61964,7 @@ app.post("/api/minibar/flat-context", (req, res) => {
       defaultStock,
       paidItems,
       paidOrdersHistory,
+      minibarOrders: getVisibleReservationMinibarOrders(reservation),
       pendingDiscrepancyOrder,
       courtesyConsumed
     });
@@ -61920,9 +62012,9 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
       doesMinibarOrderMatchReservation(o, reservation) &&
       o.paymentStatus !== "cancelado"
     );
-    const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago" || o.invoice?.status === "anexada" || Boolean(o.invoice?.invoiceFileUrl));
+    const paidOrders = allResOrders.filter(o => o.paymentStatus === "pago" || o.invoice?.status === "anexada" || Boolean(o.invoice?.invoiceFileUrl || o.invoice?.fileUrl));
     const statement = buildReservationMinibarStatement(reservation, flatStr);
-    const pendingDiscrepancyOrder = statement.primaryPendingOrder;
+    const pendingDiscrepancyOrder = sanitizeMinibarOrderForResponse(statement.primaryPendingOrder);
 
     const paidItemsMap = {};
     for (const ord of paidOrders) {
@@ -61955,7 +62047,7 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
       paymentMethod: ord.paymentMethod,
       items: ord.items || [],
       invoice: sanitizeMinibarInvoiceForResponse(ord.invoice),
-      invoiceFileUrl: ord.invoice?.invoiceFileUrl || null,
+      invoiceFileUrl: ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || null,
       invoiceFileName: ord.invoice?.invoiceFileName || null,
       invoiceNumber: ord.invoice?.invoiceNumber || null,
       invoiceStatus: ord.invoice?.status || null
@@ -62009,6 +62101,7 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
       defaultStock,
       paidItems,
       paidOrdersHistory,
+      minibarOrders: getVisibleReservationMinibarOrders(reservation),
       pendingDiscrepancyOrder,
       courtesyConsumed
     });
@@ -63195,7 +63288,7 @@ app.get("/api/minibar/orders/:id/status", async (req, res) => {
       success: true,
       status: order.paymentStatus,
       paidAt: order.paidAt || null,
-      order
+      order: sanitizeMinibarOrderForResponse(order)
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -63231,7 +63324,25 @@ app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
       return res.status(400).json({ success: false, error: "Arquivo da Nota Fiscal (Base64 ou URL) é obrigatório." });
     }
 
-    const safeFileName = fileName || `NF_Frigobar_${order.flatNumber}_${order.id}.pdf`;
+    const fileDataStr = String(fileData).trim();
+    const isDataUri = fileDataStr.startsWith("data:");
+    const isHttpUrl = fileDataStr.startsWith("http://") || fileDataStr.startsWith("https://") || fileDataStr.startsWith("/api/");
+
+    let inferredExt = "pdf";
+    if (isDataUri) {
+      const mimeMatch = fileDataStr.match(/^data:([^;]+);base64,/i);
+      const mimeLower = (mimeMatch ? mimeMatch[1] : "").toLowerCase();
+      if (mimeLower.includes("png")) inferredExt = "png";
+      else if (mimeLower.includes("jpeg") || mimeLower.includes("jpg")) inferredExt = "jpg";
+      else if (mimeLower.includes("webp")) inferredExt = "webp";
+    }
+    let safeFileName = String(fileName || "").trim();
+    if (!safeFileName) {
+      safeFileName = `NF_Frigobar_${order.flatNumber}_${order.id}.${inferredExt}`;
+    } else if (!safeFileName.includes(".")) {
+      safeFileName = `${safeFileName}.${inferredExt}`;
+    }
+
     const invoicesDir = path.join(UPLOADS_DIR, "invoices");
     if (!fs.existsSync(invoicesDir)) {
       fs.mkdirSync(invoicesDir, { recursive: true });
@@ -63242,12 +63353,8 @@ app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
 
     let invoiceFileUrl = `/api/storage/files/invoices/${diskFileName}`;
 
-    const fileDataStr = String(fileData).trim();
-    const isDataUri = fileDataStr.startsWith("data:");
-    const isHttpUrl = fileDataStr.startsWith("http://") || fileDataStr.startsWith("https://") || fileDataStr.startsWith("/api/");
-
     if (isDataUri || (!isHttpUrl && fileDataStr.length > 100)) {
-      const base64Content = fileDataStr.replace(/^data:.*?;base64,/, "");
+      const base64Content = fileDataStr.replace(/^data:.*?;base64,/i, "");
       await fs.promises.writeFile(filePath, Buffer.from(base64Content, "base64"));
     } else {
       invoiceFileUrl = fileDataStr;
@@ -63256,6 +63363,7 @@ app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
     order.invoice = {
       status: "anexada",
       invoiceFileUrl,
+      fileUrl: invoiceFileUrl,
       invoiceFileName: safeFileName,
       invoiceNumber: invoiceNumber || null,
       fileData: (isDataUri || (!isHttpUrl && fileDataStr.length > 100)) ? fileDataStr : undefined,
@@ -63286,10 +63394,7 @@ app.post("/api/minibar/orders/:id/invoice", async (req, res) => {
       success: true,
       invoice: sanitizeMinibarInvoiceForResponse(order.invoice),
       deliveryMonitor: order.invoice.deliveryMonitor,
-      order: {
-        ...order,
-        invoice: sanitizeMinibarInvoiceForResponse(order.invoice)
-      }
+      order: sanitizeMinibarOrderForResponse(order)
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -63310,7 +63415,7 @@ app.post("/api/minibar/orders/:id/invoice/retry", async (req, res) => {
       return res.status(404).json({ success: false, error: "Pedido ou Nota Fiscal anexada não encontrada." });
     }
 
-    const { phone, email, channels } = req.body || {};
+    const { phone, email, channels, channel } = req.body || {};
     if (phone !== undefined && String(phone).trim()) {
       order.guestPhone = String(phone).trim();
       if (!order.fiscalPreferences) order.fiscalPreferences = {};
@@ -63322,7 +63427,15 @@ app.post("/api/minibar/orders/:id/invoice/retry", async (req, res) => {
       order.fiscalPreferences.email = String(email).trim();
     }
 
-    const targetChannels = Array.isArray(channels) && channels.length > 0 ? channels : ["whatsapp", "email"];
+    let targetChannels = ["whatsapp", "email"];
+    if (Array.isArray(channels) && channels.length > 0) {
+      targetChannels = channels;
+    } else if (typeof channel === "string" && channel.trim()) {
+      const ch = channel.trim().toLowerCase();
+      if (ch === "whatsapp") targetChannels = ["whatsapp"];
+      else if (ch === "email") targetChannels = ["email"];
+    }
+
     const monitor = await dispatchMinibarInvoiceWithMonitoring(order, {
       channels: targetChannels,
       isRetry: true
@@ -63330,9 +63443,9 @@ app.post("/api/minibar/orders/:id/invoice/retry", async (req, res) => {
 
     res.json({
       success: true,
-      invoice: order.invoice,
+      invoice: sanitizeMinibarInvoiceForResponse(order.invoice),
       deliveryMonitor: monitor,
-      order
+      order: sanitizeMinibarOrderForResponse(order)
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -63347,23 +63460,26 @@ app.get("/api/minibar/invoices/delivery-monitor", (req, res) => {
     }
 
     const ordersWithInvoices = (db.minibarOrders || []).filter(o => o?.invoice?.status === "anexada");
-    const failedDeliveries = ordersWithInvoices.filter(o => {
-      const m = o.invoice?.deliveryMonitor;
-      if (!m) return false;
-      return (
-        m.overallStatus === "falha" ||
-        m.overallStatus === "parcial" ||
-        m.overallStatus === "retentando" ||
-        m.whatsapp?.status === "falha" ||
-        m.email?.status === "falha"
-      );
-    });
+    const failedDeliveries = ordersWithInvoices
+      .filter(o => {
+        const m = o.invoice?.deliveryMonitor;
+        if (!m) return false;
+        return (
+          m.overallStatus === "falha" ||
+          m.overallStatus === "parcial" ||
+          m.overallStatus === "retentando" ||
+          m.whatsapp?.status === "falha" ||
+          m.email?.status === "falha"
+        );
+      })
+      .map(sanitizeMinibarOrderForResponse);
 
     res.json({
       success: true,
       totalAttached: ordersWithInvoices.length,
       failedCount: failedDeliveries.length,
-      failedOrders: failedDeliveries
+      failedOrders: failedDeliveries,
+      failedInvoices: failedDeliveries
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -64155,6 +64271,7 @@ function enrichMinibarOrderForInvoiceScreen(order) {
 
   return {
     ...order,
+    invoice: sanitizeMinibarInvoiceForResponse(order.invoice),
     flatNumber: flatStr,
     reservationCode: resCode,
     documentNumber: docRaw,
@@ -64386,7 +64503,7 @@ app.get("/api/minibar/settlement", (req, res) => {
       netPayableToAnserve: Number(netPayableToAnserve.toFixed(2)),
       inspectionsCount: filteredInspections.length,
       breakdowns: {
-        orders: filteredOrders,
+        orders: filteredOrders.map(sanitizeMinibarOrderForResponse),
         inspections: filteredInspections
       }
     });
@@ -65474,7 +65591,8 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
         unitsCount: orderUnits,
         invoiceStatus: ord.invoice?.status || "pendente",
         invoiceNumber: ord.invoice?.invoiceNumber || "",
-        invoiceFileUrl: ord.invoice?.fileUrl || "",
+        invoiceFileUrl: ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || "",
+        invoiceFileName: ord.invoice?.invoiceFileName || "",
         deliveryMonitor: ord.invoice?.deliveryMonitor || null,
         invoiceDescriptionType: ord.fiscalPreferences?.invoiceDescriptionType || "detailed",
         documentNumber: ord.fiscalPreferences?.documentNumber || ord.guestDocument || "",

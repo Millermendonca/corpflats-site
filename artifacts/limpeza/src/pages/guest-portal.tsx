@@ -4280,7 +4280,7 @@ export default function GuestPortal() {
               {data.minibarOrders
                 .filter((o: any) => o && o.paymentStatus !== "cancelado")
                 .map((ord: any) => {
-                  const invUrl = ord.invoice?.invoiceFileUrl || ord.invoiceFileUrl || "";
+                  const invUrl = ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || ord.invoiceFileUrl || "";
                   const invName = ord.invoice?.invoiceFileName || ord.invoiceFileName || "Nota_Fiscal_Frigobar.pdf";
                   const invNum = ord.invoice?.invoiceNumber || ord.invoiceNumber || "";
                   const isOrdPaid = ord.paymentStatus === "pago" || ord.paymentStatus === "lancamento_quitado" || Boolean(invUrl);

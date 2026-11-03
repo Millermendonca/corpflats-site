@@ -4219,6 +4219,16 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
 export const buildTemplateActionButtons = renderTemplateButtons;
 
 // ── Disparo Oficial de Documento / PDF via Z-API (/send-document/{extension}) ─
+function resolveEffectiveZapiConfig(config, activeDb) {
+  const candidates = [config, activeDb?.zapiConfig, activeDb?.settings?.zapiConfig];
+  for (const cand of candidates) {
+    if (cand && typeof cand.instanceId === "string" && cand.instanceId.trim() && typeof cand.token === "string" && cand.token.trim()) {
+      return cand;
+    }
+  }
+  return activeDb?.zapiConfig || activeDb?.settings?.zapiConfig || config || {};
+}
+
 export async function sendZapiDocument(config, {
   phone,
   document,
@@ -4236,9 +4246,7 @@ export async function sendZapiDocument(config, {
   }
 
   const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
-  const effectiveConfig = (config && config.instanceId && config.token)
-    ? config
-    : (activeDb?.zapiConfig || activeDb?.settings?.zapiConfig || config || {});
+  const effectiveConfig = resolveEffectiveZapiConfig(config, activeDb);
 
   const policy = evaluateZapiChannelPolicy(effectiveConfig, {
     phone: cleanPhone,
@@ -4336,13 +4344,13 @@ export async function sendZapiDocument(config, {
         const matchedInvoiceOrder = Array.isArray(activeDb?.minibarOrders)
           ? activeDb.minibarOrders.find(o => o?.invoice?.invoiceFileUrl === document && o?.invoice?.fileData)
           : null;
-        if (matchedInvoiceOrder?.invoice?.fileData) {
+        if (matchedInvoiceOrder?.invoice?.fileData && !String(matchedInvoiceOrder.invoice.fileData).trim().startsWith("/") && !String(matchedInvoiceOrder.invoice.fileData).trim().startsWith("http")) {
           const rawData = String(matchedInvoiceOrder.invoice.fileData).trim();
           const mime = getMimeByExtension(extension);
-          finalDocument = rawData.startsWith("data:") ? rawData : `data:${mime};base64,${rawData}`;
+          const base64Clean = rawData.replace(/^data:.*?;base64,/i, "").trim();
+          finalDocument = `data:${mime};base64,${base64Clean}`;
           try {
             fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-            const base64Clean = rawData.replace(/^data:.*?;base64,/, "");
             fs.writeFileSync(fullPath, Buffer.from(base64Clean, "base64"));
           } catch (_) {}
         } else {
@@ -4371,6 +4379,13 @@ export async function sendZapiDocument(config, {
         } catch (e) {}
       }
     }
+  }
+
+  // Normaliza cabeçalho MIME caso document já seja data:...;base64, (ex: application/octet-stream no Windows)
+  if (typeof finalDocument === "string" && finalDocument.startsWith("data:")) {
+    const base64Clean = finalDocument.replace(/^data:.*?;base64,/i, "").trim();
+    const mime = getMimeByExtension(extension);
+    finalDocument = `data:${mime};base64,${base64Clean}`;
   }
 
   const baseUrl = effectiveConfig.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
@@ -4451,9 +4466,7 @@ export async function sendZapiMessage(config, {
   }
 
   const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
-  const effectiveConfig = (config && config.instanceId && config.token)
-    ? config
-    : (activeDb?.zapiConfig || activeDb?.settings?.zapiConfig || config || {});
+  const effectiveConfig = resolveEffectiveZapiConfig(config, activeDb);
   config = effectiveConfig;
 
   const policy = evaluateZapiChannelPolicy(config, {
@@ -13021,7 +13034,7 @@ export async function sendRestockerWorkWhatsappCheckoutSummary(db, saveDatabase,
         `🔗 *Acessar Painel:* ${serverBaseUrl}/frigobar-reposicao`;
     }
 
-    const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
+    const zapiConfig = resolveEffectiveZapiConfig(null, db);
     const sendRes = await sendZapiMessage(zapiConfig, {
       phone: workPhone,
       message,
