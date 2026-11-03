@@ -9710,8 +9710,8 @@ async function _loadDatabaseImpl() {
           console.log("[PostgreSQL] Hidratação e reconciliação concluídas com sucesso!");
           if (didChange || didAuditReconcile || didMigrateEmails || didMigratePeriodicTasks) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
-            saveDatabase();
           }
+          saveDatabase("post_hydration_prune");
           // Executa DDL complementar e tabelas auxiliares de forma escalonada (5s após hidratação) para evitar pico concorrente de RAM no PostgreSQL (256MB)
           setTimeout(async () => {
             try { await runPgDdlBootstrap(); } catch (_) {}
@@ -14494,11 +14494,45 @@ function pruneDatabase() {
     }
   }
 
-  // Trunca detalhes extensos em auditLogs para no máximo 500 caracteres para poupar memória
+  // Trunca detalhes extensos (strings e objetos aninhados com Base64/payloads gigantes) em auditLogs para poupar ~10MB de RAM/db_state
+  const compactAuditValue = (val, depth = 0) => {
+    if (val === null || val === undefined) return val;
+    if (typeof val === "string") {
+      if (val.length > 500) {
+        return val.startsWith("data:") ? `[DataURI ${val.length} chars]` : sanitizeSafeJsonString(val, 500);
+      }
+      return val;
+    }
+    if (typeof val !== "object") return val;
+    if (depth > 3) return "[Object]";
+    if (Array.isArray(val)) {
+      return val.slice(0, 20).map(item => compactAuditValue(item, depth + 1));
+    }
+    const out = {};
+    const keys = Object.keys(val);
+    for (let i = 0; i < Math.min(keys.length, 35); i++) {
+      const k = keys[i];
+      if (k.toLowerCase().includes("base64") || k === "fileData" || k === "pdfBuffer") {
+        out[k] = "[Base64 Stripped]";
+        continue;
+      }
+      out[k] = compactAuditValue(val[k], depth + 1);
+    }
+    return out;
+  };
+
   if (Array.isArray(db.auditLogs)) {
     for (const log of db.auditLogs) {
-      if (log && typeof log.details === "string" && log.details.length > 500) {
-        log.details = log.details.slice(0, 500);
+      if (!log || typeof log !== "object") continue;
+      if (log.details !== undefined) {
+        log.details = compactAuditValue(log.details, 0);
+      }
+      for (const [lk, lv] of Object.entries(log)) {
+        if (lk !== "details" && typeof lv === "string" && lv.length > 500) {
+          log[lk] = sanitizeSafeJsonString(lv, 500);
+        } else if (lk !== "details" && lk !== "actor" && lv && typeof lv === "object") {
+          log[lk] = compactAuditValue(lv, 0);
+        }
       }
     }
   }
@@ -14537,8 +14571,21 @@ function pruneDatabase() {
       if (Array.isArray(r?.guests)) {
         for (const g of r.guests) stripBase64R2AndTempFields(g);
       }
-      if (Array.isArray(r?.auditLogs) && r.auditLogs.length > 25) {
-        r.auditLogs = r.auditLogs.slice(-25);
+      if (Array.isArray(r?.auditLogs)) {
+        if (r.auditLogs.length > 25) {
+          r.auditLogs = r.auditLogs.slice(-25);
+        }
+        for (const al of r.auditLogs) {
+          if (al && typeof al === "object") {
+            if (typeof al.details === "string" && al.details.length > 500) al.details = sanitizeSafeJsonString(al.details, 500);
+            if (Array.isArray(al.changes)) {
+              for (const ch of al.changes) {
+                if (ch && typeof ch.oldValue === "string" && ch.oldValue.length > 300) ch.oldValue = sanitizeSafeJsonString(ch.oldValue, 300);
+                if (ch && typeof ch.newValue === "string" && ch.newValue.length > 300) ch.newValue = sanitizeSafeJsonString(ch.newValue, 300);
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -14649,15 +14696,22 @@ function pruneDatabase() {
     }
   }
 
-  // Compacta HTML muito grande (> 8KB) em comunicações de e-mail e remove surrogates UTF-16 órfãos
+  // Compacta HTML muito grande em comunicações de e-mail e remove surrogates UTF-16 órfãos
   if (Array.isArray(db.reservationCommunications)) {
     const cutoffComm = getOffsetDateStr(-7);
     for (const rc of db.reservationCommunications) {
       if (!rc) continue;
+      delete rc.attachments;
       const rcDate = String(rc.created_at || rc.sentAt || "").split("T")[0];
-      const maxLen = (rcDate && rcDate < cutoffComm) ? 2000 : 8000;
+      const maxLen = (rcDate && rcDate < cutoffComm) ? 1200 : 3000;
       if (typeof rc.body === "string") {
         rc.body = sanitizeSafeJsonString(rc.body, maxLen);
+      }
+      if (typeof rc.bodyHtml === "string") {
+        rc.bodyHtml = sanitizeSafeJsonString(rc.bodyHtml, maxLen);
+      }
+      if (typeof rc.html === "string") {
+        rc.html = sanitizeSafeJsonString(rc.html, maxLen);
       }
     }
   }
