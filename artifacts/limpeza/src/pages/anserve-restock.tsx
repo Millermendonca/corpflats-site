@@ -688,7 +688,9 @@ export default function AnserveRestockPage() {
             ? "Conferência Final Pós-Checkout Concluída! ✅"
             : `Consumo do dia ${formatYmdToBr(launchDateYmd)} lançado! ✅`,
           description: data.whatsappSofiaAlertSent
-            ? data.postCheckoutNotificationType === "remaining_balance"
+            ? data.postCheckoutNotificationType === "daily_summary"
+              ? `Resumo diário (R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)}) e link de acompanhamento enviados ao WhatsApp do(s) hóspede(s)!`
+              : data.postCheckoutNotificationType === "remaining_balance"
               ? `Diferença do último dia lançada! Mensagem com o saldo restante (R$ ${Number(data.statement?.pendingBalance || 0).toFixed(2)}) enviada ao WhatsApp do hóspede!`
               : `Total da estadia (R$ ${Number(data.statement?.pendingBalance || dailyLaunchCalculation.totalAmount).toFixed(2)}) enviado ao WhatsApp do hóspede com link de pagamento!`
             : `R$ ${dailyLaunchCalculation.totalAmount.toFixed(2)} adicionado ao extrato do Flat ${launchModalFlat.flatNumber}.`
@@ -1352,8 +1354,8 @@ export default function AnserveRestockPage() {
                     </span>
                     <span className="text-[11px] text-muted-foreground">
                       {launchModalFlat.isCheckedOut
-                        ? "✅ Hóspede já fez check-out: ao salvar, a Sofia enviará automaticamente o link no WhatsApp para ele pagar!"
-                        : "🏠 Hóspede no flat: os itens ficarão registrados no extrato do dia e liberados para pagamento no check-out."}
+                        ? "✅ Hóspede já fez check-out: ao salvar, o fechamento final será enviado no WhatsApp liberando o pagamento!"
+                        : "📲 Hóspede no flat: ao salvar consumo, o resumo atualizado do quarto e o link do extrato serão enviados automaticamente no WhatsApp do(s) hóspede(s)."}
                     </span>
                   </div>
                 </div>

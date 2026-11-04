@@ -62959,7 +62959,7 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
         (db.minibarInspections || []).some(
           i =>
             i &&
-            i.isFinalCheckoutInspection &&
+            (i.isFinalCheckoutInspection || i.status === "divergencia") &&
             ((resCode && i.reservationCode === resCode) ||
               (reservation.id && String(i.reservationId) === String(reservation.id)))
         ))
@@ -63192,6 +63192,7 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
 
   return {
     isCheckedOut,
+    hasFinalCheckoutInspection,
     checkoutTime: checkoutTime || null,
     dailyLaunches,
     pendingLaunchedItems,
@@ -63843,17 +63844,17 @@ if (!global.__minibarInvoiceRetryWorkerStarted) {
   }, 60000);
 }
 
-// ── F03 & F04: Contexto Mobile (QR Code do Flat + Reserva) ───────────────────
+// ── F03 & F04: Contexto Mobile (Acesso Direto por Reserva ou Flat) ──────────
 app.post("/api/minibar/flat-context", (req, res) => {
   try {
-    const { flatNumber, last4Digits } = req.body || {};
+    const { flatNumber, last4Digits, guestIndex } = req.body || {};
     const flatStr = String(flatNumber || "").trim();
     const digits = String(last4Digits || "").replace(/\D/g, "");
 
-    if (!flatStr || digits.length !== 4) {
+    if (!flatStr) {
       return res.status(400).json({
         success: false,
-        error: "Número do flat e os 4 últimos dígitos do celular são obrigatórios."
+        error: "Número do flat é obrigatório."
       });
     }
 
@@ -63865,28 +63866,52 @@ app.post("/api/minibar/flat-context", (req, res) => {
       });
     }
 
-    // Verifica os 4 últimos dígitos contra TODOS os hóspedes do flat (Titular + 2º/3º Hóspedes)
     const reservationGuests = getReservationAllGuests(reservation);
     let matchedGuest = null;
 
-    for (const g of reservationGuests) {
-      const gPhoneDigits = String(g.phone || "").replace(/\D/g, "");
-      const gDocDigits = String(g.document || "").replace(/\D/g, "");
-      if (
-        (gPhoneDigits.length >= 4 && gPhoneDigits.endsWith(digits)) ||
-        (gDocDigits.length >= 4 && gDocDigits.endsWith(digits))
-      ) {
-        matchedGuest = g;
-        break;
+    if (digits.length === 4) {
+      // Se 4 dígitos foram enviados (retrocompatibilidade), localiza o hóspede correspondente
+      for (const g of reservationGuests) {
+        const gPhoneDigits = String(g.phone || "").replace(/\D/g, "");
+        const gDocDigits = String(g.document || "").replace(/\D/g, "");
+        if (
+          (gPhoneDigits.length >= 4 && gPhoneDigits.endsWith(digits)) ||
+          (gDocDigits.length >= 4 && gDocDigits.endsWith(digits))
+        ) {
+          matchedGuest = g;
+          break;
+        }
       }
-    }
 
-    // Fallback para os campos diretos da reserva caso não esteja em reservationGuests
-    if (!matchedGuest) {
-      const phoneDigits = String(reservation.guestPhone || "").replace(/\D/g, "");
-      const docDigits = String(reservation.guestDocument || "").replace(/\D/g, "");
-      if (phoneDigits.endsWith(digits) || docDigits.endsWith(digits)) {
-        matchedGuest = reservationGuests[0] || {
+      if (!matchedGuest) {
+        const phoneDigits = String(reservation.guestPhone || "").replace(/\D/g, "");
+        const docDigits = String(reservation.guestDocument || "").replace(/\D/g, "");
+        if (phoneDigits.endsWith(digits) || docDigits.endsWith(digits)) {
+          matchedGuest = reservationGuests[0] || {
+            index: 1,
+            role: "titular",
+            guestId: reservation.guestId || null,
+            name: reservation.guestName || "Hóspede",
+            firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
+            phone: reservation.guestPhone || "",
+            email: reservation.guestEmail || "",
+            document: reservation.guestDocument || ""
+          };
+        }
+      }
+
+      if (!matchedGuest) {
+        return res.status(401).json({
+          success: false,
+          error: "Dígitos incorretos ou nenhuma reserva ativa no flat"
+        });
+      }
+    } else {
+      // Acesso direto sem necessidade de digitar 4 dígitos de CPF ou telefone
+      const reqIdx = Number(guestIndex || 0);
+      matchedGuest =
+        (reqIdx > 0 && reservationGuests.find(g => g.index === reqIdx)) ||
+        reservationGuests[0] || {
           index: 1,
           role: "titular",
           guestId: reservation.guestId || null,
@@ -63896,14 +63921,6 @@ app.post("/api/minibar/flat-context", (req, res) => {
           email: reservation.guestEmail || "",
           document: reservation.guestDocument || ""
         };
-      }
-    }
-
-    if (!matchedGuest) {
-      return res.status(401).json({
-        success: false,
-        error: "Dígitos incorretos ou nenhuma reserva ativa no flat"
-      });
     }
 
     const guestName = matchedGuest.name || reservation.guestName || "Hóspede";
@@ -63975,6 +63992,7 @@ app.post("/api/minibar/flat-context", (req, res) => {
       success: true,
       operationMode: db.minibarSettings?.operationMode || "restocker_daily_launch",
       isCheckedOut: statement.isCheckedOut,
+      hasFinalCheckoutInspection: statement.hasFinalCheckoutInspection,
       checkoutTime: statement.checkoutTime,
       dailyLaunches: statement.dailyLaunches,
       pendingLaunchedItems: statement.pendingLaunchedItems,
@@ -64112,6 +64130,7 @@ app.get("/api/minibar/reservation-context/:code", (req, res) => {
       success: true,
       operationMode: db.minibarSettings?.operationMode || "restocker_daily_launch",
       isCheckedOut: statement.isCheckedOut,
+      hasFinalCheckoutInspection: statement.hasFinalCheckoutInspection,
       checkoutTime: statement.checkoutTime,
       dailyLaunches: statement.dailyLaunches,
       pendingLaunchedItems: statement.pendingLaunchedItems,
@@ -64605,12 +64624,12 @@ app.post("/api/minibar/orders", async (req, res) => {
     const finalResCode = reservation?.code || reservationCode || "";
     const statement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
 
-    // Trava de pagamento antes do check-out quando solicitado pela tela do hóspede
-    if (requireCheckout && statement && !statement.isCheckedOut) {
+    // Trava de pagamento antes da conferência pós check-out quando solicitado pela tela do hóspede
+    if (requireCheckout && statement && !statement.hasFinalCheckoutInspection) {
       return res.status(400).json({
         success: false,
-        code: "CHECKOUT_REQUIRED",
-        error: "Pagamento disponível apenas após efetuar o check-out. Se você já realizou o check-out, clique no botão para informar sua saída."
+        code: "CHECKOUT_INSPECTION_REQUIRED",
+        error: "Pagamento disponível apenas após a conferência de consumo pós check-out."
       });
     }
 
@@ -65745,11 +65764,6 @@ app.post("/api/minibar/inspections", async (req, res) => {
     }
 
     const isFinalCheckoutInspection = Boolean(req.body?.isFinalCheckoutInspection);
-    if (reservation && isFinalCheckoutInspection) {
-      reservation.finalMinibarInspectionAt = new Date().toISOString();
-      reservation.checkoutDone = true;
-    }
-    const updatedStatement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
     const resCheckedOut = reservation
       ? isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
         Boolean(
@@ -65760,6 +65774,12 @@ app.post("/api/minibar/inspections", async (req, res) => {
           isFinalCheckoutInspection
         )
       : false;
+
+    if (reservation && (isFinalCheckoutInspection || resCheckedOut || (!isDailyLaunch && status === "divergencia"))) {
+      reservation.finalMinibarInspectionAt = new Date().toISOString();
+      reservation.checkoutDone = true;
+    }
+    const updatedStatement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
 
     // Na vistoria final pós-check-out (ou divergência final), separa automaticamente os valores
     // e deixa cada cobrança e Nota Fiscal configurada para o respectivo hóspede consumidor
@@ -65774,15 +65794,21 @@ app.post("/api/minibar/inspections", async (req, res) => {
 
     const totalPendingNow = Number(updatedStatement?.pendingBalance || 0);
     const totalPaidPreviously = Number(updatedStatement?.totalPaidAmount || 0);
+    const totalStayAmount = Number(updatedStatement?.totalLaunchedAmount || totalPendingNow || discrepancyTotalAmount || 0);
     let postCheckoutNotificationType = "none_needed";
 
-    // Regra Canônica Pós-Checkout:
-    // - O disparo de WhatsApp só ocorre após a repositora finalizar a vistoria pós-check-out (nunca em lançamento diário durante a estadia nem no botão de check-out do hóspede).
-    // - Respeita a divisão salva em tempo real ("half_and_half" ou "by_item"), enviando instruções/links individuais para cada respectivo consumidor; ou envia 100% para o Titular se nada foi marcado ("titular").
     const isInStayDailyLaunchOnly =
       Boolean(isDailyLaunch || status === "lancamento_diario") &&
       !isFinalCheckoutInspection &&
       !resCheckedOut;
+
+    const shouldSendDailySummaryNow =
+      Boolean(reservation) &&
+      db.minibarSettings?.autoNotifySofiaOnDiscrepancy !== false &&
+      bodyNotifySofia !== false &&
+      isInStayDailyLaunchOnly &&
+      discrepancyItems.length > 0 &&
+      discrepancyTotalAmount > 0;
 
     const shouldNotifySofiaNow =
       Boolean(reservation) &&
@@ -65791,7 +65817,93 @@ app.post("/api/minibar/inspections", async (req, res) => {
       (bodyNotifySofia === true || resCheckedOut || isFinalCheckoutInspection || status === "divergencia") &&
       totalPendingNow > 0;
 
-    if (shouldNotifySofiaNow) {
+    if (shouldSendDailySummaryNow) {
+      // Disparo do Resumo Diário de Consumo para TODOS os hóspedes cadastrados na reserva (Passagem "Sem Consumo" não envia nada)
+      const allGuestsInFlat = getReservationAllGuests(reservation);
+      const guestsToNotify =
+        allGuestsInFlat.length > 0
+          ? allGuestsInFlat
+          : [
+              {
+                index: 1,
+                name: reservation.guestName || "Hóspede",
+                firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
+                phone: reservation.guestPhone || "",
+                document: reservation.guestDocument || ""
+              }
+            ];
+
+      const serverBaseUrl = (process.env.SERVER_BASE_URL || db.settings?.baseUrl || "https://corpflats.com.br").replace(/\/+$/, "");
+      const todayItemsLines = discrepancyItems
+        .map(it => `• ${it.quantity}x ${it.productName} — R$ ${Number(it.totalPrice).toFixed(2)}`)
+        .join("\n");
+
+      const sentCleanPhones = new Set();
+      postCheckoutNotificationType = "daily_summary";
+
+      for (const guestSlot of guestsToNotify) {
+        const rawPhone = String(
+          guestSlot.phone || (guestSlot.index === 1 ? reservation.guestPhone : "") || ""
+        ).trim();
+        const cleanPhone = cleanWhatsAppPhone(rawPhone);
+        if (!rawPhone || cleanPhone.length < 8 || sentCleanPhones.has(cleanPhone)) {
+          continue;
+        }
+        sentCleanPhones.add(cleanPhone);
+
+        const firstName = guestSlot.firstName || (guestSlot.name || "Hóspede").trim().split(" ")[0];
+        const portalUrl = `${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar${
+          guestSlot.index > 1 ? `?guestIndex=${guestSlot.index}` : ""
+        }`;
+
+        const dailyMsg =
+          `🧊 *Resumo Atual de Consumo do Quarto — Flat ${flatStr}*\n\n` +
+          `Olá, ${firstName}! Segue seu resumo atual de consumo do quarto:\n\n` +
+          `📅 *Lançado hoje (${launchDateBr}):*\n` +
+          `${todayItemsLines}\n\n` +
+          `💰 *Total acumulado no quarto:* R$ ${totalStayAmount.toFixed(2)}\n\n` +
+          `📱 *Acesse a sua área do frigobar através do link abaixo para ver o extrato completo e o cardápio:*\n` +
+          `🔗 ${portalUrl}\n\n` +
+          `_O pagamento será liberado somente no final da estadia, após a conferência pós-check-out._`;
+
+        try {
+          if (typeof sendZapiMessage === "function") {
+            const zapiConfig = db.settings?.zapiConfig || db.zapiConfig || {};
+            sendZapiMessage(zapiConfig, {
+              phone: rawPhone,
+              message: dailyMsg,
+              channelId: "guest",
+              triggerEvent: "minibar_daily_summary",
+              db
+            });
+            whatsappSofiaAlertSent = true;
+            notifiedPhones.push(rawPhone);
+          }
+          if (typeof appendMessageToConversation === "function") {
+            appendMessageToConversation(db, {
+              phone: rawPhone,
+              text: dailyMsg,
+              type: "text",
+              sender: "Sofia (IA)"
+            });
+          }
+          whatsappMessagesSent.push({
+            guestIndex: guestSlot.index || 1,
+            guestName: guestSlot.name,
+            phone: rawPhone,
+            amount: discrepancyTotalAmount,
+            totalStayAmount,
+            orderId: chargeOrderId || updatedStatement?.primaryPendingOrder?.id || "",
+            paymentUrl: portalUrl,
+            link: portalUrl,
+            message: dailyMsg,
+            type: "daily_summary"
+          });
+        } catch (dErr) {
+          console.warn("[Minibar Daily Summary Alert] Erro ao disparar mensagem:", dErr.message);
+        }
+      }
+    } else if (shouldNotifySofiaNow) {
       const allGuestsInFlat = getReservationAllGuests(reservation);
       const splitBreakdown = updatedStatement?.splitBreakdown || null;
       const splitMode = splitBreakdown?.mode || "titular";
@@ -65843,7 +65955,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
             `${fallbackNote}\n` +
             `💰 *Valor da sua parte (${share.guestName}): R$ ${Number(share.amount).toFixed(2)}* (Total do flat: R$ ${totalPendingNow.toFixed(2)})\n` +
             `🧾 *Tomador da Nota Fiscal:* ${share.guestName}${share.document ? ` (Doc: ${share.document})` : ""}\n\n` +
-            `Para efetuar o pagamento da sua cota via PIX ou Cartão e receber sua Nota Fiscal individual, acesse seu link exclusivo abaixo:\n` +
+            `O pagamento já está liberado! Para pagar via PIX ou Cartão e receber sua Nota Fiscal individual, acesse o link abaixo:\n` +
             `🔗 ${paymentUrl}\n\n` +
             `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
 
@@ -65883,15 +65995,20 @@ app.post("/api/minibar/inspections", async (req, res) => {
           }
         }
       } else {
-        // Modo Padrão (100% Titular): se nada foi marcado, 100% vai para o Hóspede Principal (Titular) como pagador e tomador da NF
-        const titularGuest = allGuestsInFlat[0] || {
-          index: 1,
-          name: reservation.guestName || "Hóspede",
-          firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
-          phone: reservation.guestPhone || "",
-          document: reservation.guestDocument || ""
-        };
-        const targetPhone = String(titularGuest.phone || reservation.guestPhone || "").trim();
+        // Modo Padrão (100% Titular): envia o resumo pós-check-out para todos os hóspedes cadastrados na reserva
+        const guestsToNotify =
+          allGuestsInFlat.length > 0
+            ? allGuestsInFlat
+            : [
+                {
+                  index: 1,
+                  name: reservation.guestName || "Hóspede",
+                  firstName: (reservation.guestName || "Hóspede").trim().split(" ")[0],
+                  phone: reservation.guestPhone || "",
+                  document: reservation.guestDocument || ""
+                }
+              ];
+        const titularGuest = guestsToNotify[0];
         const ordQuery = linkedOrderId ? `?ord=${linkedOrderId}` : "";
         const paymentUrl = `${serverBaseUrl}/minha-reserva/${finalResCode}/frigobar${ordQuery}`;
 
@@ -65931,24 +66048,34 @@ app.post("/api/minibar/inspections", async (req, res) => {
                 .join("\n")
             : fullStayListStr;
 
-        if (targetPhone) {
-          const firstName = titularGuest.firstName || (titularGuest.name || "Hóspede").trim().split(" ")[0];
+        const sentCleanPhones = new Set();
+        for (const guestSlot of guestsToNotify) {
+          const targetPhone = String(
+            guestSlot.phone || (guestSlot.index === 1 ? reservation.guestPhone : "") || ""
+          ).trim();
+          const cleanPhone = cleanWhatsAppPhone(targetPhone);
+          if (!targetPhone || cleanPhone.length < 8 || sentCleanPhones.has(cleanPhone)) {
+            continue;
+          }
+          sentCleanPhones.add(cleanPhone);
+
+          const firstName = guestSlot.firstName || (guestSlot.name || "Hóspede").trim().split(" ")[0];
           const sofiaMsg = hasPriorPayment
             ? `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
               `Nossa equipe concluiu a conferência final do frigobar após o seu check-out.\n` +
               `✅ Já identificamos o pagamento anterior de *R$ ${totalPaidPreviously.toFixed(2)}*, porém restou o seguinte saldo referente ao consumo do último dia / conferência final:\n\n` +
               `${remainingItemsListStr}\n\n` +
-              `💰 *Saldo restante para pagamento: R$ ${totalPendingNow.toFixed(2)}*\n` +
+              `💰 *Valor restante para pagamento: R$ ${totalPendingNow.toFixed(2)}*\n` +
               `🧾 *Tomador da Nota Fiscal:* ${titularGuest.name}\n\n` +
-              `Para quitar o valor restante via PIX ou Cartão (com emissão da respectiva Nota Fiscal), acesse o link exclusivo abaixo:\n` +
+              `Para quitar o valor restante via PIX ou Cartão (com emissão da respectiva Nota Fiscal), acesse o link abaixo:\n` +
               `🔗 ${paymentUrl}\n\n` +
               `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`
             : `Olá, ${firstName}! Tudo bem? Esperamos que tenha tido uma excelente estadia no Flat ${flatStr} da CorpFlats! 🌟\n\n` +
-              `Nossa equipe de governança concluiu a conferência final do consumo de frigobar do seu apartamento:\n\n` +
+              `Nossa equipe concluiu a conferência final do consumo de frigobar do seu apartamento:\n\n` +
               `${fullStayListStr}\n\n` +
-              `💰 *Saldo total pendente para pagamento: R$ ${totalPendingNow.toFixed(2)}*\n` +
+              `💰 *Total do consumo na estadia: R$ ${totalPendingNow.toFixed(2)}*\n` +
               `🧾 *Tomador da Nota Fiscal:* ${titularGuest.name}\n\n` +
-              `Como o frigobar não pode ser faturado junto com a diária da hospedagem, você já pode efetuar o pagamento via PIX ou Cartão pelo link exclusivo abaixo:\n` +
+              `O pagamento já está liberado! Para efetuar o pagamento via PIX ou Cartão e receber sua Nota Fiscal, acesse a sua área do frigobar pelo link abaixo:\n` +
               `🔗 ${paymentUrl}\n\n` +
               `Caso tenha alguma dúvida, estamos à disposição! Tenha um excelente dia! ✨`;
 
@@ -65974,8 +66101,8 @@ app.post("/api/minibar/inspections", async (req, res) => {
               });
             }
             whatsappMessagesSent.push({
-              guestIndex: 1,
-              guestName: titularGuest.name,
+              guestIndex: guestSlot.index || 1,
+              guestName: guestSlot.name,
               phone: targetPhone,
               amount: totalPendingNow,
               orderId: linkedOrderId,

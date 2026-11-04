@@ -32,7 +32,6 @@ import {
   UserCheck,
   UserPlus,
   Edit3,
-  LogOut,
   ChevronDown,
   ChevronUp
 } from "lucide-react";
@@ -212,14 +211,14 @@ export default function GuestMinibar() {
   const [courtesyConsumed, setCourtesyConsumed] = useState(false);
 
   // Novo Modo Operacional: Extrato Diário Lançado pela Repositora + Trava de Pagamento Pré-Checkout
-  const [isCheckedOut, setIsCheckedOut] = useState<boolean>(false);
-  const [checkoutTime, setCheckoutTime] = useState<string>("");
+  const [, setIsCheckedOut] = useState<boolean>(false);
+  const [hasFinalCheckoutInspection, setHasFinalCheckoutInspection] = useState<boolean>(false);
+  const [, setCheckoutTime] = useState<string>("");
   const [dailyLaunches, setDailyLaunches] = useState<DailyLaunchGroup[]>([]);
   const [pendingLaunchedItems, setPendingLaunchedItems] = useState<PendingLaunchedItem[]>([]);
   const [pendingBalance, setPendingBalance] = useState<number>(0);
   const [totalLaunchedAmount, setTotalLaunchedAmount] = useState<number>(0);
-  const [totalPaidAmount, setTotalPaidAmount] = useState<number>(0);
-  const [confirmingCheckout, setConfirmingCheckout] = useState<boolean>(false);
+  const [, setTotalPaidAmount] = useState<number>(0);
   // Cardápio Digital recolhido por padrão e posicionado abaixo do extrato
   const [showReferenceCatalog, setShowReferenceCatalog] = useState<boolean>(false);
   const [menuCategoryFilter, setMenuCategoryFilter] = useState<string>("todos");
@@ -231,7 +230,6 @@ export default function GuestMinibar() {
   const [, setIsSavingSplit] = useState<boolean>(false);
   const [, setSplitSavedPulse] = useState<boolean>(false);
   const [expandedUnitItemKey, setExpandedUnitItemKey] = useState<string | null>(null);
-  const [expandedDetailItemKey, setExpandedDetailItemKey] = useState<string | null>(null);
 
   // Pagamento Parcial / Individual
   const [partialMode, setPartialMode] = useState<PartialPaymentMode>("configured_split");
@@ -348,6 +346,7 @@ export default function GuestMinibar() {
 
   const applyStatementData = (data: any) => {
     setIsCheckedOut(Boolean(data.isCheckedOut));
+    setHasFinalCheckoutInspection(Boolean(data.hasFinalCheckoutInspection));
     setCheckoutTime(data.checkoutTime || "");
     const launches: DailyLaunchGroup[] = Array.isArray(data.dailyLaunches) ? data.dailyLaunches : [];
     const pendingList: PendingLaunchedItem[] = Array.isArray(data.pendingLaunchedItems) ? data.pendingLaunchedItems : [];
@@ -746,7 +745,34 @@ export default function GuestMinibar() {
     }
   };
 
-  // Carrega contexto por flat e 4 dígitos (OTP)
+  // Carrega contexto direto por número do flat (sem exigir 4 dígitos de CPF/celular)
+  const loadContextByFlatNumber = async (flatNum: string) => {
+    setStep("loading");
+    setOtpError(null);
+    setManualError(null);
+    try {
+      const res = await fetch("/api/minibar/flat-context", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatNumber: flatNum
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        applyContextResponse(data, data.reservationCode || flatNum);
+        setStep("catalog");
+      } else {
+        setManualError(data.error || `Nenhuma reserva ativa ou recente encontrada para o Flat ${flatNum}.`);
+        setStep("manual_lookup");
+      }
+    } catch {
+      setManualError("Erro de comunicação ao carregar o extrato do flat.");
+      setStep("manual_lookup");
+    }
+  };
+
+  // Carrega contexto por flat e 4 dígitos (mantido apenas por compatibilidade reversa)
   const verifyFlatContextWithDigits = async (flatNum: string, digits: string) => {
     if (digits.length !== 4) return;
     setOtpLoading(true);
@@ -765,29 +791,9 @@ export default function GuestMinibar() {
       const data = await res.json();
       if (res.ok && data.success) {
         applyContextResponse(data, data.reservationCode || flatNum);
-
-        try {
-          sessionStorage.setItem(
-            `gfm_minibar_auth_${flatNum}`,
-            JSON.stringify({
-              flatNumber: flatNum,
-              reservationCode: data.reservationCode,
-              last4Digits: digits,
-              matchedGuestIndex: data.matchedGuestIndex || 1,
-              authAt: Date.now()
-            })
-          );
-        } catch (_) {}
-
         setStep("catalog");
       } else {
-        if (res.status === 401) {
-          setOtpError(data.error || "Os 4 dígitos não coincidem com o celular ou documento de nenhum hóspede cadastrado no flat.");
-        } else if (res.status === 404) {
-          setOtpError(data.error || `Nenhuma reserva ativa ou recente encontrada para o Flat ${flatNum}.`);
-        } else {
-          setOtpError(data.error || "Erro ao validar contexto do flat.");
-        }
+        setOtpError(data.error || "Erro ao validar contexto do flat.");
       }
     } catch {
       setOtpError("Falha na conexão ao validar os dígitos. Verifique sua internet.");
@@ -796,43 +802,45 @@ export default function GuestMinibar() {
     }
   };
 
-  // Recarrega extrato silenciosamente após pagamento
+  // Recarrega extrato silenciosamente
   const refreshCurrentContextSilently = async () => {
     const code = reservation?.reservationCode || codeFromUrl;
-    if (!code) return;
-    try {
-      const res = await fetch(
-        `/api/minibar/reservation-context/${encodeURIComponent(code)}?guestIndex=${encodeURIComponent(
-          String(selectedGuestIndex || 1)
-        )}`
-      );
-      const data = await res.json();
-      if (res.ok && data.success) {
-        applyContextResponse(data, code);
-      }
-    } catch (_) {}
+    if (code) {
+      try {
+        const res = await fetch(
+          `/api/minibar/reservation-context/${encodeURIComponent(code)}?guestIndex=${encodeURIComponent(
+            String(selectedGuestIndex || 1)
+          )}`
+        );
+        const data = await res.json();
+        if (res.ok && data.success) {
+          applyContextResponse(data, code);
+        }
+      } catch (_) {}
+      return;
+    }
+    const flatNum = reservation?.flatNumber || flatFromUrl;
+    if (flatNum) {
+      try {
+        const res = await fetch("/api/minibar/flat-context", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ flatNumber: flatNum })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          applyContextResponse(data, data.reservationCode || flatNum);
+        }
+      } catch (_) {}
+    }
   };
 
-  // Inicialização Baseada na URL
+  // Inicialização Baseada na URL (acesso direto por código da reserva ou número do flat, sem OTP)
   useEffect(() => {
     if (codeFromUrl) {
       loadContextByReservationCode(codeFromUrl);
     } else if (flatFromUrl) {
-      let cachedAuth: any = null;
-      try {
-        const stored = sessionStorage.getItem(`gfm_minibar_auth_${flatFromUrl}`);
-        if (stored) {
-          cachedAuth = JSON.parse(stored);
-        }
-      } catch (_) {}
-
-      if (cachedAuth?.last4Digits) {
-        verifyFlatContextWithDigits(flatFromUrl, cachedAuth.last4Digits);
-      } else if (cachedAuth?.reservationCode) {
-        loadContextByReservationCode(cachedAuth.reservationCode);
-      } else {
-        setStep("otp_gate");
-      }
+      loadContextByFlatNumber(flatFromUrl);
     } else {
       setStep("manual_lookup");
     }
@@ -911,56 +919,6 @@ export default function GuestMinibar() {
       } catch (_) {}
     }, 2500);
   };
-
-  // Botão Canônico Integrado no Card Compacto do Topo: informar check-out
-  // Importante: Nunca dispara WhatsApp de cobrança de frigobar aqui (o WhatsApp só é enviado após a vistoria final da repositora)
-  const handleConfirmGuestCheckout = async () => {
-    if (confirmingCheckout) return;
-    setConfirmingCheckout(true);
-    setOrderError(null);
-
-    try {
-      const res = await fetch("/api/public/minibar/confirm-checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          flatNumber: reservation?.flatNumber || flatFromUrl,
-          reservationCode: reservation?.reservationCode || codeFromUrl,
-          guestName: activeConsumerGuest.name
-        })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setIsCheckedOut(true);
-        setCheckoutTime(data.checkoutTime || "");
-        if (data.statement) {
-          applyStatementData(data.statement);
-        }
-      } else {
-        setOrderError(data.error || "Não foi possível registrar o check-out agora.");
-      }
-    } catch {
-      setOrderError("Erro de conexão ao informar o check-out. Tente novamente.");
-    } finally {
-      setConfirmingCheckout(false);
-    }
-  };
-
-  // Lista única e limpa de todos os itens lançados no extrato
-  const allLaunchedItems = useMemo(() => {
-    const list: (DailyLaunchGroup["items"][number] & { resolvedKey: string })[] = [];
-    dailyLaunches.forEach((group) => {
-      group.items.forEach((item, idx) => {
-        const resolvedKey = item.itemKey || `${item.orderId}_${item.productId}_${idx}`;
-        list.push({
-          ...item,
-          launchDateBr: item.launchDateBr || group.dateBr,
-          resolvedKey
-        });
-      });
-    });
-    return list;
-  }, [dailyLaunches]);
 
   // Cálculo do valor e itens a pagar de acordo com a divisão configurada na reserva
   const paymentSelectionSummary = useMemo(() => {
@@ -1116,8 +1074,8 @@ export default function GuestMinibar() {
 
   // Submissão do Pagamento no Checkout
   const handleCheckoutSubmit = async () => {
-    if (!isCheckedOut) {
-      setOrderError("O pagamento fica disponível somente após efetuar o check-out.");
+    if (!hasFinalCheckoutInspection) {
+      setOrderError("O pagamento fica disponível somente após a conferência de consumo pós check-out.");
       return;
     }
 
@@ -1394,7 +1352,7 @@ export default function GuestMinibar() {
                 if (val.toUpperCase().startsWith("RES-") || val.length >= 6) {
                   loadContextByReservationCode(val);
                 } else {
-                  setLocation(`/frigobar/flat/${val}`);
+                  loadContextByFlatNumber(val);
                 }
               }}
               className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold rounded-xl"
@@ -1409,10 +1367,11 @@ export default function GuestMinibar() {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 4. TELA PRINCIPAL: EXTRATO DE CONSUMO POR DIA + PAGAMENTO APÓS CHECK-OUT
+  // 4. TELA PRINCIPAL: EXTRATO DE CONSUMO POR DIA + PAGAMENTO APÓS CONFERÊNCIA PÓS CHECK-OUT
   // ─────────────────────────────────────────────────────────────────────────────
   if (step === "catalog") {
-    const canPayNow = isCheckedOut && pendingBalance > 0 && paymentSelectionSummary.amountToPay > 0;
+    const isPaymentReleased = Boolean(hasFinalCheckoutInspection);
+    const canPayNow = isPaymentReleased && pendingBalance > 0 && paymentSelectionSummary.amountToPay > 0;
     const sharesList: any[] = Array.isArray(splitBreakdown?.shares) ? splitBreakdown.shares : [];
 
     return (
@@ -1432,13 +1391,13 @@ export default function GuestMinibar() {
                   <Badge
                     variant="outline"
                     className={
-                      isCheckedOut
+                      isPaymentReleased
                         ? "bg-emerald-950/70 text-emerald-300 border-emerald-700/80 text-[10px] font-bold"
                         : "bg-cyan-950/60 text-cyan-300 border-cyan-800/80 text-[10px] font-bold"
                     }
                   >
-                    {isCheckedOut
-                      ? `✓ Check-out ${checkoutTime ? `às ${checkoutTime}` : "Realizado"}`
+                    {isPaymentReleased
+                      ? "✓ Conferência Finalizada"
                       : `Reserva ${reservation?.reservationCode || ""}`}
                   </Badge>
                 </div>
@@ -1449,6 +1408,22 @@ export default function GuestMinibar() {
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowReferenceCatalog(true);
+                  setTimeout(() => {
+                    document
+                      .getElementById("minibar-catalog-section")
+                      ?.scrollIntoView({ behavior: "smooth" });
+                  }, 100);
+                }}
+                className="text-[11px] font-bold text-cyan-300 border-cyan-800/70 bg-cyan-950/40 hover:bg-cyan-900/50 rounded-xl h-8 px-2.5"
+              >
+                <Sparkles className="w-3.5 h-3.5 mr-1 text-cyan-400" />
+                <span>Ver Cardápio</span>
+              </Button>
               {reservation?.reservationCode && (
                 <Button
                   variant="ghost"
@@ -1464,38 +1439,6 @@ export default function GuestMinibar() {
         </header>
 
         <main className="max-w-xl mx-auto p-4 sm:p-6 space-y-4">
-          {/* ── 1. Barra Compacta Pré-Check-out (Consumo lançado diariamente • Pagamento liberado no check-out) ── */}
-          {!isCheckedOut && (
-            <Card className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                <span className="text-xs font-medium text-slate-300 truncate">
-                  Pagamento liberado no check-out
-                </span>
-              </div>
-
-              <Button
-                type="button"
-                title="Já efetuei o check-out — Liberar Pagamento"
-                onClick={handleConfirmGuestCheckout}
-                disabled={confirmingCheckout}
-                className="h-9 px-3.5 bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 text-slate-950 font-black text-xs rounded-xl shrink-0 flex items-center gap-1.5 transition-all"
-              >
-                {confirmingCheckout ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Liberando...</span>
-                  </>
-                ) : (
-                  <>
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Já fiz check-out</span>
-                  </>
-                )}
-              </Button>
-            </Card>
-          )}
-
           {orderError && (
             <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-xs text-rose-300 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
@@ -1503,35 +1446,42 @@ export default function GuestMinibar() {
             </div>
           )}
 
-          {/* ── 2. Totais Financeiros em Destaque no Topo ── */}
-          <div className="grid grid-cols-3 gap-2.5">
-            <Card className="bg-slate-900 border-slate-800 rounded-2xl p-3 text-center">
-              <span className="text-[10px] font-bold text-slate-400 uppercase block">Total Lançado</span>
-              <strong className="text-sm sm:text-base font-black text-white mt-0.5 block">
+          {/* ── 1. Resumo Único do Consumo do Quarto + Status de Pagamento ── */}
+          <Card className="bg-slate-900 border-slate-800 rounded-3xl p-4 sm:p-5 flex items-center justify-between gap-4 shadow-lg">
+            <div className="space-y-1">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wide block">
+                Total Consumido no Quarto
+              </span>
+              <strong className="text-2xl sm:text-3xl font-black text-cyan-400 font-mono block">
                 {formatBRL(totalLaunchedAmount)}
               </strong>
-            </Card>
-            <Card className="bg-slate-900 border-slate-800 rounded-2xl p-3 text-center">
-              <span className="text-[10px] font-bold text-emerald-400 uppercase block">Já Pago</span>
-              <strong className="text-sm sm:text-base font-black text-emerald-400 mt-0.5 block">
-                {formatBRL(totalPaidAmount)}
-              </strong>
-            </Card>
-            <Card className="bg-slate-900 border-slate-800 rounded-2xl p-3 text-center">
-              <span className="text-[10px] font-bold text-amber-400 uppercase block">Saldo Pendente</span>
-              <strong className="text-sm sm:text-base font-black text-amber-300 mt-0.5 block">
-                {formatBRL(pendingBalance)}
-              </strong>
-            </Card>
-          </div>
+              <span className="text-[11px] text-slate-400 flex items-center gap-1.5 pt-0.5">
+                {isPaymentReleased ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="text-emerald-300 font-semibold">
+                      Conferência pós check-out concluída • Pagamento liberado
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>
+                      Liberado para pagamento após a conferência pós check-out
+                    </span>
+                  </>
+                )}
+              </span>
+            </div>
+          </Card>
 
-          {/* ── 3. Extrato de Consumo por Dia & Divisão ── */}
+          {/* ── 2. Extrato de Consumo por Dia & Divisão ── */}
           <Card className="bg-slate-900 border-slate-800 rounded-3xl p-4 sm:p-5 space-y-4 shadow-xl">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Receipt className="w-4 h-4 text-cyan-400 shrink-0" />
                 <h2 className="text-sm sm:text-base font-black text-white">
-                  Extrato de Consumo
+                  Extrato de Consumo por Dia
                 </h2>
               </div>
               <Button
@@ -1592,177 +1542,189 @@ export default function GuestMinibar() {
               </div>
             )}
 
-            {/* ── Lista Única e Limpa de Itens Consumidos (Detalhes só ao clicar no item) ── */}
-            {allLaunchedItems.length === 0 ? (
+            {/* ── Extrato Agrupado por Dia com Preço Unitário e Subtotal Visíveis ── */}
+            {dailyLaunches.length === 0 ? (
               <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80 text-center">
                 <p className="text-xs font-medium text-slate-400">
                   Nenhum consumo lançado até o momento.
                 </p>
               </div>
             ) : (
-              <div className="rounded-2xl bg-slate-950/80 border border-slate-800 divide-y divide-slate-800/60 px-3.5">
-                {allLaunchedItems.map((item) => {
-                  const isPaid = item.paymentStatus === "pago";
-                  const itemKey = item.resolvedKey;
-                  const remQty = item.remainingQuantity ?? item.quantity;
-                  const canAssignItem =
-                    pendingBalance > 0 &&
-                    splitMode === "by_item" &&
-                    !item.isCourtesy &&
-                    !isPaid &&
-                    remQty > 0;
-                  const currentAlloc = itemAssignments[itemKey] || item.allocation?.allocations || {};
-                  const isExplicitlyMarked =
-                    Boolean(itemAssignments[itemKey]) || Boolean(item.allocation?.isExplicitlyMarked);
-                  const isExpandedUnits = expandedUnitItemKey === itemKey;
-                  const isDetailOpen = expandedDetailItemKey === itemKey;
+              <div className="space-y-3">
+                {dailyLaunches.map((group) => (
+                  <div
+                    key={group.date}
+                    className="rounded-2xl bg-slate-950/80 border border-slate-800 overflow-hidden"
+                  >
+                    <div className="px-3.5 py-2 bg-slate-900/70 border-b border-slate-800/80 flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-200">
+                        📅 Dia {group.dateBr}
+                      </span>
+                      <span className="font-bold text-cyan-300 font-mono">
+                        Subtotal: {formatBRL(group.totalDayAmount)}
+                      </span>
+                    </div>
 
-                  return (
-                    <div key={itemKey} className="py-2.5 space-y-1.5 text-xs">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedDetailItemKey((prev) => (prev === itemKey ? null : itemKey))
-                        }
-                        className="w-full flex items-center justify-between gap-2 text-left group"
-                      >
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="font-bold text-white truncate">
-                            {item.quantity}x {item.productName}
-                          </span>
-                          {isDetailOpen ? (
-                            <ChevronUp className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                          ) : (
-                            <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0 opacity-70 group-hover:opacity-100" />
-                          )}
-                        </div>
+                    <div className="divide-y divide-slate-800/60 px-3.5">
+                      {group.items.map((item, idx) => {
+                        const isPaid = item.paymentStatus === "pago";
+                        const itemKey =
+                          item.itemKey || `${item.orderId}_${item.productId}_${idx}`;
+                        const remQty = item.remainingQuantity ?? item.quantity;
+                        const canAssignItem =
+                          pendingBalance > 0 &&
+                          splitMode === "by_item" &&
+                          !item.isCourtesy &&
+                          !isPaid &&
+                          remQty > 0;
+                        const currentAlloc =
+                          itemAssignments[itemKey] || item.allocation?.allocations || {};
+                        const isExplicitlyMarked =
+                          Boolean(itemAssignments[itemKey]) ||
+                          Boolean(item.allocation?.isExplicitlyMarked);
+                        const isExpandedUnits = expandedUnitItemKey === itemKey;
 
-                        <strong
-                          className={
-                            item.isCourtesy || isPaid
-                              ? "text-emerald-400 font-mono shrink-0"
-                              : "text-cyan-400 font-mono shrink-0"
-                          }
-                        >
-                          {item.isCourtesy ? "Cortesia" : formatBRL(item.totalPrice)}
-                        </strong>
-                      </button>
+                        return (
+                          <div key={itemKey} className="py-2.5 space-y-1.5 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <span className="font-bold text-white block truncate">
+                                  {item.quantity}x {item.productName}
+                                </span>
+                                <span className="text-[11px] text-slate-400 block">
+                                  {item.isCourtesy
+                                    ? "Gratuito (Cortesia)"
+                                    : `${formatBRL(item.unitPrice)} un.`}
+                                </span>
+                              </div>
 
-                      {isDetailOpen && (
-                        <div className="text-[11px] text-slate-400 pl-0.5 animate-in fade-in">
-                          Lançado em {item.launchDateBr || "—"} •{" "}
-                          {item.isCourtesy ? "Gratuito" : `${formatBRL(item.unitPrice)} un.`} •{" "}
-                          {item.isCourtesy ? "Cortesia" : isPaid ? "Pago" : "A pagar"}
-                        </div>
-                      )}
-
-                      {/* Controles rápidos de atribuição apenas no modo "Marcar por Item" */}
-                      {canAssignItem && (
-                        <div className="pt-1 flex flex-col gap-2">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {reservationGuests.map((g) => {
-                              const gQty = Number(currentAlloc[g.index] || 0);
-                              const isFullAssignedToG = isExplicitlyMarked && gQty === remQty && remQty > 0;
-                              const isPartialAssignedToG = gQty > 0 && gQty < remQty;
-                              const isDefaultFallbackToG = !isExplicitlyMarked && g.index === 1;
-                              return (
-                                <button
-                                  key={g.index}
-                                  type="button"
-                                  onClick={() => handleQuickAssignItemToGuest(itemKey, remQty, g.index)}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all flex items-center gap-1 ${
-                                    isFullAssignedToG
-                                      ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-sm"
-                                      : isPartialAssignedToG
-                                      ? "bg-cyan-950/80 text-cyan-300 border-cyan-500/60"
-                                      : isDefaultFallbackToG
-                                      ? "bg-slate-900 text-amber-300 border-amber-500/40 hover:border-cyan-400"
-                                      : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
-                                  }`}
-                                >
-                                  <UserCheck className="w-3 h-3 shrink-0" />
-                                  <span>
-                                    {g.firstName || g.name.split(" ")[0]}
-                                    {gQty > 0 && remQty > 1 ? ` (${gQty}x)` : ""}
-                                  </span>
-                                </button>
-                              );
-                            })}
-
-                            {remQty > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => handleQuickDivideItemUnits(itemKey, remQty, currentAlloc)}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
-                                  isExpandedUnits
-                                    ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
-                                    : "bg-slate-900 text-cyan-400 border-slate-700 hover:border-cyan-500/50"
-                                }`}
+                              <strong
+                                className={
+                                  item.isCourtesy || isPaid
+                                    ? "text-emerald-400 font-mono shrink-0"
+                                    : "text-cyan-400 font-mono shrink-0"
+                                }
                               >
-                                ÷ Dividir {remQty} un.
-                              </button>
+                                {item.isCourtesy ? "Cortesia" : formatBRL(item.totalPrice)}
+                              </strong>
+                            </div>
+
+                            {/* Controles rápidos de atribuição apenas no modo "Marcar por Item" */}
+                            {canAssignItem && (
+                              <div className="pt-1 flex flex-col gap-2">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {reservationGuests.map((g) => {
+                                    const gQty = Number(currentAlloc[g.index] || 0);
+                                    const isFullAssignedToG =
+                                      isExplicitlyMarked && gQty === remQty && remQty > 0;
+                                    const isPartialAssignedToG = gQty > 0 && gQty < remQty;
+                                    const isDefaultFallbackToG =
+                                      !isExplicitlyMarked && g.index === 1;
+                                    return (
+                                      <button
+                                        key={g.index}
+                                        type="button"
+                                        onClick={() =>
+                                          handleQuickAssignItemToGuest(itemKey, remQty, g.index)
+                                        }
+                                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all flex items-center gap-1 ${
+                                          isFullAssignedToG
+                                            ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-sm"
+                                            : isPartialAssignedToG
+                                            ? "bg-cyan-950/80 text-cyan-300 border-cyan-500/60"
+                                            : isDefaultFallbackToG
+                                            ? "bg-slate-900 text-amber-300 border-amber-500/40 hover:border-cyan-400"
+                                            : "bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600"
+                                        }`}
+                                      >
+                                        <UserCheck className="w-3 h-3 shrink-0" />
+                                        <span>
+                                          {g.firstName || g.name.split(" ")[0]}
+                                          {gQty > 0 && remQty > 1 ? ` (${gQty}x)` : ""}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+
+                                  {remQty > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleQuickDivideItemUnits(itemKey, remQty, currentAlloc)
+                                      }
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                                        isExpandedUnits
+                                          ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
+                                          : "bg-slate-900 text-cyan-400 border-slate-700 hover:border-cyan-500/50"
+                                      }`}
+                                    >
+                                      ÷ Dividir {remQty} un.
+                                    </button>
+                                  )}
+                                </div>
+
+                                {remQty > 1 && isExpandedUnits && (
+                                  <div className="p-2.5 rounded-xl bg-slate-900/95 border border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {reservationGuests.map((g) => {
+                                      const gQty = Number(currentAlloc[g.index] || 0);
+                                      return (
+                                        <div
+                                          key={g.index}
+                                          className="flex items-center justify-between bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800"
+                                        >
+                                          <span className="text-[11px] font-bold text-slate-200 truncate">
+                                            {g.firstName || g.name}
+                                          </span>
+                                          <div className="flex items-center gap-1.5">
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                handleAdjustItemUnitForGuest(
+                                                  itemKey,
+                                                  remQty,
+                                                  g.index,
+                                                  -1,
+                                                  currentAlloc
+                                                )
+                                              }
+                                              disabled={gQty <= 0}
+                                              className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white flex items-center justify-center"
+                                            >
+                                              <Minus className="w-3 h-3" />
+                                            </button>
+                                            <span className="w-5 text-center text-xs font-black text-cyan-400">
+                                              {gQty}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                handleAdjustItemUnitForGuest(
+                                                  itemKey,
+                                                  remQty,
+                                                  g.index,
+                                                  1,
+                                                  currentAlloc
+                                                )
+                                              }
+                                              disabled={gQty >= remQty}
+                                              className="w-6 h-6 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center"
+                                            >
+                                              <Plus className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
-
-                          {remQty > 1 && isExpandedUnits && (
-                            <div className="p-2.5 rounded-xl bg-slate-900/95 border border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              {reservationGuests.map((g) => {
-                                const gQty = Number(currentAlloc[g.index] || 0);
-                                return (
-                                  <div
-                                    key={g.index}
-                                    className="flex items-center justify-between bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-800"
-                                  >
-                                    <span className="text-[11px] font-bold text-slate-200 truncate">
-                                      {g.firstName || g.name}
-                                    </span>
-                                    <div className="flex items-center gap-1.5">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleAdjustItemUnitForGuest(
-                                            itemKey,
-                                            remQty,
-                                            g.index,
-                                            -1,
-                                            currentAlloc
-                                          )
-                                        }
-                                        disabled={gQty <= 0}
-                                        className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white flex items-center justify-center"
-                                      >
-                                        <Minus className="w-3 h-3" />
-                                      </button>
-                                      <span className="w-5 text-center text-xs font-black text-cyan-400">
-                                        {gQty}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleAdjustItemUnitForGuest(
-                                            itemKey,
-                                            remQty,
-                                            g.index,
-                                            1,
-                                            currentAlloc
-                                          )
-                                        }
-                                        disabled={gQty >= remQty}
-                                        className="w-6 h-6 rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center"
-                                      >
-                                        <Plus className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                        );
+                      })}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             )}
 
@@ -1850,7 +1812,7 @@ export default function GuestMinibar() {
                               {isSharePaid && guestAmount <= 0 ? "R$ 0,00" : formatBRL(guestAmount)}
                             </strong>
 
-                            {isCheckedOut && guestAmount > 0 && (
+                            {isPaymentReleased && guestAmount > 0 && (
                               <Button
                                 type="button"
                                 size="sm"
@@ -2076,7 +2038,7 @@ export default function GuestMinibar() {
           )}
 
           {/* ── 5. Cardápio Digital do Frigobar (Recolhido por Padrão e Posicionado Abaixo do Extrato) ── */}
-          <Card className="bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/30 border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+          <Card id="minibar-catalog-section" className="bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/30 border-slate-800 rounded-3xl overflow-hidden shadow-xl">
             <button
               type="button"
               onClick={() => setShowReferenceCatalog((v) => !v)}
@@ -2254,13 +2216,13 @@ export default function GuestMinibar() {
           </Card>
         </main>
 
-        {/* ── Barra Fixa Inferior (Bloqueada antes do Check-out / Liberada após Check-out) ── */}
+        {/* ── Barra Fixa Inferior (Bloqueada antes da Conferência Pós Check-out / Liberada após Conferência) ── */}
         <div className="fixed bottom-0 inset-x-0 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 p-4 z-40 shadow-2xl">
           <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
             <div>
               <span className="text-[11px] text-slate-400 block font-medium">
-                {!isCheckedOut
-                  ? "🔒 Pagamento após o check-out"
+                {!isPaymentReleased
+                  ? "🔒 Pagamento após conferência pós check-out"
                   : pendingBalance <= 0
                   ? "Tudo quitado nesta estadia"
                   : `Total a pagar (${activeConsumerGuest.firstName})`}
@@ -2270,14 +2232,14 @@ export default function GuestMinibar() {
               </div>
             </div>
 
-            {!isCheckedOut ? (
+            {!isPaymentReleased ? (
               <Button
                 type="button"
                 disabled
                 className="h-12 px-4 sm:px-5 rounded-2xl font-bold text-xs bg-slate-800 text-amber-300/90 border border-amber-500/30 cursor-not-allowed flex items-center gap-2 opacity-95"
               >
                 <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>Disponível após Check-out</span>
+                <span>Após Conferência Check-out</span>
               </Button>
             ) : (
               <Button
