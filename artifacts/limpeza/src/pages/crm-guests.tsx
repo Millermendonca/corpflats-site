@@ -1446,6 +1446,11 @@ export default function CrmGuests() {
                                       🏢 Mensalista
                                     </Badge>
                                   )}
+                                  {(g.isSmoker || g.smokedInRoom || (g.tags || []).includes("Fumante")) && (
+                                    <Badge className="text-[9px] bg-rose-600 text-white font-black px-1.5 py-0.2 rounded-md">
+                                      🚬 Fumante
+                                    </Badge>
+                                  )}
                                 </div>
                                 {g.lastStayDate && (
                                   <span className="text-[10px] text-muted-foreground">
@@ -2121,6 +2126,11 @@ export default function CrmGuests() {
                       ) : (
                         <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-400/50 py-0.5 px-2">
                           Pendente FNHR
+                        </Badge>
+                      )}
+                      {(activeGuest?.isSmoker || activeGuest?.smokedInRoom || (activeGuest?.tags || []).includes("Fumante")) && (
+                        <Badge className="text-[10px] bg-rose-600 text-white font-bold gap-1 py-0.5 px-2">
+                          🚬 Hóspede Fumante
                         </Badge>
                       )}
                       {(activeGuest?.tags || []).map((t: string) => (

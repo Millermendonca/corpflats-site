@@ -5602,6 +5602,15 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                         👶 Menor
                                       </span>
                                     )}
+                                    {(resItem.isSmoker || resItem.smokerGuestAlert || resItem.guestSmoked) && (
+                                      <span 
+                                        data-smoker-alert-badge="true"
+                                        title="Alerta para equipe: Hóspede com histórico de fumo no quarto" 
+                                        className="shrink-0 text-[9px] px-1.5 py-0.2 bg-rose-600 text-white font-black rounded shadow-xs flex items-center gap-0.5"
+                                      >
+                                        🚬 Fumante
+                                      </span>
+                                    )}
                                     {resItem.riskAttentionAlert && !resItem.hasMinor && !(resItem.isCamposResident || isCamposCard) && (
                                       <span title={resItem.riskAttentionReason || "Atenção: Hóspede jovem < 30 anos (Campos dos Goytacazes)"} className="shrink-0 text-xs px-1 py-0.2 bg-amber-400 text-slate-950 rounded font-black shadow-xs">
                                         ⚠️ &lt;30a
@@ -5990,6 +5999,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       📍 Campos/RJ
                     </Badge>
                   )}
+                  {(selectedRes?.isSmoker || selectedRes?.smokerGuestAlert || selectedRes?.guestSmoked) && (
+                    <Badge className="text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shrink-0 gap-1 shadow-xs">
+                      🚬 Hóspede Fumante
+                    </Badge>
+                  )}
                 </div>
               </div>
               <DialogDescription className="text-xs text-muted-foreground">
@@ -6068,6 +6082,26 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                 {(resModalTab === "reservation" || resModalTab === "details") && (
 
               <div className="py-2.5 space-y-3">
+                {/* Banner de Alerta para Equipe: Hóspede com apontamento de Fumante */}
+                {(selectedRes?.isSmoker || selectedRes?.smokerGuestAlert || selectedRes?.guestSmoked) && (
+                  <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-700 dark:text-rose-300 flex items-center justify-center shrink-0 text-base">
+                        🚬
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-rose-950 dark:text-rose-100 flex items-center gap-1.5">
+                          <span>Alerta da Equipe: Hóspede Fumante</span>
+                          <Badge className="bg-rose-600 text-white text-[9px] font-black px-1.5 py-0">Atenção</Badge>
+                        </div>
+                        <p className="text-[11px] text-rose-800 dark:text-rose-300 mt-0.5 leading-snug">
+                          {selectedRes.smokingAlert || "Este hóspede possui histórico de fumo no quarto registrado pela governança em estadia anterior."}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Banner de Radar Operacional: Hóspede de Campos dos Goytacazes/RJ */}
                 {(formIsCamposResident || selectedRes?.isCamposResident || isResCamposResident(selectedRes, data.guests.find(g => g.id === selectedRes?.guestId))) && (
                   <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">

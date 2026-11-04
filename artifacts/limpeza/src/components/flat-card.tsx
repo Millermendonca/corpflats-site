@@ -261,6 +261,129 @@ export function FlatCard({
   const [staffList, setStaffList] = useState<Array<{ id: number; username: string; name: string; role: string }>>([])
   const [selectedMaidId, setSelectedMaidId] = useState<string>("")
   const [adminCleanSubmitting, setAdminCleanSubmitting] = useState(false)
+  const [adminSmokedInRoom, setAdminSmokedInRoom] = useState(false)
+
+  // Pergunta em destaque sobre fumo na finalização da limpeza (card da camareira)
+  const [showSmokingPrompt, setShowSmokingPrompt] = useState(false)
+  const hasSmoked = Boolean(request?.smokedInRoom || flat?.smokedInRoom || request?.guestSmoked || flat?.guestSmoked)
+
+  const handleFinishCleaningWithSmoking = async (smoked: boolean) => {
+    setIsProcessing(true)
+    try {
+      let activeReqId = request?.id || flat?.cleaningRequest?.id
+      if (!activeReqId) {
+        const createRes = await fetch("/api/cleaning/requests/manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ flatId: flat.flatId, requestDate: date }),
+          credentials: "include"
+        })
+        const created = await createRes.json()
+        activeReqId = created.id
+      }
+
+      if (activeReqId) {
+        const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            status: "clean",
+            flatNumber: flat.flatNumber,
+            flatId: flat.flatId,
+            date: date,
+            markedByAdmin: isAdmin ? true : undefined,
+            smokedInRoom: smoked,
+            guestSmoked: smoked
+          }),
+          credentials: "include"
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          toast({
+            title: "Não foi possível concluir",
+            description: err.error || "Erro ao atualizar status da limpeza.",
+            variant: "destructive"
+          })
+          return
+        }
+        setShowSmokingPrompt(false)
+        toast({
+          title: "✓ Limpeza Concluída",
+          description: smoked 
+            ? "Limpeza finalizada com registro de fumo no quarto. Hóspede sinalizado como fumante." 
+            : "Limpeza finalizada com sucesso.",
+        })
+        refreshData()
+      }
+    } catch (err: any) {
+      console.error("Erro ao concluir limpeza:", err)
+      toast({
+        title: "Erro",
+        description: err.message || "Erro ao concluir limpeza.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const handleToggleSmoking = async () => {
+    setIsProcessing(true)
+    try {
+      let activeReqId = request?.id || flat?.cleaningRequest?.id
+      if (!activeReqId) {
+        const createRes = await fetch("/api/cleaning/requests/manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ flatId: flat.flatId, requestDate: date }),
+          credentials: "include"
+        })
+        const created = await createRes.json()
+        activeReqId = created.id
+      }
+
+      const newSmokedValue = !hasSmoked
+      const res = await fetch(`/api/cleaning/assignments/${activeReqId}/smoking`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          smokedInRoom: newSmokedValue,
+          guestSmoked: newSmokedValue,
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date
+        }),
+        credentials: "include"
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        toast({
+          title: "Erro ao atualizar indicação",
+          description: err.error || "Não foi possível alterar a indicação de fumo.",
+          variant: "destructive"
+        })
+        return
+      }
+
+      toast({
+        title: newSmokedValue ? "🚬 Fumo Registrado" : "✓ Indicação Removida",
+        description: newSmokedValue 
+          ? "Apontamento de fumante adicionado ao hóspede e reservas futuras."
+          : "Apontamento de fumante removido do cadastro e reservas futuras.",
+      })
+      refreshData()
+    } catch (err: any) {
+      console.error("Erro ao alternar fumo:", err)
+      toast({
+        title: "Erro",
+        description: err.message || "Erro ao alternar indicação de fumo.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
 
   useEffect(() => {
     if (isAdmin) {
@@ -312,6 +435,8 @@ export function FlatCard({
             flatId: flat.flatId,
             date: date,
             markedByAdmin: isAdmin ? true : undefined,
+            smokedInRoom: adminSmokedInRoom,
+            guestSmoked: adminSmokedInRoom,
             executedPeriodicTaskIds: pendingPeriodicTasks.map((t: any) => t.id)
           }),
           credentials: "include"
@@ -1026,9 +1151,13 @@ export function FlatCard({
     }
 
     if (newStatus === "clean") {
-      if (isStayover) {
-        setStayoverModalOpen(true)
-        return
+      if (request?.cleaningStartedAt) {
+        const started = new Date(request.cleaningStartedAt).getTime()
+        const mins = (Date.now() - started) / 60000
+        if (mins < 10 && !isAdmin) {
+          setMinTimeAlertOpen(true)
+          return
+        }
       }
 
       if (isAdmin) {
@@ -1036,19 +1165,9 @@ export function FlatCard({
         return
       }
 
-      if (request?.cleaningStartedAt) {
-        const started = new Date(request.cleaningStartedAt).getTime()
-        const mins = (Date.now() - started) / 60000
-        if (mins < 10) {
-          setMinTimeAlertOpen(true)
-          return
-        }
-      }
-
-      if (pendingPeriodicTasks.length > 0 || pendingSurveys.length > 0) {
-        setFinishModalOpen(true)
-        return
-      }
+      // Card da camareira: Exibe a pergunta em destaque tomando a área do card
+      setShowSmokingPrompt(true)
+      return
     }
 
     setIsProcessing(true)
@@ -1274,12 +1393,84 @@ export function FlatCard({
   return (
     <>
       <Card className={cn(
-        "overflow-hidden transition-all duration-200 border rounded-2xl shadow-xs hover:shadow-md flex flex-col justify-between h-full bg-card",
+        "overflow-hidden transition-all duration-200 border rounded-2xl shadow-xs hover:shadow-md flex flex-col justify-between h-full bg-card relative",
         conf.cardBg,
         isSelected && "ring-2 ring-primary ring-offset-1 shadow-md",
         isPriority && !isInstruction && "border-rose-400 dark:border-rose-800 shadow-rose-100/50 dark:shadow-none",
         Boolean(flat.serviceInProgress) && "border-amber-500/90 dark:border-amber-600 shadow-amber-100/50"
       )}>
+        {/* Pergunta em Destaque sobre Fumo (Toma o tamanho do card no momento da conclusão) */}
+        {showSmokingPrompt && (
+          <div 
+            data-smoking-prompt="true"
+            className="absolute inset-0 z-30 bg-card/98 backdrop-blur-md rounded-2xl p-4 flex flex-col justify-between border-2 border-rose-500 dark:border-rose-600 shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b pb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-lg">🚭</span>
+                <span className="font-bold text-xs uppercase tracking-wide text-foreground">
+                  Apt {flat.flatNumber} • Vistoria de Fumo
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 w-6 p-0 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setShowSmokingPrompt(false)}
+                title="Fechar e voltar ao card"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            <div className="my-auto py-2 text-center space-y-2">
+              <div className="w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 flex items-center justify-center mx-auto text-2xl shadow-xs">
+                🚬
+              </div>
+              <h4 className="text-base font-black text-foreground leading-snug">
+                O hóspede fumou no quarto?
+              </h4>
+              <p className="text-[11px] text-muted-foreground max-w-[220px] mx-auto leading-tight">
+                Obrigatório informar para finalizar a limpeza do apartamento.
+              </p>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t">
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  size="default"
+                  className="bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold h-11 text-xs sm:text-sm shadow-md flex items-center justify-center gap-1.5 transition-all"
+                  onClick={() => handleFinishCleaningWithSmoking(true)}
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <><span>🚬</span> <span>Sim, fumou</span></>}
+                </Button>
+                <Button
+                  type="button"
+                  size="default"
+                  className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold h-11 text-xs sm:text-sm shadow-md flex items-center justify-center gap-1.5 transition-all"
+                  onClick={() => handleFinishCleaningWithSmoking(false)}
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <><span>✓</span> <span>Não fumou</span></>}
+                </Button>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="w-full text-[11px] text-muted-foreground hover:text-foreground h-6"
+                onClick={() => setShowSmokingPrompt(false)}
+                disabled={isProcessing}
+              >
+                Voltar ao quarto
+              </Button>
+            </div>
+          </div>
+        )}
+
         <CardContent className="p-4 flex flex-col justify-between h-full space-y-3">
           <div className="space-y-2.5">
             {/* Top Bar - Linha 1: Identificação do Flat (Sem corte) e Ocupação */}
@@ -1300,7 +1491,7 @@ export function FlatCard({
                     title="Selecionar para limpeza em lote"
                   />
                 )}
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                   <h3 className="text-lg font-black tracking-tight text-foreground whitespace-nowrap shrink-0">
                     Apt {flat.flatNumber}
                   </h3>
@@ -1313,6 +1504,21 @@ export function FlatCard({
                     >
                       <Flame className="w-3 h-3 fill-current" />
                       <span>Prioridade</span>
+                    </Badge>
+                  )}
+                  {hasSmoked && (
+                    <Badge 
+                      variant="destructive" 
+                      data-smoking-badge="true"
+                      title="Fumo registrado no quarto. Clique para alternar ou desmarcar."
+                      className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black px-1.5 py-0.5 flex items-center gap-1 shrink-0 select-none cursor-pointer transition-all shadow-xs"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleToggleSmoking()
+                      }}
+                    >
+                      <span>🚬 Fumou</span>
+                      <span className="text-[9px] opacity-80 hover:opacity-100 underline ml-0.5">(Desmarcar)</span>
                     </Badge>
                   )}
                 </div>
@@ -2070,28 +2276,65 @@ export function FlatCard({
                 )}
 
                 {currentStatus === "clean" && (
-                  <div className="flex gap-1.5">
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      className="flex-1 text-xs text-slate-600 border-slate-300 hover:bg-slate-100" 
-                      onClick={() => setRevertDirtyModalOpen(true)}
-                      disabled={isProcessing}
-                      title="Devolver quarto para o estado sujo e desfazer o registro de limpeza"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 mr-1" /> Devolver Quarto
-                    </Button>
-                    {isAdmin && (
+                  <div className="space-y-1.5">
+                    {hasSmoked ? (
+                      <div className="flex items-center justify-between p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-rose-900 dark:text-rose-200 text-xs">
+                        <div className="flex items-center gap-1.5 font-bold">
+                          <span className="text-sm">🚬</span>
+                          <span>Hóspede fumou no quarto</span>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-[10px] font-bold border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleToggleSmoking()
+                          }}
+                          disabled={isProcessing}
+                          title="Desmarcar se foi registrado por engano"
+                        >
+                          Desmarcar
+                        </Button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="w-full text-center text-[10px] text-muted-foreground hover:text-rose-600 font-medium py-0.5 transition-colors flex items-center justify-center gap-1"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleToggleSmoking()
+                        }}
+                        disabled={isProcessing}
+                        title="Marcar que o hóspede fumou no quarto"
+                      >
+                        <span>🚬</span>
+                        <span>Hóspede fumou? Marcar fumo</span>
+                      </button>
+                    )}
+                    <div className="flex gap-1.5">
                       <Button 
                         size="sm" 
                         variant="outline" 
-                        className="flex-1 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 font-bold" 
-                        onClick={() => setAdminCleanModalOpen(true)}
+                        className="flex-1 text-xs text-slate-600 border-slate-300 hover:bg-slate-100" 
+                        onClick={() => setRevertDirtyModalOpen(true)}
                         disabled={isProcessing}
+                        title="Devolver quarto para o estado sujo e desfazer o registro de limpeza"
                       >
-                        Trocar Camareira
+                        <RotateCcw className="w-3.5 h-3.5 mr-1" /> Devolver Quarto
                       </Button>
-                    )}
+                      {isAdmin && (
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="flex-1 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 font-bold" 
+                          onClick={() => setAdminCleanModalOpen(true)}
+                          disabled={isProcessing}
+                        >
+                          Trocar Camareira
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -3155,6 +3398,40 @@ export function FlatCard({
                       : "Esta limpeza será creditada integralmente na contagem e nos relatórios de produtividade da colaboradora selecionada."}
                   </p>
                 </div>
+
+                {!isInstruction && (
+                  <div className="p-3 rounded-2xl border border-border bg-muted/40 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                        <span>🚬</span>
+                        <span>O hóspede fumou no quarto?</span>
+                      </span>
+                      <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded", adminSmokedInRoom ? "bg-rose-100 text-rose-800" : "bg-emerald-100 text-emerald-800")}>
+                        {adminSmokedInRoom ? "Sim, fumou" : "Não"}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={adminSmokedInRoom ? "destructive" : "outline"}
+                        className={cn("h-8 text-xs font-bold", adminSmokedInRoom && "bg-rose-600 hover:bg-rose-700 text-white")}
+                        onClick={() => setAdminSmokedInRoom(true)}
+                      >
+                        🚬 Sim, fumou
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={!adminSmokedInRoom ? "default" : "outline"}
+                        className={cn("h-8 text-xs font-bold", !adminSmokedInRoom && "bg-emerald-600 hover:bg-emerald-700 text-white")}
+                        onClick={() => setAdminSmokedInRoom(false)}
+                      >
+                        ✓ Não fumou
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {pendingPeriodicTasks.length > 0 && !isInstruction && (
                   <div className="p-3.5 rounded-2xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 space-y-1 text-xs">
