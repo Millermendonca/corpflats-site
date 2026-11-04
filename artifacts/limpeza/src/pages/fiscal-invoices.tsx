@@ -751,7 +751,8 @@ export default function FiscalInvoicesPage() {
       neighborhood: res.neighborhood || res.guestNeighborhood || resSlot?.neighborhood || crmGuest?.neighborhood,
       cep: res.cep || res.guestCep || resSlot?.cep || crmGuest?.cep,
       city: res.city || res.guestCity || resSlot?.city || crmGuest?.city,
-      state: res.state || res.guestState || resSlot?.state || crmGuest?.state
+      state: res.state || res.guestState || resSlot?.state || crmGuest?.state,
+      ibgeCode: res.ibgeCode || res.codigoMunicipio || resSlot?.ibgeCode || crmGuest?.ibgeCode || crmGuest?.codigoMunicipio
     } : null
 
     const crmAgency = agencies.find(a =>
@@ -1130,30 +1131,33 @@ export default function FiscalInvoicesPage() {
   }
 
   // ── Sincronização Formulário -> Preview ──────────────────────────────────────
-  const syncFormToPreview = () => {
+  const syncFormToPreview = (overrides: Record<string, any> = {}) => {
+    const nextNome = overrides.tomadorNome !== undefined ? overrides.tomadorNome : formTomadorNome
+    const nextDoc = overrides.tomadorCpfCnpj !== undefined ? overrides.tomadorCpfCnpj : formTomadorDoc
+    const nextValor = overrides.valorServico !== undefined ? overrides.valorServico : formValor
     setExtractedData(prev => ({
       ...prev,
-      tomadorNome: formTomadorNome,
-      tomadorCpfCnpj: formTomadorDoc,
-      tomadorEmail: formTomadorEmail,
-      tomadorTelefone: formTomadorTelefone,
-      tomadorEndereco: formTomadorEndereco,
-      tomadorNumero: formTomadorNumero,
-      tomadorComplemento: formTomadorComplemento,
-      tomadorBairro: formTomadorBairro,
-      tomadorCidade: formTomadorCidade,
-      tomadorUf: formTomadorUf,
-      tomadorCep: formTomadorCep,
-      tomadorCodigoMunicipio: formTomadorIbge,
-      flatNumber: formFlatNumber,
-      checkIn: formCheckin,
-      checkOut: formCheckout,
-      quantidadeDiarias: formDiarias,
-      valorServico: formValor,
-      descricaoServico: formDescricao,
-      aliquotaIss: formAliquota
+      tomadorNome: nextNome,
+      tomadorCpfCnpj: nextDoc,
+      tomadorEmail: overrides.tomadorEmail !== undefined ? overrides.tomadorEmail : formTomadorEmail,
+      tomadorTelefone: overrides.tomadorTelefone !== undefined ? overrides.tomadorTelefone : formTomadorTelefone,
+      tomadorEndereco: overrides.tomadorEndereco !== undefined ? overrides.tomadorEndereco : formTomadorEndereco,
+      tomadorNumero: overrides.tomadorNumero !== undefined ? overrides.tomadorNumero : formTomadorNumero,
+      tomadorComplemento: overrides.tomadorComplemento !== undefined ? overrides.tomadorComplemento : formTomadorComplemento,
+      tomadorBairro: overrides.tomadorBairro !== undefined ? overrides.tomadorBairro : formTomadorBairro,
+      tomadorCidade: overrides.tomadorCidade !== undefined ? overrides.tomadorCidade : formTomadorCidade,
+      tomadorUf: overrides.tomadorUf !== undefined ? overrides.tomadorUf : formTomadorUf,
+      tomadorCep: overrides.tomadorCep !== undefined ? overrides.tomadorCep : formTomadorCep,
+      tomadorCodigoMunicipio: overrides.tomadorCodigoMunicipio !== undefined ? overrides.tomadorCodigoMunicipio : formTomadorIbge,
+      flatNumber: overrides.flatNumber !== undefined ? overrides.flatNumber : formFlatNumber,
+      checkIn: overrides.checkIn !== undefined ? overrides.checkIn : formCheckin,
+      checkOut: overrides.checkOut !== undefined ? overrides.checkOut : formCheckout,
+      quantidadeDiarias: overrides.quantidadeDiarias !== undefined ? overrides.quantidadeDiarias : formDiarias,
+      valorServico: nextValor,
+      descricaoServico: overrides.descricaoServico !== undefined ? overrides.descricaoServico : formDescricao,
+      aliquotaIss: overrides.aliquotaIss !== undefined ? overrides.aliquotaIss : formAliquota
     }))
-    const ready = Boolean(formTomadorNome.trim() && formTomadorDoc.replace(/\D/g, "").length >= 11 && Number(formValor) > 0)
+    const ready = Boolean(String(nextNome || "").trim() && String(nextDoc || "").replace(/\D/g, "").length >= 11 && Number(nextValor) > 0)
     setIsReadyToEmit(ready)
   }
 
@@ -1194,8 +1198,12 @@ export default function FiscalInvoicesPage() {
         if (merged.tomadorTelefone) setFormTomadorTelefone(merged.tomadorTelefone)
         if (merged.tomadorEndereco) setFormTomadorEndereco(merged.tomadorEndereco)
         if (merged.tomadorNumero) setFormTomadorNumero(merged.tomadorNumero)
+        if (merged.tomadorComplemento !== undefined) setFormTomadorComplemento(merged.tomadorComplemento)
         if (merged.tomadorBairro) setFormTomadorBairro(merged.tomadorBairro)
+        if (merged.tomadorCidade) setFormTomadorCidade(merged.tomadorCidade)
+        if (merged.tomadorUf) setFormTomadorUf(merged.tomadorUf)
         if (merged.tomadorCep) setFormTomadorCep(merged.tomadorCep)
+        if (merged.tomadorCodigoMunicipio) setFormTomadorIbge(merged.tomadorCodigoMunicipio)
         if (merged.flatNumber) setFormFlatNumber(merged.flatNumber)
         if (merged.checkIn) setFormCheckin(merged.checkIn)
         if (merged.checkOut) setFormCheckout(merged.checkOut)
@@ -1338,22 +1346,24 @@ export default function FiscalInvoicesPage() {
         const res = await fetch(`/api/nfse/lookup-cpf/${clean}`)
         if (res.ok) {
           const data = await res.json()
-          if (data.nome) setFormTomadorNome(data.nome)
-          if (data.logradouro) setFormTomadorEndereco(data.logradouro)
-          if (data.numero) setFormTomadorNumero(data.numero)
-          if (data.complemento) setFormTomadorComplemento(data.complemento)
-          if (data.bairro) setFormTomadorBairro(data.bairro)
-          if (data.cep) setFormTomadorCep(data.cep)
-          if (data.cidade) setFormTomadorCidade(data.cidade)
-          if (data.uf) setFormTomadorUf(data.uf)
-          if (data.codigoMunicipio) setFormTomadorIbge(data.codigoMunicipio)
-          if (data.email) setFormTomadorEmail(data.email)
-          if (data.telefone) setFormTomadorTelefone(data.telefone)
+          const nextOverrides: Record<string, any> = { tomadorCpfCnpj: clean }
+          if (data.nome) { setFormTomadorNome(data.nome); nextOverrides.tomadorNome = data.nome }
+          if (data.logradouro) { setFormTomadorEndereco(data.logradouro); nextOverrides.tomadorEndereco = data.logradouro }
+          if (data.numero) { setFormTomadorNumero(data.numero); nextOverrides.tomadorNumero = data.numero }
+          if (data.complemento !== undefined) { setFormTomadorComplemento(data.complemento); nextOverrides.tomadorComplemento = data.complemento }
+          if (data.bairro) { setFormTomadorBairro(data.bairro); nextOverrides.tomadorBairro = data.bairro }
+          if (data.cep) { setFormTomadorCep(data.cep); nextOverrides.tomadorCep = data.cep }
+          if (data.cidade) { setFormTomadorCidade(data.cidade); nextOverrides.tomadorCidade = data.cidade }
+          if (data.uf) { setFormTomadorUf(data.uf); nextOverrides.tomadorUf = data.uf }
+          const resolvedIbge = data.codigoMunicipio || data.ibge || data.ibgeCode
+          if (resolvedIbge) { setFormTomadorIbge(resolvedIbge); nextOverrides.tomadorCodigoMunicipio = resolvedIbge }
+          if (data.email) { setFormTomadorEmail(data.email); nextOverrides.tomadorEmail = data.email }
+          if (data.telefone) { setFormTomadorTelefone(data.telefone); nextOverrides.tomadorTelefone = data.telefone }
           toast({
             title: "Check-in Digital Localizado",
             description: `${data.nome || "Hóspede"} • ${data.logradouro || ""}, ${data.numero || ""}`
           })
-          syncFormToPreview()
+          syncFormToPreview(nextOverrides)
         }
       } catch {
         // silent fallback
@@ -1374,18 +1384,29 @@ export default function FiscalInvoicesPage() {
     try {
       const res = await fetch(`/api/invoices/lookup-cnpj/${clean}`)
       const data = await res.json()
-      if (data.razaoSocial) setFormTomadorNome(data.razaoSocial)
-      if (data.logradouro) setFormTomadorEndereco(data.logradouro)
-      if (data.numero) setFormTomadorNumero(data.numero)
-      if (data.bairro) setFormTomadorBairro(data.bairro)
-      if (data.cep) setFormTomadorCep(data.cep)
-      if (data.email && !formTomadorEmail) setFormTomadorEmail(data.email)
-      if (data.telefone && !formTomadorTelefone) setFormTomadorTelefone(data.telefone)
+      const nextOverrides: Record<string, any> = { tomadorCpfCnpj: clean }
+      if (data.razaoSocial) { setFormTomadorNome(data.razaoSocial); nextOverrides.tomadorNome = data.razaoSocial }
+      if (data.logradouro || data.endereco) {
+        const endVal = data.logradouro || data.endereco
+        setFormTomadorEndereco(endVal)
+        nextOverrides.tomadorEndereco = endVal
+      }
+      if (data.numero) { setFormTomadorNumero(data.numero); nextOverrides.tomadorNumero = data.numero }
+      if (data.complemento !== undefined) { setFormTomadorComplemento(data.complemento || ""); nextOverrides.tomadorComplemento = data.complemento || "" }
+      if (data.bairro) { setFormTomadorBairro(data.bairro); nextOverrides.tomadorBairro = data.bairro }
+      if (data.cep) { setFormTomadorCep(data.cep); nextOverrides.tomadorCep = data.cep }
+      const resolvedCity = data.cidade || data.municipio || data.localidade
+      if (resolvedCity) { setFormTomadorCidade(resolvedCity); nextOverrides.tomadorCidade = resolvedCity }
+      if (data.uf) { setFormTomadorUf(data.uf); nextOverrides.tomadorUf = data.uf }
+      const resolvedIbge = data.codigoMunicipio || data.ibge || data.ibgeCode
+      if (resolvedIbge) { setFormTomadorIbge(String(resolvedIbge)); nextOverrides.tomadorCodigoMunicipio = String(resolvedIbge) }
+      if (data.email && !formTomadorEmail) { setFormTomadorEmail(data.email); nextOverrides.tomadorEmail = data.email }
+      if (data.telefone && !formTomadorTelefone) { setFormTomadorTelefone(data.telefone); nextOverrides.tomadorTelefone = data.telefone }
       toast({
         title: "CNPJ Encontrado",
-        description: `${data.razaoSocial || 'Dados importados com sucesso'}`
+        description: `${data.razaoSocial || 'Dados importados com sucesso'}${resolvedCity ? ` • ${resolvedCity}/${data.uf || 'RJ'}` : ''}`
       })
-      syncFormToPreview()
+      syncFormToPreview(nextOverrides)
     } catch {
       toast({
         title: "Erro na Busca",
@@ -1398,8 +1419,9 @@ export default function FiscalInvoicesPage() {
   }
 
   // ── Auto Lookup de CEP ─────────────────────────────────────────────────────
-  const handleLookupCep = async () => {
-    const clean = formTomadorCep.replace(/\D/g, "")
+  const handleLookupCep = async (cepOverride?: string | React.MouseEvent) => {
+    const rawCep = typeof cepOverride === "string" ? cepOverride : formTomadorCep
+    const clean = String(rawCep || "").replace(/\D/g, "")
     if (clean.length !== 8) {
       toast({
         title: "CEP Inválido",
@@ -1412,16 +1434,20 @@ export default function FiscalInvoicesPage() {
     try {
       const res = await fetch(`/api/invoices/lookup-cep/${clean}`)
       const data = await res.json()
-      if (data.logradouro) setFormTomadorEndereco(data.logradouro)
-      if (data.bairro) setFormTomadorBairro(data.bairro)
-      if (data.cidade || data.localidade) setFormTomadorCidade(data.cidade || data.localidade)
-      if (data.uf) setFormTomadorUf(data.uf)
-      if (data.ibge) setFormTomadorIbge(data.ibge)
+      const nextOverrides: Record<string, any> = {}
+      if (data.cep) { setFormTomadorCep(data.cep); nextOverrides.tomadorCep = data.cep }
+      if (data.logradouro) { setFormTomadorEndereco(data.logradouro); nextOverrides.tomadorEndereco = data.logradouro }
+      if (data.bairro) { setFormTomadorBairro(data.bairro); nextOverrides.tomadorBairro = data.bairro }
+      const resolvedCity = data.cidade || data.localidade
+      if (resolvedCity) { setFormTomadorCidade(resolvedCity); nextOverrides.tomadorCidade = resolvedCity }
+      if (data.uf) { setFormTomadorUf(data.uf); nextOverrides.tomadorUf = data.uf }
+      const resolvedIbge = data.ibge || data.codigoMunicipio || data.ibgeCode
+      if (resolvedIbge) { setFormTomadorIbge(String(resolvedIbge)); nextOverrides.tomadorCodigoMunicipio = String(resolvedIbge) }
       toast({
         title: "Endereço Localizado",
-        description: `${data.logradouro || ''} - ${data.bairro || ''}`
+        description: `${data.logradouro || ''} - ${data.bairro || ''}${resolvedCity ? ` (${resolvedCity}/${data.uf || 'RJ'})` : ''}`
       })
-      syncFormToPreview()
+      syncFormToPreview(nextOverrides)
     } catch {
       toast({
         title: "Erro na Busca de CEP",
@@ -1711,6 +1737,7 @@ export default function FiscalInvoicesPage() {
       tomadorCep: normAddr.cep || "",
       tomadorCidade: normAddr.cidade || "Campos dos Goytacazes",
       tomadorUf: normAddr.uf || "RJ",
+      tomadorCodigoMunicipio: normAddr.ibge || "3301009",
       flatNumber: String(res.flatNumber || ""),
       checkinDate: res.checkinDate,
       checkoutDate: res.checkoutDate,
@@ -3006,9 +3033,9 @@ export default function FiscalInvoicesPage() {
                                   onChange={e => {
                                     const val = e.target.value
                                     setFormTomadorDoc(val)
-                                    syncFormToPreview()
+                                    syncFormToPreview({ tomadorCpfCnpj: val })
                                     const cleanVal = val.replace(/\D/g, "")
-                                    if (cleanVal.length === 11 && tomadorMode === "pf") {
+                                    if ((cleanVal.length === 11 && tomadorMode === "pf") || cleanVal.length === 14) {
                                       handleLookupDoc(cleanVal)
                                     }
                                   }}
@@ -3117,8 +3144,13 @@ export default function FiscalInvoicesPage() {
                                   placeholder="28035-000"
                                   value={formTomadorCep}
                                   onChange={e => {
-                                    setFormTomadorCep(e.target.value)
-                                    syncFormToPreview()
+                                    const val = e.target.value
+                                    setFormTomadorCep(val)
+                                    syncFormToPreview({ tomadorCep: val })
+                                    const cleanVal = val.replace(/\D/g, "")
+                                    if (cleanVal.length === 8) {
+                                      handleLookupCep(cleanVal)
+                                    }
                                   }}
                                   className="h-9 text-xs rounded-xl"
                                 />

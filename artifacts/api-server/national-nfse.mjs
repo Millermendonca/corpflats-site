@@ -8,6 +8,7 @@ import forge from "node-forge";
 import { SignedXml } from "xml-crypto";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
+import { inferIbgeAndValidCep, resolveValidCepAndIbge } from "./lookup.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -396,10 +397,11 @@ export function cleanPhone(phone = "") {
 }
 
 /**
- * Sanitiza CEP para 8 dígitos.
+ * Sanitiza CEP para 8 dígitos (retorna "" se vazio ou zerado).
  */
 export function cleanCep(cep = "") {
   const digits = onlyDigits(cep);
+  if (!digits || /^0+$/.test(digits)) return "";
   return digits.padEnd(8, "0").substring(0, 8);
 }
 
@@ -521,6 +523,7 @@ export function buildNationalDpsPayload({
     nro: normAddr.numero,
     xCpl: normAddr.complemento || undefined,
     xBairro: normAddr.bairro,
+    xMun: normAddr.cidade,
     UF: normAddr.uf
   };
 
@@ -871,8 +874,8 @@ export async function processNationalInvoiceEmission({
 
   const ender = dps.toma?.ender || dps.toma?.end || {};
   const endNac = ender.endNac || {};
-  const cMunToma = onlyDigits(endNac.cMun || cLocEmi).padStart(7, "0").substring(0, 7) || cLocEmi;
-  const cepToma = cleanCep(endNac.CEP || "28035000");
+  const rawCMunToma = onlyDigits(endNac.cMun || cLocEmi).padStart(7, "0").substring(0, 7) || cLocEmi;
+  const rawCepToma = cleanCep(endNac.CEP || "") || "28035000";
   const xLgrToma = String(ender.xLgr || "Av. Pelinca").trim().substring(0, 255) || "Av. Pelinca";
   const nroToma = String(ender.nro || "100").trim().substring(0, 60) || "100";
   const xCplToma = ender.xCpl ? String(ender.xCpl).trim().substring(0, 156) : "";
@@ -880,15 +883,35 @@ export async function processNationalInvoiceEmission({
   const foneToma = cleanPhone(dps.toma?.fone || "");
   const emailToma = String(dps.toma?.email || "").trim().toLowerCase();
 
-  let tomaInner = `${tomaTag}<xNome>${escXml(dps.toma?.xNome || "Miller Pessanha")}</xNome>`;
-  tomaInner += `<end><endNac><cMun>${cMunToma}</cMun><CEP>${cepToma}</CEP></endNac><xLgr>${escXml(xLgrToma)}</xLgr><nro>${escXml(nroToma)}</nro>${xCplToma ? `<xCpl>${escXml(xCplToma)}</xCpl>` : ""}<xBairro>${escXml(xBairroToma)}</xBairro></end>`;
-  if (foneToma && foneToma.length >= 6 && foneToma.length <= 20) {
-    tomaInner += `<fone>${foneToma}</fone>`;
+  // Valida e reconcilia CEP + IBGE (cMun) antes de montar o XML para prevenir rejeição [E0240]
+  const resolvedGeo = await resolveValidCepAndIbge({
+    cep: rawCepToma,
+    logradouro: xLgrToma,
+    bairro: xBairroToma,
+    cidade: ender.xMun || invoiceData.tomadorCidade || "",
+    uf: ender.UF || invoiceData.tomadorUf || "RJ",
+    codigoMunicipio: rawCMunToma
+  });
+  let cMunToma = onlyDigits(resolvedGeo.codigoMunicipio || rawCMunToma).padStart(7, "0").substring(0, 7) || cLocEmi;
+  let cepToma = cleanCep(resolvedGeo.cep || rawCepToma) || "28035000";
+  if (endNac) {
+    endNac.cMun = cMunToma;
+    endNac.CEP = cepToma;
   }
-  if (emailToma && emailToma.includes("@")) {
-    tomaInner += `<email>${escXml(emailToma)}</email>`;
-  }
-  const tomaXml = `<toma>${tomaInner}</toma>`;
+
+  const buildTomaXml = (cMunVal, cepVal) => {
+    let inner = `${tomaTag}<xNome>${escXml(dps.toma?.xNome || "Miller Pessanha")}</xNome>`;
+    inner += `<end><endNac><cMun>${cMunVal}</cMun><CEP>${cepVal}</CEP></endNac><xLgr>${escXml(xLgrToma)}</xLgr><nro>${escXml(nroToma)}</nro>${xCplToma ? `<xCpl>${escXml(xCplToma)}</xCpl>` : ""}<xBairro>${escXml(xBairroToma)}</xBairro></end>`;
+    if (foneToma && foneToma.length >= 6 && foneToma.length <= 20) {
+      inner += `<fone>${foneToma}</fone>`;
+    }
+    if (emailToma && emailToma.includes("@")) {
+      inner += `<email>${escXml(emailToma)}</email>`;
+    }
+    return `<toma>${inner}</toma>`;
+  };
+
+  let tomaXml = buildTomaXml(cMunToma, cepToma);
 
   const { dhStr, dComp } = getBrasiliaTimeString(3);
   const tpAmb = dps.tpAmb || 1;
@@ -981,6 +1004,47 @@ export async function processNationalInvoiceEmission({
           includeFinNFSe: false
         });
         dpsXml = signOrWrapDps(retryInfDps, "1.00", currentIdDps);
+        sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
+      }
+
+      // Auto-healing caso a SEFIN Nacional rejeite com [E0240] (CEP não existe na tabela DNE da RFB ou diverge do cMun)
+      const cepErrors = sefinResult?.response?.erros || [];
+      if (
+        Array.isArray(cepErrors) &&
+        cepErrors.some(e => /E0240|CEP\s+informado.*n[ãa]o\s+existe|n[ãa]o\s+pertence\s+ao\s+munic/i.test(`${e.Codigo || ""} ${e.Descricao || ""} ${e.Complemento || ""}`))
+      ) {
+        const munFallback = inferIbgeAndValidCep({ codigoMunicipio: cMunToma });
+        if (munFallback.defaultCep && munFallback.defaultCep !== cepToma) {
+          cMunToma = munFallback.codigoMunicipio;
+          cepToma = munFallback.defaultCep;
+        } else {
+          cMunToma = "3301009";
+          cepToma = "28035000";
+        }
+        if (endNac) {
+          endNac.cMun = cMunToma;
+          endNac.CEP = cepToma;
+        }
+        tomaXml = buildTomaXml(cMunToma, cepToma);
+        currentNDps = String(Math.floor(Date.now() / 1000) % 900000 + 100000);
+        currentIdDps = `DPS${cLocEmi}${tpInsc}${cnpj}${seriePad}${currentNDps.padStart(15, "0")}`;
+        const retryCepInfDps = buildCanonicalInfDpsXml({
+          idDPS: currentIdDps,
+          tpAmb,
+          dhStr,
+          serie,
+          nDPS: currentNDps,
+          dComp,
+          cLocEmi,
+          cnpj,
+          includeIm: false,
+          tomaXml,
+          xDescServ,
+          valorNum,
+          pAliq,
+          includeFinNFSe: false
+        });
+        dpsXml = signOrWrapDps(retryCepInfDps, "1.00", currentIdDps);
         sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
       }
 
@@ -1301,8 +1365,8 @@ export function normalizeTomadorAddressFields(invoice = {}) {
   let rawBairro = String(invoice.tomadorBairro || "").trim();
   let rawCidade = String(invoice.tomadorCidade || "Campos dos Goytacazes").trim();
   let rawUf = String(invoice.tomadorUf || "RJ").trim().toUpperCase();
-  let rawCep = cleanCep(invoice.tomadorCep || "28035000");
-  let rawIbge = onlyDigits(invoice.tomadorCodigoMunicipio || "3301009") || "3301009";
+  let rawCep = cleanCep(invoice.tomadorCep || "");
+  let rawIbge = onlyDigits(invoice.tomadorCodigoMunicipio || "");
 
   // Se cidade veio no formato "Campos dos Goytacazes / RJ" do pré-checkin
   if (rawCidade.includes("/")) {
@@ -1332,15 +1396,23 @@ export function normalizeTomadorAddressFields(invoice = {}) {
     }
   }
 
+  // Reconcilia deterministicamente CEP, Cidade, UF e Código IBGE
+  const inferred = inferIbgeAndValidCep({
+    cep: rawCep,
+    cidade: rawCidade,
+    uf: rawUf,
+    codigoMunicipio: rawIbge
+  });
+
   return {
     logradouro: rawEnd || "Av. Pelinca",
     numero: rawNum || "100",
     complemento: rawComp,
     bairro: rawBairro || "Pelinca",
-    cidade: rawCidade || "Campos dos Goytacazes",
-    uf: rawUf || "RJ",
-    cep: rawCep,
-    ibge: rawIbge
+    cidade: inferred.cidade || rawCidade || "Campos dos Goytacazes",
+    uf: inferred.uf || rawUf || "RJ",
+    cep: inferred.cep || rawCep || "28035000",
+    ibge: inferred.codigoMunicipio || rawIbge || "3301009"
   };
 }
 

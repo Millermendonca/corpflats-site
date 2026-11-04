@@ -3425,6 +3425,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   }
 
   // Handlers para Cadastro Rápido de Empresa Parceira
+  const [newCompAddressData, setNewCompAddressData] = useState<Record<string, string>>({})
+
   const handleOpenNewCompanyModal = () => {
     setNewCompCorporateName("")
     setNewCompTradeName("")
@@ -3434,6 +3436,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setNewCompContactPerson("")
     setNewCompBillingTerms("30 dias")
     setNewCompNotes("")
+    setNewCompAddressData({})
     setNewCompanyModalOpen(true)
   }
 
@@ -3442,16 +3445,26 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     if (clean.length === 14) {
       setLoadingNewCompanyCnpj(true)
       try {
-        const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${clean}`)
+        const res = await fetch(`/api/invoices/lookup-cnpj/${clean}`, { credentials: "include" })
         if (res.ok) {
           const resData = await res.json()
-          if (resData.razao_social) setNewCompCorporateName(resData.razao_social)
-          if (resData.nome_fantasia) setNewCompTradeName(resData.nome_fantasia)
+          if (resData.razaoSocial || resData.razao_social) setNewCompCorporateName(resData.razaoSocial || resData.razao_social)
+          if (resData.nomeFantasia || resData.nome_fantasia) setNewCompTradeName(resData.nomeFantasia || resData.nome_fantasia)
           if (resData.email) setNewCompFinancialEmail(resData.email)
-          if (resData.ddd_telefone_1) setNewCompPhone(resData.ddd_telefone_1)
+          if (resData.telefone || resData.ddd_telefone_1) setNewCompPhone(resData.telefone || resData.ddd_telefone_1)
+          setNewCompAddressData({
+            address: resData.logradouro || resData.endereco || "",
+            number: resData.numero || "S/N",
+            complement: resData.complemento || "",
+            neighborhood: resData.bairro || "",
+            cep: resData.cep || "",
+            city: resData.cidade || resData.municipio || "",
+            state: resData.uf || "RJ",
+            ibgeCode: resData.codigoMunicipio || resData.ibge || resData.ibgeCode || ""
+          })
           toast({
             title: "Dados da Empresa Localizados!",
-            description: `${resData.razao_social || resData.nome_fantasia} carregada da Receita Federal.`
+            description: `${resData.razaoSocial || resData.razao_social || resData.nomeFantasia} carregada da Receita Federal.`
           })
         }
       } catch {}
@@ -3476,7 +3489,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         phone: newCompPhone.trim(),
         contactPerson: newCompContactPerson.trim(),
         billingTerms: newCompBillingTerms.trim(),
-        notes: newCompNotes.trim()
+        notes: newCompNotes.trim(),
+        ...newCompAddressData
       }
 
       const res = await fetch("/api/companies", {

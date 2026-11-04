@@ -51,7 +51,7 @@ const DEFAULT_FLATS = [
 ];
 
 import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE, buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
-import { lookupCep, lookupCnpj } from "./lookup.mjs";
+import { lookupCep, lookupCnpj, inferIbgeAndValidCep, resolveValidCepAndIbge } from "./lookup.mjs";
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -47882,10 +47882,18 @@ async function executeNfseEmissionInternal(payload) {
   const endNumero = normPayAddr.numero;
   const endComplemento = normPayAddr.complemento;
   const endBairro = normPayAddr.bairro;
-  const endCep = normPayAddr.cep;
-  const endCidade = normPayAddr.cidade;
-  const endUf = normPayAddr.uf;
-  const endCodMun = normPayAddr.ibge;
+  const resolvedGeoPay = await resolveValidCepAndIbge({
+    cep: normPayAddr.cep,
+    logradouro: endLogradouro,
+    bairro: endBairro,
+    cidade: normPayAddr.cidade,
+    uf: normPayAddr.uf,
+    codigoMunicipio: normPayAddr.ibge
+  });
+  const endCep = resolvedGeoPay.cep || normPayAddr.cep || "28035000";
+  const endCidade = resolvedGeoPay.cidade || normPayAddr.cidade || "Campos dos Goytacazes";
+  const endUf = resolvedGeoPay.uf || normPayAddr.uf || "RJ";
+  const endCodMun = resolvedGeoPay.codigoMunicipio || normPayAddr.ibge || "3301009";
   const cleanEmail = (payload.tomadorEmail || resolvedCheckin?.email || "").trim().toLowerCase();
   const cleanTel = cleanPhone(payload.tomadorTelefone || resolvedCheckin?.telefone || "");
 
@@ -47926,6 +47934,12 @@ async function executeNfseEmissionInternal(payload) {
           updatedAt: new Date().toISOString()
         };
         db.agencies.push(ag);
+      } else {
+        ag.cep = endCep;
+        ag.ibgeCode = endCodMun;
+        ag.codigoMunicipio = endCodMun;
+        ag.city = endCidade;
+        ag.state = endUf;
       }
       resolvedAgencyId = Number(ag.id);
       // Se tomador é Agência, garante que companyId do invoice permaneça a empresa cliente da reserva (ou null), nunca gravando a agência em db.companies
@@ -47957,6 +47971,14 @@ async function executeNfseEmissionInternal(payload) {
           updatedAt: new Date().toISOString()
         };
         db.companies.push(comp);
+      } else {
+        comp.cep = endCep;
+        comp.ibgeCode = endCodMun;
+        comp.codigoMunicipio = endCodMun;
+        comp.city = endCidade;
+        comp.cidade = endCidade;
+        comp.state = endUf;
+        comp.uf = endUf;
       }
       resolvedCompanyId = Number(comp.id);
     }
@@ -48020,6 +48042,7 @@ async function executeNfseEmissionInternal(payload) {
         numero: endNumero || "100",
         complemento: endComplemento,
         bairro: endBairro || "Pelinca",
+        cidade: endCidade || "Campos dos Goytacazes",
         cep: endCep,
         uf: endUf,
         codigoMunicipio: endCodMun
@@ -48753,6 +48776,23 @@ async function processSingleNfseRetryItem(item) {
       tomadorCodigoMunicipio: useRetryCheckinAddr ? resolvedRetryCheckin.ibge : (p.tomadorCodigoMunicipio || "3301009")
     });
 
+    const resolvedGeoRetry = await resolveValidCepAndIbge({
+      cep: normRetryAddr.cep,
+      logradouro: normRetryAddr.logradouro,
+      bairro: normRetryAddr.bairro,
+      cidade: normRetryAddr.cidade,
+      uf: normRetryAddr.uf,
+      codigoMunicipio: normRetryAddr.ibge
+    });
+    normRetryAddr.cep = resolvedGeoRetry.cep || normRetryAddr.cep || "28035000";
+    normRetryAddr.ibge = resolvedGeoRetry.codigoMunicipio || normRetryAddr.ibge || "3301009";
+    normRetryAddr.cidade = resolvedGeoRetry.cidade || normRetryAddr.cidade || "Campos dos Goytacazes";
+    normRetryAddr.uf = resolvedGeoRetry.uf || normRetryAddr.uf || "RJ";
+    p.tomadorCep = normRetryAddr.cep;
+    p.tomadorCodigoMunicipio = normRetryAddr.ibge;
+    p.tomadorCidade = normRetryAddr.cidade;
+    p.tomadorUf = normRetryAddr.uf;
+
     const dpsData = buildNationalDpsPayload({
       numeroDps: nextDpsNumber,
       serie: "1",
@@ -48766,6 +48806,7 @@ async function processSingleNfseRetryItem(item) {
         numero: normRetryAddr.numero,
         complemento: normRetryAddr.complemento,
         bairro: normRetryAddr.bairro,
+        cidade: normRetryAddr.cidade,
         cep: normRetryAddr.cep,
         uf: normRetryAddr.uf,
         codigoMunicipio: normRetryAddr.ibge
@@ -49600,6 +49641,15 @@ app.get("/api/nfse/lookup-cnpj/:cnpj", async (req, res) => {
   if (cnpj.length === 11) {
     const resolved = resolveGuestDigitalCheckinData({ cpfCnpj: cnpj });
     if (!resolved) return res.status(404).json({ error: "Hóspede não encontrado no cadastro/check-in digital." });
+    const healedCpf = await resolveValidCepAndIbge({
+      cep: resolved.cep,
+      logradouro: resolved.logradouro,
+      bairro: resolved.bairro,
+      cidade: resolved.cidade,
+      uf: resolved.uf,
+      codigoMunicipio: resolved.ibge
+    });
+    const ibgeCpf = healedCpf.codigoMunicipio || resolved.ibge || "3301009";
     return res.json({
       razaoSocial: resolved.nome,
       nome: resolved.nome,
@@ -49611,110 +49661,51 @@ app.get("/api/nfse/lookup-cnpj/:cnpj", async (req, res) => {
       numero: resolved.numero || "",
       complemento: resolved.complemento || "",
       bairro: resolved.bairro || "",
-      cep: resolved.cep || "",
-      cidade: resolved.cidade || "Campos dos Goytacazes",
-      uf: resolved.uf || "RJ",
-      codigoMunicipio: resolved.ibge || "3301009",
+      cep: healedCpf.cep || resolved.cep || "",
+      cidade: healedCpf.cidade || resolved.cidade || "Campos dos Goytacazes",
+      uf: healedCpf.uf || resolved.uf || "RJ",
+      codigoMunicipio: ibgeCpf,
+      ibge: ibgeCpf,
+      ibgeCode: ibgeCpf,
       guestId: resolved.guestId || null,
       origem: "checkin_digital"
     });
   }
   if (cnpj.length !== 14) return res.status(400).json({ error: "CNPJ inválido. Deve conter 14 dígitos." });
 
-  // 1. Checa primeiro no banco local de empresas e agências da CorpFlats (resposta em 0ms)
-  if (db.agencies) {
-    const localAg = db.agencies.find(a => onlyDigits(a.cnpj) === cnpj);
-    if (localAg) {
-      return res.json({
-        razaoSocial: localAg.corporateName || localAg.razaoSocial,
-        nomeFantasia: localAg.tradeName || localAg.nomeFantasia || localAg.corporateName,
-        cnpj: localAg.cnpj,
-        email: localAg.financialEmail || "",
-        telefone: localAg.phone || "",
-        endereco: localAg.address || localAg.logradouro || "",
-        logradouro: localAg.logradouro || localAg.address || "",
-        numero: localAg.number || "",
-        complemento: localAg.complement || "",
-        bairro: localAg.neighborhood || "",
-        cep: localAg.cep || "",
-        cidade: localAg.city || "",
-        uf: localAg.state || "",
-        codigoMunicipio: localAg.ibgeCode || "",
-        agencyId: localAg.id,
-        isAgency: true,
-        origem: "crm_agencias"
-      });
-    }
-  }
-  if (db.companies) {
-    const local = db.companies.find(c => onlyDigits(c.cnpj) === cnpj);
-    if (local) {
-      return res.json({
-        razaoSocial: local.corporateName,
-        nomeFantasia: local.tradeName || local.corporateName,
-        cnpj: local.cnpj,
-        email: local.financialEmail || "",
-        telefone: local.phone || "",
-        endereco: local.address || "",
-        logradouro: local.logradouro || local.address || "",
-        numero: local.number || "",
-        complemento: local.complement || "",
-        bairro: local.neighborhood || "",
-        cep: local.cep || "",
-        cidade: local.city || "",
-        uf: local.state || "",
-        codigoMunicipio: local.ibgeCode || "",
-        companyId: local.id,
-        origem: "crm_local"
-      });
-    }
-  }
-
-  // 2. Consulta BrasilAPI
   try {
-    const apiRes = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpj}`, { signal: AbortSignal.timeout(4000) });
-    if (apiRes.ok) {
-      const data = await apiRes.json();
-      return res.json({
-        razaoSocial: data.razao_social,
-        nomeFantasia: data.nome_fantasia || data.razao_social,
-        cnpj: data.cnpj,
-        cep: data.cep,
-        endereco: `${data.logradouro || ''}, ${data.numero || ''}`.trim(),
-        logradouro: data.logradouro,
-        numero: data.numero,
-        bairro: data.bairro,
-        cidade: data.municipio,
-        uf: data.uf,
-        email: data.email,
-        telefone: data.ddd_telefone_1
-      });
+    const data = await lookupCnpj(cnpj, db);
+    if (!data || data.source === "fallback") {
+      return res.status(404).json({ error: "CNPJ não encontrado na Receita Federal" });
     }
-  } catch {}
-
-  // 3. Fallback: MinhaReceita API Pública
-  try {
-    const mrRes = await fetch(`https://minhareceita.org/${cnpj}`, { signal: AbortSignal.timeout(4000) });
-    if (mrRes.ok) {
-      const data = await mrRes.json();
-      return res.json({
-        razaoSocial: data.razao_social,
-        nomeFantasia: data.nome_fantasia || data.razao_social,
-        cnpj: data.cnpj,
-        cep: data.cep,
-        endereco: `${data.logradouro || ''}, ${data.numero || ''}`.trim(),
-        logradouro: data.logradouro,
-        numero: data.numero,
-        bairro: data.bairro,
-        cidade: data.municipio,
-        uf: data.uf,
-        email: data.email,
-        telefone: data.ddd_telefone_1
-      });
-    }
-  } catch {}
-
-  res.status(404).json({ error: "CNPJ não encontrado na Receita Federal" });
+    const ibge = data.codigoMunicipio || data.ibge || data.ibgeCode || "3301009";
+    return res.json({
+      ...data,
+      razaoSocial: data.razaoSocial,
+      nomeFantasia: data.nomeFantasia || data.razaoSocial,
+      cnpj,
+      cep: data.cep || "",
+      endereco: data.logradouro || "",
+      logradouro: data.logradouro || "",
+      numero: data.numero || "S/N",
+      complemento: data.complemento || "",
+      bairro: data.bairro || "",
+      cidade: data.cidade || "Campos dos Goytacazes",
+      municipio: data.cidade || "Campos dos Goytacazes",
+      uf: data.uf || "RJ",
+      codigoMunicipio: ibge,
+      ibge,
+      ibgeCode: ibge,
+      email: data.email || "",
+      telefone: data.telefone || "",
+      agencyId: data.agencyId || null,
+      companyId: data.companyId || null,
+      isAgency: data.entityType === "agency",
+      origem: data.source || "receita_federal"
+    });
+  } catch (err) {
+    return res.status(404).json({ error: err.message || "CNPJ não encontrado na Receita Federal" });
+  }
 });
 
 // Lookup CEP via ViaCEP / BrasilAPI
@@ -49723,17 +49714,20 @@ app.get("/api/lookup-cep/:cep", async (req, res) => {
   if (cep.length !== 8) return res.status(400).json({ error: "CEP inválido. Deve conter 8 dígitos." });
 
   try {
-    const apiRes = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-    if (!apiRes.ok) return res.status(404).json({ error: "CEP não encontrado" });
-    const data = await apiRes.json();
-    if (data.erro) return res.status(404).json({ error: "CEP inexistente" });
+    const data = await lookupCep(cep, db);
+    if (!data) return res.status(404).json({ error: "CEP não encontrado" });
+    const ibge = data.codigoMunicipio || data.ibge || "3301009";
     res.json({
-      cep: data.cep,
-      logradouro: data.logradouro,
-      bairro: data.bairro,
-      cidade: data.localidade,
-      uf: data.uf,
-      enderecoCompleto: `${data.logradouro}, ${data.bairro} - ${data.localidade}/${data.uf}`
+      cep: data.cep || cep,
+      logradouro: data.logradouro || "",
+      bairro: data.bairro || "",
+      cidade: data.cidade || "",
+      localidade: data.cidade || "",
+      uf: data.uf || "RJ",
+      codigoMunicipio: ibge,
+      ibge,
+      ibgeCode: ibge,
+      enderecoCompleto: `${data.logradouro || ""}, ${data.bairro || ""} - ${data.cidade || ""}/${data.uf || "RJ"}`
     });
   } catch {
     res.status(500).json({ error: "Falha ao consultar CEP" });
@@ -50875,10 +50869,20 @@ app.post("/api/companies", (req, res) => {
   const resolvedNumber = (number || numero || "").trim();
   const resolvedComplement = (complement || complemento || "").trim();
   const resolvedNeighborhood = (neighborhood || bairro || "").trim();
-  const resolvedCep = (cep || "").toString().replace(/\D/g, "");
-  const resolvedCity = (city || cidade || municipio || "Campos dos Goytacazes").trim();
-  const resolvedState = (state || uf || estado || "RJ").trim().toUpperCase();
-  const resolvedIbge = (ibgeCode || codigoMunicipio || codigoIbge || (resolvedCity.toLowerCase().includes("campos") ? "3301009" : "")).trim();
+  const rawCep = (cep || "").toString().replace(/\D/g, "");
+  const rawCity = (city || cidade || municipio || "Campos dos Goytacazes").trim();
+  const rawState = (state || uf || estado || "RJ").trim().toUpperCase();
+  const rawIbge = (ibgeCode || codigoMunicipio || codigoIbge || "").trim();
+  const inferredCompGeo = inferIbgeAndValidCep({
+    cep: rawCep,
+    cidade: rawCity,
+    uf: rawState,
+    codigoMunicipio: rawIbge
+  });
+  const resolvedCep = rawCep || inferredCompGeo.cep || "";
+  const resolvedCity = inferredCompGeo.cidade || rawCity;
+  const resolvedState = inferredCompGeo.uf || rawState;
+  const resolvedIbge = inferredCompGeo.codigoMunicipio || rawIbge || "3301009";
 
   const newCompany = {
     id: db.companies.length > 0 ? Math.max(...db.companies.map(c => c.id)) + 1 : 1,
@@ -51020,6 +51024,16 @@ app.patch("/api/companies/:id", (req, res) => {
     const val = (b.ibgeCode ?? b.codigoMunicipio ?? b.codigoIbge ?? "").trim();
     company.ibgeCode = val;
     company.codigoMunicipio = val;
+  }
+  const patchedGeo = inferIbgeAndValidCep({
+    cep: company.cep,
+    cidade: company.city || company.cidade,
+    uf: company.state || company.uf,
+    codigoMunicipio: company.ibgeCode || company.codigoMunicipio
+  });
+  if (patchedGeo.codigoMunicipio) {
+    company.ibgeCode = patchedGeo.codigoMunicipio;
+    company.codigoMunicipio = patchedGeo.codigoMunicipio;
   }
 
   company.updatedAt = new Date().toISOString();
