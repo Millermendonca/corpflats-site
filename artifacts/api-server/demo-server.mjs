@@ -5142,6 +5142,16 @@ export function reconcileUniversalIntegrity(incomingState = null) {
           const curDate = cur.updatedAt || cur.createdAt || "";
           const curIsDeleted = Boolean(cur.isDeleted || cur.status === "deleted");
           const incIsDeleted = Boolean(incReq.isDeleted || incReq.status === "deleted");
+          const curRevertedAfterIncClean = Boolean(
+            cur.status === "dirty" &&
+            cur.revertedToDirtyAt &&
+            (!incReq.completedAt || cur.revertedToDirtyAt >= incReq.completedAt)
+          );
+          const incRevertedAfterCurClean = Boolean(
+            incReq.status === "dirty" &&
+            incReq.revertedToDirtyAt &&
+            (!cur.completedAt || incReq.revertedToDirtyAt >= cur.completedAt)
+          );
           if (curIsDeleted && !incIsDeleted) {
             const delAt = cur.deletedAt || curDate;
             if (incDate && delAt && incDate > delAt) {
@@ -5151,7 +5161,10 @@ export function reconcileUniversalIntegrity(incomingState = null) {
               delete db.cleaningRequests[existingIdx].deletedReservationId;
               changed = true;
             }
+          } else if (curRevertedAfterIncClean) {
+            // Preserva a devolução manual mais recente (status: "dirty") sobre estado anterior "clean"
           } else if (
+            incRevertedAfterCurClean ||
             (incIsDeleted && !curIsDeleted && (!curDate || (incReq.deletedAt || incDate) >= curDate)) ||
             (incReq.status === "clean" && cur.status !== "clean") ||
             (incReq.status === "no_show" && cur.status !== "no_show") ||
@@ -6050,7 +6063,7 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     if (!c || c.isDeleted || c.status === "deleted" || c.status === "clean") continue;
     const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
     if (isInst) continue;
-    if (c.source !== "checkout" || c.isVacantExplicitlySet || c.markedByAdmin) continue;
+    if (c.source !== "checkout" || c.isVacantExplicitlySet || c.markedByAdmin || c.revertedToDirtyAt) continue;
     const fNum = String(c.flatNumber || (db.flats.find(f => f.id === c.flatId)?.number || ""));
     if (fNum === "509" && c.requestDate === "2026-10-28") continue;
 
@@ -7864,6 +7877,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
     if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
     const cleaningsMap = new Map();
     const cleaningsByReqId = new Map();
+    const revertedFlatDates = new Map();
     for (const l of logs) {
       const d = l.details || {};
       const flat = String(d.flatNumber || "").replace(/\D/g, "");
@@ -7876,6 +7890,17 @@ export async function reconcileFromAuditLogs(db, pgPool) {
 
       const key = (maidName || "maid") + "___" + flat + "___" + date;
 
+      if (l.action === "CLEANING_STATUS_DIRTY" || l.action === "CLEANING_RELEASED") {
+        revertedFlatDates.set(`${flat}___${date}`, tsStr);
+        if (reqId) cleaningsByReqId.delete(reqId);
+        for (const [k, v] of cleaningsMap.entries()) {
+          if (String(v.flat) === flat && (v.date === date || (reqId && Number(v.requestId) === reqId))) {
+            cleaningsMap.delete(k);
+          }
+        }
+        continue;
+      }
+
       if (l.action === "CLEANING_STATUS_WILL_CLEAN" || l.action === "CLEANING_STATUS_CLEANING_NOW") {
         if (!cleaningsMap.has(key)) {
           cleaningsMap.set(key, { startedAt: tsStr, maidName, userId, flat, date, requestId: reqId });
@@ -7887,6 +7912,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       }
 
       if (l.action === "CLEANING_STATUS_CLEAN" || l.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") {
+        revertedFlatDates.delete(`${flat}___${date}`);
         const existing = cleaningsMap.get(key) || { flat, date };
         existing.completedAt = tsStr;
         existing.maidName = maidName || existing.maidName;
@@ -7905,6 +7931,42 @@ export async function reconcileFromAuditLogs(db, pgPool) {
 
       const fNum = String(c.flatNumber || "").replace(/\D/g, "");
       const cDate = c.requestDate || (c.completedAt ? String(c.completedAt).substring(0, 10) : "");
+      const effDate = c.effectiveDate || (c.completedAt ? String(c.completedAt).substring(0, 10) : cDate);
+      const revertTs = revertedFlatDates.get(`${fNum}___${cDate}`) || revertedFlatDates.get(`${fNum}___${effDate}`) || c.revertedToDirtyAt || null;
+
+      if (c.status === "clean" && revertTs && (!c.completedAt || revertTs > c.completedAt)) {
+        const prevMaid = c.assignedUserId;
+        c.status = "dirty";
+        c.assignedUserId = null;
+        c.assignedUsername = null;
+        c.assignedUserName = null;
+        c.willCleanAt = null;
+        c.cleaningStartedAt = null;
+        c.completedAt = null;
+        c.durationMinutes = null;
+        c.effectiveDate = null;
+        c.executionDate = null;
+        c.markedByAdmin = false;
+        c.revertedToDirtyAt = revertTs;
+        if (c.source !== "stayover" && c.cleaningType !== "stayover") {
+          c.isVacant = true;
+          c.isVacantExplicitlySet = true;
+          if (!c.vacantSource || c.vacantSource === "cleaning_completed" || c.vacantSource === "cleaning_started") {
+            c.vacantSource = "admin";
+          }
+        }
+        if (Array.isArray(db.maidStatementEntries)) {
+          db.maidStatementEntries = db.maidStatementEntries.filter(e => !(Number(e.cleaningRequestId) === Number(c.id) && e.entryDate >= "2026-09-01"));
+        }
+        if (prevMaid && typeof syncMaidCredits === "function") {
+          try { syncMaidCredits(prevMaid); } catch (_) {}
+        }
+        changed = true;
+        continue;
+      }
+
+      if (revertTs && (!c.completedAt || revertTs >= c.completedAt)) continue;
+
       const keyCris = "Cris___" + fNum + "___" + cDate;
       const keyGrazi = "Grazi___" + fNum + "___" + cDate;
 
@@ -7914,6 +7976,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
 
       const match = validReqMatch || cleaningsMap.get(keyGrazi) || cleaningsMap.get(keyCris);
       if (match && match.status === "clean") {
+        if (c.revertedToDirtyAt && (!match.completedAt || c.revertedToDirtyAt >= match.completedAt)) continue;
         c.status = "clean";
         c.isPriority = false;
         delete c.priorityReason;
@@ -7935,10 +7998,11 @@ export async function reconcileFromAuditLogs(db, pgPool) {
     let maxCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) : 1000;
     for (const item of cleaningsMap.values()) {
       if (item.status !== "clean") continue;
+      if (revertedFlatDates.has(`${item.flat}___${item.date}`)) continue;
       const alreadyExists = (db.cleaningRequests || []).some(c =>
         String(c.flatNumber).replace(/\D/g, "") === String(item.flat) &&
         (c.requestDate === item.date || c.effectiveDate === item.date) &&
-        c.status === "clean"
+        (c.status === "clean" || Boolean(c.revertedToDirtyAt))
       );
       if (alreadyExists) continue;
       const flatObj = activeFlatsMap.get(item.flat);
@@ -14274,6 +14338,79 @@ function ensureUniqueRequestIds() {
 // Se um registro já estiver "clean" (limpo), ele sempre prevalecerá sobre qualquer duplicata suja!
 function reconcileCleaningRequests() {
   if (!db.cleaningRequests) db.cleaningRequests = [];
+
+  // 0. Autocura baseada nos logs de auditoria: se o último evento de limpeza de um flat na data
+  // foi CLEANING_STATUS_DIRTY ou CLEANING_RELEASED, nenhum registro daquele flat na data pode permanecer "clean".
+  const latestAuditByFlatAndDate = new Map();
+  if (Array.isArray(db.auditLogs)) {
+    for (const log of db.auditLogs) {
+      if (!log || log.category !== "cleaning") continue;
+      if (
+        log.action !== "CLEANING_STATUS_CLEAN" &&
+        log.action !== "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID" &&
+        log.action !== "CLEANING_STATUS_DIRTY" &&
+        log.action !== "CLEANING_RELEASED"
+      ) continue;
+      const fNum = String(log.details?.flatNumber || "").replace(/\D/g, "");
+      const logTs = String(log.timestamp || "");
+      const logDate = String(log.details?.requestDate || logTs.substring(0, 10));
+      if (!fNum || !logDate) continue;
+      const keys = new Set([`${fNum}_${logDate}`]);
+      if (logTs.length >= 10) keys.add(`${fNum}_${logTs.substring(0, 10)}`);
+      for (const k of keys) {
+        const prev = latestAuditByFlatAndDate.get(k);
+        if (!prev || logTs >= String(prev.timestamp || "")) {
+          latestAuditByFlatAndDate.set(k, log);
+        }
+      }
+    }
+  }
+
+  for (const req of db.cleaningRequests) {
+    if (!req || req.isDeleted || req.status === "deleted") continue;
+    const isInst = Boolean(req.isInstructionOnly || req.source === "manual_instruction" || req.type === "instruction" || req.type === "bed_adjustment_only" || req.isBedAdjustmentOnly);
+    if (isInst) continue;
+    const fKey = String(req.flatNumber || req.flatId || "").replace(/\D/g, "");
+    const rDate = req.requestDate || (req.completedAt ? String(req.completedAt).substring(0, 10) : "");
+    const eDate = req.effectiveDate || (req.completedAt ? String(req.completedAt).substring(0, 10) : "");
+    const auditLog = latestAuditByFlatAndDate.get(`${fKey}_${rDate}`) || (eDate ? latestAuditByFlatAndDate.get(`${fKey}_${eDate}`) : null);
+    if (
+      req.status === "clean" &&
+      auditLog &&
+      (auditLog.action === "CLEANING_STATUS_DIRTY" || auditLog.action === "CLEANING_RELEASED") &&
+      String(auditLog.timestamp || "") >= String(req.completedAt || "")
+    ) {
+      const prevMaidId = req.assignedUserId;
+      req.status = "dirty";
+      req.assignedUserId = null;
+      req.assignedUsername = null;
+      req.assignedUserName = null;
+      req.willCleanAt = null;
+      req.cleaningStartedAt = null;
+      req.completedAt = null;
+      req.durationMinutes = null;
+      req.effectiveDate = null;
+      req.executionDate = null;
+      req.markedByAdmin = false;
+      req.revertedToDirtyAt = auditLog.timestamp || new Date().toISOString();
+      if (req.source !== "stayover" && req.cleaningType !== "stayover") {
+        req.isVacant = true;
+        req.isVacantExplicitlySet = true;
+        if (!req.vacantSource || req.vacantSource === "cleaning_started" || req.vacantSource === "cleaning_completed") {
+          req.vacantSource = "admin";
+        }
+      }
+      if (Array.isArray(db.maidStatementEntries)) {
+        db.maidStatementEntries = db.maidStatementEntries.filter(
+          e => !(Number(e.cleaningRequestId) === Number(req.id) && e.entryDate >= "2026-09-01")
+        );
+      }
+      if (prevMaidId && typeof syncMaidCredits === "function") {
+        try { syncMaidCredits(prevMaidId); } catch (_) {}
+      }
+    }
+  }
+
   const byFlatAndDate = new Map();
   for (const req of db.cleaningRequests) {
     if (!req || (!req.flatId && !req.flatNumber)) continue;
@@ -14293,7 +14430,7 @@ function reconcileCleaningRequests() {
     if (items.length === 1) {
       reconciled.push(items[0]);
     } else {
-      // Prioridade absoluta: registro com status === "clean" ou "no_show"
+      const revertedItem = items.find(i => i.status === "dirty" && i.revertedToDirtyAt);
       const cleanItem = items.find(i => i.status === "clean");
       const deletedItem = items.find(i => i.status === "deleted" || i.isDeleted);
       const newerActiveAfterDelete = deletedItem ? items.find(i =>
@@ -14303,7 +14440,19 @@ function reconcileCleaningRequests() {
         deletedItem.deletedAt &&
         (i.createdAt || "") > deletedItem.deletedAt
       ) : null;
-      if (cleanItem) {
+      if (revertedItem && (!cleanItem || String(revertedItem.revertedToDirtyAt) >= String(cleanItem.completedAt || ""))) {
+        for (const other of items) {
+          if (other === revertedItem) continue;
+          if (!revertedItem.leavingGuest && other.leavingGuest) revertedItem.leavingGuest = other.leavingGuest;
+          if (!revertedItem.arrivingGuest && other.arrivingGuest) revertedItem.arrivingGuest = other.arrivingGuest;
+          if (!revertedItem.adminNote && other.adminNote && !other.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
+            revertedItem.adminNote = other.adminNote;
+          }
+          if (typeof revertedItem.twinBeds !== "boolean" && typeof other.twinBeds === "boolean") revertedItem.twinBeds = other.twinBeds;
+          if (typeof revertedItem.extraMattress !== "boolean" && typeof other.extraMattress === "boolean") revertedItem.extraMattress = other.extraMattress;
+        }
+        reconciled.push(revertedItem);
+      } else if (cleanItem) {
         // Enriquecer com detalhes de hóspedes se o item limpo não os tiver
         for (const other of items) {
           if (other === cleanItem) continue;
@@ -17775,7 +17924,7 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr(), prec
     } else if (st === "in_progress" || st === "cleaning_now") {
       isDirty = true;
       cleaningStatus = "in_progress";
-    } else if (st === "dirty" || st === "pending") {
+    } else if (st === "dirty" || st === "pending" || st === "will_clean" || st === "pending_issue") {
       isDirty = true;
       cleaningStatus = "dirty";
     } else if (st === "clean" || st === "inspected" || Boolean(reqToEvaluate.completedAt)) {
@@ -19719,8 +19868,14 @@ function getRequestsForDate(dateStr, isNested = false) {
       shouldSaveDb = true;
     }
 
-    let existingCleaning = activeExactCleanings.find(c => c.leavingGuest && pmsRes.guestName && c.leavingGuest.toLowerCase().includes(pmsRes.guestName.toLowerCase())) ||
-      activeExactCleanings.find(c => c.status === "clean") ||
+    const revertedExactCleaning = activeExactCleanings.find(c => c.status === "dirty" && c.revertedToDirtyAt);
+    const cleanExactCleaning = activeExactCleanings.find(c =>
+      c.status === "clean" &&
+      (!revertedExactCleaning || String(c.completedAt || "") > String(revertedExactCleaning.revertedToDirtyAt))
+    );
+    let existingCleaning = revertedExactCleaning ||
+      activeExactCleanings.find(c => c.leavingGuest && pmsRes.guestName && c.leavingGuest.toLowerCase().includes(pmsRes.guestName.toLowerCase())) ||
+      cleanExactCleaning ||
       activeExactCleanings.find(c => c.status === "no_show") ||
       activeExactCleanings[0] ||
       (deletedExactCleaning && !deletedExactCleaning.isDeleted ? deletedExactCleaning : undefined);
@@ -19729,17 +19884,34 @@ function getRequestsForDate(dateStr, isNested = false) {
     if (!existingCleaning) {
       const matchingCleanings = (db.cleaningRequests || []).filter(c =>
         (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) &&
-        c.effectiveDate === dateStr && c.status === "clean"
+        c.effectiveDate === dateStr && c.status === "clean" && !c.revertedToDirtyAt
       );
       existingCleaning = matchingCleanings[0];
     }
 
-    // Blindagem de Auditoria: Se o status ainda for dirty mas houver evento de auditoria clean hoje, respeita o clean
-    const auditCleanEvent = (!existingCleaning || existingCleaning.status !== "clean") ? (db.auditLogs || []).find(l =>
-      (l.action === "CLEANING_STATUS_CLEAN" || l.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") &&
-      String(l.details?.flatNumber || "").replace(/\D/g, "") === flatNumClean &&
-      (String(l.timestamp || "").substring(0, 10) === dateStr)
-    ) : null;
+    // Blindagem de Auditoria: Se o status ainda for dirty mas o ÚLTIMO evento de auditoria de hoje for clean (sem devolução posterior), respeita o clean
+    let auditCleanEvent = null;
+    if ((!existingCleaning || existingCleaning.status !== "clean") && !existingCleaning?.revertedToDirtyAt) {
+      const flatAuditLogsToday = (db.auditLogs || [])
+        .filter(l =>
+          (
+            l.action === "CLEANING_STATUS_CLEAN" ||
+            l.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID" ||
+            l.action === "CLEANING_STATUS_DIRTY" ||
+            l.action === "CLEANING_RELEASED"
+          ) &&
+          String(l.details?.flatNumber || "").replace(/\D/g, "") === flatNumClean &&
+          (String(l.timestamp || "").substring(0, 10) === dateStr || String(l.details?.requestDate || "") === dateStr)
+        )
+        .sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")));
+      const latestFlatAudit = flatAuditLogsToday[0];
+      if (
+        latestFlatAudit &&
+        (latestFlatAudit.action === "CLEANING_STATUS_CLEAN" || latestFlatAudit.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID")
+      ) {
+        auditCleanEvent = latestFlatAudit;
+      }
+    }
 
     const isManualTwin = Boolean(existingCleaning?.manualTwinBeds || existingCleaning?.isManualInstruction);
     const isManualMattress = Boolean(existingCleaning?.manualExtraMattress || existingCleaning?.isManualInstruction);
@@ -19922,7 +20094,7 @@ function getRequestsForDate(dateStr, isNested = false) {
 
   // Helper: Descarta automaticamente cards de checkout órfãos (reserva cancelada, no_show, excluída ou remarcada)
   const isOrphanCheckoutRequest = (r, fNumber) => {
-    if (!r || r.source !== "checkout" || r.status === "clean" || r.isVacantExplicitlySet || r.markedByAdmin) return false;
+    if (!r || r.source !== "checkout" || r.status === "clean" || r.isVacantExplicitlySet || r.markedByAdmin || r.revertedToDirtyAt) return false;
     if (String(fNumber) === "509" && r.requestDate === "2026-10-28") return false;
     const hasActiveCheckoutOnReqDate = (db.reservations || []).some(res =>
       res.status !== "cancelada" &&
@@ -20769,30 +20941,303 @@ app.patch("/api/cleaning/assignments/:requestId/twin-beds", (req, res) => {
   res.json(item);
 });
 
+// ── Helpers de Snapshot e Reversão Completa ("Devolver Quarto") ─────────────
+function capturePreCleanSnapshot(item, targetDate) {
+  if (!item || item.preCleanSnapshot) return;
+  const effDate = targetDate || item.requestDate || item.effectiveDate || getTodayStr();
+  const matchingReservations = (db.reservations || []).filter(r =>
+    (Number(r.flatId) === Number(item.flatId) || String(r.flatNumber) === String(item.flatNumber)) &&
+    (r.checkoutDate === effDate || r.checkinDate === effDate || (r.checkinDate <= effDate && r.checkoutDate >= effDate))
+  );
+  item.preCleanSnapshot = {
+    capturedAt: new Date().toISOString(),
+    status: "dirty",
+    source: item.source || "checkout",
+    cleaningType: item.cleaningType || (item.source === "stayover" ? "stayover" : "checkout"),
+    isVacant: Boolean(item.isVacant),
+    isVacantExplicitlySet: Boolean(item.isVacantExplicitlySet),
+    vacantSource: item.vacantSource || null,
+    isPriority: Boolean(item.isPriority),
+    priorityReason: item.priorityReason || null,
+    adminNote: item.adminNote ?? null,
+    pendingObservation: item.pendingObservation ?? null,
+    twinBeds: Boolean(item.twinBeds),
+    extraMattress: Boolean(item.extraMattress),
+    towelsChanged: Boolean(item.towelsChanged),
+    beddingChanged: Boolean(item.beddingChanged),
+    smokedInRoom: Boolean(item.smokedInRoom || item.guestSmoked),
+    smokedMarkedAt: item.smokedMarkedAt || null,
+    smokedMarkedBy: item.smokedMarkedBy || null,
+    reservationPriorities: matchingReservations.map(r => ({
+      id: r.id,
+      isPriority: Boolean(r.isPriority),
+      priorityReason: r.priorityReason || null,
+    })),
+  };
+}
+
+function revertCleaningRequestToDirty(item, { date = null, userAuth = null, now = new Date().toISOString(), explicitIsVacant = undefined } = {}) {
+  if (!item) return null;
+  const targetDate = date || item.requestDate || item.effectiveDate || getTodayStr();
+  const isInst = Boolean(item.isInstructionOnly || item.source === "manual_instruction" || item.type === "instruction" || item.type === "bed_adjustment_only" || item.isBedAdjustmentOnly);
+  const isStayover = Boolean(item.source === "stayover" || item.cleaningType === "stayover");
+  const flatNumClean = String(item.flatNumber || "").replace(/\D/g, "");
+  const relatedFlat = (db.flats || []).find(f => Number(f.id) === Number(item.flatId) || (flatNumClean && String(f.number).replace(/\D/g, "") === flatNumClean));
+
+  // Coleta todos os registros correlacionados deste flat na data (incluindo carry-overs ou duplicatas)
+  const correlatedRecords = isInst
+    ? [item]
+    : (db.cleaningRequests || []).filter(c => {
+        if (!c || c.isDeleted || c.status === "deleted") return false;
+        const cInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+        if (cInst) return false;
+        const sameFlat =
+          (item.flatId && Number(c.flatId) === Number(item.flatId)) ||
+          (flatNumClean && String(c.flatNumber || "").replace(/\D/g, "") === flatNumClean);
+        if (!sameFlat) return false;
+        if (Number(c.id) === Number(item.id)) return true;
+        const cCompDate = c.completedAt ? String(c.completedAt).substring(0, 10) : "";
+        const cStartDate = c.cleaningStartedAt ? String(c.cleaningStartedAt).substring(0, 10) : "";
+        const cWillDate = c.willCleanAt ? String(c.willCleanAt).substring(0, 10) : "";
+        return (
+          c.requestDate === targetDate ||
+          c.effectiveDate === targetDate ||
+          c.executionDate === targetDate ||
+          cCompDate === targetDate ||
+          cStartDate === targetDate ||
+          cWillDate === targetDate ||
+          (item.requestDate && (c.requestDate === item.requestDate || c.effectiveDate === item.requestDate))
+        );
+      });
+
+  if (!correlatedRecords.includes(item)) {
+    correlatedRecords.unshift(item);
+  }
+
+  const snap = item.preCleanSnapshot || correlatedRecords.find(c => c.preCleanSnapshot)?.preCleanSnapshot || null;
+  const correlatedIds = new Set(correlatedRecords.map(c => Number(c.id)).filter(Boolean));
+  const previousAssignedUserIds = new Set(
+    correlatedRecords.map(c => Number(c.assignedUserId)).filter(uid => Number.isFinite(uid) && uid > 0)
+  );
+  const completedTimestamps = new Set(
+    correlatedRecords.map(c => c.completedAt).filter(Boolean)
+  );
+
+  // Determina ocupação a preservar: se estava Desocupado, continua Desocupado ao devolver!
+  const wasVacant = typeof explicitIsVacant === "boolean"
+    ? explicitIsVacant
+    : Boolean(
+        !isStayover && (
+          item.isVacant ||
+          snap?.isVacant ||
+          correlatedRecords.some(c => c.isVacant) ||
+          (relatedFlat && relatedFlat.isOccupied === false)
+        )
+      );
+
+  const preservedVacantSource = !wasVacant
+    ? null
+    : (
+        (snap?.vacantSource && snap.vacantSource !== "cleaning_started" && snap.vacantSource !== "cleaning_completed")
+          ? snap.vacantSource
+          : (
+              (item.vacantSource && item.vacantSource !== "cleaning_started" && item.vacantSource !== "cleaning_completed")
+                ? item.vacantSource
+                : "admin"
+            )
+      );
+
+  // Reverte fumo se foi alterado na finalização
+  if (snap && Boolean(item.smokedInRoom || item.guestSmoked) !== Boolean(snap.smokedInRoom)) {
+    updateSmokingStatusForCleaning(item, Boolean(snap.smokedInRoom), userAuth, targetDate);
+  }
+
+  // Reverte prioridades nas reservas se havia snapshot
+  if (snap && Array.isArray(snap.reservationPriorities)) {
+    for (const rp of snap.reservationPriorities) {
+      const targetRes = (db.reservations || []).find(r => String(r.id) === String(rp.id));
+      if (targetRes) {
+        targetRes.isPriority = Boolean(rp.isPriority);
+        if (rp.priorityReason) {
+          targetRes.priorityReason = rp.priorityReason;
+        } else {
+          delete targetRes.priorityReason;
+        }
+      }
+    }
+  }
+
+  // Reverte histórico de enxoval em reservas de stayover
+  if (isStayover) {
+    for (const r of (db.reservations || [])) {
+      if (Number(r.flatId) !== Number(item.flatId) && String(r.flatNumber || "").replace(/\D/g, "") !== flatNumClean) continue;
+      if (Array.isArray(r.linenChangeHistory) && r.linenChangeHistory.length > 0) {
+        const beforeLen = r.linenChangeHistory.length;
+        r.linenChangeHistory = r.linenChangeHistory.filter(entry => {
+          if (!entry) return false;
+          if (entry.cleaningRequestId && correlatedIds.has(Number(entry.cleaningRequestId))) return false;
+          if (entry.date === targetDate && entry.createdAt && completedTimestamps.has(entry.createdAt)) return false;
+          return true;
+        });
+        if (r.linenChangeHistory.length !== beforeLen) {
+          r.linenChanges = r.linenChangeHistory;
+          const lastBed = [...r.linenChangeHistory].reverse().find(e => e.beddingChanged);
+          const lastTow = [...r.linenChangeHistory].reverse().find(e => e.towelsChanged);
+          r.lastBeddingChangeDate = lastBed ? lastBed.date : null;
+          r.lastTowelsChangeDate = lastTow ? lastTow.date : null;
+          r.updatedAt = now;
+        }
+      }
+    }
+  }
+
+  // Reverte execuções de tarefas preventivas geradas na conclusão desta limpeza
+  if (Array.isArray(db.periodicExecutions)) {
+    db.periodicExecutions = db.periodicExecutions.filter(e => {
+      if (!e) return false;
+      if (e.cleaningRequestId && correlatedIds.has(Number(e.cleaningRequestId))) return false;
+      if (
+        Number(e.flatId) === Number(item.flatId) &&
+        e.executedAt &&
+        completedTimestamps.has(e.executedAt) &&
+        e.notes === "Executado durante a limpeza do checkout"
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Reverte respostas de vistoria vinculadas a esta limpeza
+  if (Array.isArray(db.surveys)) {
+    for (const survey of db.surveys) {
+      if (Array.isArray(survey?.responses)) {
+        survey.responses = survey.responses.filter(
+          resp => !(resp && resp.cleaningRequestId && correlatedIds.has(Number(resp.cleaningRequestId)))
+        );
+      }
+    }
+  }
+
+  // Atualiza todos os registros correlacionados para "dirty"
+  for (const c of correlatedRecords) {
+    c.status = "dirty";
+    c.assignedUserId = null;
+    c.assignedUsername = null;
+    c.assignedUserName = null;
+    c.willCleanAt = null;
+    c.cleaningStartedAt = null;
+    c.completedAt = null;
+    c.durationMinutes = null;
+    c.effectiveDate = null;
+    c.executionDate = null;
+    c.markedByAdmin = false;
+    c.revertedToDirtyAt = now;
+    c.revertedBy = userAuth ? (userAuth.name || userAuth.username) : "Sistema";
+
+    if (isStayover) {
+      c.isVacant = false;
+    } else if (wasVacant) {
+      c.isVacant = true;
+      c.isVacantExplicitlySet = true;
+      c.vacantSource = preservedVacantSource || "admin";
+      c.vacantSetAt = c.vacantSetAt || now;
+      c.vacantSetBy = c.vacantSetBy || (userAuth?.username || "admin");
+    } else if (snap) {
+      c.isVacant = Boolean(snap.isVacant);
+      c.isVacantExplicitlySet = Boolean(snap.isVacantExplicitlySet);
+      c.vacantSource = snap.vacantSource || null;
+    }
+
+    if (snap) {
+      c.isPriority = Boolean(snap.isPriority);
+      if (snap.priorityReason) {
+        c.priorityReason = snap.priorityReason;
+      } else {
+        delete c.priorityReason;
+      }
+      c.adminNote = snap.adminNote ?? c.adminNote ?? null;
+      c.pendingObservation = snap.pendingObservation ?? null;
+      c.towelsChanged = Boolean(snap.towelsChanged);
+      c.beddingChanged = Boolean(snap.beddingChanged);
+      c.smokedInRoom = Boolean(snap.smokedInRoom);
+      c.guestSmoked = Boolean(snap.smokedInRoom);
+    } else {
+      c.pendingObservation = null;
+    }
+
+    delete c.preCleanSnapshot;
+    c.updatedAt = now;
+  }
+
+  if (relatedFlat && !isStayover && wasVacant) {
+    relatedFlat.isOccupied = false;
+    relatedFlat.updatedAt = now;
+  }
+
+  // Remove duplicatas correlacionadas da mesma data mantendo apenas `item`
+  if (!isInst && correlatedRecords.length > 1) {
+    const duplicateIdsToDrop = new Set(
+      correlatedRecords
+        .filter(c => c !== item && c.requestDate === item.requestDate)
+        .map(c => Number(c.id))
+    );
+    if (duplicateIdsToDrop.size > 0) {
+      db.cleaningRequests = (db.cleaningRequests || []).filter(c => !duplicateIdsToDrop.has(Number(c.id)));
+    }
+  }
+
+  // Remove lançamentos de extrato da camareira vinculados e ressincroniza créditos
+  if (Array.isArray(db.maidStatementEntries)) {
+    db.maidStatementEntries = db.maidStatementEntries.filter(
+      e => !(correlatedIds.has(Number(e.cleaningRequestId)) && e.entryDate >= "2026-09-01")
+    );
+  }
+  for (const maidUid of previousAssignedUserIds) {
+    if (typeof syncMaidCredits === "function") {
+      try { syncMaidCredits(maidUid); } catch (_) {}
+    }
+  }
+
+  return item;
+}
+
 // ── Release / Devolver Flat Endpoint ────────────────────────────────────────
 app.post("/api/cleaning/assignments/:requestId/release", (req, res) => {
   const reqId = Number(req.params.requestId);
-  const item = db.cleaningRequests.find(r => r.id === reqId);
+  const { flatNumber, flatId, date } = req.body || {};
+  let item = findOrUpsertCleaningRequest(reqId, flatNumber, flatId, date);
   if (!item) return res.status(404).json({ error: "Solicitação não encontrada" });
 
+  const userAuth = getAuthUser(req);
   const now = new Date().toISOString();
-  if (item.status === "clean") {
-    item.isPriority = false;
-    delete item.priorityReason;
-  }
-  item.status = "dirty";
-  item.assignedUserId = null;
-  item.assignedUsername = null;
-  item.assignedUserName = null;
-  item.willCleanAt = null;
-  item.cleaningStartedAt = null;
-  item.completedAt = null;
-  item.pendingObservation = null;
-  item.updatedAt = now;
-  if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
-  saveDatabase();
+  const targetDate = date || item.requestDate || item.effectiveDate || getTodayStr();
+
+  revertCleaningRequestToDirty(item, { date: targetDate, userAuth, now });
 
   const flat = db.flats.find(f => f.id === item.flatId);
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "CLEANING_STATUS_DIRTY",
+    actor: { name: userAuth ? (userAuth.name || userAuth.username) : "Sistema", role: userAuth?.role || "admin" },
+    details: {
+      requestId: item.id,
+      flatNumber: flat ? flat.number : (item.flatNumber || String(item.flatId)),
+      requestDate: targetDate,
+      status: "dirty",
+      assignedUserId: null,
+      assignedMaidName: null,
+      markedByAdmin: userAuth?.role === "admin" || userAuth?.role === "dev",
+      revertedToDirtyAt: now,
+    },
+    source: "cleaning_dashboard"
+  });
+
+  if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
+  saveDatabase();
+  checkAndNotifyAvailableServiceFlats();
+
   res.json({
     ...item,
     flatNumber: flat ? flat.number : String(item.flatId),
@@ -20865,14 +21310,23 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
     }
   }
 
-  // 2. Se ainda não achou e informou flatNumber ou flatId, procura por quarto e data
+  // 2. Se ainda não achou e informou flatNumber ou flatId, procura por quarto e data (incluindo effectiveDate)
   if (!item && flatNumber) {
-    const matching = db.cleaningRequests.filter(r => String(r.flatNumber) === String(flatNumber) && r.requestDate === targetDate);
-    item = matching.find(r => r.status === "clean") || matching[0];
+    const fClean = String(flatNumber).replace(/\D/g, "");
+    const matching = db.cleaningRequests.filter(r =>
+      !r.isDeleted && r.status !== "deleted" &&
+      String(r.flatNumber || "").replace(/\D/g, "") === fClean &&
+      (r.requestDate === targetDate || r.effectiveDate === targetDate)
+    );
+    item = matching.find(r => r.revertedToDirtyAt) || matching.find(r => r.status === "clean") || matching[0];
   }
   if (!item && flatId) {
-    const matching = db.cleaningRequests.filter(r => Number(r.flatId) === Number(flatId) && r.requestDate === targetDate);
-    item = matching.find(r => r.status === "clean") || matching[0];
+    const matching = db.cleaningRequests.filter(r =>
+      !r.isDeleted && r.status !== "deleted" &&
+      Number(r.flatId) === Number(flatId) &&
+      (r.requestDate === targetDate || r.effectiveDate === targetDate)
+    );
+    item = matching.find(r => r.revertedToDirtyAt) || matching.find(r => r.status === "clean") || matching[0];
   }
 
   // 3. Se ainda não achou, procura nos cards dinâmicos gerados para a data
@@ -20884,51 +21338,62 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
       (reqId && Number(c.id) === Number(reqId))
     );
 
-    const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
-    const newId = maxId + 1;
-    const now = new Date().toISOString();
+    if (virtualCard && virtualCard.id) {
+      const existingByVirtualId = db.cleaningRequests.find(r => Number(r.id) === Number(virtualCard.id));
+      if (existingByVirtualId) {
+        item = existingByVirtualId;
+      }
+    }
 
-    const targetFlatObj = db.flats.find(f =>
-      (flatNumber && String(f.number) === String(flatNumber)) ||
-      (flatId && Number(f.id) === Number(flatId)) ||
-      (virtualCard && (Number(f.id) === Number(virtualCard.flatId) || String(f.number) === String(virtualCard.flatNumber)))
-    );
+    if (!item) {
+      const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+      const newId = maxId + 1;
+      const now = new Date().toISOString();
 
-    item = {
-      id: newId,
-      flatId: targetFlatObj ? targetFlatObj.id : (virtualCard?.flatId || (flatId ? Number(flatId) : 1)),
-      flatNumber: targetFlatObj ? targetFlatObj.number : (virtualCard?.flatNumber || String(flatNumber || "113")),
-      requestDate: targetDate,
-      source: virtualCard?.source || "checkout",
-      cleaningType: virtualCard?.cleaningType || (virtualCard?.source === "stayover" ? "stayover" : "checkout"),
-      status: virtualCard?.status || "dirty",
-      assignedUserId: virtualCard?.assignedUserId || null,
-      assignedUsername: virtualCard?.assignedUsername || null,
-      assignedUserName: virtualCard?.assignedUserName || null,
-      isVacant: Boolean(virtualCard?.isVacant),
-      isPriority: Boolean(virtualCard?.isPriority),
-      isExtended: false,
-      twinBeds: Boolean(virtualCard?.twinBeds),
-      extraMattress: Boolean(virtualCard?.extraMattress),
-      reservationId: virtualCard?.reservationId || virtualCard?.autoReservationId || null,
-      adminNote: virtualCard?.adminNote || null,
-      leavingGuest: virtualCard?.leavingGuest || null,
-      currentGuest: virtualCard?.currentGuest || null,
-      arrivingGuest: virtualCard?.arrivingGuest || null,
-      pendingObservation: null,
-      doNotDisturb: Boolean(virtualCard?.doNotDisturb),
-      towelsChanged: Boolean(virtualCard?.towelsChanged),
-      beddingChanged: Boolean(virtualCard?.beddingChanged),
-      smokedInRoom: Boolean(virtualCard?.smokedInRoom || virtualCard?.guestSmoked),
-      guestSmoked: Boolean(virtualCard?.smokedInRoom || virtualCard?.guestSmoked),
-      willCleanAt: null,
-      cleaningStartedAt: null,
-      completedAt: null,
-      createdAt: now,
-      updatedAt: now
-    };
+      const targetFlatObj = db.flats.find(f =>
+        (flatNumber && String(f.number) === String(flatNumber)) ||
+        (flatId && Number(f.id) === Number(flatId)) ||
+        (virtualCard && (Number(f.id) === Number(virtualCard.flatId) || String(f.number) === String(virtualCard.flatNumber)))
+      );
 
-    db.cleaningRequests.unshift(item);
+      item = {
+        id: newId,
+        flatId: targetFlatObj ? targetFlatObj.id : (virtualCard?.flatId || (flatId ? Number(flatId) : 1)),
+        flatNumber: targetFlatObj ? targetFlatObj.number : (virtualCard?.flatNumber || String(flatNumber || "113")),
+        requestDate: targetDate,
+        source: virtualCard?.source || "checkout",
+        cleaningType: virtualCard?.cleaningType || (virtualCard?.source === "stayover" ? "stayover" : "checkout"),
+        status: virtualCard?.status || "dirty",
+        assignedUserId: virtualCard?.assignedUserId || null,
+        assignedUsername: virtualCard?.assignedUsername || null,
+        assignedUserName: virtualCard?.assignedUserName || null,
+        isVacant: Boolean(virtualCard?.isVacant),
+        isVacantExplicitlySet: Boolean(virtualCard?.isVacantExplicitlySet || virtualCard?.isVacant),
+        vacantSource: virtualCard?.vacantSource || (virtualCard?.isVacant ? "admin" : null),
+        isPriority: Boolean(virtualCard?.isPriority),
+        isExtended: false,
+        twinBeds: Boolean(virtualCard?.twinBeds),
+        extraMattress: Boolean(virtualCard?.extraMattress),
+        reservationId: virtualCard?.reservationId || virtualCard?.autoReservationId || null,
+        adminNote: virtualCard?.adminNote || null,
+        leavingGuest: virtualCard?.leavingGuest || null,
+        currentGuest: virtualCard?.currentGuest || null,
+        arrivingGuest: virtualCard?.arrivingGuest || null,
+        pendingObservation: null,
+        doNotDisturb: Boolean(virtualCard?.doNotDisturb),
+        towelsChanged: Boolean(virtualCard?.towelsChanged),
+        beddingChanged: Boolean(virtualCard?.beddingChanged),
+        smokedInRoom: Boolean(virtualCard?.smokedInRoom || virtualCard?.guestSmoked),
+        guestSmoked: Boolean(virtualCard?.smokedInRoom || virtualCard?.guestSmoked),
+        willCleanAt: null,
+        cleaningStartedAt: null,
+        completedAt: null,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      db.cleaningRequests.unshift(item);
+    }
   }
 
   if (item && item.smokedInRoom === undefined && item.guestSmoked !== undefined) {
@@ -21419,6 +21884,16 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     }
   }
 
+  // Captura snapshot do estado original ("dirty") antes de assumir ou finalizar a limpeza,
+  // permitindo reversão exata ao clicar em "Devolver Quarto".
+  if (status && (status === "will_clean" || status === "cleaning_now" || status === "clean" || status === "pending_issue")) {
+    if (item.status === "dirty" || !item.preCleanSnapshot) {
+      capturePreCleanSnapshot(item, targetDate);
+    }
+    delete item.revertedToDirtyAt;
+    delete item.revertedBy;
+  }
+
   // Regra de Negócio: Sempre que um card de CHECKOUT for marcado como limpeza iniciada (ou concluída),
   // considera-se automaticamente como desocupado e check-out realizado caso ainda não esteja.
   // Em STAYOVER ou LIMPEZA/CONFERÊNCIA PÓS-SERVIÇO, NÃO realiza check-out automático de reserva ativa!
@@ -21490,19 +21965,12 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     const previousStatus = item.status;
     item.status = status;
     if (status === "dirty") {
-      if (previousStatus === "clean") {
-        item.isPriority = false;
-        delete item.priorityReason;
-      }
-      item.assignedUserId = null;
-      item.assignedUsername = null;
-      item.assignedUserName = null;
-      item.willCleanAt = null;
-      item.cleaningStartedAt = null;
-      item.completedAt = null;
-      item.pendingObservation = null;
-      item.effectiveDate = null;
-      item.markedByAdmin = false;
+      revertCleaningRequestToDirty(item, {
+        date: targetDate,
+        userAuth,
+        now,
+        explicitIsVacant: typeof isVacant === "boolean" ? isVacant : undefined,
+      });
     } else if (status === "will_clean") {
       item.effectiveDate = customEffectiveDate || item.effectiveDate || date || getTodayStr();
       if (assignedUserId) {
@@ -21613,6 +22081,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
               targetRes.linenChangeHistory = Array.isArray(targetRes.linenChanges) ? [...targetRes.linenChanges] : [];
             }
             targetRes.linenChangeHistory.push({
+              cleaningRequestId: item.id,
               date: execDate,
               beddingChanged: Boolean(item.beddingChanged),
               towelsChanged: Boolean(item.towelsChanged),
@@ -21677,6 +22146,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
           id: db.periodicExecutions.length > 0 ? Math.max(...db.periodicExecutions.map(e => e.id)) + 1 : 1,
           periodicTaskId: Number(ptId),
           flatId: Number(item.flatId),
+          cleaningRequestId: item.id,
           executedByUserId: item.assignedUserId ? Number(item.assignedUserId) : (userAuth ? Number(userAuth.id) : 2),
           executedAt: now,
           notes: "Executado durante a limpeza do checkout",
@@ -21740,12 +22210,6 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
           }
         }
       }
-    } else if (status === "dirty") {
-      item.assignedUserId = null;
-      item.willCleanAt = null;
-      item.cleaningStartedAt = null;
-      item.completedAt = null;
-      item.pendingObservation = null;
     }
   }
   item.updatedAt = now;
@@ -21765,10 +22229,12 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     details: {
       requestId: item.id,
       flatNumber: flat ? flat.number : (item.flatNumber || String(item.flatId)),
+      requestDate: targetDate,
       status: item.status,
       assignedUserId: item.assignedUserId,
-      assignedMaidName: assignedUser ? (assignedUser.name || assignedUser.username) : "Camareira",
-      markedByAdmin: userAuth?.role === "admin" || userAuth?.role === "dev"
+      assignedMaidName: assignedUser ? (assignedUser.name || assignedUser.username) : (status === "dirty" ? null : "Camareira"),
+      markedByAdmin: userAuth?.role === "admin" || userAuth?.role === "dev",
+      ...(status === "dirty" ? { revertedToDirtyAt: now } : {}),
     },
     source: "cleaning_dashboard"
   });
