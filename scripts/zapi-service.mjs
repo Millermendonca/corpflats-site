@@ -3220,7 +3220,7 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
 export function reservationHasAnyContact(reservation = {}, db = {}) {
   if (reservation.guestPhone || reservation.guestEmail) return true;
   const r = getReservationRecipients(reservation, db);
-  return Boolean(r.guest.phone || r.guest.email || r.requester.email || r.companions.length > 0);
+  return Boolean(r.guest.phone || r.guest.email || r.requester.phone || r.requester.email || r.companions.length > 0);
 }
 
 export function getRecipientTypeLabel(type) {
@@ -5652,7 +5652,9 @@ export function hasActiveBreakfastOrderForDate(db, resv, targetDateStr) {
   const flatNum = String(resv.flatNumber || flatObj?.number || resv.flatId || "").trim();
 
   return (db.breakfastOrders || []).some(o => {
-    if (!o || o.status === "cancelled" || o.date !== targetDateStr) return false;
+    if (!o || o.date !== targetDateStr) return false;
+    const st = String(o.status || "").toLowerCase().trim();
+    if (st === "cancelled" || st === "cancelado") return false;
     const oId = o.reservationId !== undefined && o.reservationId !== null ? String(o.reservationId) : "";
     const oCode = String(o.reservationCode || "").trim().toUpperCase();
     if (rId && oId && rId === oId) return true;
@@ -5663,8 +5665,18 @@ export function hasActiveBreakfastOrderForDate(db, resv, targetDateStr) {
 }
 
 // ── Cálculo do Horário de Disparo (Offset Engine - Fuso Brasília -03:00) ───────
-export function calculateScheduledTime(template, reservation, db) {
-  const now = new Date();
+export function calculateScheduledTime(template, reservation, db, options = {}) {
+  const now = options?.nowOverride instanceof Date 
+    ? options.nowOverride 
+    : (options?.nowOverride 
+      ? new Date(options.nowOverride) 
+      : (reservation?._nowOverride instanceof Date 
+        ? reservation._nowOverride 
+        : (reservation?._nowOverride 
+          ? new Date(reservation._nowOverride) 
+          : (db?._nowOverride instanceof Date 
+            ? db._nowOverride 
+            : (db?._nowOverride ? new Date(db._nowOverride) : new Date())))));
   const { todayStr: brTodayStr } = getBrasiliaDateParts(now);
   const checkinTimeStr = db.settings?.checkinTime || "14:00";
   const checkoutTimeStr = db.settings?.checkoutTime || "12:00";
@@ -11504,7 +11516,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       const db = getDb();
       if (!db || !db.zapiConfig?.enabled) return;
 
-      const now = new Date();
+      const now = db?._nowOverride ? new Date(db._nowOverride) : new Date();
       const nowIso = now.toISOString();
       cronCounter++;
 
@@ -11688,7 +11700,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
 
         // Checagem dinâmica: se for lembrete de café da manhã, valida janela estrita (18:00-20:00), estadia ativa para amanhã e pedido já realizado
-        if (item.triggerEvent === "breakfast_reminder") {
+        if (item.triggerEvent === "breakfast_reminder" || item.templateId === "tpl_breakfast_reminder") {
           const { hour: brHourNow } = getBrasiliaDateParts(now);
           if (brHourNow < 18 || brHourNow >= 20) {
             console.log(`[Auto-WhatsApp] Descartando lembrete de café da manhã para ${item.recipientName || item.guestName}: fora da janela de disparo (18:00–20:00).`);
@@ -11777,7 +11789,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
 
       // 2. Garante que reservas confirmadas tenham suas réguas agendadas
-      scheduleUpcomingReservationTriggers(db, saveDatabase);
+      scheduleUpcomingReservationTriggers(db, saveDatabase, { nowOverride: now });
 
       // 2.5. Verifica reservas de check-in hoje cujo flat já está limpo/pronto desde a véspera (agenda 10:00/12:00 ou dispara se já passou do horário)
       await checkAndScheduleReadyFlatsOnCheckinDay(db, saveDatabase, process.env.APP_BASE_URL || "https://corpflats.com.br");
@@ -12373,7 +12385,7 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
 /**
  * Entrega um item da fila: WhatsApp (se houver telefone e não estiver bloqueado) e e-mail espelho (se houver e-mail).
  */
-export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null, bypassTestMode = false } = {}) {
+export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null, bypassTestMode = false, nowOverride = null } = {}) {
   const sendButtons = buttons || item.renderedButtons || [];
   const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode) || null;
   if (!item.guestPhone && resv) {
@@ -12424,6 +12436,52 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
       console.log(`[Auto-WhatsApp] Cancelando agendamento de '${item.triggerEvent}' para ${item.recipientName || item.guestName}: hóspede já realizou check-in físico ou já recebeu aviso de quarto pronto.`);
       item.status = "cancelled";
       item.error = "Cancelado: hóspede já realizou check-in ou já recebeu aviso de quarto liberado";
+      item.updatedAt = new Date().toISOString();
+      if (typeof saveDatabase === "function") saveDatabase();
+      return { waResult: null, emailLog: null, success: false, cancelled: true };
+    }
+  }
+
+  // Trava final em tempo real para lembrete de café da manhã (18:00–20:00):
+  // cancela se o pedido de amanhã já foi realizado, se está fora da estadia ativa/sem café ou fora da janela
+  if (item.triggerEvent === "breakfast_reminder" || item.templateId === "tpl_breakfast_reminder") {
+    const now = nowOverride instanceof Date
+      ? nowOverride
+      : (nowOverride
+        ? new Date(nowOverride)
+        : (item?._nowOverride instanceof Date
+          ? item._nowOverride
+          : (item?._nowOverride
+            ? new Date(item._nowOverride)
+            : (db?._nowOverride instanceof Date
+              ? db._nowOverride
+              : (db?._nowOverride ? new Date(db._nowOverride) : new Date())))));
+    const { todayStr, hour: brHourNow } = getBrasiliaDateParts(now);
+    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(nowUtc - (3 * 3600000));
+    const tomorrowDate = new Date(brDate);
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
+
+    const isStayActiveForTomorrow = Boolean(
+      resv &&
+      resv.checkinDate &&
+      resv.checkoutDate &&
+      todayStr >= resv.checkinDate &&
+      todayStr < resv.checkoutDate &&
+      hasReservationBreakfast(resv)
+    );
+
+    const alreadyOrdered = resv ? hasActiveBreakfastOrderForDate(db, resv, tomorrowStr) : false;
+
+    if (!isStayActiveForTomorrow || alreadyOrdered || brHourNow < 18 || brHourNow >= 20) {
+      console.log(`[Auto-WhatsApp] Bloqueando entrega de '${item.triggerEvent}' para ${item.recipientName || item.guestName}: ${alreadyOrdered ? "pedido de amanhã já realizado" : (brHourNow < 18 || brHourNow >= 20 ? "fora da janela 18:00–20:00" : "estadia inativa ou sem café")}.`);
+      item.status = "cancelled";
+      item.error = alreadyOrdered
+        ? "Cancelado: pedido de café de amanhã já realizado"
+        : (brHourNow < 18 || brHourNow >= 20)
+        ? "Cancelado: fora da janela limite das 18:00 às 20:00 para lembrete de café"
+        : "Cancelado: reserva fora do período de estadia ativa ou sem café contratado para amanhã";
       item.updatedAt = new Date().toISOString();
       if (typeof saveDatabase === "function") saveDatabase();
       return { waResult: null, emailLog: null, success: false, cancelled: true };
@@ -12735,11 +12793,17 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
 }
 
 // ── Populador de Fila para Reservas Futuras (Regras por Tempo) ─────────────────
-export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
+export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, options = {}) {
   const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
   if (!db || !db.whatsappTemplates || !db.reservations) return;
 
-  const now = new Date();
+  const now = options?.nowOverride instanceof Date 
+    ? options.nowOverride 
+    : (options?.nowOverride 
+      ? new Date(options.nowOverride) 
+      : (db?._nowOverride instanceof Date 
+        ? db._nowOverride 
+        : (db?._nowOverride ? new Date(db._nowOverride) : new Date())));
   const nowIso = now.toISOString();
   const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
   const brDate = new Date(nowUtc - (3 * 3600000));
@@ -12903,7 +12967,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 
       // 3. Filtro de Café da Manhã: só avalia/agenda nos dias de estadia ativa (todayStr >= checkinDate && todayStr < checkoutDate),
       // se tiver café contratado, dentro do limite até as 20:00 e se ainda não tiver pedido para amanhã
-      if (tpl.triggerEvent === "breakfast_reminder") {
+      if (tpl.triggerEvent === "breakfast_reminder" || tpl.id === "tpl_breakfast_reminder") {
         if (!resv.checkinDate || !resv.checkoutDate || todayStr < resv.checkinDate || todayStr >= resv.checkoutDate) {
           continue;
         }
@@ -12945,12 +13009,14 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 
         // Verifica se já existe agendamento ou envio para essa combinação (reserva + trigger + recipientType).
         // Para breakfast_reminder (gatilho diário por noite de estadia), a desduplicação é feita por dia (todayStr em Brasília).
-        const isDailyBreakfastTrigger = tpl.triggerEvent === "breakfast_reminder";
+        const isDailyBreakfastTrigger = tpl.triggerEvent === "breakfast_reminder" || tpl.id === "tpl_breakfast_reminder";
         const existingQueuedItem = (db.whatsappQueue || []).find(q => {
           const sameRes = (q.reservationCode && resv.code && q.reservationCode === resv.code) || (q.reservationId && resv.id && q.reservationId === resv.id);
-          if (!sameRes || q.triggerEvent !== tpl.triggerEvent) return false;
+          if (!sameRes) return false;
+          const isQBreakfast = q.triggerEvent === "breakfast_reminder" || q.templateId === "tpl_breakfast_reminder";
+          if (isDailyBreakfastTrigger ? !isQBreakfast : q.triggerEvent !== tpl.triggerEvent) return false;
           if ((q.recipientType || "guest") !== targetItem.type) return false;
-          if (q.status !== "scheduled" && q.status !== "sent") return false;
+          if (q.status !== "scheduled" && q.status !== "pending" && q.status !== "sent" && q.status !== "delivered") return false;
           if (isDailyBreakfastTrigger) {
             const qDay = getBrasiliaDateStrFromIso(q.sentAt || q.scheduledFor || q.createdAt);
             return qDay === todayStr;
@@ -12960,7 +13026,9 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 
         const alreadySentInHistory = (db.whatsappHistory || []).some(h => {
           const sameRes = (h.reservationCode && resv.code && h.reservationCode === resv.code) || (h.reservationId && resv.id && h.reservationId === resv.id);
-          if (!sameRes || h.triggerEvent !== tpl.triggerEvent) return false;
+          if (!sameRes) return false;
+          const isHBreakfast = h.triggerEvent === "breakfast_reminder" || h.templateId === "tpl_breakfast_reminder";
+          if (isDailyBreakfastTrigger ? !isHBreakfast : h.triggerEvent !== tpl.triggerEvent) return false;
           if ((h.recipientType || "guest") !== targetItem.type) return false;
           if (h.status !== "sent" && h.status !== "delivered") return false;
           if (isDailyBreakfastTrigger) {
@@ -12971,7 +13039,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
         });
 
         if (!existingQueuedItem && !alreadySentInHistory) {
-          let scheduledTime = calculateScheduledTime(tpl, resv, db);
+          let scheduledTime = calculateScheduledTime(tpl, resv, db, { nowOverride: now });
           let scheduledDate = new Date(scheduledTime);
 
           // Se o horário do NPS (+24h pós 12:00 de checkout) já chegou ou passou nas últimas 24h,
@@ -12986,7 +13054,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 
           // Se o horário das 18:00 do lembrete de café já chegou hoje, mas ainda estamos dentro da janela 18:00–20:00 (brHour >= 18 && brHour < 20),
           // agenda para envio imediato no próximo ciclo (30s) para hóspedes com café pendente para amanhã
-          if (scheduledDate <= now && tpl.triggerEvent === "breakfast_reminder" && brHour >= 18 && brHour < 20) {
+          if (scheduledDate <= now && (tpl.triggerEvent === "breakfast_reminder" || tpl.id === "tpl_breakfast_reminder") && brHour >= 18 && brHour < 20) {
             scheduledDate = new Date(now.getTime() + 30 * 1000);
             scheduledTime = scheduledDate.toISOString();
           }
@@ -13005,9 +13073,9 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 
             hasChanges = true;
           }
-        } else if (existingQueuedItem && existingQueuedItem.status === "scheduled" && !alreadySentInHistory) {
+        } else if (existingQueuedItem && (existingQueuedItem.status === "scheduled" || existingQueuedItem.status === "pending") && !alreadySentInHistory) {
           // Sincroniza itens ainda agendados ("scheduled") caso datas, flat ou contato da reserva tenham mudado
-          const rawScheduledTime = calculateScheduledTime(tpl, resv, db);
+          const rawScheduledTime = calculateScheduledTime(tpl, resv, db, { nowOverride: now });
           const rawScheduledDate = new Date(rawScheduledTime);
           const nextScheduledFor = rawScheduledDate > now ? rawScheduledTime : existingQueuedItem.scheduledFor;
 
@@ -13413,9 +13481,17 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
                 const hId = h.reservationId ? String(h.reservationId) : "";
                 const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
                 if (!isSameRes) return false;
-                const sameGroupOrSamedayReady = isSameEventGroup(h.triggerEvent, eventName) ||
-                  (isRoomReadyEvent && h.triggerEvent === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(h.message || "")));
-                if (!sameGroupOrSamedayReady) return false;
+                const isHBreakfast = h.triggerEvent === "breakfast_reminder" || h.templateId === "tpl_breakfast_reminder";
+                const isCurrentBreakfast = eventName === "breakfast_reminder" || tpl?.id === "tpl_breakfast_reminder";
+                if (isCurrentBreakfast) {
+                  if (!isHBreakfast) return false;
+                  const hDay = getBrasiliaDateStrFromIso(h.sentAt || h.timestamp || h.createdAt);
+                  if (hDay !== todayStr) return false;
+                } else {
+                  const sameGroupOrSamedayReady = isSameEventGroup(h.triggerEvent, eventName) ||
+                    (isRoomReadyEvent && h.triggerEvent === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(h.message || "")));
+                  if (!sameGroupOrSamedayReady) return false;
+                }
                 if (eventName === "pre_checkin_completed" && (h.recipientType || "guest") !== (target.type || "guest")) return false;
                 if (normalizePhoneForDedup(h.guestPhone) !== normTargetPhone) return false;
                 if ((isUpdatedEvent || isReSignPreCheckin) && h.sentAt) {
@@ -13460,7 +13536,12 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
               const isSameRes = (rCode && cResId === rCode) || (rId && cResId === rId);
               if (!isSameRes) return false;
               if (c.metadata?.channel !== "whatsapp_mirror") return false;
-              if (!isSameEventGroup(c.metadata?.trigger, eventName)) return false;
+              if (eventName === "breakfast_reminder") {
+                const cDay = getBrasiliaDateStrFromIso(c.sent_at || c.created_at);
+                if (cDay !== todayStr) return false;
+              } else if (!isSameEventGroup(c.metadata?.trigger, eventName)) {
+                return false;
+              }
               if (eventName === "pre_checkin_completed" && (c.metadata?.recipientType || "guest") !== (target.type || "guest")) return false;
               if (String(c.recipient || "").trim().toLowerCase() !== normTargetEmail) return false;
               if ((isUpdatedEvent || isReSignPreCheckin) && c.sent_at) {
@@ -14377,7 +14458,17 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
     }
 
     const baseUrl = options.baseUrl || "https://corpflats.com.br";
-    const now = new Date();
+    const now = options?.nowOverride instanceof Date
+      ? options.nowOverride
+      : (options?.nowOverride
+        ? new Date(options.nowOverride)
+        : (reservation?._nowOverride instanceof Date
+          ? reservation._nowOverride
+          : (reservation?._nowOverride
+            ? new Date(reservation._nowOverride)
+            : (db?._nowOverride instanceof Date
+              ? db._nowOverride
+              : (db?._nowOverride ? new Date(db._nowOverride) : new Date())))));
     const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
 
     if (reservation.checkoutDate && reservation.checkoutDate < todayStr) {
@@ -14545,8 +14636,8 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
         const hCode = String(h.reservationCode || "").trim().toUpperCase();
         const hId = h.reservationId ? String(h.reservationId) : "";
         const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
-        if (!isSameRes) return false;
-        if (h.triggerEvent !== "breakfast_reminder") return false;
+        const isHBreakfast = h.triggerEvent === "breakfast_reminder" || h.templateId === "tpl_breakfast_reminder";
+        if (!isHBreakfast) return false;
         if (normGuestPhone && normalizePhoneForDedup(h.guestPhone) !== normGuestPhone) return false;
         return getBrasiliaDateStrFromIso(h.sentAt || h.timestamp || h.createdAt) === todayStr;
       });
@@ -14565,7 +14656,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
     }
 
     // 6. Agenda todas as próximas etapas futuras da régua para o hóspede
-    scheduleUpcomingReservationTriggers(db, saveDatabase);
+    scheduleUpcomingReservationTriggers(db, saveDatabase, { nowOverride: now });
     if (typeof saveDatabase === "function") saveDatabase();
 
     return { dispatchedStages };
