@@ -25,7 +25,7 @@ import {
   User, CheckCircle2, AlertCircle, Clock, PlayCircle, Sparkles, 
   Flame, Wrench, ClipboardCheck, DoorOpen, RotateCcw, AlertTriangle, Check, CalendarX,
   PackageOpen, Camera, BedDouble, Image as ImageIcon, UserX, Calendar, CloudOff, Loader2,
-  DollarSign, CalendarDays, Trash2, Coins, Bell, BellOff
+  DollarSign, CalendarDays, Trash2, Coins, Bell, BellOff, RefreshCw, X, Star
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
