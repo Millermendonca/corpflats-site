@@ -186,6 +186,13 @@ export interface ServiceFlat {
   hasCheckinToday?: boolean;
   hasCheckoutToday?: boolean;
   forceReleased?: boolean;
+  returnedAt?: string | null;
+  returnedByWorkerName?: string | null;
+  returnedByWorkerCpf?: string | null;
+  returnedFromStatus?: string | null;
+  returnedAccessedRoom?: boolean | null;
+  returnedNeedsCleaning?: boolean | null;
+  returnReason?: string | null;
 }
 
 export interface ServiceCatalogItem {
@@ -2814,11 +2821,18 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                 ) : null}
                               </div>
 
-                              <div className="shrink-0">
+                              <div className="shrink-0 flex flex-col items-end gap-1">
                                 {flat.status === "pending" && (
-                                  <Badge variant="secondary" className="text-[10px] font-semibold">
-                                    Pendente
-                                  </Badge>
+                                  <>
+                                    <Badge variant="secondary" className="text-[10px] font-semibold">
+                                      Pendente
+                                    </Badge>
+                                    {flat.returnedAt && (
+                                      <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-400 text-[9.5px] font-bold">
+                                        ↩️ Devolvido (Sem Execução)
+                                      </Badge>
+                                    )}
+                                  </>
                                 )}
                                 {flat.status === "in_progress" && (
                                   <Badge className="bg-sky-600 text-white text-[10px] font-semibold gap-1 animate-pulse">
@@ -2855,6 +2869,13 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                   🔑 Entrada Solicitada
                                 </span>
                               )}
+                              {flat.returnedAt && flat.status === "pending" && (
+                                <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold bg-amber-50 text-amber-900 border border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-700">
+                                  {flat.returnedAccessedRoom
+                                    ? (flat.returnedNeedsCleaning ? "🚪 Acessou • 🧹 Pediu limpeza" : "🚪 Acessou • ✨ Sem limpeza")
+                                    : "🚫 Não entrou no flat"}
+                                </span>
+                              )}
                               {flat.needsCleaning === true && (
                                 <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-bold bg-amber-500/15 text-amber-700 border border-amber-300">
                                   🧹 Chamar faxina
@@ -2867,12 +2888,12 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                               )}
                             </div>
 
-                            {/* Linha 3: Resumo de Execução / Observações se houver */}
-                            {(flat.workerName || flat.startedAt || flat.observations) && (
+                            {/* Linha 3: Resumo de Execução / Devolução / Observações se houver */}
+                            {(flat.workerName || flat.startedAt || flat.observations || flat.returnedAt) && (
                               <div className="text-[11px] text-muted-foreground space-y-0.5 bg-muted/30 p-2 rounded-xl border border-border/50">
-                                {flat.workerName && (
+                                {(flat.workerName || flat.returnedByWorkerName) && (
                                   <div className="truncate">
-                                    👤 <strong className="text-foreground">{flat.workerName}</strong>
+                                    👤 <strong className="text-foreground">{flat.workerName || flat.returnedByWorkerName}</strong>
                                   </div>
                                 )}
                                 {flat.startedAt && (
@@ -2880,6 +2901,12 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                     🕒 Início: {formatDateTime(flat.startedAt)}
                                     {flat.finishedAt ? ` • Fim: ${formatDateTime(flat.finishedAt)}` : ""}
                                     {durationStr ? ` (${durationStr})` : ""}
+                                  </div>
+                                )}
+                                {flat.returnedAt && flat.status === "pending" && (
+                                  <div className="text-[10px] text-amber-800 dark:text-amber-300 font-semibold">
+                                    ↩️ Devolvido em: {formatDateTime(flat.returnedAt)}
+                                    {flat.returnReason ? ` — "${flat.returnReason}"` : ""}
                                   </div>
                                 )}
                                 {flat.observations && (
@@ -3069,6 +3096,18 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                       <Badge variant="secondary" className="text-[11px] font-semibold">
                                         Pendente
                                       </Badge>
+                                      {flat.returnedAt && (
+                                        <div className="space-y-0.5">
+                                          <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-400 text-[10px] font-bold">
+                                            ↩️ Devolvido (Sem Execução)
+                                          </Badge>
+                                          <span className="text-[10px] text-muted-foreground block font-medium">
+                                            {flat.returnedAccessedRoom
+                                              ? "🚪 Acessou o quarto"
+                                              : "🚫 Não entrou no quarto"}
+                                          </span>
+                                        </div>
+                                      )}
                                       {flat.entryRequested && (
                                         <span className="text-[10px] text-amber-700 block font-medium">
                                           🔑 Entrada solicitada
@@ -3100,14 +3139,14 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
 
                                 {/* Prestador */}
                                 <TableCell className="text-xs">
-                                  {flat.workerName ? (
+                                  {(flat.workerName || flat.returnedByWorkerName) ? (
                                     <div className="space-y-0.5">
                                       <span className="font-semibold text-foreground block truncate max-w-[130px]">
-                                        {flat.workerName}
+                                        {flat.workerName || flat.returnedByWorkerName}
                                       </span>
-                                      {flat.workerCpf && (
+                                      {(flat.workerCpf || flat.returnedByWorkerCpf) && (
                                         <span className="text-[10px] text-muted-foreground font-mono block">
-                                          {formatCpf(flat.workerCpf)}
+                                          {formatCpf(flat.workerCpf || flat.returnedByWorkerCpf || "")}
                                         </span>
                                       )}
                                     </div>
@@ -3132,6 +3171,10 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                         </span>
                                       )}
                                     </div>
+                                  ) : flat.returnedAt && flat.status === "pending" ? (
+                                    <span className="text-[10.5px] text-amber-700 dark:text-amber-300 font-semibold block">
+                                      ↩️ {formatDateTime(flat.returnedAt)}
+                                    </span>
                                   ) : (
                                     <span className="text-muted-foreground">-</span>
                                   )}
@@ -3139,17 +3182,17 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
 
                                 {/* Precisa Camareira */}
                                 <TableCell>
-                                  {flat.needsCleaning === true && (
+                                  {(flat.needsCleaning === true || (flat.status === "pending" && flat.returnedAt && flat.returnedNeedsCleaning === true)) && (
                                     <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 text-[10px] font-bold">
                                       🧹 Sim, chamar faxina
                                     </Badge>
                                   )}
-                                  {flat.needsCleaning === false && (
+                                  {(flat.needsCleaning === false || (flat.status === "pending" && flat.returnedAt && flat.returnedNeedsCleaning === false)) && (
                                     <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 text-[10px] font-bold">
                                       ✓ Mantido limpo
                                     </Badge>
                                   )}
-                                  {flat.needsCleaning === null || flat.needsCleaning === undefined ? (
+                                  {(flat.needsCleaning === null || flat.needsCleaning === undefined) && !(flat.status === "pending" && flat.returnedAt) ? (
                                     <span className="text-muted-foreground text-xs">-</span>
                                   ) : null}
                                 </TableCell>
@@ -3159,6 +3202,10 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                   {flat.observations ? (
                                     <span className="text-foreground italic">
                                       "{flat.observations}"
+                                    </span>
+                                  ) : flat.returnReason ? (
+                                    <span className="text-amber-800 dark:text-amber-300 italic">
+                                      [Devolvido]: "{flat.returnReason}"
                                     </span>
                                   ) : (
                                     "-"
@@ -3328,6 +3375,40 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
 
               {detailModalFlat && (
                 <div className="space-y-4 py-2 text-sm">
+                  {/* Alerta de Devolução Sem Execução */}
+                  {detailModalFlat.returnedAt && (
+                    <div className="p-3.5 rounded-xl border-2 border-amber-400 bg-amber-50/90 dark:bg-amber-950/30 dark:border-amber-700 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-black text-amber-900 dark:text-amber-200 flex items-center gap-1.5 text-sm">
+                          <RotateCcw className="w-4 h-4 text-amber-700 shrink-0" />
+                          <span>↩️ Flat Devolvido pelo Prestador (Sem Execução)</span>
+                        </span>
+                        <Badge className="bg-amber-600 text-white text-[10px] font-bold">
+                          {formatDateTime(detailModalFlat.returnedAt)}
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-amber-950 dark:text-amber-100">
+                        <div>
+                          <span className="text-[10.5px] text-amber-800/80 dark:text-amber-300/80 block font-semibold">Profissional:</span>
+                          <span className="font-bold">{detailModalFlat.returnedByWorkerName || detailModalFlat.workerName || "Prestador"}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10.5px] text-amber-800/80 dark:text-amber-300/80 block font-semibold">Acessou o quarto?</span>
+                          <span className="font-bold">
+                            {detailModalFlat.returnedAccessedRoom
+                              ? `Sim (${detailModalFlat.returnedNeedsCleaning ? "Solicitou limpeza/conferência" : "Não precisa de limpeza"})`
+                              : "Não chegou a entrar no quarto"}
+                          </span>
+                        </div>
+                      </div>
+                      {detailModalFlat.returnReason && (
+                        <div className="pt-1 border-t border-amber-200 dark:border-amber-800/60 text-[11.5px] text-amber-900 dark:text-amber-200 italic">
+                          <strong>Motivo informado:</strong> "{detailModalFlat.returnReason}"
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Grid de Informações Básicas */}
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-3.5 rounded-xl bg-muted/40 border">
                     <div>

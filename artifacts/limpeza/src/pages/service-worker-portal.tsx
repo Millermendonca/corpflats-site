@@ -44,6 +44,7 @@ import {
   Car,
   KeyRound,
   Lock,
+  RotateCcw,
 } from "lucide-react";
 
 // Types
@@ -96,6 +97,12 @@ export interface ServiceFlat {
   hasGuestInside?: boolean;
   scenarioWarning?: string | null;
   forceReleased?: boolean;
+  returnedAt?: string | null;
+  returnedByWorkerName?: string | null;
+  returnedFromStatus?: string | null;
+  returnedAccessedRoom?: boolean | null;
+  returnedNeedsCleaning?: boolean | null;
+  returnReason?: string | null;
 }
 
 export interface ServiceOrderData {
@@ -225,6 +232,13 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
   const [uploadedPhotos, setUploadedPhotos] = useState<string[]>([]);
   const [isCompressingPhotos, setIsCompressingPhotos] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Return Flat Modal State (Devolver Flat sem execução)
+  const [returnModalOpen, setReturnModalOpen] = useState(false);
+  const [returningFlat, setReturningFlat] = useState<ServiceFlat | null>(null);
+  const [returnAccessedRoomChoice, setReturnAccessedRoomChoice] = useState<"yes" | "no" | null>(null);
+  const [returnNeedsCleaningChoice, setReturnNeedsCleaningChoice] = useState<"yes" | "no" | null>(null);
+  const [returnReasonInput, setReturnReasonInput] = useState("");
 
   // Query: Public Service Order
   const {
@@ -593,6 +607,93 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
       });
     },
   });
+
+  // Mutation: Return Flat (Devolver Flat sem executar o serviço)
+  const returnFlatMutation = useMutation({
+    mutationFn: async ({
+      flatId,
+      accessedRoom,
+      needsCleaning,
+      reason,
+    }: {
+      flatId: number | string;
+      accessedRoom: boolean;
+      needsCleaning: boolean;
+      reason: string;
+    }) => {
+      const res = await fetch(`/api/service/public/${token}/flats/${flatId}/return`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessedRoom,
+          needsCleaning,
+          reason,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Erro ao devolver apartamento");
+      }
+      return res.json();
+    },
+    onSuccess: (_, variables) => {
+      toast({
+        title: "↩️ Apartamento devolvido!",
+        description: variables.accessedRoom && variables.needsCleaning
+          ? "O apartamento foi devolvido sem execução, eventual bloqueio foi removido e a governança foi acionada para conferência/limpeza."
+          : "O apartamento foi devolvido sem execução e eventual bloqueio foi removido.",
+      });
+      setReturnModalOpen(false);
+      setReturningFlat(null);
+      setReturnAccessedRoomChoice(null);
+      setReturnNeedsCleaningChoice(null);
+      setReturnReasonInput("");
+      queryClient.invalidateQueries({ queryKey: ["public-service-order", token] });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Erro ao devolver apartamento",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleOpenReturnModal = (flat: ServiceFlat) => {
+    setReturningFlat(flat);
+    setReturnAccessedRoomChoice(null);
+    setReturnNeedsCleaningChoice(null);
+    setReturnReasonInput("");
+    setReturnModalOpen(true);
+  };
+
+  const handleSubmitReturn = () => {
+    if (!returningFlat) return;
+    if (returnAccessedRoomChoice === null) {
+      toast({
+        title: "Resposta obrigatória",
+        description: "Por favor, informe se você chegou a acessar/entrar no quarto.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const accessedRoom = returnAccessedRoomChoice === "yes";
+    if (accessedRoom && returnNeedsCleaningChoice === null) {
+      toast({
+        title: "Resposta obrigatória",
+        description: "Como você informou que acessou o quarto, informe se ele precisa de limpeza da camareira.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const needsCleaning = accessedRoom ? returnNeedsCleaningChoice === "yes" : false;
+    returnFlatMutation.mutate({
+      flatId: returningFlat.flatId,
+      accessedRoom,
+      needsCleaning,
+      reason: returnReasonInput.trim(),
+    });
+  };
 
   // Collaborator helpers
   const handleAddCollaborator = () => {
@@ -1673,10 +1774,23 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   )}
                 </CardContent>
 
-                {/* Card Action Button (Requirement 3: Solicitar Entrada -> Iniciar Serviço -> Finalizar Serviço) */}
+                {/* Card Action Button (Requirement 3: Solicitar Entrada -> Iniciar Serviço -> Finalizar Serviço / Devolver Flat) */}
                 <CardFooter className="p-4 pt-0">
                   {flat.status === "pending" && (
                     <div className="w-full space-y-2">
+                      {flat.returnedAt && !flat.entryRequested && (
+                        <div className="p-2.5 rounded-xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/70 text-[11px] text-amber-900 dark:text-amber-200 space-y-0.5">
+                          <div className="font-bold flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
+                            <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                            <span>Devolvido sem execução ({formatDateTime(flat.returnedAt)})</span>
+                          </div>
+                          {flat.returnReason && (
+                            <p className="text-[10.5px] italic text-amber-700 dark:text-amber-300/90">
+                              Motivo: "{flat.returnReason}"
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {!flat.entryRequested ? (
                         <Button
                           onClick={() => handleRequestEntry(flat)}
@@ -1722,6 +1836,17 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                             )}
                             <span>{!isStatusAllowed ? "🔒 Bloqueado para este Serviço" : "▶️ Iniciar Apartamento (2. Iniciar Serviço)"}</span>
                           </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleOpenReturnModal(flat)}
+                            disabled={returnFlatMutation.isPending}
+                            className="w-full text-xs h-auto min-h-9 py-1.5 border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40 font-semibold flex items-center justify-center gap-1.5"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                            <span>↩️ Devolver Flat (Não Executar)</span>
+                          </Button>
                         </>
                       )}
 
@@ -1750,6 +1875,17 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                       >
                         <Clock className="w-3.5 h-3.5 shrink-0" />
                         <span>⏱️ Atualizar Previsão</span>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleOpenReturnModal(flat)}
+                        disabled={returnFlatMutation.isPending}
+                        className="w-full text-xs h-auto min-h-9 py-1.5 border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40 font-semibold flex items-center justify-center gap-1.5"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                        <span>↩️ Devolver Flat (Não Executei o Serviço)</span>
                       </Button>
                     </div>
                   )}
@@ -2427,6 +2563,161 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                 <CheckCircle2 className="w-4 h-4 mr-1.5 shrink-0" />
               )}
               <span>Confirmar e Finalizar</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Return Flat Confirmation Modal (Devolver Quarto sem Execução) */}
+      <Dialog open={returnModalOpen} onOpenChange={setReturnModalOpen}>
+        <DialogContent className="max-w-md sm:max-w-lg rounded-2xl p-5 sm:p-6 max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="space-y-1">
+            <DialogTitle className="text-lg font-black text-rose-700 dark:text-rose-400 flex items-center gap-2">
+              <RotateCcw className="w-5 h-5 text-rose-600 shrink-0" />
+              <span>Devolver Quarto — Flat {returningFlat?.flatNumber}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Confirme os dados abaixo para devolver o apartamento e cancelar a atuação atual.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Declaração de Não Execução */}
+            <div className="p-3.5 bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 rounded-xl flex items-start gap-2.5 text-xs text-rose-950 dark:text-rose-200">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold leading-snug">
+                  Atenção: Declaração de Não Execução do Serviço
+                </p>
+                <p className="leading-relaxed text-[11.5px]">
+                  Ao confirmar a devolução deste quarto, você confirma que <strong>não executou o serviço</strong> no Flat {returningFlat?.flatNumber}. Caso tenha sido gerado bloqueio no apartamento, ele será removido imediatamente.
+                </p>
+              </div>
+            </div>
+
+            {/* Pergunta 1: Acessou o quarto? */}
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/70 border-2 border-slate-200 dark:border-slate-700 rounded-xl space-y-2.5">
+              <Label className="text-xs font-bold text-slate-800 dark:text-slate-100 block">
+                1. Você chegou a acessar / entrar no quarto? *
+              </Label>
+              <RadioGroup
+                value={returnAccessedRoomChoice || ""}
+                onValueChange={(val) => {
+                  const choice = val as "yes" | "no";
+                  setReturnAccessedRoomChoice(choice);
+                  if (choice === "no") {
+                    setReturnNeedsCleaningChoice("no");
+                  } else if (returnNeedsCleaningChoice !== "yes" && returnNeedsCleaningChoice !== "no") {
+                    setReturnNeedsCleaningChoice(null);
+                  }
+                }}
+                className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1"
+              >
+                <label
+                  htmlFor="return-accessed-yes"
+                  className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
+                    returnAccessedRoomChoice === "yes"
+                      ? "bg-amber-50 border-amber-500 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
+                      : "bg-white dark:bg-slate-900 border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  <RadioGroupItem value="yes" id="return-accessed-yes" />
+                  <span>🚪 Sim, acessei o quarto</span>
+                </label>
+
+                <label
+                  htmlFor="return-accessed-no"
+                  className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
+                    returnAccessedRoomChoice === "no"
+                      ? "bg-emerald-50 border-emerald-500 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200"
+                      : "bg-white dark:bg-slate-900 border-slate-200 hover:bg-slate-100"
+                  }`}
+                >
+                  <RadioGroupItem value="no" id="return-accessed-no" />
+                  <span>🚫 Não cheguei a entrar</span>
+                </label>
+              </RadioGroup>
+            </div>
+
+            {/* Pergunta 2: Caso tenha acessado, precisa de limpeza? */}
+            {returnAccessedRoomChoice === "yes" && (
+              <div className="p-3.5 bg-amber-50/60 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-700 rounded-xl space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                <Label className="text-xs font-bold text-slate-800 dark:text-slate-100 block">
+                  2. O quarto precisa de limpeza ou conferência da camareira? *
+                </Label>
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  Informe se é necessário que a camareira vá ao flat para limpeza ou conferência após o seu acesso.
+                </p>
+                <RadioGroup
+                  value={returnNeedsCleaningChoice || ""}
+                  onValueChange={(val) => setReturnNeedsCleaningChoice(val as "yes" | "no")}
+                  className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1"
+                >
+                  <label
+                    htmlFor="return-clean-yes"
+                    className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
+                      returnNeedsCleaningChoice === "yes"
+                        ? "bg-amber-100 border-amber-600 text-amber-950 dark:bg-amber-900/60 dark:text-amber-100"
+                        : "bg-white dark:bg-slate-900 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    <RadioGroupItem value="yes" id="return-clean-yes" />
+                    <span>🧹 Sim, precisa de limpeza / conferência</span>
+                  </label>
+
+                  <label
+                    htmlFor="return-clean-no"
+                    className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
+                      returnNeedsCleaningChoice === "no"
+                        ? "bg-emerald-50 border-emerald-500 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200"
+                        : "bg-white dark:bg-slate-900 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    <RadioGroupItem value="no" id="return-clean-no" />
+                    <span>✨ Não, permanece limpo e intacto</span>
+                  </label>
+                </RadioGroup>
+              </div>
+            )}
+
+            {/* Motivo / Observação (Opcional) */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold">Motivo da Devolução / Observação (Opcional)</Label>
+              <Textarea
+                placeholder="Ex: Faltou peça específica, hóspede pediu para retornar mais tarde, apartamento acionado por engano..."
+                value={returnReasonInput}
+                onChange={(e) => setReturnReasonInput(e.target.value)}
+                className="text-xs min-h-[70px]"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4 flex flex-col-reverse sm:flex-row gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setReturnModalOpen(false)}
+              className="text-xs h-auto min-h-10 py-2 w-full sm:w-auto"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSubmitReturn}
+              disabled={
+                returnFlatMutation.isPending ||
+                returnAccessedRoomChoice === null ||
+                (returnAccessedRoomChoice === "yes" && returnNeedsCleaningChoice === null)
+              }
+              className="w-full sm:w-auto sm:flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs h-auto min-h-10 py-2.5 px-4 shadow-xs"
+            >
+              {returnFlatMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5 shrink-0" />
+              ) : (
+                <RotateCcw className="w-4 h-4 mr-1.5 shrink-0" />
+              )}
+              <span>Confirmar Devolução do Quarto</span>
             </Button>
           </DialogFooter>
         </DialogContent>

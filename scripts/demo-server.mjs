@@ -18008,6 +18008,25 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
         extraData?.reason ? `📝 Motivo: "${extraData.reason}"` : "",
         `➡️ Status: Em andamento no flat ${flat.flatNumber}.`
       ].filter(Boolean).join("\n");
+    } else if (action === "flat_returned") {
+      const prevStageLabel = extraData?.returnedFromStatus === "in_progress"
+        ? "Serviço já iniciado (em andamento)"
+        : "Após solicitar liberação de entrada";
+      const accessedLabel = extraData?.accessedRoom ? "SIM (entrou no quarto)" : "NÃO (não chegou a entrar)";
+      const cleaningLabel = extraData?.accessedRoom
+        ? (extraData?.needsCleaning ? "SIM (card de conferência/limpeza gerado para a camareira)" : "NÃO (quarto mantido limpo/intacto)")
+        : "Não aplicável (não acessou o quarto)";
+
+      message = [
+        `↩️ *Flat Devolvido pelo Prestador (Sem Execução)* — ${order.title}`,
+        `🏠 Flat *${flat.flatNumber}* | Prestador: ${workerName}${workerCpf ? ` · CPF: ${workerCpf}` : ""}`,
+        `📌 Etapa em que devolveu: ${prevStageLabel}`,
+        `🚪 Acessou o quarto: *${accessedLabel}*`,
+        `🧹 Precisa de limpeza/conferência: *${cleaningLabel}*`,
+        extraData?.reason ? `📝 Motivo/Obs: "${extraData.reason}"` : `📝 Motivo/Obs: Não informado`,
+        `⏰ Horário: ${nowTimeStr}`,
+        `✅ Bloqueio removido e flat retornado para pendente.`
+      ].filter(Boolean).join("\n");
     } else {
       const startTimeStr = flat.startedAt ? timeFormatter.format(new Date(flat.startedAt)) : "--:--";
       const finishTimeStr = flat.finishedAt ? timeFormatter.format(new Date(flat.finishedAt)) : nowTimeStr;
@@ -18031,13 +18050,16 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
       const notifTitle = action === "entry_request" ? `🔑 Solicitação de Entrada - Flat ${flat.flatNumber}` :
                          action === "start" ? `🔧 Serviço iniciado - Flat ${flat.flatNumber}` :
                          action === "finish" ? `✅ Serviço finalizado - Flat ${flat.flatNumber}` :
+                         action === "flat_returned" ? `↩️ Flat devolvido (sem execução) - Flat ${flat.flatNumber}` :
                          action === "overdue_alert" ? `⚠️ Previsão expirada - Flat ${flat.flatNumber}` :
                          `⏱️ Previsão atualizada - Flat ${flat.flatNumber}`;
       createNotification({
         category: "service_order",
         title: notifTitle,
-        message: `${order.title}: ${workerName} no Flat ${flat.flatNumber}`,
-        severity: action === "overdue_alert" ? "warning" : "info",
+        message: action === "flat_returned"
+          ? `${order.title}: ${workerName} devolveu o Flat ${flat.flatNumber} sem executar (${extraData?.accessedRoom ? (extraData?.needsCleaning ? "Acessou • Precisa limpeza" : "Acessou • Não precisa limpeza") : "Não acessou o quarto"})`
+          : `${order.title}: ${workerName} no Flat ${flat.flatNumber}`,
+        severity: (action === "overdue_alert" || action === "flat_returned") ? "warning" : "info",
         metadata: {
           serviceOrderId: order.id,
           flatId: flat.flatId,
@@ -18048,12 +18070,15 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
           estimatedFinishAt: flat.estimatedFinishAt || null,
           workerName: flat.workerName || workerName || null,
           workerCpf: flat.workerCpf || workerCpf || null,
-          observations: flat.observations || null,
+          observations: flat.observations || extraData?.reason || null,
           photos: Array.isArray(flat.photos) ? flat.photos : [],
-          needsCleaning: typeof flat.needsCleaning === "boolean" ? flat.needsCleaning : null,
+          needsCleaning: typeof flat.needsCleaning === "boolean" ? flat.needsCleaning : (typeof extraData?.needsCleaning === "boolean" ? extraData.needsCleaning : null),
           wasCleanWhenStarted: typeof flat.wasCleanWhenStarted === "boolean" ? flat.wasCleanWhenStarted : null,
           entryRequested: Boolean(flat.entryRequested),
-          entryRequestedAt: flat.entryRequestedAt || null
+          entryRequestedAt: flat.entryRequestedAt || null,
+          returnedAt: flat.returnedAt || null,
+          returnedFromStatus: extraData?.returnedFromStatus || null,
+          accessedRoom: typeof extraData?.accessedRoom === "boolean" ? extraData.accessedRoom : null
         },
         targetUrl: `/servicos`
       });
@@ -18086,7 +18111,10 @@ async function dispatchServiceNotifications(action, order, flat, worker, extraDa
       return false;
     };
 
-    if (Array.isArray(order.notificationRecipients) && order.notificationRecipients.length > 0) {
+    if (action === "flat_returned") {
+      // Regra de Negócio: Na devolução de flat sem execução, notifica APENAS o Miller (Admin) via WhatsApp
+      targetPhones.add(adminPhone);
+    } else if (Array.isArray(order.notificationRecipients) && order.notificationRecipients.length > 0) {
       for (const rec of order.notificationRecipients) {
         if (!rec || rec.enabled === false) continue;
         let shouldNotify = hasEvent(rec.events, action);
@@ -18978,7 +19006,7 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
 // ── Admin Instructions & Room Setup Endpoint (Admin Only) ───────────────────
 app.patch("/api/cleaning/requests/:requestId/admin-instructions", (req, res) => {
   const reqId = Number(req.params.requestId);
-  const { twinBeds, adminNote, extraMattress, flatId, flatNumber, requestDate } = req.body || {};
+  const { twinBeds, adminNote, extraMattress, isPaidCleaning, flatId, flatNumber, requestDate } = req.body || {};
 
   const item = findOrUpsertCleaningRequest(reqId, flatNumber, flatId, requestDate);
   if (!item) return res.status(404).json({ error: "Apartamento ou solicitação de limpeza não encontrada." });
@@ -18992,12 +19020,22 @@ app.patch("/api/cleaning/requests/:requestId/admin-instructions", (req, res) => 
     item.extraMattress = extraMattress;
     item.manualExtraMattress = true;
   }
+  if (typeof isPaidCleaning === "boolean") {
+    item.isPaidCleaning = isPaidCleaning;
+  }
   if (adminNote !== undefined) {
     item.adminNote = adminNote ? String(adminNote).trim() : null;
     item.pendingObservation = item.adminNote;
     item.manualAdminNote = true;
   }
   item.updatedAt = new Date().toISOString();
+
+  if (typeof isPaidCleaning === "boolean" && item.assignedUserId) {
+    syncMaidCredits(item.assignedUserId);
+  }
+  if (typeof invalidateRequestsForDateCache === "function") {
+    invalidateRequestsForDateCache();
+  }
 
   // Sincroniza a reserva correspondente no flat para a data de check-in / estadia
   const targetDate = requestDate || item.requestDate || getTodayStr();
@@ -19960,7 +19998,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         if (String(r.flatNumber) !== "509" && r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation && (!currentStayRes || r.requestDate !== currentStayRes.checkoutDate)) return false;
       }
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
-      if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
+      if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout" && r.source !== "service_order") return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
 
       // Descarta cards de checkout órfãos cuja reserva associada na data foi cancelada, no_show ou remarcada
@@ -20232,7 +20270,8 @@ app.get("/api/reservations/checkouts", (req, res) => {
 
     const cleanPendingObs = sanitizeCardNote(req_.pendingObservation);
     const isInst = Boolean(req_.isInstructionOnly || req_.source === "manual_instruction" || req_.type === "instruction" || req_.type === "bed_adjustment_only" || req_.isBedAdjustmentOnly);
-    const isPaid = typeof req_.isPaidCleaning === "boolean" ? req_.isPaidCleaning : (isInst ? false : true);
+    const isServiceCleaning = Boolean(req_.source === "service_order" || req_.cleaningType === "service_order" || req_.type === "service_cleaning");
+    const isPaid = typeof req_.isPaidCleaning === "boolean" ? req_.isPaidCleaning : ((isInst || isServiceCleaning) ? false : true);
     const instText = req_.instructionText || req_.notes || sanitizeCardNote(req_.adminNote) || cleanPendingObs || (req_.twinBeds ? "Separar as camas, colocar como 2 solteiras" : null);
 
     const setupInfo = isInst ? {
@@ -20248,7 +20287,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
       prefersHighFloor: hasPrefersHighFloor,
       specialRequests: resolvedSpecialRequests,
       adminNote: resolvedSpecialRequests,
-      guestName: isStayover ? null : (arrivingTodayRes?.guestName || req_.arrivingGuest || null)
+      guestName: (isStayover || isServiceCleaning) ? null : (arrivingTodayRes?.guestName || req_.arrivingGuest || null)
     };
 
     // Check if flat is currently occupied with a checkout on the next day or future
@@ -20257,7 +20296,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.checkinDate < dateStr && r.checkoutDate > dateStr
     );
-    const hasFutureCheckoutOnly = !isInst && !isStayover && Boolean(activeResToday && activeResToday.checkoutDate > dateStr && !req_.leavingGuest && req_.source !== "guest_checkout" && !req_.isVacant);
+    const hasFutureCheckoutOnly = !isInst && !isStayover && !isServiceCleaning && Boolean(activeResToday && activeResToday.checkoutDate > dateStr && !req_.leavingGuest && req_.source !== "guest_checkout" && !req_.isVacant);
 
     // Identifica a reserva B2B ativa de stayover
     const stayoverRes = isStayover ? ((db.reservations || []).find(r =>
@@ -20275,7 +20314,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
     ) || activeResToday) : null;
 
     // Identifica a reserva do hóspede saindo hoje ou ativa no flat
-    const checkoutRes = isInst ? null : (stayoverRes || ((db.reservations || []).find(r =>
+    const checkoutRes = (isInst || isServiceCleaning) ? null : (stayoverRes || ((db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.checkoutDate === (req_.originalRequestDate || req_.requestDate || dateStr)
@@ -20300,19 +20339,24 @@ app.get("/api/reservations/checkouts", (req, res) => {
     return {
       flatId: flat.id,
       flatNumber: flat.number,
-      source: isStayover ? "stayover" : (req_.source || "checkout"),
-      cleaningType: isStayover ? "stayover" : (req_.cleaningType || "checkout"),
+      source: isStayover ? "stayover" : (isServiceCleaning ? "service_order" : (req_.source || "checkout")),
+      cleaningType: isStayover ? "stayover" : (isServiceCleaning ? "service_order" : (req_.cleaningType || "checkout")),
+      serviceOrderId: req_.serviceOrderId || null,
+      serviceTitle: req_.serviceTitle || null,
+      serviceWorkerName: req_.serviceWorkerName || null,
+      serviceOrigin: req_.serviceOrigin || null,
+      serviceReason: req_.serviceReason || null,
       serviceInProgress: getFlatServiceInProgress(flat.id, flat.number),
       checkoutDate: req_.requestDate,
       hasCheckinToday: isInst || isStayover ? false : hasCheckinToday,
       isOccupied: isInst ? false : isOccupied,
       isVacant: isInst ? true : isVacant,
       isPriority: req_.status === "clean" ? false : Boolean(req_.isPriority),
-      isExtended: isInst ? false : (req_.isExtended || req_.status === "extended"),
+      isExtended: (isInst || isServiceCleaning) ? false : (req_.isExtended || req_.status === "extended"),
       isPendingFromPreviousDay: Boolean(req_.isPendingFromPreviousDay),
       originalRequestDate: req_.originalRequestDate || null,
-      leavingGuest: isInst || isStayover ? null : (req_.leavingGuest || null),
-      arrivingGuest: isInst || isStayover ? null : (resolvedArrivingGuest || (arrivingTodayRes?.guestName || null)),
+      leavingGuest: (isInst || isStayover || isServiceCleaning) ? null : (req_.leavingGuest || null),
+      arrivingGuest: (isInst || isStayover) ? null : (resolvedArrivingGuest || (arrivingTodayRes?.guestName || null)),
       currentGuest: currentGuest,
       doNotDisturb: doNotDisturb,
       linenTracking: linenTracking,
@@ -20340,43 +20384,56 @@ app.get("/api/reservations/checkouts", (req, res) => {
       } : null,
       hasFutureCheckoutOnly,
       setupInfo,
-      pendingPeriodicTasks: isInst ? [] : pendingTasks,
-      pendingSurveys: (isInst || isStayover) ? [] : pendingSurveys,
+      pendingPeriodicTasks: (isInst || isServiceCleaning) ? [] : pendingTasks,
+      pendingSurveys: (isInst || isStayover || isServiceCleaning) ? [] : pendingSurveys,
       isInstructionOnly: isInst,
       isBedAdjustmentOnly: Boolean(req_.isBedAdjustmentOnly || req_.type === "bed_adjustment_only"),
       isPaidCleaning: isPaid,
       instructionText: instText,
-      smokedInRoom: (typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
-        ? Boolean(req_.smokedInRoom || req_.guestSmoked)
-        : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked)),
-      guestSmoked: (typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
-        ? Boolean(req_.smokedInRoom || req_.guestSmoked)
-        : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked)),
+      smokedInRoom: isServiceCleaning
+        ? false
+        : ((typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
+            ? Boolean(req_.smokedInRoom || req_.guestSmoked)
+            : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
+      guestSmoked: isServiceCleaning
+        ? false
+        : ((typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
+            ? Boolean(req_.smokedInRoom || req_.guestSmoked)
+            : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
       cleaningRequest: {
         id: req_.id,
         flatId: req_.flatId,
         flatNumber: flat.number,
         requestDate: req_.requestDate,
-        source: isStayover ? "stayover" : req_.source,
-        cleaningType: isStayover ? "stayover" : (req_.cleaningType || "checkout"),
+        source: isStayover ? "stayover" : (isServiceCleaning ? "service_order" : req_.source),
+        cleaningType: isStayover ? "stayover" : (isServiceCleaning ? "service_order" : (req_.cleaningType || "checkout")),
+        serviceOrderId: req_.serviceOrderId || null,
+        serviceTitle: req_.serviceTitle || null,
+        serviceWorkerName: req_.serviceWorkerName || null,
+        serviceOrigin: req_.serviceOrigin || null,
+        serviceReason: req_.serviceReason || null,
         status: req_.status,
-        type: req_.type || (isStayover ? "stayover" : (isInst ? "instruction" : "cleaning")),
+        type: req_.type || (isStayover ? "stayover" : (isServiceCleaning ? "service_cleaning" : (isInst ? "instruction" : "cleaning"))),
         isInstructionOnly: isInst,
         isBedAdjustmentOnly: Boolean(req_.isBedAdjustmentOnly || req_.type === "bed_adjustment_only"),
         isPaidCleaning: isPaid,
         instructionText: instText,
-        smokedInRoom: (typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
-          ? Boolean(req_.smokedInRoom || req_.guestSmoked)
-          : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked)),
-        guestSmoked: (typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
-          ? Boolean(req_.smokedInRoom || req_.guestSmoked)
-          : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked)),
+        smokedInRoom: isServiceCleaning
+          ? false
+          : ((typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
+              ? Boolean(req_.smokedInRoom || req_.guestSmoked)
+              : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
+        guestSmoked: isServiceCleaning
+          ? false
+          : ((typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
+              ? Boolean(req_.smokedInRoom || req_.guestSmoked)
+              : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
         twinBeds: hasTwinBeds,
         extraMattress: hasExtraMattress,
         adminNote: resolvedSpecialRequests,
         pendingObservation: cleanPendingObs || resolvedSpecialRequests,
         arrivingGuest: isStayover ? null : (arrivingTodayRes?.guestName || req_.arrivingGuest || null),
-        leavingGuest: isStayover ? null : (req_.leavingGuest || null),
+        leavingGuest: (isStayover || isServiceCleaning) ? null : (req_.leavingGuest || null),
         currentGuest: currentGuest,
         doNotDisturb: doNotDisturb,
         linenTracking: linenTracking,
@@ -20581,7 +20638,8 @@ app.get("/api/dashboard/summary", (req, res) => {
   const byUserMap = {};
   for (const r of requestsForDate) {
     const isInst = Boolean(r.isInstructionOnly || r.cleaningRequest?.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.cleaningRequest?.type === "bed_adjustment_only");
-    if (isInst && r.isPaidCleaning === false) continue;
+    const isSvcCleaning = Boolean(r.source === "service_order" || r.cleaningRequest?.source === "service_order" || r.cleaningType === "service_order" || r.type === "service_cleaning");
+    if ((isInst || isSvcCleaning) && r.isPaidCleaning === false) continue;
     const assignedId = r.cleaningRequest?.assignedUserId || r.assignedUserId;
     if (!assignedId) continue;
     const u = db.users.find(x => x.id === assignedId);
@@ -21318,9 +21376,10 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     }
   }
 
-  // Minimum time enforcement: 10 minutes minimum from cleaningStartedAt (bypassed for instructions / adjustments and stayovers)
+  // Minimum time enforcement: 10 minutes minimum from cleaningStartedAt (bypassed for instructions / adjustments, stayovers and post-service cleanings/conferences)
   const isInstructionRequest = Boolean(item.isInstructionOnly || item.isBedAdjustmentOnly || item.type === "instruction" || item.type === "bed_adjustment_only" || item.source === "manual_instruction");
-  if (status === "clean" && item.cleaningStartedAt && !customCompletedAt && !isInstructionRequest && !isStayover) {
+  const isServiceOrderCleaning = Boolean(item.source === "service_order" || item.cleaningType === "service_order" || item.type === "service_cleaning");
+  if (status === "clean" && item.cleaningStartedAt && !customCompletedAt && !isInstructionRequest && !isStayover && !isServiceOrderCleaning) {
     const started = new Date(item.cleaningStartedAt).getTime();
     const elapsedMinutes = (Date.now() - started) / 60000;
     if (elapsedMinutes < 10 && userAuth?.role !== "admin" && userAuth?.role !== "dev") {
@@ -21332,8 +21391,8 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
 
   // Regra de Negócio: Sempre que um card de CHECKOUT for marcado como limpeza iniciada (ou concluída),
   // considera-se automaticamente como desocupado e check-out realizado caso ainda não esteja.
-  // Em STAYOVER, o hóspede continua ocupando o quarto, logo NÃO realiza check-out nem altera isOccupied para false!
-  if (!isInstructionRequest && !isStayover && (status === "cleaning_now" || status === "in_progress" || status === "clean")) {
+  // Em STAYOVER ou LIMPEZA/CONFERÊNCIA PÓS-SERVIÇO, NÃO realiza check-out automático de reserva ativa!
+  if (!isInstructionRequest && !isStayover && !isServiceOrderCleaning && (status === "cleaning_now" || status === "in_progress" || status === "clean")) {
     const autoSource = status === "clean" ? "cleaning_completed" : "cleaning_started";
     if (!item.isVacant || !item.isVacantExplicitlySet) {
       item.isVacant = true;
@@ -22846,7 +22905,7 @@ function syncServiceOrderRoomBlocks(order, isDeleted = false, targetDb = db) {
   const baseEndDate = order.blockEndDate || getOffsetDateStr(1);
 
   for (const f of (order.flats || [])) {
-    if (f.status === "done") continue;
+    if (f.status === "done" || (f.status === "pending" && f.returnedAt)) continue;
     const flatStartDate = f.startedAt ? getExecutionDateStr(f.startedAt) : baseStartDate;
     const startDate = flatStartDate < baseStartDate ? flatStartDate : baseStartDate;
     const estEndDate = f.estimatedFinishAt ? getExecutionDateStr(f.estimatedFinishAt) : baseEndDate;
@@ -23480,6 +23539,13 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   flat.wasCleanWhenStarted = null;
   flat.entryRequested = false;
   flat.entryRequestedAt = null;
+  flat.returnedAt = null;
+  flat.returnedByWorkerName = null;
+  flat.returnedByWorkerCpf = null;
+  flat.returnedFromStatus = null;
+  flat.returnedAccessedRoom = null;
+  flat.returnedNeedsCleaning = null;
+  flat.returnReason = null;
   flat.delayNotified = false;
   flat.forceReleased = false;
   flat.workerNotifiedAvailable = false;
@@ -23603,31 +23669,54 @@ app.post("/api/service-orders/:id/flats/:flatId/admin-complete", (req, res) => {
   if (flat.needsCleaning === true) {
     if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
     const maxReqId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+    const todayStr = getTodayStr();
+    const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
     const existingReq = db.cleaningRequests.find(r =>
       (Number(r.flatId) === Number(flat.flatId) || String(r.flatNumber) === String(flat.flatNumber)) &&
-      r.requestDate === getTodayStr()
+      r.requestDate === todayStr &&
+      !r.isInstructionOnly &&
+      r.source !== "manual_instruction"
     );
-    const cleanNote = `[OS: ${order.title}] Limpeza pós-serviço solicitada. Obs: ${flat.observations || "Nenhuma"}`.trim();
+    const cleanNote = `[OS: ${order.title}] Conferência / limpeza pós-serviço (Prestador: ${flat.workerName || "Prestador"}).${flat.observations ? ` Obs: ${flat.observations}` : ""}`.trim();
     if (existingReq) {
       existingReq.isDeleted = false;
       existingReq.status = "dirty";
       existingReq.source = "service_order";
+      existingReq.cleaningType = "service_order";
+      existingReq.type = "service_cleaning";
+      if (typeof existingReq.isPaidCleaning !== "boolean") existingReq.isPaidCleaning = false;
+      existingReq.serviceOrderId = order.id;
+      existingReq.serviceTitle = order.title;
+      existingReq.serviceWorkerName = flat.workerName || "Prestador";
+      existingReq.serviceOrigin = "finish";
+      existingReq.serviceReason = flat.observations || null;
       existingReq.adminNote = cleanNote;
+      existingReq.pendingObservation = cleanNote;
       existingReq.updatedAt = new Date().toISOString();
     } else {
       db.cleaningRequests.unshift({
         id: maxReqId + 1,
         flatId: flat.flatId,
         flatNumber: flat.flatNumber,
-        requestDate: getTodayStr(),
+        requestDate: todayStr,
         source: "service_order",
+        cleaningType: "service_order",
+        type: "service_cleaning",
+        isPaidCleaning: false,
+        serviceOrderId: order.id,
+        serviceTitle: order.title,
+        serviceWorkerName: flat.workerName || "Prestador",
+        serviceOrigin: "finish",
+        serviceReason: flat.observations || null,
         status: "dirty",
-        isVacant: false,
+        isVacant: !realtime.isOccupied,
         adminNote: cleanNote,
+        pendingObservation: cleanNote,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
     }
+    if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
   }
 
   syncServiceOrderRoomBlocks(order);
@@ -24478,6 +24567,13 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   flat.wasCleanWhenStarted = scenario === "vago_limpo" || scenario === "checkin_hoje_limpo";
   flat.entryRequested = true;
   if (!flat.entryRequestedAt) flat.entryRequestedAt = now.toISOString();
+  flat.returnedAt = null;
+  flat.returnedByWorkerName = null;
+  flat.returnedByWorkerCpf = null;
+  flat.returnedFromStatus = null;
+  flat.returnedAccessedRoom = null;
+  flat.returnedNeedsCleaning = null;
+  flat.returnReason = null;
   flat.delayNotified = false;
 
   if (req.body?.estimatedFinishAt) {
@@ -24549,22 +24645,30 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
   }
 
   const now = new Date();
+  const worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id)) || { mainWorker: { name: flat.workerName || "Prestador", cpf: flat.workerCpf || "" } };
+  const resolvedWorkerName = (flat.workerName || worker?.mainWorker?.name || "Prestador").trim();
+
   flat.status = "done";
   flat.finishedAt = now.toISOString();
   flat.observations = req.body.observations ? String(req.body.observations).trim() : "";
   flat.photos = photos;
   flat.needsCleaning = flat.wasCleanWhenStarted === true && typeof req.body.needsCleaning === "boolean" ? req.body.needsCleaning : null;
   flat.estimatedFinishAt = null;
+  flat.returnedAt = null;
 
-  // Se precisa de camareira, enfileirar solicitação de limpeza dirty
+  // Se precisa de camareira, enfileirar solicitação de limpeza/conferência pós-serviço
   if (flat.needsCleaning === true) {
     if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
     const maxReqId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+    const todayStr = getTodayStr();
+    const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
     const existingReq = db.cleaningRequests.find(r =>
       (Number(r.flatId) === Number(flat.flatId) || String(r.flatNumber) === String(flat.flatNumber)) &&
-      r.requestDate === getTodayStr()
+      r.requestDate === todayStr &&
+      !r.isInstructionOnly &&
+      r.source !== "manual_instruction"
     );
-    const cleanNote = `[OS: ${order.title}] Limpeza pós-serviço solicitada pelo prestador. Obs: ${flat.observations || "Nenhuma"}`.trim();
+    const cleanNote = `[OS: ${order.title}] Conferência / limpeza pós-serviço solicitada pelo prestador (${resolvedWorkerName}).${flat.observations ? ` Obs: ${flat.observations}` : ""}`.trim();
     if (existingReq) {
       if (existingReq.status === "clean") {
         existingReq.isPriority = false;
@@ -24576,7 +24680,16 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
       delete existingReq.deletedReservationId;
       existingReq.status = "dirty";
       existingReq.source = "service_order";
+      existingReq.cleaningType = "service_order";
+      existingReq.type = "service_cleaning";
+      existingReq.isPaidCleaning = false;
+      existingReq.serviceOrderId = order.id;
+      existingReq.serviceTitle = order.title;
+      existingReq.serviceWorkerName = resolvedWorkerName;
+      existingReq.serviceOrigin = "finish";
+      existingReq.serviceReason = flat.observations || null;
       existingReq.adminNote = cleanNote;
+      existingReq.pendingObservation = cleanNote;
       existingReq.completedAt = null;
       existingReq.cleaningStartedAt = null;
       existingReq.durationMinutes = null;
@@ -24586,15 +24699,25 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
         id: maxReqId + 1,
         flatId: flat.flatId,
         flatNumber: flat.flatNumber,
-        requestDate: getTodayStr(),
+        requestDate: todayStr,
         source: "service_order",
+        cleaningType: "service_order",
+        type: "service_cleaning",
+        isPaidCleaning: false,
+        serviceOrderId: order.id,
+        serviceTitle: order.title,
+        serviceWorkerName: resolvedWorkerName,
+        serviceOrigin: "finish",
+        serviceReason: flat.observations || null,
         status: "dirty",
-        isVacant: false,
+        isVacant: !realtime.isOccupied,
         adminNote: cleanNote,
+        pendingObservation: cleanNote,
         createdAt: now.toISOString(),
         updatedAt: now.toISOString()
       });
     }
+    if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
   }
 
   syncServiceOrderRoomBlocks(order);
@@ -24609,8 +24732,6 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
     });
   } catch (_) {}
 
-  const worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id)) || { mainWorker: { name: flat.workerName || "Prestador", cpf: flat.workerCpf || "" } };
-
   // Multi-channel notifications
   dispatchServiceNotifications("finish", order, flat, worker);
 
@@ -24620,6 +24741,193 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
   res.json({
     success: true,
     flat
+  });
+});
+
+// POST /api/service/public/:token/flats/:flatId/return — Devolve o apartamento sem executar o serviço (remove bloqueio e registra acesso/limpeza)
+app.post("/api/service/public/:token/flats/:flatId/return", async (req, res) => {
+  const { token, flatId } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.token === token);
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
+  if (order.status === "closed") return res.status(400).json({ success: false, error: "Esta ordem de serviço está encerrada." });
+
+  const worker = getOrRegisterServiceWorker(token, order.id, req.body);
+  if (!worker) return res.status(403).json({ error: "Prestador deve se identificar antes de devolver o apartamento." });
+
+  const fId = Number(flatId);
+  const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
+  if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+
+  const canReturn = flat.status === "in_progress" || (flat.status === "pending" && Boolean(flat.entryRequested));
+  if (!canReturn) {
+    return res.status(400).json({
+      error: "Apenas apartamentos com entrada solicitada ou serviço em andamento podem ser devolvidos."
+    });
+  }
+
+  const { accessedRoom, needsCleaning, reason, observations } = req.body || {};
+  if (typeof accessedRoom !== "boolean") {
+    return res.status(400).json({
+      error: "Informe obrigatoriamente se você chegou a acessar/entrar no quarto."
+    });
+  }
+
+  if (accessedRoom === true && typeof needsCleaning !== "boolean") {
+    return res.status(400).json({
+      error: "Como você informou que acessou o quarto, informe se o apartamento precisa de limpeza ou conferência da camareira."
+    });
+  }
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const todayStr = getTodayStr();
+  const workerName = (worker?.mainWorker?.name || flat.workerName || "Prestador").trim();
+  const workerCpf = worker?.mainWorker?.cpf || flat.workerCpf || "";
+  const previousStage = flat.status === "in_progress" ? "in_progress" : "entry_requested";
+  const previousStartedAt = flat.startedAt || null;
+  const resolvedNeedsCleaning = accessedRoom === true ? Boolean(needsCleaning) : false;
+  const reasonTrimmed = String(reason || observations || "").trim();
+
+  // Grava metadados e histórico da devolução no flat
+  flat.returnedAt = nowIso;
+  flat.returnedByWorkerName = workerName;
+  flat.returnedByWorkerCpf = workerCpf;
+  flat.returnedFromStatus = previousStage;
+  flat.returnedAccessedRoom = Boolean(accessedRoom);
+  flat.returnedNeedsCleaning = resolvedNeedsCleaning;
+  flat.returnReason = reasonTrimmed || null;
+
+  if (!Array.isArray(flat.returnHistory)) flat.returnHistory = [];
+  flat.returnHistory.push({
+    returnedAt: nowIso,
+    workerName,
+    workerCpf,
+    returnedFromStatus: previousStage,
+    accessedRoom: Boolean(accessedRoom),
+    needsCleaning: resolvedNeedsCleaning,
+    reason: reasonTrimmed || null
+  });
+
+  // Reseta estado operacional para 'pending' (desbloqueando o flat e liberando vaga simultânea)
+  flat.status = "pending";
+  flat.entryRequested = false;
+  flat.entryRequestedAt = null;
+  flat.startedAt = null;
+  flat.finishedAt = null;
+  flat.estimatedFinishAt = null;
+  flat.delayNotified = false;
+  flat.wasCleanWhenStarted = null;
+  order.updatedAt = nowIso;
+
+  // Se acessou o quarto e informou que precisa de limpeza/conferência da camareira, gera card exclusivo 'service_order'
+  if (resolvedNeedsCleaning) {
+    if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
+    const maxReqId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+    const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
+    const existingReq = db.cleaningRequests.find(r =>
+      (Number(r.flatId) === Number(flat.flatId) || String(r.flatNumber) === String(flat.flatNumber)) &&
+      r.requestDate === todayStr &&
+      !r.isInstructionOnly &&
+      r.source !== "manual_instruction"
+    );
+    const cleanNote = `[OS: ${order.title}] Técnico ${workerName} acessou o flat e devolveu sem executar o serviço (solicitou conferência/limpeza).${reasonTrimmed ? ` Motivo: ${reasonTrimmed}` : ""}`.trim();
+    if (existingReq) {
+      if (existingReq.status === "clean") {
+        existingReq.isPriority = false;
+        delete existingReq.priorityReason;
+      }
+      existingReq.isDeleted = false;
+      delete existingReq.deletedAt;
+      delete existingReq.deletedBy;
+      delete existingReq.deletedReservationId;
+      existingReq.status = "dirty";
+      existingReq.source = "service_order";
+      existingReq.cleaningType = "service_order";
+      existingReq.type = "service_cleaning";
+      existingReq.isPaidCleaning = false;
+      existingReq.serviceOrderId = order.id;
+      existingReq.serviceTitle = order.title;
+      existingReq.serviceWorkerName = workerName;
+      existingReq.serviceOrigin = "return";
+      existingReq.serviceReason = reasonTrimmed || null;
+      existingReq.adminNote = cleanNote;
+      existingReq.pendingObservation = cleanNote;
+      existingReq.completedAt = null;
+      existingReq.cleaningStartedAt = null;
+      existingReq.durationMinutes = null;
+      existingReq.updatedAt = nowIso;
+    } else {
+      db.cleaningRequests.unshift({
+        id: maxReqId + 1,
+        flatId: flat.flatId,
+        flatNumber: flat.flatNumber,
+        requestDate: todayStr,
+        source: "service_order",
+        cleaningType: "service_order",
+        type: "service_cleaning",
+        isPaidCleaning: false,
+        serviceOrderId: order.id,
+        serviceTitle: order.title,
+        serviceWorkerName: workerName,
+        serviceOrigin: "return",
+        serviceReason: reasonTrimmed || null,
+        status: "dirty",
+        isVacant: !realtime.isOccupied,
+        adminNote: cleanNote,
+        pendingObservation: cleanNote,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      });
+    }
+    if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
+  }
+
+  // Remove bloqueio de inventário (db.roomBlocks) se existente e persiste
+  syncServiceOrderRoomBlocks(order);
+  saveDatabase("service_flat_return");
+
+  try {
+    notifyPmsMutation(db, {
+      type: "service_flat_returned",
+      minDate: previousStartedAt ? getExecutionDateStr(previousStartedAt) : todayStr,
+      maxDate: todayStr
+    });
+  } catch (_) {}
+
+  logAuditEvent({
+    level: "warn",
+    category: "cleaning",
+    action: "SERVICE_ORDER_FLAT_RETURNED",
+    actor: { name: workerName, role: "service_worker" },
+    details: {
+      serviceOrderId: order.id,
+      serviceTitle: order.title,
+      flatId: flat.flatId,
+      flatNumber: flat.flatNumber,
+      returnedFromStatus: previousStage,
+      accessedRoom: Boolean(accessedRoom),
+      needsCleaning: resolvedNeedsCleaning,
+      reason: reasonTrimmed || null,
+      returnedAt: nowIso
+    },
+    source: "service_worker_portal"
+  });
+
+  // Notifica EXCLUSIVAMENTE o Miller (Admin) via WhatsApp + Notificação Interna
+  dispatchServiceNotifications("flat_returned", order, flat, worker, {
+    returnedFromStatus: previousStage,
+    accessedRoom: Boolean(accessedRoom),
+    needsCleaning: resolvedNeedsCleaning,
+    reason: reasonTrimmed || null
+  });
+
+  // Verifica se algum outro flat da OS destravou com a liberação de vaga simultânea
+  checkAndNotifyAvailableServiceFlats(order.id);
+
+  res.json({
+    success: true,
+    flat,
+    message: `Flat ${flat.flatNumber} devolvido com sucesso e bloqueios removidos.`
   });
 });
 
@@ -57745,7 +58053,7 @@ function isPreReservationBlocked(r) {
   const isOtaOrB2bChan = chan.includes("booking") || chan.includes("airbnb") || chan === "b2b" || chan.includes("b2b") || Boolean(r.b2bReservationNumber);
   if (isOtaOrB2bChan) return false;
   const st = String(r.status || "").toLowerCase();
-  if (st === "pre_reserva" || st === "pendente") return true;
+  if (st === "pre_reserva" || st === "pendente" || st === "expirada") return true;
   if (isUnverifiedPreReservation(r)) return true;
   return false;
 }
@@ -58108,9 +58416,22 @@ async function confirmReservationPayment(r, {
 // 6.3 Checar Status de Pagamento de Reserva Específica com Consulta Ativa em Tempo Real
 app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
   try {
+    await sweepExpiredPreReservations(db, saveDatabase);
     const { code } = req.params;
     const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code || x.pixTxId === code);
     if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
+    if (r.status === "expirada") {
+      return res.json({
+        code: r.code,
+        paid: false,
+        status: "expirada",
+        isExpiredPreReservation: true,
+        expiredAt: r.expiredAt || null,
+        expiresAt: r.expiresAt || null,
+        pixCopiaECola: null,
+        mpInitPoint: null
+      });
+    }
     ensureReservationCompositeTotal(r);
 
     const chanLower = String(r.channel || "").toLowerCase();
@@ -58307,11 +58628,18 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
 // 6.3.1 Alterar Forma de Pagamento da Reserva (PIX <-> Cartão de Crédito)
 app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) => {
   try {
+    await sweepExpiredPreReservations(db, saveDatabase);
     const { code } = req.params;
     const { method } = req.body || {}; // "pix" | "card" | "cartao_credito"
     if (!db.reservations) db.reservations = [];
     const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
     if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
+    if (r.status === "expirada") {
+      return res.status(403).json({
+        error: "Esta pré-reserva expirou. Consulte novamente a disponibilidade pelo WhatsApp.",
+        isExpiredPreReservation: true
+      });
+    }
     ensureReservationCompositeTotal(r);
 
     const isPaid = r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0);

@@ -409,9 +409,9 @@ export function FlatCard({
     e.preventDefault()
     if (!selectedMaidId) return
 
-    // Se o quarto ainda não está limpo e é uma limpeza normal (não instrução),
+    // Se o quarto ainda não está limpo e é uma limpeza normal (não instrução nem conferência/limpeza pós-serviço),
     // fecha o seletor de camareira e abre a pergunta gigante de fumo ocupando todo o card!
-    if (!isInstruction && currentStatus !== "clean") {
+    if (!isInstruction && !isServiceCleaning && currentStatus !== "clean") {
       setAdminCleanModalOpen(false)
       setShowSmokingPrompt(true)
       return
@@ -617,12 +617,28 @@ export function FlatCard({
     request?.type === "bed_adjustment_only"
   )
 
+  const isServiceCleaning = Boolean(
+    flat?.source === "service_order" ||
+    flat?.cleaningType === "service_order" ||
+    request?.source === "service_order" ||
+    request?.cleaningType === "service_order" ||
+    request?.type === "service_cleaning"
+  )
+
+  const serviceTitle = (request as any)?.serviceTitle || (flat as any)?.serviceTitle || "Serviço Externo / Manutenção"
+  const serviceWorkerName = (request as any)?.serviceWorkerName || (flat as any)?.serviceWorkerName || "Prestador Técnico"
+  const serviceOrigin: "return" | "finish" = ((request as any)?.serviceOrigin || (flat as any)?.serviceOrigin) === "return" ? "return" : "finish"
+  const serviceReason = ((request as any)?.serviceReason || (flat as any)?.serviceReason || "").trim()
+
   const rawConf = statusStyles[currentStatus] || statusStyles.dirty
   const conf = isInstruction ? {
     label: "Instrução",
     cardBg: "bg-purple-50/50 border-purple-200/90 text-purple-950 dark:bg-purple-950/20 dark:border-purple-900/40",
     badgeClass: "bg-purple-100 text-purple-900 border-purple-300 font-bold dark:bg-purple-950/50 dark:text-purple-200",
     icon: Wrench
+  } : isServiceCleaning && currentStatus !== "clean" ? {
+    ...rawConf,
+    cardBg: "bg-cyan-50/60 border-cyan-300/90 text-slate-900 dark:bg-cyan-950/20 dark:border-cyan-800/60 dark:text-slate-100",
   } : rawConf
 
   const Icon = conf.icon
@@ -748,7 +764,42 @@ export function FlatCard({
 
   const isPaidCleaning = typeof request?.isPaidCleaning === "boolean"
     ? request.isPaidCleaning
-    : (typeof flat?.isPaidCleaning === "boolean" ? flat.isPaidCleaning : !isInstruction)
+    : (typeof flat?.isPaidCleaning === "boolean" ? flat.isPaidCleaning : (!isInstruction && !isServiceCleaning))
+
+  const [isTogglingPaid, setIsTogglingPaid] = useState(false)
+  const handleTogglePaidCleaning = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!isAdmin || isTogglingPaid) return
+    const nextPaid = !isPaidCleaning
+    const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+    setIsTogglingPaid(true)
+    try {
+      const res = await fetch(`/api/cleaning/requests/${activeReqId}/admin-instructions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatId: flat.flatId || flat.id,
+          flatNumber: flat.flatNumber || flat.number,
+          requestDate: date,
+          isPaidCleaning: nextPaid
+        }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        toast({
+          title: nextPaid ? "💰 Marcado como Remunerado" : "📋 Marcado como Não Remunerado (Conferência)",
+          description: nextPaid
+            ? `O atendimento do Flat ${flat.flatNumber} será contabilizado como faxina remunerada no extrato da camareira.`
+            : `O atendimento do Flat ${flat.flatNumber} foi configurado como conferência/apoio sem remuneração extra.`
+        })
+        refreshData()
+      }
+    } catch (err) {
+      console.error("Erro ao alternar remuneração:", err)
+    } finally {
+      setIsTogglingPaid(false)
+    }
+  }
 
   const instructionText = flat?.instructionText || request?.instructionText || maidNoteText || (isTwinBeds ? "Separar as camas, colocar como 2 solteiras" : "")
 
@@ -1134,7 +1185,7 @@ export function FlatCard({
     }
 
     if (newStatus === "clean") {
-      if (request?.cleaningStartedAt) {
+      if (request?.cleaningStartedAt && !isServiceCleaning && !isInstruction) {
         const started = new Date(request.cleaningStartedAt).getTime()
         const mins = (Date.now() - started) / 60000
         if (mins < 10 && !isAdmin) {
@@ -1143,14 +1194,16 @@ export function FlatCard({
         }
       }
 
-      if (isAdmin && isInstruction) {
+      if (isAdmin && (isInstruction || isServiceCleaning)) {
         setAdminCleanModalOpen(true)
         return
       }
 
-      // Exibe a pergunta em destaque tomando toda a área do card
-      setShowSmokingPrompt(true)
-      return
+      if (!isServiceCleaning) {
+        // Exibe a pergunta em destaque tomando toda a área do card
+        setShowSmokingPrompt(true)
+        return
+      }
     }
 
     setIsProcessing(true)
@@ -1487,7 +1540,7 @@ export function FlatCard({
                       <span>Prioridade</span>
                     </Badge>
                   )}
-                  {hasSmoked && (
+                  {hasSmoked && !isServiceCleaning && (
                     <Badge 
                       variant="destructive" 
                       data-smoking-badge="true"
@@ -1592,11 +1645,16 @@ export function FlatCard({
                 {conf.label}
               </Badge>
 
-              {/* Badge Stayover B2B vs Check-out */}
+              {/* Badge Stayover B2B vs Limpeza/Conferência Pós-Serviço vs Check-out */}
               {isStayover ? (
                 <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10.5px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
                   <BedDouble className="w-3 h-3 shrink-0" />
                   <span>Stayover B2B (Diária)</span>
+                </Badge>
+              ) : isServiceCleaning ? (
+                <Badge className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-[10.5px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                  <Wrench className="w-3 h-3 shrink-0" />
+                  <span>{serviceOrigin === "return" ? "Conferência Pós-Devolução" : "Limpeza / Conferência Pós-Serviço"}</span>
                 </Badge>
               ) : (
                 <Badge variant="outline" className="border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[10.5px] px-2 py-0.5 rounded-lg">
@@ -1648,17 +1706,23 @@ export function FlatCard({
                 </Badge>
               )}
 
-              {/* Tag de Remuneração: Exibida SOMENTE para Administradores */}
-              {isAdmin && isInstruction && (
-                <Badge variant="outline" className={cn(
-                  "font-bold text-[10px] px-2 py-0.5 rounded-lg border flex items-center gap-1",
-                  isPaidCleaning 
-                    ? "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/30 dark:border-emerald-800" 
-                    : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:border-slate-700"
-                )}>
+              {/* Tag de Remuneração: Exibida SOMENTE para Administradores (em Instruções e Pós-Serviço) */}
+              {isAdmin && (isInstruction || isServiceCleaning) && (
+                <button
+                  type="button"
+                  onClick={handleTogglePaidCleaning}
+                  disabled={isTogglingPaid}
+                  title="Clique para alternar entre Não Remunerado (conferência/favor) e Remunerado (faxina contabilizada no extrato)"
+                  className={cn(
+                    "font-bold text-[10px] px-2 py-0.5 rounded-lg border flex items-center gap-1 transition-all cursor-pointer",
+                    isPaidCleaning 
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-200" 
+                      : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                  )}
+                >
                   <Coins className="w-3 h-3" />
-                  <span>{isPaidCleaning ? "Remunerado" : "Favor / Não Remunerado"}</span>
-                </Badge>
+                  <span>{isPaidCleaning ? "Remunerado (Extrato)" : "Conferência / Não Remunerado"}</span>
+                </button>
               )}
 
               {/* Badge de Pendência (Carryover): Exibido SOMENTE em quartos que ficaram pendentes de um dia para o outro */}
@@ -1854,6 +1918,57 @@ export function FlatCard({
               </div>
             )}
 
+            {/* Box Exclusivo de Limpeza / Conferência Pós-Serviço Técnico */}
+            {isServiceCleaning && (
+              <div className="bg-cyan-500/10 dark:bg-cyan-950/35 border-2 border-cyan-400/80 dark:border-cyan-700 rounded-xl p-3 text-xs space-y-2 shadow-2xs">
+                <div className="flex items-center justify-between gap-1.5 bg-cyan-600/15 dark:bg-cyan-900/50 border border-cyan-300 dark:border-cyan-700 text-cyan-950 dark:text-cyan-100 px-2.5 py-1.5 rounded-lg font-black text-[11px]">
+                  <div className="flex items-center gap-1.5">
+                    <Wrench className="w-4 h-4 text-cyan-700 dark:text-cyan-300 shrink-0" />
+                    <span>
+                      {serviceOrigin === "return"
+                        ? "CONFERÊNCIA / LIMPEZA PÓS-ACESSO TÉCNICO"
+                        : "CONFERÊNCIA / LIMPEZA PÓS-SERVIÇO"}
+                    </span>
+                  </div>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setInstructionsModalOpen(true)}
+                      className="text-[10px] text-cyan-800 dark:text-cyan-300 font-semibold underline flex items-center gap-0.5"
+                    >
+                      ✏️ Nota
+                    </button>
+                  )}
+                </div>
+
+                <div className="bg-background/95 p-2.5 rounded-lg border border-cyan-200 dark:border-cyan-800/70 space-y-1.5 text-[11.5px] leading-relaxed">
+                  <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      🔧 Serviço: <strong className="text-foreground">{serviceTitle}</strong>
+                    </span>
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      👷 Técnico: <strong className="text-foreground">{serviceWorkerName}</strong>
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
+                    {serviceOrigin === "return"
+                      ? `O técnico ${serviceWorkerName} acessou o apartamento (referente a "${serviceTitle}"), devolveu o flat sem executar o serviço e informou que o quarto precisa de conferência/limpeza da camareira.`
+                      : `O técnico ${serviceWorkerName} concluiu o serviço "${serviceTitle}" neste apartamento e solicitou conferência/limpeza pós-intervenção.`}
+                  </p>
+                  {(serviceReason || maidNoteText) && (
+                    <div className="pt-1.5 border-t border-cyan-100 dark:border-cyan-900/60 text-[11px] text-cyan-950 dark:text-cyan-200">
+                      <span className="font-bold block text-[10px] uppercase tracking-wide text-cyan-700 dark:text-cyan-400">
+                        📝 Observação / Motivo Informado:
+                      </span>
+                      <p className="italic font-semibold mt-0.5">
+                        "{serviceReason || maidNoteText}"
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Box de Instrução no Flat (Sem Limpeza) */}
             {isInstruction && (
               <div 
@@ -1888,7 +2003,7 @@ export function FlatCard({
             )}
 
             {/* Instruções para a Camareira (Limpeza Padrão / Preparação de Check-in) */}
-            {!isInstruction && (isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText) && (
+            {!isInstruction && !isServiceCleaning && (isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText) && (
               <div 
                 className={cn(
                   "bg-amber-500/10 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700/60 rounded-xl p-2.5 text-xs space-y-2",
@@ -1950,7 +2065,7 @@ export function FlatCard({
             )}
 
             {/* Vistoria de Saída Pendente */}
-            {pendingSurveys.length > 0 && currentStatus !== "clean" && (
+            {pendingSurveys.length > 0 && !isServiceCleaning && currentStatus !== "clean" && (
               <div className="bg-indigo-50/90 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl p-2.5 text-xs text-indigo-950 dark:text-indigo-200">
                 <div className="flex items-center justify-between gap-1 mb-1">
                   <div className="flex items-center gap-1.5 font-black text-indigo-900 dark:text-indigo-300">
@@ -2258,40 +2373,42 @@ export function FlatCard({
 
                 {currentStatus === "clean" && (
                   <div className="space-y-1.5">
-                    {hasSmoked ? (
-                      <div className="flex items-center justify-between p-2.5 rounded-xl bg-rose-600 text-white text-xs shadow-sm">
-                        <div className="flex items-center gap-1.5 font-black">
-                          <span className="text-base">🚬</span>
-                          <span>Fumou no quarto</span>
+                    {!isServiceCleaning && !isInstruction && (
+                      hasSmoked ? (
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-rose-600 text-white text-xs shadow-sm">
+                          <div className="flex items-center gap-1.5 font-black">
+                            <span className="text-base">🚬</span>
+                            <span>Fumou no quarto</span>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-6 px-2.5 text-[10px] font-black bg-white text-rose-700 hover:bg-rose-50"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleToggleSmoking()
+                            }}
+                            disabled={isProcessing}
+                            title="Desmarcar se foi registrado por engano"
+                          >
+                            Desmarcar
+                          </Button>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="h-6 px-2.5 text-[10px] font-black bg-white text-rose-700 hover:bg-rose-50"
+                      ) : (
+                        <button
+                          type="button"
+                          className="w-full text-center text-[11px] text-rose-700 dark:text-rose-300 bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-900/60 rounded-xl font-bold py-1.5 px-2.5 transition-colors flex items-center justify-center gap-1.5"
                           onClick={(e) => {
                             e.stopPropagation()
                             handleToggleSmoking()
                           }}
                           disabled={isProcessing}
-                          title="Desmarcar se foi registrado por engano"
+                          title="Marcar que o hóspede fumou no quarto"
                         >
-                          Desmarcar
-                        </Button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="w-full text-center text-[11px] text-rose-700 dark:text-rose-300 bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-900/60 rounded-xl font-bold py-1.5 px-2.5 transition-colors flex items-center justify-center gap-1.5"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleToggleSmoking()
-                        }}
-                        disabled={isProcessing}
-                        title="Marcar que o hóspede fumou no quarto"
-                      >
-                        <span>🚬</span>
-                        <span>Hóspede fumou? Toque para marcar</span>
-                      </button>
+                          <span>🚬</span>
+                          <span>Hóspede fumou? Toque para marcar</span>
+                        </button>
+                      )
                     )}
                     <div className="flex gap-1.5">
                       <Button 
@@ -2335,7 +2452,7 @@ export function FlatCard({
                 )}
 
                 {/* Lost Item button for maids & admin */}
-                {!isInstruction && (
+                {!isInstruction && !isServiceCleaning && (
                   <Button 
                     type="button"
                     variant="outline"
@@ -2349,7 +2466,7 @@ export function FlatCard({
                 )}
 
                 {/* Extend Stay Button (Admin Only, when not clean) */}
-                {isAdmin && !isInstruction && currentStatus !== "clean" && currentStatus !== "no_show" && (
+                {isAdmin && !isInstruction && !isServiceCleaning && currentStatus !== "clean" && currentStatus !== "no_show" && (
                   <Button 
                     type="button"
                     variant="ghost"
@@ -2365,7 +2482,7 @@ export function FlatCard({
                 )}
 
                 {/* No Show Button (Admin Only, available when room not clean) */}
-                {isAdmin && !isInstruction && currentStatus !== "clean" && currentStatus !== "no_show" && (
+                {isAdmin && !isInstruction && !isServiceCleaning && currentStatus !== "clean" && currentStatus !== "no_show" && (
                   <Button 
                     type="button"
                     variant="ghost"
@@ -3357,25 +3474,29 @@ export function FlatCard({
 
                 <div className={cn(
                   "p-3.5 rounded-2xl border space-y-1 text-xs",
-                  isInstruction 
+                  (isInstruction || isServiceCleaning)
                     ? "bg-purple-50/80 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800/60"
                     : "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60"
                 )}>
                   <span className={cn(
                     "font-bold flex items-center gap-1",
-                    isInstruction ? "text-purple-900 dark:text-purple-200" : "text-emerald-900 dark:text-emerald-200"
+                    (isInstruction || isServiceCleaning) ? "text-purple-900 dark:text-purple-200" : "text-emerald-900 dark:text-emerald-200"
                   )}>
-                    {isInstruction ? <Wrench className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
-                    {isInstruction ? "Serviço Operacional / Instrução" : "Contabilização Automática"}
+                    {(isInstruction || isServiceCleaning) ? <Wrench className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {isServiceCleaning
+                      ? "Conferência / Limpeza Pós-Serviço"
+                      : isInstruction
+                        ? "Serviço Operacional / Instrução"
+                        : "Contabilização Automática"}
                   </span>
                   <p className={cn(
                     "text-[11px] leading-relaxed",
-                    isInstruction ? "text-purple-800 dark:text-purple-300" : "text-emerald-800 dark:text-emerald-300"
+                    (isInstruction || isServiceCleaning) ? "text-purple-800 dark:text-purple-300" : "text-emerald-800 dark:text-emerald-300"
                   )}>
-                    {isInstruction
+                    {(isInstruction || isServiceCleaning)
                       ? (isPaidCleaning 
-                          ? "Esta instrução foi configurada como remunerada e será creditada na produtividade da colaboradora." 
-                          : "Esta instrução foi registrada como favor operacional (não remunerada) e não gera crédito financeiro de faxina.")
+                          ? "Este atendimento foi configurado como remunerado e será creditado na produtividade da colaboradora." 
+                          : "Este atendimento está configurado como conferência/apoio operacional (não remunerado) e não gera crédito financeiro de faxina.")
                       : "Esta limpeza será creditada integralmente na contagem e nos relatórios de produtividade da colaboradora selecionada."}
                   </p>
                 </div>
