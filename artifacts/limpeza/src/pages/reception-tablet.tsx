@@ -412,15 +412,8 @@ export default function ReceptionTablet() {
                             {item.channel}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <div className="font-bold text-base text-slate-100 truncate">
-                            {item.guestName}
-                          </div>
-                          {(item.isSmoker || item.smokerGuestAlert || item.guestSmoked) && (
-                            <Badge className="bg-rose-600 text-white text-[10px] font-black shrink-0">
-                              🚬 Fumante
-                            </Badge>
-                          )}
+                        <div className="font-bold text-base text-slate-100 mt-1 truncate">
+                          {item.guestName}
                         </div>
                         {item.guestPhone && (
                           <div className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
@@ -729,11 +722,6 @@ export default function ReceptionTablet() {
                         </div>
 
                         <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                          {(item.isSmoker || item.smokerGuestAlert || item.guestSmoked) && (
-                            <Badge className="bg-rose-600 text-white text-[10px] font-black shrink-0">
-                              🚬 Fumante
-                            </Badge>
-                          )}
                           {item.autoEmitInvoice && (
                             <Badge className="bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px] font-bold flex items-center gap-1">
                               <FileText className="w-3 h-3 text-emerald-400" />

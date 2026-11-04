@@ -527,13 +527,6 @@ export function ReservationHoverCard({
             {guestName}
           </h4>
 
-          {(resItem.isSmoker || resItem.smokerGuestAlert || resItem.guestSmoked) && (
-            <div className="mt-1 flex items-center gap-1.5 px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 text-[11px] font-bold">
-              <span>🚬</span>
-              <span>Alerta da Equipe: Hóspede Fumante (Fumo no quarto)</span>
-            </div>
-          )}
-
           {(resItem.agencyName || resItem.agencyTradeName || resItem.companyName || resItem.b2bLocatorRloc || resItem.b2bReservationNumber) && (
             <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
               {(resItem.agencyTradeName || resItem.agencyName) && (

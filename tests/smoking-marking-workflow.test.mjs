@@ -103,35 +103,35 @@ const liveOpsPath = path.resolve("artifacts/limpeza/src/pages/live-operations-pa
   const liveOpsSrc = fs.readFileSync(liveOpsPath, "utf8");
 
   assert.ok(
-    pmsSrc.includes('data-smoker-alert-badge="true"') && pmsSrc.includes("🚬 Fumante"),
-    "PMS Calendar deve conter sinalização visual para equipe na linha do tempo"
+    pmsSrc.includes("Hóspede Fumante"),
+    "PMS Calendar deve exibir indicador de hóspede fumante exclusivamente na modal de detalhes da reserva"
   );
   assert.ok(
-    pmsSrc.includes("Hóspede Fumante"),
-    "PMS Calendar deve exibir indicador de hóspede fumante na modal da reserva"
+    !pmsSrc.includes('data-smoker-alert-badge="true"'),
+    "PMS Calendar não deve exibir badge de fumante na barra da grade do mapa de reservas"
   );
   assert.ok(
     pmsSrc.includes("pms_calendar_updated"),
     "PMS Calendar deve escutar o evento pms_calendar_updated para sincronização instantânea na mesma aba"
   );
   assert.ok(
-    hoverSrc.includes("Hóspede Fumante"),
-    "Reservation Hover Card deve exibir o alerta para a equipe"
+    !hoverSrc.includes("Hóspede Fumante"),
+    "Reservation Hover Card não deve exibir o alerta de fumante"
   );
   assert.ok(
     crmSrc.includes("🚬 Fumante") || crmSrc.includes("Hóspede Fumante"),
     "CRM de Hóspedes deve exibir o status de fumante no perfil/cadastro do hóspede"
   );
   assert.ok(
-    pmsReportsSrc.includes("🚬 Fumante") && pmsReportsSrc.includes("isSmoker"),
-    "PMS Reports deve exibir badge de fumante nos relatórios de check-ins/check-outs"
+    !pmsReportsSrc.includes("🚬 Fumante"),
+    "PMS Reports não deve exibir badge de fumante nos relatórios"
   );
   assert.ok(
-    liveOpsSrc.includes('data-smoker-alert-badge="true"') && liveOpsSrc.includes("🚬 Fumante"),
-    "Painel Ao Vivo (Live Operations) deve conter alerta visual de fumante para a equipe"
+    !liveOpsSrc.includes('data-smoker-alert-badge="true"'),
+    "Painel Ao Vivo (Live Operations) não deve exibir badge de fumante"
   );
 
-  console.log("✅ 3. Verificação estática das sinalizações visuais no PMS, Hover Card, CRM, Relatórios e Painel Ao Vivo aprovada (R3).");
+  console.log("✅ 3. Verificação estática do escopo estrito (apenas Cadastro do Hóspede e Detalhes da Reserva) aprovada (R3).");
 }
 
 // ----------------------------------------------------------------------------

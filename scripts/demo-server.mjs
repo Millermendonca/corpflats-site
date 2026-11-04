@@ -19545,6 +19545,10 @@ function getRequestsForDate(dateStr, isNested = false) {
         : null
     );
 
+    const resolvedSmoked = existingCleaning && (typeof existingCleaning.smokedInRoom === "boolean" || typeof existingCleaning.guestSmoked === "boolean")
+      ? Boolean(existingCleaning.smokedInRoom || existingCleaning.guestSmoked)
+      : Boolean(pmsRes?.smokedInRoom || pmsRes?.guestSmoked);
+
     const card = {
       id: existingCleaning ? existingCleaning.id : (maxId + 1),
       flatId: flat.id,
@@ -19568,6 +19572,10 @@ function getRequestsForDate(dateStr, isNested = false) {
       leavingGuest: pmsRes.guestName || pmsRes.title || "Hóspede",
       arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : null,
       pendingObservation: cleanExistingPendingObs,
+      smokedInRoom: resolvedSmoked,
+      guestSmoked: resolvedSmoked,
+      smokedMarkedAt: existingCleaning?.smokedMarkedAt || null,
+      smokedMarkedBy: existingCleaning?.smokedMarkedBy || null,
       willCleanAt: existingCleaning ? existingCleaning.willCleanAt : null,
       cleaningStartedAt: (isFutureDate && resolvedStatus === "dirty") ? null : (existingCleaning ? existingCleaning.cleaningStartedAt : null),
       completedAt: (isFutureDate && resolvedStatus === "dirty") ? null : (existingCleaning ? existingCleaning.completedAt : null),
@@ -20130,8 +20138,12 @@ app.get("/api/reservations/checkouts", (req, res) => {
       isBedAdjustmentOnly: Boolean(req_.isBedAdjustmentOnly || req_.type === "bed_adjustment_only"),
       isPaidCleaning: isPaid,
       instructionText: instText,
-      smokedInRoom: Boolean(req_.smokedInRoom || req_.guestSmoked),
-      guestSmoked: Boolean(req_.smokedInRoom || req_.guestSmoked),
+      smokedInRoom: (typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
+        ? Boolean(req_.smokedInRoom || req_.guestSmoked)
+        : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked)),
+      guestSmoked: (typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
+        ? Boolean(req_.smokedInRoom || req_.guestSmoked)
+        : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked)),
       cleaningRequest: {
         id: req_.id,
         flatId: req_.flatId,
@@ -20145,8 +20157,12 @@ app.get("/api/reservations/checkouts", (req, res) => {
         isBedAdjustmentOnly: Boolean(req_.isBedAdjustmentOnly || req_.type === "bed_adjustment_only"),
         isPaidCleaning: isPaid,
         instructionText: instText,
-        smokedInRoom: Boolean(req_.smokedInRoom || req_.guestSmoked),
-        guestSmoked: Boolean(req_.smokedInRoom || req_.guestSmoked),
+        smokedInRoom: (typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
+          ? Boolean(req_.smokedInRoom || req_.guestSmoked)
+          : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked)),
+        guestSmoked: (typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
+          ? Boolean(req_.smokedInRoom || req_.guestSmoked)
+          : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked)),
         twinBeds: hasTwinBeds,
         extraMattress: hasExtraMattress,
         adminNote: resolvedSpecialRequests,
@@ -20477,6 +20493,7 @@ app.post("/api/cleaning/assignments/:requestId/release", (req, res) => {
   item.completedAt = null;
   item.pendingObservation = null;
   item.updatedAt = now;
+  if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
   saveDatabase();
 
   const flat = db.flats.find(f => f.id === item.flatId);
@@ -20522,6 +20539,7 @@ app.post("/api/cleaning/assignments/:requestId/resolve-issue", (req, res) => {
   item.completedAt = now;
   item.pendingObservation = null;
   item.updatedAt = now;
+  if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
   saveDatabase();
 
   const flat = db.flats.find(f => f.id === item.flatId);
@@ -20639,6 +20657,25 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
   }
 
   const effectiveDate = targetDate || cleaningItem.requestDate || cleaningItem.effectiveDate || getTodayStr();
+
+  // Sincroniza quaisquer outros registros de limpeza do mesmo flat na mesma data
+  for (const cr of (currentDb.cleaningRequests || [])) {
+    if (!cr || cr.isInstructionOnly || cr.source === "manual_instruction" || cr.type === "instruction" || cr.type === "bed_adjustment_only") continue;
+    if (
+      (Number(cr.flatId) === Number(cleaningItem.flatId) || String(cr.flatNumber) === String(cleaningItem.flatNumber)) &&
+      cr.requestDate === effectiveDate
+    ) {
+      cr.smokedInRoom = Boolean(isSmoker);
+      cr.guestSmoked = Boolean(isSmoker);
+      if (isSmoker) {
+        cr.smokedMarkedAt = now;
+        cr.smokedMarkedBy = userAuth?.name || userAuth?.username || "Camareira";
+      } else {
+        delete cr.smokedMarkedAt;
+        delete cr.smokedMarkedBy;
+      }
+    }
+  }
 
   const normalizeStr = (str) => {
     if (!str) return "";
@@ -21397,6 +21434,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
     }
   }
   item.updatedAt = now;
+  if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
   saveDatabase();
 
   const flat = db.flats.find(f => f.id === item.flatId);
@@ -21466,6 +21504,7 @@ app.patch("/api/cleaning/assignments/:requestId/smoking", async (req, res) => {
 
   updateSmokingStatusForCleaning(item, isSmoker, userAuth, targetDate);
 
+  if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
   saveDatabase();
 
   const flat = db.flats.find(f => f.id === item.flatId);
