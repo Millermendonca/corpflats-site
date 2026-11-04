@@ -727,9 +727,9 @@ export default function WhatsappAutomation() {
   const [previewModalOpen, setPreviewModalOpen] = useState<boolean>(false)
   const [previewModalItem, setPreviewModalItem] = useState<QueueItem | null>(null)
 
-  // State: Oferta de Domingo Sem Pressa (Requisito R1 / Milestone 2)
+  // State: Oferta de Domingo Sem Pressa (Desconto em % estritamente sobre a diária pura)
   const [sundayUpsellEnabled, setSundayUpsellEnabled] = useState<boolean>(false)
-  const [sundayUpsellPrice, setSundayUpsellPrice] = useState<number>(90)
+  const [sundayUpsellDiscountPercent, setSundayUpsellDiscountPercent] = useState<number>(50)
   const [loadingSundayUpsell, setLoadingSundayUpsell] = useState<boolean>(false)
   const [savingSundayUpsell, setSavingSundayUpsell] = useState<boolean>(false)
   const [triggeringSundayUpsell, setTriggeringSundayUpsell] = useState<boolean>(false)
@@ -1675,10 +1675,16 @@ export default function WhatsappAutomation() {
         const data = await res.json()
         if (data.config) {
           setSundayUpsellEnabled(Boolean(data.config.enabled))
-          setSundayUpsellPrice(Number(data.config.sundayUpsellPrice) || 90)
+          setSundayUpsellDiscountPercent(Number(data.config.sundayUpsellDiscountPercent ?? 50) || 50)
         }
         if (data.lastRun) {
-          setSundayUpsellLastRun(data.lastRun)
+          setSundayUpsellLastRun({
+            executedAt: data.lastRun.timestamp || data.lastRun.executedAt || new Date().toISOString(),
+            eligibleCount: data.lastRun.eligibleCount ?? 0,
+            dispatchedCount: data.lastRun.dispatchedCount ?? 0,
+            skippedCount: data.lastRun.skippedCount ?? 0,
+            results: data.lastRun.results || []
+          })
         }
       }
     } catch (err: any) {
@@ -1688,14 +1694,14 @@ export default function WhatsappAutomation() {
     }
   }
 
-  const handleSaveSundayUpsellConfig = async (patch?: { enabled?: boolean; price?: number }) => {
+  const handleSaveSundayUpsellConfig = async (patch?: { enabled?: boolean; discountPercent?: number }) => {
     const newEnabled = patch?.enabled !== undefined ? patch.enabled : sundayUpsellEnabled
-    const newPrice = patch?.price !== undefined ? patch.price : Number(sundayUpsellPrice)
+    const newDiscountPercent = patch?.discountPercent !== undefined ? patch.discountPercent : Number(sundayUpsellDiscountPercent)
 
-    if (newPrice < 10) {
+    if (!Number.isFinite(newDiscountPercent) || newDiscountPercent < 1 || newDiscountPercent > 99) {
       toast({
-        title: "Valor inválido",
-        description: "O valor promocional mínimo deve ser de pelo menos R$ 10,00.",
+        title: "Percentual inválido",
+        description: "O percentual de desconto deve estar entre 1% e 99%.",
         variant: "destructive"
       })
       return
@@ -1708,16 +1714,16 @@ export default function WhatsappAutomation() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           enabled: newEnabled,
-          sundayUpsellPrice: newPrice
+          sundayUpsellDiscountPercent: newDiscountPercent
         })
       })
       const data = await res.json()
       if (res.ok && data.success) {
         setSundayUpsellEnabled(newEnabled)
-        setSundayUpsellPrice(newPrice)
+        setSundayUpsellDiscountPercent(newDiscountPercent)
         toast({
           title: "✓ Configuração Salva!",
-          description: `Oferta de Domingo Sem Pressa: ${newEnabled ? "Ativa" : "Pausada"} por R$ ${newPrice.toFixed(2)}.`
+          description: `Oferta de Domingo Sem Pressa: ${newEnabled ? "Ativa" : "Pausada"} com ${newDiscountPercent}% de desconto sobre a diária pura.`
         })
       } else {
         toast({
@@ -1739,9 +1745,11 @@ export default function WhatsappAutomation() {
 
   const handleTriggerSundayUpsellNow = async () => {
     if (!confirm(
-      "Deseja executar o disparo manual/teste da 'Oferta de Domingo Sem Pressa' agora?\n\n" +
-      "O sistema irá verificar a disponibilidade de todos os flats com check-out no domingo às 12:00h, " +
-      "gerar a pré-reserva temporária (hold 30min) e enviar a oferta pelo Canal #1 (Régua Hóspedes)."
+      "Deseja enviar um DISPARO DE TESTE seguro da 'Oferta de Domingo Sem Pressa' agora?\n\n" +
+      "🔒 MODO DE TESTE BLINDADO:\n" +
+      "• Envio 100% travado e exclusivo para o WhatsApp da gerência (5522998505276).\n" +
+      "• Simula uma reserva com R$ 200,00 de diária pura + R$ 70,00 de taxa de limpeza (aplicando " + sundayUpsellDiscountPercent + "% apenas sobre os R$ 200,00 da diária).\n" +
+      "• Nenhuma reserva real ou hóspede será afetado."
     )) {
       return
     }
@@ -1757,22 +1765,29 @@ export default function WhatsappAutomation() {
       if (res.ok && data.success) {
         const lastRunData = {
           executedAt: data.executedAt || new Date().toISOString(),
-          eligibleCount: data.eligibleCount ?? (data.results?.filter((r: any) => r.status === "sent").length || 0),
-          dispatchedCount: data.dispatchedCount ?? (data.results?.filter((r: any) => r.status === "sent").length || 0),
-          skippedCount: data.skippedCount ?? (data.results?.filter((r: any) => r.status === "skipped").length || 0),
-          results: data.results || []
+          eligibleCount: data.eligibleCount ?? 1,
+          dispatchedCount: data.dispatchedCount ?? 1,
+          skippedCount: data.ineligibleCount ?? 0,
+          results: (data.dispatchedItems || []).map((item: any) => ({
+            reservationId: item.code || item.id,
+            flatNumber: item.flatNumber || "113",
+            guestName: `${item.guestName || "Miller"} (Teste -> 5522998505276)`,
+            status: "sent" as const,
+            promoPrice: item.promotionalPrice,
+            dailyRate: item.normalDailyRate
+          }))
         }
         setSundayUpsellLastRun(lastRunData)
         setShowLastRunDetails(true)
         toast({
-          title: "⚡ Disparo Manual Concluído!",
-          description: `${lastRunData.dispatchedCount} oferta(s) enviada(s) com hold de 30min. ${lastRunData.skippedCount} ignorada(s).`
+          title: "⚡ Disparo de Teste Concluído!",
+          description: `Enviado exclusivamente para 5522998505276 (${sundayUpsellDiscountPercent}% sobre a diária pura).`
         })
         fetchQueue()
       } else {
         toast({
-          title: "Falha no disparo manual",
-          description: data.error || "Ocorreu um erro ao processar as ofertas.",
+          title: "Falha no disparo de teste",
+          description: data.error || "Ocorreu um erro ao processar o disparo de teste.",
           variant: "destructive"
         })
       }
@@ -2357,12 +2372,20 @@ export default function WhatsappAutomation() {
     const fmtPending = pendingAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
     const isPreReserva = targetRes.status === "pre_reserva"
 
-    // Cálculo dinâmico para Oferta de Domingo Sem Pressa (Requisito R1 / Milestone 2)
-    const normalDailyRate = Number(targetRes.dailyRate) > 0
-      ? Number(targetRes.dailyRate)
-      : (Number(targetRes.totalAmount) > 0 ? Number(targetRes.totalAmount) / 2 : 250)
-    const promoPrice = Number(sundayUpsellPrice) || 90
-    const savings = Math.max(0, normalDailyRate - promoPrice)
+    // Cálculo dinâmico para Oferta de Domingo Sem Pressa (Desconto em % estritamente sobre a diária pura, sem taxas)
+    const extractPureDailyForPreview = (r: any) => {
+      if (!r || selectedPreviewResCode === "sample") return 200
+      if (Number(r.dailyRate) > 0) return Number(r.dailyRate)
+      const nights = Math.max(1, Number(r.numNights || r.nights || 1) || 1)
+      const cleanFee = Number(r.cleaningFee || 0)
+      const petFee = Number(r.petFee || 0)
+      const pureTotal = Math.max(0, Number(r.totalAmount || 0) - cleanFee - petFee)
+      return pureTotal > 0 ? Number((pureTotal / nights).toFixed(2)) : 200
+    }
+    const normalDailyRate = extractPureDailyForPreview(targetRes)
+    const discountPct = Number(sundayUpsellDiscountPercent) || 50
+    const promoPrice = Number((normalDailyRate * (1 - (discountPct / 100))).toFixed(2))
+    const savings = Math.max(0, Number((normalDailyRate - promoPrice).toFixed(2)))
 
     const fmtNormal = normalDailyRate.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
     const fmtPromo = promoPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
@@ -4553,10 +4576,22 @@ export default function WhatsappAutomation() {
               const sampleDailyRate = previewRes
                 ? (Number(previewRes.dailyRate) > 0
                     ? Number(previewRes.dailyRate)
-                    : (Number(previewRes.totalAmount) > 0 ? Number(previewRes.totalAmount) / 2 : 250))
-                : 250
+                    : (() => {
+                        const nights = Math.max(1, Number((previewRes as any).numNights || (previewRes as any).nights || 1) || 1)
+                        const cleanFee = Number((previewRes as any).cleaningFee || 0)
+                        const petFee = Number((previewRes as any).petFee || 0)
+                        const pureTotal = Math.max(0, Number(previewRes.totalAmount || 0) - cleanFee - petFee)
+                        return pureTotal > 0 ? Number((pureTotal / nights).toFixed(2)) : 200
+                      })())
+                : 200
 
-              const sampleSavings = Math.max(0, sampleDailyRate - sundayUpsellPrice)
+              const sampleCleaningFeeExcluded = previewRes
+                ? Number((previewRes as any).cleaningFee ?? 70)
+                : 70
+
+              const activeDiscountPct = Number(sundayUpsellDiscountPercent) || 50
+              const samplePromoPrice = Number((sampleDailyRate * (1 - (activeDiscountPct / 100))).toFixed(2))
+              const sampleSavings = Math.max(0, Number((sampleDailyRate - samplePromoPrice).toFixed(2)))
 
               return (
                 <Card className={`rounded-2xl border-2 transition-all shadow-sm overflow-hidden ${
@@ -4602,7 +4637,7 @@ export default function WhatsappAutomation() {
                             </Badge>
                           </div>
                           <CardDescription className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                            Dispara automaticamente aos sábados às 19:00h para hóspedes com check-out no domingo às 12:00h, oferecendo saída livre e pernoite bônus até segunda às 12:00h por tarifa promocional com cobrança PIX instantânea.
+                            Dispara automaticamente aos sábados às 19:00h para hóspedes com check-out no domingo às 12:00h, oferecendo saída livre e pernoite bônus até segunda às 12:00h com desconto em porcentagem estritamente sobre a diária pura (excluindo taxas).
                           </CardDescription>
                         </div>
                       </div>
@@ -4650,32 +4685,33 @@ export default function WhatsappAutomation() {
                       </div>
                     )}
 
-                    {/* Grid de Configurações: Preço, Diária de Referência e Ações */}
+                    {/* Grid de Configurações: Percentual de Desconto, Diária Pura de Referência e Ações */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {/* Campo 1: Valor Promocional configurável (sundayUpsellPrice) */}
+                      {/* Campo 1: Percentual de Desconto configurável (sundayUpsellDiscountPercent) */}
                       <div className="p-4 rounded-xl border bg-card/80 space-y-2 flex flex-col justify-between">
                         <div className="space-y-1.5">
-                          <Label htmlFor="sunday-upsell-price-input" className="text-xs font-black flex items-center gap-1.5 text-foreground">
+                          <Label htmlFor="sunday-upsell-discount-input" className="text-xs font-black flex items-center gap-1.5 text-foreground">
                             <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
-                            Valor Promocional da Oferta (`sundayUpsellPrice`)
+                            Percentual de Desconto (`sundayUpsellDiscountPercent`)
                           </Label>
                           <div className="flex items-center gap-2">
                             <div className="relative flex-1">
-                              <span className="absolute left-3 top-2 text-xs font-bold text-muted-foreground">R$</span>
                               <Input
-                                id="sunday-upsell-price-input"
+                                id="sunday-upsell-discount-input"
                                 type="number"
                                 step="5"
-                                min="10"
-                                value={sundayUpsellPrice}
-                                onChange={(e) => setSundayUpsellPrice(Math.max(0, Number(e.target.value) || 0))}
-                                className="pl-9 h-9 font-mono font-bold text-sm bg-background border-border"
+                                min="1"
+                                max="99"
+                                value={sundayUpsellDiscountPercent}
+                                onChange={(e) => setSundayUpsellDiscountPercent(Math.min(99, Math.max(1, Number(e.target.value) || 50)))}
+                                className="pr-8 h-9 font-mono font-bold text-sm bg-background border-border"
                               />
+                              <span className="absolute right-3 top-2 text-xs font-bold text-muted-foreground">%</span>
                             </div>
                             <Button
                               size="sm"
                               disabled={savingSundayUpsell}
-                              onClick={() => handleSaveSundayUpsellConfig({ price: sundayUpsellPrice })}
+                              onClick={() => handleSaveSundayUpsellConfig({ discountPercent: sundayUpsellDiscountPercent })}
                               className="h-9 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
                             >
                               {savingSundayUpsell ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
@@ -4684,37 +4720,43 @@ export default function WhatsappAutomation() {
                           </div>
                         </div>
                         <p className="text-[11px] text-muted-foreground leading-snug">
-                          Cobrado via PIX para garantir saída livre no domingo e estadia até segunda às 12:00h.
+                          Aplicado <strong>estritamente sobre a diária pura</strong> paga pelo hóspede (exclui taxa de limpeza, pet e extras).
                         </p>
                       </div>
 
-                      {/* Campo 2: Tarifa Normal de Referência (Cálculo Dinâmico de Economia) */}
+                      {/* Campo 2: Diária Pura de Referência (Excluindo Taxas) */}
                       <div className="p-4 rounded-xl border bg-card/80 space-y-1.5 flex flex-col justify-between">
                         <div>
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-black flex items-center gap-1.5 text-foreground">
                               <Sliders className="w-3.5 h-3.5 text-blue-500" />
-                              Tarifa Normal & Economia
+                              Simulador (Somente Diária Pura)
                             </span>
                             <Badge variant="outline" className="text-[10px] font-bold text-blue-600 border-blue-300">
-                              Dinâmica PMS
+                              -{activeDiscountPct}% OFF
                             </Badge>
                           </div>
                           <div className="mt-2 space-y-1">
                             <div className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">Diária de Referência (`valor_normal`):</span>
+                              <span className="text-muted-foreground">Diária Pura (`valor_normal`):</span>
                               <span className="font-mono font-bold text-foreground">
                                 {sampleDailyRate.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                               </span>
                             </div>
+                            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                              <span>Taxa de Limpeza (ignorada no cálculo):</span>
+                              <span className="font-mono line-through opacity-75">
+                                {sampleCleaningFeeExcluded.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </span>
+                            </div>
                             <div className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">Valor Oferta (`valor_promocional`):</span>
+                              <span className="text-muted-foreground">PIX Oferta (`valor_promocional`):</span>
                               <span className="font-mono font-bold text-emerald-600">
-                                {sundayUpsellPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                                {samplePromoPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                               </span>
                             </div>
                             <div className="flex items-center justify-between text-xs pt-1 border-t">
-                              <span className="font-semibold text-foreground">Economia Destacada (`economia`):</span>
+                              <span className="font-semibold text-foreground">Economia na Diária (`economia`):</span>
                               <span className="font-mono font-black text-emerald-600">
                                 {sampleSavings.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                               </span>
@@ -4722,7 +4764,7 @@ export default function WhatsappAutomation() {
                           </div>
                         </div>
                         <p className="text-[10px] text-muted-foreground leading-snug">
-                          Calculada dinamicamente com base na diária da reserva atual do hóspede (`dailyRate` ou `totalAmount / noites`).
+                          Fórmula: `diaria_pura * (1 - {activeDiscountPct}/100)`. Taxas de limpeza e pet jamais entram na base.
                         </p>
                       </div>
 
@@ -4748,7 +4790,7 @@ export default function WhatsappAutomation() {
                             </Badge>
                           </div>
                           <p className="text-[11px] text-muted-foreground leading-snug">
-                            Envios roteados exclusivamente pela <strong>Régua de Hóspedes (`guest_schedule`)</strong> com hold de 30min e expiração silenciosa.
+                            O botão de teste abaixo é <strong>100% blindado</strong> para enviar exclusivamente ao WhatsApp <strong>5522998505276</strong> sem afetar reservas reais.
                           </p>
                         </div>
 
@@ -4757,19 +4799,19 @@ export default function WhatsappAutomation() {
                           <Button
                             type="button"
                             size="sm"
-                            disabled={triggeringSundayUpsell || !sundayUpsellEnabled}
+                            disabled={triggeringSundayUpsell}
                             onClick={handleTriggerSundayUpsellNow}
                             className="flex-1 h-8 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 shadow-xs"
                           >
                             {triggeringSundayUpsell ? (
                               <>
                                 <RefreshCw className="w-3 h-3 animate-spin" />
-                                Processando Elegibilidade...
+                                Enviando Teste...
                               </>
                             ) : (
                               <>
                                 <Zap className="w-3 h-3 text-amber-300" />
-                                ⚡ Disparo Manual / Teste
+                                ⚡ Disparo de Teste
                               </>
                             )}
                           </Button>

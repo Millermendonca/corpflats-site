@@ -8083,6 +8083,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (!db.sundayUpsellConfig) {
       db.sundayUpsellConfig = {
         enabled: false,
+        sundayUpsellDiscountPercent: 50,
         sundayUpsellPrice: 90.0,
         channelId: "guest_schedule",
         triggerHour: 19,
@@ -8093,10 +8094,15 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         lastTriggerDate: null,
         emergencyRollback20261104Applied: true
       };
-    } else if (!db.sundayUpsellConfig.emergencyRollback20261104Applied) {
-      db.sundayUpsellConfig.enabled = false;
-      db.sundayUpsellConfig.emergencyRollback20261104Applied = true;
-      sanitizeAccidentalSundayUpsellState(db, saveDatabase);
+    } else {
+      if (db.sundayUpsellConfig.sundayUpsellDiscountPercent === undefined || db.sundayUpsellConfig.sundayUpsellDiscountPercent === null) {
+        db.sundayUpsellConfig.sundayUpsellDiscountPercent = 50;
+      }
+      if (!db.sundayUpsellConfig.emergencyRollback20261104Applied) {
+        db.sundayUpsellConfig.enabled = false;
+        db.sundayUpsellConfig.emergencyRollback20261104Applied = true;
+        sanitizeAccidentalSundayUpsellState(db, saveDatabase);
+      }
     }
   }
 
@@ -8125,10 +8131,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   app.post("/api/whatsapp/sunday-upsell/config", (req, res) => {
     const db = getDb();
     ensureDbDefaults();
-    const { enabled, sundayUpsellPrice } = req.body || {};
+    const { enabled, sundayUpsellDiscountPercent, sundayUpsellPrice } = req.body || {};
     if (!db.sundayUpsellConfig) {
       db.sundayUpsellConfig = {
         enabled: false,
+        sundayUpsellDiscountPercent: 50,
         sundayUpsellPrice: 90.0,
         channelId: "guest_schedule",
         triggerHour: 19,
@@ -8142,6 +8149,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
     if (enabled !== undefined) {
       db.sundayUpsellConfig.enabled = Boolean(enabled);
+    }
+    if (sundayUpsellDiscountPercent !== undefined) {
+      const parsedPct = parseFloat(sundayUpsellDiscountPercent);
+      if (!isNaN(parsedPct) && parsedPct >= 1 && parsedPct <= 99) {
+        db.sundayUpsellConfig.sundayUpsellDiscountPercent = parsedPct;
+      }
     }
     if (sundayUpsellPrice !== undefined) {
       const parsed = parseFloat(sundayUpsellPrice);
@@ -8171,11 +8184,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     try {
       const db = getDb();
       ensureDbDefaults();
-      const { forceDate, testMode, dryRun } = req.body || {};
+      const { forceDate, testMode, dryRun, simulatedReservation } = req.body || {};
       const result = await triggerSundayUpsellRoutine(db, saveDatabase, {
         forceDate: forceDate || null,
         testMode: testMode !== undefined ? Boolean(testMode) : true,
-        dryRun: Boolean(dryRun)
+        dryRun: Boolean(dryRun),
+        simulatedReservation: simulatedReservation || null
       });
       res.json({
         success: true,
@@ -11642,8 +11656,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       await sanitizeAndDispatchTodaySub5Nps(db, saveDatabase);
       await checkPendingNpsManagerAlerts(db, saveDatabase, createNotification);
 
-      // 5. Oferta de Domingo Sem Pressa BLOQUEADA no loop automático (disparo automático desativado por segurança)
-      // await checkAndTriggerSundayUpsell(db, saveDatabase);
+      // 5. Oferta de Domingo Sem Pressa: conectada ao botão do painel (enabled === true) com travas rígidas de Sábado às 19:00h (America/Sao_Paulo)
+      if (db?.sundayUpsellConfig?.enabled === true) {
+        await checkAndTriggerSundayUpsell(db, saveDatabase);
+      }
 
     } catch (err) {
       console.error("[Auto-WhatsApp Cron Error]:", err.message);
@@ -16452,6 +16468,88 @@ export function sanitizeAccidentalSundayUpsellState(db, saveDatabase, { forceCle
   };
 }
 
+/**
+ * Extrai EXCLUSIVAMENTE o valor da diária pura paga pelo hóspede (sem taxa de limpeza, taxa pet ou outras taxas).
+ * PROIBIDO dividir o valor total bruto pelo número de noites sem antes isolar e subtrair todas as taxas extras.
+ */
+export function extractPureDailyRate(r) {
+  if (!r || typeof r !== "object") return 0;
+
+  // 1. Se dailyRates (array de diárias puras por noite) existir, usa a diária pura registrada
+  if (Array.isArray(r.dailyRates) && r.dailyRates.length > 0) {
+    const lastNight = r.dailyRates[r.dailyRates.length - 1];
+    const firstNight = r.dailyRates[0];
+    const rateFromList = Number(lastNight?.rate ?? lastNight?.amount ?? firstNight?.rate ?? firstNight?.amount ?? 0);
+    if (Number.isFinite(rateFromList) && rateFromList > 0) {
+      return Number(rateFromList.toFixed(2));
+    }
+  }
+
+  // 2. Se dailyRate explícito estiver salvo na reserva (valor unitário puro da diária, separado de cleaningFee/petFee)
+  const explicitDaily = Number(r.dailyRate);
+  if (Number.isFinite(explicitDaily) && explicitDaily > 0) {
+    return Number(explicitDaily.toFixed(2));
+  }
+
+  // 3. Fallback seguro: isola o total de hospedagem subtraindo obrigatoriamente cleaningFee, petFee e charges extras antes de dividir pelas noites
+  const nights = Math.max(1, Number(r.numNights || r.nights || 1) || 1);
+  const cleaningFromCharges = Array.isArray(r.charges)
+    ? r.charges
+        .filter(c => c && (c.type === "cleaning" || c.category === "cleaning" || /limpeza/i.test(String(c.title || c.description || ""))))
+        .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+    : 0;
+  const petFromCharges = Array.isArray(r.charges)
+    ? r.charges
+        .filter(c => c && (c.type === "pet" || c.category === "pet" || /\bpet\b/i.test(String(c.title || c.description || ""))))
+        .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+    : 0;
+  const otherExtraCharges = Array.isArray(r.charges)
+    ? r.charges
+        .filter(c =>
+          c &&
+          c.type !== "cleaning" && c.category !== "cleaning" && !/limpeza/i.test(String(c.title || c.description || "")) &&
+          c.type !== "pet" && c.category !== "pet" && !/\bpet\b/i.test(String(c.title || c.description || "")) &&
+          c.type !== "daily" && c.category !== "accommodation"
+        )
+        .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+    : 0;
+  const cleaningFee = Math.max(Number(r.cleaningFee || 0), cleaningFromCharges);
+  const petFee = Math.max(Number(r.petFee || 0), petFromCharges);
+  const totalExtraFees = cleaningFee + petFee + otherExtraCharges;
+  const grossTotal = Number(r.totalAmount || 0);
+  const pureAccommodationTotal = Math.max(0, grossTotal - totalExtraFees);
+  if (pureAccommodationTotal <= 0) return 0;
+  return Number((pureAccommodationTotal / nights).toFixed(2));
+}
+
+/**
+ * Calcula o valor promocional da Oferta de Domingo Sem Pressa aplicando sundayUpsellDiscountPercent
+ * estritamente sobre o valor da diária pura paga pelo hóspede (excluindo todas as taxas).
+ * Fórmula exata: valor_promocional = valor_diaria_pura_paga * (1 - (sundayUpsellDiscountPercent / 100))
+ */
+export function calculateSundayUpsellOfferPrices(r, discountPercent = 50) {
+  const pct = Number(discountPercent);
+  if (!Number.isFinite(pct) || pct < 1 || pct > 99) {
+    return { valid: false, discountPercent: pct, normalDailyRate: 0, promotionalPrice: 0, savingsAmount: 0 };
+  }
+  const normalDailyRate = extractPureDailyRate(r);
+  if (!Number.isFinite(normalDailyRate) || normalDailyRate <= 0) {
+    return { valid: false, discountPercent: pct, normalDailyRate: 0, promotionalPrice: 0, savingsAmount: 0 };
+  }
+  const promotionalPrice = Number((normalDailyRate * (1 - (pct / 100))).toFixed(2));
+  if (!Number.isFinite(promotionalPrice) || promotionalPrice <= 0) {
+    return { valid: false, discountPercent: pct, normalDailyRate, promotionalPrice: 0, savingsAmount: 0 };
+  }
+  const savingsAmount = Number(Math.max(0, normalDailyRate - promotionalPrice).toFixed(2));
+  return {
+    valid: true,
+    discountPercent: pct,
+    normalDailyRate,
+    promotionalPrice,
+    savingsAmount
+  };
+}
+
 export function resolveTargetSundayDate(forceDate = null, refDate = null) {
   if (forceDate && typeof forceDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(forceDate.trim())) {
     return forceDate.trim();
@@ -16489,10 +16587,11 @@ export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
     };
   }
   const mondayDate = new Date(dtSunday.getTime() + 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const discountPercent = Number(db?.sundayUpsellConfig?.sundayUpsellDiscountPercent ?? 50);
 
   const allReservations = Array.isArray(db?.reservations) ? db.reservations : [];
   const nonActiveStatuses = [
-    "cancelada", "cancelled", "expirada", "no_show", "completed", "checked_out", "finalizada", "pre_reserva", "pendente"
+    "cancelada", "cancelled", "expirada", "no_show", "completed", "checked_out", "concluida", "finalizada", "pre_reserva", "pendente"
   ];
 
   const eligibleReservations = [];
@@ -16502,12 +16601,15 @@ export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
     if (!r) continue;
     const statusNorm = String(r.status || "").toLowerCase();
     if (nonActiveStatuses.includes(statusNorm)) continue;
-    if (r.checkoutDone || r.actualCheckoutAt) continue;
+    if (r.checkoutDone || r.checkoutCompleted || r.actualCheckoutAt) continue;
 
     const rCheckout = String(r.checkoutDate || "").slice(0, 10);
     if (rCheckout !== targetSundayDate) continue;
     const rCheckoutDt = new Date(`${rCheckout}T12:00:00Z`);
     if (isNaN(rCheckoutDt.getTime()) || rCheckoutDt.getUTCDay() !== 0) continue;
+
+    const rCheckin = String(r.checkinDate || "").slice(0, 10);
+    if (rCheckin && rCheckin >= targetSundayDate) continue;
 
     const guestPhone = r.guestPhone || r.phone;
     if (!guestPhone) {
@@ -16520,6 +16622,12 @@ export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
       continue;
     }
 
+    const pricing = calculateSundayUpsellOfferPrices(r, discountPercent);
+    if (!pricing.valid) {
+      ineligibleReservations.push({ reservation: r, reason: "TARIFA_DIARIA_PURA_INVALIDA_OU_ZERO" });
+      continue;
+    }
+
     const flatNum = String(r.flatNumber || "");
     const flatId = r.flatId;
 
@@ -16527,7 +16635,7 @@ export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
       if (!other || other.id === r.id || other.code === r.code) return false;
       const oStatus = String(other.status || "").toLowerCase();
       if (nonActiveStatuses.includes(oStatus)) return false;
-      if (other.checkoutDone || other.actualCheckoutAt) return false;
+      if (other.checkoutDone || other.checkoutCompleted || other.actualCheckoutAt) return false;
       const sameFlat = (flatId != null && other.flatId != null && String(other.flatId) === String(flatId)) ||
                        (flatNum && other.flatNumber && String(other.flatNumber) === flatNum);
       if (!sameFlat) return false;
@@ -16541,7 +16649,8 @@ export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
         reservation: r,
         scenario: "VACANT_FLAT",
         incomingRes: null,
-        alternateFlat: null
+        alternateFlat: null,
+        pricing
       });
     } else {
       const inCheckin = String(incomingRes.checkinDate || targetSundayDate).slice(0, 10);
@@ -16562,7 +16671,8 @@ export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
           reservation: r,
           scenario: "REALLOCATION_AVAILABLE",
           incomingRes,
-          alternateFlat: altFlat
+          alternateFlat: altFlat,
+          pricing
         });
       } else {
         ineligibleReservations.push({
@@ -16577,6 +16687,7 @@ export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
   return {
     targetSundayDate,
     mondayDate,
+    discountPercent,
     totalEvaluated: eligibleReservations.length + ineligibleReservations.length,
     eligibleCount: eligibleReservations.length,
     eligibleReservations,
@@ -16590,6 +16701,7 @@ export function previewSundayUpsellEligibility(db, forceDate = null) {
   return {
     targetSundayDate,
     mondayDate: evalResult.mondayDate,
+    discountPercent: evalResult.discountPercent,
     totalEvaluated: evalResult.totalEvaluated,
     eligibleCount: evalResult.eligibleCount,
     eligibleReservations: evalResult.eligibleReservations.map(e => ({
@@ -16600,7 +16712,10 @@ export function previewSundayUpsellEligibility(db, forceDate = null) {
       flatNumber: e.reservation.flatNumber,
       checkoutDate: e.reservation.checkoutDate,
       scenario: e.scenario,
-      alternateFlatNumber: e.alternateFlat ? String(e.alternateFlat.number) : null
+      alternateFlatNumber: e.alternateFlat ? String(e.alternateFlat.number) : null,
+      normalDailyRate: e.pricing?.normalDailyRate,
+      promotionalPrice: e.pricing?.promotionalPrice,
+      discountPercent: e.pricing?.discountPercent
     })),
     ineligibleReservations: evalResult.ineligibleReservations.map(ie => ({
       id: ie.reservation.id,
@@ -16619,6 +16734,7 @@ export async function dispatchSundayUpsellTwoBalloons(db, {
   flatNumber,
   sundayUpsellPrice,
   normalDailyRate,
+  sundayUpsellDiscountPercent = 50,
   pixCopiaECola,
   txid,
   holdExpiresAt,
@@ -16627,19 +16743,22 @@ export async function dispatchSundayUpsellTwoBalloons(db, {
   const isTestEnv = process.env.NODE_ENV === "test" || Boolean(globalThis.__CORPFLATS_TEST_MODE__);
   const promoNum = Number(sundayUpsellPrice);
   const normalNum = Number(normalDailyRate);
+  const pctNum = Number(sundayUpsellDiscountPercent ?? 50);
   const cleanName = String(guestFirstName || "").trim();
   const cleanFlat = String(flatNumber || "").trim();
   const cleanPix = String(pixCopiaECola || "").trim();
 
   // TRAVA RÍGIDA DE VALORES VÁLIDOS: Aborta imediatamente se qualquer valor ou variável obrigatória estiver vazio, zero, NaN ou undefined
   if (
-    !promoNum || isNaN(promoNum) || promoNum <= 0 ||
-    !normalNum || isNaN(normalNum) || normalNum <= 0 ||
-    !cleanName || cleanName === "undefined" ||
-    !cleanFlat || cleanFlat === "undefined" ||
-    !cleanPix || cleanPix === "undefined"
+    !Number.isFinite(pctNum) || pctNum < 1 || pctNum > 99 ||
+    !Number.isFinite(promoNum) || promoNum <= 0 ||
+    !Number.isFinite(normalNum) || normalNum <= 0 ||
+    !cleanName || cleanName === "undefined" || cleanName === "NaN" ||
+    !cleanFlat || cleanFlat === "undefined" || cleanFlat === "NaN" ||
+    !cleanPix || cleanPix === "undefined" || cleanPix === "NaN"
   ) {
     console.error("[Sunday Upsell Blocked] Abortando envio: valores ou variáveis inválidos/vazios.", {
+      pctNum,
       promoNum,
       normalNum,
       cleanName,
@@ -16649,21 +16768,32 @@ export async function dispatchSundayUpsellTwoBalloons(db, {
     return {
       success: false,
       aborted: true,
-      error: "Envio abortado: valor promocional, tarifa normal ou variáveis do hóspede inválidas."
+      error: "Envio abortado: percentual de desconto, valor promocional, tarifa normal ou variáveis do hóspede inválidas."
     };
   }
 
-  // Modo de Teste Seguro / Whitelist: Quando em teste (ou sandbox), envia exclusivamente para 5522998505276 (a menos que em suite unitária isolada)
+  // Modo de Teste Seguro / Whitelist: Quando em teste (ou sandbox), envia 100% travado e exclusivo para 5522998505276
   const isChannelInTestMode =
     Boolean(testMode) ||
     (db?.zapiConfig?.testModeOnly !== false && !isTestEnv) ||
     Boolean(db?.zapiConfig?.channels?.guest_schedule?.testMode);
-  const effectivePhone = (isChannelInTestMode && !isTestEnv)
+  const effectivePhone = (Boolean(testMode) && !isTestEnv)
     ? "5522998505276"
-    : guestPhone;
+    : ((isChannelInTestMode && !isTestEnv) ? "5522998505276" : guestPhone);
 
   const promoFormatted = promoNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const normalFormatted = normalNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  if (
+    !promoFormatted || promoFormatted === "0,00" || promoFormatted.includes("NaN") || promoFormatted.includes("undefined") ||
+    !normalFormatted || normalFormatted === "0,00" || normalFormatted.includes("NaN") || normalFormatted.includes("undefined")
+  ) {
+    return {
+      success: false,
+      aborted: true,
+      error: "Envio abortado: formatação monetária inválida."
+    };
+  }
 
   const balloon1Text = `Olá, ${cleanName}! Tudo bem? Vi que o seu check-out aqui no flat ${cleanFlat} está programado para amanhã (domingo) às 12h.
 
@@ -16681,6 +16811,7 @@ Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX 
     triggerEvent: "sunday_upsell_offer",
     sendMode: "text",
     delayTyping: isTestEnv ? 0 : 3,
+    bypassTestMode: Boolean(testMode) && effectivePhone === "5522998505276",
     db
   });
 
@@ -16699,6 +16830,7 @@ Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX 
     triggerEvent: "sunday_upsell_offer_pix",
     sendMode: "text",
     delayTyping: isTestEnv ? 0 : 1,
+    bypassTestMode: Boolean(testMode) && effectivePhone === "5522998505276",
     db
   });
 
@@ -16717,6 +16849,7 @@ Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX 
 
   return {
     success: Boolean(balloon1Res?.success && balloon2Res?.success),
+    effectivePhone,
     balloon1: balloon1Res,
     balloon2: balloon2Res
   };
@@ -16725,16 +16858,19 @@ Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX 
 export async function triggerSundayUpsellRoutine(db, saveDatabase, {
   forceDate = null,
   testMode = false,
-  dryRun = false
+  dryRun = false,
+  simulatedReservation = null
 } = {}) {
+  const isTestEnv = process.env.NODE_ENV === "test" || Boolean(globalThis.__CORPFLATS_TEST_MODE__);
   const targetSundayDate = resolveTargetSundayDate(forceDate);
   const evalResult = evaluateSundayUpsellEligibility(db, targetSundayDate);
 
-  const sundayUpsellPrice = Number(db?.sundayUpsellConfig?.sundayUpsellPrice ?? 90.0);
-  if (!sundayUpsellPrice || isNaN(sundayUpsellPrice) || sundayUpsellPrice <= 0) {
+  const discountPercent = Number(db?.sundayUpsellConfig?.sundayUpsellDiscountPercent ?? 50);
+  if (!Number.isFinite(discountPercent) || discountPercent < 1 || discountPercent > 99) {
     return {
       targetSundayDate,
       mondayDate: evalResult.mondayDate,
+      discountPercent,
       totalEvaluated: evalResult.totalEvaluated,
       eligibleCount: 0,
       dispatchedCount: 0,
@@ -16744,7 +16880,7 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
         code: ie.reservation?.code || ie.reservation?.id,
         reason: ie.reason
       })),
-      abortedReason: "VALOR_PROMOCIONAL_INVALIDO"
+      abortedReason: "DESCONTO_PERCENTUAL_INVALIDO"
     };
   }
 
@@ -16752,13 +16888,107 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
   const expiresAt = new Date(nowMs + 30 * 60 * 1000).toISOString();
   const dispatchedItems = [];
 
+  // BLINDAGEM DO BOTÃO DE "DISPARO DE TESTE":
+  // Em modo de teste (testMode === true fora de suíte unitária isolada), o envio vai 100% travado e exclusivo para 5522998505276,
+  // usando uma reserva simulada (ex: R$ 200,00 diária pura + R$ 70,00 taxa de limpeza), sem jamais enviar para hóspedes reais e sem alterar reservas reais no banco.
+  if (testMode && !isTestEnv) {
+    const simRes = simulatedReservation && typeof simulatedReservation === "object"
+      ? { ...simulatedReservation }
+      : {
+          id: "TEST-SUN-UPSELL",
+          code: "TEST-SUN-UPSELL",
+          guestName: "Miller",
+          guestPhone: "5522998505276",
+          flatNumber: "113",
+          checkinDate: targetSundayDate,
+          checkoutDate: targetSundayDate,
+          numNights: 1,
+          nights: 1,
+          dailyRate: 200.00,
+          cleaningFee: 70.00,
+          petFee: 0,
+          charges: [
+            { id: "chg_clean_test", type: "cleaning", category: "cleaning", title: "Taxa de Limpeza", amount: 70.00 }
+          ],
+          totalAmount: 270.00
+        };
+
+    const pricing = calculateSundayUpsellOfferPrices(simRes, discountPercent);
+    if (!pricing.valid) {
+      return {
+        targetSundayDate,
+        mondayDate: evalResult.mondayDate,
+        discountPercent,
+        testMode: true,
+        totalEvaluated: 1,
+        eligibleCount: 0,
+        dispatchedCount: 0,
+        dispatchedItems: [],
+        abortedReason: "TARIFA_SIMULADA_INVALIDA"
+      };
+    }
+
+    const txid = `UPSELL_SUN_TEST_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 35);
+    const pixPayload = generateStaticPixPayload({
+      amount: pricing.promotionalPrice,
+      txid
+    });
+
+    let sendRes = null;
+    if (!dryRun) {
+      const guestFirstName = simRes.guestName ? String(simRes.guestName).trim().split(" ")[0] : "Miller";
+      const flatNumStr = String(simRes.flatNumber || "113").trim();
+      sendRes = await dispatchSundayUpsellTwoBalloons(db, {
+        reservation: simRes,
+        guestPhone: "5522998505276",
+        guestFirstName,
+        flatNumber: flatNumStr,
+        sundayUpsellPrice: pricing.promotionalPrice,
+        normalDailyRate: pricing.normalDailyRate,
+        sundayUpsellDiscountPercent: discountPercent,
+        pixCopiaECola: pixPayload,
+        txid,
+        holdExpiresAt: expiresAt,
+        testMode: true
+      });
+    }
+
+    dispatchedItems.push({
+      id: simRes.id,
+      code: simRes.code,
+      guestName: simRes.guestName,
+      targetPhone: "5522998505276",
+      flatNumber: simRes.flatNumber,
+      txid,
+      discountPercent,
+      normalDailyRate: pricing.normalDailyRate,
+      excludedCleaningFee: Number(simRes.cleaningFee || 0),
+      promotionalPrice: pricing.promotionalPrice,
+      savingsAmount: pricing.savingsAmount,
+      pixCopiaECola: pixPayload,
+      delivery: sendRes
+    });
+
+    return {
+      targetSundayDate,
+      mondayDate: evalResult.mondayDate,
+      discountPercent,
+      testMode: true,
+      targetPhone: "5522998505276",
+      totalEvaluated: 1,
+      eligibleCount: 1,
+      dispatchedCount: dryRun ? 0 : (sendRes?.success ? 1 : 0),
+      dispatchedItems,
+      ineligibleCount: 0,
+      ineligibleReservations: []
+    };
+  }
+
   for (const item of evalResult.eligibleReservations) {
     const r = item.reservation;
-    const normalDailyRate = Number(
-      r.dailyRate || (r.totalAmount && r.numNights ? Number(r.totalAmount) / Number(r.numNights) : 0)
-    );
-    // TRAVA DE VALORES VÁLIDOS: Nunca enviar se a tarifa normal estiver vazia, zero ou undefined
-    if (!normalDailyRate || isNaN(normalDailyRate) || normalDailyRate <= 0) {
+    const pricing = calculateSundayUpsellOfferPrices(r, discountPercent);
+    // TRAVA DE VALORES VÁLIDOS: Nunca enviar se a diária pura ou valor promocional estiverem vazios, zero ou undefined
+    if (!pricing.valid || !pricing.normalDailyRate || pricing.normalDailyRate <= 0 || !pricing.promotionalPrice || pricing.promotionalPrice <= 0) {
       evalResult.ineligibleReservations.push({
         reservation: r,
         reason: "TARIFA_NORMAL_INVALIDA_OU_ZERO"
@@ -16766,9 +16996,12 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
       continue;
     }
 
+    const normalDailyRate = pricing.normalDailyRate;
+    const promotionalPrice = pricing.promotionalPrice;
+
     const txid = `UPSELL_SUN_${r.code || r.id}_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 35);
     const pixPayload = generateStaticPixPayload({
-      amount: sundayUpsellPrice,
+      amount: promotionalPrice,
       txid
     });
 
@@ -16783,7 +17016,8 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
     r.pendingSundayUpsell = {
       txid,
       pixCopiaECola: pixPayload,
-      promotionalPrice: sundayUpsellPrice,
+      discountPercent,
+      promotionalPrice,
       normalDailyRate,
       originalCheckoutDate: targetSundayDate,
       targetCheckoutDate: evalResult.mondayDate,
@@ -16818,8 +17052,9 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
         guestPhone: r.guestPhone || r.phone,
         guestFirstName,
         flatNumber: flatNumStr,
-        sundayUpsellPrice,
+        sundayUpsellPrice: promotionalPrice,
         normalDailyRate,
+        sundayUpsellDiscountPercent: discountPercent,
         pixCopiaECola: pixPayload,
         txid,
         holdExpiresAt: expiresAt,
@@ -16839,7 +17074,8 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
       guestName: r.guestName,
       flatNumber: r.flatNumber,
       txid,
-      promotionalPrice: sundayUpsellPrice,
+      discountPercent,
+      promotionalPrice,
       normalDailyRate
     });
   }
@@ -16847,6 +17083,7 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
   if (!db.sundayUpsellConfig) {
     db.sundayUpsellConfig = {
       enabled: false,
+      sundayUpsellDiscountPercent: 50,
       sundayUpsellPrice: 90.0,
       channelId: "guest_schedule",
       triggerHour: 19,
@@ -16862,6 +17099,7 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
   db.sundayUpsellConfig.lastRun = {
     timestamp: new Date().toISOString(),
     targetSundayDate,
+    discountPercent,
     totalEvaluated: evalResult.totalEvaluated,
     eligibleCount: dispatchedItems.length,
     dispatchedCount: dryRun ? 0 : dispatchedItems.length
@@ -16876,6 +17114,7 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
   return {
     targetSundayDate,
     mondayDate: evalResult.mondayDate,
+    discountPercent,
     totalEvaluated: evalResult.totalEvaluated,
     eligibleCount: dispatchedItems.length,
     dispatchedCount: dispatchedItems.length,
@@ -16891,9 +17130,14 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
 export async function checkAndTriggerSundayUpsell(dbOrGetter, saveDatabase, nowOverride = null) {
   try {
     const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
-    // TRAVA DE SEGURANÇA: Desativado por padrão (enabled: false). Só executa se explicitamente true.
+    // Condição (a): O toggle do card no painel deve estar explicitamente ligado (enabled === true)
     if (!db || !db.sundayUpsellConfig || db.sundayUpsellConfig.enabled !== true) return;
 
+    // Condição (d - pré-validação): Percentual de desconto válido entre 1% e 99%
+    const discountPercent = Number(db.sundayUpsellConfig.sundayUpsellDiscountPercent ?? 50);
+    if (!Number.isFinite(discountPercent) || discountPercent < 1 || discountPercent > 99) return;
+
+    // Condição (b): Horário atual no fuso America/Sao_Paulo deve ser estritamente Sábado (day === 6) às 19:00h
     const refNow = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
     const nowUtc = refNow.getTime() + (refNow.getTimezoneOffset() * 60000);
     const brDate = new Date(nowUtc - (3 * 3600000));
@@ -16901,21 +17145,27 @@ export async function checkAndTriggerSundayUpsell(dbOrGetter, saveDatabase, nowO
     const brDayOfWeek = brDate.getDay(); // 0 = Sunday, 6 = Saturday
     const brHour = brDate.getHours();
 
-    // TRAVA RÍGIDA DE DIA E HORA: Só pode rodar no SÁBADO (day === 6) e no horário configurado (19:00)
     if (brDayOfWeek !== 6) return;
     const triggerHour = Number(db.sundayUpsellConfig.triggerHour ?? 19);
     if (brHour !== triggerHour) return;
 
-    // A data alvo de check-out deve ser estritamente o dia seguinte (Domingo)
+    // Condição (c): A data alvo de check-out deve ser estritamente o domingo seguinte (dia seguinte ao sábado)
     const tomorrowBr = new Date(brDate.getTime() + 24 * 3600000);
     if (tomorrowBr.getDay() !== 0) return;
     const targetSunday = tomorrowBr.toISOString().slice(0, 10);
 
-    if (db.sundayUpsellConfig.lastTriggerDate === todayStr || db.sundayUpsellConfig.lastTriggerDate === targetSunday) {
-      return; // Idempotência: já disparou hoje
+    // Trava de execução única por sábado para não disparar duas vezes no mesmo dia
+    if (
+      db.sundayUpsellConfig.lastTriggerDate === todayStr ||
+      db.sundayUpsellConfig.lastTriggerDate === targetSunday ||
+      db.sundayUpsellConfig.lastTriggerSaturday === todayStr
+    ) {
+      return;
     }
-    console.log(`[Sunday Upsell] Disparando rotina agendada de sábado às 19:00h (Data Brasília: ${todayStr}, Domingo Alvo: ${targetSunday})...`);
+
+    console.log(`[Sunday Upsell] Disparando rotina agendada de sábado às 19:00h (Data Brasília: ${todayStr}, Domingo Alvo: ${targetSunday}, Desconto: ${discountPercent}%)...`);
     db.sundayUpsellConfig.lastTriggerDate = targetSunday;
+    db.sundayUpsellConfig.lastTriggerSaturday = todayStr;
     if (typeof saveDatabase === "function") saveDatabase();
     await triggerSundayUpsellRoutine(db, saveDatabase, { testMode: false, forceDate: targetSunday });
   } catch (err) {

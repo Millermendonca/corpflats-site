@@ -22,6 +22,7 @@ export interface OfertaDomingoSemPressaSessao {
   ofertada: boolean;
   status: 'PENDENTE_PAGAMENTO' | 'HOLD_EXPIRADO' | 'CONFIRMADA_PAGA';
   data_envio?: string;
+  percentual_desconto?: number;
   valor_promocional: number;
   valor_normal: number;
   economia: number;

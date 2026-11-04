@@ -69,6 +69,8 @@ import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import {
   initWhatsAppEngine,
   sanitizeAccidentalSundayUpsellState,
+  extractPureDailyRate,
+  calculateSundayUpsellOfferPrices,
   triggerImmediateWhatsApp,
   triggerRoomReadyWhatsApp,
   cleanWhatsAppPhone,
@@ -58382,7 +58384,11 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
               resServiceOrder.pendingSundayUpsell.status !== "paid"
             ) {
               const upsellMeta = resServiceOrder.pendingSundayUpsell;
-              const upsellAmt = valorPago > 0 ? valorPago : (Number(upsellMeta.promotionalPrice) || 90.0);
+              const fallbackPricing = calculateSundayUpsellOfferPrices(
+                resServiceOrder,
+                Number(upsellMeta.discountPercent ?? db?.sundayUpsellConfig?.sundayUpsellDiscountPercent ?? 50)
+              );
+              const upsellAmt = valorPago > 0 ? valorPago : (Number(upsellMeta.promotionalPrice) || fallbackPricing.promotionalPrice || 100.0);
               upsellMeta.status = "paid";
               upsellMeta.paidAt = paidIso;
               upsellMeta.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;

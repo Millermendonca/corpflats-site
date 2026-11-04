@@ -250,14 +250,16 @@ export function injectSessionContext(params = {}) {
       const holdExp = offer.expiresAt || offer.holdExpiresAt ? new Date(offer.expiresAt || offer.holdExpiresAt).getTime() : 0;
       const isExpired = holdExp > 0 && Date.now() > holdExp;
       const isPaid = offer.status === 'paid' || offer.status === 'confirmed_paid' || sourceRes.hasSundayUpsell === true || sourceRes.sundayUpsellPaid === true;
-      const promoPrice = Number(offer.promotionalPrice || offer.sundayUpsellPrice || 90.0);
-      const normalRate = Number(offer.normalDailyRate || offer.normalRate || sourceRes.dailyRate || 250.0);
-      const economia = Math.max(0, normalRate - promoPrice);
+      const discountPct = Number(offer.discountPercent ?? db?.sundayUpsellConfig?.sundayUpsellDiscountPercent ?? 50);
+      const normalRate = Number(offer.normalDailyRate || offer.normalRate || sourceRes.dailyRate || 200.0);
+      const promoPrice = Number(offer.promotionalPrice || offer.sundayUpsellPrice || Number((normalRate * (1 - discountPct / 100)).toFixed(2)));
+      const economia = Math.max(0, Number((normalRate - promoPrice).toFixed(2)));
 
       reservaSessao.oferta_domingo_sem_pressa = {
         ofertada: true,
         status: isPaid ? 'CONFIRMADA_PAGA' : (isExpired ? 'HOLD_EXPIRADO' : 'PENDENTE_PAGAMENTO'),
         data_envio: offer.createdAt || offer.offeredAt || offer.sentAt,
+        percentual_desconto: discountPct,
         valor_promocional: promoPrice,
         valor_normal: normalRate,
         economia,
@@ -4131,7 +4133,7 @@ export const ofertarDomingoSemPressaTool = {
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const sundayUpsellSettings = db?.sundayUpsellConfig || db?.automationSettings?.sundayUpsell || {};
-      const promotionalPrice = Number(sundayUpsellSettings.sundayUpsellPrice || 90.0);
+      const discountPercent = Number(sundayUpsellSettings.sundayUpsellDiscountPercent ?? 50);
 
       const targetRes = Array.isArray(db?.reservations)
         ? db.reservations.find((r) => {
@@ -4140,8 +4142,50 @@ export const ofertarDomingoSemPressaTool = {
           })
         : null;
 
-      const normalRate = Number(targetRes?.dailyRate || (targetRes?.totalAmount && targetRes?.numNights ? targetRes.totalAmount / targetRes.numNights : 250.0));
-      const economia = Math.max(0, normalRate - promotionalPrice);
+      let normalRate = 0;
+      if (targetRes && typeof targetRes === 'object') {
+        if (Array.isArray(targetRes.dailyRates) && targetRes.dailyRates.length > 0) {
+          const lastNight = targetRes.dailyRates[targetRes.dailyRates.length - 1];
+          const firstNight = targetRes.dailyRates[0];
+          const rateFromList = Number(lastNight?.rate ?? lastNight?.amount ?? firstNight?.rate ?? firstNight?.amount ?? 0);
+          if (Number.isFinite(rateFromList) && rateFromList > 0) normalRate = Number(rateFromList.toFixed(2));
+        }
+        if (!(normalRate > 0) && Number.isFinite(Number(targetRes.dailyRate)) && Number(targetRes.dailyRate) > 0) {
+          normalRate = Number(Number(targetRes.dailyRate).toFixed(2));
+        }
+        if (!(normalRate > 0) && Number(targetRes.totalAmount) > 0) {
+          const nights = Math.max(1, Number(targetRes.numNights || targetRes.nights || 1) || 1);
+          const cleaningFromCharges = Array.isArray(targetRes.charges)
+            ? targetRes.charges
+                .filter((c) => c && (c.type === 'cleaning' || c.category === 'cleaning' || /limpeza/i.test(String(c.title || c.description || ''))))
+                .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+            : 0;
+          const petFromCharges = Array.isArray(targetRes.charges)
+            ? targetRes.charges
+                .filter((c) => c && (c.type === 'pet' || c.category === 'pet' || /\bpet\b/i.test(String(c.title || c.description || ''))))
+                .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+            : 0;
+          const otherExtraCharges = Array.isArray(targetRes.charges)
+            ? targetRes.charges
+                .filter((c) =>
+                  c &&
+                  c.type !== 'cleaning' && c.category !== 'cleaning' && !/limpeza/i.test(String(c.title || c.description || '')) &&
+                  c.type !== 'pet' && c.category !== 'pet' && !/\bpet\b/i.test(String(c.title || c.description || '')) &&
+                  c.type !== 'daily' && c.category !== 'accommodation'
+                )
+                .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+            : 0;
+          const cleaningFee = Math.max(Number(targetRes.cleaningFee || 0), cleaningFromCharges);
+          const petFee = Math.max(Number(targetRes.petFee || 0), petFromCharges);
+          const pureAcc = Math.max(0, Number(targetRes.totalAmount || 0) - cleaningFee - petFee - otherExtraCharges);
+          if (pureAcc > 0) normalRate = Number((pureAcc / nights).toFixed(2));
+        }
+      }
+      if (!(normalRate > 0)) {
+        normalRate = Number(reserva.oferta_domingo_sem_pressa?.valor_normal || 200.0);
+      }
+      const promotionalPrice = Number((normalRate * (1 - (discountPercent / 100))).toFixed(2));
+      const economia = Math.max(0, Number((normalRate - promotionalPrice).toFixed(2)));
 
       const dtSegunda = new Date(dtCheckout.getTime() + 24 * 3600 * 1000);
       const segundaStr = dtSegunda.toISOString().slice(0, 10);

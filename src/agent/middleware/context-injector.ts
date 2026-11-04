@@ -191,14 +191,16 @@ export function injectSessionContext(
       const holdExp = offer.expiresAt || offer.holdExpiresAt ? new Date(offer.expiresAt || offer.holdExpiresAt).getTime() : 0;
       const isExpired = holdExp > 0 && Date.now() > holdExp;
       const isPaid = offer.status === 'paid' || offer.status === 'confirmed_paid' || sourceRes.hasSundayUpsell === true || sourceRes.sundayUpsellPaid === true;
-      const promoPrice = Number(offer.promotionalPrice || offer.sundayUpsellPrice || 90.0);
-      const normalRate = Number(offer.normalDailyRate || offer.normalRate || sourceRes.dailyRate || 250.0);
-      const economia = Math.max(0, normalRate - promoPrice);
+      const discountPct = Number(offer.discountPercent ?? db?.sundayUpsellConfig?.sundayUpsellDiscountPercent ?? 50);
+      const normalRate = Number(offer.normalDailyRate || offer.normalRate || sourceRes.dailyRate || 200.0);
+      const promoPrice = Number(offer.promotionalPrice || offer.sundayUpsellPrice || Number((normalRate * (1 - discountPct / 100)).toFixed(2)));
+      const economia = Math.max(0, Number((normalRate - promoPrice).toFixed(2)));
 
       reservaSessao.oferta_domingo_sem_pressa = {
         ofertada: true,
         status: isPaid ? 'CONFIRMADA_PAGA' : (isExpired ? 'HOLD_EXPIRADO' : 'PENDENTE_PAGAMENTO'),
         data_envio: offer.createdAt || offer.offeredAt || offer.sentAt,
+        percentual_desconto: discountPct,
         valor_promocional: promoPrice,
         valor_normal: normalRate,
         economia,

@@ -34,12 +34,56 @@ function generateStaticPix(amount: number, txid: string): string {
   return `${toCrc}${crc.toString(16).toUpperCase().padStart(4, '0')}`;
 }
 
+function extractPureDailyRateFromReservation(r: any): number {
+  if (!r || typeof r !== 'object') return 0;
+  if (Array.isArray(r.dailyRates) && r.dailyRates.length > 0) {
+    const lastNight = r.dailyRates[r.dailyRates.length - 1];
+    const firstNight = r.dailyRates[0];
+    const rateFromList = Number(lastNight?.rate ?? lastNight?.amount ?? firstNight?.rate ?? firstNight?.amount ?? 0);
+    if (Number.isFinite(rateFromList) && rateFromList > 0) {
+      return Number(rateFromList.toFixed(2));
+    }
+  }
+  const explicitDaily = Number(r.dailyRate);
+  if (Number.isFinite(explicitDaily) && explicitDaily > 0) {
+    return Number(explicitDaily.toFixed(2));
+  }
+  const nights = Math.max(1, Number(r.numNights || r.nights || 1) || 1);
+  const cleaningFromCharges = Array.isArray(r.charges)
+    ? r.charges
+        .filter((c: any) => c && (c.type === 'cleaning' || c.category === 'cleaning' || /limpeza/i.test(String(c.title || c.description || ''))))
+        .reduce((acc: number, c: any) => acc + (Number(c.amount) || 0), 0)
+    : 0;
+  const petFromCharges = Array.isArray(r.charges)
+    ? r.charges
+        .filter((c: any) => c && (c.type === 'pet' || c.category === 'pet' || /\bpet\b/i.test(String(c.title || c.description || ''))))
+        .reduce((acc: number, c: any) => acc + (Number(c.amount) || 0), 0)
+    : 0;
+  const otherExtraCharges = Array.isArray(r.charges)
+    ? r.charges
+        .filter((c: any) =>
+          c &&
+          c.type !== 'cleaning' && c.category !== 'cleaning' && !/limpeza/i.test(String(c.title || c.description || '')) &&
+          c.type !== 'pet' && c.category !== 'pet' && !/\bpet\b/i.test(String(c.title || c.description || '')) &&
+          c.type !== 'daily' && c.category !== 'accommodation'
+        )
+        .reduce((acc: number, c: any) => acc + (Number(c.amount) || 0), 0)
+    : 0;
+  const cleaningFee = Math.max(Number(r.cleaningFee || 0), cleaningFromCharges);
+  const petFee = Math.max(Number(r.petFee || 0), petFromCharges);
+  const totalExtraFees = cleaningFee + petFee + otherExtraCharges;
+  const grossTotal = Number(r.totalAmount || 0);
+  const pureAccommodationTotal = Math.max(0, grossTotal - totalExtraFees);
+  if (pureAccommodationTotal <= 0) return 0;
+  return Number((pureAccommodationTotal / nights).toFixed(2));
+}
+
 export const ofertarDomingoSemPressaTool: AgentToolDefinition<OfertarDomingoSemPressaArgs> = {
   name: 'ofertar_domingo_sem_pressa',
 
   description:
     'Verifica a disponibilidade de domingo para segunda-feira e aplica ou revalida a "Oferta de Domingo Sem Pressa" ' +
-    '(check-out 100% livre no domingo + pernoite bônus até segunda-feira às 12:00h por valor promocional fixo). ' +
+    '(check-out 100% livre no domingo + pernoite bônus até segunda-feira às 12:00h com desconto percentual estritamente sobre a diária pura). ' +
     'Deve ser chamada sempre que um hóspede com check-out no domingo perguntar sobre a oferta recebida, pedir novo código PIX ' +
     'após o vencimento do prazo inicial de 30 minutos ou solicitar a extensão promocional do domingo.',
 
@@ -93,7 +137,7 @@ export const ofertarDomingoSemPressaTool: AgentToolDefinition<OfertarDomingoSemP
       const db = context.runtime?.db;
       const flatNumber = reserva.nome_imovel.replace(/^Flat\s+/i, '').trim();
       const sundayUpsellSettings = db?.sundayUpsellConfig || db?.automationSettings?.sundayUpsell || {};
-      const promotionalPrice = Number(sundayUpsellSettings.sundayUpsellPrice || 90.0);
+      const discountPercent = Number(sundayUpsellSettings.sundayUpsellDiscountPercent ?? 50);
 
       const targetRes = Array.isArray(db?.reservations)
         ? db.reservations.find((r: any) => {
@@ -102,8 +146,9 @@ export const ofertarDomingoSemPressaTool: AgentToolDefinition<OfertarDomingoSemP
           })
         : null;
 
-      const normalRate = Number(targetRes?.dailyRate || (targetRes?.totalAmount && targetRes?.numNights ? targetRes.totalAmount / targetRes.numNights : 250.0));
-      const economia = Math.max(0, normalRate - promotionalPrice);
+      const normalRate = extractPureDailyRateFromReservation(targetRes) || Number(reserva.oferta_domingo_sem_pressa?.valor_normal || 200.0);
+      const promotionalPrice = Number((normalRate * (1 - (discountPercent / 100))).toFixed(2));
+      const economia = Math.max(0, Number((normalRate - promotionalPrice).toFixed(2)));
 
       // Data de saída estendida: Segunda-feira
       const dtSegunda = new Date(dtCheckout.getTime() + 24 * 3600 * 1000);
