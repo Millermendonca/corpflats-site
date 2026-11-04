@@ -691,3 +691,87 @@ test("6. Frontend (pms-calendar.tsx) & Backend (PUT /api/pms/reservations/:id): 
   );
 });
 
+test("7. Regressão RES-712-0615: reservas recentes (id > 560) com mesmo WhatsApp de reserva histórica (ex: Marco vs Daniela Martins de Mesquita em 21996701988) preservam/recuperam guestPhone e atualizam whatsappQueue", () => {
+  const { reconcileAndMergeGuests } = loadReconciliationSandbox();
+
+  const mockDb = {
+    guests: [
+      { id: 295, guestCode: "HOSP-00295", name: "Marco", fullName: "Marco", phone: "21996701988" },
+      { id: 2603, guestCode: "HOSP-02603", name: "DANIELA MARTINS DE MESQUITA", fullName: "DANIELA MARTINS DE MESQUITA", phone: "", document: "12297831722", email: "cemporcentodany@bol.com.br" }
+    ],
+    reservations: [
+      {
+        id: 295,
+        code: "RES-512-0295",
+        flatNumber: "512",
+        status: "completed",
+        guestId: 295,
+        guestName: "Marco",
+        guestPhone: "21996701988"
+      },
+      {
+        id: 615,
+        code: "RES-712-0615",
+        flatNumber: "712",
+        status: "confirmada",
+        paymentStatus: "pago_total",
+        guestId: 2603,
+        guestCode: "HOSP-02603",
+        guestName: "DANIELA MARTINS DE MESQUITA",
+        guestPhone: "",
+        guestEmail: "cemporcentodany@bol.com.br",
+        guestDocument: "122.978.317-22",
+        guests: [
+          { index: 1, guestId: 2603, name: "DANIELA MARTINS DE MESQUITA", phone: "", email: "cemporcentodany@bol.com.br", cpf: "122.978.317-22" }
+        ]
+      }
+    ],
+    whatsappHistory: [
+      {
+        id: "auto_1793749875374_nvib",
+        reservationId: 615,
+        reservationCode: "RES-712-0615",
+        guestName: "DANIELA MARTINS DE MESQUITA",
+        guestPhone: "+55 21 99670-1988",
+        triggerEvent: "pre_reservation_created",
+        status: "sent"
+      }
+    ],
+    whatsappQueue: [
+      {
+        id: "q_1793785074413_1ebrf",
+        reservationId: 615,
+        reservationCode: "RES-712-0615",
+        triggerEvent: "checkin_day_instructions",
+        guestName: "DANIELA MARTINS DE MESQUITA",
+        guestPhone: "",
+        status: "scheduled"
+      }
+    ],
+    whatsappConversations: [
+      {
+        phone: "5521996701988",
+        name: "Marco",
+        reservationCode: "RES-512-0295",
+        flatNumber: "512"
+      }
+    ],
+    invoices: [],
+    guestAccounts: []
+  };
+
+  reconcileAndMergeGuests(mockDb);
+
+  const r615 = mockDb.reservations.find(r => r.id === 615);
+  const g2603 = mockDb.guests.find(g => g.id === 2603);
+  const qItem = mockDb.whatsappQueue[0];
+  const conv = mockDb.whatsappConversations[0];
+
+  assert.equal(r615.guestPhone, "+55 21 99670-1988");
+  assert.equal(r615.guests[0].phone, "+55 21 99670-1988");
+  assert.equal(g2603.phone, "+55 21 99670-1988");
+  assert.equal(qItem.guestPhone, "+55 21 99670-1988");
+  assert.equal(conv.reservationCode, "RES-712-0615");
+});
+
+

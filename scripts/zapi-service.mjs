@@ -11889,6 +11889,13 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
 export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null, bypassTestMode = false } = {}) {
   const sendButtons = buttons || item.renderedButtons || [];
   const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode) || null;
+  if (!item.guestPhone && resv) {
+    const recips = getReservationRecipients(resv, db);
+    const recoveredPhone = (item.recipientType === "requester" ? recips.requester?.phone : recips.guest?.phone) || resv.guestPhone || "";
+    if (recoveredPhone) {
+      item.guestPhone = recoveredPhone;
+    }
+  }
 
   // Trava final anti-envio pós-checkout: se for lembrete de check-out ou estadia e o flat/reserva já teve check-out informado, cancela na hora
   if (!POST_CHECKOUT_ALLOWED_EVENTS.has(item.triggerEvent) && isReservationOrFlatCheckedOut(db, resv, item.flatId, item.flatNumber)) {
@@ -12447,7 +12454,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
           const rawScheduledDate = new Date(rawScheduledTime);
           const nextScheduledFor = rawScheduledDate > now ? rawScheduledTime : existingQueuedItem.scheduledFor;
 
-          if (new Date(nextScheduledFor) > now) {
+          if (new Date(nextScheduledFor) > now || (!existingQueuedItem.guestPhone && targetItem.phone)) {
             const rebuilt = buildQueueItemForTarget(db, {
               tpl,
               resv,

@@ -11631,9 +11631,60 @@ export function healContaminatedGuestAndReservationLinks(database) {
     changed = true;
   }
 
-  // Limpa o telefone 21976403551 (Roselene) de Raiza Castro Tavares e de qualquer outro hóspede/reserva incompatível
+  // 1.79. Auto-recuperação de telefone em reservas recentes (id > 560) cujo guestPhone foi limpo indevidamente por compartilhar número com reserva antiga
+  const HISTORICAL_CONTAMINATION_MAX_RES_ID = 560;
+  const HISTORICAL_CONTAMINATION_MAX_GUEST_ID = 380;
+  for (const rRec of currentDb.reservations) {
+    if (!rRec || Number(rRec.id) <= HISTORICAL_CONTAMINATION_MAX_RES_ID) continue;
+    const rCodeUpper = String(rRec.code || "").trim().toUpperCase();
+    const rIdStr = rRec.id ? String(rRec.id) : "";
+    let recoveredPhone = rRec.guestPhone || "";
+    if (!recoveredPhone) {
+      const histMatch = (currentDb.whatsappHistory || []).find(h => {
+        if (!h || !h.guestPhone) return false;
+        const hCode = String(h.reservationCode || "").trim().toUpperCase();
+        const hId = h.reservationId ? String(h.reservationId) : "";
+        return (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+      });
+      if (histMatch?.guestPhone) {
+        recoveredPhone = histMatch.guestPhone;
+      } else if (rCodeUpper === "RES-712-0615") {
+        recoveredPhone = "+55 21 99670-1988";
+      }
+    }
+    if (recoveredPhone) {
+      if (!rRec.guestPhone) {
+        rRec.guestPhone = recoveredPhone;
+        changed = true;
+      }
+      if (Array.isArray(rRec.guests) && rRec.guests[0] && !rRec.guests[0].phone) {
+        rRec.guests[0].phone = recoveredPhone;
+        changed = true;
+      }
+      if (rRec.guestId) {
+        const gLinked = currentDb.guests.find(g => g && Number(g.id) === Number(rRec.guestId));
+        if (gLinked && !gLinked.phone && areGuestNamesCompatible(gLinked.fullName || gLinked.name, rRec.guestName)) {
+          gLinked.phone = recoveredPhone;
+          changed = true;
+        }
+      }
+      if (Array.isArray(currentDb.whatsappQueue)) {
+        for (const qItem of currentDb.whatsappQueue) {
+          if (!qItem || qItem.guestPhone) continue;
+          const qCode = String(qItem.reservationCode || "").trim().toUpperCase();
+          const qId = qItem.reservationId ? String(qItem.reservationId) : "";
+          if ((rCodeUpper && qCode === rCodeUpper) || (rIdStr && (qId === rIdStr || qCode === rIdStr))) {
+            qItem.guestPhone = recoveredPhone;
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+
+  // Limpa o telefone 21976403551 (Roselene) de Raiza Castro Tavares e de qualquer outro hóspede/reserva incompatível da janela histórica
   for (const gOther of currentDb.guests) {
-    if (!gOther || Number(gOther.id) === 143) continue;
+    if (!gOther || Number(gOther.id) === 143 || Number(gOther.id) > HISTORICAL_CONTAMINATION_MAX_GUEST_ID) continue;
     if (Array.isArray(gOther.additionalPhones)) {
       const bLen = gOther.additionalPhones.length;
       gOther.additionalPhones = gOther.additionalPhones.filter(ap => !phonesMatch(ap, "21976403551"));
@@ -11673,7 +11724,7 @@ export function healContaminatedGuestAndReservationLinks(database) {
           changed = true;
         }
       }
-    } else if (phonesMatch(rRos.guestPhone, "21976403551") && !areGuestNamesCompatible(rRos.guestName, "Roselene")) {
+    } else if (Number(rRos.id) <= HISTORICAL_CONTAMINATION_MAX_RES_ID && phonesMatch(rRos.guestPhone, "21976403551") && !areGuestNamesCompatible(rRos.guestName, "Roselene")) {
       rRos.guestPhone = "";
       if (Array.isArray(rRos.guests) && rRos.guests[0] && phonesMatch(rRos.guests[0].phone, "21976403551")) {
         rRos.guests[0].phone = "";
@@ -11751,9 +11802,9 @@ export function healContaminatedGuestAndReservationLinks(database) {
       changed = true;
     }
 
-    // Remove o telefone exclusivo de `item` de quaisquer outros hóspedes com nomes incompatíveis
+    // Remove o telefone exclusivo de `item` de quaisquer outros hóspedes com nomes incompatíveis (apenas da janela histórica)
     for (const otherG of currentDb.guests) {
-      if (!otherG || Number(otherG.id) === item.id) continue;
+      if (!otherG || Number(otherG.id) === item.id || Number(otherG.id) > HISTORICAL_CONTAMINATION_MAX_GUEST_ID) continue;
       if (!areGuestNamesCompatible(otherG.fullName || otherG.name, item.name)) {
         if (phonesMatch(otherG.phone, item.phone)) {
           otherG.phone = "";
@@ -11767,7 +11818,7 @@ export function healContaminatedGuestAndReservationLinks(database) {
       }
     }
 
-    // Vincula as reservas canônicas de `item` e limpa o telefone de `item` de reservas incompatíveis
+    // Vincula as reservas canônicas de `item` e limpa o telefone de `item` de reservas incompatíveis da janela histórica
     for (const r of currentDb.reservations) {
       if (!r) continue;
       const isTargetRes = item.resCodes.includes(r.code) || item.resIds.includes(Number(r.id));
@@ -11788,7 +11839,7 @@ export function healContaminatedGuestAndReservationLinks(database) {
             changed = true;
           }
         }
-      } else if (!areGuestNamesCompatible(r.guestName, item.name)) {
+      } else if (Number(r.id) <= HISTORICAL_CONTAMINATION_MAX_RES_ID && !areGuestNamesCompatible(r.guestName, item.name)) {
         if (phonesMatch(r.guestPhone, item.phone)) {
           r.guestPhone = "";
           changed = true;
@@ -11829,10 +11880,18 @@ export function healContaminatedGuestAndReservationLinks(database) {
       const cPhone = conv.phone || conv.guestPhone || conv.id || "";
       for (const wf of waFixes) {
         if (phonesMatch(cPhone, wf.phone)) {
-          if (conv.name !== wf.name || conv.reservationCode !== wf.resCode || String(conv.flatNumber) !== wf.flat) {
-            conv.name = wf.name;
-            conv.reservationCode = wf.resCode;
-            conv.flatNumber = wf.flat;
+          // Se houver uma reserva recente (id > 560, não cancelada) utilizando este mesmo telefone, vincula à reserva mais recente em vez de forçar a antiga
+          const newerRes = [...currentDb.reservations]
+            .filter(r => r && Number(r.id) > HISTORICAL_CONTAMINATION_MAX_RES_ID && r.status !== "cancelada" && r.status !== "cancelled" && phonesMatch(r.guestPhone, wf.phone))
+            .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))[0];
+          const targetName = newerRes ? (newerRes.guestName || wf.name) : wf.name;
+          const targetResCode = newerRes ? newerRes.code : wf.resCode;
+          const targetFlat = newerRes ? String(newerRes.flatNumber || wf.flat) : wf.flat;
+          if (conv.name !== targetName || conv.reservationCode !== targetResCode || String(conv.flatNumber) !== targetFlat) {
+            conv.name = targetName;
+            conv.reservationCode = targetResCode;
+            if (newerRes?.id) conv.reservationId = newerRes.id;
+            conv.flatNumber = targetFlat;
             changed = true;
           }
         }
@@ -11865,7 +11924,7 @@ export function healContaminatedGuestAndReservationLinks(database) {
   }
 
   // 1.9. Desmembramento Universal de Registros "Snowball" (PostgreSQL & Local):
-  // Detecta qualquer telefone compartilhado entre reservas/hóspedes com nomes incompatíveis ou hóspedes cujo nome foi sobrescrito por outro mais longo
+  // Detecta qualquer telefone compartilhado entre reservas/hóspedes da janela histórica com nomes incompatíveis ou hóspedes cujo nome foi sobrescrito por outro mais longo
   const authPhoneToName = new Map();
   for (const item of canonicalRestorations) {
     authPhoneToName.set(normalizePhone(item.phone), item.name);
@@ -11907,9 +11966,9 @@ export function healContaminatedGuestAndReservationLinks(database) {
     }
   }
 
-  // Limpa telefones injetados em reservas de terceiros incompatíveis
+  // Limpa telefones injetados em reservas de terceiros incompatíveis da janela histórica (id <= 560)
   for (const r of currentDb.reservations) {
-    if (!r || isPlaceholderOrEmptyGuestName(r.guestName)) continue;
+    if (!r || Number(r.id) > HISTORICAL_CONTAMINATION_MAX_RES_ID || isPlaceholderOrEmptyGuestName(r.guestName)) continue;
     const rp = normalizePhone(r.guestPhone || r.phone || "");
     if (rp.length >= 8 && authPhoneToName.has(rp)) {
       const trueOwnerName = authPhoneToName.get(rp);
@@ -11924,13 +11983,19 @@ export function healContaminatedGuestAndReservationLinks(database) {
     }
   }
 
-  // Se algum hóspede `g` possui um `g.phone` cujo dono autêntico em `authPhoneToName` é incompatível com `g.fullName || g.name`,
+  // Se algum hóspede `g` da janela histórica (id <= 380) possui um `g.phone` cujo dono autêntico em `authPhoneToName` é incompatível com `g.fullName || g.name`,
   // separa os dois cadastros e devolve o telefone exclusivamente ao dono autêntico
   for (const g of [...currentDb.guests]) {
-    if (!g) continue;
+    if (!g || Number(g.id) > HISTORICAL_CONTAMINATION_MAX_GUEST_ID) continue;
     const gp = normalizePhone(g.phone || "");
     const gFull = String(g.fullName || g.name || "").trim();
     if (gp.length >= 8 && authPhoneToName.has(gp) && !isPlaceholderOrEmptyGuestName(gFull)) {
+      const hasPostIncidentResWithPhone = currentDb.reservations.some(r =>
+        r && Number(r.id) > HISTORICAL_CONTAMINATION_MAX_RES_ID &&
+        (Number(r.guestId) === Number(g.id) || areGuestNamesCompatible(r.guestName, gFull)) &&
+        phonesMatch(r.guestPhone, gp)
+      );
+      if (hasPostIncidentResWithPhone) continue;
       const trueOwnerName = authPhoneToName.get(gp);
       if (trueOwnerName && !areGuestNamesCompatible(gFull, trueOwnerName)) {
         // Verifica se já existe um cadastro separado para trueOwnerName
@@ -56855,7 +56920,35 @@ async function dispatchConfirmedReservationToReceptionAndGarage(r, triggerSource
 }
 
 async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } = {}) {
-  if (!r || (!r.guestPhone && !reservationHasAnyContact(r, db))) return;
+  if (!r) return;
+  if (!r.guestPhone) {
+    const rCodeUpper = String(r.code || "").trim().toUpperCase();
+    const rIdStr = r.id ? String(r.id) : "";
+    const histWithPhone = (db.whatsappHistory || []).find(h => {
+      if (!h || !h.guestPhone) return false;
+      const hCode = String(h.reservationCode || "").trim().toUpperCase();
+      const hId = h.reservationId ? String(h.reservationId) : "";
+      return (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+    });
+    if (histWithPhone?.guestPhone) {
+      r.guestPhone = histWithPhone.guestPhone;
+      if (Array.isArray(r.guests) && r.guests[0] && !r.guests[0].phone) {
+        r.guests[0].phone = histWithPhone.guestPhone;
+      }
+      if (Array.isArray(db.whatsappQueue)) {
+        for (const qItem of db.whatsappQueue) {
+          if (!qItem || qItem.guestPhone) continue;
+          const qCode = String(qItem.reservationCode || "").trim().toUpperCase();
+          const qId = qItem.reservationId ? String(qItem.reservationId) : "";
+          if ((rCodeUpper && qCode === rCodeUpper) || (rIdStr && (qId === rIdStr || qCode === rIdStr))) {
+            qItem.guestPhone = histWithPhone.guestPhone;
+          }
+        }
+      }
+      saveDatabase();
+    }
+  }
+  if (!r.guestPhone && !reservationHasAnyContact(r, db)) return;
   // Nunca confirma nem dispara confirmação para pré-reserva sem pagamento real comprovado
   const isPreStatus = r.status === "pre_reserva" || r.status === "pendente" || !r.status;
   if (isPreStatus && !hasRealPaymentEvidence(r)) return;
@@ -56889,7 +56982,9 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
   const brNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
   const todayStr = brNow.date;
   const isSameDay = r.checkinDate === todayStr;
-  const isAfter0701 = isSameDay && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
+  const paidBrIso = r.paidAt ? new Date(new Date(r.paidAt).getTime() - (3 * 3600000)).toISOString().substring(0, 16) : "";
+  const wasPaidBeforeToday0701 = Boolean(paidBrIso && paidBrIso < `${todayStr}T07:01`);
+  const isAfter0701 = isSameDay && !wasPaidBeforeToday0701 && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
   const chan = String(r.channel || "").toLowerCase();
   const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
 
@@ -56938,7 +57033,7 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
     return;
   }
 
-  // 1. Para reservas futuras (ou antes das 07:01), dispara o comprovante financeiro / confirmação padrão se ainda não foi disparado
+  // 1. Para reservas futuras (ou pagas antes das 07:01), dispara o comprovante financeiro / confirmação padrão se ainda não foi disparado
   if (!isConfirmationAlreadyDispatched(r)) {
     if (isPreOrWasPre && isDirect) {
       console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento (payment_confirmed) para ${r.guestName} (${r.code})...`);
@@ -56956,6 +57051,25 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
         scheduleUpcomingReservationTriggers(db, saveDatabase);
       } catch (err) {
         console.error("[WhatsApp Dispatch] Erro ao disparar reservation_created:", err.message);
+      }
+    }
+  }
+
+  // Se o check-in é hoje, o pagamento ocorreu antes das 07:01 e já são >= 07:00 sem que checkin_day_instructions tenha saído no WhatsApp, dispara também
+  if (isSameDay && wasPaidBeforeToday0701 && brNow.hour >= 7 && r.guestPhone) {
+    const rCode = String(r.code || "").toUpperCase();
+    const rId = String(r.id || "");
+    const hasCheckinDayWa = (db.whatsappHistory || []).some(h => {
+      const hCode = String(h.reservationCode || "").toUpperCase();
+      const hId = h.reservationId ? String(h.reservationId) : "";
+      const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+      return isSameRes && (h.triggerEvent === "checkin_day_instructions" || h.triggerEvent === "sameday_reservation") && (h.status === "sent" || h.status === "delivered");
+    });
+    if (!hasCheckinDayWa) {
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "checkin_day_instructions", r);
+      } catch (err) {
+        console.error("[WhatsApp Dispatch] Erro ao recuperar checkin_day_instructions:", err.message);
       }
     }
   }
@@ -60431,6 +60545,20 @@ setInterval(async () => {
           source: "Banco Inter Extrato (Auto-Sync)"
         });
       }
+    }
+
+    // B) Auto-healing de reservas diretas recentes (id > 560, criadas nas últimas 48h, check-in >= hoje) já pagas que ainda não receberam confirmação no WhatsApp
+    const recentPaidMissingConfirm = db.reservations.filter(r => {
+      if (!r || Number(r.id) <= 560) return false;
+      if (r.status === "cancelada" || r.status === "cancelled" || r.status === "expirada") return false;
+      if (!r.checkinDate || r.checkinDate < todayStr) return false;
+      if (r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return false;
+      if (!hasRealPaymentEvidence(r)) return false;
+      if (r.createdAt && (now.getTime() - new Date(r.createdAt).getTime()) > 48 * 3600 * 1000) return false;
+      return !isConfirmationAlreadyDispatched(r);
+    });
+    for (const rPaid of recentPaidMissingConfirm) {
+      await ensurePaymentConfirmationDispatched(rPaid, { wasPreReserva: true });
     }
   } catch (errLoop) {
     // Silencioso
