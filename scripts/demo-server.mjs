@@ -32183,9 +32183,10 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   if (oldStatus !== r.status) {
     changes.push({ field: "status", label: "Status da Reserva", oldValue: oldStatus, newValue: r.status });
   }
-  if (oldFlatId !== r.flatId) {
-    const oldF = db.flats?.find(f => f.id === oldFlatId);
-    changes.push({ field: "flatNumber", label: "Apartamento", oldValue: `Flat ${oldF?.number || oldFlatId}`, newValue: `Flat ${r.flatNumber}` });
+  const prevFlatNumForRec = String(oldFlatNumber || (db.flats?.find(f => f.id === oldFlatId)?.number || oldFlatId || "")).replace(/^flat\s*/i, "").trim();
+  const nextFlatNumForRec = String(r.flatNumber || (db.flats?.find(f => f.id === r.flatId)?.number || r.flatId || "")).replace(/^flat\s*/i, "").trim();
+  if ((oldFlatId !== undefined && Number(oldFlatId) !== Number(r.flatId)) || (prevFlatNumForRec && nextFlatNumForRec && prevFlatNumForRec !== nextFlatNumForRec)) {
+    changes.push({ field: "flatNumber", label: "Apartamento", oldValue: `Flat ${prevFlatNumForRec}`, newValue: `Flat ${nextFlatNumForRec}` });
   }
   if (req.body.guestName && oldGuestName && req.body.guestName !== oldGuestName) {
     changes.push({ field: "guestName", label: "Hóspede Titular", oldValue: oldGuestName, newValue: r.guestName });

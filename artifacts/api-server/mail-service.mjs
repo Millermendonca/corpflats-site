@@ -615,9 +615,16 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
  * Gatilho B: Template de Alteração de Reserva à Recepção/Portaria
  */
 export function renderReservationUpdateEmail({ reservation, flat, changes = [], changesSummary = [], actionType, settings, baseUrl = "", db = null }) {
-  const flatNumber = flat?.number || reservation?.flatNumber || "Não informado";
+  const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
+  const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
+  const flatNumber = cleanFlat || "Não informado";
   const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
   const guestName = reservation?.guestName || "Hóspede Titular";
+  const checkinDateBr = formatDateBr(reservation?.checkinDate);
+  const checkoutDateBr = formatDateBr(reservation?.checkoutDate);
+  const periodStr = (checkinDateBr && checkoutDateBr && checkinDateBr !== "Não informada")
+    ? ` (${checkinDateBr} a ${checkoutDateBr})`
+    : "";
 
   const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
   const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
@@ -625,32 +632,113 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
   const allChanges = [...changes, ...changesSummary];
   const isCancelled = actionType === "cancelled" || 
     reservation?.status === "cancelada" || 
-    allChanges.some(c => (typeof c === "string" ? c.toLowerCase().includes("cancelad") : (c.field === "status" && c.newValue === "cancelada")));
+    allChanges.some(c => (typeof c === "string" ? c.toLowerCase().includes("cancelad") : (c.field === "status" && String(c.newValue || "").toLowerCase().includes("cancelad"))));
 
-  const subject = isCancelled 
-    ? `[CANCELAMENTO DE RESERVA] Flat ${flatNumber} - ${guestName}`
-    : `[ATUALIZAÇÃO DE RESERVA] Flat ${flatNumber} - ${guestName}`;
+  // Detecta se houve troca de Flat / Apartamento
+  const flatChangeObj = allChanges.find(c =>
+    c && typeof c === "object" && (
+      c.field === "flatNumber" ||
+      c.field === "flatId" ||
+      /apartamento|acomoda[cç][aã]o|quarto|flat/i.test(String(c.label || ""))
+    )
+  );
+
+  const normalizeFlatNum = (val) => {
+    const s = String(val ?? "").replace(/^flat\s*/i, "").trim();
+    return s;
+  };
+
+  const oldFlatNumClean = flatChangeObj ? normalizeFlatNum(flatChangeObj.oldValue) : "";
+  const newFlatNumClean = flatChangeObj ? (normalizeFlatNum(flatChangeObj.newValue) || flatNumber) : flatNumber;
+  const hasFlatChange = Boolean(!isCancelled && flatChangeObj && oldFlatNumClean && newFlatNumClean && oldFlatNumClean !== newFlatNumClean);
+
+  const oldFlatDisplay = oldFlatNumClean ? `Flat ${oldFlatNumClean}` : "Anterior";
+  const newFlatDisplay = newFlatNumClean ? `Flat ${newFlatNumClean}` : `Flat ${flatNumber}`;
+
+  let subject;
+  if (isCancelled) {
+    subject = `[CANCELAMENTO DE RESERVA] Flat ${flatNumber} - ${guestName}${periodStr}`;
+  } else if (hasFlatChange) {
+    subject = `⚠️ ATENÇÃO: ${oldFlatDisplay} alterado para ${newFlatDisplay} - ${guestName}${periodStr}`;
+  } else {
+    subject = `[ATUALIZAÇÃO DE RESERVA] Flat ${flatNumber} - ${guestName}${periodStr}`;
+  }
+
+  const formatChangeValue = (val) => {
+    const s = String(val ?? "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return formatDateBr(s);
+    return s;
+  };
 
   const changesHtml = allChanges.map(c => {
     if (typeof c === "string") {
-      return `<li style="margin-bottom: 6px;">${c}</li>`;
+      return `<li style="margin-bottom: 10px;">${c}</li>`;
     }
+    const isFlatItem = c.field === "flatNumber" || c.field === "flatId" || /apartamento|acomoda[cç][aã]o|quarto|flat/i.test(String(c.label || ""));
+    const oldValFormatted = formatChangeValue(c.oldValue) || "Anterior";
+    const newValFormatted = formatChangeValue(c.newValue) || "Novo";
+    const itemLabel = isFlatItem ? "Acomodação / Quarto" : (c.label || c.field);
+
     return `
-      <li style="margin-bottom: 6px;">
-        <strong style="color: #111827;">${c.label || c.field}:</strong> 
-        <span style="text-decoration: line-through; color: #9CA3AF;">${c.oldValue || "Anterior"}</span> 
-        ➔ <strong style="color: #111827;">${c.newValue || "Novo"}</strong>
+      <li style="margin-bottom: 12px; list-style: none; padding: 10px 12px; background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 6px;">
+        <div style="font-weight: 700; color: #111827; font-size: 14px; margin-bottom: 6px;">• ${itemLabel}:</div>
+        <div style="font-size: 14px; color: #B91C1C; margin-bottom: 4px; padding-left: 8px;">
+          ❌ <strong>${isFlatItem ? "Flat anterior" : "Anterior"}:</strong> <span style="text-decoration: line-through; color: #DC2626; font-weight: 600;">${oldValFormatted}</span>
+        </div>
+        <div style="font-size: 15px; color: #047857; font-weight: 800; padding-left: 8px;">
+          ✅ <strong>${isFlatItem ? "SEU NOVO FLAT" : "Atualizado"}:</strong> <span style="background-color: #ECFDF5; color: #065F46; padding: 2px 6px; border-radius: 4px; border: 1px solid #A7F3D0;">${newValFormatted}</span> ${isFlatItem ? "🔑" : ""}
+        </div>
       </li>
     `;
   }).join("");
 
+  const flatChangeBannerHtml = hasFlatChange ? `
+    <!-- Banner de Alerta Máximo de Troca de Apartamento -->
+    <div style="background-color: #FEF2F2; border: 2px solid #DC2626; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+      <div style="background-color: #DC2626; color: #FFFFFF; font-size: 15px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; text-align: center;">
+        🚨 ATENÇÃO PORTARIA: TROCA DE APARTAMENTO
+      </div>
+
+      <!-- Caixa 1: Flat Antigo Riscado (Vermelho) -->
+      <div style="background-color: #FFFFFF; border: 2px dashed #EF4444; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px;">
+        <div style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.6px; color: #B91C1C; margin-bottom: 4px;">
+          ❌ NÃO LIBERAR / APARTAMENTO ANTIGO (DESATIVADO NESTA RESERVA):
+        </div>
+        <div style="font-size: 22px; font-weight: 800; color: #DC2626; text-decoration: line-through;">
+          ${oldFlatDisplay}
+        </div>
+      </div>
+
+      <!-- Caixa 2: Novo Flat Autorizado (Verde Gigante) -->
+      <div style="background-color: #ECFDF5; border: 2px solid #059669; border-radius: 8px; padding: 16px; margin-bottom: 14px;">
+        <div style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.6px; color: #047857; margin-bottom: 4px;">
+          ✅ LIBERAR ENTRADA / NOVO APARTAMENTO AUTORIZADO:
+        </div>
+        <div style="font-size: 26px; font-weight: 900; color: #065F46; letter-spacing: -0.3px;">
+          ${newFlatDisplay.toUpperCase()} 🔑
+        </div>
+      </div>
+
+      <!-- Aviso Operacional Expresso -->
+      <div style="background-color: #FEE2E2; border-left: 4px solid #B91C1C; padding: 12px 14px; border-radius: 4px; color: #7F1D1D; font-size: 14px; line-height: 1.5; font-weight: 600;">
+        ⚠️ <strong>IMPORTANTE:</strong> NÃO entregue a chave nem libere o acesso ao <strong><span style="text-decoration: line-through;">${oldFlatDisplay}</span></strong> (pode estar ocupado por outro hóspede). Direcione o(a) hóspede <strong>${guestName}</strong> exclusivamente ao <strong>${newFlatDisplay}</strong>.
+      </div>
+    </div>
+  ` : "";
+
   const contentHtml = `
-    <div style="margin-bottom: 24px;">
-      <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Aviso de Modificação de Reserva</h1>
+    <div style="margin-bottom: 20px;">
+      <h1 style="font-size: 20px; font-weight: 700; line-height: 1.3; color: ${hasFlatChange ? '#B91C1C' : '#111827'}; margin: 0 0 8px 0;">
+        ${hasFlatChange ? `⚠️ Alteração de Apartamento: ${oldFlatDisplay} ➔ ${newFlatDisplay}` : "Aviso de Modificação de Reserva"}
+      </h1>
       <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
-        A reserva referente ao <strong>Flat ${flatNumber}</strong> no condomínio <strong>${buildingName}</strong> sofreu alterações no sistema.
+        ${hasFlatChange
+          ? `A reserva de <strong>${guestName}</strong> no condomínio <strong>${buildingName}</strong> foi transferida do <strong><span style="text-decoration: line-through; color: #DC2626;">${oldFlatDisplay}</span></strong> para o <strong><span style="color: #047857;">${newFlatDisplay}</span></strong>.`
+          : `A reserva referente ao <strong>Flat ${flatNumber}</strong> no condomínio <strong>${buildingName}</strong> sofreu alterações no sistema.`}
       </p>
     </div>
+
+    ${flatChangeBannerHtml}
 
     ${isCancelled ? `
       <div class="callout-cancel" style="background-color: #FEF2F2; border: 1px solid #FECACA; border-left: 3px solid #DC2626; padding: 16px; border-radius: 6px; margin-bottom: 16px;">
@@ -660,10 +748,10 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
         </p>
       </div>
     ` : `
-      <div class="callout-alert" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-left: 3px solid #D97706; padding: 16px; border-radius: 6px; margin-bottom: 16px;">
-        <strong style="color: #111827; font-size: 14px;">Modificações Realizadas:</strong>
-        <ul style="margin: 8px 0 0 18px; padding: 0; font-size: 14px; color: #374151; line-height: 1.6;">
-          ${changesHtml || "<li>As datas ou detalhes cadastrais da reserva foram atualizados.</li>"}
+      <div class="callout-alert" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-left: 4px solid ${hasFlatChange ? '#DC2626' : '#D97706'}; padding: 16px; border-radius: 6px; margin-bottom: 16px;">
+        <strong style="color: #111827; font-size: 14px; display: block; margin-bottom: 10px;">Modificações Realizadas:</strong>
+        <ul style="margin: 0; padding: 0; font-size: 14px; color: #374151; line-height: 1.6;">
+          ${changesHtml || "<li style='list-style: none;'>As datas ou detalhes cadastrais da reserva foram atualizados.</li>"}
         </ul>
       </div>
     `}
@@ -671,10 +759,16 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
     <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Resumo Atualizado da Reserva</div>
     <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
       <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
-        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Apartamento:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">Flat ${flatNumber} (${buildingName})</td></tr>
+        <tr>
+          <td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Apartamento Atual:</td>
+          <td class="val" style="padding: 5px 0; font-size: 15px; color: #047857; font-weight: 800; width: 62%;">
+            Flat ${flatNumber} (${buildingName})
+            ${hasFlatChange ? `<span style="display: block; font-size: 12px; color: #DC2626; font-weight: 600;">❌ Anterior: <span style="text-decoration: line-through;">${oldFlatDisplay}</span> (não liberar)</span>` : ""}
+          </td>
+        </tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Hóspede Titular:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${guestName}</td></tr>
-        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatDateBr(reservation?.checkinDate)}</td></tr>
-        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatDateBr(reservation?.checkoutDate)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkoutDateBr}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Status Atual:</td><td class="val" style="padding: 5px 0; font-size: 14px; text-transform: uppercase; color: ${isCancelled ? '#DC2626' : '#059669'}; font-weight: 600; width: 62%;">${reservation?.status || "Confirmada"}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; width: 62%;"><a href="${checkinUrl}" style="color: #111827; font-weight: 600; text-decoration: underline;">Acessar Ficha de Check-in</a></td></tr>
       </table>
@@ -682,8 +776,10 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
   `;
 
   const badge = isCancelled 
-    ? `<span class="badge badge-cancel" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA;">Reserva Cancelada</span>` 
-    : `<span class="badge badge-update" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">Reserva Alterada</span>`;
+    ? `<span class="badge badge-cancel" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA;">Reserva Cancelada</span>` 
+    : hasFlatChange
+      ? `<span class="badge badge-flat-change" style="display: inline-block; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 800; background-color: #DC2626; color: #FFFFFF; border: 1px solid #B91C1C;">TROCA DE FLAT: ${oldFlatNumClean} ➔ ${newFlatNumClean}</span>`
+      : `<span class="badge badge-update" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">Reserva Alterada</span>`;
 
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
   return { subject, bodyHtml, html: bodyHtml, checkinUrl };
