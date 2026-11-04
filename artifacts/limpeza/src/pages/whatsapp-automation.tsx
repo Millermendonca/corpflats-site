@@ -729,7 +729,7 @@ export default function WhatsappAutomation() {
   const [previewModalItem, setPreviewModalItem] = useState<QueueItem | null>(null)
 
   // State: Oferta de Domingo Sem Pressa (Desconto em % estritamente sobre a diária pura)
-  const [sundayUpsellEnabled, setSundayUpsellEnabled] = useState<boolean>(false)
+  const [sundayUpsellEnabled, setSundayUpsellEnabled] = useState<boolean>(true)
   const [sundayUpsellDiscountPercent, setSundayUpsellDiscountPercent] = useState<number>(50)
   const [loadingSundayUpsell, setLoadingSundayUpsell] = useState<boolean>(false)
   const [savingSundayUpsell, setSavingSundayUpsell] = useState<boolean>(false)

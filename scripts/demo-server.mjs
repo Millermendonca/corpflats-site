@@ -9715,7 +9715,6 @@ async function _loadDatabaseImpl() {
       }
       reconcileUniversalIntegrity(loaded);
       sanitizeReservationFlags();
-      try { sanitizeAccidentalSundayUpsellState(db); } catch (_) {}
       ensureHrCollections(db);
       if (ensureSystemUsers(db)) {
         saveDatabase("manual_migrate_system_users_dev_and_gestor");
@@ -9866,7 +9865,6 @@ async function _loadDatabaseImpl() {
           } catch (e) { console.warn("[PostgreSQL] Aviso em reconcileFromAuditLogs:", e.message); }
           try { sanitizeLostAndFound(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeLostAndFound:", e.message); }
           try { sanitizeReservationFlags(); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeReservationFlags:", e.message); }
-          try { sanitizeAccidentalSundayUpsellState(db); } catch (e) { console.warn("[PostgreSQL] Aviso em sanitizeAccidentalSundayUpsellState:", e.message); }
           let didChange = false;
           try {
             didChange = reconcileUniversalIntegrity({

@@ -8132,7 +8132,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     if (!db.sundayUpsellConfig) {
       db.sundayUpsellConfig = {
-        enabled: false,
+        enabled: true,
         sundayUpsellDiscountPercent: 50,
         sundayUpsellPrice: 90.0,
         channelId: "guest_schedule",
@@ -8142,16 +8142,23 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         isSilentUpsellHold: true,
         templateId: "tpl_sunday_upsell",
         lastTriggerDate: null,
-        emergencyRollback20261104Applied: true
+        emergencyRollback20261104Applied: true,
+        productionActivated20261104: true
       };
     } else {
       if (db.sundayUpsellConfig.sundayUpsellDiscountPercent === undefined || db.sundayUpsellConfig.sundayUpsellDiscountPercent === null) {
         db.sundayUpsellConfig.sundayUpsellDiscountPercent = 50;
       }
       if (!db.sundayUpsellConfig.emergencyRollback20261104Applied) {
-        db.sundayUpsellConfig.enabled = false;
         db.sundayUpsellConfig.emergencyRollback20261104Applied = true;
         sanitizeAccidentalSundayUpsellState(db, saveDatabase);
+      }
+      if (!db.sundayUpsellConfig.productionActivated20261104) {
+        sanitizeAccidentalSundayUpsellState(db, null);
+        db.sundayUpsellConfig.enabled = true;
+        db.sundayUpsellConfig.sundayUpsellDiscountPercent = Number(db.sundayUpsellConfig.sundayUpsellDiscountPercent) || 50;
+        db.sundayUpsellConfig.productionActivated20261104 = true;
+        if (typeof saveDatabase === "function") saveDatabase();
       }
     }
   }
@@ -8181,10 +8188,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   app.post("/api/whatsapp/sunday-upsell/config", (req, res) => {
     const db = getDb();
     ensureDbDefaults();
-    const { enabled, sundayUpsellDiscountPercent, sundayUpsellPrice } = req.body || {};
+    const { enabled, sundayUpsellDiscountPercent, sundayUpsellPrice, cleanTestData } = req.body || {};
+    if (cleanTestData) {
+      sanitizeAccidentalSundayUpsellState(db, null);
+    }
     if (!db.sundayUpsellConfig) {
       db.sundayUpsellConfig = {
-        enabled: false,
+        enabled: true,
         sundayUpsellDiscountPercent: 50,
         sundayUpsellPrice: 90.0,
         channelId: "guest_schedule",
@@ -8194,9 +8204,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         isSilentUpsellHold: true,
         templateId: "tpl_sunday_upsell",
         lastTriggerDate: null,
-        emergencyRollback20261104Applied: true
+        emergencyRollback20261104Applied: true,
+        productionActivated20261104: true
       };
     }
+    db.sundayUpsellConfig.productionActivated20261104 = true;
     if (enabled !== undefined) {
       db.sundayUpsellConfig.enabled = Boolean(enabled);
     }
@@ -16667,7 +16679,7 @@ export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
       continue;
     }
 
-    if (r.hasSundayUpsell || r.pendingSundayUpsell?.status === "paid") {
+    if (r.hasSundayUpsell || r.pendingSundayUpsell?.status === "paid" || r.sundayUpsellOfferSentDate === targetSundayDate) {
       ineligibleReservations.push({ reservation: r, reason: "JA_POSSUI_UPSELL" });
       continue;
     }
@@ -16823,14 +16835,14 @@ export async function dispatchSundayUpsellTwoBalloons(db, {
     };
   }
 
-  // Modo de Teste Seguro / Whitelist: Quando em teste (ou sandbox), envia 100% travado e exclusivo para 5522998505276
-  const isChannelInTestMode =
-    Boolean(testMode) ||
-    (db?.zapiConfig?.testModeOnly !== false && !isTestEnv) ||
-    Boolean(db?.zapiConfig?.channels?.guest_schedule?.testMode);
+  // Separação estrita entre Botão Manual "Disparo de Teste" e Disparo Automático de Sábado às 19:00h:
+  // - No Botão Manual "Disparo de Teste" (testMode === true): força envio exclusivamente para 5522998505276.
+  // - No Disparo Automático de Sábado às 19:00h (testMode === false): respeita exclusivamente o modo do Canal #1 (guest_schedule).
+  //   Como o Canal #1 opera em Modo Produção (testMode === false), envia diretamente para o telefone real de cada hóspede elegível (guestPhone).
+  const isGuestScheduleInTestMode = Boolean(db?.zapiConfig?.channels?.guest_schedule?.testMode);
   const effectivePhone = (Boolean(testMode) && !isTestEnv)
     ? "5522998505276"
-    : ((isChannelInTestMode && !isTestEnv) ? "5522998505276" : guestPhone);
+    : ((isGuestScheduleInTestMode && !isTestEnv) ? "5522998505276" : guestPhone);
 
   const pctFormatted = String(Math.round(pctNum));
   const promoFormatted = promoNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -16870,9 +16882,8 @@ Para garantir, basta tocar no botão abaixo para copiar o código PIX. Assim que
   const balloon3Buttons = [
     {
       id: "btn_pix",
-      type: "COPY",
+      type: "URL",
       label: "📋 Copiar Código PIX",
-      copyCode: cleanPix,
       url: copyPixUrl
     }
   ];
@@ -17217,7 +17228,7 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
 
   if (!db.sundayUpsellConfig) {
     db.sundayUpsellConfig = {
-      enabled: false,
+      enabled: true,
       sundayUpsellDiscountPercent: 50,
       sundayUpsellPrice: 90.0,
       channelId: "guest_schedule",
@@ -17227,7 +17238,8 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
       isSilentUpsellHold: true,
       templateId: "tpl_sunday_upsell",
       lastTriggerDate: null,
-      emergencyRollback20261104Applied: true
+      emergencyRollback20261104Applied: true,
+      productionActivated20261104: true
     };
   }
 
