@@ -53487,6 +53487,45 @@ app.post("/api/breakfast/orders", (req, res) => {
     }
   }
 
+  // Se o pedido inclui a manhã de amanhã, cancela imediatamente qualquer lembrete de café das 18:00 pendente na fila de hoje
+  const tomorrowObj = new Date(todayStr + "T12:00:00Z");
+  tomorrowObj.setUTCDate(tomorrowObj.getUTCDate() + 1);
+  const tomorrowStr = tomorrowObj.toISOString().substring(0, 10);
+  if (targetDates.includes(tomorrowStr)) {
+    const nowIso = new Date().toISOString();
+    const resCodeTarget = String(activeRes?.code || reservationCode || "").trim().toUpperCase();
+    const resIdTarget = activeRes?.id !== undefined && activeRes?.id !== null ? String(activeRes.id) : "";
+    if (Array.isArray(db.whatsappQueue)) {
+      for (const qItem of db.whatsappQueue) {
+        if (!qItem || (qItem.status !== "scheduled" && qItem.status !== "pending")) continue;
+        if (qItem.triggerEvent !== "breakfast_reminder" && qItem.templateId !== "tpl_breakfast_reminder") continue;
+        const qCode = String(qItem.reservationCode || "").trim().toUpperCase();
+        const qId = qItem.reservationId !== undefined && qItem.reservationId !== null ? String(qItem.reservationId) : "";
+        const isMatch = (resCodeTarget && qCode === resCodeTarget) || (resIdTarget && qId === resIdTarget);
+        if (isMatch) {
+          qItem.status = "cancelled";
+          qItem.error = "Cancelado: pedido de café de amanhã já realizado";
+          qItem.updatedAt = nowIso;
+        }
+      }
+    }
+    if (Array.isArray(db.emailQueue)) {
+      for (const eItem of db.emailQueue) {
+        if (!eItem || (eItem.status !== "scheduled" && eItem.status !== "pending")) continue;
+        const ev = String(eItem.triggerEvent || eItem.type || "").trim();
+        if (ev !== "breakfast_reminder" && eItem.templateId !== "tpl_breakfast_reminder") continue;
+        const eCode = String(eItem.reservationCode || "").trim().toUpperCase();
+        const eId = eItem.reservationId !== undefined && eItem.reservationId !== null ? String(eItem.reservationId) : "";
+        const isMatch = (resCodeTarget && eCode === resCodeTarget) || (resIdTarget && eId === resIdTarget);
+        if (isMatch) {
+          eItem.status = "cancelled";
+          eItem.error = "Cancelado: pedido de café de amanhã já realizado";
+          eItem.updatedAt = nowIso;
+        }
+      }
+    }
+  }
+
   saveDatabase();
 
   createNotification({
