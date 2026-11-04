@@ -27,6 +27,7 @@ import {
   buildStandardStayDescription,
 } from './gerenciar-nota-fiscal-nfse.tool';
 import { notificarAdministradorTool } from './notificar-administrador.tool';
+import { ofertarDomingoSemPressaTool } from './ofertar-domingo-sem-pressa.tool';
 
 export {
   consultarDisponibilidadeTool,
@@ -48,6 +49,7 @@ export {
   gerenciarNotaFiscalNfseTool,
   buildStandardStayDescription,
   notificarAdministradorTool,
+  ofertarDomingoSemPressaTool,
 };
 
 export const ALL_AGENT_TOOLS: AgentToolDefinition<any>[] = [
@@ -69,6 +71,7 @@ export const ALL_AGENT_TOOLS: AgentToolDefinition<any>[] = [
   consultarAchadosEPerdidosTool,
   gerenciarNotaFiscalNfseTool,
   notificarAdministradorTool,
+  ofertarDomingoSemPressaTool,
 ];
 
 export function getToolsForState(estado: EstadoSessao): AgentToolDefinition<any>[] {

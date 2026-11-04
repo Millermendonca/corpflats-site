@@ -1349,6 +1349,31 @@ Por favor, entre em contato diretamente com a *{{nome_camareira}}* pelo WhatsApp
     buttons: [
       { id: "btn_contact_maid", type: "URL", label: "Falar com Camareira", url: "{{link_whatsapp_camareira}}" }
     ]
+  },
+  {
+    id: "tpl_sunday_upsell",
+    triggerEvent: "sunday_upsell_offer",
+    title: "Upsell • Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)",
+    description: "Enviado aos sábados às 19:00h para hóspedes com check-out no domingo às 12:00h, oferecendo saída livre no domingo e bônus de pernoite até segunda às 12:00h com pré-reserva de 30 minutos.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "scheduled",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "19:00",
+    message: `Olá, *{{primeiro_nome}}*! ☀️ Que tal aproveitar o domingo no *Flat {{quarto}}* sem hora para ir embora?
+
+Liberamos para você a nossa *Oferta Especial de Domingo Sem Pressa*:
+• *Check-out 100% Livre no Domingo:* curta a praia, a cidade ou descanse no flat o dia inteiro sem pressa de desocupar.
+• *Pernoite Bônus Segunda-feira:* se preferir dormir e descansar mais, você pode estender a sua estadia e sair apenas na *segunda-feira até às 12:00h*, sem nenhum acréscimo!
+• *Economia Exclusiva:* de ~{{valor_normal}}~ (tarifa normal) por apenas *{{valor_promocional}}* (você economiza *{{economia}}*!).
+
+⏳ *Pré-Reserva Garantida:* seu flat já está pré-reservado por *30 minutos*. Para confirmar e garantir essa condição, efetue o pagamento do PIX abaixo.
+
+👇 *O código PIX Copia e Cola está na mensagem a seguir (basta tocar para copiar):*`,
+    footer: "CorpFlats • Hospedagem Contemporânea",
+    buttons: []
   }
 ];
 
@@ -3798,8 +3823,10 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{whatsapp_camareira}}": reservation.maidPhone || "",
     "{{link_whatsapp_camareira}}": reservation.maidWhatsAppUrl || (reservation.maidPhone ? `https://wa.me/55${String(reservation.maidPhone).replace(/\D/g, "").replace(/^55/, "")}` : ""),
     "{{descricao_item}}": reservation.description || reservation.itemDescription || "",
-    "{{local_no_quarto}}": reservation.locationInRoom ? ` (${reservation.locationInRoom})` : "",
-    "{{foto_item}}": (reservation.photoUrl && (reservation.photoUrl.startsWith("http://") || reservation.photoUrl.startsWith("https://"))) ? `📸 *Foto do item:* ${reservation.photoUrl}\n` : ""
+    "{{foto_item}}": (reservation.photoUrl && (reservation.photoUrl.startsWith("http://") || reservation.photoUrl.startsWith("https://"))) ? `📸 *Foto do item:* ${reservation.photoUrl}\n` : "",
+    "{{valor_promocional}}": reservation.pendingSundayUpsell ? formatCurrency(reservation.pendingSundayUpsell.promotionalPrice) : (reservation._upsellPromotionalPrice ? formatCurrency(reservation._upsellPromotionalPrice) : ""),
+    "{{valor_normal}}": reservation.pendingSundayUpsell ? formatCurrency(reservation.pendingSundayUpsell.normalDailyRate) : (reservation._upsellNormalDailyRate ? formatCurrency(reservation._upsellNormalDailyRate) : ""),
+    "{{economia}}": formatCurrency(Math.max(0, (reservation.pendingSundayUpsell?.normalDailyRate || reservation._upsellNormalDailyRate || 0) - (reservation.pendingSundayUpsell?.promotionalPrice || reservation._upsellPromotionalPrice || 0)))
   };
 
   let rendered = text;
@@ -8038,6 +8065,20 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       db.whatsappConversations = [];
     }
     syncWhatsappConversationsStore(db);
+
+    if (!db.sundayUpsellConfig) {
+      db.sundayUpsellConfig = {
+        enabled: true,
+        sundayUpsellPrice: 90.0,
+        channelId: "guest_schedule",
+        triggerHour: 19,
+        triggerDay: 6,
+        holdDurationMinutes: 30,
+        isSilentUpsellHold: true,
+        templateId: "tpl_sunday_upsell",
+        lastTriggerDate: null
+      };
+    }
   }
 
   ensureDbDefaults();
@@ -8049,6 +8090,86 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const db = getDb();
     ensureDbDefaults();
     res.json(db?.zapiConfig || {});
+  });
+
+  // 1.05 Rotas da Oferta de Domingo Sem Pressa (Upsell)
+  app.get("/api/whatsapp/sunday-upsell/config", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    res.json({
+      success: true,
+      config: db?.sundayUpsellConfig || {},
+      lastRun: db?.sundayUpsellConfig?.lastRun || null
+    });
+  });
+
+  app.post("/api/whatsapp/sunday-upsell/config", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const { enabled, sundayUpsellPrice } = req.body || {};
+    if (!db.sundayUpsellConfig) {
+      db.sundayUpsellConfig = {
+        enabled: true,
+        sundayUpsellPrice: 90.0,
+        channelId: "guest_schedule",
+        triggerHour: 19,
+        triggerDay: 6,
+        holdDurationMinutes: 30,
+        isSilentUpsellHold: true,
+        templateId: "tpl_sunday_upsell",
+        lastTriggerDate: null
+      };
+    }
+    if (enabled !== undefined) {
+      db.sundayUpsellConfig.enabled = Boolean(enabled);
+    }
+    if (sundayUpsellPrice !== undefined) {
+      const parsed = parseFloat(sundayUpsellPrice);
+      if (!isNaN(parsed) && parsed > 0) {
+        db.sundayUpsellConfig.sundayUpsellPrice = parsed;
+      }
+    }
+    db.sundayUpsellConfig.updatedAt = new Date().toISOString();
+    if (typeof saveDatabase === "function") saveDatabase();
+    res.json({
+      success: true,
+      config: db.sundayUpsellConfig
+    });
+  });
+
+  app.post("/api/whatsapp/sunday-upsell/trigger", async (req, res) => {
+    try {
+      const db = getDb();
+      ensureDbDefaults();
+      const { forceDate, testMode, dryRun } = req.body || {};
+      const result = await triggerSundayUpsellRoutine(db, saveDatabase, {
+        forceDate: forceDate || null,
+        testMode: testMode !== undefined ? Boolean(testMode) : true,
+        dryRun: Boolean(dryRun)
+      });
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      console.error("[Sunday Upsell Trigger Route Error]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/whatsapp/sunday-upsell/preview", (req, res) => {
+    try {
+      const db = getDb();
+      ensureDbDefaults();
+      const { forceDate } = req.query || {};
+      const result = previewSundayUpsellEligibility(db, forceDate || null);
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   // 1.1 Listar os 7 Canais Independentes Z-API
@@ -11483,6 +11604,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       // 4. Higieniza falsos positivos de NPS e garante disparo das notas < 5 de hoje + alerta de fallback 15m ao gestor (22998505276)
       await sanitizeAndDispatchTodaySub5Nps(db, saveDatabase);
       await checkPendingNpsManagerAlerts(db, saveDatabase, createNotification);
+
+      // 5. Oferta de Domingo Sem Pressa (sábados às 19h no fuso de Brasília)
+      await checkAndTriggerSundayUpsell(db, saveDatabase);
 
     } catch (err) {
       console.error("[Auto-WhatsApp Cron Error]:", err.message);
@@ -16135,3 +16259,370 @@ export async function processInboundNpsAndSentiment({
   if (typeof saveDatabase === "function") saveDatabase();
   return npsFlowResult || { npsHandled: false };
 }
+
+// ── Motor da Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda) ──────
+
+export function resolveTargetSundayDate(forceDate = null, refDate = null) {
+  if (forceDate && typeof forceDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(forceDate.trim())) {
+    return forceDate.trim();
+  }
+  const now = refDate instanceof Date ? refDate : (refDate ? new Date(refDate) : new Date());
+  const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const brDate = new Date(nowUtc - (3 * 3600000));
+  const brDayOfWeek = brDate.getDay(); // 0 = Sun, 6 = Sat
+  const daysUntilSunday = brDayOfWeek === 6 ? 1 : ((7 - brDayOfWeek) % 7);
+  const targetSun = new Date(brDate.getTime() + daysUntilSunday * 24 * 3600000);
+  return targetSun.toISOString().slice(0, 10);
+}
+
+export function evaluateSundayUpsellEligibility(db, targetSundayDate) {
+  const dtSunday = new Date(`${targetSundayDate}T12:00:00Z`);
+  const mondayDate = new Date(dtSunday.getTime() + 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+  const allReservations = Array.isArray(db?.reservations) ? db.reservations : [];
+  const nonActiveStatuses = [
+    "cancelada", "cancelled", "expirada", "no_show", "completed", "checked_out", "finalizada"
+  ];
+
+  const eligibleReservations = [];
+  const ineligibleReservations = [];
+
+  for (const r of allReservations) {
+    if (!r) continue;
+    const statusNorm = String(r.status || "").toLowerCase();
+    if (nonActiveStatuses.includes(statusNorm)) continue;
+    if (r.checkoutDone || r.actualCheckoutAt) continue;
+
+    const rCheckout = String(r.checkoutDate || "").slice(0, 10);
+    if (rCheckout !== targetSundayDate) continue;
+
+    const guestPhone = r.guestPhone || r.phone;
+    if (!guestPhone) {
+      ineligibleReservations.push({ reservation: r, reason: "SEM_TELEFONE" });
+      continue;
+    }
+
+    if (r.hasSundayUpsell || r.pendingSundayUpsell?.status === "paid") {
+      ineligibleReservations.push({ reservation: r, reason: "JA_POSSUI_UPSELL" });
+      continue;
+    }
+
+    const flatNum = String(r.flatNumber || "");
+    const flatId = r.flatId;
+
+    const incomingRes = allReservations.find(other => {
+      if (!other || other.id === r.id || other.code === r.code) return false;
+      const oStatus = String(other.status || "").toLowerCase();
+      if (nonActiveStatuses.includes(oStatus)) return false;
+      if (other.checkoutDone || other.actualCheckoutAt) return false;
+      const sameFlat = (flatId != null && other.flatId != null && String(other.flatId) === String(flatId)) ||
+                       (flatNum && other.flatNumber && String(other.flatNumber) === flatNum);
+      if (!sameFlat) return false;
+      const oCheckin = String(other.checkinDate || "").slice(0, 10);
+      const oCheckout = String(other.checkoutDate || "").slice(0, 10);
+      return oCheckin < mondayDate && oCheckout > targetSundayDate;
+    });
+
+    if (!incomingRes) {
+      eligibleReservations.push({
+        reservation: r,
+        scenario: "VACANT_FLAT",
+        incomingRes: null,
+        alternateFlat: null
+      });
+    } else {
+      const inCheckin = String(incomingRes.checkinDate || targetSundayDate).slice(0, 10);
+      const inCheckout = String(incomingRes.checkoutDate || mondayDate).slice(0, 10);
+
+      let altFlat = null;
+      if (typeof selectFairShareFlat === "function") {
+        const fsResult = selectFairShareFlat(db, inCheckin, inCheckout, incomingRes.id);
+        if (fsResult?.recommendedFlat && String(fsResult.recommendedFlat.number) !== flatNum) {
+          altFlat = fsResult.recommendedFlat;
+        } else if (Array.isArray(fsResult?.availableFlats)) {
+          altFlat = fsResult.availableFlats.find(f => String(f.number) !== flatNum);
+        }
+      }
+
+      if (altFlat) {
+        eligibleReservations.push({
+          reservation: r,
+          scenario: "REALLOCATION_AVAILABLE",
+          incomingRes,
+          alternateFlat: altFlat
+        });
+      } else {
+        ineligibleReservations.push({
+          reservation: r,
+          reason: "CONDOMINIO_100_PORCENTO_OCUPADO",
+          incomingRes
+        });
+      }
+    }
+  }
+
+  return {
+    targetSundayDate,
+    mondayDate,
+    totalEvaluated: eligibleReservations.length + ineligibleReservations.length,
+    eligibleCount: eligibleReservations.length,
+    eligibleReservations,
+    ineligibleReservations
+  };
+}
+
+export function previewSundayUpsellEligibility(db, forceDate = null) {
+  const targetSundayDate = resolveTargetSundayDate(forceDate);
+  const evalResult = evaluateSundayUpsellEligibility(db, targetSundayDate);
+  return {
+    targetSundayDate,
+    mondayDate: evalResult.mondayDate,
+    totalEvaluated: evalResult.totalEvaluated,
+    eligibleCount: evalResult.eligibleCount,
+    eligibleReservations: evalResult.eligibleReservations.map(e => ({
+      id: e.reservation.id,
+      code: e.reservation.code,
+      guestName: e.reservation.guestName,
+      guestPhone: e.reservation.guestPhone || e.reservation.phone,
+      flatNumber: e.reservation.flatNumber,
+      checkoutDate: e.reservation.checkoutDate,
+      scenario: e.scenario,
+      alternateFlatNumber: e.alternateFlat ? String(e.alternateFlat.number) : null
+    })),
+    ineligibleReservations: evalResult.ineligibleReservations.map(ie => ({
+      id: ie.reservation.id,
+      code: ie.reservation.code,
+      guestName: ie.reservation.guestName,
+      flatNumber: ie.reservation.flatNumber,
+      reason: ie.reason
+    }))
+  };
+}
+
+export async function dispatchSundayUpsellTwoBalloons(db, {
+  reservation,
+  guestPhone,
+  guestFirstName,
+  flatNumber,
+  sundayUpsellPrice,
+  normalDailyRate,
+  pixCopiaECola,
+  txid,
+  holdExpiresAt
+}) {
+  const isTestEnv = process.env.NODE_ENV === "test" || Boolean(globalThis.__CORPFLATS_TEST_MODE__);
+  const economia = Math.max(0, normalDailyRate - sundayUpsellPrice);
+
+  const balloon1Text = `Olá, *${guestFirstName}*! ☀️ Que tal aproveitar o domingo no *Flat ${flatNumber}* sem hora para ir embora?
+
+Liberamos para você a nossa *Oferta Especial de Domingo Sem Pressa*:
+• *Check-out 100% Livre no Domingo:* curta a praia, a cidade ou descanse no flat o dia inteiro sem pressa de desocupar.
+• *Pernoite Bônus Segunda-feira:* se preferir dormir e descansar mais, você pode estender a sua estadia e sair apenas na *segunda-feira até às 12:00h*, sem nenhum acréscimo!
+• *Economia Exclusiva:* de ~R$ ${normalDailyRate.toFixed(2)}~ (tarifa normal) por apenas *R$ ${sundayUpsellPrice.toFixed(2)}* (você economiza *R$ ${economia.toFixed(2)}*!).
+
+⏳ *Pré-Reserva Garantida:* seu flat já está pré-reservado por *30 minutos*. Para confirmar e garantir essa condição, efetue o pagamento do PIX abaixo.
+
+👇 *O código PIX Copia e Cola está na mensagem a seguir (basta tocar para copiar):*`;
+
+  const balloon1Res = await sendZapiMessage(db?.zapiConfig, {
+    phone: guestPhone,
+    message: balloon1Text,
+    channelId: "guest_schedule",
+    recipientRole: "guest",
+    triggerEvent: "sunday_upsell_offer",
+    sendMode: "text",
+    delayTyping: isTestEnv ? 0 : 3,
+    db
+  });
+
+  const waitBetweenBalloonsMs = isTestEnv ? 0 : 1500;
+  if (waitBetweenBalloonsMs > 0) {
+    await new Promise(resolve => setTimeout(resolve, waitBetweenBalloonsMs));
+  }
+
+  const balloon2Text = String(pixCopiaECola || "").trim();
+
+  const balloon2Res = await sendZapiMessage(db?.zapiConfig, {
+    phone: guestPhone,
+    message: balloon2Text,
+    channelId: "guest_schedule",
+    recipientRole: "guest",
+    triggerEvent: "sunday_upsell_offer_pix",
+    sendMode: "text",
+    delayTyping: isTestEnv ? 0 : 1,
+    db
+  });
+
+  if (typeof appendMessageToConversation === "function") {
+    appendMessageToConversation(db, {
+      phone: guestPhone,
+      senderName: "CorpFlats (Automação)",
+      fromMe: true,
+      text: `${balloon1Text}\n\n---\n[PIX Copia e Cola]:\n${balloon2Text}`,
+      type: "text",
+      status: "delivered",
+      triggerEvent: "sunday_upsell_offer",
+      reservationCode: reservation?.code || reservation?.id
+    });
+  }
+
+  return {
+    success: Boolean(balloon1Res?.success && balloon2Res?.success),
+    balloon1: balloon1Res,
+    balloon2: balloon2Res
+  };
+}
+
+export async function triggerSundayUpsellRoutine(db, saveDatabase, {
+  forceDate = null,
+  testMode = false,
+  dryRun = false
+} = {}) {
+  const targetSundayDate = resolveTargetSundayDate(forceDate);
+  const evalResult = evaluateSundayUpsellEligibility(db, targetSundayDate);
+
+  const sundayUpsellPrice = Number(db?.sundayUpsellConfig?.sundayUpsellPrice ?? 90.0);
+  const nowMs = Date.now();
+  const expiresAt = new Date(nowMs + 30 * 60 * 1000).toISOString();
+  const dispatchedItems = [];
+
+  for (const item of evalResult.eligibleReservations) {
+    const r = item.reservation;
+    const normalDailyRate = Number(
+      r.dailyRate || (r.totalAmount && r.numNights ? r.totalAmount / r.numNights : 250.0)
+    );
+    const txid = `UPSELL_SUN_${r.code || r.id}_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 35);
+    const pixPayload = generateStaticPixPayload({
+      amount: sundayUpsellPrice,
+      txid
+    });
+
+    r.pendingSundayUpsell = {
+      txid,
+      pixCopiaECola: pixPayload,
+      promotionalPrice: sundayUpsellPrice,
+      normalDailyRate,
+      originalCheckoutDate: targetSundayDate,
+      targetCheckoutDate: evalResult.mondayDate,
+      originalCheckoutTime: "12:00",
+      targetCheckoutTime: "12:00",
+      expiresAt,
+      createdAt: new Date(nowMs).toISOString(),
+      status: "pending_payment",
+      isSilentUpsellHold: true,
+      incomingReservationId: item.incomingRes ? (item.incomingRes.code || item.incomingRes.id) : null,
+      alternateFlatNumber: item.alternateFlat ? String(item.alternateFlat.number) : null,
+      alternateFlatId: item.alternateFlat ? item.alternateFlat.id : null
+    };
+
+    r.pendingModification = {
+      status: "awaiting_payment",
+      type: "sunday_upsell",
+      newCheckoutDate: evalResult.mondayDate,
+      newCheckoutTime: "12:00",
+      expiresAt,
+      isSilentUpsellHold: true
+    };
+
+    r.sundayUpsellOfferSentDate = targetSundayDate;
+    r.updatedAt = new Date(nowMs).toISOString();
+
+    if (!dryRun) {
+      const guestFirstName = r.guestName ? r.guestName.trim().split(" ")[0] : "Hóspede";
+      await dispatchSundayUpsellTwoBalloons(db, {
+        reservation: r,
+        guestPhone: r.guestPhone || r.phone,
+        guestFirstName,
+        flatNumber: r.flatNumber || r.flatId || "",
+        sundayUpsellPrice,
+        normalDailyRate,
+        pixCopiaECola: pixPayload,
+        txid,
+        holdExpiresAt: expiresAt
+      });
+    }
+
+    dispatchedItems.push({
+      id: r.id,
+      code: r.code,
+      guestName: r.guestName,
+      flatNumber: r.flatNumber,
+      txid,
+      promotionalPrice: sundayUpsellPrice,
+      normalDailyRate
+    });
+  }
+
+  if (!db.sundayUpsellConfig) {
+    db.sundayUpsellConfig = {
+      enabled: true,
+      sundayUpsellPrice: 90.0,
+      channelId: "guest_schedule",
+      triggerHour: 19,
+      triggerDay: 6,
+      holdDurationMinutes: 30,
+      isSilentUpsellHold: true,
+      templateId: "tpl_sunday_upsell",
+      lastTriggerDate: null
+    };
+  }
+
+  db.sundayUpsellConfig.lastRun = {
+    timestamp: new Date().toISOString(),
+    targetSundayDate,
+    totalEvaluated: evalResult.totalEvaluated,
+    eligibleCount: evalResult.eligibleCount,
+    dispatchedCount: dryRun ? 0 : evalResult.eligibleCount
+  };
+
+  if (!testMode && !dryRun) {
+    db.sundayUpsellConfig.lastTriggerDate = targetSundayDate;
+  }
+
+  if (typeof saveDatabase === "function") saveDatabase();
+
+  return {
+    targetSundayDate,
+    mondayDate: evalResult.mondayDate,
+    totalEvaluated: evalResult.totalEvaluated,
+    eligibleCount: evalResult.eligibleCount,
+    dispatchedCount: dispatchedItems.length,
+    dispatchedItems,
+    ineligibleCount: evalResult.ineligibleReservations.length,
+    ineligibleReservations: evalResult.ineligibleReservations.map(ie => ({
+      code: ie.reservation?.code || ie.reservation?.id,
+      reason: ie.reason
+    }))
+  };
+}
+
+export async function checkAndTriggerSundayUpsell(dbOrGetter, saveDatabase, nowOverride = null) {
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !db.sundayUpsellConfig || db.sundayUpsellConfig.enabled === false) return;
+
+    const refNow = nowOverride instanceof Date ? nowOverride : (nowOverride ? new Date(nowOverride) : new Date());
+    const nowUtc = refNow.getTime() + (refNow.getTimezoneOffset() * 60000);
+    const brDate = new Date(nowUtc - (3 * 3600000));
+    const todayStr = brDate.toISOString().substring(0, 10);
+    const brDayOfWeek = brDate.getDay(); // 0 = Sunday, 6 = Saturday
+    const brHour = brDate.getHours();
+
+    const triggerDay = Number(db.sundayUpsellConfig.triggerDay ?? 6);
+    const triggerHour = Number(db.sundayUpsellConfig.triggerHour ?? 19);
+
+    if (brDayOfWeek === triggerDay && brHour === triggerHour) {
+      const targetSunday = resolveTargetSundayDate(null, refNow);
+      if (db.sundayUpsellConfig.lastTriggerDate === todayStr || db.sundayUpsellConfig.lastTriggerDate === targetSunday) {
+        return; // Idempotência: já disparou hoje
+      }
+      console.log(`[Sunday Upsell] Disparando rotina agendada de sábado às 19:00h (Data Brasília: ${todayStr}, Domingo Alvo: ${targetSunday})...`);
+      db.sundayUpsellConfig.lastTriggerDate = targetSunday;
+      if (typeof saveDatabase === "function") saveDatabase();
+      await triggerSundayUpsellRoutine(db, saveDatabase, { testMode: false, forceDate: targetSunday });
+    }
+  } catch (err) {
+    console.error("[checkAndTriggerSundayUpsell Error]:", err.message);
+  }
+}
+

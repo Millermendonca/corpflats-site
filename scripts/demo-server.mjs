@@ -28223,6 +28223,49 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
   let expiredCount = 0;
   let remindedCount = 0;
 
+  // 0. Varredura Silenciosa de Ofertas de Domingo Sem Pressa (pendingSundayUpsell)
+  for (const r of targetDb.reservations) {
+    if (!r) continue;
+    const isUpsellAwaiting = r.pendingSundayUpsell && (
+      r.pendingSundayUpsell.status === "pending_payment" ||
+      r.pendingSundayUpsell.status === "awaiting_payment" ||
+      r.pendingSundayUpsell.status === "pending"
+    );
+    const isHoldAwaiting = r.pendingModification && r.pendingModification.isSilentUpsellHold && (
+      r.pendingModification.status === "awaiting_payment" ||
+      r.pendingModification.status === "pending"
+    );
+
+    if (isUpsellAwaiting || isHoldAwaiting) {
+      const expStr = r.pendingSundayUpsell?.expiresAt || r.pendingModification?.expiresAt;
+      if (expStr) {
+        const expMs = new Date(expStr).getTime();
+        if (!isNaN(expMs) && expMs <= nowMs) {
+          if (r.pendingSundayUpsell) {
+            r.pendingSundayUpsell.status = "expired";
+            r.pendingSundayUpsell.expiredAt = nowIso;
+          }
+          if (r.pendingModification && r.pendingModification.isSilentUpsellHold) {
+            delete r.pendingModification;
+          }
+          r.updatedAt = nowIso;
+          expiredCount++;
+          try {
+            if (typeof addReservationAuditLog === "function") {
+              addReservationAuditLog(r, {
+                action: "sunday_upsell_expired",
+                actor: { id: null, name: "Sistema Automático", role: "system", type: "system" },
+                source: "Motor de Upsell Domingo Sem Pressa",
+                description: "Oferta de Domingo Sem Pressa expirou sem confirmação de pagamento (30 min). Check-out original de domingo mantido sem cancelamento."
+              });
+            }
+          } catch (_) {}
+          // NUNCA altera r.status, NUNCA envia mensagem de cancelamento/expiração de reserva!
+        }
+      }
+    }
+  }
+
   for (const r of targetDb.reservations) {
     if (!r) continue;
     if (r.status !== "pre_reserva" && r.status !== "pendente") continue;
@@ -58016,13 +58059,15 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
         const valorPago = Number(item.valor || 0);
 
         if (txid) {
-          // 0. Verifica se o pagamento é referente a Limpeza Durante a Estadia (R$ 70,00), Early Check-in, Late Check-out, 2ª via de Cartão NFC (R$ 15,00) ou Prorrogação de Estadia
+          // 0. Verifica se o pagamento é referente a Limpeza Durante a Estadia (R$ 70,00), Early Check-in, Late Check-out, 2ª via de Cartão NFC (R$ 15,00), Prorrogação de Estadia ou Domingo Sem Pressa
           const resServiceOrder = (db.reservations || []).find(resItem =>
             resItem.pendingStayoverCleaning?.txid === txid ||
             resItem.pendingEarlyCheckin?.txid === txid ||
             resItem.pendingLateCheckout?.txid === txid ||
             resItem.pendingNfcCardReplacement?.txid === txid ||
-            resItem.pendingStayExtension?.txid === txid
+            resItem.pendingStayExtension?.txid === txid ||
+            resItem.pendingSundayUpsell?.txid === txid ||
+            (resItem.pendingSundayUpsell && txid && String(txid).includes("UPSELL_SUN") && String(txid).includes(String(resItem.code || resItem.id)))
           );
 
           if (resServiceOrder) {
@@ -58322,6 +58367,141 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
                 sendZapiMessage(
                   resServiceOrder.guestPhone,
                   `✅ *Prorrogação Confirmada!* Recebemos o seu PIX de R$ ${extAmt.toFixed(2).replace(".", ",")}. Sua estadia no *Flat ${resServiceOrder.flatNumber}* foi estendida com sucesso até *${String(resServiceOrder.checkoutDate).split("-").reverse().join("/")}*!`,
+                  { isAutomated: true, skipQueue: true }
+                ).catch(() => {});
+              }
+              continue;
+            }
+
+            if (
+              resServiceOrder.pendingSundayUpsell &&
+              (resServiceOrder.pendingSundayUpsell.txid === txid || (txid && String(txid).includes("UPSELL_SUN") && String(txid).includes(String(resServiceOrder.code || resServiceOrder.id)))) &&
+              resServiceOrder.pendingSundayUpsell.status !== "paid"
+            ) {
+              const upsellMeta = resServiceOrder.pendingSundayUpsell;
+              const upsellAmt = valorPago > 0 ? valorPago : (Number(upsellMeta.promotionalPrice) || 90.0);
+              upsellMeta.status = "paid";
+              upsellMeta.paidAt = paidIso;
+              upsellMeta.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
+
+              // 1. Extensão do check-out para Segunda-feira às 12:00h
+              const targetCheckout = upsellMeta.targetCheckoutDate || "2026-11-09";
+              resServiceOrder.checkoutDate = targetCheckout;
+              resServiceOrder.checkoutTime = "12:00";
+              resServiceOrder.hasSundayUpsell = true;
+              resServiceOrder.sundayUpsellPaidAt = paidIso;
+              if (resServiceOrder.pendingModification?.isSilentUpsellHold) {
+                delete resServiceOrder.pendingModification;
+              }
+
+              // 2. Registro em charges e payments
+              if (!Array.isArray(resServiceOrder.charges)) resServiceOrder.charges = [];
+              resServiceOrder.charges.push({
+                id: `chg_upsell_${Date.now()}`,
+                description: `Oferta Domingo Sem Pressa (Check-out Livre Domingo + Bônus Segunda 12h: ${upsellMeta.originalCheckoutDate || ""} -> ${resServiceOrder.checkoutDate})`,
+                amount: upsellAmt,
+                category: "sunday_upsell",
+                date: paidIso
+              });
+              if (!Array.isArray(resServiceOrder.payments)) resServiceOrder.payments = [];
+              resServiceOrder.payments.push({
+                id: `pay_upsell_${Date.now()}`,
+                amount: upsellAmt,
+                method: "pix",
+                date: paidIso,
+                notes: `PIX Domingo Sem Pressa (${txid})`
+              });
+              resServiceOrder.totalAmount = Math.round(((Number(resServiceOrder.totalAmount) || 0) + upsellAmt) * 100) / 100;
+              resServiceOrder.paidAmount = Math.round(((Number(resServiceOrder.paidAmount) || 0) + upsellAmt) * 100) / 100;
+
+              // 3. Reagendamento da governança/limpeza em db.cleaningRequests para segunda-feira
+              if (Array.isArray(db.cleaningRequests)) {
+                const oldCheckout = upsellMeta.originalCheckoutDate;
+                const flatNum = String(resServiceOrder.flatNumber || "");
+                const cReq = db.cleaningRequests.find(c => 
+                  c && !c.isDeleted &&
+                  (String(c.flatNumber) === flatNum || Number(c.flatId) === Number(resServiceOrder.flatId)) &&
+                  (c.requestDate === oldCheckout || c.targetDate === oldCheckout || c.reservationCode === resServiceOrder.code || c.reservationId === resServiceOrder.id)
+                );
+                if (cReq) {
+                  cReq.requestDate = targetCheckout;
+                  cReq.targetDate = targetCheckout;
+                  cReq.notes = `${cReq.notes || ""}\n[Reagendamento Domingo Sem Pressa] Check-out prorrogado para segunda-feira ${targetCheckout}.`.trim();
+                  cReq.updatedAt = paidIso;
+                }
+              }
+
+              // 4. Executa remanejamento FairShare da reserva entrante, se houver
+              if (upsellMeta.incomingReservationId && upsellMeta.alternateFlatNumber) {
+                const incomingRes = (db.reservations || []).find(r => 
+                  String(r.id) === String(upsellMeta.incomingReservationId) || 
+                  String(r.code) === String(upsellMeta.incomingReservationId)
+                );
+                if (incomingRes) {
+                  const oldFlat = incomingRes.flatNumber;
+                  const newFlatNum = String(upsellMeta.alternateFlatNumber);
+                  const targetFlatObj = (db.flats || []).find(f => String(f.number) === newFlatNum);
+                  
+                  incomingRes.flatNumber = newFlatNum;
+                  if (targetFlatObj) incomingRes.flatId = targetFlatObj.id;
+                  incomingRes.updatedAt = paidIso;
+
+                  try {
+                    if (typeof addReservationAuditLog === "function") {
+                      addReservationAuditLog(incomingRes, {
+                        action: "fairshare_reallocation_sunday_upsell",
+                        actor: { id: null, name: "Motor FairShare (Upsell)", role: "system", type: "system" },
+                        source: "Motor de Upsell Domingo Sem Pressa",
+                        description: `Reserva remanejada do Flat ${oldFlat} para o Flat ${newFlatNum} para viabilizar Domingo Sem Pressa da reserva ${resServiceOrder.code || resServiceOrder.id}.`,
+                        changes: [
+                          { field: "flatNumber", label: "Flat", oldValue: oldFlat, newValue: newFlatNum }
+                        ]
+                      });
+                    }
+                  } catch (_) {}
+
+                  createNotification({
+                    category: "reservation",
+                    title: `🔄 Remanejamento FairShare: Flat ${oldFlat} -> ${newFlatNum}`,
+                    message: `Reserva ${incomingRes.code || incomingRes.id} (${incomingRes.guestName}) transferida para Flat ${newFlatNum} devido ao Domingo Sem Pressa de ${resServiceOrder.guestName}.`,
+                    severity: "info",
+                    metadata: { reservationCode: incomingRes.code, flatNumber: newFlatNum },
+                    targetUrl: `/reservas`
+                  });
+                }
+              }
+
+              // 5. Audit Log da reserva beneficiada
+              try {
+                if (typeof addReservationAuditLog === "function") {
+                  addReservationAuditLog(resServiceOrder, {
+                    action: "sunday_upsell_confirmed",
+                    actor: { id: null, name: "Banco Inter (PIX Webhook)", role: "system", type: "system" },
+                    source: "Motor de Upsell Domingo Sem Pressa",
+                    description: `Pagamento PIX de R$ ${upsellAmt.toFixed(2)} confirmado. Check-out livre de domingo e permanência até segunda 12h garantidos!`,
+                    changes: [
+                      { field: "checkoutDate", label: "Data de Check-out", oldValue: upsellMeta.originalCheckoutDate, newValue: targetCheckout },
+                      { field: "hasSundayUpsell", label: "Domingo Sem Pressa", oldValue: false, newValue: true }
+                    ]
+                  });
+                }
+              } catch (_) {}
+
+              // 6. Notificação no Painel
+              createNotification({
+                category: "reservation",
+                title: `☀️ Domingo Sem Pressa Confirmado: Flat ${resServiceOrder.flatNumber}`,
+                message: `PIX de R$ ${upsellAmt.toFixed(2)} confirmado para ${resServiceOrder.guestName}. Check-out estendido até segunda 12h!`,
+                severity: "success",
+                metadata: { reservationCode: resServiceOrder.code, txid, flatNumber: resServiceOrder.flatNumber },
+                targetUrl: `/reservas`
+              });
+
+              // 7. Envio da mensagem de confirmação via WhatsApp
+              if (resServiceOrder.guestPhone && typeof sendZapiMessage === "function") {
+                sendZapiMessage(
+                  resServiceOrder.guestPhone,
+                  `Pagamento confirmado! 🎉 Seu check-out livre de domingo (com direito a ficar até segunda às 12h se desejar) já está garantido no sistema. Aproveite seu descanso!`,
                   { isAutomated: true, skipQueue: true }
                 ).catch(() => {});
               }

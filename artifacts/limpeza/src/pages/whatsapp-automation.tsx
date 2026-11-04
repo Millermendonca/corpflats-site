@@ -56,7 +56,11 @@ import {
   ArrowLeftRight,
   Image as ImageIcon,
   Upload,
-  Building
+  Building,
+  DollarSign,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
@@ -310,6 +314,16 @@ const TAG_GROUPS = [
       { tag: "{{link_avaliacao_google}}", label: "⭐ Avaliação Google Maps", example: "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA" },
       { tag: "{{link_guia_hospede}}", label: "📖 Manual do Hóspede (PDF)", example: "https://.../Manual_do_Hospede.pdf" },
       { tag: "{{aviso_acompanhante_pendente_pos_checkin}}", label: "👥 Link 2º Hóspede Pendente (Pós Check-in)", example: "👥 Acompanhante Pendente (2º Hóspede): envie o link..." },
+    ]
+  },
+  {
+    category: "🏖️ Oferta Domingo Sem Pressa (Upsell)",
+    tags: [
+      { tag: "{{valor_normal}}", label: "Tarifa Normal Diária", example: "R$ 250,00" },
+      { tag: "{{valor_promocional}}", label: "Valor Promocional Oferta", example: "R$ 90,00" },
+      { tag: "{{economia}}", label: "Economia Real Hóspede", example: "R$ 160,00" },
+      { tag: "{{tempo_validade_pix}}", label: "Validade do PIX (Hold)", example: "30 minutos" },
+      { tag: "{{codigo_pix_copia_e_cola}}", label: "Código PIX Copia e Cola (Balão 2)", example: "00020126580014br.gov.bcb.pix0136..." },
     ]
   }
 ]
@@ -712,6 +726,31 @@ export default function WhatsappAutomation() {
   // State: View Message Dialog
   const [previewModalOpen, setPreviewModalOpen] = useState<boolean>(false)
   const [previewModalItem, setPreviewModalItem] = useState<QueueItem | null>(null)
+
+  // State: Oferta de Domingo Sem Pressa (Requisito R1 / Milestone 2)
+  const [sundayUpsellEnabled, setSundayUpsellEnabled] = useState<boolean>(true)
+  const [sundayUpsellPrice, setSundayUpsellPrice] = useState<number>(90)
+  const [loadingSundayUpsell, setLoadingSundayUpsell] = useState<boolean>(false)
+  const [savingSundayUpsell, setSavingSundayUpsell] = useState<boolean>(false)
+  const [triggeringSundayUpsell, setTriggeringSundayUpsell] = useState<boolean>(false)
+  const [sundayUpsellLastRun, setSundayUpsellLastRun] = useState<{
+    executedAt: string
+    eligibleCount: number
+    dispatchedCount: number
+    skippedCount: number
+    results?: Array<{
+      reservationId: string
+      flatNumber: string
+      guestName: string
+      status: "sent" | "skipped"
+      reason?: string
+      holdExpiresAt?: string
+      promoPrice?: number
+      dailyRate?: number
+    }>
+  } | null>(null)
+  const [showSundayUpsellPreview, setShowSundayUpsellPreview] = useState<boolean>(false)
+  const [showLastRunDetails, setShowLastRunDetails] = useState<boolean>(true)
 
   // Mensagens Rápidas (Manuais) State
   const {
@@ -1549,6 +1588,7 @@ export default function WhatsappAutomation() {
     fetchAiConfig()
     fetchDeveloperGuidelines()
     fetchBotActionsSettings()
+    fetchSundayUpsellConfig()
   }, [])
 
   // Auto-refresh guidelines & channels when switching tabs
@@ -1559,6 +1599,8 @@ export default function WhatsappAutomation() {
       fetchZapiChannels()
     } else if (activeTab === "channels") {
       fetchZapiChannels()
+    } else if (activeTab === "rules") {
+      fetchSundayUpsellConfig()
     }
   }, [activeTab])
 
@@ -1622,6 +1664,126 @@ export default function WhatsappAutomation() {
       }
     } catch (e) {
       console.error(e)
+    }
+  }
+
+  const fetchSundayUpsellConfig = async () => {
+    try {
+      setLoadingSundayUpsell(true)
+      const res = await fetch("/api/whatsapp/sunday-upsell/config")
+      if (res.ok) {
+        const data = await res.json()
+        if (data.config) {
+          setSundayUpsellEnabled(data.config.enabled !== false)
+          setSundayUpsellPrice(Number(data.config.sundayUpsellPrice) || 90)
+        }
+        if (data.lastRun) {
+          setSundayUpsellLastRun(data.lastRun)
+        }
+      }
+    } catch (err: any) {
+      console.warn("Erro ao buscar configurações de sunday-upsell:", err?.message)
+    } finally {
+      setLoadingSundayUpsell(false)
+    }
+  }
+
+  const handleSaveSundayUpsellConfig = async (patch?: { enabled?: boolean; price?: number }) => {
+    const newEnabled = patch?.enabled !== undefined ? patch.enabled : sundayUpsellEnabled
+    const newPrice = patch?.price !== undefined ? patch.price : Number(sundayUpsellPrice)
+
+    if (newPrice < 10) {
+      toast({
+        title: "Valor inválido",
+        description: "O valor promocional mínimo deve ser de pelo menos R$ 10,00.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setSavingSundayUpsell(true)
+    try {
+      const res = await fetch("/api/whatsapp/sunday-upsell/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: newEnabled,
+          sundayUpsellPrice: newPrice
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setSundayUpsellEnabled(newEnabled)
+        setSundayUpsellPrice(newPrice)
+        toast({
+          title: "✓ Configuração Salva!",
+          description: `Oferta de Domingo Sem Pressa: ${newEnabled ? "Ativa" : "Pausada"} por R$ ${newPrice.toFixed(2)}.`
+        })
+      } else {
+        toast({
+          title: "Erro ao salvar",
+          description: data.error || "Não foi possível gravar as configurações.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de conexão",
+        description: err.message,
+        variant: "destructive"
+      })
+    } finally {
+      setSavingSundayUpsell(false)
+    }
+  }
+
+  const handleTriggerSundayUpsellNow = async () => {
+    if (!confirm(
+      "Deseja executar o disparo manual/teste da 'Oferta de Domingo Sem Pressa' agora?\n\n" +
+      "O sistema irá verificar a disponibilidade de todos os flats com check-out no domingo às 12:00h, " +
+      "gerar a pré-reserva temporária (hold 30min) e enviar a oferta pelo Canal #1 (Régua Hóspedes)."
+    )) {
+      return
+    }
+
+    setTriggeringSundayUpsell(true)
+    try {
+      const res = await fetch("/api/whatsapp/sunday-upsell/trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ testMode: true })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        const lastRunData = {
+          executedAt: data.executedAt || new Date().toISOString(),
+          eligibleCount: data.eligibleCount ?? (data.results?.filter((r: any) => r.status === "sent").length || 0),
+          dispatchedCount: data.dispatchedCount ?? (data.results?.filter((r: any) => r.status === "sent").length || 0),
+          skippedCount: data.skippedCount ?? (data.results?.filter((r: any) => r.status === "skipped").length || 0),
+          results: data.results || []
+        }
+        setSundayUpsellLastRun(lastRunData)
+        setShowLastRunDetails(true)
+        toast({
+          title: "⚡ Disparo Manual Concluído!",
+          description: `${lastRunData.dispatchedCount} oferta(s) enviada(s) com hold de 30min. ${lastRunData.skippedCount} ignorada(s).`
+        })
+        fetchQueue()
+      } else {
+        toast({
+          title: "Falha no disparo manual",
+          description: data.error || "Ocorreu um erro ao processar as ofertas.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message,
+        variant: "destructive"
+      })
+    } finally {
+      setTriggeringSundayUpsell(false)
     }
   }
 
@@ -2195,10 +2357,26 @@ export default function WhatsappAutomation() {
     const fmtPending = pendingAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
     const isPreReserva = targetRes.status === "pre_reserva"
 
+    // Cálculo dinâmico para Oferta de Domingo Sem Pressa (Requisito R1 / Milestone 2)
+    const normalDailyRate = Number(targetRes.dailyRate) > 0
+      ? Number(targetRes.dailyRate)
+      : (Number(targetRes.totalAmount) > 0 ? Number(targetRes.totalAmount) / 2 : 250)
+    const promoPrice = Number(sundayUpsellPrice) || 90
+    const savings = Math.max(0, normalDailyRate - promoPrice)
+
+    const fmtNormal = normalDailyRate.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+    const fmtPromo = promoPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+    const fmtSavings = savings.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+
     const map: Record<string, string> = {
       "{{nome_hospede}}": targetRes.guestName || "Hóspede",
       "{{primeiro_nome}}": firstName,
-            "{{telefone_hospede}}": targetRes.guestPhone || "(22) 99887-7665",
+      "{{telefone_hospede}}": targetRes.guestPhone || "(22) 99887-7665",
+      "{{valor_normal}}": fmtNormal,
+      "{{valor_promocional}}": fmtPromo,
+      "{{economia}}": fmtSavings,
+      "{{tempo_validade_pix}}": "30 minutos",
+      "{{codigo_pix_copia_e_cola}}": `00020126580014br.gov.bcb.pix013647964813000165520400005303986540${promoPrice.toFixed(2)}5802BR5919CORPFLATS HOSPEDAGEM6014CAMPOS GOYTACAZ62070503***6304ABCD`,
       "{{nome_solicitante}}": targetRes.requesterInfo?.name || targetRes.companyName || targetRes.guestName || "Maria (Solicitante)",
       "{{primeiro_nome_solicitante}}": (targetRes.requesterInfo?.name || targetRes.guestName || "Maria").split(" ")[0],
       "{{telefone_solicitante}}": targetRes.requesterInfo?.phone || targetRes.guestPhone || "(22) 99112-3344",
@@ -4359,6 +4537,391 @@ export default function WhatsappAutomation() {
                 </Button>
               </div>
             </div>
+
+            {/* ════════════════════════════════════════════════════════════════════
+                DESTAQUE EXECUTIVO: OFERTA DE DOMINGO SEM PRESSA (REQUISITO R1)
+            ════════════════════════════════════════════════════════════════════ */}
+            {(() => {
+              const guestScheduleCh = zapiChannels?.guest_schedule || {}
+              const isGuestSchedulePaused = guestScheduleCh.enabled === false
+              const isGuestScheduleTestMode = Boolean(guestScheduleCh.testMode)
+
+              const previewRes = selectedPreviewResCode !== "sample"
+                ? (reservations.find(r => r.code === selectedPreviewResCode || String(r.id) === selectedPreviewResCode) || null)
+                : null
+
+              const sampleDailyRate = previewRes
+                ? (Number(previewRes.dailyRate) > 0
+                    ? Number(previewRes.dailyRate)
+                    : (Number(previewRes.totalAmount) > 0 ? Number(previewRes.totalAmount) / 2 : 250))
+                : 250
+
+              const sampleSavings = Math.max(0, sampleDailyRate - sundayUpsellPrice)
+
+              return (
+                <Card className={`rounded-2xl border-2 transition-all shadow-sm overflow-hidden ${
+                  sundayUpsellEnabled 
+                    ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/5 via-background to-background dark:border-emerald-500/30"
+                    : "border-amber-500/40 bg-gradient-to-br from-amber-500/5 via-background to-background dark:border-amber-500/30 opacity-90"
+                }`}>
+                  {/* Header com Ícone, Título, Badges e Master Switch */}
+                  <CardHeader className="p-5 border-b bg-card/60 backdrop-blur-xs">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <div className={`p-2.5 rounded-2xl shrink-0 ${
+                          sundayUpsellEnabled
+                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                        }`}>
+                          <Sparkles className="w-6 h-6 animate-pulse" />
+                        </div>
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <CardTitle className="text-base sm:text-lg font-black text-foreground">
+                              Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)
+                            </CardTitle>
+                            {/* Dynamic visual badge: AUTOMAÇÃO ATIVA (emerald) vs AUTOMAÇÃO PAUSADA (amber) */}
+                            <Badge 
+                              variant="outline" 
+                              className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 ${
+                                sundayUpsellEnabled 
+                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700" 
+                                  : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                              }`}
+                            >
+                              {sundayUpsellEnabled ? "AUTOMAÇÃO ATIVA" : "AUTOMAÇÃO PAUSADA"}
+                            </Badge>
+                            <Badge variant="secondary" className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300">
+                              Canal #1 • Régua Hóspedes
+                            </Badge>
+                            <Badge variant="secondary" className="text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-300">
+                              🕒 Sábados às 19:00h
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px] font-semibold">
+                              ⏳ Hold Silencioso de 30min
+                            </Badge>
+                          </div>
+                          <CardDescription className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                            Dispara automaticamente aos sábados às 19:00h para hóspedes com check-out no domingo às 12:00h, oferecendo saída livre e pernoite bônus até segunda às 12:00h por tarifa promocional com cobrança PIX instantânea.
+                          </CardDescription>
+                        </div>
+                      </div>
+
+                      {/* Master Switch Toggle */}
+                      <div className="flex items-center gap-3 self-end lg:self-center bg-background/80 dark:bg-slate-900/80 p-2.5 px-4 rounded-xl border shadow-xs">
+                        <div className="text-right">
+                          <Label htmlFor="sunday-upsell-master-switch" className="text-xs font-black cursor-pointer block text-foreground">
+                            {sundayUpsellEnabled ? "Automação Ativa" : "Automação Pausada"}
+                          </Label>
+                          <span className="text-[10px] text-muted-foreground">
+                            {sundayUpsellEnabled ? "Disparos automáticos ativos" : "Envios suspensos no cron"}
+                          </span>
+                        </div>
+                        <Switch
+                          id="sunday-upsell-master-switch"
+                          checked={sundayUpsellEnabled}
+                          disabled={savingSundayUpsell}
+                          onCheckedChange={(checked) => {
+                            setSundayUpsellEnabled(checked)
+                            handleSaveSundayUpsellConfig({ enabled: checked })
+                          }}
+                          className="data-[state=checked]:bg-emerald-600 scale-110"
+                        />
+                      </div>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent className="p-5 space-y-4">
+                    {/* Alertas de Governança do Canal #1 */}
+                    {isGuestSchedulePaused && (
+                      <div className="p-3 rounded-xl border border-red-200 bg-red-50/50 dark:border-red-900/50 dark:bg-red-950/30 text-red-800 dark:text-red-300 text-xs flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                        <span>
+                          <strong>⚠️ Atenção:</strong> O <strong>Canal #1 (Régua Hóspedes - guest_schedule)</strong> está <strong>pausado</strong> globalmente na Central de Canais. As ofertas de domingo não serão enviadas aos hóspedes até que o canal seja reativado na aba <em>🎛️ Canais & Whitelist</em>.
+                        </span>
+                      </div>
+                    )}
+                    {!isGuestSchedulePaused && isGuestScheduleTestMode && (
+                      <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>
+                          <strong>ℹ️ Modo Teste Ativo no Canal #1:</strong> As ofertas (automáticas ou por disparo manual) serão enviadas <strong>exclusivamente</strong> para os telefones autorizados na Whitelist do canal ({guestScheduleCh?.whitelist?.join(", ") || "nenhum cadastrado"}), garantindo segurança para testes.
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Grid de Configurações: Preço, Diária de Referência e Ações */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Campo 1: Valor Promocional configurável (sundayUpsellPrice) */}
+                      <div className="p-4 rounded-xl border bg-card/80 space-y-2 flex flex-col justify-between">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="sunday-upsell-price-input" className="text-xs font-black flex items-center gap-1.5 text-foreground">
+                            <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                            Valor Promocional da Oferta (`sundayUpsellPrice`)
+                          </Label>
+                          <div className="flex items-center gap-2">
+                            <div className="relative flex-1">
+                              <span className="absolute left-3 top-2 text-xs font-bold text-muted-foreground">R$</span>
+                              <Input
+                                id="sunday-upsell-price-input"
+                                type="number"
+                                step="5"
+                                min="10"
+                                value={sundayUpsellPrice}
+                                onChange={(e) => setSundayUpsellPrice(Math.max(0, Number(e.target.value) || 0))}
+                                className="pl-9 h-9 font-mono font-bold text-sm bg-background border-border"
+                              />
+                            </div>
+                            <Button
+                              size="sm"
+                              disabled={savingSundayUpsell}
+                              onClick={() => handleSaveSundayUpsellConfig({ price: sundayUpsellPrice })}
+                              className="h-9 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                            >
+                              {savingSundayUpsell ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                              Salvar
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-snug">
+                          Cobrado via PIX para garantir saída livre no domingo e estadia até segunda às 12:00h.
+                        </p>
+                      </div>
+
+                      {/* Campo 2: Tarifa Normal de Referência (Cálculo Dinâmico de Economia) */}
+                      <div className="p-4 rounded-xl border bg-card/80 space-y-1.5 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black flex items-center gap-1.5 text-foreground">
+                              <Sliders className="w-3.5 h-3.5 text-blue-500" />
+                              Tarifa Normal & Economia
+                            </span>
+                            <Badge variant="outline" className="text-[10px] font-bold text-blue-600 border-blue-300">
+                              Dinâmica PMS
+                            </Badge>
+                          </div>
+                          <div className="mt-2 space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">Diária de Referência (`valor_normal`):</span>
+                              <span className="font-mono font-bold text-foreground">
+                                {sampleDailyRate.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">Valor Oferta (`valor_promocional`):</span>
+                              <span className="font-mono font-bold text-emerald-600">
+                                {sundayUpsellPrice.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs pt-1 border-t">
+                              <span className="font-semibold text-foreground">Economia Destacada (`economia`):</span>
+                              <span className="font-mono font-black text-emerald-600">
+                                {sampleSavings.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground leading-snug">
+                          Calculada dinamicamente com base na diária da reserva atual do hóspede (`dailyRate` ou `totalAmount / noites`).
+                        </p>
+                      </div>
+
+                      {/* Campo 3: Governança do Canal #1 e Ações de Disparo */}
+                      <div className="p-4 rounded-xl border bg-card/80 flex flex-col justify-between space-y-2">
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black flex items-center gap-1 text-foreground">
+                              <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                              Governança Canal #1
+                            </span>
+                            <Badge 
+                              variant="outline" 
+                              className={`text-[10px] font-bold ${
+                                isGuestSchedulePaused 
+                                  ? "border-red-300 text-red-600" 
+                                  : isGuestScheduleTestMode 
+                                  ? "border-amber-300 text-amber-700 bg-amber-50/50" 
+                                  : "border-indigo-300 text-indigo-700 bg-indigo-50/50"
+                              }`}
+                            >
+                              {isGuestSchedulePaused ? "Canal Pausado" : isGuestScheduleTestMode ? "Modo Teste (Whitelist)" : "Canal #1 Ativo"}
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Envios roteados exclusivamente pela <strong>Régua de Hóspedes (`guest_schedule`)</strong> com hold de 30min e expiração silenciosa.
+                          </p>
+                        </div>
+
+                        {/* Botão de Disparo Manual / Teste e Alternador de Prévia */}
+                        <div className="pt-2 flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={triggeringSundayUpsell || !sundayUpsellEnabled}
+                            onClick={handleTriggerSundayUpsellNow}
+                            className="flex-1 h-8 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 shadow-xs"
+                          >
+                            {triggeringSundayUpsell ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                Processando Elegibilidade...
+                              </>
+                            ) : (
+                              <>
+                                <Zap className="w-3 h-3 text-amber-300" />
+                                ⚡ Disparo Manual / Teste
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowSundayUpsellPreview(!showSundayUpsellPreview)}
+                            className="h-8 text-xs font-bold gap-1 text-muted-foreground hover:text-foreground"
+                          >
+                            <Eye className="w-3 h-3" />
+                            {showSundayUpsellPreview ? "Ocultar" : "Ver 2 Balões"}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Prévia ao Vivo dos 2 Balões de WhatsApp (Colapsável) */}
+                    {showSundayUpsellPreview && (
+                      <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/20 dark:bg-emerald-950/10 space-y-3 animate-in fade-in-50">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <MessageSquare className="w-4 h-4 text-emerald-600" />
+                            <span className="text-xs font-bold text-foreground">
+                              Simulação de Envio no WhatsApp do Hóspede (2 Balões Consecutivos)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-300 font-bold">
+                              Delay simulado: ~2 segundos
+                            </Badge>
+                            <Badge variant="secondary" className="text-[10px] font-bold">
+                              Reserva Base: {selectedPreviewResCode === "sample" ? "Exemplo (Carlos Silva - Flat 113)" : selectedPreviewResCode}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          {/* Mockup Balão 1 */}
+                          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl rounded-tl-xs shadow-xs border border-emerald-100 dark:border-emerald-900/40 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                                Balão 1 • Cópia Persuasiva & Economia
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">Sábado 19:00</span>
+                            </div>
+                            <p className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed">
+                              {renderPreviewText(
+                                "Olá, *{{primeiro_nome}}*! Tudo bem? Esperamos que esteja aproveitando muito sua estadia no *Flat {{quarto}}* do *CorpFlats Soho Residence*! ✨\n\n" +
+                                "Temos uma *oportunidade exclusiva* para o seu domingo:\n\n" +
+                                "Que tal aproveitar seu domingo inteiro sem pressa de ir embora, curtir a cidade, descansar e só liberar o flat na *segunda-feira até às 12:00h*? 🏖️\n\n" +
+                                "A diária padrão para esse período é de *{{valor_normal}}*, mas liberamos para você agora por apenas *{{valor_promocional}}* (uma economia de *{{economia}}*)! 🎁\n\n" +
+                                "Garantimos um bloqueio temporário exclusivo de *30 minutos* no sistema para o seu flat.\n\n" +
+                                "Para confirmar seu domingo sem pressa, basta efetuar o pagamento do PIX abaixo nos próximos 30 minutos:"
+                              )}
+                            </p>
+                            <div className="text-right text-[10px] text-muted-foreground flex items-center justify-end gap-1">
+                              <span>19:00</span>
+                              <CheckCheck className="w-3 h-3 text-sky-500 inline" />
+                            </div>
+                          </div>
+
+                          {/* Mockup Balão 2 */}
+                          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl rounded-tl-xs shadow-xs border border-emerald-100 dark:border-emerald-900/40 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black text-purple-700 dark:text-purple-400 uppercase tracking-wider">
+                                Balão 2 • Chave PIX Copia e Cola Isolada (1 Toque)
+                              </span>
+                              <Badge variant="outline" className="text-[10px] font-mono text-purple-600 border-purple-200">
+                                Zero Texto Extra
+                              </Badge>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground leading-tight">
+                              O código PIX é enviado em um balão separado exclusivo para que o hóspede possa copiar com apenas 1 toque no celular, sem necessidade de selecionar ou editar texto.
+                            </p>
+                            <div className="p-2.5 rounded-lg bg-muted/60 font-mono text-[11px] text-foreground break-all select-all border border-border">
+                              {renderPreviewText("{{codigo_pix_copia_e_cola}}")}
+                            </div>
+                            <div className="text-right text-[10px] text-muted-foreground flex items-center justify-end gap-1">
+                              <span>19:00</span>
+                              <CheckCheck className="w-3 h-3 text-sky-500 inline" />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Caixa Expansível de Resultados do Último Disparo Manual */}
+                    {sundayUpsellLastRun && (
+                      <div className="p-3.5 rounded-xl border bg-muted/40 text-xs space-y-2">
+                        <div className="flex items-center justify-between font-bold">
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-foreground">
+                              Última Execução: {new Date(sundayUpsellLastRun.executedAt).toLocaleString("pt-BR")}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary" className="text-[10px] font-bold">
+                              {sundayUpsellLastRun.dispatchedCount} Disparados
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px]">
+                              {sundayUpsellLastRun.skippedCount} Ignorados
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setShowLastRunDetails(!showLastRunDetails)}
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                            >
+                              {showLastRunDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            </Button>
+                          </div>
+                        </div>
+
+                        {showLastRunDetails && sundayUpsellLastRun.results && sundayUpsellLastRun.results.length > 0 && (
+                          <div className="space-y-1.5 pt-1">
+                            {sundayUpsellLastRun.results.map((r, i) => (
+                              <div key={i} className="flex flex-col sm:flex-row sm:items-center justify-between p-2 rounded-lg bg-background border text-[11px] gap-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="font-mono text-[10px]">
+                                    Flat {r.flatNumber}
+                                  </Badge>
+                                  <span className="font-semibold text-foreground">{r.guestName}</span>
+                                  {r.promoPrice && (
+                                    <span className="text-muted-foreground font-mono">
+                                      (R$ {Number(r.promoPrice).toFixed(2)})
+                                    </span>
+                                  )}
+                                </div>
+                                <div>
+                                  {r.status === "sent" ? (
+                                    <span className="text-emerald-600 font-bold flex items-center gap-1">
+                                      <Check className="w-3 h-3" />
+                                      Oferta enviada • Hold 30min {r.holdExpiresAt ? `(expira ${new Date(r.holdExpiresAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})` : ""}
+                                    </span>
+                                  ) : (
+                                    <span className="text-amber-600 font-medium">
+                                      Não elegível: {r.reason || "Critérios não atendidos"}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )
+            })()}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {templates.map(tpl => {

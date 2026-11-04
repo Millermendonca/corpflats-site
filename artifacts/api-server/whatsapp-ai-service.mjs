@@ -73,6 +73,7 @@ import {
   gerenciarNotaFiscalNfseTool,
   buildStandardStayDescription,
   notificarAdministradorTool,
+  ofertarDomingoSemPressaTool,
   ALL_AGENT_TOOLS,
   getToolsForState,
   getGeminiFunctionDeclarationsForState,
@@ -107,6 +108,7 @@ export {
   gerenciarNotaFiscalNfseTool,
   buildStandardStayDescription,
   notificarAdministradorTool,
+  ofertarDomingoSemPressaTool,
   ALL_AGENT_TOOLS,
   getToolsForState,
   getGeminiFunctionDeclarationsForState,
@@ -936,6 +938,7 @@ export function getBotActionsSettings(db) {
         enviar_midia_unidade: s.allowedActions?.enviar_midia_unidade !== false,
         consultar_achados_e_perdidos: s.allowedActions?.consultar_achados_e_perdidos !== false,
         gerenciar_nota_fiscal_nfse: s.allowedActions?.gerenciar_nota_fiscal_nfse !== false,
+        ofertar_domingo_sem_pressa: s.allowedActions?.ofertar_domingo_sem_pressa !== false,
         ...(s.allowedActions || {})
       },
       preReservationHoldMinutes: Number(s.preReservationHoldMinutes) || 30,
@@ -975,7 +978,8 @@ export function getBotActionsSettings(db) {
       processar_cancelamento: true,
       enviar_midia_unidade: true,
       consultar_achados_e_perdidos: true,
-      gerenciar_nota_fiscal_nfse: true
+      gerenciar_nota_fiscal_nfse: true,
+      ofertar_domingo_sem_pressa: true
     },
     preReservationHoldMinutes: 30,
     handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano."
@@ -6951,7 +6955,7 @@ export function prepareAgenticPreAnalysis({
   if (analysis.type === "GREETING_ONLY") {
     preAnalysisDirective = `- POSTURA DE ESCUTA ATIVA (MEMÓRIA SILENCIOSA): O hóspede enviou APENAS uma saudação ("${queryText}"). Cumprimente-o pelo nome de forma calorosa e pergunte como pode ajudar. NÃO despeje dados da reserva, NÃO cobre check-out, NÃO envie links não solicitados!`;
   } else if (isSemanticToolHandledDemand) {
-    preAnalysisDirective = `- AUTONOMIA DE TOOL CALLING ATIVA: O hóspede solicitou uma operação suportada pelas suas ferramentas semânticas (\`estender_estadia\`, \`alterar_datas_reserva\`, \`solicitar_early_checkin\`, \`solicitar_late_checkout\`, \`solicitar_limpeza_extra\`, \`abrir_chamado_manutencao\`, \`gerenciar_nota_fiscal_nfse\`, \`processar_cancelamento\`). Acione a ferramenta correspondente imediatamente! Se o hóspede pediu para estender/prorrogar a estadia e ainda não disse a data de saída, chame \`estender_estadia\` com \`nova_data_checkout: ""\` ou pergunte diretamente até qual data ele deseja ficar.`;
+    preAnalysisDirective = `- AUTONOMIA DE TOOL CALLING ATIVA: O hóspede solicitou uma operação suportada pelas suas ferramentas semânticas (\`estender_estadia\`, \`alterar_datas_reserva\`, \`solicitar_early_checkin\`, \`solicitar_late_checkout\`, \`ofertar_domingo_sem_pressa\`, \`solicitar_limpeza_extra\`, \`abrir_chamado_manutencao\`, \`gerenciar_nota_fiscal_nfse\`, \`processar_cancelamento\`). Acione a ferramenta correspondente imediatamente! Se o hóspede pediu para estender/prorrogar a estadia e ainda não disse a data de saída, chame \`estender_estadia\` com \`nova_data_checkout: ""\` ou pergunte diretamente até qual data ele deseja ficar.`;
   } else if (isCheckoutDone) {
     preAnalysisDirective = `- ATENÇÃO: O check-out da reserva ${guestContext?.reservation?.code || ""} (Flat ${guestContext?.flatNumber || "N/A"}) JÁ FOI CONCLUÍDO! Nunca peça para desocupar o quarto até 12h nem envie link de check-out.`;
   } else if (unmetDemand) {

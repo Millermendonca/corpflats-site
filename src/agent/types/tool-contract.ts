@@ -18,6 +18,19 @@ export interface DadosHospedeSessao {
   telefone?: string;
 }
 
+export interface OfertaDomingoSemPressaSessao {
+  ofertada: boolean;
+  status: 'PENDENTE_PAGAMENTO' | 'HOLD_EXPIRADO' | 'CONFIRMADA_PAGA';
+  data_envio?: string;
+  valor_promocional: number;
+  valor_normal: number;
+  economia: number;
+  bonus_segunda_ate: string;
+  hold_expirado: boolean;
+  hold_expira_em?: string;
+  codigo_pix_copia_e_cola?: string;
+}
+
 export interface ReservaAtivaSessao {
   id: string;
   reserva_id?: string;
@@ -32,6 +45,7 @@ export interface ReservaAtivaSessao {
   senha_fechadura?: string;
   wifi_rede?: string;
   wifi_senha?: string;
+  oferta_domingo_sem_pressa?: OfertaDomingoSemPressaSessao;
 }
 
 export interface ContextoSessaoInjetado {

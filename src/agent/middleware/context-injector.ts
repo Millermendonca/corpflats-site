@@ -185,6 +185,29 @@ export function injectSessionContext(
       wifi_rede: `apto ${flatNum}`,
       wifi_senha: wifiPassword,
     };
+
+    if (sourceRes.pendingSundayUpsell || sourceRes.sundayUpsellOffer) {
+      const offer = sourceRes.pendingSundayUpsell || sourceRes.sundayUpsellOffer;
+      const holdExp = offer.expiresAt || offer.holdExpiresAt ? new Date(offer.expiresAt || offer.holdExpiresAt).getTime() : 0;
+      const isExpired = holdExp > 0 && Date.now() > holdExp;
+      const isPaid = offer.status === 'paid' || offer.status === 'confirmed_paid' || sourceRes.hasSundayUpsell === true || sourceRes.sundayUpsellPaid === true;
+      const promoPrice = Number(offer.promotionalPrice || offer.sundayUpsellPrice || 90.0);
+      const normalRate = Number(offer.normalDailyRate || offer.normalRate || sourceRes.dailyRate || 250.0);
+      const economia = Math.max(0, normalRate - promoPrice);
+
+      reservaSessao.oferta_domingo_sem_pressa = {
+        ofertada: true,
+        status: isPaid ? 'CONFIRMADA_PAGA' : (isExpired ? 'HOLD_EXPIRADO' : 'PENDENTE_PAGAMENTO'),
+        data_envio: offer.createdAt || offer.offeredAt || offer.sentAt,
+        valor_promocional: promoPrice,
+        valor_normal: normalRate,
+        economia,
+        bonus_segunda_ate: offer.bonusUntil || offer.targetCheckoutTime || '12:00',
+        hold_expirado: isExpired && !isPaid,
+        hold_expira_em: offer.expiresAt || offer.holdExpiresAt,
+        codigo_pix_copia_e_cola: isExpired && !isPaid ? undefined : (offer.pixCopiaECola || offer.pix_copia_e_cola),
+      };
+    }
   }
 
   return {

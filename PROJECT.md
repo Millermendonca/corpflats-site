@@ -1,59 +1,67 @@
-# Project: Guest-Flow-Manager Performance & Stability Optimizations (Priorities 1 to 3)
+# Project: Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)
 
 ## Architecture
-Guest-Flow-Manager is a hospitality operations platform for CorpFlats.
-- **Frontend**: Vite + React SPA in `artifacts/limpeza/` with Wouter routing and TanStack Query. Built output is emitted to `artifacts/limpeza/dist/public/` (`index.html`, `assets/index.js`, `assets/index.css`, chunked JS files).
-- **Backend**: Express-based Node.js monolith with dual twin files: `artifacts/api-server/demo-server.mjs` (booted via `server.mjs`) and mirror `scripts/demo-server.mjs`. Integrates in-memory JSON state synchronized to PostgreSQL `system_store (key='db_state')`.
+O Guest-Flow-Manager é a plataforma de gestão de hotelaria e locação para CorpFlats.
+- **Frontend**: Vite + React SPA em `artifacts/limpeza/` com roteamento Wouter. A aba `⚡ Régua Automática` em `artifacts/limpeza/src/pages/whatsapp-automation.tsx` fornece os controles operacionais e simulação em tempo real para o ciclo do hóspede.
+- **Backend & Serviços**: Monolito Node.js Express com paridade estrita SHA-256 entre `artifacts/api-server/` e `scripts/`. O servidor principal `demo-server.mjs` gerencia o estado do PMS, reservas e webhooks de pagamento (Banco Inter).
+- **Z-API WhatsApp Service**: `artifacts/api-server/zapi-service.mjs` gerencia a governança dos 7 canais independentes (incluindo o Canal #1 `guest_schedule`), filas de envio, templates de WhatsApp e o runner contínuo de background.
+- **IA Sofia & Arquitetura de Agente**: `artifacts/api-server/agent-architecture.mjs`, `whatsapp-ai-service.mjs` e `src/agent/` implementam a inteligência conversacional autônoma da Sofia baseada em Tool Calling determinístico conforme a Constituição do AGENTS.md.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Smart Asset Caching | Server headers in `demo-server.mjs`: `public, max-age=31536000, immutable` for hashed chunks; `no-cache` + ETag for unhashed (`index.js`, `index.css`); `no-store` strictly for `index.html` and `sw.js`. | M1 | Survey / R1 |
-| 2 | Vite Chunking Config | Configure Rollup output in `vite.config.ts`: `entryFileNames: 'assets/index.js'` and `chunkFileNames: 'assets/[name]-[hash].js'`. | M1 | Survey / R1 |
-| 3 | App.tsx Code Splitting | Convert 15 heavy operational pages in `artifacts/limpeza/src/App.tsx` to `lazyWithRetry`, keeping `Login` and `NotFound` static. Drops initial `index.js` from 2.4 MB to ~250 KB. | M1 | Survey / R1 |
-| 4 | Non-blocking Route Guards | Session cache (`gfm_auth_user_session_v1`) pre-hydrating TanStack Query on boot + `useSessionUser()` and `.preload()` on route components to download chunks in parallel with session validation. | M1 | Survey / R1 |
-| 5 | PMS Calendar On-Demand Mount | In `floating-new-reservation.tsx`, replace static import of `PmsCalendar` with `React.lazy`, mount on-demand only when `isModalMounted` is true with `autoOpenNewRes`, and unmount after a 300ms transition delay. | M2 | Survey / R2 |
-| 6 | PMS Calendar Polling & Tab Pause | In `pms-calendar.tsx`, reduce polling from 4s to 12s, clear interval when tab is hidden (`document.hidden`), resume on focus, and deactivate polling & initial fetch when `modalOnly && !resModalOpen`. | M2 | Survey / R2 |
-| 7 | PMS Calendar Heavy Computations Guard | In `pms-calendar.tsx`, wrap `daysInView`, `gridTemplateColumns`, `totalGridMinWidth`, `dayLayoutMap`, and filter metrics (`reservationsTodayWithBf`, `displayedFlats`, etc.) in `useMemo` with early exit returning empty/0 when `modalOnly`. | M2 | Survey / R2 |
-| 8 | Guest Reconcile Cooldown & Dirty Flag | In `demo-server.mjs`, remove synchronous `reconcileAndMergeGuests` from GET requests (`/api/pms/guests`, etc.) using a 60s cooldown and dirty flag (`isGuestReconciliationDirty`). | M3 | Survey / R2 |
-| 9 | Universal Integrity Cooldown & Async Save | In `demo-server.mjs`, remove synchronous `reconcileUniversalIntegrity` from GET requests (`/api/flats`, `/api/reservations/checkouts`) using a 30s cooldown and dirty flag, replacing synchronous `saveDatabase()` with `setImmediate`. | M3 | Survey / R2 |
-| 10 | RequestsForDate Memoization & Flat Status Batching | In `demo-server.mjs`, add a 3-second memoization cache (`requestsForDateCache`) to `getRequestsForDate` and pass precomputed daily requests in `getFlatRealtimeStatus` from `GET /api/flats`. | M3 | Survey / R2 |
-| 11 | O(1) Periodic Task & Housekeeping Regularization | In `demo-server.mjs`, index `periodicExecutions` by `${taskId}_${flatId}`, index reservations by flat, and add a once-per-day guard to `regularizeHousekeepingPreventiveTasks`. | M3 | Survey / R2 |
-| 12 | flushPgState Event Loop Yield & Surrogate Fast-Path | In `demo-server.mjs`, add fast-path check in `sanitizeJsonSerialized` (bypassing backtracking regex when surrogate-free), yield event loop via `setImmediate` before CPU/IO steps, and add GC hints. | M3 | Survey / R3 |
-| 13 | Residual Base64 Detection & Pruning Optimization | In `demo-server.mjs`, detect pure Base64 strings in `walkAndOffloadResidualDataUrls`, yield to event loop during tree traversal, pre-extract sort keys in `pruneDatabase()`, and truncate deep audit log details. | M3 | Survey / R3 |
-| 14 | Build, Verification & Version Control | Verify `npm run build` in `artifacts/limpeza` produces valid `dist/`, verify strictly targeted tests, commit with `dist/` included, and `git push` to remote origin. | M4 | Survey / R4 |
+| 1 | UI do Painel Régua Automática | Card de controle em `whatsapp-automation.tsx` com master switch, input de `sundayUpsellPrice`, cálculo de diária de referência `valor_normal` e `{{economia}}`, vinculação ao Canal #1 (`guest_schedule`), live preview dos 2 balões e botão de disparo manual/teste. | M2 | R1 |
+| 2 | Endpoints de Configuração e Disparo Manual | Rotas `GET /api/whatsapp/sunday-upsell/config`, `POST /api/whatsapp/sunday-upsell/config` e `POST /api/whatsapp/sunday-upsell/trigger` para gerenciamento do estado e execução sob demanda em validação. | M1 | R1, R2 |
+| 3 | Gatilho Agendado aos Sábados 19h e Filtro de Elegibilidade | Verificação semanal automática às 19:00h de sábado no fuso de Brasília pelo runner de 60s em `zapi-service.mjs`, selecionando reservas ativas/hospedadas com check-out no domingo às 12:00h. | M1 | R2 |
+| 4 | Motor de Disponibilidade e Fair-Share | Verificação de disponibilidade domingo-segunda: (1) flat vago; (2) flat com entrada no domingo remanejável via `selectFairShareFlat`; (3) bloqueio se o condomínio estiver 100% ocupado. | M1 | R2 |
+| 5 | Hold Temporário de 30min e Expiração Silenciosa | Criação de bloqueio temporário via `pendingSundayUpsell` e `pendingModification` (`isSilentUpsellHold: true`) com cobrança PIX gerada. Expiração automática após 30min sem pagamento sem envio de WhatsApp e preservando a reserva original no domingo às 12h. | M1 | R3 |
+| 6 | Confirmação Webhook PIX e Atualização Operacional | Interceptação do pagamento no webhook do Banco Inter em `demo-server.mjs`, extensão do check-out no PMS para segunda 12h, reagendamento da limpeza em `db.cleaningRequests` de domingo para segunda, remanejamento da reserva entrante para o flat alternativo e disparo da mensagem de confirmação do R4. | M1 | R4 |
+| 7 | Disparo em 2 Balões no Canal #1 | Envio sequencial de 2 balões com delay de digitação (Balão 1: cópia comercial persuasiva com economia; Balão 2: exclusivamente o código PIX Copia e Cola) e registro do template `tpl_sunday_upsell`. | M1 | R5 |
+| 8 | Sincronia Sofia AI e Tool Dedicada | Injeção de contexto `oferta_domingo_sem_pressa` em `tool-contract.ts` e `context-injector.ts`, diretrizes em `in-stay.prompt.ts`, e criação da tool `src/agent/tools/ofertar-domingo-sem-pressa.tool.ts` (AGENTS.md compliant) para simulação e reemissão com novo hold. | M1 | R5 |
+| 9 | Integração, Build e Paridade Twin-Server | Compilação Vite em `artifacts/limpeza` (`npm run build`), sincronização SHA-256 de `artifacts/api-server/` para `scripts/`, teste pontual dedicado e versionamento via git commit & push. | M3 | Verification |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| 1 | M1: Frontend Bundle, Lazy Loading & Cache | Features 1, 2, 3, 4 (`demo-server.mjs` asset caching, `vite.config.ts`, `App.tsx` lazy pages and non-blocking guards) | Survey completed | DONE |
-| 2 | M2: Frontend UI Performance in PMS Components | Features 5, 6, 7 (`floating-new-reservation.tsx` on-demand mount, `pms-calendar.tsx` polling reduction, visibility pause, and computation guards) | Survey completed | DONE |
-| 3 | M3: Backend Latency & Persistence Stability | Features 8, 9, 10, 11, 12, 13 (`demo-server.mjs` and mirror `scripts/demo-server.mjs` reconcile cooldowns, requests memoization, O(1) task indexing, `flushPgState` yields/fast-path, Base64 offloading and pruning) | Survey completed | DONE |
-| 4 | M4: Integration, Build Verification & Git Push | Feature 14 (Frontend `npm run build`, targeted tests pass, twin server hash match, git commit and push) | M1, M2, M3 | DONE |
+| 1 | M1: Backend Upsell Engine, Scheduler, Sofia Sync & Webhook | Features 2, 3, 4, 5, 6, 7, 8 (`zapi-service.mjs`, `demo-server.mjs`, `whatsapp-ai-service.mjs`, `agent-architecture.mjs`, `src/agent/tools/ofertar-domingo-sem-pressa.tool.ts`) | Survey completed | DONE |
+| 2 | M2: Frontend UI na Régua Automática & Live Preview | Feature 1 (`artifacts/limpeza/src/pages/whatsapp-automation.tsx`) | M1 | DONE |
+| 3 | M3: Integration, Twin Mirror Parity, Build & Targeted Verification | Feature 9 (Vite build, twin parity `scripts/check-twin-parity.mjs`, targeted unit tests, git commit & push) | M1, M2 | PLANNED |
 
 ## Interface Contracts
 
-### M1 ↔ M2: Floating Button & PMS Calendar Code Splitting
-- In `artifacts/limpeza/src/components/floating-new-reservation.tsx`, `PmsCalendar` MUST be imported dynamically via `React.lazy` (`const PmsCalendarLazy = lazy(() => import('@/pages/pms-calendar'))`).
-- Props passed: `<PmsCalendarLazy modalOnly autoOpenNewRes />` wrapped in `<Suspense fallback={null}>`.
-- Mounted only when `isModalMounted` is true. `App.tsx` imports `PmsCalendar` via `lazyWithRetry`. This ensures Rollup splits `pms-calendar` into its own chunk (`assets/pms-calendar-[hash].js`), keeping `assets/index.js` under ~300 KB.
+### Backend ↔ Frontend API Contract
+- `GET /api/whatsapp/sunday-upsell/config`: Retorna `{ success: true, config: { enabled, sundayUpsellPrice, channelId, triggerTime, triggerDay, holdDurationMinutes }, lastRun }`.
+- `POST /api/whatsapp/sunday-upsell/config`: Recebe `{ enabled, sundayUpsellPrice }` e persiste em `db.sundayUpsellConfig`.
+- `POST /api/whatsapp/sunday-upsell/trigger`: Recebe `{ testMode: true }` e executa a rotina de avaliação de elegibilidade e disparo, retornando `{ success: true, totalEvaluated, eligibleCount, dispatchedCount, results: [...] }`.
 
-### M1 ↔ M3: Static Asset Serving & Twin Server Parity
-- `setSmartAssetCacheHeaders` in `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`:
-  - `fileName === 'index.html' || fileName === 'sw.js'`: `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`
-  - `/-[a-zA-Z0-9_-]{6,}\.(js|mjs|css|...)$/`: `Cache-Control: public, max-age=31536000, immutable`
-  - Unhashed files (`index.js`, `index.css`, `manifest.json`, etc.): `Cache-Control: no-cache` with ETag validation.
-- `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` must maintain 100% hash parity.
+### Scheduler & PMS ↔ Webhook PIX Contract
+- Ao disparar a oferta, a reserva grava:
+  - `pendingSundayUpsell`: `{ txid, pixCopiaECola, promotionalPrice, normalDailyRate, expiresAt, status: "pending_payment", isSilentUpsellHold: true, incomingReservationId, alternateFlatNumber }`
+  - `pendingModification`: `{ status: "awaiting_payment", newCheckoutDate: mondayDate, expiresAt, isSilentUpsellHold: true }`
+- Ao receber `POST /api/pms/inter/webhook` com correspondência em `pendingSundayUpsell.txid`:
+  - `checkoutDate = pendingSundayUpsell.targetCheckoutDate` (segunda-feira).
+  - `checkoutTime = "12:00"`.
+  - `hasSundayUpsell = true`.
+  - Reagendamento em `db.cleaningRequests`: card com `requestDate === sundayDate` passa a ter `requestDate = mondayDate`.
+  - Caso `incomingReservationId` exista, a reserva entrante tem `flatId` e `flatNumber` atualizados para `alternateFlatNumber`.
+  - Disparo de mensagem de confirmação: *"Pagamento confirmado! 🎉 Seu check-out livre de domingo (com direito a ficar até segunda às 12h se desejar) já está garantido no sistema. Aproveite seu descanso!"*.
 
-### M3 ↔ Frontend: Zero Breaking Changes on API Schemas
-- Cooldowns and dirty flags on `/api/pms/guests`, `/api/flats`, and `/api/reservations/checkouts` preserve exact existing JSON response schemas.
-- Synchronous `saveDatabase()` triggers replaced with `setImmediate(() => saveDatabase(...))`.
+### Sofia AI ↔ Tool `ofertar_domingo_sem_pressa`
+- `ContextoSessaoInjetado`: `reserva_ativa.oferta_domingo_sem_pressa` injeta status, hold expirado, valores e bônus.
+- Tool `ofertar_domingo_sem_pressa`:
+  - `allowedStates: ['IN_STAY_CONCIERGE']`
+  - `parametersSchema`: `{ confirmacao_hospede: boolean }`
+  - `execute`: Retorna `AgentToolResponse` com `instrucao_para_ia`. Se `confirmacao_hospede === false`, simula e informa viabilidade e valor. Se `true`, gera novo PIX via `generatePixChargeForService`, grava novo hold de 30min (`isSilentUpsellHold: true`) e orienta a resposta da Sofia.
 
 ## Code Layout
-- `artifacts/limpeza/vite.config.ts`: Vite build configuration.
-- `artifacts/limpeza/src/App.tsx`: Root SPA routing, `lazyWithRetry`, route guards.
-- `artifacts/limpeza/src/components/floating-new-reservation.tsx`: Global new reservation button.
-- `artifacts/limpeza/src/pages/pms-calendar.tsx`: PMS calendar matrix, timeline, polling.
-- `artifacts/api-server/demo-server.mjs`: Backend server API routes, database state, persistence.
-- `scripts/demo-server.mjs`: Mirror twin backend server.
-- `artifacts/limpeza/dist/public/`: Production compiled bundle.
+- `artifacts/limpeza/src/pages/whatsapp-automation.tsx`: UI da Régua Automática, card de controle do upsell, live preview.
+- `artifacts/api-server/zapi-service.mjs`: Scheduler de sábado às 19h, motor de elegibilidade e disparo em 2 balões pelo Canal #1, endpoints REST do upsell.
+- `artifacts/api-server/demo-server.mjs`: Estado `db`, varredura de expiração silenciosa, webhook do Banco Inter para confirmação e extensão PMS/governança.
+- `artifacts/api-server/agent-architecture.mjs` & `whatsapp-ai-service.mjs`: Context injection para Sofia e runtime de tool calling.
+- `src/agent/types/tool-contract.ts`: Contrato de tipagem com `oferta_domingo_sem_pressa`.
+- `src/agent/middleware/context-injector.ts`: Injeção de contexto de sessão da Sofia.
+- `src/agent/prompts/in-stay.prompt.ts`: Prompt do concierge com reconhecimento da oferta.
+- `src/agent/tools/ofertar-domingo-sem-pressa.tool.ts`: Tool oficial AGENTS.md compliant para a Sofia.
+- `src/agent/tools/index.ts`: Registro da tool.
+- `scripts/`: Espelho idêntico de runtime dos arquivos `.mjs` de `artifacts/api-server/`.
+- `artifacts/limpeza/dist/`: Bundle compilado de produção.
