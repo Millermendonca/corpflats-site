@@ -267,16 +267,6 @@ export default function AgencyGuestCredential() {
         return;
       }
 
-      if (!docPhotoBase64 && !reservation.hasDocPhoto) {
-        toast({
-          title: "Documento de Identificação obrigatório",
-          description: "Anexe uma foto da galeria, um arquivo PDF ou tire uma foto do documento (RG ou CNH).",
-          variant: "destructive"
-        });
-        setSubmitting(false);
-        return;
-      }
-
       const res = await fetch(`/api/pms/agency-guest-credential/${encodeURIComponent(reservation.code)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -503,7 +493,7 @@ export default function AgencyGuestCredential() {
                 {isGuestSelfIdentifyMode ? (
                   <>
                     O <strong>CorpFlats (Edifício Soho)</strong> opera com liberação antecipada na recepção 24h. Assim que você preencher seu{" "}
-                    <strong>Nome Completo, CPF, WhatsApp, E-mail e anexar seu Documento (foto da galeria, PDF ou câmera)</strong>, sua entrada estará liberada e enviaremos imediatamente para o seu{" "}
+                    <strong>Nome Completo, CPF, WhatsApp e E-mail</strong>, sua entrada estará liberada e enviaremos imediatamente para o seu{" "}
                     <strong>WhatsApp</strong> a confirmação da sua estadia e as instruções de acesso ao flat.
                   </>
                 ) : (
@@ -641,11 +631,11 @@ export default function AgencyGuestCredential() {
                   />
                 </div>
 
-                {/* Anexo do Documento: Galeria / PDF ou Câmera (Sem Inspeção de IA) */}
+                {/* Anexo do Documento: Galeria / PDF ou Câmera (Opcional) */}
                 <div className="sm:col-span-2 space-y-2.5 pt-1">
                   <Label className="text-xs text-slate-200 font-semibold flex items-center gap-1.5">
                     <FileText className="w-3.5 h-3.5 text-teal-400" />
-                    Documento de Identificação (RG, CNH ou Passaporte — Foto da Galeria, PDF ou Câmera) *
+                    Documento de Identificação (RG, CNH ou Passaporte — Opcional)
                   </Label>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

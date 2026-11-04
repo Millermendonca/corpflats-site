@@ -399,7 +399,7 @@ Na recepção do prédio, você apenas se identifica para pegar a chave do flat 
 Confirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* para o(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.
 
 ⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*
-Como ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e Documento*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:
+Como ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e E-mail*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:
 
 👉 {{link_credenciamento_agencia}}
 
@@ -7626,6 +7626,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               tpl.message?.includes("B2B #") ||
               tpl.message?.includes("parceria") ||
               tpl.message?.includes("{{nome_agencia}}") ||
+              tpl.message?.includes("e Documento") ||
               tpl.footer?.includes("B2B"))
           ) {
             tpl.title = defCred.title;

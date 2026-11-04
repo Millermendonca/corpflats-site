@@ -1225,7 +1225,7 @@ export function renderB2bAgencyCredentialRequestEmail({
         ⚠️ IMPORTANTE: LIBERAÇÃO ANTECIPADA OBRIGATÓRIA NA RECEPÇÃO / PORTARIA 24H
       </div>
       <p style="color: #78350F; font-size: 13.5px; margin: 0; line-height: 1.55;">
-        O preenchimento antecipado pelo link abaixo (informando <strong>Nome Completo, CPF, WhatsApp e Documento de Identificação do hóspede</strong>) é <strong>indispensável para gerar a autorização de entrada na portaria do edifício</strong>.<br/><br/>
+        O preenchimento antecipado pelo link abaixo (informando <strong>Nome Completo, CPF, WhatsApp e E-mail do hóspede</strong>) é <strong>indispensável para gerar a autorização de entrada na portaria do edifício</strong>.<br/><br/>
         Ressaltamos gentilmente que <strong>esses dados não podem ser informados apenas na hora no balcão</strong>, pois nossa operação é digital e, sem o cadastro prévio pelo link, o sistema da recepção/portaria não conseguirá localizar a reserva nem autorizar a entrada do hóspede no condomínio.
       </p>
     </div>
@@ -1273,7 +1273,7 @@ export function renderB2bAgencyCredentialRequestEmail({
   const bodyText = [
     `Olá, ${agentName || agencyName}!`,
     `Confirmamos a reserva ${refLabel} para o(a) hóspede ${guestName} no ${buildingName} (${flatDisplay}), período de ${checkinDateBr} a ${checkoutDateBr}.`,
-    `IMPORTANTE: Para gerar a liberação de entrada na recepção/portaria do prédio, é obrigatório o preenchimento antecipado dos dados do hóspede (Nome Completo, CPF, WhatsApp e Documento de Identificação) através do nosso link seguro abaixo. Não é possível informar apenas na hora no balcão, pois sem o cadastro prévio pelo link a portaria não conseguirá localizar a reserva nem autorizar a entrada.`,
+    `IMPORTANTE: Para gerar a liberação de entrada na recepção/portaria do prédio, é obrigatório o preenchimento antecipado dos dados do hóspede (Nome Completo, CPF, WhatsApp e E-mail) através do nosso link seguro abaixo. Não é possível informar apenas na hora no balcão, pois sem o cadastro prévio pelo link a portaria não conseguirá localizar a reserva nem autorizar a entrada.`,
     `Link Seguro para Preenchimento dos Dados do Hóspede (sem exibição de valores financeiros): ${finalCredentialUrl}`,
     `Muito obrigado pela atenção! Equipe CorpFlats`
   ].join("\n\n");

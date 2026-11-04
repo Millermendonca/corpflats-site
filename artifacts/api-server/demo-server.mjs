@@ -33338,17 +33338,13 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       finalDocUrl = await uploadImageToStorage(normalizedDocBase64, `b2b_cred_${r.code}`, db, "guests");
     }
 
-    if (!finalDocUrl) {
-      return res.status(400).json({ error: "O envio do documento de identificação do hóspede (foto ou PDF) é obrigatório." });
-    }
-
     r.guestName = cleanName;
     r.guestPending = false;
     r.guestDocument = cleanDoc;
     r.guestPhone = cleanPhone;
     if (cleanSecPhone) r.guestSecondaryPhone = cleanSecPhone;
     r.guestEmail = cleanEmail;
-    r.docPhotoUrl = finalDocUrl;
+    if (finalDocUrl) r.docPhotoUrl = finalDocUrl;
     if (notes) {
       const labelPrefix = sourceMode === "guest" ? "Identificação Hóspede" : "Credenciamento Solicitante";
       r.receptionNotes = r.receptionNotes
@@ -33369,7 +33365,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
         phone: cleanPhone,
         email: cleanEmail,
         docPhotoUrl: finalDocUrl,
-        hasCompletedCheckin: Boolean(r.guestDocument && cleanPhone && finalDocUrl)
+        hasCompletedCheckin: Boolean(r.guestDocument && cleanPhone)
       }];
     } else {
       r.guests[0] = {
@@ -33379,11 +33375,11 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
         phone: cleanPhone,
         email: cleanEmail || r.guests[0].email || "",
         docPhotoUrl: finalDocUrl || r.guests[0].docPhotoUrl || null,
-        hasCompletedCheckin: Boolean(r.guestDocument && cleanPhone && (finalDocUrl || r.guests[0].docPhotoUrl))
+        hasCompletedCheckin: Boolean(r.guestDocument && cleanPhone)
       };
     }
 
-    if (finalDocUrl && r.guestDocument && cleanPhone) {
+    if (r.guestDocument && cleanPhone) {
       r.preCheckinCompleted = true;
       r.hasPreCheckin = true;
     }
