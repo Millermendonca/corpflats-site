@@ -38135,6 +38135,7 @@ app.post("/api/pms/guests/google-contacts/config", async (req, res) => {
     cfg.accessToken = cleanToken;
     cfg.tokenExpiresAt = Date.now() + (Number(expiresIn || 3599) * 1000);
     cfg._googleContactsFullHealV5 = false;
+    cfg._googleContactsFullHealV6 = false;
 
     try {
       const uRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
@@ -38242,6 +38243,7 @@ app.get("/api/pms/guests/google-contacts/oauth-callback", async (req, res) => {
         cfg.tokenExpiresAt = Date.now() + (Number(tokenData.expires_in || 3599) * 1000);
         cfg.enabled = true;
         cfg._googleContactsFullHealV5 = false;
+        cfg._googleContactsFullHealV6 = false;
 
         try {
           const uRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
