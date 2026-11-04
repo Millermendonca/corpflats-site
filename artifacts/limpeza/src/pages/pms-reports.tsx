@@ -338,7 +338,14 @@ export default function PmsReportsPage() {
                       data.checkins.map((c: any) => (
                         <div key={c.id} className="p-3.5 flex items-center justify-between text-xs hover:bg-muted/20">
                           <div>
-                            <div className="font-bold text-foreground">{c.guestName}</div>
+                            <div className="font-bold text-foreground flex items-center gap-1.5 flex-wrap">
+                              <span>{c.guestName}</span>
+                              {(c.isSmoker || c.smokerGuestAlert || c.guestSmoked) && (
+                                <span className="text-[9px] px-1 py-0.2 rounded bg-rose-600 text-white font-black shrink-0">
+                                  🚬 Fumante
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[11px] text-muted-foreground">
                               Flat <strong>{c.flatNumber}</strong> • Entrada: {c.checkinDate.split('-').reverse().join('/')}
                             </div>
@@ -369,7 +376,14 @@ export default function PmsReportsPage() {
                       data.checkouts.map((c: any) => (
                         <div key={c.id} className="p-3.5 flex items-center justify-between text-xs hover:bg-muted/20">
                           <div>
-                            <div className="font-bold text-foreground">{c.guestName}</div>
+                            <div className="font-bold text-foreground flex items-center gap-1.5 flex-wrap">
+                              <span>{c.guestName}</span>
+                              {(c.isSmoker || c.smokerGuestAlert || c.guestSmoked) && (
+                                <span className="text-[9px] px-1 py-0.2 rounded bg-rose-600 text-white font-black shrink-0">
+                                  🚬 Fumante
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[11px] text-muted-foreground">
                               Flat <strong>{c.flatNumber}</strong> • Saída: {c.checkoutDate.split('-').reverse().join('/')}
                             </div>

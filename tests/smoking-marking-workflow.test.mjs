@@ -12,6 +12,8 @@ const flatCardPath = path.resolve("artifacts/limpeza/src/components/flat-card.ts
 const pmsCalendarPath = path.resolve("artifacts/limpeza/src/pages/pms-calendar.tsx");
 const hoverCardPath = path.resolve("artifacts/limpeza/src/components/reservation-hover-card.tsx");
 const crmGuestsPath = path.resolve("artifacts/limpeza/src/pages/crm-guests.tsx");
+const pmsReportsPath = path.resolve("artifacts/limpeza/src/pages/pms-reports.tsx");
+const liveOpsPath = path.resolve("artifacts/limpeza/src/pages/live-operations-panel.tsx");
 
 // ----------------------------------------------------------------------------
 // 1. Paridade byte-a-byte entre arquivos espelhados (Twin Parity)
@@ -97,6 +99,8 @@ const crmGuestsPath = path.resolve("artifacts/limpeza/src/pages/crm-guests.tsx")
   const pmsSrc = fs.readFileSync(pmsCalendarPath, "utf8");
   const hoverSrc = fs.readFileSync(hoverCardPath, "utf8");
   const crmSrc = fs.readFileSync(crmGuestsPath, "utf8");
+  const pmsReportsSrc = fs.readFileSync(pmsReportsPath, "utf8");
+  const liveOpsSrc = fs.readFileSync(liveOpsPath, "utf8");
 
   assert.ok(
     pmsSrc.includes('data-smoker-alert-badge="true"') && pmsSrc.includes("🚬 Fumante"),
@@ -118,8 +122,16 @@ const crmGuestsPath = path.resolve("artifacts/limpeza/src/pages/crm-guests.tsx")
     crmSrc.includes("🚬 Fumante") || crmSrc.includes("Hóspede Fumante"),
     "CRM de Hóspedes deve exibir o status de fumante no perfil/cadastro do hóspede"
   );
+  assert.ok(
+    pmsReportsSrc.includes("🚬 Fumante") && pmsReportsSrc.includes("isSmoker"),
+    "PMS Reports deve exibir badge de fumante nos relatórios de check-ins/check-outs"
+  );
+  assert.ok(
+    liveOpsSrc.includes('data-smoker-alert-badge="true"') && liveOpsSrc.includes("🚬 Fumante"),
+    "Painel Ao Vivo (Live Operations) deve conter alerta visual de fumante para a equipe"
+  );
 
-  console.log("✅ 3. Verificação estática das sinalizações visuais no PMS, Hover Card e CRM aprovada (R3).");
+  console.log("✅ 3. Verificação estática das sinalizações visuais no PMS, Hover Card, CRM, Relatórios e Painel Ao Vivo aprovada (R3).");
 }
 
 // ----------------------------------------------------------------------------
@@ -391,6 +403,114 @@ async function runRealBackendTests() {
   assert.equal(futureResPhone.isSmoker, true, "Reserva futura com nome abreviado/diferente mas mesmo telefone deve ser correlacionada");
   assert.equal(futureResPhone.smokerGuestAlert, true, "Alerta deve ser ativado na reserva futura correlacionada por telefone");
   console.log("✅ 4.7. Correlação de reservas futuras por telefone/e-mail sem CPF validada com sucesso.");
+
+  // 4.8. Correlação com variação de DDI/DDD no telefone (+55 21 99988-7766 vs (21) 99988-7766)
+  const reqDdi = {
+    id: 706,
+    flatId: 810,
+    flatNumber: "810",
+    requestDate: "2026-11-04",
+    status: "cleaning_now",
+    reservationId: "RES-DDI-1",
+    leavingGuest: "Ariano Suassuna"
+  };
+  testDb.cleaningRequests.push(reqDdi);
+  testDb.reservations.push({
+    id: "RES-DDI-1",
+    code: "RES-DDI-1",
+    flatId: 810,
+    flatNumber: "810",
+    guestName: "Ariano Suassuna",
+    guestPhone: "5581988776655", // Com código de país 55
+    checkinDate: "2026-11-01",
+    checkoutDate: "2026-11-04",
+    status: "confirmada"
+  });
+  testDb.reservations.push({
+    id: "RES-FUTURE-DDI",
+    code: "RES-FUTURE-DDI",
+    flatId: 811,
+    flatNumber: "811",
+    guestName: "A. Suassuna", // Abreviado
+    guestPhone: "81988776655", // Sem código 55
+    checkinDate: "2026-12-20",
+    checkoutDate: "2026-12-25",
+    status: "confirmada"
+  });
+  updateSmokingStatusForCleaning(reqDdi, true, maidUser, "2026-11-04", testDb);
+  const futureResDdi = testDb.reservations.find(r => r.code === "RES-FUTURE-DDI");
+  assert.equal(futureResDdi.isSmoker, true, "Reserva futura com formato telefônico com/sem DDI 55 deve ser correlacionada");
+  console.log("✅ 4.8. Correlação com variação de DDI (+55 81 vs 81) validada com sucesso.");
+
+  // 4.9. Correlação por compatibilidade de nomes com tokens compostos
+  const reqNameCompat = {
+    id: 707,
+    flatId: 812,
+    flatNumber: "812",
+    requestDate: "2026-11-04",
+    status: "cleaning_now",
+    reservationId: "RES-NAME-1",
+    leavingGuest: "Cecília Benevides de Carvalho Meireles"
+  };
+  testDb.cleaningRequests.push(reqNameCompat);
+  testDb.reservations.push({
+    id: "RES-NAME-1",
+    code: "RES-NAME-1",
+    flatId: 812,
+    flatNumber: "812",
+    guestName: "Cecília Benevides de Carvalho Meireles",
+    checkinDate: "2026-11-01",
+    checkoutDate: "2026-11-04",
+    status: "confirmada"
+  });
+  testDb.reservations.push({
+    id: "RES-FUTURE-NAME",
+    code: "RES-FUTURE-NAME",
+    flatId: 813,
+    flatNumber: "813",
+    guestName: "Cecilia Meireles", // Nome resumido
+    checkinDate: "2026-12-10",
+    checkoutDate: "2026-12-14",
+    status: "confirmada"
+  });
+  updateSmokingStatusForCleaning(reqNameCompat, true, maidUser, "2026-11-04", testDb);
+  const futureResName = testDb.reservations.find(r => r.code === "RES-FUTURE-NAME");
+  assert.equal(futureResName.isSmoker, true, "Reserva futura com nome resumido/composto deve ser correlacionada via areGuestNamesCompatible");
+  console.log("✅ 4.9. Correlação por compatibilidade de nomes compostos e acentuação validada com sucesso.");
+
+  // 4.10. Preservação de status de fumo multi-estadias quando há outra estadia anterior com histórico
+  // Carlos fumou na estadia anterior (req1 está true). Agora Carlos tem uma 2ª estadia onde não fumou.
+  // Criamos uma 2ª limpeza (reqCarlosStay2) com fumo = false.
+  const reqCarlosStay2 = {
+    id: 708,
+    flatId: 814,
+    flatNumber: "814",
+    requestDate: "2026-11-05",
+    status: "cleaning_now",
+    reservationId: "RES-CARLOS-STAY2",
+    leavingGuest: "Carlos Drummond de Andrade"
+  };
+  testDb.cleaningRequests.push(reqCarlosStay2);
+  testDb.reservations.push({
+    id: "RES-CARLOS-STAY2",
+    code: "RES-CARLOS-STAY2",
+    flatId: 814,
+    flatNumber: "814",
+    guestId: 77,
+    guestName: "Carlos Drummond de Andrade",
+    guestDocument: "11122233344",
+    checkinDate: "2026-11-04",
+    checkoutDate: "2026-11-05",
+    status: "confirmada"
+  });
+  // Camareira finaliza a 2ª estadia informando "Não fumou"
+  updateSmokingStatusForCleaning(reqCarlosStay2, false, maidUser, "2026-11-05", testDb);
+  // Como req1 (1ª estadia) registrou fumo, o cadastro de Carlos em db.guests e suas reservas futuras devem permanecer com alerta!
+  const guestCarlosAfterStay2 = testDb.guests.find(g => g.id === 77);
+  assert.equal(guestCarlosAfterStay2.isSmoker, true, "Hóspede deve manter status de fumante porque a 1ª estadia registrou fumo");
+  const futureCarlosAfterStay2 = testDb.reservations.find(r => r.code === "RES-FUTURE-0002");
+  assert.equal(futureCarlosAfterStay2.isSmoker, true, "Reserva futura deve preservar o alerta devido ao histórico anterior");
+  console.log("✅ 4.10. Preservação de histórico de fumo multi-estadias validada com sucesso.");
 
   if (httpServer && typeof httpServer.close === "function") {
     httpServer.close();
