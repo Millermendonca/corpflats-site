@@ -5116,7 +5116,15 @@ export function reconcileUniversalIntegrity(incomingState = null) {
 
     // 1.4 Limpezas (União estrita para TODOS os flats)
     if (Array.isArray(incomingState.cleaningRequests)) {
+      const validFlatNumsMerge = new Set((db.flats || []).map(f => String(f.number)).filter(Boolean));
+      const validFlatIdsMerge = new Set((db.flats || []).map(f => Number(f.id)).filter(Boolean));
       incomingState.cleaningRequests.forEach(incReq => {
+        if (!incReq || String(incReq.flatNumber) === "502" || incReq.flatId === 9) return;
+        if (incReq.source === "service_order" && (!incReq.serviceOrderId || String(incReq.requestDate || "") <= "2026-10-15")) return;
+        if (validFlatNumsMerge.size > 0) {
+          const isRealFlat = (incReq.flatNumber && validFlatNumsMerge.has(String(incReq.flatNumber))) || (incReq.flatId && validFlatIdsMerge.has(Number(incReq.flatId)));
+          if (!isRealFlat) return;
+        }
         const incIsInst = Boolean(incReq.isInstructionOnly || incReq.source === "manual_instruction" || incReq.type === "instruction" || incReq.type === "bed_adjustment_only" || incReq.isBedAdjustmentOnly);
         const existingIdx = db.cleaningRequests.findIndex(c => {
           if (c.id && incReq.id && Number(c.id) === Number(incReq.id)) return true;
@@ -5628,8 +5636,18 @@ export function reconcileUniversalIntegrity(incomingState = null) {
   db.flats = (db.flats || []).filter(flat => String(flat.number) !== "502" && flat.id !== 9);
   if (db.flats.length !== flatsBeforeCount) changed = true;
 
+  const validFlatNumsPurge = new Set((db.flats || []).map(f => String(f.number)).filter(Boolean));
+  const validFlatIdsPurge = new Set((db.flats || []).map(f => Number(f.id)).filter(Boolean));
   const cleanReqsBefore = (db.cleaningRequests || []).length;
-  db.cleaningRequests = (db.cleaningRequests || []).filter(c => String(c.flatNumber) !== "502" && c.flatId !== 9 && c.source !== "checkin");
+  db.cleaningRequests = (db.cleaningRequests || []).filter(c => {
+    if (!c || String(c.flatNumber) === "502" || c.flatId === 9 || c.source === "checkin") return false;
+    if (c.source === "service_order" && (!c.serviceOrderId || String(c.requestDate || "") <= "2026-10-15")) return false;
+    if (validFlatNumsPurge.size > 0) {
+      const isRealFlat = (c.flatNumber && validFlatNumsPurge.has(String(c.flatNumber))) || (c.flatId && validFlatIdsPurge.has(Number(c.flatId)));
+      if (!isRealFlat) return false;
+    }
+    return true;
+  });
   if (db.cleaningRequests.length !== cleanReqsBefore) changed = true;
 
   db.flats.forEach(flat => {
@@ -19408,11 +19426,23 @@ function getRequestsForDate(dateStr, isNested = false) {
     getRequestsForDate(getTodayStr(), true);
   }
 
-  // Garante que cleaningRequests existe e não possui registros nulos ou do flat 502
-  db.cleaningRequests = (db.cleaningRequests || []).filter(r => r && (r.flatId || r.flatNumber) && String(r.flatNumber) !== "502" && r.flatId !== 9);
+  // Garante que cleaningRequests existe e não possui registros nulos, de flats inexistentes ou órfãos de testes antigos
+  const validFlatIdsForReq = new Set((db.flats || []).map(f => Number(f.id)).filter(Boolean));
+  const validFlatNumbersForReq = new Set((db.flats || []).map(f => String(f.number)).filter(Boolean));
+  const hasRegisteredFlatsForReq = validFlatNumbersForReq.size > 0;
+  const beforeCleanFilterCount = (db.cleaningRequests || []).length;
+  db.cleaningRequests = (db.cleaningRequests || []).filter(r => {
+    if (!r || (!r.flatId && !r.flatNumber) || String(r.flatNumber) === "502" || r.flatId === 9) return false;
+    if (r.source === "service_order" && (!r.serviceOrderId || String(r.requestDate || "") <= "2026-10-15")) return false;
+    if (hasRegisteredFlatsForReq) {
+      const matchesFlat = (r.flatNumber && validFlatNumbersForReq.has(String(r.flatNumber))) || (r.flatId && validFlatIdsForReq.has(Number(r.flatId)));
+      if (!matchesFlat) return false;
+    }
+    return true;
+  });
   const requestsForDate = [];
   const existingFlatNumbersForDate = new Set();
-  let shouldSaveDb = false;
+  let shouldSaveDb = db.cleaningRequests.length !== beforeCleanFilterCount;
 
   // 1. Identifica flats que estão com hóspede contínuo (STAYOVER) na data consultada
   // Se o hóspede entrou ANTES de dateStr (checkinDate < dateStr) e só sai DEPOIS de dateStr (checkoutDate > dateStr),
@@ -19998,7 +20028,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         if (String(r.flatNumber) !== "509" && r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation && (!currentStayRes || r.requestDate !== currentStayRes.checkoutDate)) return false;
       }
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
-      if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout" && r.source !== "service_order") return false;
+      if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout" && !(r.source === "service_order" && r.serviceOrderId && r.requestDate >= "2026-11-01")) return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
 
       // Descarta cards de checkout órfãos cuja reserva associada na data foi cancelada, no_show ou remarcada
