@@ -3424,9 +3424,11 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     resStatus === "pending_payment" ||
     resStatus === "expirada" ||
     templateId === "tpl_pre_reserva" ||
+    templateId === "tpl_pre_reserva_lembrete" ||
     templateId === "tpl_pre_reserva_expirada" ||
     templateId === "tpl_payment_pending" ||
     triggerEvent === "pre_reservation_created" ||
+    triggerEvent === "pre_reservation_expiring_soon" ||
     triggerEvent === "pre_reservation_expired" ||
     triggerEvent === "payment_pending"
   );
@@ -4053,9 +4055,11 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       resStatus === "pending_payment" ||
       resStatus === "expirada" ||
       templateId === "tpl_pre_reserva" ||
+      templateId === "tpl_pre_reserva_lembrete" ||
       templateId === "tpl_pre_reserva_expirada" ||
       templateId === "tpl_payment_pending" ||
       triggerEvent === "pre_reservation_created" ||
+      triggerEvent === "pre_reservation_expiring_soon" ||
       triggerEvent === "pre_reservation_expired" ||
       triggerEvent === "payment_pending"
     )
@@ -4323,7 +4327,10 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const pendingAmountVal = Math.max(0, Math.round((totalAmountVal - paidAmountVal) * 100) / 100);
   const isFullyPaidVal = pendingAmountVal <= 0.01;
 
-  if (isFullyPaidVal) {
+  const pmRaw = String(reservation?.paymentMethod || "pix").toLowerCase().trim();
+  const isExplicitNonPixMethod = Boolean(pmRaw && !pmRaw.includes("pix") && (pmRaw.includes("cartao") || pmRaw.includes("credit") || pmRaw.includes("debit") || pmRaw.includes("faturado") || pmRaw.includes("vcn")));
+
+  if (isFullyPaidVal || ((tplId === "tpl_pre_reserva_lembrete" || triggerEv === "pre_reservation_expiring_soon") && isExplicitNonPixMethod)) {
     list = list.filter(b => {
       if (!b) return false;
       const bId = String(b.id || "").toLowerCase();
@@ -4333,7 +4340,9 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       }
       return true;
     });
+  }
 
+  if (isFullyPaidVal) {
     list = list.map(b => {
       if (b.id === "btn_pagar" || /ver\s*detalhes\s*&\s*pagar/i.test(String(b.label || ""))) {
         return {
@@ -7664,6 +7673,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           (tpl.channels.includes("booking") || tpl.channels.includes("airbnb")) &&
           !tpl.channels.includes("b2b") &&
           tpl.id !== "tpl_pre_reserva" &&
+          tpl.id !== "tpl_pre_reserva_lembrete" &&
+          tpl.id !== "tpl_pre_reserva_expirada" &&
           tpl.id !== "tpl_payment_pending" &&
           tpl.id !== "tpl_payment_confirmed" &&
           tpl.id !== "tpl_new_reservation_direct"
@@ -11510,6 +11521,7 @@ const SINGLE_DISPATCH_EVENTS = new Set([
   "payment_confirmed",
   "sameday_reservation",
   "pre_reservation_created",
+  "pre_reservation_expiring_soon",
   "pre_reservation_expired",
   "pre_checkin_completed",
   "checkin_completed",
@@ -12676,6 +12688,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     if (!reservation) return;
     if ((reservation.status === "pre_reserva" || reservation.status === "pendente") &&
         eventName !== "pre_reservation_created" &&
+        eventName !== "pre_reservation_expiring_soon" &&
         eventName !== "pre_reservation_expired" &&
         eventName !== "payment_pending" &&
         eventName !== "reservation_cancelled") {
@@ -12812,6 +12825,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "pre_reservation_created") {
       const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
       if (defPre) templates = [defPre];
+    } else if (templates.length === 0 && eventName === "pre_reservation_expiring_soon") {
+      const defPreRem = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva_lembrete" || t.triggerEvent === "pre_reservation_expiring_soon");
+      if (defPreRem) templates = [defPreRem];
     } else if (templates.length === 0 && eventName === "pre_reservation_expired") {
       const defPreExp = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva_expirada" || t.triggerEvent === "pre_reservation_expired");
       if (defPreExp) templates = [defPreExp];
@@ -12966,7 +12982,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     const isSingleFireEvent = SINGLE_DISPATCH_EVENTS.has(eventName);
     const isUpdatedEvent = eventName === "reservation_updated";
     const isReSignPreCheckin = eventName === "pre_checkin_completed" && Boolean(reservation._wasReSignature);
-    const isPreResUpdate = (eventName === "pre_reservation_created" || eventName === "pre_reservation_expired") && Boolean(reservation._isPreReservationUpdate);
+    const isPreResUpdate = (eventName === "pre_reservation_created" || eventName === "pre_reservation_expiring_soon" || eventName === "pre_reservation_expired") && Boolean(reservation._isPreReservationUpdate);
 
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";

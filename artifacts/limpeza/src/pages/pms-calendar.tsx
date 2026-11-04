@@ -19,7 +19,7 @@ import {
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
   LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
-  Download, Upload, FileSpreadsheet, Wrench, Camera, Refrigerator
+  Download, Upload, FileSpreadsheet, Wrench, Camera, Refrigerator, Bell
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 import { useToast } from "@/hooks/use-toast"
@@ -450,6 +450,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [formHoldCustomUnit, setFormHoldCustomUnit] = useState<"minutes" | "hours">("minutes")
   const [formHoldCustomDateTime, setFormHoldCustomDateTime] = useState(() => format(addDays(new Date(), 1), "yyyy-MM-dd'T'12:00"))
   const [formHoldManuallyChosen, setFormHoldManuallyChosen] = useState(false)
+  const [formSendExpirationReminder, setFormSendExpirationReminder] = useState(true)
   const [isReactivatingRes, setIsReactivatingRes] = useState(false)
   const [reactivationFlatSwitchedInfo, setReactivationFlatSwitchedInfo] = useState<string | null>(null)
   const [expiredModalOpen, setExpiredModalOpen] = useState(false)
@@ -527,12 +528,48 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       ? `Hoje (${format(expDate, "dd/MM")}) às ${format(expDate, "HH:mm")}`
       : format(expDate, "dd/MM/yyyy 'às' HH:mm")
 
+    // Cálculo adaptativo do Lembrete Antes de Expirar:
+    // - <= 15 min (ex: 10 min): sem lembrete intermediário
+    // - 16 a 60 min (ex: 30 min): faltando 10 min
+    // - 61 a 240 min (ex: 2h): faltando 30 min
+    // - > 240 min (ex: Até 23:59): faltando 2 horas (120 min)
+    let reminderLeadMinutes = 0
+    let reminderLeadLabel = ""
+    let reminderAt: string | null = null
+    let reminderFormattedTime = ""
+
+    if (holdDurationMinutes > 15) {
+      if (holdDurationMinutes <= 60) {
+        reminderLeadMinutes = 10
+        reminderLeadLabel = "10 min"
+      } else if (holdDurationMinutes <= 240) {
+        reminderLeadMinutes = 30
+        reminderLeadLabel = "30 min"
+      } else {
+        reminderLeadMinutes = 120
+        reminderLeadLabel = "2 horas"
+      }
+      const remMs = expiresAtMs - reminderLeadMinutes * 60 * 1000
+      if (remMs > nowMs + 60 * 1000) {
+        const remDate = new Date(remMs)
+        reminderAt = remDate.toISOString()
+        reminderFormattedTime = isSameDay(remDate, now)
+          ? `hoje às ${format(remDate, "HH:mm")}`
+          : format(remDate, "dd/MM 'às' HH:mm")
+      }
+    }
+
     return {
       expiresAt: expDate.toISOString(),
       holdPreset: formHoldPreset,
       holdDurationMinutes,
       holdDurationLabel,
-      formattedDeadline
+      formattedDeadline,
+      sendExpirationReminder: formSendExpirationReminder && reminderLeadMinutes > 0,
+      reminderLeadMinutes,
+      reminderLeadLabel,
+      reminderAt: formSendExpirationReminder ? reminderAt : null,
+      reminderFormattedTime
     }
   }
   const [formNotes, setFormNotes] = useState("")
@@ -2522,6 +2559,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setIsReactivatingRes(false)
     setReactivationFlatSwitchedInfo(null)
     setFormHoldManuallyChosen(false)
+    setFormSendExpirationReminder(true)
     setFormHoldPreset(getDefaultHoldPresetForCheckin(cin))
     setFormHoldCustomMode("duration")
     setFormHoldCustomValue("45")
@@ -2778,6 +2816,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setIsReactivatingRes(false)
     setReactivationFlatSwitchedInfo(null)
     setFormHoldManuallyChosen(false)
+    setFormSendExpirationReminder(true)
     setFormHoldPreset(getDefaultHoldPresetForCheckin(cin))
     setFormHoldCustomMode("duration")
     setFormHoldCustomValue("45")
@@ -3130,6 +3169,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid || isB2bRes) ? "confirmada" : (isExpiredRes ? "pre_reserva" : (resItem.status || "pre_reserva")))
     setIsReactivatingRes(isExpiredRes)
     setReactivationFlatSwitchedInfo(null)
+    setFormSendExpirationReminder(isExpiredRes ? true : resItem.sendExpirationReminder !== false)
     if (resItem.holdPreset && ["10m", "30m", "2h", "until_2359", "custom"].includes(resItem.holdPreset) && !isExpiredRes) {
       setFormHoldPreset(resItem.holdPreset)
       setFormHoldManuallyChosen(true)
@@ -3206,6 +3246,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormPaymentStatus("pendente")
     setIsReactivatingRes(true)
     setFormHoldManuallyChosen(false)
+    setFormSendExpirationReminder(true)
     setFormHoldPreset(getDefaultHoldPresetForCheckin(resItem.checkinDate))
 
     const cin = resItem.checkinDate
@@ -4692,7 +4733,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
           holdPreset: holdInfoForSave.holdPreset,
           holdDurationMinutes: holdInfoForSave.holdDurationMinutes,
           holdDurationLabel: holdInfoForSave.holdDurationLabel,
-          expiresAt: holdInfoForSave.expiresAt
+          expiresAt: holdInfoForSave.expiresAt,
+          sendExpirationReminder: holdInfoForSave.sendExpirationReminder
         } : {}),
         ...(isReactivatingNow ? { reactivatePreReservation: true } : {}),
         channel: isB2b ? "b2b" : (formChannel || (formDailyRates.length > 0 && formDailyRates[0].channel) || "whatsapp"),
@@ -9261,15 +9303,51 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           </div>
                         )}
 
-                        <div className="p-2.5 rounded-xl bg-amber-100/80 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[11px] text-amber-950 dark:text-amber-200 flex items-start gap-2">
-                          <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                          <div className="space-y-0.5">
-                            <div>
-                              <strong>Validade definida:</strong> até <strong>{holdPreview.formattedDeadline}</strong> ({holdPreview.holdDurationLabel}).
+                        <div className="p-2.5 rounded-xl bg-amber-100/80 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[11px] text-amber-950 dark:text-amber-200 space-y-2">
+                          <div className="flex items-start gap-2">
+                            <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                            <div className="space-y-0.5">
+                              <div>
+                                <strong>Validade definida:</strong> até <strong>{holdPreview.formattedDeadline}</strong> ({holdPreview.holdDurationLabel}).
+                              </div>
+                              <div className="text-[10.5px] text-amber-800 dark:text-amber-300/90">
+                                A mensagem enviada ao WhatsApp do hóspede informará esse prazo com clareza. Se não houver pagamento até o vencimento, a pré-reserva sai do calendário e o cliente é avisado no WhatsApp.
+                              </div>
                             </div>
-                            <div className="text-[10.5px] text-amber-800 dark:text-amber-300/90">
-                              A mensagem enviada ao WhatsApp do hóspede informará esse prazo com clareza. Se não houver pagamento até o vencimento, a pré-reserva sai do calendário e o cliente é avisado no WhatsApp.
+                          </div>
+
+                          <div className="pt-2 border-t border-amber-300/60 dark:border-amber-800/60 flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5 text-[10.5px]">
+                              <Bell className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
+                              {holdPreview.reminderLeadMinutes <= 0 ? (
+                                <span className="text-amber-800 dark:text-amber-300">
+                                  <strong>Lembrete intermediário:</strong> Não enviado em pré-reservas de 10 min (para evitar excesso de mensagens).
+                                </span>
+                              ) : formSendExpirationReminder ? (
+                                <span className="text-amber-950 dark:text-amber-100">
+                                  <strong>Lembrete no WhatsApp:</strong> será enviado faltando <strong>{holdPreview.reminderLeadLabel}</strong>{holdPreview.reminderFormattedTime ? ` (${holdPreview.reminderFormattedTime})` : ""} com Link + PIX Copia e Cola.
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground line-through">
+                                  Lembrete antes de expirar desativado para esta pré-reserva
+                                </span>
+                              )}
                             </div>
+
+                            {holdPreview.reminderLeadMinutes > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setFormSendExpirationReminder(prev => !prev)}
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                  formSendExpirationReminder
+                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                                    : "bg-background text-muted-foreground border-border hover:text-foreground"
+                                }`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${formSendExpirationReminder ? "bg-white" : "bg-slate-400"}`} />
+                                {formSendExpirationReminder ? "Lembrete Ativo" : "Lembrete Desativado"}
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>

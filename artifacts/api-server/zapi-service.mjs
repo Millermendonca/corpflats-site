@@ -3424,9 +3424,11 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     resStatus === "pending_payment" ||
     resStatus === "expirada" ||
     templateId === "tpl_pre_reserva" ||
+    templateId === "tpl_pre_reserva_lembrete" ||
     templateId === "tpl_pre_reserva_expirada" ||
     templateId === "tpl_payment_pending" ||
     triggerEvent === "pre_reservation_created" ||
+    triggerEvent === "pre_reservation_expiring_soon" ||
     triggerEvent === "pre_reservation_expired" ||
     triggerEvent === "payment_pending"
   );
@@ -4053,9 +4055,11 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       resStatus === "pending_payment" ||
       resStatus === "expirada" ||
       templateId === "tpl_pre_reserva" ||
+      templateId === "tpl_pre_reserva_lembrete" ||
       templateId === "tpl_pre_reserva_expirada" ||
       templateId === "tpl_payment_pending" ||
       triggerEvent === "pre_reservation_created" ||
+      triggerEvent === "pre_reservation_expiring_soon" ||
       triggerEvent === "pre_reservation_expired" ||
       triggerEvent === "payment_pending"
     )
@@ -7669,6 +7673,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           (tpl.channels.includes("booking") || tpl.channels.includes("airbnb")) &&
           !tpl.channels.includes("b2b") &&
           tpl.id !== "tpl_pre_reserva" &&
+          tpl.id !== "tpl_pre_reserva_lembrete" &&
+          tpl.id !== "tpl_pre_reserva_expirada" &&
           tpl.id !== "tpl_payment_pending" &&
           tpl.id !== "tpl_payment_confirmed" &&
           tpl.id !== "tpl_new_reservation_direct"

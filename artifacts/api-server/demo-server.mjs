@@ -28032,6 +28032,75 @@ app.all(["/api/pms/reservations/repair-incident-sept30", "/api/system/repair-inc
 let lastCalendarReconcileTime = 0;
 
 // ── Motor de Cálculo e Validade de Pré-Reservas (10min, 30min, 2h, Até 23:59, Custom) ──
+export function computePreReservationReminderSchedule(expiresAtIso, holdDurationMinutes = 0, sendExpirationReminder = true) {
+  const enabled = sendExpirationReminder !== false;
+  if (!enabled || !expiresAtIso) {
+    return {
+      sendExpirationReminder: enabled,
+      reminderAt: null,
+      reminderLeadMinutes: 0,
+      reminderLeadLabel: ""
+    };
+  }
+  const expMs = new Date(expiresAtIso).getTime();
+  const nowMs = Date.now();
+  if (isNaN(expMs) || expMs <= nowMs) {
+    return {
+      sendExpirationReminder: enabled,
+      reminderAt: null,
+      reminderLeadMinutes: 0,
+      reminderLeadLabel: ""
+    };
+  }
+  const effMins = Number(holdDurationMinutes) > 0
+    ? Number(holdDurationMinutes)
+    : Math.max(1, Math.round((expMs - nowMs) / 60000));
+
+  // Regra adaptativa por duração:
+  // - <= 15 min (ex: 10 min): sem lembrete intermediário para evitar 3 msgs em 10 min
+  // - 16 a 60 min (ex: 30 min): faltando 10 min
+  // - 61 a 240 min (ex: 2h): faltando 30 min
+  // - > 240 min (ex: Até 23:59): faltando 2 horas (120 min)
+  if (effMins <= 15) {
+    return {
+      sendExpirationReminder: enabled,
+      reminderAt: null,
+      reminderLeadMinutes: 0,
+      reminderLeadLabel: ""
+    };
+  }
+
+  let leadMins = 30;
+  let leadLabel = "30 minutos";
+  if (effMins <= 60) {
+    leadMins = 10;
+    leadLabel = "10 minutos";
+  } else if (effMins <= 240) {
+    leadMins = 30;
+    leadLabel = "30 minutos";
+  } else {
+    leadMins = 120;
+    leadLabel = "2 horas";
+  }
+
+  const reminderAtMs = expMs - leadMins * 60 * 1000;
+  if (reminderAtMs <= nowMs + 90 * 1000) {
+    return {
+      sendExpirationReminder: enabled,
+      reminderAt: null,
+      reminderLeadMinutes: leadMins,
+      reminderLeadLabel: leadLabel
+    };
+  }
+
+  return {
+    sendExpirationReminder: true,
+    reminderAt: new Date(reminderAtMs).toISOString(),
+    reminderLeadMinutes: leadMins,
+    reminderLeadLabel: leadLabel
+  };
+}
+
 export function resolvePreReservationHold(input = {}, checkinDate = "") {
   const now = new Date();
   const todayBrStr = typeof getTodayStr === "function"
@@ -28041,45 +28110,58 @@ export function resolvePreReservationHold(input = {}, checkinDate = "") {
   const rawPreset = String(input.holdPreset || "").trim();
   const rawMinutes = Number(input.holdDurationMinutes);
   const rawExpiresAt = input.expiresAt ? String(input.expiresAt).trim() : "";
+  const sendExpirationReminder = input.sendExpirationReminder !== false;
+
+  const finalizeHold = (baseObj) => {
+    const remInfo = computePreReservationReminderSchedule(
+      baseObj.expiresAt,
+      baseObj.holdDurationMinutes,
+      sendExpirationReminder
+    );
+    return {
+      ...baseObj,
+      ...remInfo
+    };
+  };
 
   if (rawExpiresAt) {
     const parsedExp = new Date(rawExpiresAt);
     if (!isNaN(parsedExp.getTime()) && parsedExp.getTime() > now.getTime()) {
       const diffMins = Math.max(1, Math.round((parsedExp.getTime() - now.getTime()) / 60000));
-      return {
+      return finalizeHold({
         expiresAt: parsedExp.toISOString(),
         holdPreset: rawPreset || "custom",
         holdDurationMinutes: Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : diffMins,
         holdDurationLabel: input.holdDurationLabel ? String(input.holdDurationLabel).trim() : (rawPreset === "until_2359" ? "até 23:59 de hoje" : `${diffMins} min`)
-      };
+      });
     }
   }
 
   if (rawPreset === "10m" || rawMinutes === 10) {
-    return {
+    return finalizeHold({
       expiresAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
       holdPreset: "10m",
       holdDurationMinutes: 10,
       holdDurationLabel: "10 minutos"
-    };
+    });
   }
 
   if (rawPreset === "30m" || rawMinutes === 30) {
-    return {
+    return finalizeHold({
       expiresAt: new Date(now.getTime() + 30 * 60 * 1000).toISOString(),
       holdPreset: "30m",
       holdDurationMinutes: 30,
       holdDurationLabel: "30 minutos"
-    };
+    });
   }
 
   if (rawPreset === "2h" || rawMinutes === 120) {
-    return {
+    return finalizeHold({
       expiresAt: new Date(now.getTime() + 120 * 60 * 1000).toISOString(),
       holdPreset: "2h",
       holdDurationMinutes: 120,
       holdDurationLabel: "2 horas"
-    };
+    });
   }
 
   if (rawPreset === "until_2359") {
@@ -28088,24 +28170,24 @@ export function resolvePreReservationHold(input = {}, checkinDate = "") {
       ? endOfDayBr
       : new Date(now.getTime() + 120 * 60 * 1000);
     const diffMins = Math.max(1, Math.round((fallbackExp.getTime() - now.getTime()) / 60000));
-    return {
+    return finalizeHold({
       expiresAt: fallbackExp.toISOString(),
       holdPreset: "until_2359",
       holdDurationMinutes: diffMins,
       holdDurationLabel: "até 23:59 de hoje"
-    };
+    });
   }
 
   if (Number.isFinite(rawMinutes) && rawMinutes > 0) {
     const label = input.holdDurationLabel
       ? String(input.holdDurationLabel).trim()
       : (rawMinutes % 60 === 0 && rawMinutes >= 60 ? `${rawMinutes / 60}h` : `${rawMinutes} minutos`);
-    return {
+    return finalizeHold({
       expiresAt: new Date(now.getTime() + rawMinutes * 60 * 1000).toISOString(),
       holdPreset: rawPreset || "custom",
       holdDurationMinutes: rawMinutes,
       holdDurationLabel: label
-    };
+    });
   }
 
   // Padrão inteligente por data de check-in:
@@ -28116,29 +28198,30 @@ export function resolvePreReservationHold(input = {}, checkinDate = "") {
     const endOfDayBr = new Date(`${todayBrStr}T23:59:59-03:00`);
     if (!isNaN(endOfDayBr.getTime()) && endOfDayBr.getTime() > now.getTime() + 10 * 60 * 1000) {
       const diffMins = Math.max(1, Math.round((endOfDayBr.getTime() - now.getTime()) / 60000));
-      return {
+      return finalizeHold({
         expiresAt: endOfDayBr.toISOString(),
         holdPreset: "until_2359",
         holdDurationMinutes: diffMins,
         holdDurationLabel: "até 23:59 de hoje"
-      };
+      });
     }
   }
 
-  return {
+  return finalizeHold({
     expiresAt: new Date(now.getTime() + 120 * 60 * 1000).toISOString(),
     holdPreset: "2h",
     holdDurationMinutes: 120,
     holdDurationLabel: "2 horas"
-  };
+  });
 }
 
-// ── Varredura Automática de Pré-Reservas Expiradas + Aviso no WhatsApp ───────
+// ── Varredura Automática de Pré-Reservas Expiradas + Lembrete Antes de Expirar ──
 export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase) {
   if (!targetDb || !Array.isArray(targetDb.reservations)) return 0;
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   let expiredCount = 0;
+  let remindedCount = 0;
 
   for (const r of targetDb.reservations) {
     if (!r) continue;
@@ -28146,13 +28229,60 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
     if (!r.expiresAt) continue;
 
     const expMs = new Date(r.expiresAt).getTime();
-    if (isNaN(expMs) || expMs > nowMs) continue;
+    if (isNaN(expMs)) continue;
 
     const isPaid = r.paymentStatus === "pago_total" ||
       r.paymentStatus === "pago" ||
       (typeof hasRealPaymentEvidence === "function" && hasRealPaymentEvidence(r));
     if (isPaid) continue;
 
+    // 1. Verifica se ainda está dentro do prazo, mas já atingiu o horário do Lembrete Antes de Expirar
+    if (expMs > nowMs) {
+      if (r.sendExpirationReminder !== false && !r.preReservationReminderSentAt) {
+        if (r.reminderAt === undefined) {
+          const fallbackRem = computePreReservationReminderSchedule(r.expiresAt, r.holdDurationMinutes, true);
+          r.reminderAt = fallbackRem.reminderAt;
+          r.reminderLeadMinutes = fallbackRem.reminderLeadMinutes;
+          r.reminderLeadLabel = fallbackRem.reminderLeadLabel;
+        }
+        if (r.reminderAt) {
+          const remMs = new Date(r.reminderAt).getTime();
+          // Dispara o lembrete quando atingir reminderAt e ainda faltar pelo menos 1 minuto para expirar
+          if (!isNaN(remMs) && nowMs >= remMs && (expMs - nowMs) >= 60 * 1000) {
+            r.preReservationReminderSentAt = nowIso;
+            r.updatedAt = nowIso;
+            remindedCount++;
+
+            try {
+              addReservationAuditLog(r, {
+                action: "expiration_reminder_sent",
+                actor: { id: null, name: "Sistema Automático", role: "system", type: "system" },
+                source: "Motor de Validade de Pré-Reserva",
+                description: `Lembrete de pré-reserva expirando (${r.reminderLeadLabel || "em breve"}) enviado automaticamente via WhatsApp.`
+              });
+            } catch (_) {}
+
+            if (typeof triggerImmediateWhatsApp === "function") {
+              triggerImmediateWhatsApp(
+                targetDb,
+                saveFn,
+                "pre_reservation_expiring_soon",
+                {
+                  ...r,
+                  _reminderLeadLabel: r.reminderLeadLabel,
+                  _isPreReservationUpdate: Boolean(r._wasReactivatedBefore || r._holdUpdatedCount)
+                }
+              ).catch(err => {
+                console.warn(`[Pre-Reservation Reminder] Erro ao disparar lembrete para ${r.code || r.id}:`, err?.message || err);
+              });
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    // 2. Expiração definitiva quando expMs <= nowMs
     const prevStatusLabel = r.status === "pre_reserva" ? "Pré-Reserva" : "Pendente";
     r.status = "expirada";
     r.expiredAt = nowIso;
@@ -28177,15 +28307,15 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
         targetDb,
         saveFn,
         "pre_reservation_expired",
-        { ...r, _isPreReservationUpdate: Boolean(r._wasReactivatedBefore) }
+        { ...r, _isPreReservationUpdate: Boolean(r._wasReactivatedBefore || r._holdUpdatedCount) }
       ).catch(err => {
         console.warn(`[Pre-Reservation Expire] Erro ao disparar WhatsApp de expiração para ${r.code || r.id}:`, err?.message || err);
       });
     }
   }
 
-  if (expiredCount > 0 && typeof saveFn === "function") {
-    saveFn("auto_expire_pre_reservations");
+  if ((expiredCount > 0 || remindedCount > 0) && typeof saveFn === "function") {
+    saveFn(expiredCount > 0 ? "auto_expire_pre_reservations" : "pre_reservation_reminder_sent");
   }
   return expiredCount;
 }
@@ -29280,6 +29410,10 @@ app.post("/api/pms/reservations", async (req, res) => {
     holdPreset: holdInfoOnCreate ? holdInfoOnCreate.holdPreset : undefined,
     holdDurationMinutes: holdInfoOnCreate ? holdInfoOnCreate.holdDurationMinutes : undefined,
     holdDurationLabel: holdInfoOnCreate ? holdInfoOnCreate.holdDurationLabel : undefined,
+    sendExpirationReminder: holdInfoOnCreate ? holdInfoOnCreate.sendExpirationReminder : undefined,
+    reminderAt: holdInfoOnCreate ? holdInfoOnCreate.reminderAt : null,
+    reminderLeadMinutes: holdInfoOnCreate ? holdInfoOnCreate.reminderLeadMinutes : undefined,
+    reminderLeadLabel: holdInfoOnCreate ? holdInfoOnCreate.reminderLeadLabel : undefined,
     channel: isB2b ? "b2b" : channel,
     paymentMethod: resolvedPaymentMethod,
     dailyRate: finalDailyRate,
@@ -31241,8 +31375,14 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         r.holdPreset = holdInfo.holdPreset;
         r.holdDurationMinutes = holdInfo.holdDurationMinutes;
         r.holdDurationLabel = holdInfo.holdDurationLabel;
+        r.sendExpirationReminder = holdInfo.sendExpirationReminder;
+        r.reminderAt = holdInfo.reminderAt;
+        r.reminderLeadMinutes = holdInfo.reminderLeadMinutes;
+        r.reminderLeadLabel = holdInfo.reminderLeadLabel;
         delete r.expiredAt;
         delete r.expiredWhatsappSentAt;
+        delete r.preReservationReminderSentAt;
+        r._holdUpdatedCount = (Number(r._holdUpdatedCount) || 0) + 1;
         if (oldStatus === "expirada" || req.body.reactivatePreReservation) {
           r._wasReactivatedBefore = true;
           r.reactivatedAt = new Date().toISOString();
@@ -31250,11 +31390,23 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         } else if (oldExp !== r.expiresAt) {
           holdWasUpdatedOnPut = true;
         }
+      } else if (req.body.sendExpirationReminder !== undefined) {
+        r.sendExpirationReminder = Boolean(req.body.sendExpirationReminder);
+        if (!r.sendExpirationReminder) {
+          r.reminderAt = null;
+        } else if (r.expiresAt) {
+          const remInfo = computePreReservationReminderSchedule(r.expiresAt, r.holdDurationMinutes, true);
+          r.reminderAt = remInfo.reminderAt;
+          r.reminderLeadMinutes = remInfo.reminderLeadMinutes;
+          r.reminderLeadLabel = remInfo.reminderLeadLabel;
+        }
       }
     } else if (r.status === "confirmada") {
       r.expiresAt = null;
+      r.reminderAt = null;
       delete r.expiredAt;
       delete r.expiredWhatsappSentAt;
+      delete r.preReservationReminderSentAt;
     }
   }
 

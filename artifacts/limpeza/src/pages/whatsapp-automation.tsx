@@ -144,7 +144,7 @@ interface WhatsAppTemplate {
 type RecipientType = "guest" | "requester" | `guest_${number}`
 
 // Mesma regra do backend: eventos financeiros não vão para acompanhantes por padrão
-const COMPANION_EXCLUDED_EVENTS = ["pre_reservation_created", "payment_pending", "additional_daily_pending", "payment_confirmed"]
+const COMPANION_EXCLUDED_EVENTS = ["pre_reservation_created", "pre_reservation_expiring_soon", "pre_reservation_expired", "payment_pending", "additional_daily_pending", "payment_confirmed"]
 const defaultIncludeCompanions = (tpl: { triggerEvent?: string; includeCompanions?: boolean }) =>
   typeof tpl.includeCompanions === "boolean" ? tpl.includeCompanions : !COMPANION_EXCLUDED_EVENTS.includes(tpl.triggerEvent || "")
 
@@ -271,6 +271,9 @@ const TAG_GROUPS = [
       { tag: "{{quanto_falta}}", label: "Quanto Falta Pagar", example: "R$ 250,00" },
       { tag: "{{saldo_restante}}", label: "Saldo Restante", example: "R$ 250,00" },
       { tag: "{{status_confirmacao}}", label: "Status de Confirmação", example: "Pré-Reserva" },
+      { tag: "{{validade_pre_reserva}}", label: "Validade da Pré-Reserva", example: "hoje (04/11) às 16:00 (2 horas)" },
+      { tag: "{{tempo_restante_pre_reserva}}", label: "Tempo Restante da Pré-Reserva", example: "30 minutos" },
+      { tag: "{{aviso_validade_pre_reserva}}", label: "Bloco Aviso Validade Pré-Reserva", example: "⏰ Validade da Pré-Reserva: Esta pré-reserva é válida até hoje às 16:00..." },
       { tag: "{{chave_pix}}", label: "Chave PIX Hotel", example: "47.964.813/0001-65" },
       { tag: "{{titular_pix}}", label: "Titular PIX", example: "CorpFlats Hospedagem" },
       { tag: "{{instrucao_saldo}}", label: "Instrução Dinâmica de Saldo", example: "Saldo restante de R$ 250,00 a acertar no check-in." },
