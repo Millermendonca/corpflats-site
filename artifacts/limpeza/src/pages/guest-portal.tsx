@@ -1019,13 +1019,18 @@ export default function GuestPortal() {
     reservation?.status === "CANCELLED" || 
     reservation?.isCancelled
   )
+  const isExpiredPreReservation = Boolean(
+    reservation?.status === "expirada" ||
+    reservation?.isExpiredPreReservation ||
+    data?.isExpiredPreReservation
+  )
   const hasPartialPendingBalance = Boolean(
     !isB2b &&
     (reservation?.paymentStatus === "sinal_pago" || reservation?.paymentStatus === "parcial") &&
     Number(reservation?.paidAmount || 0) > 0 &&
     Number(reservation?.paidAmount || 0) < Number(reservation?.totalAmount || 0) - 0.01
   )
-  const isPaid = !isCancelled && !hasPartialPendingBalance && Boolean(
+  const isPaid = !isCancelled && !isExpiredPreReservation && !hasPartialPendingBalance && Boolean(
     isOta || 
     reservation?.isPaid ||
     reservation?.paymentStatus === "pago_total" || 
@@ -1189,12 +1194,27 @@ export default function GuestPortal() {
 
   // Polling automático de status de pagamento a cada 6 segundos quando pendente
   useEffect(() => {
-    if (!reservation?.code || isPaid || isCancelled) return
+    if (!reservation?.code || isPaid || isCancelled || isExpiredPreReservation) return
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
         if (res.ok) {
           const json = await res.json()
+          if (json.isExpiredPreReservation || json.status === "expirada") {
+            setData((prev: any) => prev ? ({
+              ...prev,
+              isExpiredPreReservation: true,
+              reservation: {
+                ...prev.reservation,
+                status: "expirada",
+                isExpiredPreReservation: true,
+                expiredAt: json.expiredAt || new Date().toISOString(),
+                pixCopiaECola: null,
+                mpInitPoint: null
+              }
+            }) : null)
+            return
+          }
           if (json.paid) {
             setPaymentSuccessNotice(true)
             setData((prev: any) => prev ? ({
@@ -2292,6 +2312,11 @@ export default function GuestPortal() {
                     ✕ <span className="hidden sm:inline">Reserva Cancelada</span>
                     <span className="sm:hidden">Cancelada</span>
                   </Badge>
+                ) : isExpiredPreReservation ? (
+                  <Badge variant="outline" className="bg-amber-100 text-amber-900 border-amber-400 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
+                    ⏳ <span className="hidden sm:inline">Pré-Reserva Expirada</span>
+                    <span className="sm:hidden">Expirada</span>
+                  </Badge>
                 ) : isPaid ? (
                   <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
                     ✓ <span className="hidden sm:inline">{hideFinancialForGuest ? "Reserva Confirmada" : (isOta ? (channelLower.includes("booking") ? "Pago via Booking" : "Pago via Airbnb") : "Reserva Confirmada & Paga")}</span>
@@ -2851,6 +2876,49 @@ export default function GuestPortal() {
           </div>
         )}
 
+        {/* ── Banner de Alerta: Pré-Reserva Expirada ────────────────────── */}
+        {isExpiredPreReservation && !isCancelled && (
+          <div className="rounded-3xl border-2 border-amber-400 bg-gradient-to-br from-amber-50 via-amber-50/95 to-orange-50 p-5 sm:p-7 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+                  <Clock className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge className="bg-amber-600 text-white text-[10.5px] font-bold px-2 py-0.5">
+                      ⏳ Pré-Reserva Expirada
+                    </Badge>
+                    {(reservation.expiredAt || reservation.expiresAt) && (
+                      <span className="text-[11px] text-amber-800 font-medium">
+                        Expirou em {format(new Date(reservation.expiredAt || reservation.expiresAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black text-amber-950 mt-1">
+                    O prazo desta pré-reserva expirou
+                  </h2>
+                  <p className="text-xs sm:text-sm text-amber-900/90 mt-0.5 leading-relaxed max-w-xl">
+                    Como o pagamento não foi confirmado dentro do tempo de validade estipulado, o <strong>Flat {reservation.flatNumber}</strong> foi liberado automaticamente no calendário.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
+                <a
+                  href={`https://wa.me/${finalWaNumber}?text=${encodeURIComponent(`Olá! Minha pré-reserva (${reservation.code}) para o Flat ${reservation.flatNumber} (${checkinFormatted} a ${checkoutFormatted}) expirou, mas ainda tenho interesse. Poderiam verificar a disponibilidade e valores novamente?`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm transition-colors w-full sm:w-auto"
+                >
+                  <WhatsAppIcon className="w-4 h-4" />
+                  <span>Consultar Disponibilidade no WhatsApp</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Banner de Boas-vindas / Entrada Confirmada */}
         {selfCheckinNotice && (
           <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white shadow-lg flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
@@ -3260,6 +3328,41 @@ export default function GuestPortal() {
               )}
             </div>
           </Card>
+        ) : isExpiredPreReservation ? (
+          <Card className="bg-white rounded-3xl border border-amber-300 shadow-md p-5 sm:p-7 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 border border-amber-300 flex items-center justify-center font-black text-sm shadow-2xs shrink-0">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-black text-slate-900">
+                    Prazo de Pagamento Expirado
+                  </h2>
+                  <span className="text-xs text-slate-500">
+                    A validade desta pré-reserva encerrou e o link de pagamento foi suspenso
+                  </span>
+                </div>
+              </div>
+              <Badge className="bg-amber-600 text-white font-bold text-xs py-1 px-3">
+                ⏳ Expirada
+              </Badge>
+            </div>
+            <div className="p-4 bg-amber-50/80 rounded-2xl border border-amber-200 text-xs text-amber-950 space-y-3">
+              <p className="leading-relaxed">
+                Caso você ainda deseje se hospedar conosco neste período, clique no botão abaixo para falar com nossa equipe no WhatsApp. Vamos <strong>consultar a disponibilidade e os valores novamente</strong> e reativar sua pré-reserva em instantes!
+              </p>
+              <a
+                href={`https://wa.me/${finalWaNumber}?text=${encodeURIComponent(`Olá! Minha pré-reserva (${reservation.code}) para o Flat ${reservation.flatNumber} expirou, mas ainda tenho interesse. Poderiam consultar a disponibilidade e reativar meu link de pagamento?`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold shadow-sm transition-colors"
+              >
+                <WhatsAppIcon className="w-4 h-4" />
+                <span>Falar no WhatsApp e Reativar Pré-Reserva</span>
+              </a>
+            </div>
+          </Card>
         ) : (
         <Card className={`rounded-3xl border shadow-md p-5 sm:p-7 space-y-4 transition-all ${
           isPaid 
@@ -3465,6 +3568,20 @@ export default function GuestPortal() {
           {/* Se NÃO PAGO: Seletor de Método e Instruções */}
           {!isPaid && !hideFinancialForGuest && (
             <div className="space-y-4 pt-2">
+              {reservation.status === "pre_reserva" && reservation.expiresAt && (
+                <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-xs text-amber-950 flex items-start gap-2.5">
+                  <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block">
+                      ⏳ Validade desta Pré-Reserva: até {format(new Date(reservation.expiresAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                    </span>
+                    <span className="text-[11px] text-amber-800 block">
+                      Conclua o pagamento dentro deste prazo para confirmar sua reserva. Após esse horário sem confirmação de pagamento, a pré-reserva expira automaticamente e o flat é liberado.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-slate-700 block">
                   Selecione ou altere a forma de pagamento:

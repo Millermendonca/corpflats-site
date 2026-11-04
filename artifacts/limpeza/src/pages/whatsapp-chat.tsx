@@ -230,6 +230,12 @@ function getReservationStatusInfo(status?: string) {
       className: 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-700'
     }
   }
+  if (s === 'expirada' || s === 'expired') {
+    return {
+      label: 'Pré-Reserva Expirada',
+      className: 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-700'
+    }
+  }
   if (s === 'checkout' || s === 'checked_out') {
     return {
       label: 'Check-out',
@@ -2764,6 +2770,26 @@ export default function WhatsappChat() {
                     {getPaymentInfo(activeConversation.reservation).label}
                   </Badge>
                 </div>
+
+                {activeConversation.reservation.status === 'pre_reserva' && (activeConversation.reservation as any).expiresAt && (
+                  <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300 flex items-center justify-between">
+                    <span className="font-semibold">⏳ Validade:</span>
+                    <span className="font-bold">
+                      até {new Date((activeConversation.reservation as any).expiresAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                )}
+
+                {activeConversation.reservation.status === 'expirada' && (
+                  <div className="pt-1">
+                    <a
+                      href={`/reservas?reactivateCode=${encodeURIComponent(activeConversation.reservation.code)}`}
+                      className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs transition-colors"
+                    >
+                      <span>🔄 Reativar Pré-Reserva</span>
+                    </a>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-center space-y-1">
@@ -2814,10 +2840,12 @@ export default function WhatsappChat() {
                           <ArrowRightCircle className="w-3.5 h-3.5" /> Ativar no Dossiê
                         </Button>
                         <a
-                          href={`/reservas?code=${ores.code}`}
-                          className="text-[10.5px] font-semibold text-emerald-600 hover:underline flex items-center gap-0.5"
+                          href={ores.status === 'expirada' ? `/reservas?reactivateCode=${encodeURIComponent(ores.code)}` : `/reservas?code=${ores.code}`}
+                          className={`text-[10.5px] font-semibold hover:underline flex items-center gap-0.5 ${
+                            ores.status === 'expirada' ? 'text-amber-600 dark:text-amber-400 font-bold' : 'text-emerald-600'
+                          }`}
                         >
-                          Ver no PMS <ChevronRight className="w-3 h-3" />
+                          {ores.status === 'expirada' ? '🔄 Reativar no PMS' : 'Ver no PMS'} <ChevronRight className="w-3 h-3" />
                         </a>
                       </div>
                     </div>

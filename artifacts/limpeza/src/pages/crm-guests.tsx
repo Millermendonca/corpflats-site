@@ -2603,18 +2603,43 @@ export default function CrmGuests() {
                   ) : (
                     <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                       {activeGuest.reservations.map((r: any) => (
-                        <div key={r.id} className="p-2.5 rounded-xl bg-muted/40 border border-border flex items-center justify-between">
-                          <div>
+                        <div key={r.id} className="p-2.5 rounded-xl bg-muted/40 border border-border flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center flex-wrap gap-1.5">
                             <span className="font-bold text-foreground">Flat {r.flatNumber || "—"}</span>
-                            <span className="text-muted-foreground text-[11px] ml-2">
+                            <span className="text-muted-foreground text-[11px]">
                               {r.checkinDate} a {r.checkoutDate} ({r.nightsCount || 1} noites)
                             </span>
+                            {r.status === "expirada" && (
+                              <Badge className="text-[9px] bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                                ⏳ Pré-Reserva Expirada
+                              </Badge>
+                            )}
+                            {r.status === "pre_reserva" && (
+                              <Badge className="text-[9px] bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                                ⏳ Pré-Reserva
+                              </Badge>
+                            )}
                             {r.fnhrCompleted && (
-                              <Badge className="ml-2 text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">FNHR OK</Badge>
+                              <Badge className="text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">FNHR OK</Badge>
                             )}
                           </div>
-                          <div className="font-black text-emerald-600">
-                            R$ {Number(r.totalAmount || r.totalPrice || 0).toFixed(2)}
+                          <div className="flex items-center gap-2">
+                            {r.status === "expirada" && (r.code || r.id) && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => {
+                                  setDetailModalOpen(false)
+                                  setLocation(`/reservas?reactivateCode=${encodeURIComponent(r.code || r.id)}`)
+                                }}
+                                className="h-6 px-2 text-[10px] font-bold rounded-lg bg-amber-600 hover:bg-amber-700 text-white"
+                              >
+                                🔄 Reativar
+                              </Button>
+                            )}
+                            <div className="font-black text-emerald-600">
+                              R$ {Number(r.totalAmount || r.totalPrice || 0).toFixed(2)}
+                            </div>
                           </div>
                         </div>
                       ))}
