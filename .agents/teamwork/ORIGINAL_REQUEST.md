@@ -1,72 +1,46 @@
 # Original User Request
 
-## Approved Task Prompt — 2026-11-04T16:01:11Z
+## Initial Request — 2026-11-04T22:16:33Z
 
-Implementar uma nova automação de Upsell na aba `⚡ Régua Automática` chamada "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)", disparada aos sábados às 19:00h pelo Canal #1 (Régua Hóspedes) para reservas ativas com check-out no domingo às 12:00h, com pré-reserva temporária (hold de 30 minutos), expiração silenciosa, sincronia com a Sofia e atualização do mapa PMS e governança.
+This is a single self-contained fix; keep it small and focused. Investigar o motivo pelo qual a mensagem de lembrete de café da manhã via WhatsApp (programada para 18:00) não foi enviada para Alessandra Dias (Flat 905), AVILA SAMUEL (Flat 113) e Patrícia Belchior de Carvalho (Flat 605) — todas com café contratado para a manhã seguinte e sem pedido efetuado —, e implementar a correção necessária na régua de envio respeitando todas as regras de negócio acordadas.
 
 Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 Integrity mode: development
 
 ## Requirements
 
-### R1. Painel de Controle e Configuração na Régua Automática
-Na aba `⚡ Régua Automática`, disponibilizar a configuração da automação "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)", incluindo:
-- Toggle para ativar/desativar a automação.
-- Campo de configuração para o valor promocional da oferta (`sundayUpsellPrice`).
-- Cálculo do valor normal de referência (`valor_normal`) exibido na mensagem com base no valor da diária da reserva atual do hóspede.
-- Disparo pelo Canal #1 (Régua Hóspedes).
-- Botão de disparo manual/teste para disparar a oferta imediatamente para reservas elegíveis em ambiente de validação.
+### R1. Diagnóstico da Causa Raiz do Não-Disparo
+Investigar o histórico de execuções, agendamentos, dados de reserva e código do serviço da régua de envio (`artifacts/api-server/zapi-service.mjs`, `artifacts/api-server/demo-server.mjs`) para determinar por que o lembrete de café não disparou às 18:00 do dia 04/11/2026 para:
+- Flat 905 - Alessandra Dias (RES-905-0596, reservationId: 596)
+- Flat 113 - AVILA SAMUEL (RES-113-B2B-25152172, reservationId: 550)
+- Flat 605 - Patrícia Belchior de Carvalho (RES-605-0470, reservationId: 470)
+Documentar a causa raiz identificada (ex.: validação de datas, formato de telefone, checagem de status/no-show, ordenação de chaves ou filtro de pedidos existentes).
 
-### R2. Gatilho de Disparo e Elegibilidade de Disponibilidade
-O gatilho deve rodar automaticamente todo sábado às 19:00h (quando a automação estiver ativada):
-- Identificar todas as reservas com status ativo/hospedado (`in_stay` ou confirmada) cujo check-out original esteja marcado para o domingo seguinte às 12:00h.
-- Verificar a disponibilidade do flat de domingo para segunda-feira:
-  1. Se o flat atual do hóspede estiver vago de domingo para segunda-feira, a reserva é elegível.
-  2. Se houver outra reserva agendada para entrar no domingo no mesmo flat, verificar se existe outro flat livre no condomínio ("Flat da Vez" via `selectFairShareFlat`) para receber essa nova reserva. Havendo flat alternativo para remanejar o hóspede entrante, a reserva atual é elegível.
-  3. Se o prédio estiver 100% ocupado de domingo para segunda-feira (sem flat vago para remanejar), não disparar a oferta para o hóspede.
-
-### R3. Pré-Reserva de Extensão (Hold de 30 Minutos e Expiração Silenciosa)
-- No momento do disparo (sábado às 19:00h ou teste manual), gerar a cobrança PIX via `createInterPixCob` / `generateStaticPixPayload` no valor promocional configurado.
-- Criar um bloqueio temporário (hold) de 30 minutos estendendo a reserva até segunda-feira às 12:00h.
-- Regra de expiração silenciosa (`isSilentUpsellHold: true`): caso o hóspede não efetue o pagamento do PIX dentro dos 30 minutos, o bloqueio temporário de domingo para segunda expira em silêncio no sistema, mantendo a reserva original com check-out no domingo às 12:00h. É terminantemente proibido disparar mensagens de expiração de pré-reserva ou cancelamento ao hóspede após o vencimento dos 30 minutos.
-
-### R4. Confirmação Automática de Pagamento e Atualização Operacional
-Ao receber a notificação de pagamento confirmado via Webhook PIX correspondente à cobrança da oferta:
-- Atualizar a reserva no mapa PMS estendendo o check-out para segunda-feira às 12:00h através da rotina existente de extensão de reservas.
-- Reagendar a ordem de limpeza das camareiras para o flat de domingo para segunda-feira.
-- Se havia outro hóspede com check-in previsto para aquele flat no domingo, transferir automaticamente a reserva do hóspede entrante para o flat vago selecionado via `selectFairShareFlat`.
-- Disparar a mensagem de confirmação ao hóspede: *"Pagamento confirmado! 🎉 Seu check-out livre de domingo (com direito a ficar até segunda às 12h se desejar) já está garantido no sistema. Aproveite seu descanso!"*.
-
-### R5. Formato de Envio das Mensagens e Sincronia com a Sofia
-- O disparo deve ser realizado em 2 balões consecutivos com simulação de delay de digitação:
-  - Balão 1: Mensagem persuasiva apresentando o check-out livre no domingo pelo valor promocional (`valor_promocional`), destacando a economia em relação à tarifa normal (`valor_normal`), informando a extensão bônus até segunda às 12:00h e comunicando a pré-reserva com validade de 30 minutos.
-  - Balão 2: Exclusivamente a chave PIX Copia e Cola (`codigo_pix_copia_e_cola`), sem textos adicionais.
-- Registrar no contexto dinâmico da IA Sofia que o hóspede recebeu a oferta de domingo sem pressa no sábado à noite. Se o hóspede interagir tirando dúvidas ou solicitar novo código PIX após o prazo de 30 minutos ter expirado, a Sofia deve reconhecer a condição e emitir uma nova cobrança promocional com novo hold, desde que o flat continue disponível de domingo para segunda.
+### R2. Correção da Lógica da Régua de Café da Manhã
+Ajustar a rotina de envio para assegurar que todas as reservas elegíveis recebam o lembrete de café da manhã às 18:00, garantindo o cumprimento das seguintes regras:
+- Avaliar e agendar apenas nos dias de estadia ativa (data atual >= data de check-in e data atual < data de check-out) para hóspedes com café contratado que ainda não realizaram o pedido para a manhã seguinte.
+- Respeitar a janela estendida das 18:00 às 20:00 (permitir disparo até as 20:00 se a reserva ou contato for carregado logo após as 18:00, e bloquear estritamente após as 20:00).
+- Disparar para o solicitante/titular e também para eventuais acompanhantes cadastrados na reserva que possuam telefone.
+- Não bloquear o envio por status de no-show (enviar para todas as reservas com café contratado para o dia seguinte).
+- Manter a paridade estrita SHA-256 entre os arquivos alterados em `artifacts/api-server/` e seus espelhos em `scripts/`.
+- Conforme o `AGENTS.md`, executar apenas testes pontuais da alteração realizada, sem executar testes globais ou de outros módulos.
 
 ## Acceptance Criteria
 
-### Painel e Configurações da Régua
-- [ ] A aba `⚡ Régua Automática` contém o toggle de ativação/desativação da "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)", o campo para `sundayUpsellPrice` e o botão de disparo manual/teste.
-- [ ] O acionamento manual dispara o fluxo de oferta apenas para as reservas que atendem aos critérios de elegibilidade.
+### Diagnóstico
+- [ ] Causa raiz do não-envio para Alessandra, Avila e Patrícia identificada e explicada objetivamente.
 
-### Filtro de Elegibilidade e Disponibilidade
-- [ ] Apenas hóspedes com reservas ativas/confirmadas e check-out agendado para domingo às 12:00h são selecionados.
-- [ ] Reservas em flats que possuem check-in no domingo só recebem a oferta se houver outro flat vago apto para remanejamento via `selectFairShareFlat`.
-- [ ] Nenhuma oferta é enviada caso o condomínio esteja 100% ocupado na noite de domingo para segunda.
-
-### Hold de 30 Minutos e Expiração Silenciosa
-- [ ] O disparo gera o payload PIX no valor promocional e grava o hold de 30 minutos com a flag `isSilentUpsellHold: true`.
-- [ ] Ao término de 30 minutos sem pagamento, o hold de domingo para segunda é removido silenciosamente, sem envio de mensagem de cancelamento ou expiração ao hóspede e preservando a reserva original.
-
-### Webhook PIX e Repercussões no Sistema
-- [ ] A confirmação do PIX atualiza a data de check-out no PMS para segunda-feira às 12:00h.
-- [ ] A limpeza do flat é automaticamente reagendada para segunda-feira.
-- [ ] Havendo reserva subsequente no domingo para o mesmo flat, ela é remanejada para o flat alternativo livre.
-- [ ] A mensagem de confirmação de pagamento é enviada ao hóspede.
-
-### Mensagens e Contexto da Sofia
-- [ ] A mensagem da oferta é enviada em dois balões distintos (texto persuasivo no primeiro, código PIX isolado no segundo).
-- [ ] A IA Sofia possui em seu contexto a informação da oferta enviada e consegue regerar o PIX promocional caso solicitada pelo hóspede e havendo disponibilidade.
+### Elegibilidade e Regras de Disparo
+- [ ] A lógica de seleção inclui todas as reservas com café da manhã contratado sem pedido registrado para a manhã seguinte durante a estadia ativa (hoje >= check-in e hoje < check-out).
+- [ ] O disparo ocorre às 18:00 com janela estendida permitida até 20:00, bloqueando envios após as 20:00.
+- [ ] Acompanhantes cadastrados com telefone válido também são incluídos no agendamento do lembrete.
+- [ ] Reservas sem confirmação presencial de entrada (no-show) não são bloqueadas.
+- [ ] Paridade de arquivos entre `artifacts/api-server/` e `scripts/` validada e mantida (100% idênticos).
+- [ ] Teste automatizado pontual da correção implementado e executado com sucesso, sem execução de testes globais.
 
 ## Verification Resources
-- [ ] Testes pontuais de unidade/integração desenvolvidos pela equipe conforme as diretrizes do AGENTS.md, cobrindo elegibilidade, geração e expiração silenciosa do hold, e confirmação via webhook PIX.
+- Dados das reservas pendentes em 04/11/2026:
+  - RES-905-0596 (ID: 596, Flat 905, Alessandra Dias, tel: 5521964120926)
+  - RES-113-B2B-25152172 (ID: 550, Flat 113, AVILA SAMUEL, tel: 41 998725041)
+  - RES-605-0470 (ID: 470, Flat 605, Patrícia Belchior de Carvalho, tel: 3198171397)
+- Endpoint de verificação de pedidos de café: `/api/breakfast/orders?date=2026-11-05`

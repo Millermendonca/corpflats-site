@@ -917,7 +917,8 @@ Se você notar qualquer detalhe que precise de atenção, desejar solicitar trav
     description: "Enviado às 18:00 da véspera para hóspedes com café que ainda não efetuaram a montagem do pedido.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
-    recipientTarget: "guest",
+    recipientTarget: "both",
+    includeCompanions: true,
     triggerTiming: "fixed_time_day_before",
     offsetValue: 0,
     offsetUnit: "hours",
@@ -2943,7 +2944,8 @@ export const COMPANION_EXCLUDED_EVENTS = new Set([
   "pre_reservation_expiring_soon",
   "pre_reservation_expired",
   "payment_pending",
-  "additional_daily_pending"
+  "additional_daily_pending",
+  "payment_confirmed"
 ]);
 
 // ── Cobrança / PIX puro: quando há solicitante distinto, vai EXCLUSIVAMENTE ao solicitante ──
@@ -2971,13 +2973,16 @@ export const PURE_BILLING_TEMPLATE_IDS = new Set([
 export const REQUESTER_AND_GUEST_EVENTS = new Set([
   "payment_confirmed",
   "reservation_updated",
-  "reservation_cancelled"
+  "reservation_cancelled",
+  "breakfast_reminder"
 ]);
 
 export const REQUESTER_AND_GUEST_TEMPLATE_IDS = new Set([
   "tpl_payment_confirmed",
   "tpl_reservation_updated",
-  "tpl_reservation_cancelled"
+  "tpl_reservation_cancelled",
+  "tpl_breakfast_reminder",
+  "qm_breakfast"
 ]);
 
 // ── Eventos exclusivos de estadia, instruções de reserva/check-in, café, saída, frigobar, achados e avaliação (vão APENAS aos hóspedes quando Nome + WhatsApp do hóspede estão preenchidos) ──
@@ -2998,7 +3003,6 @@ export const GUEST_ONLY_STAY_AND_POST_EVENTS = new Set([
   "room_ready_regular",
   "checkin_cleaning_delay",
   "checkin_completed",
-  "breakfast_reminder",
   "checkout_reminder",
   "checkout_completed",
   "on_checkout",
@@ -3031,7 +3035,6 @@ export const GUEST_ONLY_TEMPLATE_IDS = new Set([
   "tpl_room_ready_regular",
   "tpl_checkin_cleaning_delay",
   "tpl_checkin_completed",
-  "tpl_breakfast_reminder",
   "tpl_checkout_reminder",
   "tpl_checkout_completed",
   "tpl_late_checkout_approved",
@@ -3044,7 +3047,6 @@ export const GUEST_ONLY_TEMPLATE_IDS = new Set([
   "tpl_nps_feedback_thanks",
   "tpl_lost_item_registered",
   "tpl_lost_item",
-  "qm_breakfast",
   "qm_checkout_reminder",
   "qm_review_request"
 ]);
@@ -8029,8 +8031,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_breakfast_reminder") {
           tpl.channels = ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"];
-          tpl.recipientTarget = "guest";
-          if (tpl.includeCompanions === undefined) tpl.includeCompanions = true;
+          tpl.recipientTarget = "both";
+          tpl.includeCompanions = true;
           if (tpl.footer?.includes("Artesanal") || tpl.footer?.includes("artesanal")) {
             const defBf = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_breakfast_reminder");
             if (defBf) {
