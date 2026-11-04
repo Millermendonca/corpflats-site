@@ -819,9 +819,20 @@ export default function LiveOperationsPanel() {
                       className="flex items-center justify-between gap-2 bg-slate-950/80 px-2.5 py-1.5 rounded-xl border border-slate-800/80 text-xs"
                     >
                       <div className="min-w-0">
-                        <span className="font-bold text-white truncate block">
-                          Flat {c.flatNumber} • {formatShortGuestName(c.guestName)}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-white truncate">
+                            Flat {c.flatNumber} • {formatShortGuestName(c.guestName)}
+                          </span>
+                          {(c.isSmoker || c.smokerGuestAlert || c.guestSmoked) && (
+                            <span 
+                              data-smoker-alert-badge="true"
+                              className="text-[9px] px-1 py-0.2 rounded bg-rose-600 text-white font-black shrink-0"
+                              title="Hóspede Fumante"
+                            >
+                              🚬 Fumante
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] text-slate-400">
                           {(c.channel || "Site").toUpperCase()} • {c.checkinTime || "14:00"}
                         </span>

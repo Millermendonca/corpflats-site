@@ -78,6 +78,14 @@ const crmGuestsPath = path.resolve("artifacts/limpeza/src/pages/crm-guests.tsx")
     flatCardSrc.includes("stayoverSmokedInRoom"),
     "FlatCard deve suportar confirmação de fumo também na limpeza stayover"
   );
+  assert.ok(
+    !flatCardSrc.includes("handleStatusChange") || !flatCardSrc.slice(flatCardSrc.indexOf("handleStatusChange")).split("submitCompletion")[0].includes("/api/cleaning/requests/manual"),
+    "handleStatusChange não deve invocar /api/cleaning/requests/manual (previne erro 403 para camareiras)"
+  );
+  assert.ok(
+    !flatCardSrc.includes("handleConfirmStayoverClean") || !flatCardSrc.slice(flatCardSrc.indexOf("handleConfirmStayoverClean")).split("instructionsModalOpen")[0].includes("/api/cleaning/requests/manual"),
+    "handleConfirmStayoverClean não deve invocar /api/cleaning/requests/manual (previne erro 403 para camareiras)"
+  );
 
   console.log("✅ 2. Verificação estática de UI em FlatCard aprovada (R1 e R2).");
 }
@@ -318,6 +326,71 @@ async function runRealBackendTests() {
   assert.equal(futureJose.isSmoker, true, "Reserva futura com 'Jose' (sem acento) deve ser localizada e sinalizada");
 
   console.log("✅ 4.5. Normalização de acentos e tipos mistos de ID validada com 100% de precisão.");
+
+  // 4.6. Prevenção de poluição de cadastro esqueleto em limpezas sem fumo
+  const guestCountBefore = testDb.guests.length;
+  const reqNoSmoke = {
+    id: 704,
+    flatId: 707,
+    flatNumber: "707",
+    requestDate: "2026-11-04",
+    status: "cleaning_now",
+    reservationId: "RES-NO-SMOKE",
+    leavingGuest: "Machado de Assis"
+  };
+  testDb.cleaningRequests.push(reqNoSmoke);
+  testDb.reservations.push({
+    id: "RES-NO-SMOKE",
+    code: "RES-NO-SMOKE",
+    flatId: 707,
+    flatNumber: "707",
+    guestName: "Machado de Assis",
+    checkinDate: "2026-11-01",
+    checkoutDate: "2026-11-04",
+    status: "confirmada"
+  });
+  updateSmokingStatusForCleaning(reqNoSmoke, false, maidUser, "2026-11-04", testDb);
+  assert.equal(testDb.guests.length, guestCountBefore, "Limpeza sem fumo não deve poluir db.guests com cadastros esqueletos");
+  console.log("✅ 4.6. Limpeza sem fumo não gerou poluição de cadastro esqueleto em db.guests.");
+
+  // 4.7. Correlação de reservas futuras por telefone e e-mail mesmo com nome diferente e sem CPF (Ledger Item 4)
+  const reqPhone = {
+    id: 705,
+    flatId: 808,
+    flatNumber: "808",
+    requestDate: "2026-11-04",
+    status: "cleaning_now",
+    reservationId: "RES-PHONE-1",
+    leavingGuest: "Guimaraes Rosa"
+  };
+  testDb.cleaningRequests.push(reqPhone);
+  testDb.reservations.push({
+    id: "RES-PHONE-1",
+    code: "RES-PHONE-1",
+    flatId: 808,
+    flatNumber: "808",
+    guestName: "Guimaraes Rosa",
+    guestPhone: "21999887766",
+    checkinDate: "2026-11-01",
+    checkoutDate: "2026-11-04",
+    status: "confirmada"
+  });
+  testDb.reservations.push({
+    id: "RES-FUTURE-PHONE",
+    code: "RES-FUTURE-PHONE",
+    flatId: 909,
+    flatNumber: "909",
+    guestName: "J. G. Rosa", // Nome diferente/abreviado, sem CPF, mas mesmo telefone
+    guestPhone: "21999887766",
+    checkinDate: "2026-12-15",
+    checkoutDate: "2026-12-20",
+    status: "confirmada"
+  });
+  updateSmokingStatusForCleaning(reqPhone, true, maidUser, "2026-11-04", testDb);
+  const futureResPhone = testDb.reservations.find(r => r.code === "RES-FUTURE-PHONE");
+  assert.equal(futureResPhone.isSmoker, true, "Reserva futura com nome abreviado/diferente mas mesmo telefone deve ser correlacionada");
+  assert.equal(futureResPhone.smokerGuestAlert, true, "Alerta deve ser ativado na reserva futura correlacionada por telefone");
+  console.log("✅ 4.7. Correlação de reservas futuras por telefone/e-mail sem CPF validada com sucesso.");
 
   if (httpServer && typeof httpServer.close === "function") {
     httpServer.close();

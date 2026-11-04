@@ -496,8 +496,22 @@ export default function CrmGuests() {
         handleSyncAllGoogleContacts()
       }
     }
+    const handleCalendarUpdated = () => {
+      fetchGuests()
+    }
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "pms_calendar_sync_trigger") {
+        fetchGuests()
+      }
+    }
     window.addEventListener("message", handlePopupMsg)
-    return () => window.removeEventListener("message", handlePopupMsg)
+    window.addEventListener("pms_calendar_updated", handleCalendarUpdated)
+    window.addEventListener("storage", handleStorageChange)
+    return () => {
+      window.removeEventListener("message", handlePopupMsg)
+      window.removeEventListener("pms_calendar_updated", handleCalendarUpdated)
+      window.removeEventListener("storage", handleStorageChange)
+    }
   }, [])
 
   const calculateGuestAge = (birthDate?: string) => {

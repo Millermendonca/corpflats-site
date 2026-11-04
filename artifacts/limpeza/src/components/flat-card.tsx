@@ -443,60 +443,47 @@ export function FlatCard({
     e.preventDefault()
     setIsProcessing(true)
     try {
-      let activeReqId = request?.id
-      if (!activeReqId) {
-        const createRes = await fetch("/api/cleaning/requests/manual", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ flatId: flat.flatId, requestDate: date, cleaningType: "stayover" }),
-          credentials: "include"
-        })
-        const created = await createRes.json()
-        activeReqId = created.id
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+      const payload: any = {
+        status: "clean",
+        towelsChanged,
+        beddingChanged,
+        flatNumber: flat.flatNumber,
+        flatId: flat.flatId,
+        date: date,
+        markedByAdmin: isAdmin ? true : undefined,
+        smokedInRoom: stayoverSmokedInRoom,
+        guestSmoked: stayoverSmokedInRoom
+      }
+      if (isAdmin && selectedMaidId) {
+        payload.assignedUserId = parseInt(selectedMaidId)
+        payload.maidId = parseInt(selectedMaidId)
+      } else if (request?.assignedUserId) {
+        payload.assignedUserId = request.assignedUserId
+        payload.maidId = request.assignedUserId
       }
 
-      if (activeReqId) {
-        const payload: any = {
-          status: "clean",
-          towelsChanged,
-          beddingChanged,
-          flatNumber: flat.flatNumber,
-          flatId: flat.flatId,
-          date: date,
-          markedByAdmin: isAdmin ? true : undefined,
-          smokedInRoom: stayoverSmokedInRoom,
-          guestSmoked: stayoverSmokedInRoom
-        }
-        if (isAdmin && selectedMaidId) {
-          payload.assignedUserId = parseInt(selectedMaidId)
-          payload.maidId = parseInt(selectedMaidId)
-        } else if (request?.assignedUserId) {
-          payload.assignedUserId = request.assignedUserId
-          payload.maidId = request.assignedUserId
-        }
+      const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include"
+      })
 
-        const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
+      if (res.ok) {
+        toast({
+          title: "Limpeza Stayover Concluída",
+          description: `Flat ${flat.flatNumber} higienizado e trocas de enxoval registradas.`
         })
-
-        if (res.ok) {
-          toast({
-            title: "Limpeza Stayover Concluída",
-            description: `Flat ${flat.flatNumber} higienizado e trocas de enxoval registradas.`
-          })
-          setStayoverModalOpen(false)
-          refreshData()
-        } else {
-          const err = await res.json()
-          toast({
-            title: "Não foi possível concluir",
-            description: err.error || "Erro ao salvar conclusão de stayover.",
-            variant: "destructive"
-          })
-        }
+        setStayoverModalOpen(false)
+        refreshData()
+      } else {
+        const err = await res.json()
+        toast({
+          title: "Não foi possível concluir",
+          description: err.error || "Erro ao salvar conclusão de stayover.",
+          variant: "destructive"
+        })
       }
     } catch (err: any) {
       toast({
@@ -1152,52 +1139,40 @@ export function FlatCard({
 
     setIsProcessing(true)
     try {
-      let activeReqId = request?.id
-      if (!activeReqId) {
-        const createRes = await fetch("/api/cleaning/requests/manual", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ flatId: flat.flatId, requestDate: date }),
-          credentials: "include"
-        })
-        const created = await createRes.json()
-        activeReqId = created.id
-      }
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
 
-      if (activeReqId) {
-        const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            status: newStatus,
-            flatNumber: flat.flatNumber,
-            flatId: flat.flatId,
-            date: date,
-            markedByAdmin: isAdmin ? true : undefined
-          }),
-          credentials: "include"
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          if (err.error?.includes("Tempo insuficiente")) {
-            setMinTimeAlertOpen(true)
-            return
-          }
-          if (err.targetCheckoutDate || err.error?.includes("check-out deste")) {
-            setFutureCheckoutInfo({
-              guestName: flat.activeReservation?.guestName,
-              checkoutDate: err.targetCheckoutDate || flat.activeReservation?.checkoutDate
-            })
-            setFutureCheckoutAlertOpen(true)
-            return
-          }
-          toast({
-            title: "Não foi possível alterar status",
-            description: err.error || "Erro ao atualizar status da limpeza.",
-            variant: "destructive"
-          })
+      const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          status: newStatus,
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date,
+          markedByAdmin: isAdmin ? true : undefined
+        }),
+        credentials: "include"
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        if (err.error?.includes("Tempo insuficiente")) {
+          setMinTimeAlertOpen(true)
           return
         }
+        if (err.targetCheckoutDate || err.error?.includes("check-out deste")) {
+          setFutureCheckoutInfo({
+            guestName: flat.activeReservation?.guestName,
+            checkoutDate: err.targetCheckoutDate || flat.activeReservation?.checkoutDate
+          })
+          setFutureCheckoutAlertOpen(true)
+          return
+        }
+        toast({
+          title: "Não foi possível alterar status",
+          description: err.error || "Erro ao atualizar status da limpeza.",
+          variant: "destructive"
+        })
+        return
       }
       refreshData()
       if (pendingPeriodicTasks.length > 0 && (newStatus === "will_clean" || newStatus === "cleaning_now")) {
