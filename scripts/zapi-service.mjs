@@ -752,7 +752,7 @@ Qualquer dúvida ou necessidade, estamos à sua total disposição por aqui.`,
     id: "tpl_reservation_updated",
     triggerEvent: "reservation_updated",
     title: "Modificação de Reserva • O que foi alterado",
-    description: "Enviado quando houver alterações de datas, quarto, valores ou hóspedes. Informa com precisão e clareza apenas os itens alterados (De ➔ Para), sem reenviar os demais dados da reserva.",
+    description: "Enviado quando houver alterações de datas, quarto, valores ou hóspedes. Informa com precisão e clareza apenas os itens alterados (antigo riscado em cima e novo em destaque embaixo), sem reenviar os demais dados da reserva.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
@@ -760,11 +760,13 @@ Qualquer dúvida ou necessidade, estamos à sua total disposição por aqui.`,
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
-    message: `Olá, *{{primeiro_nome}}*! 🔄
+    message: `{{alerta_mudanca_flat}}Olá, *{{primeiro_nome}}*! 🔄
 Sua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* foi alterada.
 
 Confira o que foi atualizado:
-{{resumo_alteracoes}}`,
+{{resumo_alteracoes}}
+
+Por favor, confirme com *OK* que viu a mudança.`,
     footer: "CorpFlats • Central de Atendimento",
     buttons: [
       { id: "btn_checkin", type: "URL", label: "📝 Assinar Ficha Atualizada", url: "{{link_checkin_digital}}" },
@@ -2662,9 +2664,26 @@ export function formatWhatsAppChangesSummary(changes = [], options = {}) {
       }
     }
 
+    if (c.field === "flatNumber") {
+      const fmtFlat = (v) => {
+        const s = String(v ?? "").trim();
+        if (!s) return s;
+        return /^flat\b/i.test(s) ? s : `Flat ${s}`;
+      };
+      const hasOldFlat = oldV !== undefined && oldV !== null && oldV !== "" && oldV !== "(vazio)" && oldV !== "null";
+      const oldFlatStr = hasOldFlat ? fmtFlat(oldV) : "";
+      const newFlatStr = fmtFlat(newV);
+      if (hasOldFlat && oldFlatStr !== newFlatStr) {
+        lines.push(`• *${label}:*\n  ❌ Flat anterior: ~${oldFlatStr}~\n  ✅ *SEU NOVO FLAT: ${newFlatStr}* 🔑`);
+      } else {
+        lines.push(`• *${label}:*\n  ✅ *SEU NOVO FLAT: ${newFlatStr}* 🔑`);
+      }
+      continue;
+    }
+
     const hasOld = oldV !== undefined && oldV !== null && oldV !== "" && oldV !== "(vazio)" && oldV !== "null";
     if (hasOld && String(oldV) !== String(newV)) {
-      lines.push(`• *${label}:* ${oldV} ➔ *${newV}*`);
+      lines.push(`• *${label}:*\n  ❌ Anterior: ~${oldV}~\n  ✅ *Atualizado: ${newV}*`);
     } else {
       lines.push(`• *${label}:* *${newV}*`);
     }
@@ -3621,14 +3640,24 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     }
   }
 
-  // ── Tag: {{resumo_alteracoes}} ────────────────────────────────────────────
-  // Formata a lista de campos alterados (apenas o que mudou, De ➔ Para)
+  // ── Tag: {{resumo_alteracoes}} & {{alerta_mudanca_flat}} ──────────────────
+  // Formata a lista de campos alterados (antigo riscado em cima e novo embaixo)
   let resumoAlteracoes = "";
+  let alertaMudancaFlat = "";
   const changes = reservation._changesContext || [];
   const hasChanges = (Array.isArray(changes) && changes.length > 0) ||
     (changes && typeof changes === "object" && !Array.isArray(changes) && Object.keys(changes).length > 0);
   if (hasChanges) {
     resumoAlteracoes = formatWhatsAppChangesSummary(changes, { excludeFinancial: hideFinancialForGuest });
+    const flatChangeItem = Array.isArray(changes)
+      ? changes.find(c => c && c.field === "flatNumber")
+      : (changes && typeof changes === "object" && changes.flatNumber ? { newValue: changes.flatNumber.newValue ?? changes.flatNumber.new } : null);
+    if (flatChangeItem) {
+      const rawNewFlat = String(flatChangeItem.newValue || flatNumber || "").replace(/^flat\s+/i, "").trim();
+      if (rawNewFlat) {
+        alertaMudancaFlat = `⚠️ *ATENÇÃO: MUDANÇA PARA O FLAT ${rawNewFlat}*\n\n`;
+      }
+    }
   }
   if (!resumoAlteracoes) {
     resumoAlteracoes = "• *Status da Reserva:* Dados atualizados no sistema.";
@@ -3816,6 +3845,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{forma_pagamento}}": hideFinancialForGuest ? "" : formaPagamento,
     "{{data_pagamento}}": formatDateBr(reservation.paidAt || new Date().toISOString()),
     "{{resumo_alteracoes}}": resumoAlteracoes,
+    "{{alerta_mudanca_flat}}": alertaMudancaFlat,
     "{{nome_camareira}}": reservation.maidName || reservation.foundBy || "Camareira",
     "{{whatsapp_camareira}}": reservation.maidPhone || "",
     "{{link_whatsapp_camareira}}": reservation.maidWhatsAppUrl || (reservation.maidPhone ? `https://wa.me/55${String(reservation.maidPhone).replace(/\D/g, "").replace(/^55/, "")}` : ""),
@@ -3893,6 +3923,14 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     rendered = rendered
       .replace(/⚠️[^\n]*(?:assinar|assinatura|ficha atualizada|termo atualizado)[\s\S]*?(?=\n\n|$)/gi, "")
       .replace(/^[ \t]*[^\n]*(?:Assinar Ficha Atualizada|Assinar o Termo Atualizado|re-assinar|assinar novamente)[^\n]*\n?/gim, "");
+  }
+  if (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated") {
+    if (alertaMudancaFlat && !rendered.includes("ATENÇÃO: MUDANÇA PARA O FLAT")) {
+      rendered = `${alertaMudancaFlat}${rendered.trimStart()}`;
+    }
+    if (!/confirme\s+com\s+\*?ok\*?/i.test(rendered)) {
+      rendered = `${rendered.trimEnd()}\n\nPor favor, confirme com *OK* que viu a mudança.`;
+    }
   }
 
   // Remove excesso de quebras de linha decorrentes de tags opcionais vazias
@@ -7948,8 +7986,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_reservation_updated") {
           const defUpdated = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_updated");
           if (defUpdated) {
-            if (tpl.message.includes("permanecem inalterados")) {
+            if (
+              tpl.message.includes("permanecem inalterados") ||
+              !tpl.message.includes("{{alerta_mudanca_flat}}") ||
+              !tpl.message.includes("confirme com *OK*")
+            ) {
               tpl.message = defUpdated.message;
+              tpl.description = defUpdated.description;
             }
             if (!tpl.buttons?.some(b => b.id === "btn_checkin" || b.url === "{{link_checkin_digital}}")) {
               tpl.buttons = defUpdated.buttons;

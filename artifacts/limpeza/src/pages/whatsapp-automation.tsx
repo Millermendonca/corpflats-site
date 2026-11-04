@@ -264,7 +264,8 @@ const TAG_GROUPS = [
   {
     category: "🔄 Alterações na Reserva",
     tags: [
-      { tag: "{{resumo_alteracoes}}", label: "Itens Alterados (De ➔ Para)", example: "• Quarto: Flat 101 ➔ Flat 104\n• Check-in: 20/09 ➔ 22/09" },
+      { tag: "{{alerta_mudanca_flat}}", label: "Alerta de Mudança de Flat (Condicional)", example: "⚠️ *ATENÇÃO: MUDANÇA PARA O FLAT 113*" },
+      { tag: "{{resumo_alteracoes}}", label: "Itens Alterados (Antigo Riscado / Novo em Destaque)", example: "• *Acomodação / Quarto:*\n  ❌ Flat anterior: ~Flat 101~\n  ✅ *SEU NOVO FLAT: Flat 113* 🔑" },
     ]
   },
   {
@@ -2441,7 +2442,8 @@ export default function WhatsappAutomation() {
       "{{link_avaliacao_google}}": config.googleReviewUrl || "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
       "{{status_cafe}}": (targetRes.includeBreakfast || targetRes.ratePlan === "with_breakfast") ? "Incluso" : "Não incluso",
       "{{aviso_cafe_exclusivo_flat}}": (targetRes.includeBreakfast || targetRes.ratePlan === "with_breakfast") ? "☕ *Sobre o seu Café da Manhã:* informamos que em nossas hospedagens o café da manhã é servido *exclusivamente no flat* (entregue diretamente na sua acomodação no horário agendado por você)." : "",
-      "{{resumo_alteracoes}}": "• *Acomodação / Quarto:* Flat 101 ➔ *Flat 113*\n• *Data de Entrada (Check-in):* 03/09/2026 ➔ *05/09/2026*\n• *Valor Total:* R$ 450,00 ➔ *R$ 600,00*"
+      "{{alerta_mudanca_flat}}": `⚠️ *ATENÇÃO: MUDANÇA PARA O FLAT ${targetRes.flatNumber || "113"}*\n\n`,
+      "{{resumo_alteracoes}}": `• *Acomodação / Quarto:*\n  ❌ Flat anterior: ~Flat 101~\n  ✅ *SEU NOVO FLAT: Flat ${targetRes.flatNumber || "113"}* 🔑\n• *Data de Entrada (Check-in):*\n  ❌ Anterior: ~03/09/2026~\n  ✅ *Atualizado: 05/09/2026*\n• *Valor Total:*\n  ❌ Anterior: ~R$ 450,00~\n  ✅ *Atualizado: R$ 600,00*`
     }
 
     let rendered = text
@@ -2452,19 +2454,22 @@ export default function WhatsappAutomation() {
     return rendered
   }
 
-  // Format WhatsApp markdown (*bold*, _italic_) into styled HTML safely
+  // Format WhatsApp markdown (*bold*, ~strikethrough~) into styled HTML safely
   const formatWhatsappMarkdown = (txt: string) => {
     const rendered = renderPreviewText(txt)
     return rendered
       .split("\n")
       .map((line, lineIdx) => {
-        // Simple bold + URL parser
-        const parts = line.split(/(\*[^*]+\*|https?:\/\/[^\s]+)/g)
+        // Simple bold + strikethrough + URL parser
+        const parts = line.split(/(\*[^*]+\*|~[^~]+~|https?:\/\/[^\s]+)/g)
         return (
           <span key={lineIdx} className="block leading-relaxed min-h-[1.2em]">
             {parts.map((p, pIdx) => {
               if (p.startsWith("*") && p.endsWith("*") && p.length > 2) {
                 return <strong key={pIdx} className="font-bold text-neutral-900 dark:text-neutral-50">{p.slice(1, -1)}</strong>
+              }
+              if (p.startsWith("~") && p.endsWith("~") && p.length > 2) {
+                return <del key={pIdx} className="line-through text-neutral-500 dark:text-neutral-400">{p.slice(1, -1)}</del>
               }
               if (/^https?:\/\//i.test(p)) {
                 return <a key={pIdx} href={p} target="_blank" rel="noopener noreferrer" className="text-sky-600 dark:text-sky-400 underline break-all">{p}</a>
