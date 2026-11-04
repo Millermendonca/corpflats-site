@@ -262,6 +262,7 @@ export function FlatCard({
   const [selectedMaidId, setSelectedMaidId] = useState<string>("")
   const [adminCleanSubmitting, setAdminCleanSubmitting] = useState(false)
   const [adminSmokedInRoom, setAdminSmokedInRoom] = useState(false)
+  const [stayoverSmokedInRoom, setStayoverSmokedInRoom] = useState(false)
 
   // Pergunta em destaque sobre fumo na finalização da limpeza (card da camareira)
   const [showSmokingPrompt, setShowSmokingPrompt] = useState(false)
@@ -270,51 +271,39 @@ export function FlatCard({
   const handleFinishCleaningWithSmoking = async (smoked: boolean) => {
     setIsProcessing(true)
     try {
-      let activeReqId = request?.id || flat?.cleaningRequest?.id
-      if (!activeReqId) {
-        const createRes = await fetch("/api/cleaning/requests/manual", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ flatId: flat.flatId, requestDate: date }),
-          credentials: "include"
-        })
-        const created = await createRes.json()
-        activeReqId = created.id
-      }
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
 
-      if (activeReqId) {
-        const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            status: "clean",
-            flatNumber: flat.flatNumber,
-            flatId: flat.flatId,
-            date: date,
-            markedByAdmin: isAdmin ? true : undefined,
-            smokedInRoom: smoked,
-            guestSmoked: smoked
-          }),
-          credentials: "include"
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          toast({
-            title: "Não foi possível concluir",
-            description: err.error || "Erro ao atualizar status da limpeza.",
-            variant: "destructive"
-          })
-          return
-        }
-        setShowSmokingPrompt(false)
+      const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          status: "clean",
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date,
+          markedByAdmin: isAdmin ? true : undefined,
+          smokedInRoom: smoked,
+          guestSmoked: smoked
+        }),
+        credentials: "include"
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
         toast({
-          title: "✓ Limpeza Concluída",
-          description: smoked 
-            ? "Limpeza finalizada com registro de fumo no quarto. Hóspede sinalizado como fumante." 
-            : "Limpeza finalizada com sucesso.",
+          title: "Não foi possível concluir",
+          description: err.error || "Erro ao atualizar status da limpeza.",
+          variant: "destructive"
         })
-        refreshData()
+        return
       }
+      setShowSmokingPrompt(false)
+      toast({
+        title: "✓ Limpeza Concluída",
+        description: smoked 
+          ? "Limpeza finalizada com registro de fumo no quarto. Hóspede sinalizado como fumante." 
+          : "Limpeza finalizada com sucesso.",
+      })
+      refreshData()
     } catch (err: any) {
       console.error("Erro ao concluir limpeza:", err)
       toast({
@@ -330,18 +319,7 @@ export function FlatCard({
   const handleToggleSmoking = async () => {
     setIsProcessing(true)
     try {
-      let activeReqId = request?.id || flat?.cleaningRequest?.id
-      if (!activeReqId) {
-        const createRes = await fetch("/api/cleaning/requests/manual", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ flatId: flat.flatId, requestDate: date }),
-          credentials: "include"
-        })
-        const created = await createRes.json()
-        activeReqId = created.id
-      }
-
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
       const newSmokedValue = !hasSmoked
       const res = await fetch(`/api/cleaning/assignments/${activeReqId}/smoking`, {
         method: "PATCH",
@@ -485,7 +463,9 @@ export function FlatCard({
           flatNumber: flat.flatNumber,
           flatId: flat.flatId,
           date: date,
-          markedByAdmin: isAdmin ? true : undefined
+          markedByAdmin: isAdmin ? true : undefined,
+          smokedInRoom: stayoverSmokedInRoom,
+          guestSmoked: stayoverSmokedInRoom
         }
         if (isAdmin && selectedMaidId) {
           payload.assignedUserId = parseInt(selectedMaidId)
@@ -1441,7 +1421,7 @@ export function FlatCard({
                 <Button
                   type="button"
                   size="default"
-                  className="bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold h-11 text-xs sm:text-sm shadow-md flex items-center justify-center gap-1.5 transition-all"
+                  className="bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold h-11 text-xs px-2 shadow-md flex items-center justify-center gap-1.5 transition-all whitespace-nowrap flex-nowrap shrink-0 min-w-0"
                   onClick={() => handleFinishCleaningWithSmoking(true)}
                   disabled={isProcessing}
                 >
@@ -1450,7 +1430,7 @@ export function FlatCard({
                 <Button
                   type="button"
                   size="default"
-                  className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold h-11 text-xs sm:text-sm shadow-md flex items-center justify-center gap-1.5 transition-all"
+                  className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold h-11 text-xs px-2 shadow-md flex items-center justify-center gap-1.5 transition-all whitespace-nowrap flex-nowrap shrink-0 min-w-0"
                   onClick={() => handleFinishCleaningWithSmoking(false)}
                   disabled={isProcessing}
                 >
@@ -3563,6 +3543,39 @@ export function FlatCard({
                   className={`h-8 px-3 text-xs font-bold rounded-xl ${!beddingChanged ? "bg-slate-700 text-white" : ""}`}
                 >
                   Não
+                </Button>
+              </div>
+            </div>
+
+            {/* Pergunta 3: Fumo no quarto */}
+            <div className="p-3.5 bg-muted/30 border border-border rounded-2xl flex items-center justify-between gap-3">
+              <div>
+                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <span>🚬</span>
+                  <span>3. O hóspede fumou no quarto?</span>
+                </Label>
+                <span className="text-[11px] text-muted-foreground">
+                  Registra no cadastro e alerta a equipe em futuras estadias
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={stayoverSmokedInRoom ? "destructive" : "outline"}
+                  onClick={() => setStayoverSmokedInRoom(true)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${stayoverSmokedInRoom ? "bg-rose-600 hover:bg-rose-700 text-white" : ""}`}
+                >
+                  🚬 Sim
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!stayoverSmokedInRoom ? "default" : "outline"}
+                  onClick={() => setStayoverSmokedInRoom(false)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${!stayoverSmokedInRoom ? "bg-emerald-600 text-white" : ""}`}
+                >
+                  ✓ Não
                 </Button>
               </div>
             </div>

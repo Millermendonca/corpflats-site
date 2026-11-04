@@ -20132,6 +20132,12 @@ app.get("/api/reservations/checkins", (req, res) => {
     .filter(r => (r.checkinDate === dateStr || r.checkinDate?.substring(0, 10) === dateStr) && r.status !== "cancelada")
     .map(r => {
       const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || { id: r.flatId, number: r.flatNumber || "113" };
+      const matchedGuest = (db.guests || []).find(g =>
+        (r.guestId && (Number(g.id) === Number(r.guestId) || String(g.id) === String(r.guestId))) ||
+        (r.guestDocument && g.document && g.document.replace(/\D/g, "") === r.guestDocument.replace(/\D/g, "")) ||
+        (r.guestName && g.name && g.name.trim().toLowerCase() === r.guestName.trim().toLowerCase())
+      );
+      const isSmoker = Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || matchedGuest?.isSmoker || matchedGuest?.smokedInRoom || (matchedGuest?.tags || []).includes("Fumante"));
       return {
         id: r.id,
         flatId: flat.id,
@@ -20143,7 +20149,10 @@ app.get("/api/reservations/checkins", (req, res) => {
         channel: r.channel || "direta",
         notes: r.notes || "",
         earlyCheckinAuthorized: Boolean(r.earlyCheckinAuthorized),
-        hasPreCheckin: Boolean(r.fnhrCompleted || (r.guests && r.guests.some(g => g.hasCompletedCheckin)))
+        hasPreCheckin: Boolean(r.fnhrCompleted || (r.guests && r.guests.some(g => g.hasCompletedCheckin))),
+        isSmoker,
+        smokerGuestAlert: isSmoker,
+        guestSmoked: isSmoker
       };
     });
   res.json(list);
@@ -20551,7 +20560,8 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
 }
 
 // ── Helper: Atualização de Fumo da Limpeza no Cadastro do Hóspede e Reservas Futuras ──
-function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, targetDate = null) {
+function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, targetDate = null, dbInstance = null) {
+  const currentDb = dbInstance || db;
   const now = new Date().toISOString();
   cleaningItem.smokedInRoom = Boolean(isSmoker);
   cleaningItem.guestSmoked = Boolean(isSmoker);
@@ -20565,34 +20575,48 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
 
   const effectiveDate = targetDate || cleaningItem.requestDate || cleaningItem.effectiveDate || getTodayStr();
 
+  const normalizeStr = (str) => {
+    if (!str) return "";
+    return String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+  };
+
   // 1. Identificar reserva correspondente à estadia
   let res = null;
   if (cleaningItem.reservationId) {
-    res = (db.reservations || []).find(r => String(r.id) === String(cleaningItem.reservationId) || r.code === cleaningItem.reservationId);
+    res = (currentDb.reservations || []).find(r => String(r.id) === String(cleaningItem.reservationId) || r.code === cleaningItem.reservationId);
   }
   if (!res && cleaningItem.autoReservationId) {
-    res = (db.reservations || []).find(r => String(r.id) === String(cleaningItem.autoReservationId) || r.code === cleaningItem.autoReservationId);
+    res = (currentDb.reservations || []).find(r => String(r.id) === String(cleaningItem.autoReservationId) || r.code === cleaningItem.autoReservationId);
   }
   if (!res) {
-    res = (db.reservations || []).find(r =>
+    res = (currentDb.reservations || []).find(r =>
       r.status !== "cancelada" && r.status !== "cancelled" &&
       (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
       (r.checkoutDate === effectiveDate || r.checkoutDate === cleaningItem.requestDate)
     );
   }
-  if (!res && cleaningItem.leavingGuest) {
-    const lg = cleaningItem.leavingGuest.trim().toLowerCase();
-    res = (db.reservations || []).find(r =>
+  const cleanGuestCandidate = cleaningItem.leavingGuest || cleaningItem.currentGuest || cleaningItem.guestName;
+  if (!res && cleanGuestCandidate) {
+    const lg = normalizeStr(cleanGuestCandidate);
+    res = (currentDb.reservations || []).find(r =>
       r.status !== "cancelada" && r.status !== "cancelled" &&
       (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
-      r.guestName && (r.guestName.trim().toLowerCase() === lg || r.guestName.trim().toLowerCase().includes(lg) || lg.includes(r.guestName.trim().toLowerCase()))
+      r.guestName && (normalizeStr(r.guestName) === lg || normalizeStr(r.guestName).includes(lg) || lg.includes(normalizeStr(r.guestName)))
     );
   }
   if (!res) {
-    res = (db.reservations || []).find(r =>
+    res = (currentDb.reservations || []).find(r =>
       r.status !== "cancelada" && r.status !== "cancelled" &&
       (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
       r.checkinDate <= effectiveDate && r.checkoutDate >= effectiveDate
+    );
+  }
+  if (!res && cleanGuestCandidate) {
+    const lg = normalizeStr(cleanGuestCandidate);
+    res = (currentDb.reservations || []).find(r =>
+      r.status !== "cancelada" && r.status !== "cancelled" &&
+      r.guestName && (normalizeStr(r.guestName) === lg || normalizeStr(r.guestName).includes(lg) || lg.includes(normalizeStr(r.guestName))) &&
+      (r.checkoutDate === effectiveDate || (r.checkinDate <= effectiveDate && r.checkoutDate >= effectiveDate))
     );
   }
 
@@ -20600,47 +20624,55 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
     res.smokedInRoom = Boolean(isSmoker);
     res.guestSmoked = Boolean(isSmoker);
     res.isSmoker = Boolean(isSmoker);
+    res.smokerGuestAlert = Boolean(isSmoker);
+    if (isSmoker) {
+      res.smokingAlert = "Hóspede com histórico de fumo no quarto";
+    } else {
+      delete res.smokingAlert;
+    }
     res.updatedAt = now;
   }
 
-  // 2. Identificar e atualizar cadastro do hóspede em db.guests
-  if (!db.guests) db.guests = [];
+  // 2. Identificar e atualizar cadastro do hóspede em currentDb.guests
+  if (!currentDb.guests) currentDb.guests = [];
   let guest = null;
   if (res?.guestId) {
-    guest = db.guests.find(g => Number(g.id) === Number(res.guestId) || String(g.id) === String(res.guestId));
+    guest = currentDb.guests.find(g => Number(g.id) === Number(res.guestId) || String(g.id) === String(res.guestId));
   }
-  if (!guest && res?.guestDocument) {
-    const docClean = String(res.guestDocument).replace(/\D/g, "");
+  if (!guest && (res?.guestDocument || res?.document)) {
+    const docClean = String(res.guestDocument || res.document).replace(/\D/g, "");
     if (docClean) {
-      guest = db.guests.find(g => (g.document && g.document.replace(/\D/g, "") === docClean) || (g.documentNumber && g.documentNumber.replace(/\D/g, "") === docClean));
+      guest = currentDb.guests.find(g => (g.document && g.document.replace(/\D/g, "") === docClean) || (g.documentNumber && g.documentNumber.replace(/\D/g, "") === docClean));
     }
   }
   if (!guest && res?.guestName) {
-    const norm = res.guestName.trim().toLowerCase();
-    guest = db.guests.find(g => (g.fullName && g.fullName.trim().toLowerCase() === norm) || (g.name && g.name.trim().toLowerCase() === norm));
+    const norm = normalizeStr(res.guestName);
+    guest = currentDb.guests.find(g => (g.fullName && normalizeStr(g.fullName) === norm) || (g.name && normalizeStr(g.name) === norm));
   }
-  if (!guest && cleaningItem.leavingGuest) {
-    const norm = cleaningItem.leavingGuest.trim().toLowerCase();
-    guest = db.guests.find(g => (g.fullName && g.fullName.trim().toLowerCase() === norm) || (g.name && g.name.trim().toLowerCase() === norm));
+  if (!guest && cleanGuestCandidate) {
+    const norm = normalizeStr(cleanGuestCandidate);
+    guest = currentDb.guests.find(g => (g.fullName && normalizeStr(g.fullName) === norm) || (g.name && normalizeStr(g.name) === norm));
   }
 
-  if (!guest && res) {
-    const nextId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+  // Se o cadastro não existe mas temos referência de hóspede (por reserva ou apontamento no card), cria o cadastro
+  if (!guest && (res || cleanGuestCandidate)) {
+    const nextId = currentDb.guests.length > 0 ? Math.max(...currentDb.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+    const nameForGuest = res?.guestName || cleanGuestCandidate || "Hóspede";
     guest = {
       id: nextId,
       guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
-      name: res.guestName || "Hóspede",
-      fullName: res.guestName || "Hóspede",
-      document: res.guestDocument || "",
-      documentNumber: res.guestDocument || "",
-      phone: res.guestPhone || "",
-      email: res.guestEmail || "",
+      name: nameForGuest,
+      fullName: nameForGuest,
+      document: res?.guestDocument || res?.document || "",
+      documentNumber: res?.guestDocument || res?.document || "",
+      phone: res?.guestPhone || res?.phone || "",
+      email: res?.guestEmail || res?.email || "",
       tags: [],
       createdAt: now,
       updatedAt: now
     };
-    db.guests.push(guest);
-    res.guestId = guest.id;
+    currentDb.guests.push(guest);
+    if (res) res.guestId = guest.id;
   }
 
   if (guest) {
@@ -20672,26 +20704,33 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
   if (guest?.document) guestDocs.add(guest.document.replace(/\D/g, ""));
   if (guest?.documentNumber) guestDocs.add(guest.documentNumber.replace(/\D/g, ""));
   if (res?.guestDocument) guestDocs.add(res.guestDocument.replace(/\D/g, ""));
+  if (res?.document) guestDocs.add(res.document.replace(/\D/g, ""));
   guestDocs.delete("");
 
   const guestNames = new Set();
-  if (guest?.fullName) guestNames.add(guest.fullName.trim().toLowerCase());
-  if (guest?.name) guestNames.add(guest.name.trim().toLowerCase());
-  if (res?.guestName) guestNames.add(res.guestName.trim().toLowerCase());
+  if (guest?.fullName) guestNames.add(normalizeStr(guest.fullName));
+  if (guest?.name) guestNames.add(normalizeStr(guest.name));
+  if (res?.guestName) guestNames.add(normalizeStr(res.guestName));
+  if (cleanGuestCandidate) guestNames.add(normalizeStr(cleanGuestCandidate));
   guestNames.delete("");
 
   const isMatchingGuest = (otherRes) => {
     if (otherRes.guestId && guestIds.has(String(otherRes.guestId))) return true;
-    if (otherRes.guestDocument) {
-      const doc = otherRes.guestDocument.replace(/\D/g, "");
-      if (doc && guestDocs.has(doc)) return true;
+    const doc = (otherRes.guestDocument || otherRes.document || otherRes.cpf || "").replace(/\D/g, "");
+    if (doc && guestDocs.has(doc)) return true;
+    if (otherRes.guestName && guestNames.has(normalizeStr(otherRes.guestName))) return true;
+    if (Array.isArray(otherRes.guests)) {
+      for (const g of otherRes.guests) {
+        const gDoc = (g?.cpf || g?.document || "").replace(/\D/g, "");
+        if (gDoc && guestDocs.has(gDoc)) return true;
+        if (g?.name && guestNames.has(normalizeStr(g.name))) return true;
+      }
     }
-    if (otherRes.guestName && guestNames.has(otherRes.guestName.trim().toLowerCase())) return true;
     return false;
   };
 
-  for (const otherRes of (db.reservations || [])) {
-    if (res && otherRes.id === res.id) continue;
+  for (const otherRes of (currentDb.reservations || [])) {
+    if (res && String(otherRes.id) === String(res.id)) continue;
     if (!isMatchingGuest(otherRes)) continue;
 
     const isFuture = otherRes.checkinDate >= effectiveDate || otherRes.checkoutDate >= effectiveDate || (!otherRes.checkoutDone && otherRes.status !== "cancelada" && otherRes.status !== "cancelled" && otherRes.status !== "completed");
@@ -20701,11 +20740,13 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
         otherRes.isSmoker = true;
         otherRes.smokerGuestAlert = true;
         otherRes.guestSmoked = true;
+        otherRes.smokedInRoom = true;
         otherRes.smokingAlert = "Hóspede com histórico de fumo no quarto";
       } else {
         otherRes.isSmoker = false;
         otherRes.smokerGuestAlert = false;
         otherRes.guestSmoked = false;
+        otherRes.smokedInRoom = false;
         delete otherRes.smokingAlert;
       }
       otherRes.updatedAt = now;
@@ -67699,6 +67740,8 @@ httpServer.on("error", (err) => {
 export {
   app,
   httpServer,
+  db,
+  updateSmokingStatusForCleaning,
   calculateCanonicalAvailability,
   checkReservationConflicts,
   getCanonicalFlats,

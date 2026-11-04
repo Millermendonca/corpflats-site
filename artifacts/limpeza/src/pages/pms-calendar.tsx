@@ -2285,17 +2285,21 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       startPolling();
     };
 
-    // 3. Sincronização instantânea entre abas no mesmo computador via StorageEvent
+    // 3. Sincronização instantânea entre abas no mesmo computador via StorageEvent e eventos internos
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === "pms_calendar_sync_trigger") {
         doSilentSync();
       }
+    };
+    const handleCalendarUpdated = () => {
+      doSilentSync();
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("focus", handleFocus);
     window.addEventListener("pageshow", handlePageShow);
     window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("pms_calendar_updated", handleCalendarUpdated);
 
     return () => {
       stopPolling();
@@ -2303,6 +2307,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("pageshow", handlePageShow);
       window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("pms_calendar_updated", handleCalendarUpdated);
     };
   }, [modalOnly]);
 
