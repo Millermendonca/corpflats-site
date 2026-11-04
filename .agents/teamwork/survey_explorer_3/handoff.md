@@ -1,171 +1,146 @@
-# Handoff Report: WhatsApp Fiscal Assistant Flow, Validation & Testing Architecture
+# Handoff Report — Explorer 3 (WhatsApp & Sofia AI Explorer)
 
-**Agent:** Survey Explorer 3  
-**Working Directory:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3`  
-**Date:** 2026-10-14  
-**Handoff Type:** Hard (Survey Complete)
+**Milestone:** Survey / Investigation R5 (Oferta de Domingo Sem Pressa)  
+**Agent:** Explorer 3 (`survey_explorer_3`)  
+**Working Directory:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3\`  
+**Target:** Parent Orchestrator (`967b1f8a-534e-4526-94ad-683f5ef4e50f`)  
 
 ---
 
 ## 1. Observation
 
-Direct observations from source inspection and filesystem tools:
+Durante a investigação detalhada do código-fonte e da arquitetura do repositório, foram observados diretamente os seguintes fatos:
 
-### O1. WhatsApp Inbound Webhook & Message Ingestion
-- **File:** `artifacts/api-server/zapi-service.mjs`, line 6109:
-  `app.post("/api/whatsapp/webhook/received", async (req, res) => {`
-- Ingestion pipeline:
-  - Extracts message data via `extractIncomingMessageInfo(req.body)` (line 6126).
-  - Cleans sender phone: `cleanTarget = cleanWhatsAppPhone(...)` (line 6137).
-  - Stores message in conversation store: `appendMessageToConversation(db, { phone: cleanTarget, ... })` (line 6141).
-  - Triggers AI processing: `processAiInboundMessage({ db, incomingInfo, cleanTarget, saveDatabase, createNotification, sendZapiMessage, appendMessageFn })` (line 6354).
+1. **Canal #1 (Régua de Envios de Hóspedes) e Função de Disparo Z-API:**
+   - Em `artifacts/api-server/zapi-service.mjs`, linhas 1900–1908:
+     ```javascript
+     id: "guest_schedule",
+     name: "Régua de Envios de Hóspedes",
+     description: "Confirmações, instruções de check-in, senhas de Wi-Fi, quarto pronto, avisos de saída e pesquisa NPS",
+     category: "hospedes",
+     enabled: true,
+     testMode: true,
+     redirectToWhitelistOnTest: false,
+     whitelist: ["22998505276", "21997142513"],
+     blacklist: []
+     ```
+   - Em `artifacts/api-server/zapi-service.mjs`, linhas 4612–4648 e 4838–4841:
+     A função `sendZapiMessage(configOrPhone, optionsOrMessage, thirdOpts)` aceita o parâmetro `delayTyping`. No endpoint `/send-text`:
+     ```javascript
+     const textPayload = { phone: targetPhone, message: textWithLinks };
+     if (delayTyping && Number(delayTyping) > 0) {
+       textPayload.delayTyping = Math.min(15, Math.max(1, Math.round(Number(delayTyping))));
+     }
+     ```
+   - Em `artifacts/api-server/zapi-service.mjs`, linhas 12142–12150:
+     Disparos automáticos da régua chamam `sendZapiMessage` com `channelId: "guest_schedule"` e `recipientRole: "guest"`.
 
-### O2. Missing Intent Handling in AI & Heuristics
-- **File:** `artifacts/api-server/whatsapp-ai-service.mjs`, lines 3198–3205:
-  ```javascript
-  if (/\b(?:nota\s*fiscal|nf|nfe|fatura|recibo\s*fiscal|comprovante\s*fiscal|cnpj\s*(?:na\s*nota)?)\b/i.test(lower)) {
-    return {
-      category: "emissao_nota_fiscal",
-      demandTitle: UNMET_DEMAND_CATEGORIES.emissao_nota_fiscal.title,
-      reason: "capability_missing",
-      actionTarget: null,
-      suggestedFeature: UNMET_DEMAND_CATEGORIES.emissao_nota_fiscal.defaultSuggested
-    };
-  }
-  ```
-- **File:** `artifacts/api-server/whatsapp-ai-service.mjs`, lines 4814–5200 (`generateHeuristicResponse`):
-  There is currently ZERO logic for fiscal intent interception, fiscal data collection state, or CRM company linkage confirmation.
+2. **Simulação de Quebra em Balões com Delay:**
+   - Em `artifacts/api-server/whatsapp-ai-service.mjs`, linhas 13531–13554:
+     Existe padrão já testado de envio sequencial de balões com `setTimeout` e `delayTyping`:
+     ```javascript
+     const typingSec = isTestEnv ? 0 : Math.min(4, Math.max(1, Math.ceil(balloonText.length / 70)));
+     const waitMs = isTestEnv ? 0 : (bIdx === 0 ? Math.max(500, delaySec * 1000) : Math.max(600, typingSec * 600));
+     if (waitMs > 0) {
+       await new Promise(resolve => setTimeout(resolve, waitMs));
+     }
+     await sendZapiMessage(db.zapiConfig, {
+       phone: cleanTarget,
+       message: balloonText,
+       channelId: "ai_agent",
+       recipientRole: "guest",
+       delayTyping: typingSec > 0 ? typingSec : undefined,
+       db
+     });
+     ```
 
-### O3. Sender Phone & CRM Resolution
-- **File:** `artifacts/api-server/whatsapp-ai-service.mjs`, lines 264–315 (`buildGuestContext`):
-  Resolves reservations via `r.guestPhone || r.phone`, but does NOT currently check `r.requesterInfo?.phone` (third-party requester phone recorded in `r.requesterInfo`).
-- **File:** `artifacts/api-server/zapi-service.mjs`, lines 1706–1725 (`getReservationRecipients`):
-  Already demonstrates how `requesterInfo` and corporate linkage are extracted:
-  `if (requesterType === "other_person" && reservation.requesterInfo) requesterPhone = reservation.requesterInfo.phone;`
-  `else if (requesterType === "company") companyObj = db.companies.find(c => String(c.id) === String(reservation.companyId));`
+3. **Injeção de Contexto da Sessão (Zero-Ask e State Router):**
+   - Em `src/agent/middleware/context-injector.ts`, linhas 85–134:
+     `injectSessionContext` localiza reservas ativas em andamento (`checkin <= today <= checkout`) e define `estado_atual = 'IN_STAY_CONCIERGE'` e `perfil_remetente = 'HOSPEDE_ATIVO'`.
+   - Em `src/agent/middleware/context-injector.ts`, linhas 173–188:
+     O objeto `reservaSessao` é construído com dados da reserva e atribuído a `context.reserva_ativa` e `context.reserva_atual`.
+   - Em `src/agent/prompts/in-stay.prompt.ts`, linhas 13–15 e 30–33:
+     O contexto é injetado no prompt via `{{JSON_CONTEXTO_DINAMICO}}`, obtido de `buildContextoSessaoJson(context)`.
 
-### O4. Validation, Sanitization & Enrichment Implementations
-- **File:** `artifacts/api-server/national-nfse.mjs`, lines 66–155:
-  - `toTitleCase(str)` (line 66): converts to title case while preserving corporate acronyms `["LTDA", "ME", "EPP", "S/A", "SA", "EIRELI", "SS", "PJ", "PF", "RJ", ...]` and prepositions `["de", "da", "do", "dos", "das", "e", "em", "para", "com", "por"]`.
-  - `isValidCpf(cpf)` (line 94): mathematical Modulo 11 validation for 11-digit CPFs.
-  - `isValidCnpj(cnpj)` (line 112): mathematical Modulo 11 validation for 14-digit CNPJs.
-  - `cleanPhone(phone)` (line 141): strips DDI 55 and retains 10 or 11 digits.
-  - `cleanCep(cep)` (line 152): cleans and normalizes to 8 digits.
-- **File:** `artifacts/api-server/lookup.mjs`, lines 3–58:
-  - `lookupCep(cep)`: calls ViaCEP (`https://viacep.com.br/ws/${cleanCep}/json/`).
-  - `lookupCnpj(cnpj)`: calls BrasilAPI (`https://brasilapi.com.br/api/cnpj/v1/${cleanCnpj}`).
+4. **Constituição AGENTS.md e Registro de Ferramentas:**
+   - Em `src/agent/types/tool-contract.ts`:
+     Toda ferramenta implementa `AgentToolDefinition` e deve retornar obrigatoriamente `AgentToolResponse` com `instrucao_para_ia`.
+   - Em `artifacts/api-server/whatsapp-ai-service.mjs`, linhas 4248–4296:
+     `executeBotAction` verifica se a ferramenta está registrada em `isRegisteredAgentTool(actionName)` e a executa diretamente com `executeRegisteredAgentTool(actionName, args, sessionCtx)`.
+   - Em `artifacts/api-server/agent-architecture.mjs`, linhas 535–567:
+     A função `generatePixChargeForService({ amount, description, debtorName, reservationCode, context })` gera a cobrança PIX integrada (Inter ou fallback estático) retornando `{ txid, pixCopiaECola, valor }`.
+   - Em `artifacts/api-server/agent-architecture.mjs`, linhas 586–600 e 1824–1840:
+     `selectFairShareFlatHelper` é utilizado em tempo de execução para encontrar flat vago no condomínio e transferir reservas quando necessário.
 
-### O5. Runtime Bug in `POST /api/nfse/emit`
-- **File:** `artifacts/api-server/demo-server.mjs`, lines 27467–27473:
-  ```javascript
-  res.status(201).json({
-    success: true,
-    invoice: newInvoice,
-    numeroNfse: numNfseReal,       // ReferenceError: numNfseReal is not defined!
-    numeroNota: numNfseReal,       // ReferenceError: numNfseReal is not defined!
-    codigoVerificacao: codVerifReal, // ReferenceError: codVerifReal is not defined!
-    danfseUrl: `/api/nfse/danfse/${numNfseReal}`,
-    linkPrefeitura: newInvoice.linkPrefeitura,
-    qrCodeUrl: newInvoice.qrCodeUrl,
-    message: `Nota Fiscal Nº ${numNfseReal} emitida com sucesso pelo GissOnline Municipal!`
-  });
-  ```
-- Line 27415 sets `numeroNfse: emissionResult.numeroNfse`, but `emitirNfseGissReal` in `giss-soap.mjs` returns `{ ok: true, numeroNota, codigoVerificacao, ... }`, causing `newInvoice.numeroNfse` to be `undefined`.
-
-### O6. Missing Address Fields in Company Endpoints
-- **File:** `artifacts/api-server/demo-server.mjs`, lines 28705–28769 (`POST /api/companies` and `PATCH /api/companies/:id`):
-  Currently only accepts: `corporateName, tradeName, cnpj, stateRegistration, municipalRegistration, financialEmail, phone, contactPerson, billingTerms, notes`.
-  Completely omits: `address / logradouro, number, neighborhood / bairro, cep, city / cidade, state / uf, ibgeCode / codigoMunicipio`.
-- **File:** `artifacts/limpeza/src/pages/crm-guests.tsx`, lines 385–396:
-  The company modal payload also lacks these address fields.
-
-### O7. Twin-Server Missing Files in `scripts/`
-- Directory listing of `scripts/` reveals that while `demo-server.mjs`, `whatsapp-ai-service.mjs`, and `zapi-service.mjs` exist in `scripts/`, the following files present in `artifacts/api-server/` are missing in `scripts/`:
-  - `chat-service.mjs`
-  - `national-nfse.mjs`
-  - `giss-soap.mjs`
-  - `lookup.mjs`
-  However, `scripts/demo-server.mjs` line 53–55 explicitly imports them:
-  `import { emitirNfseGissReal, COD_MUNICIPIO, renderGissDanfseHtml } from "./giss-soap.mjs";`
-  `import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE } from "./chat-service.mjs";`
-  `import { lookupCep, lookupCnpj } from "./lookup.mjs";`
-  Running `scripts/demo-server.mjs` directly will crash due to missing module imports.
+5. **Expiração Silenciosa e Webhook PIX:**
+   - Em `artifacts/api-server/demo-server.mjs`, linhas 28304–28315:
+     Pré-reservas expiradas por padrão acionam `triggerImmediateWhatsApp("pre_reservation_expired")`. Para a oferta de domingo, a flag `isSilentUpsellHold: true` deve inibir esse disparo, permitindo que o hold expire em silêncio.
+   - Em `artifacts/api-server/demo-server.mjs`, linhas 58019–58026:
+     O webhook do Banco Inter (`/api/pms/inter/webhook`) identifica cobranças de serviços por `txid` em `pendingStayoverCleaning`, `pendingEarlyCheckin`, `pendingLateCheckout`, etc.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Inbound Webhook to Bot Flow (from O1 & O2):**
-   When a user sends a message on WhatsApp requesting an invoice (e.g. "preciso de nota fiscal"), `POST /api/whatsapp/webhook/received` parses the payload and invokes `processAiInboundMessage`. Since `classifyUnmetDemand` tags "emissao_nota_fiscal" as an unhandled demand (`capability_missing`), the bot currently fails to act autonomously. Therefore, an active intent interceptor must be placed in `whatsapp-ai-service.mjs` (or in the webhook handler) to capture fiscal inquiries.
+1. **Premissa de Canal e Formato dos Balões (Observação 1 e 2):**
+   - O requisito R5 exige envio pelo Canal #1 (Régua Hóspedes) em 2 balões com delay de digitação.
+   - Sabendo que o Canal #1 possui `id: "guest_schedule"` e que `sendZapiMessage` suporta `channelId: "guest_schedule"`, `sendMode: "text"` e `delayTyping`, a forma de garantir que o código PIX possa ser copiado em 1 toque no celular é enviar o Balão 1 com a mensagem comercial persuasiva e, após intervalo assíncrono (1,5s), enviar o Balão 2 contendo estritamente a string pura de `codigo_pix_copia_e_cola`.
+   - Em ambiente de testes (`process.env.NODE_ENV === "test"`), ambos os delays (`delayTyping` e `waitMs`) são zerados para evitar travamentos ou lentidão em testes automatizados.
 
-2. **Sender Identification & CRM Resolution (from O3):**
-   A sender might be the primary guest or a third-party requester (`r.requesterInfo`). Normalizing the incoming phone and matching against `db.reservations` (checking `r.guestPhone`, `r.phone`, and `r.requesterInfo?.phone`) and `db.guests` identifies the contact and their active/recent reservation. Checking `guest.companyId` or `r.companyId` against `db.companies` reveals whether a corporate entity is already bound.
+2. **Premissa de Injeção de Contexto (Observação 3):**
+   - No sábado à noite, o hóspede elegível está em estadia ativa com check-out no domingo. Seu estado de sessão resolvido pelo `injectSessionContext` é `IN_STAY_CONCIERGE`.
+   - Ao registrar `reservation.sundayUpsellOffer` na reserva no momento do disparo de sábado (ou teste manual), o `injectSessionContext` pode extrair esse objeto e injetá-lo estruturadamente dentro de `reservaSessao.oferta_domingo_sem_pressa`.
+   - Quando `buildContextoSessaoJson` serializa para o prompt, a Sofia recebe a informação de que a oferta foi enviada, o valor promocional, a economia, o bônus de segunda até 12:00h e o status do hold (`hold_expirado: true/false`).
 
-3. **Conditional Flow Without Repeated Questions (from O2 & O3):**
-   - If the contact is already linked to a company in `db.companies` with a valid CNPJ:
-     Asking them for data again creates user friction and contradicts R3.2. The system must immediately reply confirming the registered Razão Social and formatted CNPJ, set `autoEmitInvoice = true` on the reservation and guest, link `r.companyId`, and create a draft/pre-fill in `r.invoiceDetails`.
-   - If not linked:
-     The assistant must send a clear, warm message asking whether the invoice is for PJ (requiring CNPJ + financial email) or PF (requiring Full Name, CPF, Address/CEP, Email), and set `conv.awaitingFiscalData = true`.
+3. **Premissa de Tool Calling Conforme AGENTS.md (Observação 4 e Constituição):**
+   - A Lei 4 proíbe alterar o orquestrador para adicionar regras hardcoded e orienta a criar ferramentas isoladas em `src/agent/tools/`.
+   - A ferramenta existente `solicitar_late_checkout` trata saídas até 17h/18h com regras de cortesia por ocupação e diária cheia após 18h. A ferramenta `estender_estadia` calcula diárias normais integrais (ex: R$ 237,00) via `alterar_datas_reserva`. Nenhuma das duas atende à regra de preço promocional fixo (`sundayUpsellPrice`), hold temporário de 30 minutos e bônus de pernoite até segunda às 12h.
+   - Logo, a criação da nova ferramenta dedicada `ofertar-domingo-sem-pressa.tool.ts` (`ofertar_domingo_sem_pressa`) é a solução arquitetural mais limpa, desacoplada e 100% conforme a Constituição do projeto.
+   - A tool implementa o fluxo de 2 etapas (`confirmacao_hospede: false` para simulação e consulta no banco de vagas; `confirmacao_hospede: true` para gerar novo PIX e fixar novo hold de 30 minutos com `isSilentUpsellHold: true`).
 
-4. **Validation, Sanitization & CRM Persistence (from O4):**
-   When the user replies with data:
-   - If CNPJ (14 digits) is provided, `isValidCnpj` validates Modulo 11 check digits. If invalid, a gentle correction message is sent without corrupting the database. If valid, `lookupCnpj` enriches company data (checking local `db.companies` first, then BrasilAPI). `toTitleCase` sanitizes the corporate name, `cleanPhone` and `cleanCep` sanitize contact fields. The company is created/updated in `db.companies`, linked via `companyId` to `db.guests` and `db.reservations`, `autoEmitInvoice` is set to `true`, and confirmation is sent.
-   - If CPF (11 digits) is provided, `isValidCpf` validates Modulo 11. `db.guests` and the reservation are updated with PF data, `autoEmitInvoice` is set to `true`, and confirmation is sent.
-
-5. **NFS-e Emission & UI Resolution (from O5 & O6):**
-   Fixing `POST /api/nfse/emit` to use `newInvoice.numeroNfse` and `newInvoice.codigoVerificacao` eliminates the `ReferenceError`. Supporting both `giss_prefeitura` and `padrao_nacional`, persisting full tomador address fields in `newInvoice`, and adding address fields to `POST /api/companies` and `PATCH /api/companies/:id` fulfills R1 & R2. In `fiscal-invoices.tsx`, integrating `/api/companies` into the combobox and providing the quick PJ/PF toggle completes the CRM 360° loop.
-
-6. **Twin-Server Parity & Strict Testing (from O7 & AGENTS.md):**
-   To maintain the project's strict 100% SHA-256 parity rule, any changes in `artifacts/api-server/` must be mirrored in `scripts/`, and missing twin files (`chat-service.mjs`, `national-nfse.mjs`, `giss-soap.mjs`, `lookup.mjs`) must be copied to `scripts/`. Per `AGENTS.md`, no global test suites may be run; testing must be strictly confined to `tests/nfse-crm-whatsapp-flow.test.mjs`.
+4. **Premissa de Expiração e Webhook (Observação 5):**
+   - Caso o hóspede não pague em 30 minutos, o hold expira em silêncio no banco (a flag `isSilentUpsellHold: true` impede disparo de mensagem de cancelamento).
+   - Se o hóspede voltar a falar com a Sofia após o prazo de 30 minutos, o contexto injetado (`hold_expirado: true`) e o prompt orientam a Sofia a chamar `ofertar_domingo_sem_pressa`. A ferramenta verifica se o flat (ou condomínio) ainda está livre de domingo para segunda. Se sim, gera uma nova cobrança PIX com novo hold de 30 minutos; se não, informa educadamente a lotação do prédio.
+   - Quando o PIX é pago, o webhook `/api/pms/inter/webhook` localiza o `txid` em `sundayUpsellOffer.txid`, estende a reserva no PMS para segunda às 12:00h, transfere eventual reserva subsequente para o Flat da Vez via `selectFairShareFlat`, reagenda a limpeza e envia a mensagem de confirmação.
 
 ---
 
 ## 3. Caveats
 
-1. **Network Connectivity for Lookups:** In production, `lookupCnpj` calls BrasilAPI and `lookupCep` calls ViaCEP. In test environments (or during offline development), external HTTP calls may fail or time out. The implementation must prioritize local CRM lookups (`db.companies`) and provide safe mock fallbacks when running under `NODE_ENV === "test"`.
-2. **Ambiguity between 11-digit CPF and Phone Numbers:** An unformatted 11-digit string in WhatsApp could potentially be a phone number or a CPF. The logic must rely on `isValidCpf` (Modulo 11 algorithm) and conversational context (`conv.awaitingFiscalData === true` or explicit keywords like "cpf") so that valid phone numbers are not mistakenly ingested as CPFs.
-3. **No Caveats Beyond Above:** No other architectural blockers or uninvestigated components exist.
+1. **Paridade Twin-Server Obrigatória:**
+   - Todos os arquivos `.mjs` modificados em `artifacts/api-server/` (`agent-architecture.mjs`, `whatsapp-ai-service.mjs`, `zapi-service.mjs`) devem ser espelhados identicamente na pasta `scripts/` correspondente para aprovação no `scripts/check-twin-parity.mjs`.
+2. **Ambiente de Testes vs Produção:**
+   - A simulação de delay de digitação (`delayTyping` e `waitBetweenBalloonsMs`) deve ser estritamente desabilitada em `NODE_ENV === "test"` para não quebrar testes unitários com timeouts.
+3. **Escopo Estrito de Testes (Regra AGENTS.md):**
+   - É terminantemente proibido rodar testes globais (`tests/*.test.mjs`). Quando a implementação for concluída pelos implementadores, apenas o teste pontual da funcionalidade deve ser executado.
 
 ---
 
 ## 4. Conclusion
 
-The path to full compliance with the requirements is clear, actionable, and strictly scoped:
-1. **Fix `POST /api/nfse/emit`**: Resolve the undefined variable bug (`numNfseReal`/`codVerifReal`), normalize `emissionResult.numeroNota` -> `newInvoice.numeroNfse`, support both `giss_prefeitura` and `padrao_nacional`, and persist full tomador address fields.
-2. **Upgrade Company Endpoints & CRM**: Extend `POST /api/companies` and `PATCH /api/companies/:id` to accept and persist address fields (`logradouro`, `numero`, `bairro`, `cep`, `cidade`, `uf`, `codigoMunicipio`), and update `crm-guests.tsx`.
-3. **Upgrade Fiscal Invoices UI (`fiscal-invoices.tsx`)**: Allow searching both guests and companies, auto-fill tomador with linked company PJ data when `companyId` exists, offer a quick PJ/PF toggle, and prefill active reservation stay details.
-4. **Implement WhatsApp Fiscal Flow**: Intercept fiscal intent in `whatsapp-ai-service.mjs` / `zapi-service.mjs`, check sender phone and reservation `requesterInfo`, conditionally branch (confirm existing company without re-asking vs prompt for PJ/PF data), validate via Modulo 11, enrich via local CRM/BrasilAPI/ViaCEP, sanitize via `toTitleCase`/`cleanPhone`/`cleanCep`, persist in `db.companies` and `db.guests`, link reservation, set `autoEmitInvoice=true`, and send WhatsApp confirmation.
-5. **Ensure Twin Parity & Strict Testing**: Sync twin files in `scripts/`, ensure identical SHA-256 hashes, build `artifacts/limpeza`, and create the dedicated test suite `tests/nfse-crm-whatsapp-flow.test.mjs` running in complete isolation without global test runs.
+O Requisito R5 está completamente delineado, mapeado e pronto para implementação:
+- **Disparo no WhatsApp:** Implementação da função `dispatchSundayUpsellTwoBalloons` em `zapi-service.mjs` usando o Canal 1 (`guest_schedule`), `delayTyping` de 3s no Balão 1, intervalo de 1,5s, e Balão 2 contendo unicamente o código PIX Copia e Cola.
+- **Injeção de Contexto:** Adição de `oferta_domingo_sem_pressa` em `tool-contract.ts` e preenchimento automático em `context-injector.ts`.
+- **Comportamento da Sofia:** Inclusão de seção explicativa em `in-stay.prompt.ts` e diretriz em `prepareAgenticPreAnalysis`.
+- **Tool Calling:** Criação da ferramenta `src/agent/tools/ofertar-domingo-sem-pressa.tool.ts` (`ofertar_domingo_sem_pressa`), com validação backend de domingo-segunda, simulação/efetivação em 2 etapas, geração de novo PIX e novo hold silencioso de 30 minutos.
 
 ---
 
 ## 5. Verification Method
 
-To independently verify all findings and validate future implementations:
+Para verificação independente das constatações:
 
-### V1. Code Inspection Commands
-- Verify `numNfseReal` undefined bug in `demo-server.mjs`:
-  `view_file` on `artifacts/api-server/demo-server.mjs` lines 27465–27475.
-- Verify `classifyUnmetDemand` for `emissao_nota_fiscal`:
-  `view_file` on `artifacts/api-server/whatsapp-ai-service.mjs` lines 3198–3206.
-- Verify missing twin files in `scripts/`:
-  `find_by_name` on `scripts` with pattern `*nfse*` or `chat-service.mjs`.
-
-### V2. Dedicated Isolated Test Execution
-Run exclusively the single test file:
-```powershell
-node --test tests/nfse-crm-whatsapp-flow.test.mjs
-```
-*Note: In accordance with `AGENTS.md`, never run `tests/*.test.mjs` or batch test commands.*
-
-### V3. Build & Parity Verification
-- Compile frontend:
-  ```powershell
-  npm --prefix artifacts/limpeza run build
-  ```
-- Verify SHA-256 twin parity between `artifacts/api-server/` and `scripts/`:
-  ```powershell
-  Get-FileHash artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs
-  Get-FileHash artifacts/api-server/whatsapp-ai-service.mjs, scripts/whatsapp-ai-service.mjs
-  Get-FileHash artifacts/api-server/zapi-service.mjs, scripts/zapi-service.mjs
-  ```
+1. **Inspeção de Arquivos de Governança e Z-API:**
+   - Verificar as definições do canal em `artifacts/api-server/zapi-service.mjs`:
+     `evaluateZapiChannelPolicy` (linha 2076) e `DEFAULT_ZAPI_CHANNELS.guest_schedule` (linha 1900).
+   - Verificar suporte a `delayTyping` em `sendZapiMessage` (linha 4839).
+2. **Inspeção de Contrato e Ferramentas:**
+   - Verificar contrato em `src/agent/types/tool-contract.ts` e injeção em `src/agent/middleware/context-injector.ts`.
+   - Verificar molde e regras na Constituição em `AGENTS.md`.
+3. **Teste Pontual Recomendado para a Equipe de Implementação:**
+   - Desenvolver teste pontual exclusivo (ex: `tests/sunday-upsell-r5-sofia-dispatch.test.mjs`) validando:
+     1. Disparo de 2 balões no Canal 1 com balão 2 contendo estritamente o código PIX.
+     2. Injeção de `oferta_domingo_sem_pressa` no contexto da sessão.
+     3. Execução da tool `ofertar_domingo_sem_pressa` em modo simulação (`confirmacao_hospede: false`) e efetivação (`confirmacao_hospede: true`).
+     4. Bloqueio correto com `BLOQUEADO_PELA_REGRA` caso o condomínio esteja 100% ocupado na noite de domingo.
+     5. Paridade Twin verificada via `node scripts/check-twin-parity.mjs`.

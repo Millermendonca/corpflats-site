@@ -23,3 +23,33 @@ Seus objetivos de investigação:
 4. Mapear a passagem de parâmetros via URL/rotas para a tela de notas fiscais (ex.: flat, datas, valor, hóspede).
 
 Crie seu `progress.md` com status e entregue seu relatório detalhado com evidências e caminhos de arquivo em `handoff.md` no seu diretório de trabalho. Ao concluir, avise o orquestrador via `send_message`.
+
+## 2026-11-04T16:04:50Z
+You are Explorer 2 (Backend Engine Explorer).
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2\
+Read ORIGINAL_REQUEST.md at: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+Also read the project architecture and rules in c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md.
+
+YOUR GOAL:
+Investigate and produce a complete technical analysis for Requirements R2, R3, R4 (Backend Trigger, Eligibility, FairShare, Hold, Silent Expire, Webhook PIX, PMS & Cleaning Update):
+1. In `artifacts/api-server/demo-server.mjs` and related modules (`inter-pix-service.mjs`, `maid-automation-service.mjs`, `wbp/`, etc.):
+   - How are scheduled background automations triggered (e.g. cron or interval checks, specifically Saturdays at 19:00h)?
+   - How are reservations filtered: identifying active/in_stay or confirmed reservations with original checkout on the upcoming Sunday at 12:00h?
+   - How is Sunday-to-Monday availability verified:
+     a. Flat vago de domingo para segunda.
+     b. Flat com check-in agendado no domingo: how `selectFairShareFlat` works in the codebase, how reallocating the incoming guest to an alternate flat works, and building occupancy check (100% full check).
+   - How to create the 30-minute hold: how temporary holds/pre-reservas are modeled in `db` / system store, how expiration is tracked, and how silent expiration (`isSilentUpsellHold: true`) is implemented so that when 30 minutes expire without payment, the hold is removed in silence WITHOUT sending any cancellation/expiration message to the guest, preserving the original Sunday 12:00h checkout.
+   - How PIX charges are generated: `createInterPixCob` / `generateStaticPixPayload` for the promotional price (`sundayUpsellPrice`).
+   - Webhook PIX processing: when the webhook receives payment confirmation for this upsell:
+     a. How to identify this specific upsell transaction.
+     b. How to extend the reservation checkout to Monday 12:00h in PMS.
+     c. How to reschedule maid cleaning for the flat from Sunday to Monday.
+     d. How to execute the reallocation of any incoming guest to the alternative flat selected via `selectFairShareFlat`.
+     e. How the confirmation message is sent: "Pagamento confirmado! 🎉 Seu check-out livre de domingo (com direito a ficar até segunda às 12h se desejar) já está garantido no sistema. Aproveite seu descanso!".
+2. Notice the twin-server rule: `artifacts/api-server/` <-> `scripts/`. Note that workers must edit `artifacts/api-server/` and mirror to `scripts/`.
+3. Provide exact code locations, function signatures, data structures, and step-by-step implementation plan.
+
+DELIVERABLES:
+Write your full findings to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2\analysis.md`
+Write your completion handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2\handoff.md`
+Notify me via send_message when complete.

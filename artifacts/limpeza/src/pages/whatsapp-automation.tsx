@@ -2398,6 +2398,7 @@ export default function WhatsappAutomation() {
       "{{telefone_hospede}}": targetRes.guestPhone || "(22) 99887-7665",
       "{{valor_normal}}": fmtNormal,
       "{{valor_promocional}}": fmtPromo,
+      "{{percentual_desconto}}": String(discountPct),
       "{{economia}}": fmtSavings,
       "{{tempo_validade_pix}}": "30 minutos",
       "{{codigo_pix_copia_e_cola}}": `00020126580014br.gov.bcb.pix013647964813000165520400005303986540${promoPrice.toFixed(2)}5802BR5919CORPFLATS HOSPEDAGEM6014CAMPOS GOYTACAZ62070503***6304ABCD`,
@@ -4828,25 +4829,25 @@ export default function WhatsappAutomation() {
                             className="h-8 text-xs font-bold gap-1 text-muted-foreground hover:text-foreground"
                           >
                             <Eye className="w-3 h-3" />
-                            {showSundayUpsellPreview ? "Ocultar" : "Ver 2 Balões"}
+                            {showSundayUpsellPreview ? "Ocultar" : "Ver 3 Balões"}
                           </Button>
                         </div>
                       </div>
                     </div>
 
-                    {/* Prévia ao Vivo dos 2 Balões de WhatsApp (Colapsável) */}
+                    {/* Prévia ao Vivo dos 3 Balões de WhatsApp (Colapsável) */}
                     {showSundayUpsellPreview && (
                       <div className="p-4 rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/20 dark:bg-emerald-950/10 space-y-3 animate-in fade-in-50">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <div className="flex items-center gap-2">
                             <MessageSquare className="w-4 h-4 text-emerald-600" />
                             <span className="text-xs font-bold text-foreground">
-                              Simulação de Envio no WhatsApp do Hóspede (2 Balões Consecutivos)
+                              Simulação de Envio no WhatsApp do Hóspede (3 Balões Consecutivos • Sem Asteriscos)
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-300 font-bold">
-                              Delay simulado: ~2 segundos
+                              Delay de digitação entre balões: ~2s
                             </Badge>
                             <Badge variant="secondary" className="text-[10px] font-bold">
                               Reserva Base: {selectedPreviewResCode === "sample" ? "Exemplo (Carlos Silva - Flat 113)" : selectedPreviewResCode}
@@ -4854,48 +4855,78 @@ export default function WhatsappAutomation() {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                           {/* Mockup Balão 1 */}
-                          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl rounded-tl-xs shadow-xs border border-emerald-100 dark:border-emerald-900/40 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
-                                Balão 1 • Cópia Persuasiva & Economia
-                              </span>
-                              <span className="text-[10px] text-muted-foreground">Sábado 19:00</span>
+                          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl rounded-tl-xs shadow-xs border border-emerald-100 dark:border-emerald-900/40 space-y-2 flex flex-col justify-between">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                                  Balão 1 • Abordagem Leve
+                                </span>
+                                <span className="text-[10px] text-muted-foreground">Sábado 19:00</span>
+                              </div>
+                              <p className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed">
+                                {renderPreviewText(
+                                  "Olá, {{primeiro_nome}}! Tudo bem? 😊\n" +
+                                  "Vi aqui que o seu check-out no Flat {{quarto}} está programado para amanhã (domingo) às 12h.\n\n" +
+                                  "Quer aproveitar o domingo inteiro descansando, sem precisar acordar cedo ou correr para arrumar as malas pela manhã? 🛌✨"
+                                )}
+                              </p>
                             </div>
-                            <p className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed">
-                              {renderPreviewText(
-                                "Olá, {{primeiro_nome}}! Tudo bem? Vi que o seu check-out aqui no flat {{quarto}} está programado para amanhã (domingo) às 12h.\n\n" +
-                                "Se você quiser aproveitar o domingo inteiro relaxando, sem precisar acordar cedo, correr com horário ou arrumar suas coisas pela manhã, liberei uma condição especial para você **sair amanhã a hora que quiser (check-out livre no domingo)** por apenas **{{valor_promocional}}** (em vez da tarifa normal de {{valor_normal}}).\n\n" +
-                                "E como bônus, já deixamos o seu flat liberado no sistema até **segunda-feira às 12h** sem custo extra — assim você pode sair no domingo à tarde ou à noite sem nenhuma pressa, ou até dormir de domingo para segunda se resolver esticar!\n\n" +
-                                "Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX abaixo. Como o sistema só segura esse bloqueio promocional por **30 minutos**, se quiser aproveitar basta copiar e pagar o código abaixo que o sistema já confirma automaticamente:"
-                              )}
-                            </p>
-                            <div className="text-right text-[10px] text-muted-foreground flex items-center justify-end gap-1">
+                            <div className="text-right text-[10px] text-muted-foreground flex items-center justify-end gap-1 pt-1">
                               <span>19:00</span>
                               <CheckCheck className="w-3 h-3 text-sky-500 inline" />
                             </div>
                           </div>
 
                           {/* Mockup Balão 2 */}
-                          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl rounded-tl-xs shadow-xs border border-emerald-100 dark:border-emerald-900/40 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-black text-purple-700 dark:text-purple-400 uppercase tracking-wider">
-                                Balão 2 • Chave PIX Copia e Cola Isolada (1 Toque)
-                              </span>
-                              <Badge variant="outline" className="text-[10px] font-mono text-purple-600 border-purple-200">
-                                Zero Texto Extra
-                              </Badge>
+                          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl rounded-tl-xs shadow-xs border border-emerald-100 dark:border-emerald-900/40 space-y-2 flex flex-col justify-between">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black text-blue-700 dark:text-blue-400 uppercase tracking-wider">
+                                  Balão 2 • Oferta & Bônus Segunda
+                                </span>
+                                <span className="text-[10px] text-muted-foreground">Sábado 19:00</span>
+                              </div>
+                              <p className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed">
+                                {renderPreviewText(
+                                  "Liberei uma condição especial para você ter check-out livre amanhã (pode sair a hora que quiser no domingo!) com {{percentual_desconto}}% de desconto: de {{valor_normal}} por apenas {{valor_promocional}}.\n\n" +
+                                  "🎁 E de bônus, já deixamos o seu flat liberado no sistema até segunda-feira às 12h sem custo extra — assim você pode sair no domingo mais tarde sem pressa, ou até dormir de domingo para segunda se resolver esticar!"
+                                )}
+                              </p>
                             </div>
-                            <p className="text-[11px] text-muted-foreground leading-tight">
-                              O código PIX é enviado em um balão separado exclusivo para que o hóspede possa copiar com apenas 1 toque no celular, sem necessidade de selecionar ou editar texto.
-                            </p>
-                            <div className="p-2.5 rounded-lg bg-muted/60 font-mono text-[11px] text-foreground break-all select-all border border-border">
-                              {renderPreviewText("{{codigo_pix_copia_e_cola}}")}
-                            </div>
-                            <div className="text-right text-[10px] text-muted-foreground flex items-center justify-end gap-1">
+                            <div className="text-right text-[10px] text-muted-foreground flex items-center justify-end gap-1 pt-1">
                               <span>19:00</span>
                               <CheckCheck className="w-3 h-3 text-sky-500 inline" />
+                            </div>
+                          </div>
+
+                          {/* Mockup Balão 3 */}
+                          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl rounded-tl-xs shadow-xs border border-emerald-100 dark:border-emerald-900/40 space-y-2.5 flex flex-col justify-between">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black text-purple-700 dark:text-purple-400 uppercase tracking-wider">
+                                  Balão 3 • Botão Interativo PIX (Banco Inter)
+                                </span>
+                                <Badge variant="outline" className="text-[10px] font-mono text-purple-600 border-purple-200">
+                                  Só PIX (Sem Cartão)
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed">
+                                {renderPreviewText(
+                                  "⏳ Já deixei essa extensão pré-reservada para o seu flat por 30 minutos.\n\n" +
+                                  "Para garantir, basta tocar no botão abaixo para copiar o código PIX. Assim que você pagar, o nosso sistema já dá baixa e confirma sua estadia automaticamente! 👇"
+                                )}
+                              </p>
+                            </div>
+                            <div className="space-y-2 pt-1">
+                              <div className="w-full py-2 px-3 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/70 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs">
+                                <span>📋 Copiar Código PIX</span>
+                              </div>
+                              <div className="text-right text-[10px] text-muted-foreground flex items-center justify-end gap-1">
+                                <span>19:00</span>
+                                <CheckCheck className="w-3 h-3 text-sky-500 inline" />
+                              </div>
                             </div>
                           </div>
                         </div>

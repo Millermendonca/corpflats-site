@@ -1,35 +1,24 @@
 ## Current Status
-Last visited: 2026-11-03T01:05:00Z
+Last visited: 2026-11-04T17:25:00Z
 
-- [x] Initial setup: ORIGINAL_REQUEST.md, DISPATCH.md, BRIEFING.md, plan.md created
-- [x] Phase 1: Survey & Technical Investigation (3 parallel Explorers completed)
-  - [x] Explorer 1: Frontend Bundle, Lazy Loading & Cache
-  - [x] Explorer 2: Frontend PMS Calendar & Floating Reservation
-  - [x] Explorer 3: Backend Reconcile, Periodic Tasks & DB State / Render Stability
-- [x] Phase 2: Synthesis into PROJECT.md & Milestone Formulation
-- [x] Phase 3: Implementation via Workers (Frontend & Backend completed)
-  - [x] Worker Frontend: bundle reduced from 2.4 MB to 166.18 kB (-93.1%), code-splitting with `lazyWithRetry`, non-blocking route guards, on-demand PMS modal mount, 12s polling with visibility pause
-  - [x] Worker Backend: asset caching headers, dirty-flagged reconciliation cooldowns, request memoization, O(1) task indexing, fast-path surrogate sanitization, Base64 detection
-- [x] Phase 4: Review, Empirical Challenge & Forensic Audit (Iteration 1 Gate completed)
-  - Gate 1: FAIL (Auditor vetoed due to twin mirror hash divergence)
-- [x] Iteration 2: Audit Remediation
-  - [x] Explorer Iteration 2: Identified missing minibar helpers in `scripts/demo-server.mjs`, verified parity
-  - [x] Worker Iteration 2: Enforced 100% twin-server parity (37/37 files passed), ran targeted tests (100% pass), ran frontend build (exit code 0), committed (a9a329f) and pushed to remote `origin main`
-  - [x] Reviewer Iteration 2: APPROVE
-  - [x] Challenger Iteration 2: APPROVE
-  - [x] Auditor Iteration 2: CLEAN
-  - [x] Gate 2: PASS (All criteria satisfied)
-- [x] Phase 5: Final Closure & Reporting
-
-## Retrospective Notes
-- **What worked**:
-  - Parallel multi-agent architecture successfully investigated and implemented both frontend and backend tracks simultaneously without file collisions.
-  - Granular code splitting with `vendor-react` manual chunking reduced the initial bundle `index.js` by 93.1% (from 2.4 MB down to 166.18 kB).
-  - Forensic auditor's strict integrity check caught the twin-server parity divergence early, ensuring that `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` remain 100% identical.
-- **What didn't**:
-  - The initial backend worker made manual parallel edits to `demo-server.mjs` without copying the entire authoritative file, missing 173 lines of prior minibar routines and causing hash divergence.
-- **Lessons learned**:
-  - Twin-mirror files should always be synchronized via full byte copying (`Copy-Item -Force`) from the authoritative file once changes are applied, followed by the repository's dynamic twin checker (`node scripts/check-twin-parity.mjs`).
+- [x] Initial setup: DISPATCH.md updated, BRIEFING.md initialized for new mission
+- [x] Phase 0: Survey & Technical Investigation (3 parallel Explorers completed)
+  - [x] Explorer 1: Frontend Régua Automática UI & Settings (`sundayUpsellPrice`, toggle, manual test trigger)
+  - [x] Explorer 2: Backend Trigger, Scheduler, Eligibility, FairShare Reallocation, Hold & Silent Expire, Webhook PIX & PMS/Cleaning update
+  - [x] Explorer 3: 2-Balloon WhatsApp Dispatch (Canal #1), Sofia AI Context Sync, Tool Calling & Regeneration
+- [x] Phase 1: Survey Synthesis into PROJECT.md & Decomposition (M1 Backend, M2 Frontend, M3 Integration)
+- [x] Phase 2: Implementation via Workers
+  - [x] Worker Frontend: M2 (Frontend UI na Régua Automática & Live Preview) — COMPLETED (Vite build passed with exit code 0, 303.25 kB bundle)
+  - [x] Worker Backend: M1 (Backend Engine, Scheduler, Sofia Sync & Webhook) — COMPLETED (37/37 twin parity 100%, 14/14 tests pass, 0 tsc errors)
+- [x] Phase 3: Gate Verification (5 independent agents) — GATE RESULT: PASS
+  - [x] Reviewer Backend: APPROVE
+  - [x] Reviewer Frontend: APPROVE
+  - [x] Challenger Backend: APPROVE (18/18 adversarial tests pass)
+  - [x] Challenger Sofia & UI: APPROVE (18/18 tests pass, AGENTS.md Constitution compliant)
+  - [x] Forensic Auditor: CLEAN (100% 37/37 twin parity, zero facades/cheating)
+- [x] Phase 4: Final Integration, Clean Build & Git Push (Milestone 3)
+  - [x] Worker Integration (`38628773-d0d6-4ddd-ba01-1f49d482f0e0`) — COMPLETED (37/37 twin parity 100%, Vite build exit 0, 32/32 tests pass, commit 4762319 pushed to origin/main)
+- [x] Phase 5: Sentinel Final Reporting (In Progress)
 
 ## Iteration Status
-Current iteration: 2 / 32 — COMPLETE (Gate Result: PASS)
+Current iteration: 1 / 32 (Project Fully Implemented, Verified, Built and Pushed)

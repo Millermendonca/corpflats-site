@@ -57930,7 +57930,7 @@ async function getInterAccessToken() {
   });
 }
 
-async function createInterPixCob({ amount, description, debtorName, debtorDocument, reservationCode }) {
+async function createInterPixCob({ amount, description, debtorName, debtorDocument, reservationCode, expirationSeconds }) {
   const token = await getInterAccessToken();
   const cfg = db.settings?.interConfig || DEFAULT_INTER_CONFIG;
   const pixKey = cfg.pixKey || "47964813000165";
@@ -57951,9 +57951,11 @@ async function createInterPixCob({ amount, description, debtorName, debtorDocume
     devedor = { nome: cleanName || "Hospede CorpFlats", cnpj: "47964813000165" };
   }
 
+  const expSecs = Number(expirationSeconds) > 0 ? Math.round(Number(expirationSeconds)) : 86400;
+
   const payload = {
     calendario: {
-      expiracao: 86400 // 24 horas
+      expiracao: expSecs
     },
     devedor,
     valor: {
@@ -61073,18 +61075,35 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     String(x.id) === rawCode
   );
 
-  const guestName = r?.guestName || "Hóspede";
-  const flatNumber = r?.flatNumber || r?.flatId || "";
+  const isSundayUpsell = Boolean(
+    req.query.upsell === "1" ||
+    rawCode.toUpperCase() === "TEST-SUN-UPSELL" ||
+    (r?.pendingSundayUpsell && r.pendingSundayUpsell.status !== "paid")
+  );
+
+  const guestName = String(r?.guestName || req.query.guest || "Hóspede").trim();
+  const flatNumber = String(r?.flatNumber || r?.flatId || req.query.flat || "").trim();
   const totalAmount = Number(r?.totalAmount) || 0;
   const paidAmount = Number(r?.paidAmount) || 0;
-  const isExpiredPreRes = Boolean(r && r.status === "expirada");
-  const isAlreadyPaid = Boolean(r && !isExpiredPreRes && !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (paidAmount >= totalAmount && totalAmount > 0)));
-  const pendingAmount = (isAlreadyPaid || isExpiredPreRes) ? 0 : (Math.max(0, totalAmount - paidAmount) || totalAmount);
-  let pixCode = (isAlreadyPaid || isExpiredPreRes) ? "" : (r?.pixCopiaECola || "");
+  const isExpiredPreRes = !isSundayUpsell && Boolean(r && r.status === "pre_reserva" && r.status === "expirada");
+  const isAlreadyPaid = !isSundayUpsell && Boolean(r && !isExpiredPreRes && !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (paidAmount >= totalAmount && totalAmount > 0)));
+  const pendingAmount = isSundayUpsell
+    ? (Number(r?.pendingSundayUpsell?.promotionalPrice || req.query.amount || 100) || 100)
+    : ((isAlreadyPaid || isExpiredPreRes) ? 0 : (Math.max(0, totalAmount - paidAmount) || totalAmount));
+  const upsellNormalDailyRate = isSundayUpsell
+    ? (Number(r?.pendingSundayUpsell?.normalDailyRate || req.query.normal || 200) || 200)
+    : 0;
+  const upsellDiscountPct = isSundayUpsell
+    ? (Number(r?.pendingSundayUpsell?.discountPercent || req.query.discount || 50) || 50)
+    : 0;
+  let pixCode = isSundayUpsell
+    ? String(r?.pendingSundayUpsell?.pixCopiaECola || req.query.pix || "").trim()
+    : ((isAlreadyPaid || isExpiredPreRes) ? "" : (r?.pixCopiaECola || ""));
 
   let formattedHoldExpiry = "";
-  if (r && r.status === "pre_reserva" && r.expiresAt) {
-    const expD = new Date(r.expiresAt);
+  const holdExpRaw = isSundayUpsell ? r?.pendingSundayUpsell?.expiresAt : (r && r.status === "pre_reserva" ? r.expiresAt : null);
+  if (holdExpRaw) {
+    const expD = new Date(holdExpRaw);
     if (!isNaN(expD.getTime())) {
       formattedHoldExpiry = new Intl.DateTimeFormat("pt-BR", {
         timeZone: "America/Sao_Paulo",
@@ -61097,7 +61116,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     }
   }
 
-  if (pendingAmount > 0 && (!pixCode || (r && isPixPayloadStaleForAmount(r, pendingAmount)))) {
+  if (pendingAmount > 0 && (!pixCode || (!isSundayUpsell && r && isPixPayloadStaleForAmount(r, pendingAmount)))) {
     const cleanTxId = (rawCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
     pixCode = generateStaticPixPayload({
       pixKey: db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47964813000165",
@@ -61106,7 +61125,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
       merchantCity: "CAMPOS DOS GOYTACAZES",
       txid: cleanTxId || "***"
     });
-    if (r) {
+    if (r && !isSundayUpsell) {
       r.pixTxId = cleanTxId || r.pixTxId;
       r.pixCopiaECola = pixCode;
       r.pixChargedAmount = pendingAmount;
@@ -61117,6 +61136,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   const cardPendingAmount = computeCardAmountFromPix(pendingAmount);
   const formattedValue = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(pendingAmount);
   const formattedCardValue = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cardPendingAmount);
+  const formattedUpsellNormalValue = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(upsellNormalDailyRate);
   const qrCodeUrl = pixCode ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(pixCode)}` : "";
   const portalUrl = rawCode ? `/minha-reserva/${encodeURIComponent(rawCode)}` : "/minha-reserva";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
@@ -61158,7 +61178,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
 <body>
   <div class="card">
     <div class="brand">CORPFLATS • PAGAMENTO PIX</div>
-    <div class="title">Código PIX da Reserva</div>
+    <div class="title">${isSundayUpsell ? "Oferta de Domingo Sem Pressa" : "Código PIX da Reserva"}</div>
     <div class="subtitle">Abra o app do seu banco e selecione <strong>PIX Copia e Cola</strong> para efetuar o pagamento.</div>
 
     <div id="status-badge" class="badge-copied" style="${isExpiredPreRes ? 'display:none;' : ''}">
@@ -61184,6 +61204,15 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
         <span class="detail-label">Hóspede:</span>
         <span class="detail-val">${guestName}</span>
       </div>
+      ${isSundayUpsell ? `
+      <div class="detail-row" style="border-top: 1px solid #334155; margin-top: 6px; padding-top: 8px;">
+        <span class="detail-label">Tarifa Normal da Diária:</span>
+        <span class="detail-val" style="color: #94a3b8; text-decoration: line-through;">${formattedUpsellNormalValue}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Oferta Domingo Sem Pressa (-${upsellDiscountPct}% no PIX):</span>
+        <span class="detail-val price">${formattedValue}</span>
+      </div>` : `
       <div class="detail-row" style="border-top: 1px solid #334155; margin-top: 6px; padding-top: 8px;">
         <span class="detail-label">Valor no Cartão de Crédito:</span>
         <span class="detail-val" style="color: #94a3b8; text-decoration: line-through;">${formattedCardValue}</span>
@@ -61191,7 +61220,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
       <div class="detail-row">
         <span class="detail-label">Valor com Desconto no PIX (-5%):</span>
         <span class="detail-val price">${formattedValue}</span>
-      </div>
+      </div>`}
     </div>
 
     ${pixCode ? `
@@ -61220,9 +61249,10 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     </div>
     `}
 
+    ${!isSundayUpsell ? `
     <a href="${portalUrl}" class="btn-sec">
       🏨 Acessar Portal da Minha Reserva
-    </a>
+    </a>` : ""}
 
     <a href="${whatsappUrl}" class="btn-sec" style="background: #1e3a2b; border: 1px solid #065f46; color: #6ee7b7;">
       💬 Voltar para o WhatsApp

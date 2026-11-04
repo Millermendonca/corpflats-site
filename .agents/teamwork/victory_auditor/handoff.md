@@ -1,189 +1,131 @@
-# Victory Audit Handoff Report: Guest-Flow-Manager Priorities 1 to 3
+# Victory Audit Handoff Report — Oferta de Domingo Sem Pressa
 
-**Author**: `victory_auditor`  
-**Date**: 2026-11-03T01:15:00Z  
-**Recipient**: Parent Agent (`e5e72c62-dbab-4f9e-8c07-bd958b9cf993`)  
-**Audit Type**: Independent Post-Victory Verification  
-**Integrity Mode**: Development Mode (with strict AGENTS.md compliance: zero global test suites, punctual targeted execution only, twin-server parity, git push verification)  
-
----
-
-```
-=== VICTORY AUDIT REPORT ===
-
-VERDICT: VICTORY CONFIRMED
-
-PHASE A — TIMELINE:
-  Result: PASS
-  Anomalies: none
-
-PHASE B — INTEGRITY CHECK:
-  Result: PASS
-  Details: Verified genuine implementation across all Priority 1-3 requirements without stubs, mocks, or hardcoded values. Smart asset caching headers active in demo-server.mjs (lines 57627-57647); 59 pages split via lazyWithRetry in App.tsx reducing index.js to 166.18 kB (-93.1% reduction from 2.4 MB); route guards pre-hydrated non-blocking with local session cache; floating-new-reservation.tsx mounts PMS modal strictly on demand with 300ms transition unmount timer; pms-calendar.tsx polling interval at 12s with visibilitychange pause/resume; backend GET routes protected with 60s/30s dirty-flag cooldowns, getRequestsForDate deduplicated with 3s TTL cache, and O(1) task status indexing; flushPgState yields to event loop via setImmediate with regex fast-path and Schwartzian transform pruning; byte-for-byte SHA-256 twin parity verified on demo-server.mjs and 37/37 runtime files.
-
-PHASE C — INDEPENDENT TEST EXECUTION:
-  Test command:
-    1. node scripts/verify-frontend-empirical.mjs
-    2. node --test tests/empirical-backend-verification.mjs
-    3. node --test tests/room-ready-605-dedup-and-pg-surrogate.test.mjs
-    4. node --test tests/challenger-m4-demographics-ltv.test.mjs
-    5. node --test --test-concurrency=1 tests/challenger-m1-1.test.mjs
-    6. node scripts/check-twin-parity.mjs
-    7. cd artifacts/limpeza && npm run build
-    8. git -C "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager" status -uno
-  Your results:
-    1. verify-frontend-empirical: 5/5 passed (100%)
-    2. empirical-backend-verification: 5/5 passed (100%)
-    3. room-ready-605-dedup-and-pg-surrogate: 8/8 passed (100%)
-    4. challenger-m4-demographics-ltv: 15/15 passed (100%)
-    5. challenger-m1-1: 12/12 passed (100%)
-    6. check-twin-parity: 37/37 runtime files PASS (100%)
-    7. npm run build: built in 31.93s, exit code 0, generated index.js at 166.18 kB, 0 diff with tracked dist/
-    8. git status: clean working tree, up to date with origin/main at commit a9a329f
-  Claimed results:
-    All acceptance criteria across Priorities 1-3 met, tests passing, index.js at 166.18 kB, 37/37 twin parity, pushed to origin main.
-  Match: YES — exact 100% match across all empirical measurements and test executions.
-```
+**Author**: Victory Auditor (`victory_auditor`)  
+**Roles**: critic, specialist, auditor, victory_verifier  
+**Date**: 2026-11-04  
+**Type**: Hard Handoff (Final Victory Audit Complete)  
+**Overall Verdict**: **VICTORY CONFIRMED**
 
 ---
 
 ## 1. Observation
 
-### 1.1 Git History & Provenance (Phase A)
-- Git log inspection at repository root (`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`):
-  - `a9a329f` (HEAD -> main, origin/main, origin/HEAD): `feat(perf): implement Priorities 1-3 frontend code-splitting, smart caching, and backend stability optimizations`
-  - Authored by `Millermendonca <miller.mendonca16@gmail.com>` on `Mon Nov 2 21:49:39 2026 -0300`.
-  - Prior iterative commits show authentic development progression:
-    - `69f2748`: `fix(minibar): harden NF WhatsApp Z-API dispatch, sanitize Base64 payloads, and preserve NF links in reservation modal`
-    - `21584c3`: `feat(agent): implement constitutional agent architecture, tool-contract, state router and template tools`
-    - `7ff93b5`: `fix(minibar): fix WhatsApp Nota Fiscal dispatch via db.zapiConfig and expose NF download in reservation screens`
-  - `git status -uno` confirms working tree clean on project source files, with branch up to date with remote `origin/main`.
-  - `git log origin/main..HEAD` confirms 0 unpushed commits.
+All forensic checks, timeline inspections, and independent executions were performed empirically from scratch:
 
-### 1.2 Source Code Integrity & Implementation Details (Phase B)
-1. **Smart Asset Caching (`artifacts/api-server/demo-server.mjs:57627-57679` & `scripts/demo-server.mjs`)**:
-   - `setSmartAssetCacheHeaders(res, filePath)` inspects file names:
-     - `fileName === "index.html" || fileName === "sw.js" || normalized.endsWith(".html")`: `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`, `Expires: 0`.
-     - `/-[a-zA-Z0-9_-]{6,}\.(js|mjs|css|...)$/i`: `Cache-Control: public, max-age=31536000, immutable`.
-     - Unhashed static files: `Cache-Control: no-cache`.
-   - Dynamic asset route handler `/assets/:filename` incorporates fallback chunk resolution to prevent "Failed to fetch dynamically imported module" errors across new deployments.
-2. **Frontend Code-Splitting (`artifacts/limpeza/src/App.tsx:19-122`)**:
-   - `lazyWithRetry()` implements 3 retry attempts with exponential backoff (500ms, 1200ms, 2200ms) and throttled auto-reload fallback.
-   - 59 pages configured via `lazyWithRetry`, including all 15 heavy operational routes (`Dashboard`, `PmsCalendar`, `WhatsappAutomation`, `WhatsappChat`, `GuestPreCheckin`, `AgencyGuestCredential`, `VerifyFnrh`, `BookingEngine`, `GuestBreakfast`, `GuestCheckout`, `GuestPortal`, `GuestMinibar`, `MyAccount`, `ServiceOrders`, `ServiceWorkerPortal`).
-   - `Login` and `NotFound` retained as static imports for instantaneous initial rendering.
-3. **Route Guards & Session Cache (`artifacts/limpeza/src/App.tsx:124-227`)**:
-   - `SESSION_USER_KEY = 'gfm_auth_user_session_v1'` checks sessionStorage/localStorage.
-   - Pre-hydrates TanStack Query before render (`queryClient.setQueryData(getGetMeQueryKey(), initialUser)`).
-   - `useSessionUser()` returns cached user immediately so route guards do not stall chunk loading while `/api/auth/me` validates in the background.
-   - `(Component as any)?.preload?.()` triggered on guard mount to fetch chunks in parallel.
-   - Security enforced: redirects to `/login` if unauthenticated; calls `hasModuleAccess(user, location)` and renders `<AccessDenied />` if unauthorized.
-4. **On-Demand PMS Modal Mount (`artifacts/limpeza/src/components/floating-new-reservation.tsx:6, 106-118, 235-239`)**:
-   - `PmsCalendarLazy = lazy(() => import('@/pages/pms-calendar'))`.
-   - `<PmsCalendarLazy modalOnly autoOpenNewRes />` rendered strictly when `!isOnReservationsPage && isModalMounted`.
-   - When modal closes, a 300ms transition timeout allows Radix dialog animation to complete cleanly before unmounting.
-5. **PMS Calendar Polling & Optimization (`artifacts/limpeza/src/pages/pms-calendar.tsx:2235-2287`)**:
-   - `if (modalOnly) return;` disables background polling when used as modal.
-   - Polling interval set to `12000` ms (12 seconds, within required 10s-15s window).
-   - `document.hidden` check pauses interval when tab is minimized/hidden; `visibilitychange` and window `focus` events trigger immediate `doSilentSync()` and restart the timer.
-6. **Backend Cooldowns, Deduping & O(1) Indexing (`artifacts/api-server/demo-server.mjs`)**:
-   - `reconcileAndMergeGuests` (line 11985): 60s cooldown (`GUEST_RECONCILE_COOLDOWN_MS = 60000`) and `isGuestReconciliationDirty` flag.
-   - `reconcileUniversalIntegrity` (line 5010): 30s cooldown (`UNIVERSAL_INTEGRITY_COOLDOWN_MS = 30000`) and `isUniversalIntegrityDirty` flag.
-   - `requestsForDateCache` (line 18811): Map with 3s TTL and versioned invalidation on `saveDatabase()`.
-   - `getRequestsForDate`: deduplicated to 1 single call in `GET /api/reservations/checkouts`.
-   - `computePeriodicTaskStatus` & `regularizeHousekeepingPreventiveTasks`: use `latestExecutionMap` (`${taskId}_${flatId}`) and `reservationsByFlat` for $O(1)$ lookups.
-7. **PostgreSQL Event Loop & Memory Stability (`artifacts/api-server/demo-server.mjs:14275-14376`)**:
-   - `sanitizeJsonSerialized(jsonStr)`: fast-path skips regex unless `\u0000` or `\uD...` is present.
-   - `flushPgState()`: yields event loop via `await new Promise(r => setImmediate(r))` before JSON serialization and database query.
-   - `pruneDatabase()`: Schwartzian transform decorated sort, truncates `auditLogs.details` to $\le 500$ chars, explicitly protects all HR tables.
-   - `offloadHistoricalBase64Media()`: offloads Base64 payloads in chunks of 20-80 items to `media_blobs`.
-   - Heap garbage collection hint invoked when heap exceeds 900MB.
-8. **Twin-Server Parity**:
-   - SHA-256 hash of `artifacts/api-server/demo-server.mjs`: `262681F238A9801BECB0313D205D246FD0637C411AD6C5BF709D0A15FCAA5699`
-   - SHA-256 hash of `scripts/demo-server.mjs`: `262681F238A9801BECB0313D205D246FD0637C411AD6C5BF709D0A15FCAA5699`
-   - Dynamic scanner `node scripts/check-twin-parity.mjs`: 37/37 runtime files identical (100% pass).
+### 1.1 Phase A — Timeline & Provenance
+- **Git Commit Verification**:
+  - Hash: `4762319d81773920e50b921d98b081949cbdc508`
+  - Message: `feat(upsell): implementacao da Oferta de Domingo Sem Pressa na Regua Automatica com hold silencioso, webhook PIX e sincronia Sofia`
+  - Author: Millermendonca <miller.mendonca16@gmail.com>
+  - Date: Wed Nov 4 14:22:55 2026 -0300 (17:22:55 UTC)
+  - Diff stats: 21 files changed, 4266 insertions(+), 82 deletions(-)
+- **Remote Push Verification**:
+  - Command: `git rev-parse HEAD; git rev-parse origin/main`
+  - Output:
+    ```
+    4762319d81773920e50b921d98b081949cbdc508
+    4762319d81773920e50b921d98b081949cbdc508
+    ```
+  - `origin/main` is 100% synchronized with local `main` at commit `4762319`.
+- **Timeline & Artifact Provenance**:
+  - Approved task prompt timestamp: `2026-11-04T16:01:11Z` (`ORIGINAL_REQUEST.md`).
+  - Commit timestamp: `2026-11-04T17:22:55Z` (~1h 21m elapsed).
+  - Subagent work progressions show natural, iterative development from survey explorers to backend and frontend implementers, followed by 5 independent verification agents (2 reviewers, 2 challengers, 1 auditor) and integration worker.
+  - No pre-populated test result artifacts or fabricated logs were found.
 
-### 1.3 Independent Verification Execution (Phase C)
-- `node scripts/verify-frontend-empirical.mjs`:
-  - Test 1 (Bundle size & chunk splitting): PASS (`index.js` = 162.28 KB / 166,178 bytes, < 450 KB threshold)
-  - Test 2 (Floating button conditional mount & 300ms transition): PASS
-  - Test 3 (PMS Calendar 12s polling & tab visibility pause): PASS
-  - Test 4 (Route guards non-blocking hydration & lazyWithRetry): PASS
-  - Test 5 (Module routing & regression compatibility): PASS
-  - Total: 5/5 PASS.
-- `node --test tests/empirical-backend-verification.mjs`:
-  - 1. Twin-Server Mirror Hash Verification: PASS
-  - 2. Fast-Path Surrogate Sanitization: PASS
-  - 3. Guest Reconciliation 60s Cooldown & Dirty Flag: PASS
-  - 4. Async Save & Non-blocking Behavior in GET Routes: PASS
-  - 5. O(1) Periodic Task Computation Context Support: PASS
-  - Total: 5/5 PASS.
-- `node --test tests/room-ready-605-dedup-and-pg-surrogate.test.mjs`:
-  - 8/8 tests passed in 1153ms.
-- `node --test tests/challenger-m4-demographics-ltv.test.mjs`:
-  - 15/15 tests passed in 7841ms.
-- `node --test --test-concurrency=1 tests/challenger-m1-1.test.mjs`:
-  - 12/12 tests passed in 4203ms.
-- `npm run build` in `artifacts/limpeza`:
-  - Transformed 3403 modules, built in 31.93s with exit code 0.
-  - `dist/public/assets/index.js` generated at 166.18 kB (gzip: 43.97 kB).
-  - `git status -- artifacts/limpeza/dist` showed zero diff against committed state.
+### 1.2 Phase B — Integrity & Cheating Forensics
+- **Cheating & Facade Detection**:
+  - Searched project files for hardcoded test outcomes, dummy stubs, and facade functions. All implementations (`zapi-service.mjs`, `demo-server.mjs`, `whatsapp-automation.tsx`, `ofertar-domingo-sem-pressa.tool.ts`) contain full, genuine business logic.
+  - Active stay protection verified in `sweepExpiredPreReservations` (lines 28226–28266): reservations with `isSilentUpsellHold: true` expire silently without cancelling guest stay or sending cancellation WhatsApp messages.
+  - FairShare reallocation verified in `demo-server.mjs` (lines 58434–58472): reallocates incoming conflicting reservation to alternative vacant flat with full audit log and notification.
+  - Sofia AI tool verified in `src/agent/tools/ofertar-domingo-sem-pressa.tool.ts`: conforms strictly to the 5 laws of AGENTS.md Constitution (zero hardcoded conversation, backend rules in code, `AgentToolResponse` with `instrucao_para_ia`, 2-step simulation/execution flow, and admin WhatsApp fallback).
+- **Test Integrity**:
+  - Grep search for `.skip`, `.only`, or commented-out tests in `tests/sunday-upsell*.test.mjs` returned 0 matches.
+  - No notifications or webhooks were muted or disabled in production logic.
+- **Twin-Server Parity**:
+  - Command: `node scripts/check-twin-parity.mjs`
+  - Output:
+    ```
+    Resultado: 37/37 arquivos de runtime auditados dinamicamente.
+    STATUS: 100% PASS - Paridade perfeita restabelecida!
+    ```
+  - Exit code: 0.
+
+### 1.3 Phase C — Independent Test & Build Execution
+- **TypeScript Static Typing Check**:
+  - Command: `npx tsc --noEmit`
+  - Result: Exit code 0, zero errors.
+- **Targeted Unit Test Suite**:
+  - Command: `node --test tests/sunday-upsell-engine.test.mjs`
+  - Result: 14 tests, 2 suites, 14 passed, 0 failed, 0 skipped, 0 cancelled (duration: 5.66s, exit code 0).
+- **Targeted Adversarial Test Suite**:
+  - Command: `node --test tests/sunday-upsell-adversarial.test.mjs`
+  - Result: 18 tests, 4 suites, 18 passed, 0 failed, 0 skipped, 0 cancelled (duration: 2.46s, exit code 0).
+- **Frontend Production Build**:
+  - Command: `npm run build` in `artifacts/limpeza`
+  - Result: Exit code 0, 3403 modules transformed in 27.64s. Generated bundle `dist/public/assets/whatsapp-automation-DyGgLure.js` (303.25 kB).
+  - Git working tree diff against commit `4762319` on all tracked source and dist files: exactly 0 diff.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Requirement Mapping**:
-   - `ORIGINAL_REQUEST.md` demanded full implementation of Priorities 1 to 3:
-     - Priority 1: elimination of white screen / module loading delays via smart asset caching, 15+ pages code-split via `lazyWithRetry`, non-blocking route guards.
-     - Priority 2: on-demand `<PmsCalendar modalOnly />` mounting, calendar polling at 10s-15s with visibility pause, backend cooldowns on $O(N^2)$ reconciliations, deduplication of `getRequestsForDate`, and $O(1)$ task indexing.
-     - Priority 3: Node server and PostgreSQL stability in Render via Event Loop yielding, regex fast-paths, residual Base64 offloading, and database pruning.
-     - Mandates: strict avoidance of global test sweeps (`tests/*.test.mjs`), execution of targeted punctual tests only, unmasked notifications, and git push verification.
-2. **Empirical Verification**:
-   - The auditor independently ran the build toolchain (`npm run build`), which finished cleanly in 31.93s. The resulting bundle size `index.js` (166.18 kB) verified the claimed 93.1% size reduction from 2.4 MB.
-   - Punctual test suites targeting the frontend and backend optimizations (`verify-frontend-empirical.mjs`, `empirical-backend-verification.mjs`, `room-ready-605-dedup-and-pg-surrogate.test.mjs`, `challenger-m4-demographics-ltv.test.mjs`, `challenger-m1-1.test.mjs`) all executed with 100% pass rates without executing prohibited global suites.
-   - Twin-server SHA-256 verification confirmed that the 173-line divergence identified in Iteration 1 was completely remediated, with 37 out of 37 files matching byte-for-byte.
-   - Git remote tracking confirmed that commit `a9a329f` is published on GitHub `origin/main` with zero local unpushed commits.
-3. **Synthesis**:
-   - All observations directly validate that the work product was implemented genuinely and completely without shortcuts, stubs, or facade implementations.
+1. **Commit and Provenance Verification**:
+   The code delivery claimed by the orchestrator in commit `4762319` is genuine, properly timestamped, and confirmed pushed to `origin/main` on GitHub.
+2. **Implementation Authenticity**:
+   Forensic analysis revealed no hardcoded test assertions, no dummy facades, no muted notifications, and no skipped tests. The code genuinely implements all 5 acceptance criteria requirements:
+   - R1: Executive control card, toggle, price configuration, and manual test trigger in `whatsapp-automation.tsx`.
+   - R2: Saturday 19:00 BRT scheduler, eligibility evaluation, and FairShare reassignments in `zapi-service.mjs`.
+   - R3: 30-min hold with static PIX payload and silent expiration (`isSilentUpsellHold: true`) in `sweepExpiredPreReservations`.
+   - R4: Webhook payment confirmation extending PMS checkout to Monday 12:00h, shifting housekeeping cleaning, reallocating incoming reservations, and sending confirmation WhatsApp message in `demo-server.mjs`.
+   - R5: 2-balloon sequential dispatch on Canal #1 and Sofia AI tool calling conforming to AGENTS.md.
+3. **Twin Parity Integrity**:
+   Every runtime `.mjs` file modified in `artifacts/api-server/` has an identical SHA-256 counterpart in `scripts/`, satisfying the project's constitutional twin architecture.
+4. **Independent Execution Match**:
+   Running the test suites independently yielded 32/32 passing tests (100%), matching the claimed results in `orchestrator/handoff.md` and gate approvals. Recompiling the frontend produced identical build artifacts with zero drift.
 
 ---
 
 ## 3. Caveats
 
-- **No Caveats**: All required checks across Priorities 1 to 3 were independently executed and verified with raw evidence.
+- In strict compliance with the AGENTS.md Constitution ("NUNCA executar testes globais, varreduras ou em lote"), only the targeted test suites (`tests/sunday-upsell-engine.test.mjs` and `tests/sunday-upsell-adversarial.test.mjs`) were executed.
+- No caveats regarding code quality, authenticity, or test outcomes.
 
 ---
 
 ## 4. Conclusion
 
-The claim of project completion submitted by the orchestrator is authentic and verified. All acceptance criteria from `ORIGINAL_REQUEST.md` are satisfied with zero regressions and strict compliance with `AGENTS.md` rules.
+The completion claim for "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)" has been independently verified across all three mandatory audit phases.
 
-**Final Verdict**: **VICTORY CONFIRMED**.
+**FINAL AUDIT VERDICT**: **VICTORY CONFIRMED**
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce the audit verification from PowerShell:
+To independently reproduce the entire victory audit:
+
 ```powershell
 Set-Location "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
 
-# 1. Twin-Server SHA-256 parity check (Expected: True)
-(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
+# 1. Verify Git commit and remote push status
+git rev-parse HEAD
+git rev-parse origin/main
+git log -1 --stat 4762319
 
-# 2. Dynamic twin parity audit (Expected: 37/37 PASS - 100%)
+# 2. Verify twin-server parity (37/37 files)
 node scripts/check-twin-parity.mjs
 
-# 3. Targeted empirical verification suites (Expected: All pass)
-node scripts/verify-frontend-empirical.mjs
-node --test tests/empirical-backend-verification.mjs
-node --test tests/room-ready-605-dedup-and-pg-surrogate.test.mjs
-node --test tests/challenger-m4-demographics-ltv.test.mjs
-node --test --test-concurrency=1 tests/challenger-m1-1.test.mjs
+# 3. Verify TypeScript compilation (0 errors)
+npx tsc --noEmit
 
-# 4. Frontend build & bundle size (Expected: index.js is 166.18 kB)
-Set-Location "artifacts/limpeza"; npm run build
+# 4. Verify targeted unit test suite (14/14 pass)
+node --test tests/sunday-upsell-engine.test.mjs
 
-# 5. Remote git synchronization (Expected: up to date with origin/main)
-git -C "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager" status -uno
+# 5. Verify adversarial stress test suite (18/18 pass)
+node --test tests/sunday-upsell-adversarial.test.mjs
+
+# 6. Verify frontend production build (exit code 0)
+Set-Location "artifacts/limpeza"
+npm run build
 ```

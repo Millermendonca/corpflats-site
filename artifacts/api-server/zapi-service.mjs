@@ -1356,7 +1356,7 @@ Por favor, entre em contato diretamente com a *{{nome_camareira}}* pelo WhatsApp
     id: "tpl_sunday_upsell",
     triggerEvent: "sunday_upsell_offer",
     title: "Upsell • Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)",
-    description: "Enviado aos sábados às 19:00h para hóspedes com check-out no domingo às 12:00h, oferecendo saída livre no domingo e bônus de pernoite até segunda às 12:00h com pré-reserva de 30 minutos.",
+    description: "Enviado aos sábados às 19:00h em 3 balões curtos (com botão interativo de Copiar Código PIX do Banco Inter e zero asteriscos) para hóspedes com check-out no domingo às 12:00h.",
     enabled: false,
     channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
@@ -1364,15 +1364,22 @@ Por favor, entre em contato diretamente com a *{{nome_camareira}}* pelo WhatsApp
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "19:00",
-    message: `Olá, {{primeiro_nome}}! Tudo bem? Vi que o seu check-out aqui no flat {{quarto}} está programado para amanhã (domingo) às 12h.
+    message: `Olá, {{primeiro_nome}}! Tudo bem? 😊
+Vi aqui que o seu check-out no Flat {{quarto}} está programado para amanhã (domingo) às 12h.
 
-Se você quiser aproveitar o domingo inteiro relaxando, sem precisar acordar cedo, correr com horário ou arrumar suas coisas pela manhã, liberei uma condição especial para você *sair amanhã a hora que quiser (check-out livre no domingo)* por apenas *R$ {{valor_promocional}}* (em vez da tarifa normal de R$ {{valor_normal}}).
+Quer aproveitar o domingo inteiro descansando, sem precisar acordar cedo ou correr para arrumar as malas pela manhã? 🛌✨
 
-E como bônus, já deixamos o seu flat liberado no sistema até *segunda-feira às 12h* sem custo extra — assim você pode sair no domingo à tarde ou à noite sem nenhuma pressa, ou até dormir de domingo para segunda se resolver esticar!
+Liberei uma condição especial para você ter check-out livre amanhã (pode sair a hora que quiser no domingo!) com {{percentual_desconto}}% de desconto: de {{valor_normal}} por apenas {{valor_promocional}}.
 
-Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX abaixo. Como o sistema só segura esse bloqueio promocional por *30 minutos*, se quiser aproveitar basta copiar e pagar o código abaixo que o sistema já confirma automaticamente:`,
+🎁 E de bônus, já deixamos o seu flat liberado no sistema até segunda-feira às 12h sem custo extra — assim você pode sair no domingo mais tarde sem pressa, ou até dormir de domingo para segunda se resolver esticar!
+
+⏳ Já deixei essa extensão pré-reservada para o seu flat por 30 minutos.
+
+Para garantir, basta tocar no botão abaixo para copiar o código PIX. Assim que você pagar, o nosso sistema já dá baixa e confirma sua estadia automaticamente! 👇`,
     footer: "",
-    buttons: []
+    buttons: [
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" }
+    ]
   }
 ];
 
@@ -5084,11 +5091,11 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
     }
   }
 
-  // Se a mensagem enviada contém botão ou código PIX de cópia, despacha imediatamente o código PIX no chat
+  // Se a mensagem enviada contém botão ou código PIX de cópia, despacha imediatamente o código PIX no chat (exceto quando skipPixCompanion=true)
   const pixBtn = validButtons.find(b => b && (b.copyCode || (b.type === "COPY" && (b.code || b.url)) || (b.url && String(b.url).startsWith("000201"))));
   const pixCodeToCopy = pixBtn ? (pixBtn.copyCode || pixBtn.code || (String(pixBtn.url).startsWith("000201") ? pixBtn.url : "")) : "";
 
-  if (pixCodeToCopy && typeof pixCodeToCopy === "string" && pixCodeToCopy.startsWith("000201") && (primaryResult?.success || primaryResult?.simulated)) {
+  if (!rawOpts.skipPixCompanion && pixCodeToCopy && typeof pixCodeToCopy === "string" && pixCodeToCopy.startsWith("000201") && (primaryResult?.success || primaryResult?.simulated)) {
     try {
       console.log(`[Z-API PIX Companion] Enviando código PIX para cópia em 1 toque para ${targetPhone}...`);
       await new Promise(r => setTimeout(r, 800)); // Pequena pausa para garantir ordem cronológica no WhatsApp
@@ -16787,8 +16794,9 @@ export async function dispatchSundayUpsellTwoBalloons(db, {
   const promoNum = Number(sundayUpsellPrice);
   const normalNum = Number(normalDailyRate);
   const pctNum = Number(sundayUpsellDiscountPercent ?? 50);
-  const cleanName = String(guestFirstName || "").trim();
-  const cleanFlat = String(flatNumber || "").trim();
+  // Remove 100% de asteriscos (*) eventualmente presentes em variáveis para nunca quebrar a formatação do WhatsApp
+  const cleanName = String(guestFirstName || "").replace(/\*/g, "").trim();
+  const cleanFlat = String(flatNumber || "").replace(/\*/g, "").trim();
   const cleanPix = String(pixCopiaECola || "").trim();
 
   // TRAVA RÍGIDA DE VALORES VÁLIDOS: Aborta imediatamente se qualquer valor ou variável obrigatória estiver vazio, zero, NaN ou undefined
@@ -16824,6 +16832,7 @@ export async function dispatchSundayUpsellTwoBalloons(db, {
     ? "5522998505276"
     : ((isChannelInTestMode && !isTestEnv) ? "5522998505276" : guestPhone);
 
+  const pctFormatted = String(Math.round(pctNum));
   const promoFormatted = promoNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const normalFormatted = normalNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -16838,13 +16847,35 @@ export async function dispatchSundayUpsellTwoBalloons(db, {
     };
   }
 
-  const balloon1Text = `Olá, ${cleanName}! Tudo bem? Vi que o seu check-out aqui no flat ${cleanFlat} está programado para amanhã (domingo) às 12h.
+  // Balão 1 (Texto — ZERO asteriscos)
+  const balloon1Text = `Olá, ${cleanName}! Tudo bem? 😊
+Vi aqui que o seu check-out no Flat ${cleanFlat} está programado para amanhã (domingo) às 12h.
 
-Se você quiser aproveitar o domingo inteiro relaxando, sem precisar acordar cedo, correr com horário ou arrumar suas coisas pela manhã, liberei uma condição especial para você **sair amanhã a hora que quiser (check-out livre no domingo)** por apenas **R$ ${promoFormatted}** (em vez da tarifa normal de R$ ${normalFormatted}).
+Quer aproveitar o domingo inteiro descansando, sem precisar acordar cedo ou correr para arrumar as malas pela manhã? 🛌✨`.replace(/\*/g, "");
 
-E como bônus, já deixamos o seu flat liberado no sistema até **segunda-feira às 12h** sem custo extra — assim você pode sair no domingo à tarde ou à noite sem nenhuma pressa, ou até dormir de domingo para segunda se resolver esticar!
+  // Balão 2 (Texto — ZERO asteriscos)
+  const balloon2Text = `Liberei uma condição especial para você ter check-out livre amanhã (pode sair a hora que quiser no domingo!) com ${pctFormatted}% de desconto: de R$ ${normalFormatted} por apenas R$ ${promoFormatted}.
 
-Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX abaixo. Como o sistema só segura esse bloqueio promocional por **30 minutos**, se quiser aproveitar basta copiar e pagar o código abaixo que o sistema já confirma automaticamente:`;
+🎁 E de bônus, já deixamos o seu flat liberado no sistema até segunda-feira às 12h sem custo extra — assim você pode sair no domingo mais tarde sem pressa, ou até dormir de domingo para segunda se resolver esticar!`.replace(/\*/g, "");
+
+  // Balão 3 (Componente com Botão Interativo de Copiar PIX da Z-API — sem opção de cartão e ZERO asteriscos)
+  const balloon3Text = `⏳ Já deixei essa extensão pré-reservada para o seu flat por 30 minutos.
+
+Para garantir, basta tocar no botão abaixo para copiar o código PIX. Assim que você pagar, o nosso sistema já dá baixa e confirma sua estadia automaticamente! 👇`.replace(/\*/g, "");
+
+  const resCode = String(reservation?.code || reservation?.id || "TEST-SUN-UPSELL").trim();
+  const hostBase = (typeof process !== "undefined" && process.env?.SERVER_BASE_URL ? process.env.SERVER_BASE_URL : "https://corpflats.com.br").replace(/\/+$/, "");
+  const copyPixUrl = `${hostBase}/copiar-pix/${encodeURIComponent(resCode)}?upsell=1&pix=${encodeURIComponent(cleanPix)}&amount=${promoNum.toFixed(2)}&normal=${normalNum.toFixed(2)}&discount=${pctFormatted}&flat=${encodeURIComponent(cleanFlat)}&guest=${encodeURIComponent(cleanName)}`;
+
+  const balloon3Buttons = [
+    {
+      id: "btn_pix",
+      type: "COPY",
+      label: "📋 Copiar Código PIX",
+      copyCode: cleanPix,
+      url: copyPixUrl
+    }
+  ];
 
   const balloon1Res = await sendZapiMessage(db?.zapiConfig, {
     phone: effectivePhone,
@@ -16853,7 +16884,7 @@ Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX 
     recipientRole: "guest",
     triggerEvent: "sunday_upsell_offer",
     sendMode: "text",
-    delayTyping: isTestEnv ? 0 : 3,
+    delayTyping: isTestEnv ? 0 : 2,
     bypassTestMode: Boolean(testMode) && effectivePhone === "5522998505276",
     db
   });
@@ -16863,16 +16894,32 @@ Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX 
     await new Promise(resolve => setTimeout(resolve, waitBetweenBalloonsMs));
   }
 
-  const balloon2Text = cleanPix;
-
   const balloon2Res = await sendZapiMessage(db?.zapiConfig, {
     phone: effectivePhone,
     message: balloon2Text,
     channelId: "guest_schedule",
     recipientRole: "guest",
-    triggerEvent: "sunday_upsell_offer_pix",
+    triggerEvent: "sunday_upsell_offer_part2",
     sendMode: "text",
-    delayTyping: isTestEnv ? 0 : 1,
+    delayTyping: isTestEnv ? 0 : 3,
+    bypassTestMode: Boolean(testMode) && effectivePhone === "5522998505276",
+    db
+  });
+
+  if (waitBetweenBalloonsMs > 0) {
+    await new Promise(resolve => setTimeout(resolve, waitBetweenBalloonsMs));
+  }
+
+  const balloon3Res = await sendZapiMessage(db?.zapiConfig, {
+    phone: effectivePhone,
+    message: balloon3Text,
+    buttons: balloon3Buttons,
+    channelId: "guest_schedule",
+    recipientRole: "guest",
+    triggerEvent: "sunday_upsell_offer_pix",
+    sendMode: "buttons",
+    skipPixCompanion: true,
+    delayTyping: isTestEnv ? 0 : 2,
     bypassTestMode: Boolean(testMode) && effectivePhone === "5522998505276",
     db
   });
@@ -16882,7 +16929,7 @@ Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX 
       phone: effectivePhone,
       senderName: "CorpFlats (Automação)",
       fromMe: true,
-      text: `${balloon1Text}\n\n---\n[PIX Copia e Cola]:\n${balloon2Text}`,
+      text: `${balloon1Text}\n\n---\n${balloon2Text}\n\n---\n${balloon3Text}\n[Botão Interativo: 📋 Copiar Código PIX]`,
       type: "text",
       status: "delivered",
       triggerEvent: "sunday_upsell_offer",
@@ -16891,12 +16938,15 @@ Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX 
   }
 
   return {
-    success: Boolean(balloon1Res?.success && balloon2Res?.success),
+    success: Boolean(balloon1Res?.success && balloon2Res?.success && balloon3Res?.success),
     effectivePhone,
     balloon1: balloon1Res,
-    balloon2: balloon2Res
+    balloon2: balloon2Res,
+    balloon3: balloon3Res
   };
 }
+
+export const dispatchSundayUpsellThreeBalloons = dispatchSundayUpsellTwoBalloons;
 
 export async function triggerSundayUpsellRoutine(db, saveDatabase, {
   forceDate = null,
@@ -16971,11 +17021,32 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
       };
     }
 
-    const txid = `UPSELL_SUN_TEST_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 35);
-    const pixPayload = generateStaticPixPayload({
-      amount: pricing.promotionalPrice,
-      txid
-    });
+    let txid = `UPSELL_SUN_TEST_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 35);
+    let pixPayload = "";
+    if (typeof globalThis.createInterPixCob === "function" && !isTestEnv) {
+      try {
+        const interCharge = await globalThis.createInterPixCob({
+          amount: pricing.promotionalPrice,
+          description: `Oferta Domingo Sem Pressa - Flat ${simRes.flatNumber || "113"} (${simRes.code || "TEST-SUN-UPSELL"})`,
+          debtorName: simRes.guestName || "Miller",
+          debtorDocument: simRes.guestDoc || simRes.guestCpf || "",
+          reservationCode: simRes.code || "TEST-SUN-UPSELL",
+          expirationSeconds: 1800
+        });
+        if (interCharge?.pixCopiaECola) {
+          pixPayload = interCharge.pixCopiaECola;
+          txid = interCharge.txid || txid;
+        }
+      } catch (interErr) {
+        console.warn("[Sunday Upsell Test] Falha ao criar cobrança dinâmica no Banco Inter, usando fallback:", interErr.message);
+      }
+    }
+    if (!pixPayload) {
+      pixPayload = generateStaticPixPayload({
+        amount: pricing.promotionalPrice,
+        txid
+      });
+    }
 
     let sendRes = null;
     if (!dryRun) {
@@ -17042,11 +17113,32 @@ export async function triggerSundayUpsellRoutine(db, saveDatabase, {
     const normalDailyRate = pricing.normalDailyRate;
     const promotionalPrice = pricing.promotionalPrice;
 
-    const txid = `UPSELL_SUN_${r.code || r.id}_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 35);
-    const pixPayload = generateStaticPixPayload({
-      amount: promotionalPrice,
-      txid
-    });
+    let txid = `UPSELL_SUN_${r.code || r.id}_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 35);
+    let pixPayload = "";
+    if (typeof globalThis.createInterPixCob === "function" && !isTestEnv) {
+      try {
+        const interCharge = await globalThis.createInterPixCob({
+          amount: promotionalPrice,
+          description: `Oferta Domingo Sem Pressa - Flat ${r.flatNumber || ""} (${r.code || r.id})`,
+          debtorName: r.guestName || "Hospede CorpFlats",
+          debtorDocument: r.guestDoc || r.guestCpf || r.cpf || "",
+          reservationCode: r.code || String(r.id || ""),
+          expirationSeconds: 1800
+        });
+        if (interCharge?.pixCopiaECola) {
+          pixPayload = interCharge.pixCopiaECola;
+          txid = interCharge.txid || txid;
+        }
+      } catch (interErr) {
+        console.warn(`[Sunday Upsell] Falha ao criar cobrança dinâmica no Banco Inter para ${r.code || r.id}, usando fallback:`, interErr.message);
+      }
+    }
+    if (!pixPayload) {
+      pixPayload = generateStaticPixPayload({
+        amount: promotionalPrice,
+        txid
+      });
+    }
 
     if (!pixPayload || typeof pixPayload !== "string" || !pixPayload.trim()) {
       evalResult.ineligibleReservations.push({

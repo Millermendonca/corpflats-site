@@ -1,27 +1,19 @@
-# Progress: Survey Explorer 2 (CRM 360° Models & Fiscal Invoices UI)
+# Progress Report — Explorer 2 (Backend Engine Explorer)
 
-**Last visited**: 2026-10-14T09:55:00Z
-**Current status**: Investigation complete. Synthesizing handoff report.
+**Last visited**: 2026-11-04T16:26:00Z
+**Current Status**: Investigation completed successfully. Full technical analysis written to `analysis.md` and 5-component handoff report written to `handoff.md`.
 
-### Task Checklist
-- [x] Initialized DISPATCH.md, BRIEFING.md, and progress.md
-- [x] 1. Backend CRM data models and endpoints (`db.companies`, `/api/companies`, `db.guests`, `/api/pms/guests`, `db.reservations`, `/api/pms/reservations`)
-  - [x] Audited `POST /api/companies` and `PATCH /api/companies/:id` (dropped address/fiscal fields)
-  - [x] Audited `POST /api/pms/guests` and `handleUpdateGuest` (dropped address/fiscal fields, whitelist `fields`)
-  - [x] Audited `reconcileAndMergeGuests` / `mergeGuestRecords` (missing address/company/autoInvoice merge logic)
-  - [x] Audited `db.reservations`, `/api/pms/reservations` and check-out auto-invoice (ignoring `companyId` for tomador)
-  - [x] Audited `POST /api/nfse/emit` (`numNfseReal`/`codVerifReal` ReferenceError bug, missing tomador address persistence)
-- [x] 2. UI in `artifacts/limpeza/src/pages/crm-guests.tsx` (Guest & Company modals, missing fiscal/address fields)
-  - [x] Identified missing fields in Company Modal: IE, IM, CEP, Endereço/Logradouro, Número, Complemento, Bairro, Cidade, UF, Código IBGE, Telefone, Contato, Observações
-  - [x] Identified missing fields in Guest Modal: CEP, Endereço/Logradouro, Número, Complemento, Bairro, Cidade, UF, Código IBGE
-  - [x] Audited `handleSaveCompany` and `handleSaveGuest` payloads
-- [x] 3. UI in `artifacts/limpeza/src/pages/fiscal-invoices.tsx` (CRM selector, Tomador prefill, PJ vs PF quick toggle)
-  - [x] Mapped current combobox (only filters guests, hardcoded address, ignores `companyId`)
-  - [x] Designed unified combobox (Hóspedes PF, Empresas PJ, Reservas Ativas/Recentes)
-  - [x] Designed quick toggle mechanism for Tomador (Empresa Vinculada PJ vs Hóspede PF)
-  - [x] Designed service description formatting preserving guest/stay details
-- [x] 4. URL/route parameters mapping into `fiscal-invoices.tsx`
-  - [x] Mapped existing parameters (`doc`, `nome`)
-  - [x] Defined complete parameter contract (`doc`, `nome`, `email`, `phone`, `flat`, `checkin`, `checkout`, `valor`, `diarias`, `resCode`, `companyId`, `guestId`)
-  - [x] Mapped navigation points from `crm-guests.tsx`
-- [x] 5. Synthesize findings into `handoff.md` and alert orchestrator via `send_message`
+## Completed Investigation Steps
+1. [x] Scheduled background automations pattern in `artifacts/api-server/zapi-service.mjs` (60s runner, UTC-3 Brasilia timezone conversion, Saturday 19:00h trigger, and anti-duplication).
+2. [x] Existing automation settings and storage in `db` / `system_store` (e.g. `db.sundayUpsellConfig`, `db.whatsappTemplates`, `DEFAULT_ZAPI_CHANNELS.guest_schedule`).
+3. [x] Active reservation filtering (`in_stay` / confirmed reservations, Sunday checkout detection at 12:00h, date parsing and time handling).
+4. [x] Sunday-to-Monday availability check:
+   - Flat vacancy logic.
+   - Incoming Sunday reservation detection.
+   - `selectFairShareFlat`: how it works across `whatsapp-ai-service.mjs`, `demo-server.mjs`, and `agent-architecture.mjs`, building occupancy check (100% full check).
+   - Reallocating incoming guest to alternate flat.
+5. [x] 30-minute hold: modeled via `pendingSundayUpsell` and `pendingModification` with `isSilentUpsellHold: true`, expiration tracking in 20s runner, and silent expiration implementation (no WhatsApp cancellation message, keeping original Sunday 12:00h checkout).
+6. [x] PIX charges: `createInterPixCob` and `generateStaticPixPayload` signatures and usage, storing reference for upsell.
+7. [x] Webhook PIX processing: identifying upsell transaction in `POST /api/pms/inter/webhook`, extending reservation to Monday 12:00h, rescheduling maid cleaning (`maid-automation-service.mjs` / `db.cleaningRequests`), executing reallocation of incoming guest, sending confirmation message via Z-API.
+8. [x] Twin-server rule considerations (`artifacts/api-server/` <-> `scripts/`).
+9. [x] Synthesized findings into `analysis.md` and `handoff.md`.

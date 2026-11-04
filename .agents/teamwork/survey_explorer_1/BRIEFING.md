@@ -1,55 +1,47 @@
-# BRIEFING — 2026-10-14T09:55:00Z
+# BRIEFING — 2026-11-04T16:16:00Z
 
 ## Mission
-Audit, map, and analyze the entire NFS-e emission engine (Municipal GISS and National ADN), tomador CRM data propagation, undefined variable bug in `POST /api/nfse/emit`, checkout auto-emission, and fiscal chat assistant.
+Investigate and produce a complete technical analysis for Requirement R1 (Frontend UI in `⚡ Régua Automática`) for the "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)" feature.
 
 ## 🔒 My Identity
-- Archetype: explorer
-- Roles: backend investigation, architecture analysis, payment flows, API specification
-- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1
-- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
-- Milestone: Investigation & Survey
-- Roles (added 2026-10-14): NFS-e engine audit, municipal/national tax engine mapping, fiscal chat audit, CRM-to-invoice data flow analysis
-- Milestone (added 2026-10-14): Survey Explorer 1 (NFS-e Engine & Emission Audit)
+- Archetype: Explorer
+- Roles: Frontend UI Explorer
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\
+- Original parent: 967b1f8a-534e-4526-94ad-683f5ef4e50f
+- Milestone: Requirement R1 Analysis
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement
-- Deliver findings in `survey_report.md` and `handoff.md`
-- Never modify production source code in this phase
-- Keep all metadata files strictly in `.agents/teamwork/survey_explorer_1`
-- Escopo estrito de testes (AGENTS.md): NUNCA executar varreduras globais nem testes de outros módulos
-- Twin-server parity byte-a-byte between scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs
+- Read-only investigation — do NOT implement / do NOT modify source code
+- Files for content delivery, Messages for coordination
+- Follow AGENTS.md rules & architecture
+- Write full findings to analysis.md and handoff.md
 
 ## Current Parent
-- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
-- Updated: 2026-10-14T09:55:00Z
+- Conversation ID: 967b1f8a-534e-4526-94ad-683f5ef4e50f
+- Updated: not yet
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` (endpoints `/api/nfse/emit`, `/api/companies`, `/api/pms/guests`, checkout auto-invoice)
-  - `artifacts/api-server/giss-soap.mjs` (SOAP ABRASF 2.04 engine, RPS/Lote building, XMLDSig signatures, Campos dos Goytacazes ws-goytacazes.giss.com.br, polling, DANFSE HTML)
-  - `artifacts/api-server/national-nfse.mjs` (ADN / SEFIN Nacional mTLS REST, 50-digit access key generation, DPS payload, gzip+base64, DANFSE HTML)
-  - `artifacts/api-server/chat-service.mjs` & `lookup.mjs` (fiscal chat parsing, template engine, BrasilAPI CNPJ and ViaCEP lookup)
-  - `artifacts/api-server/whatsapp-ai-service.mjs` (inbound message processing, unmet demand classification for fiscal requests)
-  - `artifacts/limpeza/src/pages/fiscal-invoices.tsx` (invoice UI, guest selector, hardcoded address, missing company lookup)
-  - `artifacts/limpeza/src/pages/crm-guests.tsx` (company modal, guest modal, payload gaps)
+  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx` (TabsTrigger `rules` at line 2618, TabsContent `rules` at line 4336, Channels at line 2553, Preview helper at line 2164, Tag groups at line 230)
+  - `artifacts/api-server/zapi-service.mjs` (Channel #1 `guest_schedule` at line 1899, Templates at line 359, Background runner at line 11224, Scheduler at line 12428)
+  - `artifacts/limpeza/src/pages/maid-whatsapp-automation.tsx` (Automation patterns, manual test dispatch)
+  - `artifacts/api-server/demo-server.mjs` (Daily rates, bot action settings)
+  - `ORIGINAL_REQUEST.md` (Requirements R1 to R5 and acceptance criteria)
 - **Key findings**:
-  1. `POST /api/nfse/emit` throws `ReferenceError: numNfseReal is not defined` on line 27467 of `demo-server.mjs`.
-  2. Route `/api/nfse/emit` completely ignores address fields passed by caller and hardcodes call to GISS, never calling `processNationalInvoiceEmission`.
-  3. Checkout auto-emission and fiscal pre-fill completely ignore `companyId` / `db.companies` and bill to guest PF even when corporate B2B company is linked.
-  4. Fiscal chat assistant saves CNPJ as a guest in `db.guests` rather than `db.companies`.
-  5. WhatsApp AI service currently flags tax requests as unmet demands (`capability_missing`), lacking conversational solicitation, verification of linked companies, and enrichment.
-  6. `scripts/` lacks helper files `giss-soap.mjs`, `national-nfse.mjs`, `chat-service.mjs`, `lookup.mjs`.
-- **Unexplored areas**: None. Complete investigation accomplished and documented.
+  - Located `⚡ Régua Automática` inside `artifacts/limpeza/src/pages/whatsapp-automation.tsx` (`<TabsContent value="rules">`).
+  - Mapped Canal #1 (`guest_schedule`) and its independent governance (whitelist, test mode).
+  - Designed the executive control card for the Sunday Upsell with master switch, `sundayUpsellPrice`, dynamic `valor_normal` & `economia` reference, Canal #1 binding badge, and manual trigger button.
+  - Specified API endpoints (`GET/POST /api/whatsapp/sunday-upsell/config`, `POST /api/whatsapp/sunday-upsell/trigger`) and default template `tpl_sunday_upsell`.
+- **Unexplored areas**: None for Requirement R1. Downstream backend scheduling (R2), hold creation (R3), webhook handling (R4), and Sofia AI prompt context (R5) are handled by peer investigators.
 
 ## Key Decisions Made
-- Compiled exhaustive 5-component handoff report in `handoff.md`.
-- Documented full architectural audit and remediation plan in `survey_report.md`.
-- Ready for orchestrator and implementers.
+- Positioned the dedicated Sunday Upsell control card prominently at the top of `TabsContent value="rules"`.
+- Modeled the message preview with 2 distinct balloons (persuasive offer + isolated PIX copy-paste) to match Requirement R5.
+- Documented full findings in `analysis.md` and synthesized into `handoff.md`.
 
 ## Artifact Index
-- `DISPATCH.md` — Inbound message log
-- `BRIEFING.md` — Persistent situational memory
-- `progress.md` — Liveness heartbeat and milestone tracking
-- `survey_report.md` — Full investigation findings and architectural specification
+- `DISPATCH.md` — Log of incoming dispatch messages
+- `BRIEFING.md` — Working memory and context index
+- `progress.md` — Liveness heartbeat
+- `analysis.md` — Detailed technical findings for Requirement R1
 - `handoff.md` — 5-component handoff report

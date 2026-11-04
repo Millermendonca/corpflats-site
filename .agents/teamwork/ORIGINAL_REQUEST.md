@@ -1,37 +1,72 @@
 # Original User Request
 
-## Initial Request — 2026-11-04T01:24:29Z
+## Approved Task Prompt — 2026-11-04T16:01:11Z
 
-This is a single self-contained fix; keep it small and focused.
-Adicionar a obrigatoriedade de marcação se o hóspede fumou no quarto ao finalizar a limpeza no card da camareira, registrando o apontamento de fumante no cadastro do hóspede e em suas reservas futuras, com opção de alternar ou corrigir a marcação no próprio card.
+Implementar uma nova automação de Upsell na aba `⚡ Régua Automática` chamada "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)", disparada aos sábados às 19:00h pelo Canal #1 (Régua Hóspedes) para reservas ativas com check-out no domingo às 12:00h, com pré-reserva temporária (hold de 30 minutos), expiração silenciosa, sincronia com a Sofia e atualização do mapa PMS e governança.
 
 Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 Integrity mode: development
 
 ## Requirements
 
-### R1. Pergunta em destaque sobre fumo na finalização da limpeza
-Ao acionar a finalização da limpeza em um card de tarefa da camareira, a pergunta se o hóspede fumou no quarto deve ser exibida de forma destacada, tomando o tamanho do card naquele momento, com opções para "Sim" e "Não", sem exigir modal ou confirmação adicional para conclusão.
+### R1. Painel de Controle e Configuração na Régua Automática
+Na aba `⚡ Régua Automática`, disponibilizar a configuração da automação "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)", incluindo:
+- Toggle para ativar/desativar a automação.
+- Campo de configuração para o valor promocional da oferta (`sundayUpsellPrice`).
+- Cálculo do valor normal de referência (`valor_normal`) exibido na mensagem com base no valor da diária da reserva atual do hóspede.
+- Disparo pelo Canal #1 (Régua Hóspedes).
+- Botão de disparo manual/teste para disparar a oferta imediatamente para reservas elegíveis em ambiente de validação.
 
-### R2. Indicador interativo e correção da marcação no card
-Caso a opção "Sim" seja marcada, o card de limpeza deve exibir um indicador visual (ex: badge "Fumou") e permitir que a camareira alterne ou desmarque a seleção caso tenha marcado por engano. Ao desmarcar, o badge e a sinalização devem ser removidos tanto na visão da camareira quanto no painel administrativo.
+### R2. Gatilho de Disparo e Elegibilidade de Disponibilidade
+O gatilho deve rodar automaticamente todo sábado às 19:00h (quando a automação estiver ativada):
+- Identificar todas as reservas com status ativo/hospedado (`in_stay` ou confirmada) cujo check-out original esteja marcado para o domingo seguinte às 12:00h.
+- Verificar a disponibilidade do flat de domingo para segunda-feira:
+  1. Se o flat atual do hóspede estiver vago de domingo para segunda-feira, a reserva é elegível.
+  2. Se houver outra reserva agendada para entrar no domingo no mesmo flat, verificar se existe outro flat livre no condomínio ("Flat da Vez" via `selectFairShareFlat`) para receber essa nova reserva. Havendo flat alternativo para remanejar o hóspede entrante, a reserva atual é elegível.
+  3. Se o prédio estiver 100% ocupado de domingo para segunda-feira (sem flat vago para remanejar), não disparar a oferta para o hóspede.
 
-### R3. Atualização no cadastro do hóspede e sinalização em reservas futuras
-Quando for confirmado que o hóspede fumou no quarto, o cadastro do hóspede associado àquela estadia deve ser atualizado com o status de fumante, e qualquer reserva futura deste hóspede deve exibir uma sinalização visual para a equipe (posicionamento visual a critério da equipe). Caso a marcação seja desfeita no card, o apontamento no cadastro e nas reservas futuras deve ser revertido.
+### R3. Pré-Reserva de Extensão (Hold de 30 Minutos e Expiração Silenciosa)
+- No momento do disparo (sábado às 19:00h ou teste manual), gerar a cobrança PIX via `createInterPixCob` / `generateStaticPixPayload` no valor promocional configurado.
+- Criar um bloqueio temporário (hold) de 30 minutos estendendo a reserva até segunda-feira às 12:00h.
+- Regra de expiração silenciosa (`isSilentUpsellHold: true`): caso o hóspede não efetue o pagamento do PIX dentro dos 30 minutos, o bloqueio temporário de domingo para segunda expira em silêncio no sistema, mantendo a reserva original com check-out no domingo às 12:00h. É terminantemente proibido disparar mensagens de expiração de pré-reserva ou cancelamento ao hóspede após o vencimento dos 30 minutos.
+
+### R4. Confirmação Automática de Pagamento e Atualização Operacional
+Ao receber a notificação de pagamento confirmado via Webhook PIX correspondente à cobrança da oferta:
+- Atualizar a reserva no mapa PMS estendendo o check-out para segunda-feira às 12:00h através da rotina existente de extensão de reservas.
+- Reagendar a ordem de limpeza das camareiras para o flat de domingo para segunda-feira.
+- Se havia outro hóspede com check-in previsto para aquele flat no domingo, transferir automaticamente a reserva do hóspede entrante para o flat vago selecionado via `selectFairShareFlat`.
+- Disparar a mensagem de confirmação ao hóspede: *"Pagamento confirmado! 🎉 Seu check-out livre de domingo (com direito a ficar até segunda às 12h se desejar) já está garantido no sistema. Aproveite seu descanso!"*.
+
+### R5. Formato de Envio das Mensagens e Sincronia com a Sofia
+- O disparo deve ser realizado em 2 balões consecutivos com simulação de delay de digitação:
+  - Balão 1: Mensagem persuasiva apresentando o check-out livre no domingo pelo valor promocional (`valor_promocional`), destacando a economia em relação à tarifa normal (`valor_normal`), informando a extensão bônus até segunda às 12:00h e comunicando a pré-reserva com validade de 30 minutos.
+  - Balão 2: Exclusivamente a chave PIX Copia e Cola (`codigo_pix_copia_e_cola`), sem textos adicionais.
+- Registrar no contexto dinâmico da IA Sofia que o hóspede recebeu a oferta de domingo sem pressa no sábado à noite. Se o hóspede interagir tirando dúvidas ou solicitar novo código PIX após o prazo de 30 minutos ter expirado, a Sofia deve reconhecer a condição e emitir uma nova cobrança promocional com novo hold, desde que o flat continue disponível de domingo para segunda.
 
 ## Acceptance Criteria
 
-### Finalização da Limpeza no Card
-- [ ] Ao clicar para finalizar a limpeza no card de tarefa, é exibida em destaque (ocupando a área do card) a pergunta se o hóspede fumou no quarto, com botões para "Sim" e "Não".
-- [ ] A finalização da limpeza é concluída diretamente com a resposta informada, sem solicitar telas extras de confirmação.
-- [ ] O card de limpeza disponibiliza um indicador/badge (ex: "Fumou") que permite à camareira alterar ou desmarcar a indicação de fumo a qualquer momento se selecionada por engano.
-- [ ] Ao desmarcar a indicação no card, o badge é removido da interface da camareira e a alteração é refletida no sistema administrativo.
+### Painel e Configurações da Régua
+- [ ] A aba `⚡ Régua Automática` contém o toggle de ativação/desativação da "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)", o campo para `sundayUpsellPrice` e o botão de disparo manual/teste.
+- [ ] O acionamento manual dispara o fluxo de oferta apenas para as reservas que atendem aos critérios de elegibilidade.
 
-### Cadastro e Reservas Futuras
-- [ ] Ao registrar que o hóspede fumou, o perfil/cadastro do hóspede correspondente à reserva é marcado com o status de fumante.
-- [ ] As reservas futuras do hóspede sinalizado exibem o alerta/apontamento de hóspede fumante para a equipe.
-- [ ] Ao reverter a indicação de fumo no card, o apontamento de fumante é removido do cadastro do hóspede e das reservas futuras vinculadas.
+### Filtro de Elegibilidade e Disponibilidade
+- [ ] Apenas hóspedes com reservas ativas/confirmadas e check-out agendado para domingo às 12:00h são selecionados.
+- [ ] Reservas em flats que possuem check-in no domingo só recebem a oferta se houver outro flat vago apto para remanejamento via `selectFairShareFlat`.
+- [ ] Nenhuma oferta é enviada caso o condomínio esteja 100% ocupado na noite de domingo para segunda.
 
-Working directory: .agents/teamwork/swe/
-Original request file: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-Project directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+### Hold de 30 Minutos e Expiração Silenciosa
+- [ ] O disparo gera o payload PIX no valor promocional e grava o hold de 30 minutos com a flag `isSilentUpsellHold: true`.
+- [ ] Ao término de 30 minutos sem pagamento, o hold de domingo para segunda é removido silenciosamente, sem envio de mensagem de cancelamento ou expiração ao hóspede e preservando a reserva original.
+
+### Webhook PIX e Repercussões no Sistema
+- [ ] A confirmação do PIX atualiza a data de check-out no PMS para segunda-feira às 12:00h.
+- [ ] A limpeza do flat é automaticamente reagendada para segunda-feira.
+- [ ] Havendo reserva subsequente no domingo para o mesmo flat, ela é remanejada para o flat alternativo livre.
+- [ ] A mensagem de confirmação de pagamento é enviada ao hóspede.
+
+### Mensagens e Contexto da Sofia
+- [ ] A mensagem da oferta é enviada em dois balões distintos (texto persuasivo no primeiro, código PIX isolado no segundo).
+- [ ] A IA Sofia possui em seu contexto a informação da oferta enviada e consegue regerar o PIX promocional caso solicitada pelo hóspede e havendo disponibilidade.
+
+## Verification Resources
+- [ ] Testes pontuais de unidade/integração desenvolvidos pela equipe conforme as diretrizes do AGENTS.md, cobrindo elegibilidade, geração e expiração silenciosa do hold, e confirmação via webhook PIX.

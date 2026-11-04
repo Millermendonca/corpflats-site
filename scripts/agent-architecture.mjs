@@ -4258,27 +4258,46 @@ export const ofertarDomingoSemPressaTool = {
         };
       }
 
-      const txid = `UPSELL_SUN_${reserva.id || 'RES'}_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 35);
-      const formatTag = (id, value) => `${id}${String(value.length).padStart(2, '0')}${value}`;
-      let pixPayload = formatTag('00', '01') +
-        formatTag('26', `${formatTag('00', 'br.gov.bcb.pix')}${formatTag('01', '47964813000165')}`) +
-        formatTag('52', '0000') +
-        formatTag('53', '986') +
-        formatTag('54', promotionalPrice.toFixed(2)) +
-        formatTag('58', 'BR') +
-        formatTag('59', 'CORPFLATS LTDA') +
-        formatTag('60', 'CAMPOS') +
-        formatTag('62', formatTag('05', txid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 25) || '***'));
-      const toCrc = `${pixPayload}6304`;
-      let crc = 0xffff;
-      for (let i = 0; i < toCrc.length; i++) {
-        crc ^= toCrc.charCodeAt(i) << 8;
-        for (let j = 0; j < 8; j++) {
-          if ((crc & 0x8000) !== 0) crc = ((crc << 1) ^ 0x1021) & 0xffff;
-          else crc = (crc << 1) & 0xffff;
-        }
+      let txid = `UPSELL_SUN_${reserva.id || 'RES'}_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 35);
+      let pixPayload = '';
+      if (typeof globalThis.createInterPixCob === 'function') {
+        try {
+          const interRes = await globalThis.createInterPixCob({
+            amount: promotionalPrice,
+            description: `Oferta Domingo Sem Pressa - ${reserva.nome_imovel} (${reserva.id})`,
+            debtorName: context.hospede?.nome || targetRes?.guestName || 'Hospede CorpFlats',
+            debtorDocument: targetRes?.guestDoc || targetRes?.guestCpf || '',
+            reservationCode: String(reserva.id || ''),
+            expirationSeconds: 1800,
+          });
+          if (interRes?.pixCopiaECola) {
+            pixPayload = interRes.pixCopiaECola;
+            txid = interRes.txid || txid;
+          }
+        } catch (_) {}
       }
-      pixPayload = `${toCrc}${crc.toString(16).toUpperCase().padStart(4, '0')}`;
+      if (!pixPayload) {
+        const formatTag = (id, value) => `${id}${String(value.length).padStart(2, '0')}${value}`;
+        pixPayload = formatTag('00', '01') +
+          formatTag('26', `${formatTag('00', 'br.gov.bcb.pix')}${formatTag('01', '47964813000165')}`) +
+          formatTag('52', '0000') +
+          formatTag('53', '986') +
+          formatTag('54', promotionalPrice.toFixed(2)) +
+          formatTag('58', 'BR') +
+          formatTag('59', 'CORPFLATS LTDA') +
+          formatTag('60', 'CAMPOS') +
+          formatTag('62', formatTag('05', txid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 25) || '***'));
+        const toCrc = `${pixPayload}6304`;
+        let crc = 0xffff;
+        for (let i = 0; i < toCrc.length; i++) {
+          crc ^= toCrc.charCodeAt(i) << 8;
+          for (let j = 0; j < 8; j++) {
+            if ((crc & 0x8000) !== 0) crc = ((crc << 1) ^ 0x1021) & 0xffff;
+            else crc = (crc << 1) & 0xffff;
+          }
+        }
+        pixPayload = `${toCrc}${crc.toString(16).toUpperCase().padStart(4, '0')}`;
+      }
 
       const now = new Date();
       const holdExpiresAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();

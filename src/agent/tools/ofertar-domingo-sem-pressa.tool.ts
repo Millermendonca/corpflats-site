@@ -223,9 +223,29 @@ export const ofertarDomingoSemPressaTool: AgentToolDefinition<OfertarDomingoSemP
         };
       }
 
-      // 4. EFETIVAÇÃO E GERAÇÃO DO PIX COM NOVO HOLD DE 30 MINUTOS
-      const txid = `UPSELL_SUN_${reserva.id || 'RES'}_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 35);
-      const pixPayload = generateStaticPix(promotionalPrice, txid);
+      // 4. EFETIVAÇÃO E GERAÇÃO DO PIX DINÂMICO (BANCO INTER) COM NOVO HOLD DE 30 MINUTOS
+      let txid = `UPSELL_SUN_${reserva.id || 'RES'}_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 35);
+      let pixPayload = '';
+      const createInterPix = (globalThis as any).createInterPixCob;
+      if (typeof createInterPix === 'function') {
+        try {
+          const interRes = await createInterPix({
+            amount: promotionalPrice,
+            description: `Oferta Domingo Sem Pressa - ${reserva.nome_imovel} (${reserva.id})`,
+            debtorName: context.hospede?.nome || targetRes?.guestName || 'Hospede CorpFlats',
+            debtorDocument: targetRes?.guestDoc || targetRes?.guestCpf || '',
+            reservationCode: String(reserva.id || ''),
+            expirationSeconds: 1800,
+          });
+          if (interRes?.pixCopiaECola) {
+            pixPayload = interRes.pixCopiaECola;
+            txid = interRes.txid || txid;
+          }
+        } catch (_) {}
+      }
+      if (!pixPayload) {
+        pixPayload = generateStaticPix(promotionalPrice, txid);
+      }
       const now = new Date();
       const holdExpiresAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
 

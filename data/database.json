@@ -6327,7 +6327,7 @@
       "requestDate": "2026-10-13",
       "effectiveDate": "2026-10-13",
       "source": "checkout",
-      "status": "dirty",
+      "status": "deleted",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -6342,10 +6342,13 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-13T13:00:00.000Z",
       "createdAt": "2026-10-13T08:00:00.000Z",
-      "updatedAt": "2026-10-13T13:00:00.000Z",
+      "updatedAt": "2026-11-04T16:59:40.237Z",
       "isVacantExplicitlySet": false,
       "autoReservationCode": null,
-      "autoReservationId": null
+      "autoReservationId": null,
+      "isDeleted": true,
+      "deletedAt": "2026-11-04T16:59:40.237Z",
+      "deletedBy": "auto_orphan_checkout_cleanup"
     },
     {
       "id": 1352,
@@ -7620,904 +7623,904 @@
   ],
   "periodicExecutions": [
     {
-      "id": 781,
-      "periodicTaskId": 5,
-      "flatId": 17,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.104Z"
-    },
-    {
-      "id": 780,
-      "periodicTaskId": 5,
-      "flatId": 16,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.103Z"
-    },
-    {
-      "id": 778,
-      "periodicTaskId": 1,
-      "flatId": 7,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.091Z"
-    },
-    {
-      "id": 779,
-      "periodicTaskId": 2,
-      "flatId": 7,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.091Z"
-    },
-    {
-      "id": 776,
-      "periodicTaskId": 4,
-      "flatId": 6,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.090Z"
-    },
-    {
-      "id": 777,
-      "periodicTaskId": 6,
-      "flatId": 6,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.090Z"
-    },
-    {
-      "id": 775,
-      "periodicTaskId": 4,
-      "flatId": 5,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.088Z"
-    },
-    {
-      "id": 772,
-      "periodicTaskId": 2,
-      "flatId": 4,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.086Z"
-    },
-    {
-      "id": 773,
-      "periodicTaskId": 3,
-      "flatId": 4,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.086Z"
-    },
-    {
-      "id": 774,
-      "periodicTaskId": 4,
-      "flatId": 4,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.086Z"
-    },
-    {
-      "id": 769,
-      "periodicTaskId": 2,
-      "flatId": 3,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.084Z"
-    },
-    {
-      "id": 770,
-      "periodicTaskId": 3,
-      "flatId": 3,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.084Z"
-    },
-    {
-      "id": 771,
-      "periodicTaskId": 4,
-      "flatId": 3,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.084Z"
-    },
-    {
-      "id": 768,
-      "periodicTaskId": 1,
-      "flatId": 3,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:09:30.083Z"
-    },
-    {
-      "id": 767,
-      "periodicTaskId": 5,
-      "flatId": 18,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.969Z"
-    },
-    {
-      "id": 766,
-      "periodicTaskId": 5,
-      "flatId": 15,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.967Z"
-    },
-    {
-      "id": 765,
-      "periodicTaskId": 5,
-      "flatId": 14,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.966Z"
-    },
-    {
-      "id": 764,
-      "periodicTaskId": 5,
-      "flatId": 13,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.965Z"
-    },
-    {
-      "id": 762,
-      "periodicTaskId": 5,
-      "flatId": 11,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.964Z"
-    },
-    {
-      "id": 763,
-      "periodicTaskId": 5,
-      "flatId": 12,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.964Z"
-    },
-    {
-      "id": 758,
-      "periodicTaskId": 2,
-      "flatId": 2,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.952Z"
-    },
-    {
-      "id": 759,
-      "periodicTaskId": 3,
-      "flatId": 2,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.952Z"
-    },
-    {
-      "id": 760,
-      "periodicTaskId": 4,
-      "flatId": 2,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.952Z"
-    },
-    {
-      "id": 761,
-      "periodicTaskId": 6,
-      "flatId": 2,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.952Z"
-    },
-    {
-      "id": 756,
-      "periodicTaskId": 6,
-      "flatId": 1,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.951Z"
-    },
-    {
-      "id": 757,
-      "periodicTaskId": 1,
-      "flatId": 2,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.951Z"
-    },
-    {
-      "id": 755,
-      "periodicTaskId": 3,
-      "flatId": 1,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.950Z"
-    },
-    {
-      "id": 754,
-      "periodicTaskId": 2,
-      "flatId": 1,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T20:06:26.949Z"
-    },
-    {
-      "id": 753,
+      "id": 994,
       "periodicTaskId": 1,
       "flatId": 19,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.150Z"
+      "createdAt": "2026-11-04T17:31:12.540Z"
     },
     {
-      "id": 752,
+      "id": 993,
       "periodicTaskId": 6,
       "flatId": 16,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.147Z"
+      "createdAt": "2026-11-04T17:31:12.539Z"
     },
     {
-      "id": 751,
-      "periodicTaskId": 5,
-      "flatId": 10,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.140Z"
-    },
-    {
-      "id": 750,
+      "id": 991,
       "periodicTaskId": 3,
       "flatId": 10,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.139Z"
+      "createdAt": "2026-11-04T17:31:12.537Z"
     },
     {
-      "id": 748,
+      "id": 992,
+      "periodicTaskId": 5,
+      "flatId": 10,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:31:12.537Z"
+    },
+    {
+      "id": 989,
       "periodicTaskId": 5,
       "flatId": 8,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.138Z"
+      "createdAt": "2026-11-04T17:31:12.536Z"
     },
     {
-      "id": 749,
+      "id": 990,
       "periodicTaskId": 1,
       "flatId": 10,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.138Z"
+      "createdAt": "2026-11-04T17:31:12.536Z"
     },
     {
-      "id": 747,
+      "id": 986,
       "periodicTaskId": 5,
-      "flatId": 7,
+      "flatId": 5,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.136Z"
+      "createdAt": "2026-11-04T17:31:12.535Z"
     },
     {
-      "id": 746,
+      "id": 987,
       "periodicTaskId": 5,
       "flatId": 6,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.134Z"
+      "createdAt": "2026-11-04T17:31:12.535Z"
     },
     {
-      "id": 745,
+      "id": 988,
       "periodicTaskId": 5,
-      "flatId": 5,
+      "flatId": 7,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.132Z"
+      "createdAt": "2026-11-04T17:31:12.535Z"
     },
     {
-      "id": 744,
-      "periodicTaskId": 5,
-      "flatId": 4,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.130Z"
-    },
-    {
-      "id": 743,
-      "periodicTaskId": 5,
+      "id": 983,
+      "periodicTaskId": 1,
       "flatId": 3,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.128Z"
+      "createdAt": "2026-11-04T17:31:12.534Z"
     },
     {
-      "id": 742,
-      "periodicTaskId": 5,
+      "id": 984,
+      "periodicTaskId": 2,
+      "flatId": 3,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:31:12.534Z"
+    },
+    {
+      "id": 985,
+      "periodicTaskId": 3,
+      "flatId": 3,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:31:12.534Z"
+    },
+    {
+      "id": 980,
+      "periodicTaskId": 2,
       "flatId": 2,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.126Z"
+      "createdAt": "2026-11-04T17:31:12.533Z"
     },
     {
-      "id": 740,
-      "periodicTaskId": 4,
-      "flatId": 1,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.123Z"
-    },
-    {
-      "id": 741,
-      "periodicTaskId": 5,
-      "flatId": 1,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:48:10.123Z"
-    },
-    {
-      "id": 738,
-      "periodicTaskId": 2,
-      "flatId": 19,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.711Z"
-    },
-    {
-      "id": 739,
+      "id": 981,
       "periodicTaskId": 3,
-      "flatId": 19,
+      "flatId": 2,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.711Z"
+      "createdAt": "2026-11-04T17:31:12.533Z"
     },
     {
-      "id": 736,
+      "id": 982,
       "periodicTaskId": 6,
-      "flatId": 17,
+      "flatId": 2,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.710Z"
+      "createdAt": "2026-11-04T17:31:12.533Z"
     },
     {
-      "id": 737,
+      "id": 977,
       "periodicTaskId": 6,
       "flatId": 18,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.710Z"
+      "createdAt": "2026-11-04T17:31:00.438Z"
     },
     {
-      "id": 734,
-      "periodicTaskId": 4,
-      "flatId": 15,
+      "id": 978,
+      "periodicTaskId": 2,
+      "flatId": 19,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.709Z"
+      "createdAt": "2026-11-04T17:31:00.438Z"
     },
     {
-      "id": 735,
+      "id": 979,
+      "periodicTaskId": 3,
+      "flatId": 19,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:31:00.438Z"
+    },
+    {
+      "id": 975,
       "periodicTaskId": 6,
       "flatId": 15,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.709Z"
+      "createdAt": "2026-11-04T17:31:00.437Z"
     },
     {
-      "id": 732,
+      "id": 976,
+      "periodicTaskId": 6,
+      "flatId": 17,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:31:00.437Z"
+    },
+    {
+      "id": 972,
       "periodicTaskId": 6,
       "flatId": 13,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.708Z"
+      "createdAt": "2026-11-04T17:31:00.436Z"
     },
     {
-      "id": 733,
+      "id": 973,
       "periodicTaskId": 6,
       "flatId": 14,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.708Z"
+      "createdAt": "2026-11-04T17:31:00.436Z"
     },
     {
-      "id": 730,
+      "id": 974,
+      "periodicTaskId": 4,
+      "flatId": 15,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:31:00.436Z"
+    },
+    {
+      "id": 970,
       "periodicTaskId": 6,
       "flatId": 8,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.705Z"
+      "createdAt": "2026-11-04T17:31:00.434Z"
     },
     {
-      "id": 731,
+      "id": 971,
       "periodicTaskId": 2,
       "flatId": 10,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.705Z"
+      "createdAt": "2026-11-04T17:31:00.434Z"
     },
     {
-      "id": 728,
+      "id": 968,
+      "periodicTaskId": 1,
+      "flatId": 2,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:31:00.430Z"
+    },
+    {
+      "id": 969,
+      "periodicTaskId": 4,
+      "flatId": 2,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:31:00.430Z"
+    },
+    {
+      "id": 965,
+      "periodicTaskId": 2,
+      "flatId": 1,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:31:00.429Z"
+    },
+    {
+      "id": 966,
       "periodicTaskId": 3,
-      "flatId": 5,
+      "flatId": 1,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.703Z"
+      "createdAt": "2026-11-04T17:31:00.429Z"
     },
     {
-      "id": 729,
+      "id": 967,
       "periodicTaskId": 6,
-      "flatId": 5,
+      "flatId": 1,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.703Z"
+      "createdAt": "2026-11-04T17:31:00.429Z"
     },
     {
-      "id": 727,
+      "id": 962,
+      "periodicTaskId": 1,
+      "flatId": 21,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.161Z"
+    },
+    {
+      "id": 963,
+      "periodicTaskId": 2,
+      "flatId": 21,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.161Z"
+    },
+    {
+      "id": 964,
+      "periodicTaskId": 3,
+      "flatId": 21,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.161Z"
+    },
+    {
+      "id": 958,
+      "periodicTaskId": 3,
+      "flatId": 17,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.160Z"
+    },
+    {
+      "id": 959,
+      "periodicTaskId": 1,
+      "flatId": 18,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.160Z"
+    },
+    {
+      "id": 960,
+      "periodicTaskId": 4,
+      "flatId": 19,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.160Z"
+    },
+    {
+      "id": 961,
+      "periodicTaskId": 6,
+      "flatId": 19,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.160Z"
+    },
+    {
+      "id": 955,
+      "periodicTaskId": 4,
+      "flatId": 16,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.159Z"
+    },
+    {
+      "id": 956,
+      "periodicTaskId": 1,
+      "flatId": 17,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.159Z"
+    },
+    {
+      "id": 957,
+      "periodicTaskId": 2,
+      "flatId": 17,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.159Z"
+    },
+    {
+      "id": 954,
+      "periodicTaskId": 5,
+      "flatId": 4,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.152Z"
+    },
+    {
+      "id": 953,
+      "periodicTaskId": 5,
+      "flatId": 3,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.151Z"
+    },
+    {
+      "id": 952,
+      "periodicTaskId": 5,
+      "flatId": 2,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.150Z"
+    },
+    {
+      "id": 951,
+      "periodicTaskId": 5,
+      "flatId": 1,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.149Z"
+    },
+    {
+      "id": 950,
+      "periodicTaskId": 4,
+      "flatId": 1,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:55.148Z"
+    },
+    {
+      "id": 948,
+      "periodicTaskId": 4,
+      "flatId": 21,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:42.005Z"
+    },
+    {
+      "id": 949,
+      "periodicTaskId": 6,
+      "flatId": 21,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:42.005Z"
+    },
+    {
+      "id": 946,
+      "periodicTaskId": 2,
+      "flatId": 18,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:42.002Z"
+    },
+    {
+      "id": 947,
+      "periodicTaskId": 3,
+      "flatId": 18,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:42.002Z"
+    },
+    {
+      "id": 945,
+      "periodicTaskId": 4,
+      "flatId": 17,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:42.001Z"
+    },
+    {
+      "id": 942,
+      "periodicTaskId": 1,
+      "flatId": 16,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:42.000Z"
+    },
+    {
+      "id": 943,
+      "periodicTaskId": 2,
+      "flatId": 16,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:42.000Z"
+    },
+    {
+      "id": 944,
+      "periodicTaskId": 3,
+      "flatId": 16,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:42.000Z"
+    },
+    {
+      "id": 941,
+      "periodicTaskId": 1,
+      "flatId": 15,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:41.999Z"
+    },
+    {
+      "id": 940,
+      "periodicTaskId": 2,
+      "flatId": 13,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:41.997Z"
+    },
+    {
+      "id": 939,
+      "periodicTaskId": 1,
+      "flatId": 13,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:41.996Z"
+    },
+    {
+      "id": 936,
       "periodicTaskId": 2,
       "flatId": 5,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.702Z"
+      "createdAt": "2026-11-04T17:21:41.988Z"
     },
     {
-      "id": 726,
+      "id": 937,
+      "periodicTaskId": 3,
+      "flatId": 5,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:41.988Z"
+    },
+    {
+      "id": 938,
+      "periodicTaskId": 6,
+      "flatId": 5,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:21:41.988Z"
+    },
+    {
+      "id": 935,
       "periodicTaskId": 6,
       "flatId": 3,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:43:24.701Z"
+      "createdAt": "2026-11-04T17:21:41.986Z"
     },
     {
-      "id": 724,
+      "id": 933,
       "periodicTaskId": 2,
-      "flatId": 21,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.701Z"
-    },
-    {
-      "id": 725,
-      "periodicTaskId": 3,
-      "flatId": 21,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.701Z"
-    },
-    {
-      "id": 719,
-      "periodicTaskId": 1,
-      "flatId": 18,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.700Z"
-    },
-    {
-      "id": 720,
-      "periodicTaskId": 2,
-      "flatId": 18,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.700Z"
-    },
-    {
-      "id": 721,
-      "periodicTaskId": 4,
-      "flatId": 19,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.700Z"
-    },
-    {
-      "id": 722,
-      "periodicTaskId": 6,
-      "flatId": 19,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.700Z"
-    },
-    {
-      "id": 723,
-      "periodicTaskId": 1,
-      "flatId": 21,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.700Z"
-    },
-    {
-      "id": 714,
-      "periodicTaskId": 4,
-      "flatId": 16,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.699Z"
-    },
-    {
-      "id": 715,
-      "periodicTaskId": 1,
-      "flatId": 17,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.699Z"
-    },
-    {
-      "id": 716,
-      "periodicTaskId": 2,
-      "flatId": 17,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.699Z"
-    },
-    {
-      "id": 717,
-      "periodicTaskId": 3,
-      "flatId": 17,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.699Z"
-    },
-    {
-      "id": 718,
-      "periodicTaskId": 4,
-      "flatId": 17,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.699Z"
-    },
-    {
-      "id": 713,
-      "periodicTaskId": 1,
-      "flatId": 5,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.693Z"
-    },
-    {
-      "id": 712,
-      "periodicTaskId": 6,
-      "flatId": 4,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:23.692Z"
-    },
-    {
-      "id": 710,
-      "periodicTaskId": 4,
-      "flatId": 21,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.850Z"
-    },
-    {
-      "id": 711,
-      "periodicTaskId": 6,
-      "flatId": 21,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.850Z"
-    },
-    {
-      "id": 709,
-      "periodicTaskId": 3,
-      "flatId": 18,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.849Z"
-    },
-    {
-      "id": 706,
-      "periodicTaskId": 1,
-      "flatId": 16,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.848Z"
-    },
-    {
-      "id": 707,
-      "periodicTaskId": 2,
-      "flatId": 16,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.848Z"
-    },
-    {
-      "id": 708,
-      "periodicTaskId": 3,
-      "flatId": 16,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.848Z"
-    },
-    {
-      "id": 705,
-      "periodicTaskId": 1,
       "flatId": 15,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.847Z"
+      "createdAt": "2026-11-04T17:17:41.352Z"
     },
     {
-      "id": 702,
-      "periodicTaskId": 2,
-      "flatId": 13,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.846Z"
-    },
-    {
-      "id": 703,
+      "id": 934,
       "periodicTaskId": 3,
-      "flatId": 13,
+      "flatId": 15,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.846Z"
+      "createdAt": "2026-11-04T17:17:41.352Z"
     },
     {
-      "id": 704,
-      "periodicTaskId": 4,
-      "flatId": 13,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.846Z"
-    },
-    {
-      "id": 700,
-      "periodicTaskId": 2,
-      "flatId": 11,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.845Z"
-    },
-    {
-      "id": 701,
+      "id": 931,
       "periodicTaskId": 1,
-      "flatId": 13,
+      "flatId": 14,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.845Z"
+      "createdAt": "2026-11-04T17:17:41.351Z"
     },
     {
-      "id": 699,
-      "periodicTaskId": 1,
-      "flatId": 4,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.840Z"
-    },
-    {
-      "id": 698,
-      "periodicTaskId": 1,
-      "flatId": 1,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:42:14.836Z"
-    },
-    {
-      "id": 696,
+      "id": 932,
       "periodicTaskId": 4,
       "flatId": 14,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.488Z"
+      "createdAt": "2026-11-04T17:17:41.351Z"
     },
     {
-      "id": 697,
-      "periodicTaskId": 2,
-      "flatId": 15,
+      "id": 929,
+      "periodicTaskId": 3,
+      "flatId": 13,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.488Z"
+      "createdAt": "2026-11-04T17:17:41.349Z"
     },
     {
-      "id": 693,
+      "id": 930,
+      "periodicTaskId": 4,
+      "flatId": 13,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.349Z"
+    },
+    {
+      "id": 927,
+      "periodicTaskId": 1,
+      "flatId": 12,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.348Z"
+    },
+    {
+      "id": 928,
+      "periodicTaskId": 6,
+      "flatId": 12,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.348Z"
+    },
+    {
+      "id": 922,
+      "periodicTaskId": 1,
+      "flatId": 11,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.347Z"
+    },
+    {
+      "id": 923,
+      "periodicTaskId": 2,
+      "flatId": 11,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.347Z"
+    },
+    {
+      "id": 924,
+      "periodicTaskId": 3,
+      "flatId": 11,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.347Z"
+    },
+    {
+      "id": 925,
+      "periodicTaskId": 4,
+      "flatId": 11,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.347Z"
+    },
+    {
+      "id": 926,
+      "periodicTaskId": 6,
+      "flatId": 11,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.347Z"
+    },
+    {
+      "id": 921,
+      "periodicTaskId": 1,
+      "flatId": 5,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.339Z"
+    },
+    {
+      "id": 920,
+      "periodicTaskId": 6,
+      "flatId": 4,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:41.338Z"
+    },
+    {
+      "id": 918,
+      "periodicTaskId": 5,
+      "flatId": 19,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:36.404Z"
+    },
+    {
+      "id": 919,
+      "periodicTaskId": 5,
+      "flatId": 21,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:36.404Z"
+    },
+    {
+      "id": 916,
+      "periodicTaskId": 2,
+      "flatId": 14,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:36.400Z"
+    },
+    {
+      "id": 917,
+      "periodicTaskId": 3,
+      "flatId": 14,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:36.400Z"
+    },
+    {
+      "id": 914,
       "periodicTaskId": 3,
       "flatId": 12,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.487Z"
+      "createdAt": "2026-11-04T17:17:36.398Z"
     },
     {
-      "id": 694,
+      "id": 915,
       "periodicTaskId": 4,
       "flatId": 12,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.487Z"
+      "createdAt": "2026-11-04T17:17:36.398Z"
     },
     {
-      "id": 695,
-      "periodicTaskId": 6,
+      "id": 913,
+      "periodicTaskId": 2,
       "flatId": 12,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.487Z"
+      "createdAt": "2026-11-04T17:17:36.397Z"
     },
     {
-      "id": 684,
+      "id": 910,
       "periodicTaskId": 4,
       "flatId": 10,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.486Z"
+      "createdAt": "2026-11-04T17:17:36.396Z"
     },
     {
-      "id": 685,
+      "id": 911,
       "periodicTaskId": 6,
       "flatId": 10,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.486Z"
+      "createdAt": "2026-11-04T17:17:36.396Z"
     },
     {
-      "id": 686,
+      "id": 912,
       "periodicTaskId": 7,
       "flatId": 10,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.486Z"
+      "createdAt": "2026-11-04T17:17:36.396Z"
     },
     {
-      "id": 687,
+      "id": 906,
       "periodicTaskId": 1,
-      "flatId": 11,
+      "flatId": 8,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.486Z"
+      "createdAt": "2026-11-04T17:17:36.394Z"
     },
     {
-      "id": 688,
-      "periodicTaskId": 3,
-      "flatId": 11,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.486Z"
-    },
-    {
-      "id": 689,
-      "periodicTaskId": 4,
-      "flatId": 11,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.486Z"
-    },
-    {
-      "id": 690,
-      "periodicTaskId": 6,
-      "flatId": 11,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.486Z"
-    },
-    {
-      "id": 691,
-      "periodicTaskId": 1,
-      "flatId": 12,
-      "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
-      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.486Z"
-    },
-    {
-      "id": 692,
+      "id": 907,
       "periodicTaskId": 2,
-      "flatId": 12,
+      "flatId": 8,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:31:39.486Z"
+      "createdAt": "2026-11-04T17:17:36.394Z"
     },
     {
-      "id": 683,
+      "id": 908,
       "periodicTaskId": 3,
-      "flatId": 15,
+      "flatId": 8,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:29:40.687Z"
+      "createdAt": "2026-11-04T17:17:36.394Z"
     },
     {
-      "id": 680,
-      "periodicTaskId": 1,
-      "flatId": 14,
+      "id": 909,
+      "periodicTaskId": 4,
+      "flatId": 8,
       "executedByUserId": 1,
-      "executedAt": "2026-10-28T23:59:00.000Z",
+      "executedAt": "2026-11-03T23:59:00.000Z",
       "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-      "createdAt": "2026-10-29T18:29:40.686Z"
+      "createdAt": "2026-11-04T17:17:36.394Z"
+    },
+    {
+      "id": 905,
+      "periodicTaskId": 3,
+      "flatId": 7,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:17:36.393Z"
+    },
+    {
+      "id": 904,
+      "periodicTaskId": 5,
+      "flatId": 17,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.466Z"
+    },
+    {
+      "id": 903,
+      "periodicTaskId": 5,
+      "flatId": 16,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.465Z"
+    },
+    {
+      "id": 894,
+      "periodicTaskId": 1,
+      "flatId": 6,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.460Z"
+    },
+    {
+      "id": 895,
+      "periodicTaskId": 2,
+      "flatId": 6,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.460Z"
+    },
+    {
+      "id": 896,
+      "periodicTaskId": 3,
+      "flatId": 6,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.460Z"
+    },
+    {
+      "id": 897,
+      "periodicTaskId": 4,
+      "flatId": 6,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.460Z"
+    },
+    {
+      "id": 898,
+      "periodicTaskId": 6,
+      "flatId": 6,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.460Z"
+    },
+    {
+      "id": 899,
+      "periodicTaskId": 1,
+      "flatId": 7,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.460Z"
+    },
+    {
+      "id": 900,
+      "periodicTaskId": 2,
+      "flatId": 7,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.460Z"
+    },
+    {
+      "id": 901,
+      "periodicTaskId": 4,
+      "flatId": 7,
+      "executedByUserId": 1,
+      "executedAt": "2026-11-03T23:59:00.000Z",
+      "notes": "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+      "createdAt": "2026-11-04T17:16:22.460Z"
     }
   ],
   "serviceOrders": [],
@@ -9683,44 +9686,6 @@
       "averageTicket": 750,
       "favoriteFlat": "313",
       "lastStayDate": "2026-09-24",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 1
-    },
-    {
-      "id": 114,
-      "guestCode": "HOSP-00114",
-      "name": "William Ferreira",
-      "fullName": "William Ferreira",
-      "phone": "",
-      "email": "",
-      "isMonthlyGuest": false,
-      "clientType": "avulso",
-      "createdAt": "2026-09-20T16:29:27.208Z",
-      "documentNumber": "",
-      "document": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 1,
-      "totalNights": 3,
-      "averageTicket": 0,
-      "favoriteFlat": "114",
-      "lastStayDate": "2026-09-23",
       "tags": [],
       "companyName": "",
       "invoicesCount": 0,
@@ -11487,44 +11452,6 @@
       "reservationsCount": 1
     },
     {
-      "id": 64,
-      "guestCode": "HOSP-00064",
-      "name": "V\\",
-      "fullName": "V\\",
-      "phone": "",
-      "email": "",
-      "isMonthlyGuest": false,
-      "clientType": "avulso",
-      "createdAt": "2026-09-11T20:07:58.341Z",
-      "documentNumber": "",
-      "document": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 0,
-      "totalNights": 0,
-      "averageTicket": 0,
-      "favoriteFlat": "",
-      "lastStayDate": "",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 0
-    },
-    {
       "id": 62,
       "guestCode": "HOSP-00062",
       "name": "Marcus",
@@ -12059,44 +11986,6 @@
       "reservationsCount": 1
     },
     {
-      "id": 45,
-      "guestCode": "HOSP-00045",
-      "name": "Miller",
-      "fullName": "Miller",
-      "phone": "",
-      "email": "",
-      "isMonthlyGuest": false,
-      "clientType": "avulso",
-      "createdAt": "2026-09-08T21:43:58.254Z",
-      "documentNumber": "",
-      "document": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 363,
-      "totalStays": 1,
-      "totalNights": 2,
-      "averageTicket": 363,
-      "favoriteFlat": "211",
-      "lastStayDate": "2026-09-23",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 1
-    },
-    {
       "id": 43,
       "guestCode": "HOSP-00043",
       "name": "Rodrigo Xavier",
@@ -12410,78 +12299,6 @@
       "additionalPhones": []
     },
     {
-      "id": 32,
-      "guestCode": "HOSP-00032",
-      "name": "Hóspede Flat 715",
-      "fullName": "Hóspede Flat 715",
-      "phone": "",
-      "createdAt": "2026-09-21T10:00:00.000Z",
-      "documentNumber": "",
-      "document": "",
-      "email": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 0,
-      "totalNights": 0,
-      "averageTicket": 0,
-      "favoriteFlat": "",
-      "lastStayDate": "",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 0
-    },
-    {
-      "id": 31,
-      "guestCode": "HOSP-00031",
-      "name": "Hóspede Flat 408",
-      "fullName": "Hóspede Flat 408",
-      "phone": "",
-      "createdAt": "2026-09-21T10:00:00.000Z",
-      "documentNumber": "",
-      "document": "",
-      "email": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 0,
-      "totalNights": 0,
-      "averageTicket": 0,
-      "favoriteFlat": "",
-      "lastStayDate": "",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 0
-    },
-    {
       "id": 30,
       "guestCode": "HOSP-00030",
       "name": "Igor",
@@ -12672,42 +12489,6 @@
       "reservationsCount": 2
     },
     {
-      "id": 23,
-      "guestCode": "HOSP-00023",
-      "name": "Diana",
-      "fullName": "Diana",
-      "createdAt": "2026-09-09T21:10:43.310Z",
-      "documentNumber": "",
-      "document": "",
-      "phone": "",
-      "email": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 1,
-      "totalNights": 1,
-      "averageTicket": 0,
-      "favoriteFlat": "116",
-      "lastStayDate": "2026-09-02",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 1
-    },
-    {
       "id": 21,
       "guestCode": "HOSP-00021",
       "name": "Goal",
@@ -12744,52 +12525,6 @@
       "companyName": "",
       "invoicesCount": 0,
       "reservationsCount": 3
-    },
-    {
-      "id": 20,
-      "guestCode": "HOSP-00020",
-      "name": "João Eduardo Leal Correa",
-      "fullName": "João Eduardo Leal Correa",
-      "createdAt": "2026-09-02T15:28:12.540Z",
-      "documentNumber": "41802685823",
-      "document": "41802685823",
-      "phone": "19982405600",
-      "email": "joao.educorrea@gmail.com",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "1993-02-23",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 1300,
-      "totalStays": 1,
-      "totalNights": 6,
-      "averageTicket": 216.67,
-      "favoriteFlat": "408",
-      "lastStayDate": "2026-10-22",
-      "tags": [
-        "VIP",
-        "Recorrente"
-      ],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 6,
-      "reservationIds": [
-        373
-      ],
-      "lastRoom": "212",
-      "additionalPhones": [],
-      "googleContactDisplayName": "João Eduardo Leal Correa • CorpFlats",
-      "googleContactResourceName": "people/c5362578501072660427"
     },
     {
       "id": 19,
@@ -12983,7 +12718,7 @@
       "name": "Marco",
       "fullName": "Marco",
       "createdAt": "2026-09-02T15:44:19.337Z",
-      "phone": "21 99670-1988",
+      "phone": "21 99985-4881",
       "documentNumber": "",
       "document": "",
       "email": "",
@@ -13015,9 +12750,7 @@
       "companyName": "",
       "invoicesCount": 0,
       "reservationsCount": 5,
-      "additionalPhones": [
-        "21 99985-4881"
-      ]
+      "additionalPhones": []
     },
     {
       "id": 9,
@@ -13093,194 +12826,6 @@
       "lastStayDate": "2026-09-07",
       "invoicesCount": 0,
       "reservationsCount": 2
-    },
-    {
-      "id": 6,
-      "name": "Hospede Com Cafe",
-      "phone": "2299887754",
-      "email": "comcafe@corpflats.com.br",
-      "document": "",
-      "createdAt": "2026-08-25T05:33:12.134Z",
-      "guestCode": "HOSP-00006",
-      "fullName": "Hospede Com Cafe",
-      "documentNumber": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 0,
-      "totalNights": 0,
-      "averageTicket": 0,
-      "favoriteFlat": "",
-      "lastStayDate": "",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 0
-    },
-    {
-      "id": 5,
-      "name": "Hospede Sem Cafe",
-      "phone": "2299887755",
-      "email": "semcafe@corpflats.com.br",
-      "document": "",
-      "createdAt": "2026-08-25T05:33:12.122Z",
-      "guestCode": "HOSP-00005",
-      "fullName": "Hospede Sem Cafe",
-      "documentNumber": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 0,
-      "totalNights": 0,
-      "averageTicket": 0,
-      "favoriteFlat": "",
-      "lastStayDate": "",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 0
-    },
-    {
-      "id": 4,
-      "name": "Hospede Queen Casal",
-      "phone": "2299887765",
-      "email": "queen@corpflats.com.br",
-      "document": "",
-      "createdAt": "2026-08-25T05:15:53.766Z",
-      "guestCode": "HOSP-00004",
-      "fullName": "Hospede Queen Casal",
-      "documentNumber": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 0,
-      "totalNights": 0,
-      "averageTicket": 0,
-      "favoriteFlat": "",
-      "lastStayDate": "",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 0
-    },
-    {
-      "id": 3,
-      "name": "Hospede 2 Camas Solteiro",
-      "phone": "",
-      "email": "twin@corpflats.com.br",
-      "document": "123.456.789-00",
-      "createdAt": "2026-08-25T05:15:53.753Z",
-      "guestCode": "HOSP-00003",
-      "fullName": "Hospede 2 Camas Solteiro",
-      "documentNumber": "123.456.789-00",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "city": "",
-      "state": "",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 0,
-      "totalNights": 0,
-      "averageTicket": 0,
-      "favoriteFlat": "",
-      "lastStayDate": "",
-      "tags": [],
-      "companyName": "",
-      "invoicesCount": 0,
-      "reservationsCount": 0
-    },
-    {
-      "id": 2,
-      "name": "Hospede Flexivel",
-      "phone": "",
-      "email": "lucas.teste.1787151089982@corpflats.com.br",
-      "document": "",
-      "companyName": "",
-      "city": "",
-      "notes": "",
-      "tags": [],
-      "createdAt": "2026-08-25T04:51:34.860Z",
-      "guestCode": "HOSP-00002",
-      "fullName": "Hospede Flexivel",
-      "documentNumber": "",
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "birthDate": "",
-      "gender": "",
-      "address": "",
-      "state": "RJ",
-      "vehiclePlate": "BRA2E19",
-      "vehicleModel": "Corolla",
-      "vehicleBrand": "Toyota",
-      "vehicleColor": "Preto",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "aiVerification": null,
-      "totalSpent": 0,
-      "totalStays": 0,
-      "totalNights": 0,
-      "averageTicket": 0,
-      "favoriteFlat": "",
-      "lastStayDate": "",
-      "invoicesCount": 0,
-      "reservationsCount": 0,
-      "uf": "RJ",
-      "vehicle": {
-        "plate": "BRA2E19",
-        "brand": "Toyota",
-        "model": "Corolla",
-        "color": "Preto"
-      }
     },
     {
       "id": 149,
@@ -13623,15 +13168,6 @@
       "additionalPhones": []
     },
     {
-      "id": 158,
-      "guestCode": "HOSP-00158",
-      "name": "Igor",
-      "fullName": "Igor",
-      "createdAt": "2026-09-29T08:00:00.000Z",
-      "documentNumber": "",
-      "document": ""
-    },
-    {
       "id": 165,
       "guestCode": "HOSP-00165",
       "name": "Adriana Alves da Silva",
@@ -13775,143 +13311,6 @@
       "documentNumber": ""
     },
     {
-      "id": 172,
-      "guestCode": "HOSP-00172",
-      "name": "WEBSERVICE",
-      "fullName": "WEBSERVICE",
-      "phone": "(11) 3995-2500 / (11) 99155-8446",
-      "createdAt": "2026-10-27T16:42:52.310Z",
-      "email": "lactalis@opusviagens.com.br",
-      "companyName": "Opus Viagens",
-      "companyData": {
-        "cnpj": "",
-        "companyName": "Opus Viagens",
-        "companyEmail": "",
-        "companyPhone": ""
-      },
-      "tags": [
-        "Agente B2B",
-        "Agência B2B"
-      ],
-      "additionalPhones": [
-        "(11) 99155-8446"
-      ],
-      "documentNumber": "",
-      "document": ""
-    },
-    {
-      "id": 173,
-      "guestCode": "HOSP-00173",
-      "name": "Mateus Mizumoto dos Santos Oliveira da Silva",
-      "fullName": "Mateus Mizumoto dos Santos Oliveira da Silva",
-      "phone": "(21) 3812-1128",
-      "createdAt": "2026-10-27T16:42:52.310Z",
-      "email": "vibra@copastur.com.br",
-      "companyName": "Copastur",
-      "companyData": {
-        "cnpj": "",
-        "companyName": "Copastur",
-        "companyEmail": "",
-        "companyPhone": ""
-      },
-      "tags": [
-        "Agente B2B",
-        "Agência B2B"
-      ],
-      "documentNumber": "",
-      "document": ""
-    },
-    {
-      "id": 174,
-      "guestCode": "HOSP-00174",
-      "name": "Gabriela Soares de Moura Silva",
-      "fullName": "Gabriela Soares de Moura Silva",
-      "phone": "(11) 4890-4500",
-      "createdAt": "2026-10-27T16:42:52.310Z",
-      "email": "cristalia@avipam.com.br",
-      "companyName": "Avipam SP",
-      "companyData": {
-        "cnpj": "",
-        "companyName": "Avipam SP",
-        "companyEmail": "",
-        "companyPhone": ""
-      },
-      "tags": [
-        "Agente B2B",
-        "Agência B2B"
-      ],
-      "documentNumber": "",
-      "document": ""
-    },
-    {
-      "id": 175,
-      "guestCode": "HOSP-00175",
-      "name": "Fernanda Leite Ferreira Silva de Oliveira",
-      "fullName": "Fernanda Leite Ferreira Silva de Oliveira",
-      "phone": "(11) 2394-2122",
-      "createdAt": "2026-10-27T16:42:52.310Z",
-      "email": "carrefour@copastur.com.br",
-      "companyName": "Copastur",
-      "companyData": {
-        "cnpj": "",
-        "companyName": "Copastur",
-        "companyEmail": "",
-        "companyPhone": ""
-      },
-      "tags": [
-        "Agente B2B",
-        "Agência B2B"
-      ],
-      "documentNumber": "",
-      "document": ""
-    },
-    {
-      "id": 176,
-      "guestCode": "HOSP-00176",
-      "name": "Cristiane",
-      "fullName": "Cristiane",
-      "phone": "(47) 2103-8400",
-      "createdAt": "2026-10-27T16:42:52.311Z",
-      "email": "cristiane.batista@tripservice.com.br",
-      "companyName": "Tripservice",
-      "companyData": {
-        "cnpj": "",
-        "companyName": "Tripservice",
-        "companyEmail": "",
-        "companyPhone": ""
-      },
-      "tags": [
-        "Agente B2B",
-        "Agência B2B"
-      ],
-      "documentNumber": "",
-      "document": ""
-    },
-    {
-      "id": 177,
-      "guestCode": "HOSP-00177",
-      "name": "Renata Vasconcelos",
-      "fullName": "Renata Vasconcelos",
-      "phone": "(21) 98844-2211",
-      "createdAt": "2026-10-27T16:42:52.314Z",
-      "email": "renata.v@gmail.com",
-      "tags": [],
-      "documentNumber": "",
-      "document": ""
-    },
-    {
-      "id": 178,
-      "guestCode": "HOSP-00178",
-      "name": "Eduardo Mendes",
-      "fullName": "Eduardo Mendes",
-      "phone": "(21) 99777-3322",
-      "createdAt": "2026-10-27T16:42:52.314Z",
-      "email": "eduardo.m@outlook.com",
-      "tags": [],
-      "documentNumber": "",
-      "document": ""
-    },
-    {
       "id": 180,
       "guestCode": "HOSP-00180",
       "name": "Robson Tertuliano da Silva Junior",
@@ -13926,29 +13325,6 @@
       "name": "Izabella",
       "fullName": "Izabella",
       "createdAt": "2026-09-27T17:08:53.660Z",
-      "documentNumber": "",
-      "document": ""
-    },
-    {
-      "id": 182,
-      "guestCode": "HOSP-00182",
-      "name": "Lucas Teste",
-      "fullName": "Lucas Teste",
-      "createdAt": "2026-08-19T14:50:12.353Z",
-      "phone": "22997124021",
-      "email": "lucas.teste.1787151012250@corpflats.com.br",
-      "state": "RJ",
-      "uf": "RJ",
-      "vehiclePlate": "BRA2E19",
-      "vehicleModel": "Corolla",
-      "vehicleBrand": "Toyota",
-      "vehicleColor": "Preto",
-      "vehicle": {
-        "plate": "BRA2E19",
-        "brand": "Toyota",
-        "model": "Corolla",
-        "color": "Preto"
-      },
       "documentNumber": "",
       "document": ""
     },
@@ -14077,15 +13453,6 @@
       "name": "Yuri",
       "fullName": "Yuri",
       "createdAt": "2026-09-27T17:08:41.275Z",
-      "documentNumber": "",
-      "document": ""
-    },
-    {
-      "id": 196,
-      "guestCode": "HOSP-00196",
-      "name": "Yuri",
-      "fullName": "Yuri",
-      "createdAt": "2026-10-28T23:34:18.814Z",
       "documentNumber": "",
       "document": ""
     },
@@ -14244,34 +13611,12 @@
       "googleContactSyncedAt": "2026-10-29T18:48:58.570Z"
     },
     {
-      "id": 360,
-      "guestCode": "HOSP-00360",
-      "name": "Hóspede Teste Produção",
-      "fullName": "Hóspede Teste Produção",
-      "createdAt": "2026-08-25T04:38:56.854Z",
-      "document": "123.456.789-00",
-      "documentNumber": "123.456.789-00",
-      "phone": "2299887766",
-      "email": "hospede.teste@corpflats.com.br"
-    },
-    {
       "id": 361,
       "guestCode": "HOSP-00361",
       "name": "Leonardo Primo de Sousa",
       "fullName": "Leonardo Primo de Sousa",
       "createdAt": "2026-09-27T18:43:46.695Z",
       "phone": "",
-      "tags": [],
-      "documentNumber": "",
-      "document": ""
-    },
-    {
-      "id": 362,
-      "guestCode": "HOSP-00362",
-      "name": "Dany",
-      "fullName": "Dany",
-      "phone": "",
-      "createdAt": "2026-10-29T00:19:19.348Z",
       "tags": [],
       "documentNumber": "",
       "document": ""
@@ -15094,7 +14439,7 @@
       "riskAttentionAlert": false,
       "riskAttentionReason": "",
       "breakfastToken": "bfk_res5120295",
-      "guestPhone": "5521996701988",
+      "guestPhone": "21 99985-4881",
       "charges": [],
       "cardTotalAmount": 787.5
     },
@@ -17576,10 +16921,10 @@
           "email": "",
           "index": 1,
           "phone": "",
-          "guestId": 196,
+          "guestId": 195,
           "checkinCompletedAt": null,
           "hasCompletedCheckin": false,
-          "guestCode": "HOSP-00196"
+          "guestCode": "HOSP-00195"
         }
       ],
       "status": "confirmada",
@@ -20290,7 +19635,7 @@
         {
           "name": "Marco",
           "index": 1,
-          "phone": "21 99670-1988",
+          "phone": "21 99985-4881",
           "guestId": 11,
           "guestCode": "HOSP-00011",
           "checkinCompletedAt": null,
@@ -20341,7 +19686,8 @@
       "includeBreakfast": true,
       "riskAttentionAlert": false,
       "riskAttentionReason": "",
-      "charges": []
+      "charges": [],
+      "guestPhone": "21 99985-4881"
     },
     {
       "id": 175,
@@ -26319,7 +25665,7 @@
         {
           "name": "Marco",
           "index": 1,
-          "phone": "21 99670-1988",
+          "phone": "21 99985-4881",
           "guestId": 11,
           "guestCode": "HOSP-00011",
           "checkinCompletedAt": null,
@@ -26369,7 +25715,8 @@
       "includeBreakfast": true,
       "riskAttentionAlert": false,
       "riskAttentionReason": "",
-      "charges": []
+      "charges": [],
+      "guestPhone": "21 99985-4881"
     },
     {
       "id": 74,
@@ -29432,7 +28779,7 @@
         {
           "name": "Marco",
           "index": 1,
-          "phone": "21 99670-1988",
+          "phone": "21 99985-4881",
           "guestId": 11,
           "guestCode": "HOSP-00011",
           "checkinCompletedAt": null,
@@ -29639,8 +28986,8 @@
       "paymentStatus": "pago_total",
       "createdAt": "2026-09-29T08:00:00.000Z",
       "updatedAt": "2026-09-29T08:00:00.000Z",
-      "guestId": 158,
-      "guestCode": "HOSP-00158",
+      "guestId": 30,
+      "guestCode": "HOSP-00030",
       "charges": [],
       "cardTotalAmount": 262.5
     },
@@ -30912,7 +30259,7 @@
       "cc": "faturamento@tripservice.com.br",
       "bcc": null,
       "subject": "[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25086142 - Marlon Luiz da Silva Pimentel (26/10/2026 a 28/10/2026)",
-      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25086142 - Marlon Luiz da Silva Pimentel (26/10/2026 a 28/10/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n    }\n    .wrapper {\n      max-width: 600px;\n      margin: 0 auto;\n      width: 100%;\n    }\n    .email-card {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 8px;\n    }\n    .email-card-pad {\n      padding: 36px 40px;\n    }\n    .badge {\n      display: inline-block;\n      padding: 4px 10px;\n      border-radius: 6px;\n      font-size: 12px;\n      font-weight: 600;\n      line-height: 1.4;\n      letter-spacing: 0.2px;\n    }\n    .badge-checkin { background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }\n    .badge-update { background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A; }\n    .badge-cancel { background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; }\n    .badge-general { background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB; }\n    .section-title {\n      font-size: 12px;\n      font-weight: 600;\n      text-transform: uppercase;\n      letter-spacing: 0.6px;\n      color: #6B7280;\n      margin: 24px 0 8px 0;\n    }\n    .info-card {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-bottom: 16px;\n    }\n    .info-table {\n      width: 100%;\n      border-collapse: collapse;\n    }\n    .info-table td {\n      padding: 6px 0;\n      font-size: 14px;\n      line-height: 1.5;\n      vertical-align: top;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n    }\n    .info-table .label {\n      color: #6B7280;\n      font-weight: 500;\n      width: 38%;\n      font-size: 13px;\n    }\n    .info-table .val {\n      color: #111827;\n      font-weight: 600;\n      width: 62%;\n      font-size: 14px;\n    }\n    .guest-box {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-top: 8px;\n    }\n    .callout-alert {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-left: 3px solid #D97706;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .callout-cancel {\n      background-color: #FEF2F2;\n      border: 1px solid #FECACA;\n      border-left: 3px solid #DC2626;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .btn-action {\n      display: inline-block;\n      padding: 12px 24px;\n      background-color: #111827;\n      color: #FFFFFF !important;\n      text-decoration: none;\n      border-radius: 6px;\n      font-size: 14px;\n      font-weight: 700;\n      line-height: 1.4;\n      margin-top: 8px;\n    }\n    @media only screen and (max-width: 600px) {\n      .outer-pad {\n        padding: 16px 12px !important;\n      }\n      .email-card-pad {\n        padding: 20px !important;\n      }\n      .info-table .label,\n      .info-table .val {\n        display: block !important;\n        width: 100% !important;\n        padding: 2px 0 !important;\n      }\n      .info-table tr {\n        display: block !important;\n        padding: 6px 0 !important;\n        border-bottom: 1px solid #F3F4F6;\n      }\n      .info-table tr:last-child {\n        border-bottom: none !important;\n      }\n      .btn-action {\n        display: block !important;\n        text-align: center !important;\n      }\n    }\n  </style>\n</head>\n<body style=\"margin: 0; padding: 0; width: 100%; background-color: #F8FAFC; color: #374151; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;\">\n  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color: #F8FAFC; width: 100%; margin: 0; padding: 0;\">\n    <tr>\n      <td align=\"center\" class=\"outer-pad\" style=\"padding: 32px 16px;\">\n        <!--[if mso]>\n        <table role=\"presentation\" align=\"center\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\" width=\"600\">\n        <tr>\n        <td width=\"600\">\n        <![endif]-->\n        <div class=\"wrapper\" style=\"max-width: 600px; margin: 0 auto; width: 100%;\">\n          <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" class=\"email-card\" style=\"background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; width: 100%; border-collapse: separate;\">\n            <tr>\n              <td class=\"email-card-pad\" style=\"padding: 36px 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #374151; font-size: 15px; line-height: 1.6; text-align: left;\">\n                <!-- Header Sutil e Discreto com Respiro Inferior de 24px -->\n                <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width: 100%; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #E5E7EB;\">\n                  <tr>\n                    <td align=\"left\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span style=\"display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #111827; margin-right: 8px; vertical-align: middle;\"></span>\n                      <span style=\"color: #111827; font-size: 15px; font-weight: 600; letter-spacing: -0.2px; vertical-align: middle;\">CorpFlats</span>\n                      <span style=\"color: #9CA3AF; font-size: 12px; font-weight: 400; margin-left: 6px; vertical-align: middle;\">• Gestão de Hospedagem</span>\n                    </td>\n                    <td align=\"right\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span class=\"badge badge-checkin\" style=\"display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;\">Reserva B2B • Credenciamento</span>\n                    </td>\n                  </tr>\n                </table>\n\n                <!-- Corpo Principal -->\n                <div class=\"content\" style=\"color: #374151; font-size: 15px; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                  \n    <div style=\"margin-bottom: 24px;\">\n      <h1 style=\"font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 10px 0;\">\n        Reserva Confirmada • Credenciamento do Hóspede para Liberação na Portaria\n      </h1>\n      <p style=\"font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;\">\n        Olá, <strong>Cristiane</strong> (Tripservice), tudo bem? Agradecemos pela parceria e confirmamos com muita satisfação a reserva do(a) hóspede <strong>Marlon Luiz da Silva Pimentel</strong> (<strong>CBO Holding S.A.</strong>) no <",
+      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25086142 - Marlon Luiz da Silva Pimentel (26/10/2026 a 28/10/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n    }\n",
       "status": "sent",
       "metadata": {
         "trigger": "b2b_auto_credential_request",
@@ -30931,7 +30278,7 @@
       "cc": "conciliacao@copastur.com.br",
       "bcc": null,
       "subject": "[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25078591 (RLOC: SUIG3T) - Fernanda Oliveira (02/11/2026 a 03/11/2026)",
-      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25078591 (RLOC: SUIG3T) - Fernanda Oliveira (02/11/2026 a 03/11/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n    }\n    .wrapper {\n      max-width: 600px;\n      margin: 0 auto;\n      width: 100%;\n    }\n    .email-card {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 8px;\n    }\n    .email-card-pad {\n      padding: 36px 40px;\n    }\n    .badge {\n      display: inline-block;\n      padding: 4px 10px;\n      border-radius: 6px;\n      font-size: 12px;\n      font-weight: 600;\n      line-height: 1.4;\n      letter-spacing: 0.2px;\n    }\n    .badge-checkin { background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }\n    .badge-update { background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A; }\n    .badge-cancel { background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; }\n    .badge-general { background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB; }\n    .section-title {\n      font-size: 12px;\n      font-weight: 600;\n      text-transform: uppercase;\n      letter-spacing: 0.6px;\n      color: #6B7280;\n      margin: 24px 0 8px 0;\n    }\n    .info-card {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-bottom: 16px;\n    }\n    .info-table {\n      width: 100%;\n      border-collapse: collapse;\n    }\n    .info-table td {\n      padding: 6px 0;\n      font-size: 14px;\n      line-height: 1.5;\n      vertical-align: top;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n    }\n    .info-table .label {\n      color: #6B7280;\n      font-weight: 500;\n      width: 38%;\n      font-size: 13px;\n    }\n    .info-table .val {\n      color: #111827;\n      font-weight: 600;\n      width: 62%;\n      font-size: 14px;\n    }\n    .guest-box {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-top: 8px;\n    }\n    .callout-alert {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-left: 3px solid #D97706;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .callout-cancel {\n      background-color: #FEF2F2;\n      border: 1px solid #FECACA;\n      border-left: 3px solid #DC2626;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .btn-action {\n      display: inline-block;\n      padding: 12px 24px;\n      background-color: #111827;\n      color: #FFFFFF !important;\n      text-decoration: none;\n      border-radius: 6px;\n      font-size: 14px;\n      font-weight: 700;\n      line-height: 1.4;\n      margin-top: 8px;\n    }\n    @media only screen and (max-width: 600px) {\n      .outer-pad {\n        padding: 16px 12px !important;\n      }\n      .email-card-pad {\n        padding: 20px !important;\n      }\n      .info-table .label,\n      .info-table .val {\n        display: block !important;\n        width: 100% !important;\n        padding: 2px 0 !important;\n      }\n      .info-table tr {\n        display: block !important;\n        padding: 6px 0 !important;\n        border-bottom: 1px solid #F3F4F6;\n      }\n      .info-table tr:last-child {\n        border-bottom: none !important;\n      }\n      .btn-action {\n        display: block !important;\n        text-align: center !important;\n      }\n    }\n  </style>\n</head>\n<body style=\"margin: 0; padding: 0; width: 100%; background-color: #F8FAFC; color: #374151; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;\">\n  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color: #F8FAFC; width: 100%; margin: 0; padding: 0;\">\n    <tr>\n      <td align=\"center\" class=\"outer-pad\" style=\"padding: 32px 16px;\">\n        <!--[if mso]>\n        <table role=\"presentation\" align=\"center\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\" width=\"600\">\n        <tr>\n        <td width=\"600\">\n        <![endif]-->\n        <div class=\"wrapper\" style=\"max-width: 600px; margin: 0 auto; width: 100%;\">\n          <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" class=\"email-card\" style=\"background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; width: 100%; border-collapse: separate;\">\n            <tr>\n              <td class=\"email-card-pad\" style=\"padding: 36px 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #374151; font-size: 15px; line-height: 1.6; text-align: left;\">\n                <!-- Header Sutil e Discreto com Respiro Inferior de 24px -->\n                <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width: 100%; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #E5E7EB;\">\n                  <tr>\n                    <td align=\"left\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span style=\"display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #111827; margin-right: 8px; vertical-align: middle;\"></span>\n                      <span style=\"color: #111827; font-size: 15px; font-weight: 600; letter-spacing: -0.2px; vertical-align: middle;\">CorpFlats</span>\n                      <span style=\"color: #9CA3AF; font-size: 12px; font-weight: 400; margin-left: 6px; vertical-align: middle;\">• Gestão de Hospedagem</span>\n                    </td>\n                    <td align=\"right\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span class=\"badge badge-checkin\" style=\"display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;\">Reserva B2B • Credenciamento</span>\n                    </td>\n                  </tr>\n                </table>\n\n                <!-- Corpo Principal -->\n                <div class=\"content\" style=\"color: #374151; font-size: 15px; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                  \n    <div style=\"margin-bottom: 24px;\">\n      <h1 style=\"font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 10px 0;\">\n        Reserva Confirmada • Credenciamento do Hóspede para Liberação na Portaria\n      </h1>\n      <p style=\"font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;\">\n        Olá, <strong>Fernanda Leite Ferreira Silva de Oliveira</strong> (Copastur), tudo bem? Agradecemos pela parceria e confirmamos com muita satisfação a reserva do(a) hóspede <strong>Fernanda Oliveira</strong> (<strong>Grupo Carre",
+      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25078591 (RLOC: SUIG3T) - Fernanda Oliveira (02/11/2026 a 03/11/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n   ",
       "status": "sent",
       "metadata": {
         "trigger": "b2b_auto_credential_request",
@@ -30950,7 +30297,7 @@
       "cc": "supervisoresSP@avipam.com.br",
       "bcc": null,
       "subject": "[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25065298 (RLOC: KPO3ZX) - Gabriela Silva (16/11/2026 a 19/11/2026)",
-      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25065298 (RLOC: KPO3ZX) - Gabriela Silva (16/11/2026 a 19/11/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n    }\n    .wrapper {\n      max-width: 600px;\n      margin: 0 auto;\n      width: 100%;\n    }\n    .email-card {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 8px;\n    }\n    .email-card-pad {\n      padding: 36px 40px;\n    }\n    .badge {\n      display: inline-block;\n      padding: 4px 10px;\n      border-radius: 6px;\n      font-size: 12px;\n      font-weight: 600;\n      line-height: 1.4;\n      letter-spacing: 0.2px;\n    }\n    .badge-checkin { background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }\n    .badge-update { background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A; }\n    .badge-cancel { background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; }\n    .badge-general { background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB; }\n    .section-title {\n      font-size: 12px;\n      font-weight: 600;\n      text-transform: uppercase;\n      letter-spacing: 0.6px;\n      color: #6B7280;\n      margin: 24px 0 8px 0;\n    }\n    .info-card {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-bottom: 16px;\n    }\n    .info-table {\n      width: 100%;\n      border-collapse: collapse;\n    }\n    .info-table td {\n      padding: 6px 0;\n      font-size: 14px;\n      line-height: 1.5;\n      vertical-align: top;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n    }\n    .info-table .label {\n      color: #6B7280;\n      font-weight: 500;\n      width: 38%;\n      font-size: 13px;\n    }\n    .info-table .val {\n      color: #111827;\n      font-weight: 600;\n      width: 62%;\n      font-size: 14px;\n    }\n    .guest-box {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-top: 8px;\n    }\n    .callout-alert {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-left: 3px solid #D97706;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .callout-cancel {\n      background-color: #FEF2F2;\n      border: 1px solid #FECACA;\n      border-left: 3px solid #DC2626;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .btn-action {\n      display: inline-block;\n      padding: 12px 24px;\n      background-color: #111827;\n      color: #FFFFFF !important;\n      text-decoration: none;\n      border-radius: 6px;\n      font-size: 14px;\n      font-weight: 700;\n      line-height: 1.4;\n      margin-top: 8px;\n    }\n    @media only screen and (max-width: 600px) {\n      .outer-pad {\n        padding: 16px 12px !important;\n      }\n      .email-card-pad {\n        padding: 20px !important;\n      }\n      .info-table .label,\n      .info-table .val {\n        display: block !important;\n        width: 100% !important;\n        padding: 2px 0 !important;\n      }\n      .info-table tr {\n        display: block !important;\n        padding: 6px 0 !important;\n        border-bottom: 1px solid #F3F4F6;\n      }\n      .info-table tr:last-child {\n        border-bottom: none !important;\n      }\n      .btn-action {\n        display: block !important;\n        text-align: center !important;\n      }\n    }\n  </style>\n</head>\n<body style=\"margin: 0; padding: 0; width: 100%; background-color: #F8FAFC; color: #374151; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;\">\n  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color: #F8FAFC; width: 100%; margin: 0; padding: 0;\">\n    <tr>\n      <td align=\"center\" class=\"outer-pad\" style=\"padding: 32px 16px;\">\n        <!--[if mso]>\n        <table role=\"presentation\" align=\"center\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\" width=\"600\">\n        <tr>\n        <td width=\"600\">\n        <![endif]-->\n        <div class=\"wrapper\" style=\"max-width: 600px; margin: 0 auto; width: 100%;\">\n          <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" class=\"email-card\" style=\"background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; width: 100%; border-collapse: separate;\">\n            <tr>\n              <td class=\"email-card-pad\" style=\"padding: 36px 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #374151; font-size: 15px; line-height: 1.6; text-align: left;\">\n                <!-- Header Sutil e Discreto com Respiro Inferior de 24px -->\n                <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width: 100%; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #E5E7EB;\">\n                  <tr>\n                    <td align=\"left\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span style=\"display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #111827; margin-right: 8px; vertical-align: middle;\"></span>\n                      <span style=\"color: #111827; font-size: 15px; font-weight: 600; letter-spacing: -0.2px; vertical-align: middle;\">CorpFlats</span>\n                      <span style=\"color: #9CA3AF; font-size: 12px; font-weight: 400; margin-left: 6px; vertical-align: middle;\">• Gestão de Hospedagem</span>\n                    </td>\n                    <td align=\"right\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span class=\"badge badge-checkin\" style=\"display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;\">Reserva B2B • Credenciamento</span>\n                    </td>\n                  </tr>\n                </table>\n\n                <!-- Corpo Principal -->\n                <div class=\"content\" style=\"color: #374151; font-size: 15px; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                  \n    <div style=\"margin-bottom: 24px;\">\n      <h1 style=\"font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 10px 0;\">\n        Reserva Confirmada • Credenciamento do Hóspede para Liberação na Portaria\n      </h1>\n      <p style=\"font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;\">\n        Olá, <strong>Gabriela Soares de Moura Silva</strong> (Avipam SP), tudo bem? Agradecemos pela parceria e confirmamos com muita satisfação a reserva do(a) hóspede <strong>Gabriela Silva</strong> (<strong>Cristália</strong>) no <str",
+      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25065298 (RLOC: KPO3ZX) - Gabriela Silva (16/11/2026 a 19/11/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n    }\n",
       "status": "sent",
       "metadata": {
         "trigger": "b2b_auto_credential_request",
@@ -30969,7 +30316,7 @@
       "cc": "conciliacao@copastur.com.br",
       "bcc": null,
       "subject": "[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25057926 (RLOC: ZYIK2X) - Nilton França (26/10/2026 a 31/10/2026)",
-      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25057926 (RLOC: ZYIK2X) - Nilton França (26/10/2026 a 31/10/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n    }\n    .wrapper {\n      max-width: 600px;\n      margin: 0 auto;\n      width: 100%;\n    }\n    .email-card {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 8px;\n    }\n    .email-card-pad {\n      padding: 36px 40px;\n    }\n    .badge {\n      display: inline-block;\n      padding: 4px 10px;\n      border-radius: 6px;\n      font-size: 12px;\n      font-weight: 600;\n      line-height: 1.4;\n      letter-spacing: 0.2px;\n    }\n    .badge-checkin { background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }\n    .badge-update { background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A; }\n    .badge-cancel { background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; }\n    .badge-general { background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB; }\n    .section-title {\n      font-size: 12px;\n      font-weight: 600;\n      text-transform: uppercase;\n      letter-spacing: 0.6px;\n      color: #6B7280;\n      margin: 24px 0 8px 0;\n    }\n    .info-card {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-bottom: 16px;\n    }\n    .info-table {\n      width: 100%;\n      border-collapse: collapse;\n    }\n    .info-table td {\n      padding: 6px 0;\n      font-size: 14px;\n      line-height: 1.5;\n      vertical-align: top;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n    }\n    .info-table .label {\n      color: #6B7280;\n      font-weight: 500;\n      width: 38%;\n      font-size: 13px;\n    }\n    .info-table .val {\n      color: #111827;\n      font-weight: 600;\n      width: 62%;\n      font-size: 14px;\n    }\n    .guest-box {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-top: 8px;\n    }\n    .callout-alert {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-left: 3px solid #D97706;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .callout-cancel {\n      background-color: #FEF2F2;\n      border: 1px solid #FECACA;\n      border-left: 3px solid #DC2626;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .btn-action {\n      display: inline-block;\n      padding: 12px 24px;\n      background-color: #111827;\n      color: #FFFFFF !important;\n      text-decoration: none;\n      border-radius: 6px;\n      font-size: 14px;\n      font-weight: 700;\n      line-height: 1.4;\n      margin-top: 8px;\n    }\n    @media only screen and (max-width: 600px) {\n      .outer-pad {\n        padding: 16px 12px !important;\n      }\n      .email-card-pad {\n        padding: 20px !important;\n      }\n      .info-table .label,\n      .info-table .val {\n        display: block !important;\n        width: 100% !important;\n        padding: 2px 0 !important;\n      }\n      .info-table tr {\n        display: block !important;\n        padding: 6px 0 !important;\n        border-bottom: 1px solid #F3F4F6;\n      }\n      .info-table tr:last-child {\n        border-bottom: none !important;\n      }\n      .btn-action {\n        display: block !important;\n        text-align: center !important;\n      }\n    }\n  </style>\n</head>\n<body style=\"margin: 0; padding: 0; width: 100%; background-color: #F8FAFC; color: #374151; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;\">\n  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color: #F8FAFC; width: 100%; margin: 0; padding: 0;\">\n    <tr>\n      <td align=\"center\" class=\"outer-pad\" style=\"padding: 32px 16px;\">\n        <!--[if mso]>\n        <table role=\"presentation\" align=\"center\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\" width=\"600\">\n        <tr>\n        <td width=\"600\">\n        <![endif]-->\n        <div class=\"wrapper\" style=\"max-width: 600px; margin: 0 auto; width: 100%;\">\n          <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" class=\"email-card\" style=\"background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; width: 100%; border-collapse: separate;\">\n            <tr>\n              <td class=\"email-card-pad\" style=\"padding: 36px 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #374151; font-size: 15px; line-height: 1.6; text-align: left;\">\n                <!-- Header Sutil e Discreto com Respiro Inferior de 24px -->\n                <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width: 100%; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #E5E7EB;\">\n                  <tr>\n                    <td align=\"left\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span style=\"display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #111827; margin-right: 8px; vertical-align: middle;\"></span>\n                      <span style=\"color: #111827; font-size: 15px; font-weight: 600; letter-spacing: -0.2px; vertical-align: middle;\">CorpFlats</span>\n                      <span style=\"color: #9CA3AF; font-size: 12px; font-weight: 400; margin-left: 6px; vertical-align: middle;\">• Gestão de Hospedagem</span>\n                    </td>\n                    <td align=\"right\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span class=\"badge badge-checkin\" style=\"display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;\">Reserva B2B • Credenciamento</span>\n                    </td>\n                  </tr>\n                </table>\n\n                <!-- Corpo Principal -->\n                <div class=\"content\" style=\"color: #374151; font-size: 15px; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                  \n    <div style=\"margin-bottom: 24px;\">\n      <h1 style=\"font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 10px 0;\">\n        Reserva Confirmada • Credenciamento do Hóspede para Liberação na Portaria\n      </h1>\n      <p style=\"font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;\">\n        Olá, <strong>Mateus Mizumoto dos Santos Oliveira da Silva</strong> (Copastur), tudo bem? Agradecemos pela parceria e confirmamos com muita satisfação a reserva do(a) hóspede <strong>Nilton França</strong> (<strong>Vibra Energia</s",
+      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25057926 (RLOC: ZYIK2X) - Nilton França (26/10/2026 a 31/10/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n    }\n ",
       "status": "sent",
       "metadata": {
         "trigger": "b2b_auto_credential_request",
@@ -30988,7 +30335,7 @@
       "cc": null,
       "bcc": null,
       "subject": "[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25055349 - Arlindo Amorim Barcelos (26/10/2026 a 28/10/2026)",
-      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25055349 - Arlindo Amorim Barcelos (26/10/2026 a 28/10/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n    }\n    .wrapper {\n      max-width: 600px;\n      margin: 0 auto;\n      width: 100%;\n    }\n    .email-card {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 8px;\n    }\n    .email-card-pad {\n      padding: 36px 40px;\n    }\n    .badge {\n      display: inline-block;\n      padding: 4px 10px;\n      border-radius: 6px;\n      font-size: 12px;\n      font-weight: 600;\n      line-height: 1.4;\n      letter-spacing: 0.2px;\n    }\n    .badge-checkin { background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }\n    .badge-update { background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A; }\n    .badge-cancel { background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; }\n    .badge-general { background-color: #F9FAFB; color: #374151; border: 1px solid #E5E7EB; }\n    .section-title {\n      font-size: 12px;\n      font-weight: 600;\n      text-transform: uppercase;\n      letter-spacing: 0.6px;\n      color: #6B7280;\n      margin: 24px 0 8px 0;\n    }\n    .info-card {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-bottom: 16px;\n    }\n    .info-table {\n      width: 100%;\n      border-collapse: collapse;\n    }\n    .info-table td {\n      padding: 6px 0;\n      font-size: 14px;\n      line-height: 1.5;\n      vertical-align: top;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n    }\n    .info-table .label {\n      color: #6B7280;\n      font-weight: 500;\n      width: 38%;\n      font-size: 13px;\n    }\n    .info-table .val {\n      color: #111827;\n      font-weight: 600;\n      width: 62%;\n      font-size: 14px;\n    }\n    .guest-box {\n      background-color: #FFFFFF;\n      border: 1px solid #E5E7EB;\n      border-radius: 6px;\n      padding: 16px;\n      margin-top: 8px;\n    }\n    .callout-alert {\n      background-color: #F9FAFB;\n      border: 1px solid #E5E7EB;\n      border-left: 3px solid #D97706;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .callout-cancel {\n      background-color: #FEF2F2;\n      border: 1px solid #FECACA;\n      border-left: 3px solid #DC2626;\n      padding: 16px;\n      border-radius: 6px;\n      margin-bottom: 16px;\n    }\n    .btn-action {\n      display: inline-block;\n      padding: 12px 24px;\n      background-color: #111827;\n      color: #FFFFFF !important;\n      text-decoration: none;\n      border-radius: 6px;\n      font-size: 14px;\n      font-weight: 700;\n      line-height: 1.4;\n      margin-top: 8px;\n    }\n    @media only screen and (max-width: 600px) {\n      .outer-pad {\n        padding: 16px 12px !important;\n      }\n      .email-card-pad {\n        padding: 20px !important;\n      }\n      .info-table .label,\n      .info-table .val {\n        display: block !important;\n        width: 100% !important;\n        padding: 2px 0 !important;\n      }\n      .info-table tr {\n        display: block !important;\n        padding: 6px 0 !important;\n        border-bottom: 1px solid #F3F4F6;\n      }\n      .info-table tr:last-child {\n        border-bottom: none !important;\n      }\n      .btn-action {\n        display: block !important;\n        text-align: center !important;\n      }\n    }\n  </style>\n</head>\n<body style=\"margin: 0; padding: 0; width: 100%; background-color: #F8FAFC; color: #374151; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;\">\n  <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color: #F8FAFC; width: 100%; margin: 0; padding: 0;\">\n    <tr>\n      <td align=\"center\" class=\"outer-pad\" style=\"padding: 32px 16px;\">\n        <!--[if mso]>\n        <table role=\"presentation\" align=\"center\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\" width=\"600\">\n        <tr>\n        <td width=\"600\">\n        <![endif]-->\n        <div class=\"wrapper\" style=\"max-width: 600px; margin: 0 auto; width: 100%;\">\n          <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" class=\"email-card\" style=\"background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; width: 100%; border-collapse: separate;\">\n            <tr>\n              <td class=\"email-card-pad\" style=\"padding: 36px 40px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #374151; font-size: 15px; line-height: 1.6; text-align: left;\">\n                <!-- Header Sutil e Discreto com Respiro Inferior de 24px -->\n                <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width: 100%; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #E5E7EB;\">\n                  <tr>\n                    <td align=\"left\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span style=\"display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #111827; margin-right: 8px; vertical-align: middle;\"></span>\n                      <span style=\"color: #111827; font-size: 15px; font-weight: 600; letter-spacing: -0.2px; vertical-align: middle;\">CorpFlats</span>\n                      <span style=\"color: #9CA3AF; font-size: 12px; font-weight: 400; margin-left: 6px; vertical-align: middle;\">• Gestão de Hospedagem</span>\n                    </td>\n                    <td align=\"right\" valign=\"middle\" style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                      <span class=\"badge badge-checkin\" style=\"display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;\">Reserva B2B • Credenciamento</span>\n                    </td>\n                  </tr>\n                </table>\n\n                <!-- Corpo Principal -->\n                <div class=\"content\" style=\"color: #374151; font-size: 15px; line-height: 1.6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\">\n                  \n    <div style=\"margin-bottom: 24px;\">\n      <h1 style=\"font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 10px 0;\">\n        Reserva Confirmada • Credenciamento do Hóspede para Liberação na Portaria\n      </h1>\n      <p style=\"font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;\">\n        Prezada equipe da <strong>Opus Viagens</strong>, tudo bem? Agradecemos pela parceria e confirmamos com muita satisfação a reserva do(a) hóspede <strong>Arlindo Amorim Barcelos</strong> (<strong>Lactalis do Brasil</strong>) no <strong>E",
+      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n  <meta name=\"x-apple-disable-message-reformatting\" />\n  <title>[CONFIRMAÇÃO & CREDENCIAMENTO OBRIGATÓRIO] Reserva B2B #25055349 - Arlindo Amorim Barcelos (26/10/2026 a 28/10/2026)</title>\n  <!--[if mso]>\n  <noscript>\n    <xml>\n      <o:OfficeDocumentSettings>\n        <o:PixelsPerInch>96</o:PixelsPerInch>\n      </o:OfficeDocumentSettings>\n    </xml>\n  </noscript>\n  <![endif]-->\n  <style type=\"text/css\">\n    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }\n    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }\n    body {\n      margin: 0 !important;\n      padding: 0 !important;\n      width: 100% !important;\n      background-color: #F8FAFC;\n      color: #374151;\n      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;\n      -webkit-font-smoothing: antialiased;\n    }\n    .w",
       "status": "sent",
       "metadata": {
         "trigger": "b2b_auto_credential_request",
@@ -31007,7 +30354,7 @@
       "cc": null,
       "bcc": null,
       "subject": "Flat 712 - Miller Mendonça Pessanha (12/10/2026 a 13/10/2026)",
-      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>Flat 712 - Miller Mendonça Pessanha (12/10/2026 a 13/10/2026)</title>\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }\n    .wrapper { max-width: 620px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }\n    .header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px 30px; text-align: left; }\n    .brand { color: #f59e0b; font-size: 20px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; margin: 0; }\n    .subbrand { color: #94a3b8; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px; }\n    .badge-bar { margin-top: 14px; }\n    .badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }\n    .badge-checkin { background-color: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }\n    .badge-update { background-color: #fffbeb; color: #b45309; border: 1px solid #fde68a; }\n    .badge-cancel { background-color: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }\n    .badge-general { background-color: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }\n    .content { padding: 30px; }\n    .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-top: 20px; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }\n    .info-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }\n    .info-table { width: 100%; border-collapse: collapse; }\n    .info-table td { ",
+      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>Flat 712 - Miller Mendonça Pessanha (12/10/2026 a 13/10/2026)</title>\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }\n    .wrapper { max-width: 620px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }\n    .header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px 30px; text-align: left; }\n    .brand { color: #f59e0b; font-size: 20px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; margin: 0; }\n    .subbrand { color: #94a3b8; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px; }\n    .badge-bar { margin-top: 14px; }\n    .badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }\n    .badge-checkin { backgr",
       "status": "failed",
       "metadata": {
         "trigger": "morning_checkin_07h",
@@ -31968,7 +31315,7 @@
       "direction": "outbound",
       "recipient": "soho@promenade.com.br",
       "subject": "[ATUALIZAÇÃO DE RESERVA] Flat 113 - Carlos Silva",
-      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>[ATUALIZAÇÃO DE RESERVA] Flat 113 - Carlos Silva</title>\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }\n    .wrapper { max-width: 620px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }\n    .header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px 30px; text-align: left; }\n    .brand { color: #f59e0b; font-size: 20px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; margin: 0; }\n    .subbrand { color: #94a3b8; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px; }\n    .badge-bar { margin-top: 14px; }\n    .badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }\n    .badge-checkin { background-color: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }\n    .badge-update { background-color: #fffbeb; color: #b45309; border: 1px solid #fde68a; }\n    .badge-cancel { background-color: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }\n    .badge-general { background-color: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }\n    .content { padding: 30px; }\n    .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-top: 20px; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }\n    .info-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }\n    .info-table { width: 100%; border-collapse: collapse; }\n    .info-table td { padding: 5px ",
+      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>[ATUALIZAÇÃO DE RESERVA] Flat 113 - Carlos Silva</title>\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }\n    .wrapper { max-width: 620px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }\n    .header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px 30px; text-align: left; }\n    .brand { color: #f59e0b; font-size: 20px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; margin: 0; }\n    .subbrand { color: #94a3b8; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px; }\n    .badge-bar { margin-top: 14px; }\n    .badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }\n    .badge-checkin { background-color: #",
       "status": "failed",
       "metadata": {
         "trigger": "reservation_update",
@@ -32961,7 +32308,8 @@
     "zohoOAuth": {
       "webhookEndpoint": "https://corpflats.com.br/api/webmail/zoho-webhook"
     },
-    "webmailSeededV1": true
+    "webmailSeededV1": true,
+    "smokingContaminationCleanedV1": true
   },
   "siteConfig": {
     "theme": {
@@ -33871,6 +33219,715 @@
     }
   ],
   "auditLogs": [
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:31:13.132Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 72,
+        "reservationCode": "RES-REGULAR-PRE-RESERVA",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "status": "expirada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "paymentStatus": "pendente",
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Validade de Pré-Reserva",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:31:13.130Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 70,
+        "reservationCode": "RES-ACTIVE-SILENT",
+        "guestName": "Marina Hóspede",
+        "guestPhone": "5521988880070",
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkoutDate": "2026-11-08",
+        "checkoutTime": "12:00",
+        "status": "in_stay",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:31:01.049Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:21:56.047Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 72,
+        "reservationCode": "RES-REGULAR-PRE-RESERVA",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "status": "expirada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "paymentStatus": "pendente",
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Validade de Pré-Reserva",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:21:56.043Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 70,
+        "reservationCode": "RES-ACTIVE-SILENT",
+        "guestName": "Marina Hóspede",
+        "guestPhone": "5521988880070",
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkoutDate": "2026-11-08",
+        "checkoutTime": "12:00",
+        "status": "in_stay",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:21:43.106Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:17:43.175Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:17:37.608Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 72,
+        "reservationCode": "RES-REGULAR-PRE-RESERVA",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "status": "expirada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "paymentStatus": "pendente",
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Validade de Pré-Reserva",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:17:37.605Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 70,
+        "reservationCode": "RES-ACTIVE-SILENT",
+        "guestName": "Marina Hóspede",
+        "guestPhone": "5521988880070",
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkoutDate": "2026-11-08",
+        "checkoutTime": "12:00",
+        "status": "in_stay",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:16:23.320Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 72,
+        "reservationCode": "RES-REGULAR-PRE-RESERVA",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "status": "expirada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "paymentStatus": "pendente",
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Validade de Pré-Reserva",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:16:23.318Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 70,
+        "reservationCode": "RES-ACTIVE-SILENT",
+        "guestName": "Marina Hóspede",
+        "guestPhone": "5521988880070",
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkoutDate": "2026-11-08",
+        "checkoutTime": "12:00",
+        "status": "in_stay",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:15:08.361Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:14:38.721Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:12:05.289Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:10:01.430Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:02:47.871Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T17:00:36.841Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T16:59:47.313Z",
+      "level": "warning",
+      "category": "system",
+      "action": "SERVER_MONITOR_EVENT_LOOP_STARVATION",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "Atraso no Event Loop (196.1ms)",
+        "probableCause": "Execução de rotina síncrona interna em segundo plano (persistência de banco, sincronização ou GC do Node.js)",
+        "technicalEvidence": {
+          "eventLoopLagMax": 196.1,
+          "eventLoopP99": 136.8,
+          "processCpu": 0.8,
+          "activeRequestsCount": 0
+        },
+        "recommendedAction": "Isole rotinas síncronas demoradas (como JSON.stringify de coleções gigantes ou leitura síncrona de arquivos) em operações assíncronas."
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-11-04T16:59:41.262Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_SUNDAY_UPSELL_EXPIRED",
+      "actor": {
+        "id": null,
+        "name": "Sistema Automático",
+        "role": "system",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 10,
+        "reservationCode": "RES-ACTIVE-STAY",
+        "guestPhone": null,
+        "guestEmail": null,
+        "guestDocument": null,
+        "guestCount": 1,
+        "guests": null,
+        "requesterType": "guest",
+        "requesterInfo": null,
+        "companyId": null,
+        "companyName": null,
+        "checkinDate": "2026-11-06",
+        "checkoutDate": "2026-11-08",
+        "status": "confirmada",
+        "dailyRates": null,
+        "payments": null,
+        "charges": null,
+        "cleaningFee": null,
+        "roomReadySentDate": null,
+        "roomReadySentAt": null
+      },
+      "source": "Motor de Upsell Domingo Sem Pressa",
+      "ip": "",
+      "userAgent": ""
+    },
     {
       "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
       "timestamp": "2026-10-29T20:06:34.169Z",
@@ -35713,451 +35770,6 @@
         "reservationCode": "RES-STRESS-TIMEOUT",
         "guestIndex": 1,
         "error": "SERPRO_TIMEOUT: Requisição à API SERPRO excedeu o tempo limite de 5000ms."
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-07T16:37:50.859Z",
-      "level": "warning",
-      "category": "system",
-      "action": "NOTIFICATION_SYSTEM_ERROR",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "⚠️ Contingência FNRH SERPRO",
-        "message": "Falha SERPRO FNRH: Check-in fallback ativado para reserva RES-NO-DATES",
-        "metadata": {
-          "reservationCode": "RES-NO-DATES",
-          "error": "Datas inválidas para registro no SERPRO: checkin=, checkout="
-        },
-        "targetUrl": "/reservas?code=RES-NO-DATES"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-07T16:37:50.858Z",
-      "level": "warning",
-      "category": "integration",
-      "action": "FNRH_SERPRO_FALLBACK",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "reservationCode": "RES-NO-DATES",
-        "guestIndex": 1,
-        "error": "Datas inválidas para registro no SERPRO: checkin=, checkout="
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-07T16:37:50.845Z",
-      "level": "warning",
-      "category": "system",
-      "action": "NOTIFICATION_SYSTEM_ERROR",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "⚠️ Contingência FNRH SERPRO",
-        "message": "Falha SERPRO FNRH: Check-in fallback ativado para reserva ",
-        "metadata": {
-          "error": "Reserva inválida ou sem identificador."
-        },
-        "targetUrl": "/reservas"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-07T16:37:50.843Z",
-      "level": "warning",
-      "category": "integration",
-      "action": "FNRH_SERPRO_FALLBACK",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "reservationCode": "",
-        "guestIndex": 1,
-        "error": "Reserva inválida ou sem identificador."
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-05T14:59:21.907Z",
-      "level": "info",
-      "category": "reservation",
-      "action": "RESERVATION_VEHICLE_AUTHORIZED",
-      "actor": {
-        "id": null,
-        "name": "Sistema de Garagem CorpFlats",
-        "role": "system",
-        "type": "system"
-      },
-      "details": {
-        "reservationId": 9902,
-        "reservationCode": "TEST_TODAY_CAR",
-        "flatNumber": "113",
-        "guestName": "Hóspede de Hoje",
-        "guestPhone": null,
-        "guestEmail": null,
-        "guestDocument": null,
-        "guestCount": 1,
-        "guests": null,
-        "requesterType": "guest",
-        "requesterInfo": null,
-        "companyId": null,
-        "companyName": null,
-        "checkinDate": "2026-10-05",
-        "checkoutDate": "2099-12-31",
-        "description": "Liberação de garagem enviada para millerpessanha@gmail.com (Placa XYZ9876)",
-        "changes": [
-          {
-            "field": "vehicle",
-            "label": "Autorização de Garagem",
-            "oldValue": null,
-            "newValue": "XYZ9876 (Honda Civic)"
-          }
-        ]
-      },
-      "source": "Automação de Garagem",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:30:34.927Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "✅ Serviço finalizado - Flat 113",
-        "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
-        "metadata": {
-          "serviceOrderId": "so_1790825433614_tddjn",
-          "flatId": 1,
-          "flatNumber": "113"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:30:33.894Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "🔧 Serviço iniciado - Flat 113",
-        "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
-        "metadata": {
-          "serviceOrderId": "so_1790825433614_tddjn",
-          "flatId": 1,
-          "flatNumber": "113"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:30:33.647Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "SERVICE_ORDER_CREATED",
-      "actor": {
-        "id": 1,
-        "name": "admin",
-        "role": "admin"
-      },
-      "details": {
-        "orderId": "so_1790825433614_tddjn",
-        "title": "Pintura e Reparos de Teste E2E",
-        "flatsCount": 3
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:24.218Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "✅ Serviço finalizado - Flat 402",
-        "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 402",
-        "metadata": {
-          "serviceOrderId": "so_1790825182599_eejmg",
-          "flatId": 402,
-          "flatNumber": "402"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:23.717Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "✅ Serviço finalizado - Flat 401",
-        "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 401",
-        "metadata": {
-          "serviceOrderId": "so_1790825182599_eejmg",
-          "flatId": 401,
-          "flatNumber": "401"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:23.247Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "🔧 Serviço iniciado - Flat 402",
-        "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 402",
-        "metadata": {
-          "serviceOrderId": "so_1790825182599_eejmg",
-          "flatId": 402,
-          "flatNumber": "402"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:22.792Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "🔧 Serviço iniciado - Flat 401",
-        "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 401",
-        "metadata": {
-          "serviceOrderId": "so_1790825182599_eejmg",
-          "flatId": 401,
-          "flatNumber": "401"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:22.642Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "SERVICE_ORDER_CREATED",
-      "actor": {
-        "id": 1,
-        "name": "admin",
-        "role": "admin"
-      },
-      "details": {
-        "orderId": "so_1790825182599_eejmg",
-        "title": "Troca de Lâmpadas LED Múltiplos Flats",
-        "flatsCount": 2
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:18.715Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "✅ Serviço finalizado - Flat 301",
-        "message": "Manutenção de Ar Condicionado Flat 301: Roberto Climatização no Flat 301",
-        "metadata": {
-          "serviceOrderId": "so_1790825178003_xw7gg",
-          "flatId": 301,
-          "flatNumber": "301"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:18.168Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "🔧 Serviço iniciado - Flat 301",
-        "message": "Manutenção de Ar Condicionado Flat 301: Roberto Climatização no Flat 301",
-        "metadata": {
-          "serviceOrderId": "so_1790825178003_xw7gg",
-          "flatId": 301,
-          "flatNumber": "301"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:18.048Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "SERVICE_ORDER_CREATED",
-      "actor": {
-        "id": 1,
-        "name": "admin",
-        "role": "admin"
-      },
-      "details": {
-        "orderId": "so_1790825178003_xw7gg",
-        "title": "Manutenção de Ar Condicionado Flat 301",
-        "flatsCount": 1
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:17.888Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "✅ Serviço finalizado - Flat 201",
-        "message": "Revisão Hidráulica Flat 201: Mário Encanador no Flat 201",
-        "metadata": {
-          "serviceOrderId": "so_1790825176949_ils0r",
-          "flatId": 201,
-          "flatNumber": "201"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:17.206Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "NOTIFICATION_SERVICE_ORDER",
-      "actor": {
-        "name": "Sistema",
-        "role": "system"
-      },
-      "details": {
-        "title": "🔧 Serviço iniciado - Flat 201",
-        "message": "Revisão Hidráulica Flat 201: Mário Encanador no Flat 201",
-        "metadata": {
-          "serviceOrderId": "so_1790825176949_ils0r",
-          "flatId": 201,
-          "flatNumber": "201"
-        },
-        "targetUrl": "/servicos"
-      },
-      "source": "server",
-      "ip": "",
-      "userAgent": ""
-    },
-    {
-      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111",
-      "timestamp": "2026-10-01T03:26:17.031Z",
-      "level": "info",
-      "category": "cleaning",
-      "action": "SERVICE_ORDER_CREATED",
-      "actor": {
-        "id": 1,
-        "name": "admin",
-        "role": "admin"
-      },
-      "details": {
-        "orderId": "so_1790825176949_ils0r",
-        "title": "Revisão Hidráulica Flat 201",
-        "flatsCount": 1
       },
       "source": "server",
       "ip": "",
@@ -39618,7 +39230,7 @@
     "conciergeGroupName": "Checkout Flats",
     "conciergeMonitoringEnabled": true,
     "conciergeRequireKeywords": false,
-    "webhooksSyncedAt": "2026-10-29T20:06:34.816Z",
+    "webhooksSyncedAt": "2026-11-04T17:16:29.733Z",
     "googleReviewUrl": "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
     "alertEmail": "millerpessanha@gmail.com",
     "alertEmailEnabled": true,
@@ -39895,7 +39507,7 @@
       "fixedTime": "",
       "hasAttachment": false,
       "sendEmail": true,
-      "message": "Olá, *{{nome_destinatario}}*! Tudo bem? 👋\n\nConfirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* para o(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.\n\n⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*\nComo ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e Documento*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:\n\n👉 {{link_credenciamento_agencia}}\n\nRessaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o cadastro prévio pelo link a recepção não conseguirá localizar a reserva nem liberar a entrada.",
+      "message": "Olá, *{{nome_destinatario}}*! Tudo bem? 👋\n\nConfirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* para o(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.\n\n⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*\nComo ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e E-mail*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:\n\n👉 {{link_credenciamento_agencia}}\n\nRessaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o cadastro prévio pelo link a recepção não conseguirá localizar a reserva nem liberar a entrada.",
       "footer": "CorpFlats • Edifício Soho Residence",
       "buttons": [
         {
@@ -40101,7 +39713,7 @@
       "offsetValue": 0,
       "offsetUnit": "minutes",
       "fixedTime": "",
-      "message": "Olá, *{{primeiro_nome}}*! 🌟🔑\nSua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!\n\n📋 *Sua Hospedagem:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *Hoje a partir das {{horario_liberacao_hoje}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Café da Manhã: *{{status_cafe}}*\n• Pagamento: *{{status_pagamento}}*\n\n{{status_liberacao_flat_hoje}}\n\n📍 *Endereço:* {{endereco_hotel}}\n🗺️ *Localização no Maps:* {{link_maps}}\n🚪 *Portaria:* 24 horas (basta se identificar com seu nome e o número do Flat *{{quarto}}*)\n\n📶 *Wi-Fi do Flat:*\n• Rede: *{{wifi_rede}}*\n• Senha: *{{wifi_senha}}*\n\n{{mensagem_cafe_incluso}}\n\n{{instrucao_checkin_ou_chegada}}",
+      "message": "Olá, *{{primeiro_nome}}*! 🌟🔑\nSua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!\n\n📋 *Sua Hospedagem:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Café da Manhã: *{{status_cafe}}*\n• Pagamento: *{{status_pagamento}}*\n\n{{status_liberacao_flat_hoje}}\n\n📍 *Endereço:* {{endereco_hotel}}\n🗺️ *Localização no Maps:* {{link_maps}}\n🚪 *Portaria:* 24 horas (basta se identificar com seu nome e o número do Flat *{{quarto}}*)\n\n📶 *Wi-Fi do Flat:*\n• Rede: *{{wifi_rede}}*\n• Senha: *{{wifi_senha}}*\n\n{{mensagem_cafe_incluso}}\n\n{{instrucao_checkin_ou_chegada}}",
       "footer": "CorpFlats • Entrada Imediata",
       "buttons": [
         {
@@ -40860,6 +40472,96 @@
       "fixedTime": "",
       "message": "Muito obrigado pelo seu retorno detalhado, *{{primeiro_nome}}*! 🙏💙\n\nJá registramos suas observações sobre o *Flat {{quarto}}* diretamente em nosso *Plano de Melhorias da Gerência* para providenciarmos os ajustes necessários.\n\nValorizamos imensamente sua sinceridade — é graças ao seu feedback que evoluímos a cada dia. Esperamos ter a oportunidade de recebê-lo(a) novamente em breve para proporcionar uma experiência 5 estrelas! ✨",
       "footer": "CorpFlats • Obrigado por nos ajudar a melhorar",
+      "buttons": []
+    },
+    {
+      "id": "tpl_pre_reserva_lembrete",
+      "triggerEvent": "pre_reservation_expiring_soon",
+      "title": "Lembrete • Sua Pré-Reserva Expira em Breve",
+      "description": "Enviado automaticamente antes da pré-reserva expirar (faltando 10 min na de 30m, 30 min na de 2h, ou 2h na de Até 23:59), com link rápido da reserva e PIX Copia e Cola para facilitar o pagamento.",
+      "enabled": true,
+      "channels": [
+        "site",
+        "whatsapp",
+        "outros"
+      ],
+      "recipientTarget": "requester",
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{nome_destinatario}}*! ⏰\n\nPassando para lembrar que a sua *Pré-Reserva ({{numero_reserva}})* no *{{nome_hotel}}* (*Flat {{quarto}}* • *{{data_checkin}} a {{data_checkout}}*) *expira em {{tempo_restante_pre_reserva}}* (limite: *{{validade_pre_reserva}}*).\n\n💰 *Para garantir sua reserva agora:*\n• Com desconto no PIX (-5%): *{{quanto_falta}}*\n• No Cartão de Crédito: *{{quanto_falta_cartao}}*\n\n👉 *Acesse os detalhes e conclua o pagamento em 1 clique:*\n{{link_portal_hospede}}\n\n⚠️ _Caso o pagamento não seja confirmado até o horário limite, o sistema liberará a acomodação automaticamente em nosso calendário._",
+      "footer": "CorpFlats • Hospedagem Contemporânea",
+      "buttons": [
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "💳 Ver Reserva & Pagar",
+          "url": "{{link_portal_hospede}}"
+        },
+        {
+          "id": "btn_pix",
+          "type": "COPY",
+          "label": "📋 Copiar Código PIX",
+          "copyCode": "{{pix_copia_e_cola}}",
+          "url": "{{link_copiar_pix}}"
+        },
+        {
+          "id": "btn_admin",
+          "type": "CALL",
+          "label": "📞 Falar com Atendimento",
+          "phone": "{{telefone_hotel}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_pre_reserva_expirada",
+      "triggerEvent": "pre_reservation_expired",
+      "title": "Pré-Reserva Expirada • Prazo de Pagamento Encerrado",
+      "description": "Enviado automaticamente quando o prazo de validade da pré-reserva expira sem confirmação de pagamento, informando que a acomodação foi liberada e orientando a consultar disponibilidade e valores novamente caso ainda haja interesse.",
+      "enabled": true,
+      "channels": [
+        "site",
+        "whatsapp",
+        "outros"
+      ],
+      "recipientTarget": "requester",
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{nome_destinatario}}*! ⏳\n\nInformamos que o prazo de validade da sua *Pré-Reserva ({{numero_reserva}})* no *{{nome_hotel}}* para o período de *{{data_checkin}} a {{data_checkout}}* (*Flat {{quarto}}*) *expirou* por falta de confirmação de pagamento dentro do tempo limite, e a acomodação voltou a ficar disponível em nosso calendário.\n\n💬 *Ainda tem interesse nesta hospedagem?*\nBasta responder a esta mensagem aqui no WhatsApp para *consultarmos a disponibilidade e os valores novamente* e reativarmos a sua pré-reserva!",
+      "footer": "CorpFlats • Hospedagem Contemporânea",
+      "buttons": [
+        {
+          "id": "btn_admin",
+          "type": "CALL",
+          "label": "📞 Falar com Atendimento",
+          "phone": "{{telefone_hotel}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_sunday_upsell",
+      "triggerEvent": "sunday_upsell_offer",
+      "title": "Upsell • Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)",
+      "description": "Enviado aos sábados às 19:00h para hóspedes com check-out no domingo às 12:00h, oferecendo saída livre no domingo e bônus de pernoite até segunda às 12:00h com pré-reserva de 30 minutos.",
+      "enabled": false,
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "b2b",
+        "outros"
+      ],
+      "recipientTarget": "guest",
+      "triggerTiming": "scheduled",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "19:00",
+      "message": "Olá, *{{primeiro_nome}}*! ☀️ Que tal aproveitar o domingo no *Flat {{quarto}}* sem hora para ir embora?\n\nLiberamos para você a nossa *Oferta Especial de Domingo Sem Pressa*:\n• *Check-out 100% Livre no Domingo:* curta a praia, a cidade ou descanse no flat o dia inteiro sem pressa de desocupar.\n• *Pernoite Bônus Segunda-feira:* se preferir dormir e descansar mais, você pode estender a sua estadia e sair apenas na *segunda-feira até às 12:00h*, sem nenhum acréscimo!\n• *Economia Exclusiva:* de ~{{valor_normal}}~ (tarifa normal) por apenas *{{valor_promocional}}* (você economiza *{{economia}}*!).\n\n⏳ *Pré-Reserva Garantida:* seu flat já está pré-reservado por *30 minutos*. Para confirmar e garantir essa condição, efetue o pagamento do PIX abaixo.\n\n👇 *O código PIX Copia e Cola está na mensagem a seguir (basta tocar para copiar):*",
+      "footer": "CorpFlats • Hospedagem Contemporânea",
       "buttons": []
     }
   ],
@@ -41731,13 +41433,13 @@
       "id": "5521996701988",
       "phone": "5521996701988",
       "formattedPhone": "+55 (21) 99670-1988",
-      "name": "Marco",
+      "name": "DANIELA MARTINS DE MESQUITA",
       "avatarUrl": "",
       "isGroup": false,
       "unreadCount": 0,
       "pinned": false,
-      "reservationCode": "RES-512-0295",
-      "flatNumber": "512",
+      "reservationCode": "RES-712-0615",
+      "flatNumber": "712",
       "checkinDate": "2026-09-28",
       "checkoutDate": "2026-10-01",
       "status": "confirmada",
@@ -41976,13 +41678,13 @@
       "isGroup": false,
       "unreadCount": 0,
       "pinned": false,
-      "reservationCode": "RES-512-0005",
+      "reservationCode": "RES-512-0295",
       "flatNumber": "512",
-      "checkinDate": "2026-09-01",
-      "checkoutDate": "2026-09-04",
+      "checkinDate": "2026-09-28",
+      "checkoutDate": "2026-10-01",
       "status": "confirmada",
-      "paymentStatus": "pendente",
-      "totalAmount": 0,
+      "paymentStatus": "pago_total",
+      "totalAmount": 750,
       "lastMessage": null,
       "updatedAt": "2026-08-31T18:09:30.728Z",
       "messages": []
@@ -45941,14 +45643,16 @@
         "text": "Nunca oferecer auxílio com malas ou bagagens. O condomínio Soho não dispõe de serviço de maleiros ou carregadores, mantendo o atendimento focado no acolhimento e nas dúvidas do hóspede.",
         "category": "geral",
         "active": true,
-        "createdAt": "2026-10-12T02:02:34.764Z"
+        "createdAt": "2026-10-12T02:02:34.764Z",
+        "rule": "Nunca oferecer auxílio com malas ou bagagens. O condomínio Soho não dispõe de serviço de maleiros ou carregadores, mantendo o atendimento focado no acolhimento e nas dúvidas do hóspede."
       },
       {
         "id": "guide_1791770554772_2",
         "text": "Adotar postura de escuta ativa: em saudações iniciais (olá, bom dia, etc.), cumprimentar cordialmente e apenas perguntar abertamente como pode ajudar hoje, sem presumir o assunto e sem despejar detalhes da reserva logo de início. O conhecimento sobre o hóspede ou reserva deve ser usado nos bastidores para responder com coerência sob demanda, conforme o que for perguntado.",
         "category": "saudacao",
         "active": true,
-        "createdAt": "2026-10-12T02:02:34.772Z"
+        "createdAt": "2026-10-12T02:02:34.772Z",
+        "rule": "Adotar postura de escuta ativa: em saudações iniciais (olá, bom dia, etc.), cumprimentar cordialmente e apenas perguntar abertamente como pode ajudar hoje, sem presumir o assunto e sem despejar detalhes da reserva logo de início. O conhecimento sobre o hóspede ou reserva deve ser usado nos bastidores para responder com coerência sob demanda, conforme o que for perguntado."
       }
     ],
     "toneSettings": {
@@ -45959,7 +45663,72 @@
       "updatedAt": "2026-10-11T23:58:14.492Z"
     },
     "enabled": true,
-    "testModeOnly": true
+    "testModeOnly": true,
+    "trainingBlocks": {
+      "blocoA_fichasTecnicas": [
+        {
+          "id": "ft_wifi",
+          "titulo": "Wi-Fi dos Flats",
+          "topico": "wifi",
+          "conteudo": "Rede: CorpFlats-Hospedes | Senha: corpflats2026 (sinal dedicado de alta velocidade em todos os flats)."
+        },
+        {
+          "id": "ft_acesso_nfc",
+          "titulo": "Acesso ao Prédio e aos Flats (Cartão NFC)",
+          "topico": "acesso",
+          "conteudo": "Acesso 100% via cartão magnético NFC retirado diretamente na recepção 24h do Edifício Soho Residence (Rua Conselheiro Otaviano, 209 - Centro). Não utilizamos senha numérica na porta."
+        },
+        {
+          "id": "ft_voltagem_equipamentos",
+          "titulo": "Voltagem e Equipamentos dos Flats",
+          "topico": "equipamentos",
+          "conteudo": "Voltagem padrão 110V (127V). Todos os flats contam com ar-condicionado, Smart TV, frigobar, bancada de trabalho, enxoval completo (cama e banho), ferro de passar e secador de cabelo."
+        },
+        {
+          "id": "ft_condominio_lazer",
+          "titulo": "Regras da Piscina, Academia e Visitas (Soho Residence)",
+          "topico": "condominio",
+          "conteudo": "Piscina e academia funcionam das 06:00h às 22:00h e são de uso exclusivo dos hóspedes cadastrados na reserva. Visitantes temporários devem ser autorizados por e-mail na portaria (Nome completo + CPF), não podem pernoitar e não podem utilizar piscina ou academia."
+        }
+      ],
+      "blocoB_fatosOperacionais": [
+        {
+          "id": "fo_horarios",
+          "situacao": "Horários de Check-in, Early Check-in e Late Check-out",
+          "fato": "Check-in padrão às 14:00h e check-out às 12:00h. Early check-in gratuito a partir das 10:00h (WhatsApp/Direto) ou 12:00h (OTAs) se o flat estiver limpo. Late check-out gratuito até 13:00h de segunda a sábado; aos domingos, gratuito até 18:00h quando a ocupação ativa for menor que 50%."
+        },
+        {
+          "id": "fo_limpeza_insumos",
+          "situacao": "Limpeza durante a estadia vs. reposição de itens",
+          "fato": "Toalha extra, travesseiro, papel higiênico e sabonete são entregues como cortesia (card de entrega avulsa). Limpeza completa durante a estadia com troca de enxoval custa R$ 70,00 via PIX antecipado."
+        },
+        {
+          "id": "fo_cartao_nfc",
+          "situacao": "Perda de cartão NFC ou chave trancada dentro do flat",
+          "fato": "Se trancou o cartão dentro do flat, enviamos e-mail para soho@promenade.com.br liberando cartão reserva sem custo. Em caso de perda/extravio, há taxa de R$ 15,00 via PIX e o e-mail de 2ª via é disparado automaticamente após confirmação do pagamento."
+        }
+      ],
+      "blocoC_exemplosDeOuro": [
+        {
+          "id": "ex_wifi_checkout",
+          "perguntaHospede": "Bom dia! Qual é a senha do wi-fi mesmo? E amanhã consigo sair às 13h?",
+          "respostaIdealSofia": "Bom dia, Sr. Carlos! A rede do Wi-Fi é *CorpFlats-Hospedes* e a senha é *corpflats2026*.\n\nSobre amanhã, já deixei registrado aqui no sistema a sua saída estendida como cortesia até as 13:00h no Flat 212, pode ficar tranquilo!"
+        },
+        {
+          "id": "ex_toalha",
+          "perguntaHospede": "Oi Sofia, tem como mandar mais uma toalha de banho e dois papéis higiênicos pro 304?",
+          "respostaIdealSofia": "Oi, Sra. Mariana! Já avisei nossa governança para levar 1 toalha de banho extra e 2 rolos de papel higiênico aí no Flat 304 como cortesia para você."
+        }
+      ],
+      "listaNegraCliches": [
+        "Com certeza!",
+        "Espero ter ajudado",
+        "Fico feliz em ajudar",
+        "Não hesite em entrar em contato",
+        "Como uma inteligência artificial",
+        "Prezado(a) cliente"
+      ]
+    }
   },
   "financialSettings": {
     "fixedRent": 24000,
@@ -46878,5 +46647,16 @@
   "deletedB2bSeeds": [
     "25078591",
     "B2B-25078591"
-  ]
+  ],
+  "sundayUpsellConfig": {
+    "enabled": false,
+    "sundayUpsellPrice": 90,
+    "channelId": "guest_schedule",
+    "triggerHour": 19,
+    "triggerDay": 6,
+    "holdDurationMinutes": 30,
+    "isSilentUpsellHold": true,
+    "templateId": "tpl_sunday_upsell",
+    "lastTriggerDate": null
+  }
 }

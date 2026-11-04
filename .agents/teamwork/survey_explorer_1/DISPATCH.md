@@ -1,28 +1,22 @@
-# Task Assignment: Survey Explorer 1 (NFS-e Engine & Emission Audit)
-Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1
-Role: teamwork_preview_explorer
+## 2026-11-04T16:04:37Z
+You are Explorer 1 (Frontend UI Explorer).
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\
+Read ORIGINAL_REQUEST.md at: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+Also read the project architecture and rules in c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md.
 
-Focus:
-1. Audit and map all code related to NFS-e emission in `scripts/demo-server.mjs`, `artifacts/api-server/demo-server.mjs`, `giss-soap.mjs`, `national-nfse.mjs`, and `chat-service.mjs`.
-2. Locate the undefined variable bug (`numNfseReal` / `codVerifReal`) in `POST /api/nfse/emit`.
-3. Investigate municipal engine (`giss_prefeitura`) vs national engine (`padrao_nacional`), inspecting all tomador fields passed, XML building, SOAP requests, fallback handling, template formatting, CNAE, item de serviço, and response structure.
-4. Examine auto-emission at check-out and pending invoice queue, checking how CRM company/guest billing data is currently fetched or ignored.
-5. Inspect `POST /api/invoices/chat` and `chat-service.mjs`.
-6. Write your comprehensive report in `handoff.md` within your working directory.
+YOUR GOAL:
+Investigate and produce a complete technical analysis for Requirement R1 (Frontend UI in `⚡ Régua Automática`):
+1. Locate where the tab `⚡ Régua Automática` is implemented in `artifacts/limpeza/src/pages/` (e.g. `whatsapp-automation.tsx` or similar).
+2. Examine the existing structure for automation settings, channels (Canal #1 Régua Hóspedes vs others), triggers, and configuration models.
+3. Detail how to implement:
+   - Toggle to enable/disable "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)".
+   - Configuration field for `sundayUpsellPrice`.
+   - Normal reference price calculation/display (`valor_normal`) in the message template/preview based on guest daily rate.
+   - Channel #1 (Régua Hóspedes) binding.
+   - Manual test / trigger button ("Disparo manual / teste") that calls the backend endpoint immediately for eligible reservations in the validation environment.
+4. Detail all UI components, state management, API routes (GET/POST for settings, POST for manual trigger), and error/success handling.
 
-
-## 2026-10-14T09:41:46Z
-Você é o Survey Explorer 1 (NFS-e Engine & Emission Audit).
-Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1
-Leia atentamente:
-1. O arquivo oficial de requisitos: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-2. Sua atribuição de tarefa: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\DISPATCH.md
-
-Seus objetivos de investigação:
-1. Investigar todo o código de emissão de NFS-e no backend (`scripts/demo-server.mjs`, `artifacts/api-server/demo-server.mjs`, `giss-soap.mjs`, `national-nfse.mjs`, `chat-service.mjs`, `fiscal-service.mjs` ou serviços correlatos).
-2. Localizar e analisar o bug de variáveis indefinidas (`numNfseReal` / `codVerifReal`) na rota `POST /api/nfse/emit`.
-3. Mapear o funcionamento do motor municipal (`giss_prefeitura`) e nacional (`padrao_nacional`), campos do tomador passados (CPF/CNPJ, Razão Social, Logradouro, Número, Bairro, CEP, Município, Código IBGE, UF, E-mail, Telefone), montagem de XML/SOAP, status de retorno, templates de discriminação, alíquotas, CNAE, itens de serviço.
-4. Mapear como a auto-emissão (no check-out ou tarefas em lote) e o pré-preenchimento de notas buscam ou ignoram dados do CRM (empresa vinculada vs hóspede).
-5. Mapear o Chat Assistente Fiscal (`POST /api/invoices/chat` e `chat-service.mjs`) e seus métodos de higienização/enriquecimento de dados.
-
-Crie seu `progress.md` com status e entregue seu relatório detalhado com evidências e caminhos de arquivo em `handoff.md` no seu diretório de trabalho. Ao concluir, avise o orquestrador via `send_message`.
+DELIVERABLES:
+Write your full findings to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\analysis.md`
+Write your completion handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\handoff.md`
+Notify me via send_message when complete.

@@ -1,18 +1,16 @@
-# Progress Tracker — Survey Explorer 3
+# Progress — Explorer 3 (WhatsApp & Sofia AI Explorer)
 
-Last visited: 2026-10-14T09:55:00Z
+Last visited: 2026-11-04T16:20:00Z
+Status: Complete
 
-## Status
-Investigation complete for WhatsApp Fiscal Assistant Flow, Validation & Testing Architecture:
-- [x] Step 1: Ingest dispatch instructions and update DISPATCH.md, BRIEFING.md, progress.md.
-- [x] Step 2: Investigate WhatsApp inbound message handling (`demo-server.mjs`, Z-API webhook `POST /api/whatsapp/webhook/received`, bot action routes, chat interactive routing).
-- [x] Step 3: Investigate fiscal intent detection ("preciso de nota fiscal", "emite NF", etc.) and flow state machine.
-- [x] Step 4: Investigate sender phone resolution (`db.guests`, `requesterInfo`, `db.reservations`) and CRM company linking check (`companyId`, CNPJ).
-- [x] Step 5: Investigate sanitization & validation rules (Modulo 11 CPF/CNPJ, `toTitleCase` with corporate acronyms & prepositions, `cleanPhone`, `cleanCep`, `lookupCnpj`, `lookupCep`).
-- [x] Step 6: Map actions when saving/linking company & guest: `autoEmitInvoice=true`, reservation linkage, drafting fiscal invoice.
-- [x] Step 7: Investigate test patterns (`tests/`), strict test rules (`AGENTS.md`), twin-server parity (`scripts/` vs `artifacts/api-server/`), build (`artifacts/limpeza`), and structure for `tests/nfse-crm-whatsapp-flow.test.mjs`.
-- [x] Step 8: Synthesize findings into `survey_report.md` and `handoff.md`, and notify orchestrator via `send_message`.
-
-## Reports Delivered
-- `survey_report.md` — Complete architectural findings on WhatsApp routing, intent detection, sender resolution, sanitization/validation/enrichment, NFS-e engine bug, and test architecture.
-- `handoff.md` — Authoritative 5-component handoff report (Observation, Logic Chain, Caveats, Conclusion, Verification Method).
+## Current Tasks
+- [x] Initialized BRIEFING.md and DISPATCH.md
+- [x] Investigate WhatsApp Canal #1 dispatch in `zapi-service.mjs`, `chat-service.mjs`, `demo-server.mjs`
+- [x] Investigate 2-balloon sequential dispatch pattern & typing delay simulation
+- [x] Investigate Sofia AI context injection in `whatsapp-ai-service.mjs`, `agent-architecture.mjs`, `src/agent/middleware/context-injector.ts`
+- [x] Investigate in-stay prompt (`src/agent/prompts/in-stay.prompt.ts`) and handling Sunday Upsell offer
+- [x] Investigate tool definitions (`src/agent/tools/`, `estender-estadia.tool.ts`, or new `ofertar-domingo-sem-pressa.tool.ts`)
+- [x] Verify AGENTS.md compliance (5 laws, AgentToolResponse, zero-ask, admin notifier)
+- [x] Write `analysis.md`
+- [x] Write `handoff.md`
+- [ ] Notify parent orchestrator via send_message

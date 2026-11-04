@@ -1,29 +1,24 @@
-# Task Assignment: Survey Explorer 3 (WhatsApp Fiscal Assistant Flow, Validation & Testing Architecture)
-Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3
-Role: teamwork_preview_explorer
+## 2026-11-04T16:05:01Z
+You are Explorer 3 (WhatsApp & Sofia AI Explorer).
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3\
+Read ORIGINAL_REQUEST.md at: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+Also read the project architecture and rules in c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md.
 
-Focus:
-1. Audit and map WhatsApp inbound message handling and bot/assistant routing in `demo-server.mjs`, Z-API webhooks, bot action routes, and any fiscal intent handlers.
-2. Examine how customer requests for invoice ("preciso de nota fiscal", "emite NF", etc.) are detected, or where they should be intercepted.
-3. Inspect how sender phone is resolved against `db.guests`, `requesterInfo`, and `db.reservations`, and how `companyId` linking to `db.companies` is checked.
-4. Audit sanitization & validation logic: CPF/CNPJ Modulo 11 check, `toTitleCase` preserving LTDA/ME/EPP/SA/preposições, `cleanPhone`, `cleanCep`, and enrichment lookups (`lookupCnpj`, `lookupCep`).
-5. Map what needs to happen when saving/linking company & guest: setting `autoEmitInvoice=true`, linking reservation, drafting invoice.
-6. Review existing test patterns in `tests/`, guidelines in `AGENTS.md`, and requirements for `tests/nfse-crm-whatsapp-flow.test.mjs`, twin-server parity, and build process.
+YOUR GOAL:
+Investigate and produce a complete technical analysis for Requirement R5 (2-Balloon Dispatch, Sofia AI Sync & Context, Tool Calling):
+1. In WhatsApp dispatch:
+   - How are messages sent through Canal #1 (Régua Hóspedes) via `zapi-service.mjs` or `chat-service.mjs`?
+   - How to implement the 2-balloon sequential dispatch with typing delay simulation:
+     - Balloon 1: Persuasive text presenting the free Sunday checkout for `valor_promocional` (`sundayUpsellPrice`), showing the savings relative to regular daily rate (`valor_normal`), informing the bonus extension until Monday 12:00h, and noting the 30-minute hold validity.
+     - Balloon 2: Exclusively the PIX Copia e Cola code (`codigo_pix_copia_e_cola`), without any additional text.
+2. In Sofia AI & Context Injection:
+   - Inspect `artifacts/api-server/whatsapp-ai-service.mjs`, `agent-architecture.mjs`, and `src/agent/` (`middleware/context-injector.ts`, `prompts/in-stay.prompt.ts`, `types/tool-contract.ts`, and tools in `src/agent/tools/`).
+   - How does the context injector supply reservation details to Sofia? How should it record/inject that the guest received the Sunday Upsell offer on Saturday night?
+   - How should Sofia recognize when the guest asks about the offer or requests a new PIX code after the 30-minute hold has expired?
+   - What tool should Sofia call (or do we create/update a tool such as `src/agent/tools/ofertar-domingo-sem-pressa.tool.ts` or extend an existing tool) conforming strictly to AGENTS.md Constitution (5 Laws: `AgentToolResponse`, `instrucao_para_ia`, `confirmacao_hospede`, zero-ask from context, backend verification of Sunday-Monday availability)?
+   - How will that tool re-generate the promotional PIX and place a new 30-minute hold if the flat is still available?
 
-## 2026-10-14T09:41:47Z
-Você é o Survey Explorer 3 (WhatsApp Fiscal Assistant Flow, Validation & Testing Architecture).
-Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3
-Leia atentamente:
-1. O arquivo oficial de requisitos: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-2. Sua atribuição de tarefa: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3\DISPATCH.md
-
-Seus objetivos de investigação:
-1. Investigar o fluxo de mensagens do WhatsApp: webhook Z-API (`POST /api/zapi/webhook` ou equivalente), bot actions, chat interativo, e detecção de intenções do usuário no backend (`demo-server.mjs`, `scripts/` ou módulos associados).
-2. Mapear como identificar pedidos de Nota Fiscal no WhatsApp ("preciso de nota fiscal", "emite NF", etc.) de forma robusta.
-3. Mapear a lógica de resolução do remetente (pelo telefone e reserva ativa/recente como titular ou `requesterInfo`), consulta ao CRM (`db.guests`, `db.companies`), e o fluxo condicional:
-   - Se já tem empresa vinculada (`companyId` e CNPJ): NÃO perguntar de novo; responder confirmando dados da empresa e ativar `autoEmitInvoice = true`.
-   - Se não tem empresa vinculada: enviar mensagem estruturada e acolhedora pedindo dados (PJ vs PF) e marcar estado aguardando dados fiscais.
-4. Mapear as funções e regras de validação/sanitização: Módulo 11 para CPF e CNPJ, `toTitleCase` preservando siglas (LTDA, S/A, ME, EPP) e preposições, `cleanPhone`, `cleanCep`, e serviços de enriquecimento `lookupCnpj` e `lookupCep` (existentes ou a aprimorar).
-5. Mapear a arquitetura de testes existente (`tests/`), diretrizes de `AGENTS.md` (escopo estrito de teste), paridade twin-server (`scripts/demo-server.mjs` vs `artifacts/api-server/demo-server.mjs`), processo de build (`artifacts/limpeza`), e estrutura necessária para o teste pontual dedicado `tests/nfse-crm-whatsapp-flow.test.mjs`.
-
-Crie seu `progress.md` com status e entregue seu relatório detalhado com evidências e caminhos de arquivo em `handoff.md` no seu diretório de trabalho. Ao concluir, avise o orquestrador via `send_message`.
+DELIVERABLES:
+Write your full findings to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3\analysis.md`
+Write your completion handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_3\handoff.md`
+Notify me via send_message when complete.

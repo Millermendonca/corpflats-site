@@ -1,26 +1,13 @@
-## Gate — Iteration 1
+## Gate — Iteration 1 (Oferta de Domingo Sem Pressa)
 
 | Agent | Role | Verdict | Source |
 |-------|------|---------|--------|
-| worker_frontend | teamwork_worker | DONE (build passed, index.js: 166.18 kB) | handoff.md |
-| worker_backend_2 | teamwork_worker | DONE (functional code complete) | handoff.md |
+| worker_backend | teamwork_worker | DONE (37/37 twin parity, 14/14 tests pass, tsc 0 errors) | handoff.md |
+| worker_frontend | teamwork_worker | DONE (Vite build exit code 0, 303.25 kB bundle) | handoff.md |
+| reviewer_backend | teamwork_reviewer | APPROVE | handoff.md |
 | reviewer_frontend | teamwork_reviewer | APPROVE | handoff.md |
-| reviewer_backend | teamwork_reviewer | REQUEST_CHANGES (twin mirror hash mismatch) | handoff.md |
-| challenger_frontend | teamwork_challenger | APPROVE | handoff.md |
-| challenger_backend | teamwork_challenger | REQUEST_CHANGES (twin mirror hash mismatch) | handoff.md |
-| auditor | teamwork_auditor | INTEGRITY VIOLATION (twin mirror desync) | handoff.md |
-
-Gate Result: **FAIL** (auditor INTEGRITY VIOLATION)
-
----
-
-## Gate — Iteration 2
-
-| Agent | Role | Verdict | Source |
-|-------|------|---------|--------|
-| worker_it2 | teamwork_worker | DONE (commit a9a329f, pushed to origin main) | handoff.md |
-| reviewer_it2 | teamwork_reviewer | APPROVE | handoff.md |
-| challenger_it2 | teamwork_challenger | APPROVE | handoff.md |
-| auditor_it2 | teamwork_auditor | CLEAN | handoff.md |
+| challenger_backend | teamwork_challenger | APPROVE (18/18 adversarial tests pass) | handoff.md |
+| challenger_sofia_ui | teamwork_challenger | APPROVE (18/18 tests pass, AGENTS.md compliant) | handoff.md |
+| auditor | teamwork_auditor | CLEAN (37/37 twin parity 100%, zero facades/cheating) | handoff.md |
 
 Gate Result: **PASS**

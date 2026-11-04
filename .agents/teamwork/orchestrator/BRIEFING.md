@@ -1,36 +1,38 @@
-# BRIEFING — 2026-11-03T00:53:00Z
+# BRIEFING — 2026-11-04T17:25:30Z
 
 ## Mission
-Executar em paralelo com equipe de agentes todas as modificações do Guest-Flow-Manager nas Prioridades 1 a 3 (Frontend lazy loading/cache, Otimização de latência de telas e GETs, Estabilidade de Node/PostgreSQL no Render).
+Implementar automação de Upsell na aba `⚡ Régua Automática` ("Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)"), disparada aos sábados às 19:00h pelo Canal #1 para reservas ativas com check-out no domingo às 12:00h, com pré-reserva temporária (hold de 30 minutos), expiração silenciosa, sincronia com a Sofia e atualização do mapa PMS e governança.
 
 ## 🔒 My Identity
 - Archetype: teamwork_orchestrator
 - Roles: orchestrator, user_liaison, human_reporter, successor
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator\
-- Original parent: parent
-- Original parent conversation ID: e5e72c62-dbab-4f9e-8c07-bd958b9cf993
+- Original parent: parent (Sentinel)
+- Original parent conversation ID: a899b28b-46fa-48cc-9f09-d6b584fd8cd4
 
 ## 🔒 My Workflow
 - **Pattern**: Project Multi-Milestone
 - **Scope document**: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
 1. **Decompose**:
-   - M1: Prioridade 1 — Frontend Bundle, Code Splitting & Caching
-   - M2: Prioridade 2 (Frontend) — UI Mount & Polling Optimizations
-   - M3: Prioridade 2 & 3 (Backend) — Backend GET Latency & State Persistence
-   - M4: Integration, Build Verification (`npm run build`), Pontual Testing & Git Push
+   - Survey: 3 parallel Explorers [COMPLETED].
+   - Milestones formulation in PROJECT.md [COMPLETED].
+   - Milestone 1 (Backend Engine & Sofia) [COMPLETED by Worker Backend: 37/37 twin parity, 14/14 tests pass, 0 tsc errors].
+   - Milestone 2 (Frontend UI na Régua) [COMPLETED by Worker Frontend: Vite build exit code 0, 303.25 kB bundle].
+   - Gate Verification [PASSED UNANIMOUSLY: 2 Reviewers APPROVE, 2 Challengers APPROVE, 1 Auditor CLEAN].
+   - Milestone 3: Final Integration, Clean Build, Targeted Verification & Git Push [COMPLETED by worker_integration: Commit 4762319 pushed].
 2. **Dispatch & Execute**:
-   - Direct: Explorers survey & investigate -> Workers execute changes -> Reviewers & Challengers & Forensic Auditor verify
+   - Direct iteration loop: Explorers -> Workers -> Reviewers & Challengers & Auditor.
 3. **On failure**:
    - Retry -> Replace -> Skip -> Redistribute -> Redesign
-4. **Succession**: At 16 spawns, write handoff.md, spawn successor
+4. **Succession**: At 16 spawns, write handoff.md, spawn successor.
 - **Work items**:
   1. Survey & Initial Exploration [completed]
-  2. Milestone Implementation [completed]
-  3. Gate 1 Verification [completed - failed on twin mirror hash mismatch]
-  4. Iteration 2 Remediation & Mirror Sync [completed - commit a9a329f pushed]
-  5. Gate 2 Final Verification [in-progress]
-- **Current phase**: Gate 2 Verification
-- **Current focus**: Reviewer Iteration 2, Challenger Iteration 2, and Auditor Iteration 2
+  2. Synthesis into PROJECT.md & Decomposition [completed]
+  3. Milestone 1 & 2 Implementation [completed]
+  4. Gate Verification (Reviewers, Challengers, Auditor) [COMPLETED - GATE RESULT: PASS]
+  5. Milestone 3: Build, Pontual Verification & Push [COMPLETED]
+- **Current phase**: 5. Sentinel Final Reporting
+- **Current focus**: Sentinel Final Reporting to parent `a899b28b-46fa-48cc-9f09-d6b584fd8cd4`
 
 ## 🔒 Key Constraints
 - NEVER write, modify, or create source code files directly.
@@ -38,48 +40,47 @@ Executar em paralelo com equipe de agentes todas as modificações do Guest-Flow
 - NEVER investigate or explore the problem at the code level — dispatch Explorers for technical investigation.
 - Always git push on commit.
 - On altering artifacts/limpeza/src, build with npm run build in artifacts/limpeza and include dist in commit.
+- Paridade dos Arquivos Gêmeos: artifacts/api-server/ <-> scripts/ (paridade 100% SHA-256).
 - NEVER run global test suites, test scans, or batch tests (tests/*.test.mjs is strictly forbidden). Run strictly targeted unit tests if applicable. No test muting/masking in code.
 - Never reuse a subagent after it has delivered its handoff — always spawn fresh.
 
 ## Current Parent
-- Conversation ID: e5e72c62-dbab-4f9e-8c07-bd958b9cf993
-- Updated: 2026-11-02T23:17:00Z
+- Conversation ID: a899b28b-46fa-48cc-9f09-d6b584fd8cd4
+- Updated: 2026-11-04T17:25:30Z
 
 ## Key Decisions Made
-- Iteration 2 remediation completely restored twin mirror parity (`262681f238a9...`, 37/37 pass).
-- Targeted tests (8/8, 12/12, 15/15) all pass.
-- Build in artifacts/limpeza verified with 166.18 kB index.js.
-- Deliverables committed and pushed to remote origin main (`a9a329f`).
+- Gate Result: PASS. All 5 verification agents approved unanimously.
+- Milestone 3 (Worker Integration) successfully completed:
+  - 37/37 twin parity 100% PASS (`node scripts/check-twin-parity.mjs`)
+  - Frontend production build exit code 0 (`npm run build` in `artifacts/limpeza`, 31.61s)
+  - 32/32 tests passed (14/14 engine + 18/18 adversarial)
+  - Git commit `4762319` pushed to `origin/main` (`4445b4b..4762319`).
+- Heartbeat cron cancelled.
 
 ## Team Roster
 | Agent | Type | Work Item | Status | Conv ID |
 |-------|------|-----------|--------|---------|
-| explorer_1 | teamwork_explorer | Survey Priority 1 (Frontend Bundle & Cache) | completed | 6903ceff-528d-4755-9221-543c8d62b5f3 |
-| explorer_2 | teamwork_explorer | Survey Priority 2 (PMS UI & Polling) | completed | 0d81e635-384b-4e07-9b37-160af98ed1ca |
-| explorer_3 | teamwork_explorer | Survey Priorities 2 & 3 (Backend Latency & Stability) | completed | 05fe5750-b057-4d5b-b63f-411ecf70fdab |
-| worker_frontend | teamwork_worker | Implement Frontend (Priorities 1 & 2) | completed | 8635949a-7137-4ad5-b3c3-7cf267a7f019 |
-| worker_backend | teamwork_worker | Implement Backend (Priorities 1, 2 & 3) | failed (hung) | 416a328c-f85b-4153-9874-cd1417ae33cf |
-| worker_backend_2 | teamwork_worker | Implement Backend Replacement | completed | 0cd3bdb0-e203-426c-9b73-10cfd1b90391 |
-| reviewer_frontend | teamwork_reviewer | Review Frontend Changes | completed (APPROVE) | c8a64fc5-e606-4f0c-a481-4138b0fa8381 |
-| reviewer_backend | teamwork_reviewer | Review Backend Changes | completed (REQUEST_CHANGES) | 66a5877d-5e44-40fb-ac00-e905dc10e853 |
-| challenger_frontend | teamwork_challenger | Empirically Challenge Frontend | completed (APPROVE) | 4d573779-914f-47aa-afd1-93bf4fb9170f |
-| challenger_backend | teamwork_challenger | Empirically Challenge Backend | completed (REQUEST_CHANGES) | 51afcf9d-7359-470d-8f47-1eb2e0d75776 |
-| auditor | teamwork_auditor | Forensic Integrity Audit | completed (INTEGRITY VIOLATION) | e97084a6-1043-4649-ad08-7df34c8603e8 |
-| explorer_it2 | teamwork_explorer | Audit Remediation Explorer | completed | 98d1dc38-347c-46f5-9642-d9ce8112de91 |
-| worker_it2 | teamwork_worker | Final Remediation Worker | completed | d71993ef-e5fc-4650-b319-f803a468891f |
-| reviewer_it2 | teamwork_reviewer | Final Review Sign-off | in-progress | 9ff1c185-4c85-45c8-a206-930ef7440835 |
-| challenger_it2 | teamwork_challenger | Final Empirical Challenge | in-progress | 440676e9-5af4-4b46-a459-8c377ba077c6 |
-| auditor_it2 | teamwork_auditor | Final Forensic Audit | in-progress | 3b7e12ae-7bfc-4620-81a6-5d8b89777a53 |
+| survey_explorer_frontend | teamwork_explorer | Survey R1: Frontend Régua Automática UI & Settings | completed | 3e18119d-1952-4e9d-a978-68f6bf762952 |
+| survey_explorer_backend | teamwork_explorer | Survey R2, R3, R4: Backend Eligibility, Hold, Webhook & PMS | completed | 0f1d26a8-8004-46cc-a505-efa25975c938 |
+| survey_explorer_sofia | teamwork_explorer | Survey R5: 2-Balloon Dispatch, Sofia AI Sync & Context | completed | d28fb5f4-6f11-4463-896e-f88d1214112b |
+| worker_frontend | teamwork_worker | M2: Frontend UI na Régua Automática & Live Preview | completed | 1a30519e-2a7c-4090-adb1-4831cee136d0 |
+| worker_backend | teamwork_worker | M1: Backend Engine, Scheduler, Sofia Sync & Webhook | completed | dfe8262c-8b60-46bd-8af8-e4b0c4f64e70 |
+| reviewer_backend | teamwork_reviewer | Review Milestone 1 Backend & Sofia Implementation | completed (APPROVE) | 16cb6611-c207-4775-ba4f-0c524a0bd371 |
+| reviewer_frontend | teamwork_reviewer | Review Milestone 2 Frontend UI Implementation | completed (APPROVE) | e7baba33-2f18-40a0-8ba0-b5aa9ad06316 |
+| challenger_backend | teamwork_challenger | Empirical Verification of Backend Logic & Edge Cases | completed (APPROVE) | a776cfc5-b7da-4028-8536-ba709049dadc |
+| challenger_sofia_ui | teamwork_challenger | Empirical Verification of Sofia Tool & Frontend Bundle | completed (APPROVE) | 2435d0d0-5eef-4f01-980c-f4ea5f916cd5 |
+| auditor | teamwork_auditor | Forensic Integrity Audit & Twin Parity Check | completed (CLEAN) | aeb1922f-55cc-4d33-8b54-ced7dd7becb1 |
+| worker_integration | teamwork_worker | M3: Integration, Build, Twin Parity & Git Push | completed | 38628773-d0d6-4ddd-ba01-1f49d482f0e0 |
 
 ## Succession Status
-- Succession required: yes (threshold 16 reached, awaiting completion of pending subagents)
-- Spawn count: 16 / 16
-- Pending subagents: 9ff1c185-4c85-45c8-a206-930ef7440835, 440676e9-5af4-4b46-a459-8c377ba077c6, 3b7e12ae-7bfc-4620-81a6-5d8b89777a53
+- Succession required: no
+- Spawn count: 11 / 16
+- Pending subagents: none
 - Predecessor: none
 - Successor: not yet spawned
 
 ## Active Timers
-- Heartbeat cron: 960bd884-3e1c-4b5c-abb1-b3a053aa63cc/task-24
+- Heartbeat cron: cancelled
 - Safety timer: none
 
 ## Artifact Index
@@ -89,3 +90,4 @@ Executar em paralelo com equipe de agentes todas as modificações do Guest-Flow
 - progress.md — Liveness & status log
 - PROJECT.md — Architecture, milestones, code layout & interface contracts
 - GATE_STATUS.md — Structured gate verdicts tracking
+- handoff.md — Orchestrator final handoff report
