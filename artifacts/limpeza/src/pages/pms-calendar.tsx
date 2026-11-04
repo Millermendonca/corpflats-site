@@ -6617,13 +6617,15 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                             if (!formFlatId) {
                               return loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat";
                             }
+                            const todayIso = format(new Date(), "yyyy-MM-dd");
+                            const isFutureCheckin = formCheckin > todayIso;
                             const selFlat = data.flats.find(f => String(f.id) === String(formFlatId));
                             const selStat = fairShareResult?.allStats?.find(
                               (s: any) => Number(s.flat?.id) === Number(formFlatId) || (selFlat && String(s.flat?.number) === String(selFlat.number))
                             );
-                            const cleanSt = selStat?.cleaningStatus || (selFlat as any)?.cleaningStatus || "clean";
-                            const isDirty = cleanSt === "dirty" || Boolean(selStat?.isDirty);
-                            const isCleaningNow = cleanSt === "cleaning_now" || Boolean(selStat?.isCleaningNow);
+                            const cleanSt = isFutureCheckin ? "clean" : (selStat?.cleaningStatus || (selFlat as any)?.cleaningStatus || "clean");
+                            const isDirty = !isFutureCheckin && (cleanSt === "dirty" || Boolean(selStat?.isDirty));
+                            const isCleaningNow = !isFutureCheckin && (cleanSt === "cleaning_now" || Boolean(selStat?.isCleaningNow));
                             const hasSameDay = Boolean(selStat?.hasCheckoutOnCheckinDay);
                             const isAvail = selStat ? Boolean(selStat.isAvailable) : true;
                             const isBest = !selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId);
@@ -6683,13 +6685,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                             !isAvail &&
                             !conflictName &&
                             Boolean(blockItem || flatStat?.hasServiceOrderConflict || flatStat?.isFlatBlockedStatus);
-                          const hasSameDayTurnover = flatStat ? Boolean(flatStat.hasCheckoutOnCheckinDay) : localSameDayCheckout;
-                          const hasCompletedSameDayCheckout = Boolean(flatStat?.hasCompletedSameDayCheckout);
-                          const cleaningStatus = flatStat?.cleaningStatus || (f as any).cleaningStatus || "clean";
-                          const isDirty = cleaningStatus === "dirty" || Boolean(flatStat?.isDirty);
-                          const isCleaningNow = cleaningStatus === "cleaning_now" || Boolean(flatStat?.isCleaningNow);
-                          const isOccupiedToday = Boolean(flatStat?.isOccupiedToday);
                           const todayIso = format(new Date(), "yyyy-MM-dd");
+                          const isFutureCheckin = formCheckin > todayIso;
+                          const hasSameDayTurnover = flatStat ? Boolean(flatStat.hasCheckoutOnCheckinDay) : localSameDayCheckout;
+                          const hasCompletedSameDayCheckout = !isFutureCheckin && Boolean(flatStat?.hasCompletedSameDayCheckout);
+                          const cleaningStatus = isFutureCheckin ? "clean" : (flatStat?.cleaningStatus || (f as any).cleaningStatus || "clean");
+                          const isDirty = !isFutureCheckin && (cleaningStatus === "dirty" || Boolean(flatStat?.isDirty));
+                          const isCleaningNow = !isFutureCheckin && (cleaningStatus === "cleaning_now" || Boolean(flatStat?.isCleaningNow));
                           const daysCount = flatStat?.monthOccupiedDays || 0;
 
                           let stateBadgeText = `🟢 Vago & Limpo (${daysCount}d)`;
@@ -6708,10 +6710,6 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                             stateBadgeText = `🧽 Vago • Em Limpeza (${daysCount}d)`;
                             stateBadgeClass = "text-sky-700 dark:text-sky-300 bg-sky-500/15 border border-sky-500/30";
                             bestSuffix = "Em Limpeza";
-                          } else if (isOccupiedToday && formCheckin > todayIso) {
-                            stateBadgeText = `🟢 Livre no Check-in • Ocupado Hoje (${daysCount}d)`;
-                            stateBadgeClass = "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20";
-                            bestSuffix = "Livre no Check-in";
                           }
 
                           return (
@@ -6800,14 +6798,16 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
                 {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
                 {!selectedRes && fairShareResult?.bestFlatNumber && (() => {
+                  const todayIso = format(new Date(), "yyyy-MM-dd");
+                  const isFutureCheckin = formCheckin > todayIso;
                   const bestStat = fairShareResult?.allStats?.find(
                     (s: any) => Number(s.flat?.id) === Number(fairShareResult.bestFlatId) || String(s.flat?.number) === String(fairShareResult.bestFlatNumber)
                   );
                   const bestStatusLabel = bestStat?.hasCheckoutOnCheckinDay
                     ? "🔄 Saída no Dia"
-                    : bestStat?.isDirty || bestStat?.cleaningStatus === "dirty"
+                    : !isFutureCheckin && (bestStat?.isDirty || bestStat?.cleaningStatus === "dirty")
                     ? "🧹 Vago & Sujo"
-                    : bestStat?.isCleaningNow || bestStat?.cleaningStatus === "cleaning_now"
+                    : !isFutureCheckin && (bestStat?.isCleaningNow || bestStat?.cleaningStatus === "cleaning_now")
                     ? "🧽 Em Limpeza"
                     : "🟢 Vago & Limpo";
                   return (
@@ -6843,14 +6843,16 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
                 {/* Alerta Operacional: Quarto Vago & Sujo ou Saída no Dia Selecionado */}
                 {(() => {
+                  const todayIso = format(new Date(), "yyyy-MM-dd");
+                  const isFutureCheckin = formCheckin > todayIso;
                   const selFlat = data.flats.find(f => String(f.id) === String(formFlatId));
                   const selectedStat = fairShareResult?.allStats?.find(
                     (s: any) => String(s.flat?.id) === String(formFlatId) || (selFlat && String(s.flat?.number) === String(selFlat.number))
                   );
                   const isAvail = selectedStat ? Boolean(selectedStat.isAvailable) : true;
                   if (!isAvail) return null;
-                  const cleanSt = selectedStat?.cleaningStatus || (selFlat as any)?.cleaningStatus || "clean";
-                  const isDirty = cleanSt === "dirty" || Boolean(selectedStat?.isDirty);
+                  const cleanSt = isFutureCheckin ? "clean" : (selectedStat?.cleaningStatus || (selFlat as any)?.cleaningStatus || "clean");
+                  const isDirty = !isFutureCheckin && (cleanSt === "dirty" || Boolean(selectedStat?.isDirty));
                   const hasSameDay = Boolean(selectedStat?.hasCheckoutOnCheckinDay);
                   if (!isDirty && !hasSameDay) return null;
 

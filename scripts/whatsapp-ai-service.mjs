@@ -14540,12 +14540,15 @@ export function selectFairShareFlat(db, checkinDate, checkoutDate, excludeResId 
       }
       return false;
     });
+    const isFutureCheckin = checkinDate > todayStr;
     const rawCleanStatus = String(flat.cleaningStatus || "clean").toLowerCase();
     let cleaningStatus = "clean";
-    if (hasInProgressCleaning || rawCleanStatus === "cleaning_now" || rawCleanStatus === "in_progress") {
-      cleaningStatus = "cleaning_now";
-    } else if (hasPendingCleaning || rawCleanStatus === "dirty" || rawCleanStatus === "sujo" || rawCleanStatus === "pending") {
-      cleaningStatus = "dirty";
+    if (!isFutureCheckin) {
+      if (hasInProgressCleaning || rawCleanStatus === "cleaning_now" || rawCleanStatus === "in_progress") {
+        cleaningStatus = "cleaning_now";
+      } else if (hasPendingCleaning || rawCleanStatus === "dirty" || rawCleanStatus === "sujo" || rawCleanStatus === "pending") {
+        cleaningStatus = "dirty";
+      }
     }
 
     // Prioridade na alocação:

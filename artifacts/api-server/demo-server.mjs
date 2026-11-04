@@ -25937,33 +25937,39 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
       r.cleaningRequest?.type !== "instruction"
     );
 
-    let cleaningStatus = "clean";
-    let cleaningLabel = "Limpo";
+    let todayCleaningStatus = "clean";
+    let todayCleaningLabel = "Limpo";
     if (reqToday) {
       const st = String(reqToday.cleaningRequest?.status || reqToday.status || "").toLowerCase();
       if (st === "cleaning_now" || st === "in_progress") {
-        cleaningStatus = "cleaning_now";
-        cleaningLabel = "Limpando";
+        todayCleaningStatus = "cleaning_now";
+        todayCleaningLabel = "Limpando";
       } else if (st === "dirty" || st === "pending") {
-        cleaningStatus = "dirty";
-        cleaningLabel = "Sujo";
+        todayCleaningStatus = "dirty";
+        todayCleaningLabel = "Sujo";
       } else if (st === "clean" || st === "inspected") {
-        cleaningStatus = "clean";
-        cleaningLabel = "Limpo";
+        todayCleaningStatus = "clean";
+        todayCleaningLabel = "Limpo";
       }
     } else if (flat.cleaningStatus === "cleaning_now" || flat.cleaningStatus === "in_progress") {
-      cleaningStatus = "cleaning_now";
-      cleaningLabel = "Limpando";
+      todayCleaningStatus = "cleaning_now";
+      todayCleaningLabel = "Limpando";
     } else if (flat.cleaningStatus === "dirty" || flat.cleaningStatus === "pending") {
-      cleaningStatus = "dirty";
-      cleaningLabel = "Sujo";
+      todayCleaningStatus = "dirty";
+      todayCleaningLabel = "Sujo";
     }
+
+    // O status de limpeza atual (hoje) só se aplica quando o check-in da reserva é para hoje.
+    // Para datas futuras (effectiveCheckin > todayStr), o apartamento já estará limpo até a data da entrada.
+    const isFutureCheckin = effectiveCheckin > todayStr;
+    const cleaningStatus = isFutureCheckin ? "clean" : todayCleaningStatus;
+    const cleaningLabel = isFutureCheckin ? "Limpo" : todayCleaningLabel;
 
     const isCleanReqCheckedOut = Boolean(
       reqToday && (
         Boolean(reqToday.isVacant) ||
-        cleaningStatus === "cleaning_now" ||
-        cleaningStatus === "clean"
+        todayCleaningStatus === "cleaning_now" ||
+        todayCleaningStatus === "clean"
       )
     );
 
@@ -26146,9 +26152,6 @@ export function calculateFairShareStats(checkinDate, checkoutDate, excludeResId 
     } else if (isDirty) {
       operationalStatus = "vago_sujo";
       operationalLabel = hasCompletedSameDayCheckout ? "Vago & Sujo (Saiu Hoje)" : "Vago & Sujo";
-    } else if (effectiveCheckin > todayStr && isOccupiedToday) {
-      operationalStatus = "livre_checkin_ocupado_hoje";
-      operationalLabel = "Livre no Check-in • Ocupado Hoje";
     } else {
       operationalStatus = "vago_limpo";
       operationalLabel = "Vago & Limpo";
