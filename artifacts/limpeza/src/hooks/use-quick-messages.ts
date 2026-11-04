@@ -124,29 +124,49 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
   let requesterName = ""
   let requesterPhone = ""
   let requesterEmail = ""
-  let requesterType: "guest" | "other_person" | "company" = resItem?.requesterType || "guest"
+  let rawReqType = String(resItem?.requesterType || "guest")
+  if (rawReqType === "agency_b2b" || rawReqType === "agency") rawReqType = "company"
+  if (rawReqType === "third_party") rawReqType = "other_person"
+  let requesterType: "guest" | "other_person" | "company" = (
+    rawReqType === "other_person" || rawReqType === "company" ? rawReqType : "guest"
+  )
+  const isB2bOrAgency = Boolean(
+    resItem?.agencyId ||
+    resItem?.agencyName ||
+    resItem?.agencyTradeName ||
+    String(resItem?.channel || "").toLowerCase() === "b2b" ||
+    resItem?.requesterType === "agency" ||
+    resItem?.requesterType === "agency_b2b"
+  )
   if (requesterType === "guest") {
-    if (resItem?.agencyId || resItem?.agencyName || String(resItem?.channel || "").toLowerCase() === "b2b" || resItem?.companyId || resItem?.companyName) {
+    if (isB2bOrAgency || resItem?.companyId || resItem?.companyName) {
       requesterType = "company"
     } else if (
-      resItem?.requesterInfo &&
-      (resItem.requesterInfo.name || resItem.requesterInfo.phone || resItem.requesterInfo.email)
+      (resItem?.requesterInfo &&
+        (resItem.requesterInfo.name || resItem.requesterInfo.phone || resItem.requesterInfo.email)) ||
+      resItem?.requesterName ||
+      resItem?.requesterPhone ||
+      resItem?.requesterEmail
     ) {
       requesterType = "other_person"
     }
   }
   let requesterCompany = ""
 
-  if (requesterType === "other_person" && resItem?.requesterInfo) {
-    requesterName = (resItem.requesterInfo.name || "").trim()
-    requesterPhone = (resItem.requesterInfo.phone || "").trim()
-    requesterEmail = String(resItem.requesterInfo.email || "").trim().toLowerCase()
+  if (requesterType === "other_person") {
+    requesterName = (resItem?.requesterInfo?.name || resItem?.requesterName || "").trim()
+    requesterPhone = (resItem?.requesterInfo?.phone || resItem?.requesterPhone || "").trim()
+    requesterEmail = String(resItem?.requesterInfo?.email || resItem?.requesterEmail || "").trim().toLowerCase()
   } else if (requesterType === "company") {
-    if (resItem?.agencyId || resItem?.agencyName || String(resItem?.channel || "").toLowerCase() === "b2b") {
-      requesterCompany = resItem?.agencyTradeName || resItem?.agencyName || resItem?.companyName || "Agência B2B"
-      requesterName = (resItem?.agencyAgentName || resItem?.agencyTradeName || resItem?.agencyName || resItem?.companyName || "Agência B2B").trim()
-      requesterPhone = (resItem?.agencyAgentPhone || "").trim()
-      requesterEmail = String(resItem?.agencyAgentEmail || "").trim().toLowerCase()
+    if (isB2bOrAgency) {
+      const rawAgent = String(resItem?.agencyAgentName || "").trim()
+      const validAgent = rawAgent && !/^webservice$/i.test(rawAgent) ? rawAgent : ""
+      const rawReqInfo = String(resItem?.requesterInfo?.name || resItem?.requesterName || "").trim()
+      const validReqInfo = rawReqInfo && !/^webservice$/i.test(rawReqInfo) ? rawReqInfo : ""
+      requesterCompany = (resItem?.agencyTradeName || resItem?.agencyName || resItem?.companyName || "Agência B2B").trim()
+      requesterName = (validAgent || validReqInfo || requesterCompany || "Agência B2B").trim()
+      requesterPhone = (resItem?.agencyAgentPhone || resItem?.requesterInfo?.phone || resItem?.requesterPhone || "").trim()
+      requesterEmail = String(resItem?.agencyAgentEmail || resItem?.requesterInfo?.email || resItem?.requesterEmail || "").trim().toLowerCase()
     } else {
       requesterCompany = resItem?.companyName || ""
       let companyObj = null
@@ -159,13 +179,18 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
           c.corporateName?.toLowerCase() === resItem.companyName?.toLowerCase()
         )
       }
+      const explicitReqName = (resItem?.requesterInfo?.name || resItem?.requesterName || "").trim()
+      const explicitReqPhone = (resItem?.requesterInfo?.phone || resItem?.requesterPhone || "").trim()
+      const explicitReqEmail = String(resItem?.requesterInfo?.email || resItem?.requesterEmail || "").trim().toLowerCase()
       if (companyObj) {
-        requesterName = (companyObj.contactPerson || companyObj.tradeName || resItem.companyName || "Solicitante Corporativo").trim()
-        requesterPhone = (companyObj.phone || "").trim()
-        requesterEmail = String(companyObj.email || companyObj.financialEmail || "").trim().toLowerCase()
+        requesterName = (explicitReqName || companyObj.contactPerson || companyObj.tradeName || resItem.companyName || "Solicitante Corporativo").trim()
+        requesterPhone = (explicitReqPhone || companyObj.phone || "").trim()
+        requesterEmail = (explicitReqEmail || String(companyObj.email || companyObj.financialEmail || "").trim().toLowerCase())
         requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany
       } else {
-        requesterName = resItem.companyName || "Solicitante Corporativo"
+        requesterName = (explicitReqName || resItem.companyName || "Solicitante Corporativo").trim()
+        requesterPhone = explicitReqPhone
+        requesterEmail = explicitReqEmail
       }
     }
   }

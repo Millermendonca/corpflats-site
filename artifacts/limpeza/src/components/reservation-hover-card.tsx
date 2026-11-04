@@ -187,6 +187,26 @@ export function ReservationHoverCard({
   const finalWaPhone = cleanWhatsAppPhone(rawPhone)
   const recipients = getReservationRecipients(resItem)
 
+  const requesterDisplayName = (() => {
+    const rawAgent = String(resItem.agencyAgentName || "").trim()
+    const validAgent = rawAgent && !/^webservice$/i.test(rawAgent) ? rawAgent : ""
+    const rawReqInfoName = String(resItem.requesterInfo?.name || resItem.requesterName || "").trim()
+    const validReqInfoName = rawReqInfoName && !/^webservice$/i.test(rawReqInfoName) ? rawReqInfoName : ""
+    const fallbackOrgName = String(resItem.agencyTradeName || resItem.agencyName || resItem.companyName || "").trim()
+
+    const candidate =
+      validReqInfoName ||
+      validAgent ||
+      (recipients.requester.isDifferentFromGuest ? recipients.requester.name : "") ||
+      fallbackOrgName
+
+    if (!candidate) return null
+    if (candidate.toLowerCase() === guestName.trim().toLowerCase()) {
+      return null
+    }
+    return candidate
+  })()
+
   const flatNumber = resItem.flatNumber || flat?.number || "Flat"
   const isCamposCityStr = (s?: string) => {
     if (!s) return false
@@ -526,6 +546,19 @@ export function ReservationHoverCard({
           <h4 className="text-sm font-black text-slate-900 dark:text-slate-50 truncate leading-snug">
             {guestName}
           </h4>
+
+          {requesterDisplayName && (
+            <div
+              className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-300 font-medium truncate"
+              title={`Solicitante: ${requesterDisplayName}`}
+            >
+              <span className="shrink-0">👥</span>
+              <span className="text-slate-500 dark:text-slate-400 shrink-0">Solicitante:</span>
+              <span className="font-bold text-slate-800 dark:text-slate-100 truncate">
+                {requesterDisplayName}
+              </span>
+            </div>
+          )}
 
           {(resItem.agencyName || resItem.agencyTradeName || resItem.companyName || resItem.b2bLocatorRloc || resItem.b2bReservationNumber) && (
             <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
