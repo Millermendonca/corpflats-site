@@ -185,12 +185,18 @@ export function injectSessionContext(params = {}) {
     const checkinDate = String(sourceRes.checkinDate || '').slice(0, 10);
     const checkoutDate = String(sourceRes.checkoutDate || '').slice(0, 10);
     const rawPay = String(sourceRes.paymentStatus || '').toLowerCase();
+    const rawStatus = String(sourceRes.status || '').toLowerCase();
     const isPaid =
       rawPay === 'paid' ||
       rawPay === 'pago' ||
       rawPay === 'pago_total' ||
       rawPay === 'pago_integralmente' ||
       rawPay === 'confirmado';
+    const isUnconfirmedPreRes =
+      rawStatus === 'pre_reserva' ||
+      rawStatus === 'pendente' ||
+      rawStatus === 'pending_payment' ||
+      rawStatus === 'expirada';
 
     const includeBreakfast = Boolean(
       sourceRes.includeBreakfast ||
@@ -222,6 +228,7 @@ export function injectSessionContext(params = {}) {
       check_in: `${checkinDate}T${sourceRes.checkinTime || '14:00'}:00`,
       check_out: `${checkoutDate}T${sourceRes.lateCheckoutTime || sourceRes.checkoutTime || '12:00'}:00`,
       status_pagamento: isPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE',
+      status_reserva: isUnconfirmedPreRes ? 'PRE_RESERVA' : 'CONFIRMADA',
       plano_tarifa: includeBreakfast ? 'COM_CAFE_DA_MANHA' : 'SOMENTE_HOSPEDAGEM',
       cafe_incluso: includeBreakfast,
       status_pre_checkin_fnrh: preCheckinDone ? 'CONCLUIDO' : 'PENDENTE',
@@ -233,9 +240,9 @@ export function injectSessionContext(params = {}) {
       wifi_rede: `apto ${flatNum}`,
       wifi_senha: wifiPassword,
       veiculo: sourceRes.vehicle || null,
-      link_pre_checkin: `${baseUrl}/pre-checkin/${resCode}`,
+      link_pre_checkin: isUnconfirmedPreRes ? null : `${baseUrl}/pre-checkin/${resCode}`,
       link_comprovante_pagamento: `${baseUrl}/minha-reserva/${resCode}`,
-      link_agendamento_cafe: `${baseUrl}/minha-reserva/${resCode}/cafe`,
+      link_agendamento_cafe: (!isUnconfirmedPreRes && includeBreakfast) ? `${baseUrl}/minha-reserva/${resCode}/cafe` : null,
     };
   }
 
@@ -1150,16 +1157,23 @@ export const consultarDetalhesReservaTool = {
         context.runtime?.db?.settings?.baseUrl ||
         (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
         'https://corpflats.com.br';
-      const linkPreCheckin = `${baseUrl}/pre-checkin/${reserva.id}`;
+      const isPreResUnpaid =
+        reserva.status_reserva === 'PRE_RESERVA' ||
+        reserva.status_pagamento === 'PENDENTE';
+      const linkPreCheckin = isPreResUnpaid ? null : `${baseUrl}/pre-checkin/${reserva.id}`;
       const linkPortalReserva = `${baseUrl}/minha-reserva/${reserva.id}`;
-      const linkCafe = `${baseUrl}/minha-reserva/${reserva.id}/cafe`;
+      const linkCafe = (!isPreResUnpaid && reserva.cafe_incluso !== false) ? `${baseUrl}/minha-reserva/${reserva.id}/cafe` : null;
 
-      const msg =
-        `Apresente ao hóspede com clareza os detalhes da reserva *${reserva.id}* no *${reserva.nome_imovel}*: ` +
-        `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, ` +
-        `Status de pagamento: ${reserva.status_pagamento}, Wi-Fi rede "${reserva.wifi_rede}" (senha: "${reserva.wifi_senha}"), ` +
-        `Link oficial para Pré-Check-in Digital (FNRH, foto do documento e assinatura): ${linkPreCheckin}, ` +
-        `Link do Portal do Hóspede / Comprovante de Pagamento (Recibo): ${linkPortalReserva}.`;
+      const msg = isPreResUnpaid
+        ? `Apresente ao cliente os detalhes da pré-reserva *${reserva.id}* no *${reserva.nome_imovel}*: ` +
+          `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, ` +
+          `Status: Pré-Reserva aguardando confirmação do pagamento. ` +
+          `Informe o link do Portal da Reserva para pagamento (${linkPortalReserva}) e explique que o pré-check-in digital e o agendamento do café da manhã serão liberados assim que o pagamento for confirmado.`
+        : `Apresente ao hóspede com clareza os detalhes da reserva *${reserva.id}* no *${reserva.nome_imovel}*: ` +
+          `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, ` +
+          `Status de pagamento: ${reserva.status_pagamento}, Wi-Fi rede "${reserva.wifi_rede}" (senha: "${reserva.wifi_senha}"), ` +
+          `Link oficial para Pré-Check-in Digital (FNRH, foto do documento e assinatura): ${linkPreCheckin}, ` +
+          `Link do Portal do Hóspede / Comprovante de Pagamento (Recibo): ${linkPortalReserva}.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -1170,8 +1184,8 @@ export const consultarDetalhesReservaTool = {
           data_checkout: reserva.data_checkout,
           status_pagamento: reserva.status_pagamento,
           quantidade_hospedes: reserva.quantidade_hospedes || 1,
-          wifi_rede: reserva.wifi_rede,
-          wifi_senha: reserva.wifi_senha,
+          wifi_rede: isPreResUnpaid ? null : reserva.wifi_rede,
+          wifi_senha: isPreResUnpaid ? null : reserva.wifi_senha,
           link_pre_checkin: linkPreCheckin,
           link_comprovante_pagamento: linkPortalReserva,
           link_agendamento_cafe: linkCafe,

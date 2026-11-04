@@ -2512,7 +2512,7 @@ export default function GuestPortal() {
                     <DoorOpen className="w-4 h-4 text-slate-600 shrink-0" />
                     <span>Check-out Expresso</span>
                   </DropdownMenuItem>
-                  {hasBreakfast && (
+                  {hasBreakfast && !isPreReservaUnpaid && !isExpiredPreReservation && !isCancelled && (
                     <DropdownMenuItem
                       onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
                       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
@@ -4342,35 +4342,49 @@ export default function GuestPortal() {
             )}
 
             {/* Botões de Ação do Café */}
-            <div className="flex flex-col gap-2.5 pt-1 w-full">
-              <Button
-                onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
-                className="w-full h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center bg-amber-700 hover:bg-amber-800 active:scale-[0.99] text-white font-semibold text-xs sm:text-sm rounded-2xl shadow-sm shadow-amber-900/10 inline-flex items-center justify-center gap-2.5 transition-all"
-              >
-                <Coffee className="w-5 h-5 shrink-0" />
-                <span>{breakfastOrder ? "Alterar ou Agendar Outros Dias" : "Personalizar Cardápio & Horário do Café"}</span>
-                <ArrowRight className="w-5 h-5 shrink-0" />
-              </Button>
+            {isPreReservaUnpaid || isExpiredPreReservation || isCancelled ? (
+              <div className="p-3.5 rounded-2xl bg-amber-50/90 border border-amber-200/90 text-amber-900 text-xs leading-relaxed flex items-start gap-2.5">
+                <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="font-bold block text-amber-950">
+                    {isExpiredPreReservation ? "Pré-reserva expirada" : "Aguardando confirmação da reserva"}
+                  </strong>
+                  <span>
+                    O link para personalizar o cardápio e agendar o horário de entrega do seu café da manhã é liberado exclusivamente após a confirmação do pagamento da reserva.
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2.5 pt-1 w-full">
+                <Button
+                  onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
+                  className="w-full h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center bg-amber-700 hover:bg-amber-800 active:scale-[0.99] text-white font-semibold text-xs sm:text-sm rounded-2xl shadow-sm shadow-amber-900/10 inline-flex items-center justify-center gap-2.5 transition-all"
+                >
+                  <Coffee className="w-5 h-5 shrink-0" />
+                  <span>{breakfastOrder ? "Alterar ou Agendar Outros Dias" : "Personalizar Cardápio & Horário do Café"}</span>
+                  <ArrowRight className="w-5 h-5 shrink-0" />
+                </Button>
 
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleCopyCafeLink}
-                className="w-full h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-2xl bg-stone-50 hover:bg-stone-100 border border-stone-200/90 text-stone-700 font-semibold text-xs sm:text-sm shadow-2xs transition-all inline-flex items-center justify-center gap-2"
-              >
-                {copiedCafeLink ? (
-                  <>
-                    <Check className="w-5 h-5 shrink-0 text-emerald-600" />
-                    <span>Link do Café Copiado para a Área de Transferência!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-5 h-5 shrink-0 text-stone-500" />
-                    <span>Copiar Link do Café</span>
-                  </>
-                )}
-              </Button>
-            </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleCopyCafeLink}
+                  className="w-full h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-2xl bg-stone-50 hover:bg-stone-100 border border-stone-200/90 text-stone-700 font-semibold text-xs sm:text-sm shadow-2xs transition-all inline-flex items-center justify-center gap-2"
+                >
+                  {copiedCafeLink ? (
+                    <>
+                      <Check className="w-5 h-5 shrink-0 text-emerald-600" />
+                      <span>Link do Café Copiado para a Área de Transferência!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-5 h-5 shrink-0 text-stone-500" />
+                      <span>Copiar Link do Café</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
           </Card>
         )}
 

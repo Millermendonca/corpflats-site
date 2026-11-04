@@ -33283,8 +33283,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       mpInitPoint: (hideFinancialForGuest || isExpiredPreRes) ? null : (r.mpInitPoint || null),
       hasBreakfast,
       includeBreakfast: hasBreakfast,
-      breakfastToken,
-      breakfastLink,
+      breakfastToken: (isPortalUnlocked && !isPreReservationBlocked(r)) ? breakfastToken : null,
+      breakfastLink: (isPortalUnlocked && !isPreReservationBlocked(r)) ? breakfastLink : null,
       earlyCheckinAuthorized: Boolean(r.earlyCheckinAuthorized || hasEarlyCheckinBenefit),
       hasEarlyCheckinBenefit,
       flatNumber: r.flatNumber,
@@ -33310,7 +33310,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       minibarOrders: getVisibleReservationMinibarOrders(r)
     },
     hasBreakfast,
-    breakfastLink,
+    breakfastLink: (isPortalUnlocked && !isPreReservationBlocked(r)) ? breakfastLink : null,
     checkinPolicy: `Check-in padrão a partir das ${checkinTimeStr} (Check-in antecipado liberado na portaria mediante disponibilidade).`,
     checkinTime: checkinTimeStr,
     checkoutTime: checkoutTimeStr,
@@ -51083,6 +51083,15 @@ function computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl
     return "Reserva cancelada no calendário do hotel";
   }
 
+  // 1b. Pré-reserva ainda não confirmada (aguardando pagamento) ou expirada
+  if (isPreReservationBlocked(matchingRes)) {
+    const st = String(matchingRes.status || "").toLowerCase();
+    if (st === "expirada") {
+      return "Pré-reserva expirada sem confirmação de pagamento";
+    }
+    return "Pré-reserva aguardando confirmação de pagamento (pedido de café liberado apenas após confirmação)";
+  }
+
   // 2. Check-out antecipado registrado na reserva (com rastreio de quem informou)
   const reportedByLabel = matchingRes.earlyCheckoutReportedBy ||
     matchingRes.checkoutReportedBy ||
@@ -51253,8 +51262,10 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
     return res.status(404).json({ error: "Reserva não encontrada no calendário do hotel." });
   }
 
-  // Check if cancelled
-  const isCancelled = r.status === "cancelada" || r.status === "cancelado";
+  // Check if cancelled or unconfirmed pre-reservation
+  const isCancelled = r.status === "cancelada" || r.status === "cancelado" || r.status === "cancelled";
+  const isPreReservation = isPreReservationBlocked(r);
+  const isExpiredPreReservation = String(r.status || "").toLowerCase() === "expirada";
 
   // Check if breakfast is included
   const hasBreakfast = Boolean(
@@ -51307,7 +51318,7 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
     const isTomorrow = dateStr === getOffsetDateStr(1);
     const isClosedTodayAfter5am = isToday && (nowBrl.hour >= 5);
     const isClosedTomorrowAfter22h = false;
-    const isOpen = !isCancelled && !isPast && (!isToday || nowBrl.hour < 5);
+    const isOpen = !isCancelled && !isPreReservation && !isPast && (!isToday || nowBrl.hour < 5);
 
     const existing = reservationOrders.find(o => o.date === dateStr);
 
@@ -51316,6 +51327,9 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
 
     if (isCancelled) {
       status = "cancelled";
+      cancelReason = computeBreakfastCancellationReason({ date: dateStr }, r, todayStr, nowBrl, db);
+    } else if (isPreReservation) {
+      status = "blocked_pre_reservation";
       cancelReason = computeBreakfastCancellationReason({ date: dateStr }, r, todayStr, nowBrl, db);
     } else if (existing) {
       if (existing.status === "cancelled") {
@@ -51361,6 +51375,10 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
       checkoutDate: r.checkoutDate,
       status: r.status,
       isCancelled,
+      isPreReservation,
+      preReservationBlocked: isPreReservation,
+      isExpiredPreReservation,
+      paymentStatus: r.paymentStatus || (isPreReservation ? "pendente" : "pago"),
       includeBreakfast: hasBreakfast,
       hasBreakfast,
       notes: r.notes
@@ -51455,7 +51473,8 @@ app.get("/api/breakfast/orders", (req, res) => {
     }
 
     if (matchingRes) {
-      const isResCancelled = matchingRes.status === "cancelada" || matchingRes.status === "cancelado";
+      const isResCancelled = matchingRes.status === "cancelada" || matchingRes.status === "cancelado" || matchingRes.status === "cancelled";
+      const isResPreReservation = isPreReservationBlocked(matchingRes);
       const isBeforeCheckin = order.date < matchingRes.checkinDate;
       const isAfterCheckout = order.date > matchingRes.checkoutDate;
       const hasBf = Boolean(
@@ -51541,13 +51560,15 @@ app.get("/api/breakfast/orders", (req, res) => {
         };
       }
 
-      if (isResCancelled || isBeforeCheckin || isAfterCheckout || !hasBf || isCheckoutTriggeredCancel) {
+      if (isResCancelled || isResPreReservation || isBeforeCheckin || isAfterCheckout || !hasBf || isCheckoutTriggeredCancel) {
         order.status = "cancelled";
         order.cancelReason = computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl, db);
       } else if (order.status === "cancelled" && !order.cancelledManually && (
         order.cancelledByCheckout ||
         order.checkoutWarningInfo ||
         order.cancelReason === "Pedido cancelado no calendário" ||
+        order.cancelReason?.includes("Pré-reserva") ||
+        order.cancelReason?.includes("pré-reserva") ||
         order.cancelReason?.includes("Early check-out") ||
         order.cancelReason?.includes("early check-out") ||
         order.cancelReason?.includes("Check-in") ||
@@ -51558,7 +51579,7 @@ app.get("/api/breakfast/orders", (req, res) => {
         order.cancelReason?.includes("Diária removida") ||
         order.cancelReason?.includes("Estadia reduzida")
       )) {
-        // Reativa automaticamente caso a reserva esteja ativa, com café e sem check-out registrado (e não tenha sido cancelado manualmente)
+        // Reativa automaticamente caso a reserva esteja ativa, confirmada, com café e sem check-out registrado (e não tenha sido cancelado manualmente)
         order.status = "pending";
         order.cancelReason = null;
         order.cancelledByCheckout = false;
@@ -51628,9 +51649,10 @@ app.get("/api/breakfast/orders", (req, res) => {
     }))
     .sort((a, b) => a.time.localeCompare(b.time));
 
-  // Identificação de todos os quartos elegíveis com café contratado para esta data
+  // Identificação de todos os quartos elegíveis com café contratado para esta data (apenas reservas confirmadas, nunca pré-reservas)
   const eligibleReservations = (db.reservations || []).filter(r => {
-    if (r.status === "cancelada" || r.status === "cancelado") return false;
+    if (r.status === "cancelada" || r.status === "cancelado" || r.status === "cancelled") return false;
+    if (isPreReservationBlocked(r)) return false;
     const hasBf = Boolean(
       r.includeBreakfast !== undefined ? r.includeBreakfast : (
         r.hasBreakfast ||
@@ -52950,10 +52972,19 @@ app.post("/api/breakfast/orders", (req, res) => {
   // Se não foi encontrada por código de reserva, busca pelo apartamento e período de entrega
   if (!activeRes && roomNumber) {
     const rawDeliveryDate = req.body.deliveryDate || (Array.isArray(req.body.deliveryDates) ? req.body.deliveryDates[0] : null) || getTodayStr();
+    // Prioriza reservas confirmadas para a data, senão qualquer reserva ativa/pré-reserva para validar e bloquear caso seja pré-reserva
     activeRes = (db.reservations || []).find(r =>
       String(r.flatNumber) === String(roomNumber) &&
       r.status !== "cancelada" &&
       r.status !== "cancelado" &&
+      r.status !== "cancelled" &&
+      !isPreReservationBlocked(r) &&
+      (!rawDeliveryDate || (rawDeliveryDate >= r.checkinDate && rawDeliveryDate <= r.checkoutDate))
+    ) || (db.reservations || []).find(r =>
+      String(r.flatNumber) === String(roomNumber) &&
+      r.status !== "cancelada" &&
+      r.status !== "cancelado" &&
+      r.status !== "cancelled" &&
       (!rawDeliveryDate || (rawDeliveryDate >= r.checkinDate && rawDeliveryDate <= r.checkoutDate))
     );
 
@@ -52961,15 +52992,32 @@ app.post("/api/breakfast/orders", (req, res) => {
       activeRes = (db.reservations || []).find(r =>
         String(r.flatNumber) === String(roomNumber) &&
         r.status !== "cancelada" &&
-        r.status !== "cancelado"
+        r.status !== "cancelado" &&
+        r.status !== "cancelled" &&
+        !isPreReservationBlocked(r)
+      ) || (db.reservations || []).find(r =>
+        String(r.flatNumber) === String(roomNumber) &&
+        r.status !== "cancelada" &&
+        r.status !== "cancelado" &&
+        r.status !== "cancelled"
       );
     }
   }
 
   if (activeRes) {
-    if (activeRes.status === "cancelada" || activeRes.status === "cancelado") {
+    if (activeRes.status === "cancelada" || activeRes.status === "cancelado" || activeRes.status === "cancelled") {
       return res.status(400).json({
         error: "Esta reserva foi cancelada no calendário do hotel. Não é possível realizar pedidos de café."
+      });
+    }
+
+    if (isPreReservationBlocked(activeRes)) {
+      const isExp = String(activeRes.status || "").toLowerCase() === "expirada";
+      return res.status(403).json({
+        error: isExp
+          ? "Esta pré-reserva expirou por falta de confirmação de pagamento. Não é possível realizar pedidos de café da manhã."
+          : "Esta reserva ainda está como pré-reserva aguardando confirmação do pagamento. O pedido de café da manhã só é liberado após a confirmação da reserva.",
+        preReservationBlocked: true
       });
     }
 
@@ -53294,6 +53342,25 @@ app.post("/api/breakfast/orders/repeat", (req, res) => {
   const { orderId, targetDate, deliveryTime } = req.body;
   const original = (db.breakfastOrders || []).find(o => o.id === Number(orderId));
   if (!original) return res.status(404).json({ error: "Pedido original não encontrado para repetição." });
+
+  let repeatRes = null;
+  if (original.reservationCode) {
+    repeatRes = findReservationByLocatorOrContact(original.reservationCode);
+  }
+  if (!repeatRes && original.reservationId) {
+    repeatRes = (db.reservations || []).find(r => r.id === original.reservationId);
+  }
+  if (repeatRes) {
+    if (repeatRes.status === "cancelada" || repeatRes.status === "cancelado" || repeatRes.status === "cancelled") {
+      return res.status(400).json({ error: "Esta reserva foi cancelada. Não é possível repetir pedidos de café." });
+    }
+    if (isPreReservationBlocked(repeatRes)) {
+      return res.status(403).json({
+        error: "Esta reserva ainda está como pré-reserva aguardando confirmação do pagamento. O pedido de café da manhã só é liberado após a confirmação da reserva.",
+        preReservationBlocked: true
+      });
+    }
+  }
 
   const dateToUse = targetDate || getTodayStr();
   const timeToUse = deliveryTime || original.deliveryTime;
@@ -58545,7 +58612,7 @@ function isPreReservationBlocked(r) {
   const isOtaOrB2bChan = chan.includes("booking") || chan.includes("airbnb") || chan === "b2b" || chan.includes("b2b") || Boolean(r.b2bReservationNumber);
   if (isOtaOrB2bChan) return false;
   const st = String(r.status || "").toLowerCase();
-  if (st === "pre_reserva" || st === "pendente" || st === "expirada") return true;
+  if (st === "pre_reserva" || st === "pendente" || st === "pending_payment" || st === "expirada") return true;
   if (isUnverifiedPreReservation(r)) return true;
   return false;
 }

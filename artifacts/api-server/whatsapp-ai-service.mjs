@@ -3320,7 +3320,7 @@ export function handleGetReservationDetails(db, args = {}) {
   if (isPreReservaUnpaid) {
     operationalGuidance = hideFin
       ? `PRÉ-RESERVA EM CONFIRMAÇÃO COM O SOLICITANTE (${recipientsInfo.requester.name}). NUNCA enviar cobrança, valor ou PIX ao hóspede. Informar apenas que a reserva está em processo de confirmação junto ao solicitante responsável.`
-      : "PRÉ-RESERVA AGUARDANDO PAGAMENTO (status pre_reserva). NUNCA enviar link de pré-check-in digital e NUNCA liberar entrada na portaria antes da confirmação do pagamento. Orientar o hóspede a concluir o pagamento via PIX ou Cartão no Portal do Hóspede para confirmar a reserva.";
+      : "PRÉ-RESERVA AGUARDANDO PAGAMENTO (status pre_reserva). NUNCA enviar link de pré-check-in digital, NUNCA enviar link ou botão de café da manhã e NUNCA liberar entrada na portaria antes da confirmação do pagamento. Orientar o hóspede a concluir o pagamento via PIX ou Cartão no Portal do Hóspede para confirmar a reserva.";
   } else if (isCheckoutCompleted) {
     operationalGuidance = "CHECK-OUT JÁ CONCLUÍDO PELO HÓSPEDE (estadia encerrada e saída já confirmada). NUNCA cobrar desocupação até as 12:00h e NUNCA enviar link de check-out ou de pré-check-in. Caso o hóspede pergunte sobre a reserva ou check-out, confirme que o check-out já foi concluído com sucesso e agradeça pela estadia.";
   } else if (isCheckoutDay) {

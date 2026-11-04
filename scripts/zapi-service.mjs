@@ -448,6 +448,37 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
     ]
   },
   {
+    id: "tpl_pre_reserva_lembrete",
+    triggerEvent: "pre_reservation_expiring_soon",
+    title: "Lembrete • Sua Pré-Reserva Expira em Breve",
+    description: "Enviado automaticamente antes da pré-reserva expirar (faltando 10 min na de 30m, 30 min na de 2h, ou 2h na de Até 23:59), com link rápido da reserva e PIX Copia e Cola para facilitar o pagamento.",
+    enabled: true,
+    channels: ["site", "whatsapp", "outros"],
+    recipientTarget: "requester",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_destinatario}}*! ⏰
+
+Passando para lembrar que a sua *Pré-Reserva ({{numero_reserva}})* no *{{nome_hotel}}* (*Flat {{quarto}}* • *{{data_checkin}} a {{data_checkout}}*) *expira em {{tempo_restante_pre_reserva}}* (limite: *{{validade_pre_reserva}}*).
+
+💰 *Para garantir sua reserva agora:*
+• Com desconto no PIX (-5%): *{{quanto_falta}}*
+• No Cartão de Crédito: *{{quanto_falta_cartao}}*
+
+👉 *Acesse os detalhes e conclua o pagamento em 1 clique:*
+{{link_portal_hospede}}
+
+⚠️ _Caso o pagamento não seja confirmado até o horário limite, o sistema liberará a acomodação automaticamente em nosso calendário._`,
+    footer: "CorpFlats • Hospedagem Contemporânea",
+    buttons: [
+      { id: "btn_portal", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
+    ]
+  },
+  {
     id: "tpl_pre_reserva_expirada",
     triggerEvent: "pre_reservation_expired",
     title: "Pré-Reserva Expirada • Prazo de Pagamento Encerrado",
@@ -2861,6 +2892,7 @@ export function getReservationRecipients(reservation = {}, db = {}) {
 // ── Régua de Acompanhantes: eventos puramente de cobrança nunca vão para o 2º/3º hóspede ──
 export const COMPANION_EXCLUDED_EVENTS = new Set([
   "pre_reservation_created",
+  "pre_reservation_expiring_soon",
   "pre_reservation_expired",
   "payment_pending",
   "additional_daily_pending"
@@ -2870,6 +2902,7 @@ export const COMPANION_EXCLUDED_EVENTS = new Set([
 export const PURE_BILLING_EVENTS = new Set([
   "b2b_agency_credential_request",
   "pre_reservation_created",
+  "pre_reservation_expiring_soon",
   "pre_reservation_expired",
   "payment_pending",
   "additional_daily_pending"
@@ -2878,6 +2911,7 @@ export const PURE_BILLING_EVENTS = new Set([
 export const PURE_BILLING_TEMPLATE_IDS = new Set([
   "tpl_b2b_agency_credential",
   "tpl_pre_reserva",
+  "tpl_pre_reserva_lembrete",
   "tpl_pre_reserva_expirada",
   "tpl_payment_pending",
   "tpl_additional_daily_pending",
@@ -3148,6 +3182,7 @@ export function getRecipientTypeLabel(type) {
 
 const EMAIL_SUBJECT_BY_EVENT = {
   pre_reservation_created: "Pré-reserva recebida • Aguardando pagamento",
+  pre_reservation_expiring_soon: "⏰ Lembrete: sua pré-reserva expira em breve",
   pre_reservation_expired: "Pré-reserva expirada • Prazo de pagamento encerrado",
   reservation_created: "Sua reserva está confirmada",
   payment_confirmed: "Pagamento confirmado",
@@ -3383,6 +3418,18 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   const resStatus = String(reservation.status || "").toLowerCase().trim();
   const isCancelled = resStatus === "cancelada" || resStatus === "cancelled" || resStatus === "cancelado";
+  const isUnpaidPreReservaTag = Boolean(
+    resStatus === "pre_reserva" ||
+    resStatus === "pendente" ||
+    resStatus === "pending_payment" ||
+    resStatus === "expirada" ||
+    templateId === "tpl_pre_reserva" ||
+    templateId === "tpl_pre_reserva_expirada" ||
+    templateId === "tpl_payment_pending" ||
+    triggerEvent === "pre_reservation_created" ||
+    triggerEvent === "pre_reservation_expired" ||
+    triggerEvent === "payment_pending"
+  );
   const isBreakfastExplicitTemplate = templateId === "qm_breakfast" || templateId === "tpl_breakfast_reminder" || triggerEvent === "breakfast_reminder";
   const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.hasBreakfast || reservation.ratePlan === "with_breakfast" || isBreakfastExplicitTemplate);
 
@@ -3397,7 +3444,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     ? `${appOrigin}/minha-reserva/${resCode}?requester=1`
     : `${appOrigin}/minha-reserva/${resCode}`;
   const linkCopiarPix = `${appOrigin}/copiar-pix/${resCode}`;
-  const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled ? `${appOrigin}/cafe/${resCode}` : "";
+  const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled && !isUnpaidPreReservaTag ? `${appOrigin}/cafe/${resCode}` : "";
   const linkCheckout = `${appOrigin}/checkout/${resCode}`;
 
   const cardTotalAmount = computeCardAmountFromPix(totalAmount);
@@ -3406,9 +3453,19 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Formatação clara da validade da pré-reserva (fuso horário America/Sao_Paulo)
   let validadePreReserva = "";
   let avisoValidadePreReserva = "";
+  let tempoRestantePreReserva = reservation._reminderLeadLabel || "poucos minutos";
   if (reservation.expiresAt) {
     const expDate = new Date(reservation.expiresAt);
     if (!isNaN(expDate.getTime())) {
+      const remMins = Math.max(1, Math.round((expDate.getTime() - Date.now()) / 60000));
+      if (remMins >= 90) {
+        const hrs = Math.round(remMins / 60);
+        tempoRestantePreReserva = hrs === 1 ? "1 hora" : `${hrs} horas`;
+      } else if (remMins === 60) {
+        tempoRestantePreReserva = "1 hora";
+      } else {
+        tempoRestantePreReserva = `${remMins} minutos`;
+      }
       const nowBrStr = new Intl.DateTimeFormat("en-CA", {
         timeZone: "America/Sao_Paulo",
         year: "numeric",
@@ -3586,8 +3643,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   // Tag: {{status_cafe}}, {{mensagem_cafe_incluso}} e {{aviso_cafe_exclusivo_flat}}
   const statusCafe = isCancelled ? "Cancelado" : (hasBreakfast ? "Incluso" : "Não incluso");
-  const mensagemCafeIncluso = (hasBreakfast && !isCancelled)
-    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo botão abaixo.`
+  const mensagemCafeIncluso = (hasBreakfast && !isCancelled && !isUnpaidPreReservaTag)
+    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã servido exclusivamente no seu flat!`
     : "";
   const avisoCafeExclusivoFlat = (hasBreakfast && !isCancelled)
     ? `\n\n🥐 *Sobre o seu Café da Manhã:* Como sua reserva inclui café da manhã, informamos também que ele é servido *exclusivamente no flat* (diretamente na sua acomodação).`
@@ -3694,6 +3751,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{pix_copia_e_cola}}": hideFinancialForGuest ? "" : pixCopiaECola,
     "{{validade_pre_reserva}}": validadePreReserva,
     "{{aviso_validade_pre_reserva}}": avisoValidadePreReserva,
+    "{{tempo_restante_pre_reserva}}": tempoRestantePreReserva,
     "{{instrucao_pagamento}}": hideFinancialForGuest ? "" : instrucaoPagamento,
     "{{instrucao_saldo}}": hideFinancialForGuest ? "" : instrucaoSaldo,
     "{{status_confirmacao}}": statusConfirmacao,
@@ -3990,11 +4048,15 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   // ── Lógica Dinâmica de Botões de Check-in e Chegada ────────────────────────
   const isUnpaidPreReserva = Boolean(
     reservation && (
-      reservation.status === "pre_reserva" ||
-      reservation.status === "pendente" ||
+      resStatus === "pre_reserva" ||
+      resStatus === "pendente" ||
+      resStatus === "pending_payment" ||
+      resStatus === "expirada" ||
       templateId === "tpl_pre_reserva" ||
+      templateId === "tpl_pre_reserva_expirada" ||
       templateId === "tpl_payment_pending" ||
       triggerEvent === "pre_reservation_created" ||
+      triggerEvent === "pre_reservation_expired" ||
       triggerEvent === "payment_pending"
     )
   );
@@ -4172,42 +4234,34 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     }
   }
 
-  // Templates e eventos permitidos para inclusão do botão de café (apenas no fluxo de entrada e estadia inicial)
+  // Templates e eventos permitidos para inclusão do botão de café (apenas na mensagem de confirmação da reserva e lembrete/link explícito de café)
   const ALLOWED_TEMPLATES_FOR_CAFE = [
     "tpl_new_reservation_direct",
+    "tpl_new_reservation_ota",
     "tpl_new_reservation",
-    "tpl_pre_reserva",
     "tpl_payment_confirmed",
     "tpl_sameday_reservation_instructions",
-    "tpl_room_ready_direct",
-    "tpl_room_ready_regular",
-    "tpl_checkin_day_instructions",
-    "tpl_checkin_completed",
     "tpl_breakfast_reminder",
     "qm_breakfast",
-    "qm_payment_confirmed",
-    "qm_summary_checkin"
+    "qm_payment_confirmed"
   ];
   const ALLOWED_EVENTS_FOR_CAFE = [
+    "reservation_created",
     "new_reservation",
     "new_reservation_direct",
+    "new_reservation_ota",
     "payment_confirmed",
     "sameday_reservation",
-    "room_ready",
-    "room_ready_direct",
-    "room_ready_regular",
-    "checkin_day_instructions",
-    "checkin_completed",
     "breakfast_reminder"
   ];
 
   const isAllowedTemplate = ALLOWED_TEMPLATES_FOR_CAFE.includes(templateId) || ALLOWED_EVENTS_FOR_CAFE.includes(triggerEvent);
   const isBreakfastExplicitTemplate = templateId === "qm_breakfast" || templateId === "tpl_breakfast_reminder" || triggerEvent === "breakfast_reminder";
 
-  // Se o contexto for cancelamento, pós-checkout, checkout, cobrança, sem café ou template não autorizado:
-  // Remove QUALQUER botão de café existente ou acidental (a menos que seja template explícito de café).
-  if (!isBreakfastExplicitTemplate && (isCancellationTrigger || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast || !isAllowedTemplate)) {
-    list = list.filter(b => b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+  // Se o contexto for pré-reserva não paga, cancelamento, pós-checkout, checkout, cobrança, sem café ou template não autorizado:
+  // Remove QUALQUER botão de café existente ou acidental (pré-reserva NUNCA recebe botão de café).
+  if (isUnpaidPreReserva || (!isBreakfastExplicitTemplate && (isCancellationTrigger || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast || !isAllowedTemplate))) {
+    list = list.filter(b => b.id !== "btn_cafe" && (!b.url || (!String(b.url).includes("/cafe") && !String(b.url).includes("link_cafe_manha"))));
   } else {
     // Para reservas ativas com café OU disparo explícito de café:
     const safeCafeUrl = linkCafeManha || `${baseUrl || "https://corpflats.com.br"}/cafe/${resCode}`;
@@ -7648,6 +7702,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               tpl.buttons = defPre.buttons;
             }
           }
+          if (Array.isArray(tpl.buttons)) {
+            tpl.buttons = tpl.buttons.filter(
+              b => b && b.id !== "btn_cafe" && (!b.url || (!String(b.url).includes("/cafe") && !String(b.url).includes("link_cafe_manha")))
+            );
+          }
         }
         if (tpl.id === "tpl_payment_pending") {
           tpl.recipientTarget = "requester";
@@ -8449,8 +8508,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     let queueButtons = item.renderedButtons || [];
     const queueContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""} ${item.renderedMessage || ""}`.toLowerCase();
-    if (queueContext.includes("checkout") || queueContext.includes("check-out") || queueContext.includes("cancel") || queueContext.includes("review") || queueContext.includes("saida") || queueContext.includes("saída") || queueContext.includes("avaliação")) {
-      queueButtons = queueButtons.filter(b => b && b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+    if (queueContext.includes("checkout") || queueContext.includes("check-out") || queueContext.includes("cancel") || queueContext.includes("review") || queueContext.includes("saida") || queueContext.includes("saída") || queueContext.includes("avaliação") || queueContext.includes("pre_reservation") || queueContext.includes("pre_reserva") || queueContext.includes("pré-reserva") || queueContext.includes("payment_pending")) {
+      queueButtons = queueButtons.filter(b => b && b.id !== "btn_cafe" && (!b.url || (!String(b.url).includes("/cafe") && !String(b.url).includes("link_cafe_manha"))));
       item.renderedButtons = queueButtons;
     }
 

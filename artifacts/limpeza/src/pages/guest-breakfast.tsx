@@ -537,6 +537,67 @@ export default function GuestBreakfast() {
     )
   }
 
+  // Tela de Bloqueio se a Reserva ainda estiver como Pré-Reserva (não confirmada/não paga) ou Expirada
+  if (
+    loadedFromReservation &&
+    reservationData &&
+    (
+      reservationData.isPreReservation ||
+      reservationData.preReservationBlocked ||
+      reservationData.isExpiredPreReservation ||
+      reservationData.status === "pre_reserva" ||
+      reservationData.status === "pendente" ||
+      reservationData.status === "pending_payment" ||
+      reservationData.status === "expirada"
+    )
+  ) {
+    const isExpired = reservationData.isExpiredPreReservation || reservationData.status === "expirada"
+    return (
+      <div className="min-h-screen bg-slate-50/70 text-slate-900 flex items-center justify-center p-4 font-sans">
+        <Card className="w-full max-w-md bg-white border border-amber-200 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-2xl shadow-amber-200/40">
+          <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto shadow-2xs">
+            <Clock className="w-8 h-8" />
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="text-xl font-black text-slate-900 tracking-tight">
+              {isExpired ? "Pré-Reserva Expirada" : "Pré-Reserva Aguardando Confirmação"}
+            </h2>
+            <p className="text-xs text-slate-600 leading-relaxed pt-1">
+              {isExpired ? (
+                <>
+                  O prazo de validade da pré-reserva do <strong>Apt {reservationData.flatNumber}</strong> em nome de <strong>{reservationData.guestName}</strong> expirou sem confirmação de pagamento. O agendamento de café da manhã está indisponível.
+                </>
+              ) : (
+                <>
+                  A reserva do <strong>Apt {reservationData.flatNumber}</strong> em nome de <strong>{reservationData.guestName}</strong> ainda consta como <strong>pré-reserva (aguardando pagamento)</strong>. O pedido e agendamento do café da manhã só são liberados após a confirmação da reserva.
+                </>
+              )}
+            </p>
+          </div>
+          <div className="pt-2 space-y-2.5">
+            {!isExpired && reservationData.code && (
+              <Button
+                onClick={() => setLocation(`/minha-reserva/${reservationData.code}`)}
+                className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-11 rounded-xl shadow-md shadow-sky-600/20"
+              >
+                Acessar Minha Reserva e Confirmar Pagamento
+              </Button>
+            )}
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="w-full inline-flex items-center justify-center gap-1.5 h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shadow-md shadow-emerald-600/20"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>Falar com a Administração no WhatsApp</span>
+            </a>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
   // Tela de Bloqueio se a Reserva NÃO tiver Café da Manhã Incluso
   if (loadedFromReservation && reservationData && !(reservationData.includeBreakfast || reservationData.hasBreakfast)) {
     return (

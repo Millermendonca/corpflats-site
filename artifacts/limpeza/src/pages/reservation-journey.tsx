@@ -209,7 +209,8 @@ Sua pré-reserva no *{{nome_hotel}}* agora está *Confirmada & Garantida*!
 Realize agora seu pré-checkin digital para liberação rápida na portaria:`,
     buttons: [
       { label: "📝 Fazer Check-in Online", type: "URL", url: "{{link_checkin_digital}}" },
-      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
+      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "🥐 Escolher Itens do Café", type: "URL", url: "{{link_cafe_manha}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_payment_confirmed",
     category: "pagamento"
