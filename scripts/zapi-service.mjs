@@ -413,7 +413,7 @@ Ressaltamos gentilmente que *não é possível informar esses dados apenas na ho
     id: "tpl_pre_reserva",
     triggerEvent: "pre_reservation_created",
     title: "Pré-Reserva • Confirmação & Aguardando Pagamento",
-    description: "Enviado automaticamente para o solicitante quando uma pré-reserva é registrada ou atualizada, informando os dados da estadia, valores (Cartão e PIX com desconto) e botão de copiar o código PIX.",
+    description: "Enviado automaticamente para o solicitante quando uma pré-reserva é registrada ou atualizada, informando os dados da estadia, prazo de validade, valores (Cartão e PIX com desconto) e botão de copiar o código PIX.",
     enabled: true,
     channels: ["site", "whatsapp", "outros"],
     recipientTarget: "requester",
@@ -424,7 +424,7 @@ Ressaltamos gentilmente que *não é possível informar esses dados apenas na ho
     message: `Olá, *{{nome_destinatario}}*! ⏳
 Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 
-⚠️ *Importante:* Esta reserva está *Aguardando Pagamento* para confirmação definitiva da sua acomodação.
+⚠️ *Importante:* Esta reserva está *Aguardando Pagamento* para confirmação definitiva da sua acomodação.{{aviso_validade_pre_reserva}}
 
 📋 *Resumo da Estadia:*
 • Código da Reserva: *{{numero_reserva}}*
@@ -444,6 +444,29 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
     buttons: [
       { id: "btn_portal", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
       { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
+    ]
+  },
+  {
+    id: "tpl_pre_reserva_expirada",
+    triggerEvent: "pre_reservation_expired",
+    title: "Pré-Reserva Expirada • Prazo de Pagamento Encerrado",
+    description: "Enviado automaticamente quando o prazo de validade da pré-reserva expira sem confirmação de pagamento, informando que a acomodação foi liberada e orientando a consultar disponibilidade e valores novamente caso ainda haja interesse.",
+    enabled: true,
+    channels: ["site", "whatsapp", "outros"],
+    recipientTarget: "requester",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_destinatario}}*! ⏳
+
+Informamos que o prazo de validade da sua *Pré-Reserva ({{numero_reserva}})* no *{{nome_hotel}}* para o período de *{{data_checkin}} a {{data_checkout}}* (*Flat {{quarto}}*) *expirou* por falta de confirmação de pagamento dentro do tempo limite, e a acomodação voltou a ficar disponível em nosso calendário.
+
+💬 *Ainda tem interesse nesta hospedagem?*
+Basta responder a esta mensagem aqui no WhatsApp para *consultarmos a disponibilidade e os valores novamente* e reativarmos a sua pré-reserva!`,
+    footer: "CorpFlats • Hospedagem Contemporânea",
+    buttons: [
       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
@@ -2157,8 +2180,12 @@ export function evaluateZapiChannelPolicy(configOrOptions, maybeOptions = {}) {
     }
   }
 
-  // 5. Regra 3: Modo de Teste
-  if (channel.testMode === true && !bypassTestMode) {
+  // 5. Regra 3: Modo de Teste (exceção: envios de NFS-e liberados da whitelist de teste)
+  const isNfseInvoiceBypass = Boolean(
+    bypassTestMode ||
+    /^nfse_(?:pdf_dispatch|dispatch|auto_dispatch|checkout_dispatch|whatsapp)$/i.test(String(triggerEvent || "").trim())
+  );
+  if (channel.testMode === true && !isNfseInvoiceBypass) {
     const isWhitelisted = isPhoneInList(cleanPhone, channel.whitelist);
     if (isWhitelisted) {
       return {
@@ -2834,6 +2861,7 @@ export function getReservationRecipients(reservation = {}, db = {}) {
 // ── Régua de Acompanhantes: eventos puramente de cobrança nunca vão para o 2º/3º hóspede ──
 export const COMPANION_EXCLUDED_EVENTS = new Set([
   "pre_reservation_created",
+  "pre_reservation_expired",
   "payment_pending",
   "additional_daily_pending"
 ]);
@@ -2842,6 +2870,7 @@ export const COMPANION_EXCLUDED_EVENTS = new Set([
 export const PURE_BILLING_EVENTS = new Set([
   "b2b_agency_credential_request",
   "pre_reservation_created",
+  "pre_reservation_expired",
   "payment_pending",
   "additional_daily_pending"
 ]);
@@ -2849,6 +2878,7 @@ export const PURE_BILLING_EVENTS = new Set([
 export const PURE_BILLING_TEMPLATE_IDS = new Set([
   "tpl_b2b_agency_credential",
   "tpl_pre_reserva",
+  "tpl_pre_reserva_expirada",
   "tpl_payment_pending",
   "tpl_additional_daily_pending",
   "qm_payment_pending",
@@ -3118,6 +3148,7 @@ export function getRecipientTypeLabel(type) {
 
 const EMAIL_SUBJECT_BY_EVENT = {
   pre_reservation_created: "Pré-reserva recebida • Aguardando pagamento",
+  pre_reservation_expired: "Pré-reserva expirada • Prazo de pagamento encerrado",
   reservation_created: "Sua reserva está confirmada",
   payment_confirmed: "Pagamento confirmado",
   payment_pending: "Pagamento pendente da sua reserva",
@@ -3372,11 +3403,65 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const cardTotalAmount = computeCardAmountFromPix(totalAmount);
   const cardPendingAmount = computeCardAmountFromPix(pendingAmount > 0 ? pendingAmount : totalAmount);
 
+  // Formatação clara da validade da pré-reserva (fuso horário America/Sao_Paulo)
+  let validadePreReserva = "";
+  let avisoValidadePreReserva = "";
+  if (reservation.expiresAt) {
+    const expDate = new Date(reservation.expiresAt);
+    if (!isNaN(expDate.getTime())) {
+      const nowBrStr = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).format(new Date());
+      const expBrDateStr = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).format(expDate);
+      const expDayMonth = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit",
+        month: "2-digit"
+      }).format(expDate);
+      const expFullDate = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+      }).format(expDate);
+      const expTime = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      }).format(expDate);
+
+      const datePart = expBrDateStr === nowBrStr ? `hoje (${expDayMonth}) às ${expTime}` : `${expFullDate} às ${expTime}`;
+      const rawHoldLabel = String(reservation.holdDurationLabel || "").trim();
+      const holdSuffix = rawHoldLabel && !rawHoldLabel.toLowerCase().includes("23:59")
+        ? ` (${rawHoldLabel})`
+        : "";
+      validadePreReserva = `${datePart}${holdSuffix}`;
+      avisoValidadePreReserva = `\n\n⏰ *Validade da Pré-Reserva:* Esta pré-reserva é válida até *${validadePreReserva}*. Após esse horário sem confirmação de pagamento, a pré-reserva expira e o apartamento é liberado automaticamente no calendário.`;
+    }
+  }
+
+  const tplHasExplicitValidityTag = typeof templateText === "string" && (
+    templateText.includes("{{aviso_validade_pre_reserva}}") ||
+    templateText.includes("{{validade_pre_reserva}}")
+  );
+  const inlineValidityFallback = (!tplHasExplicitValidityTag && avisoValidadePreReserva && (resStatus === "pre_reserva" || triggerEvent === "pre_reservation_created"))
+    ? avisoValidadePreReserva
+    : "";
+
   let instrucaoPagamento = "";
   if (paidAmount === 0) {
-    instrucaoPagamento = `Para garantir e confirmar definitivamente sua acomodação, efetue o pagamento via PIX com 5% de desconto (*${formatCurrency(pendingAmount)}*) ou no Cartão de Crédito (*${formatCurrency(cardPendingAmount)}*) pelo portal do hóspede:\n👉 ${linkPortalHospede}`;
+    instrucaoPagamento = `Para garantir e confirmar definitivamente sua acomodação, efetue o pagamento via PIX com 5% de desconto (*${formatCurrency(pendingAmount)}*) ou no Cartão de Crédito (*${formatCurrency(cardPendingAmount)}*) pelo portal do hóspede:\n👉 ${linkPortalHospede}${inlineValidityFallback}`;
   } else if (paidAmount > 0 && pendingAmount > 0) {
-    instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante é de *${formatCurrency(cardPendingAmount)}* no Cartão de Crédito ou *${formatCurrency(pendingAmount)}* com Desconto no PIX (-5%), e poderá ser quitado pelo portal:\n👉 ${linkPortalHospede}`;
+    instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante é de *${formatCurrency(cardPendingAmount)}* no Cartão de Crédito ou *${formatCurrency(pendingAmount)}* com Desconto no PIX (-5%), e poderá ser quitado pelo portal:\n👉 ${linkPortalHospede}${inlineValidityFallback}`;
   } else {
     instrucaoPagamento = "Reserva 100% quitada! Nenhuma pendência financeira.";
   }
@@ -3607,6 +3692,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{chave_pix}}": hideFinancialForGuest ? "" : pixKey,
     "{{titular_pix}}": hideFinancialForGuest ? "" : titularPix,
     "{{pix_copia_e_cola}}": hideFinancialForGuest ? "" : pixCopiaECola,
+    "{{validade_pre_reserva}}": validadePreReserva,
+    "{{aviso_validade_pre_reserva}}": avisoValidadePreReserva,
     "{{instrucao_pagamento}}": hideFinancialForGuest ? "" : instrucaoPagamento,
     "{{instrucao_saldo}}": hideFinancialForGuest ? "" : instrucaoSaldo,
     "{{status_confirmacao}}": statusConfirmacao,
@@ -11363,6 +11450,7 @@ const SINGLE_DISPATCH_EVENTS = new Set([
   "payment_confirmed",
   "sameday_reservation",
   "pre_reservation_created",
+  "pre_reservation_expired",
   "pre_checkin_completed",
   "checkin_completed",
   "checkout_completed",
@@ -12528,6 +12616,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     if (!reservation) return;
     if ((reservation.status === "pre_reserva" || reservation.status === "pendente") &&
         eventName !== "pre_reservation_created" &&
+        eventName !== "pre_reservation_expired" &&
         eventName !== "payment_pending" &&
         eventName !== "reservation_cancelled") {
       console.log(`[WhatsApp Trigger ⏳] Evento '${eventName}' retido para ${reservation.code || reservation.id}: reserva ainda está como pré-reserva aguardando pagamento.`);
@@ -12663,6 +12752,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "pre_reservation_created") {
       const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
       if (defPre) templates = [defPre];
+    } else if (templates.length === 0 && eventName === "pre_reservation_expired") {
+      const defPreExp = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva_expirada" || t.triggerEvent === "pre_reservation_expired");
+      if (defPreExp) templates = [defPreExp];
     } else if (templates.length === 0 && eventName === "payment_confirmed") {
       const defPay = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_confirmed");
       if (defPay) templates = [defPay];
@@ -12814,7 +12906,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     const isSingleFireEvent = SINGLE_DISPATCH_EVENTS.has(eventName);
     const isUpdatedEvent = eventName === "reservation_updated";
     const isReSignPreCheckin = eventName === "pre_checkin_completed" && Boolean(reservation._wasReSignature);
-    const isPreResUpdate = eventName === "pre_reservation_created" && Boolean(reservation._isPreReservationUpdate);
+    const isPreResUpdate = (eventName === "pre_reservation_created" || eventName === "pre_reservation_expired") && Boolean(reservation._isPreReservationUpdate);
 
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";

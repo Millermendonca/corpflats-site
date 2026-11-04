@@ -27227,6 +27227,165 @@ app.all(["/api/pms/reservations/repair-incident-sept30", "/api/system/repair-inc
 
 let lastCalendarReconcileTime = 0;
 
+// ── Motor de Cálculo e Validade de Pré-Reservas (10min, 30min, 2h, Até 23:59, Custom) ──
+export function resolvePreReservationHold(input = {}, checkinDate = "") {
+  const now = new Date();
+  const todayBrStr = typeof getTodayStr === "function"
+    ? getTodayStr()
+    : new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+
+  const rawPreset = String(input.holdPreset || "").trim();
+  const rawMinutes = Number(input.holdDurationMinutes);
+  const rawExpiresAt = input.expiresAt ? String(input.expiresAt).trim() : "";
+
+  if (rawExpiresAt) {
+    const parsedExp = new Date(rawExpiresAt);
+    if (!isNaN(parsedExp.getTime()) && parsedExp.getTime() > now.getTime()) {
+      const diffMins = Math.max(1, Math.round((parsedExp.getTime() - now.getTime()) / 60000));
+      return {
+        expiresAt: parsedExp.toISOString(),
+        holdPreset: rawPreset || "custom",
+        holdDurationMinutes: Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : diffMins,
+        holdDurationLabel: input.holdDurationLabel ? String(input.holdDurationLabel).trim() : (rawPreset === "until_2359" ? "até 23:59 de hoje" : `${diffMins} min`)
+      };
+    }
+  }
+
+  if (rawPreset === "10m" || rawMinutes === 10) {
+    return {
+      expiresAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+      holdPreset: "10m",
+      holdDurationMinutes: 10,
+      holdDurationLabel: "10 minutos"
+    };
+  }
+
+  if (rawPreset === "30m" || rawMinutes === 30) {
+    return {
+      expiresAt: new Date(now.getTime() + 30 * 60 * 1000).toISOString(),
+      holdPreset: "30m",
+      holdDurationMinutes: 30,
+      holdDurationLabel: "30 minutos"
+    };
+  }
+
+  if (rawPreset === "2h" || rawMinutes === 120) {
+    return {
+      expiresAt: new Date(now.getTime() + 120 * 60 * 1000).toISOString(),
+      holdPreset: "2h",
+      holdDurationMinutes: 120,
+      holdDurationLabel: "2 horas"
+    };
+  }
+
+  if (rawPreset === "until_2359") {
+    const endOfDayBr = new Date(`${todayBrStr}T23:59:59-03:00`);
+    const fallbackExp = (!isNaN(endOfDayBr.getTime()) && endOfDayBr.getTime() > now.getTime() + 5 * 60 * 1000)
+      ? endOfDayBr
+      : new Date(now.getTime() + 120 * 60 * 1000);
+    const diffMins = Math.max(1, Math.round((fallbackExp.getTime() - now.getTime()) / 60000));
+    return {
+      expiresAt: fallbackExp.toISOString(),
+      holdPreset: "until_2359",
+      holdDurationMinutes: diffMins,
+      holdDurationLabel: "até 23:59 de hoje"
+    };
+  }
+
+  if (Number.isFinite(rawMinutes) && rawMinutes > 0) {
+    const label = input.holdDurationLabel
+      ? String(input.holdDurationLabel).trim()
+      : (rawMinutes % 60 === 0 && rawMinutes >= 60 ? `${rawMinutes / 60}h` : `${rawMinutes} minutos`);
+    return {
+      expiresAt: new Date(now.getTime() + rawMinutes * 60 * 1000).toISOString(),
+      holdPreset: rawPreset || "custom",
+      holdDurationMinutes: rawMinutes,
+      holdDurationLabel: label
+    };
+  }
+
+  // Padrão inteligente por data de check-in:
+  // - Mesmo dia (checkinDate === hoje) -> 2 horas
+  // - Dia seguinte em diante (checkinDate > hoje) -> Até 23:59 de hoje
+  const normCheckin = String(checkinDate || todayBrStr).substring(0, 10);
+  if (normCheckin > todayBrStr) {
+    const endOfDayBr = new Date(`${todayBrStr}T23:59:59-03:00`);
+    if (!isNaN(endOfDayBr.getTime()) && endOfDayBr.getTime() > now.getTime() + 10 * 60 * 1000) {
+      const diffMins = Math.max(1, Math.round((endOfDayBr.getTime() - now.getTime()) / 60000));
+      return {
+        expiresAt: endOfDayBr.toISOString(),
+        holdPreset: "until_2359",
+        holdDurationMinutes: diffMins,
+        holdDurationLabel: "até 23:59 de hoje"
+      };
+    }
+  }
+
+  return {
+    expiresAt: new Date(now.getTime() + 120 * 60 * 1000).toISOString(),
+    holdPreset: "2h",
+    holdDurationMinutes: 120,
+    holdDurationLabel: "2 horas"
+  };
+}
+
+// ── Varredura Automática de Pré-Reservas Expiradas + Aviso no WhatsApp ───────
+export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase) {
+  if (!targetDb || !Array.isArray(targetDb.reservations)) return 0;
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  let expiredCount = 0;
+
+  for (const r of targetDb.reservations) {
+    if (!r) continue;
+    if (r.status !== "pre_reserva" && r.status !== "pendente") continue;
+    if (!r.expiresAt) continue;
+
+    const expMs = new Date(r.expiresAt).getTime();
+    if (isNaN(expMs) || expMs > nowMs) continue;
+
+    const isPaid = r.paymentStatus === "pago_total" ||
+      r.paymentStatus === "pago" ||
+      (typeof hasRealPaymentEvidence === "function" && hasRealPaymentEvidence(r));
+    if (isPaid) continue;
+
+    const prevStatusLabel = r.status === "pre_reserva" ? "Pré-Reserva" : "Pendente";
+    r.status = "expirada";
+    r.expiredAt = nowIso;
+    r.updatedAt = nowIso;
+    expiredCount++;
+
+    try {
+      addReservationAuditLog(r, {
+        action: "expired",
+        actor: { id: null, name: "Sistema Automático", role: "system", type: "system" },
+        source: "Motor de Validade de Pré-Reserva",
+        description: `Pré-reserva expirou automaticamente após o prazo limite (${r.holdDurationLabel || r.expiresAt}) sem confirmação de pagamento e foi removida do calendário.`,
+        changes: [
+          { field: "status", label: "Status da Reserva", oldValue: prevStatusLabel, newValue: "Expirada" }
+        ]
+      });
+    } catch (_) {}
+
+    if (!r.expiredWhatsappSentAt && typeof triggerImmediateWhatsApp === "function") {
+      r.expiredWhatsappSentAt = nowIso;
+      triggerImmediateWhatsApp(
+        targetDb,
+        saveFn,
+        "pre_reservation_expired",
+        { ...r, _isPreReservationUpdate: Boolean(r._wasReactivatedBefore) }
+      ).catch(err => {
+        console.warn(`[Pre-Reservation Expire] Erro ao disparar WhatsApp de expiração para ${r.code || r.id}:`, err?.message || err);
+      });
+    }
+  }
+
+  if (expiredCount > 0 && typeof saveFn === "function") {
+    saveFn("auto_expire_pre_reservations");
+  }
+  return expiredCount;
+}
+
 app.get("/api/pms/calendar", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev" && userAuth.role !== "reception" && userAuth.role !== "recepcao")) {
@@ -27330,11 +27489,20 @@ app.get("/api/pms/calendar", (req, res) => {
     saveDatabase();
   }
 
+  // Expira automaticamente pré-reservas cujo prazo (expiresAt) já venceu antes de montar o calendário
+  sweepExpiredPreReservations(db, saveDatabase);
+
   const rawReservations = (db.reservations || []).filter(r => {
     const effectiveCheckout = (r.earlyCheckout && r.originalCheckoutDate && r.originalCheckoutDate > r.checkoutDate)
       ? r.originalCheckoutDate
       : r.checkoutDate;
-    return r.checkinDate <= end && effectiveCheckout >= start && r.status !== "cancelada" && r.status !== "cancelled";
+    return (
+      r.checkinDate <= end &&
+      effectiveCheckout >= start &&
+      r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      r.status !== "expirada"
+    );
   });
 
   // Pré-indexação dos hóspedes em Map com cache reutilizável para acesso O(1) instantâneo sem alocações repetidas
@@ -27503,11 +27671,37 @@ app.get("/api/pms/calendar", (req, res) => {
   ];
   const isLiteMode = req.query.lite === "1";
 
+  const minRecentDateStr = getOffsetDateStr(-15);
+  const expiredPreReservations = (db.reservations || [])
+    .filter(r => r && r.status === "expirada" && (r.checkoutDate >= todayStr || (r.expiredAt && r.expiredAt >= minRecentDateStr) || (r.updatedAt && r.updatedAt >= minRecentDateStr)))
+    .sort((a, b) => {
+      const tA = new Date(a.expiredAt || a.updatedAt || a.createdAt || 0).getTime();
+      const tB = new Date(b.expiredAt || b.updatedAt || b.createdAt || 0).getTime();
+      return tB - tA;
+    })
+    .slice(0, 50)
+    .map(r => {
+      const conflicts = findActiveOverbookingConflicts(db, {
+        flatId: r.flatId,
+        flatNumber: r.flatNumber,
+        checkinDate: r.checkinDate,
+        checkoutDate: r.checkoutDate,
+        excludeResId: r.id
+      });
+      return {
+        ...r,
+        code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
+        isOriginalFlatAvailable: conflicts.length === 0,
+        activeFlatConflicts: conflicts
+      };
+    });
+
   res.json({
     startDate: start,
     endDate: end,
     flats: isLiteMode ? [] : flats,
     reservations,
+    expiredPreReservations,
     blocks: isLiteMode ? [] : blocks,
     guests: isLiteMode ? [] : (db.guests || []),
     companies: isLiteMode ? [] : (db.companies || []),
@@ -28218,6 +28412,10 @@ app.post("/api/pms/reservations", async (req, res) => {
     ? Boolean(nfHideFromGuest)
     : (isB2b && resolvedInvRecipient !== "guest");
 
+  const holdInfoOnCreate = resolvedStatus === "pre_reserva"
+    ? resolvePreReservationHold(req.body, checkinDate)
+    : null;
+
   const newReservation = {
     id: resId,
     code: resolvedCode,
@@ -28274,6 +28472,10 @@ app.post("/api/pms/reservations", async (req, res) => {
     checkinTime: String(checkinTime || db.settings?.checkinTime || "14:00").trim(),
     checkoutTime: String(checkoutTime || db.settings?.checkoutTime || "12:00").trim(),
     status: resolvedStatus,
+    expiresAt: holdInfoOnCreate ? holdInfoOnCreate.expiresAt : null,
+    holdPreset: holdInfoOnCreate ? holdInfoOnCreate.holdPreset : undefined,
+    holdDurationMinutes: holdInfoOnCreate ? holdInfoOnCreate.holdDurationMinutes : undefined,
+    holdDurationLabel: holdInfoOnCreate ? holdInfoOnCreate.holdDurationLabel : undefined,
     channel: isB2b ? "b2b" : channel,
     paymentMethod: resolvedPaymentMethod,
     dailyRate: finalDailyRate,
@@ -29603,7 +29805,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const isForcedPutOverbooking = Boolean(req.body.forceOverbooking || req.body.forceReplace || req.body.allowOverbooking);
   const isStayTouchOnPut = Boolean(
     isDatesOrFlatChanged ||
-    (oldStatus === "cancelada" && nextStatusOnPut !== "cancelada") ||
+    ((oldStatus === "cancelada" || oldStatus === "expirada") && nextStatusOnPut !== "cancelada" && nextStatusOnPut !== "expirada") ||
     req.body.flatId !== undefined ||
     req.body.checkinDate !== undefined ||
     req.body.checkoutDate !== undefined
@@ -30191,6 +30393,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   // Regra oficial Pré-Reserva x Confirmada (canais diretos):
   // - status pré-reserva => nenhum valor pago
   // - qualquer valor pago lançado em uma pré-reserva => reserva confirmada (sinal ou quitada)
+  let holdWasUpdatedOnPut = false;
   {
     const ruleChan = String(r.channel || "").toLowerCase();
     const ruleIsOta = ruleChan.includes("booking") || ruleChan.includes("airbnb");
@@ -30215,6 +30418,39 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         r.b2bCommissionAmount = Number((((Number(r.totalAmount) || 0) * commPct) / 100).toFixed(2));
         r.b2bNetAmount = Number(((Number(r.totalAmount) || 0) - r.b2bCommissionAmount).toFixed(2));
       }
+    }
+
+    if (r.status === "pre_reserva") {
+      const hasExplicitHoldInput = Boolean(
+        req.body.expiresAt !== undefined ||
+        req.body.holdPreset !== undefined ||
+        req.body.holdDurationMinutes !== undefined ||
+        req.body.reactivatePreReservation ||
+        oldStatus === "expirada" ||
+        oldStatus !== "pre_reserva" ||
+        !r.expiresAt
+      );
+      if (hasExplicitHoldInput) {
+        const oldExp = r.expiresAt || null;
+        const holdInfo = resolvePreReservationHold(req.body, r.checkinDate);
+        r.expiresAt = holdInfo.expiresAt;
+        r.holdPreset = holdInfo.holdPreset;
+        r.holdDurationMinutes = holdInfo.holdDurationMinutes;
+        r.holdDurationLabel = holdInfo.holdDurationLabel;
+        delete r.expiredAt;
+        delete r.expiredWhatsappSentAt;
+        if (oldStatus === "expirada" || req.body.reactivatePreReservation) {
+          r._wasReactivatedBefore = true;
+          r.reactivatedAt = new Date().toISOString();
+          holdWasUpdatedOnPut = true;
+        } else if (oldExp !== r.expiresAt) {
+          holdWasUpdatedOnPut = true;
+        }
+      }
+    } else if (r.status === "confirmada") {
+      r.expiresAt = null;
+      delete r.expiredAt;
+      delete r.expiredWhatsappSentAt;
     }
   }
 
@@ -31166,7 +31402,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  if (oldStatus === "pre_reserva" && r.status === "confirmada") {
+  if ((oldStatus === "pre_reserva" || oldStatus === "expirada") && r.status === "confirmada") {
     if (!r.guestPending) {
       dispatchConfirmedReservationToReceptionAndGarage(r, "pms_pre_reservation_confirmed").catch(() => {});
     }
@@ -31300,13 +31536,15 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     if (isPreReservationBlocked(r)) {
       const preResModified = Boolean(
         isDatesOrFlatChanged ||
+        holdWasUpdatedOnPut ||
+        oldStatus === "expirada" ||
         Math.abs(pendingAmt - oldPendingAmount) > 0.01 ||
         Math.abs(totalAmt - oldTotalAmount) > 0.01 ||
         wasGuestPhoneJustAdded ||
         guestFacingDiffs.length > 0
       );
       if (preResModified && pendingAmt > 0) {
-        console.log(`[WhatsApp Trigger] Pré-reserva não paga ${r.code} (${r.guestName}) teve datas/flat/valores atualizados. Reenviando mensagem de pré-reserva com novo link e PIX Copia e Cola atualizado.`);
+        console.log(`[WhatsApp Trigger] Pré-reserva não paga ${r.code} (${r.guestName}) teve datas/flat/valores/validade atualizados ou foi reativada. Reenviando mensagem de pré-reserva com novo link e PIX Copia e Cola atualizado.`);
         triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", { ...r, _isPreReservationUpdate: true }, editBaseUrl).catch(err => {
           console.warn("[WhatsApp Trigger] Erro ao reenviar pre_reservation_created na edição da pré-reserva:", err.message);
         });
@@ -31875,6 +32113,7 @@ function enrichReservationPayments(r) {
 app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
+  sweepExpiredPreReservations(db, saveDatabase);
   const r = findReservationByLocatorOrContact(code);
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada com os dados informados. Verifique o localizador, CPF ou telefone." });
@@ -31982,24 +32221,25 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const breakfastLink = `/cafe/${encodeURIComponent(resolvedPortalCode)}`;
 
   const isCancelledRes = r.status === "cancelada" || r.status === "cancelled";
+  const isExpiredPreRes = r.status === "expirada";
   const chanLower = String(r.channel || "").toLowerCase();
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
   const isB2b = isB2bReservation(r);
-  const isUnpaidPre = isUnverifiedPreReservation(r);
+  const isUnpaidPre = isUnverifiedPreReservation(r) || isExpiredPreRes;
   const hasPartialPendingBalance = Boolean(
     !isB2b &&
     (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial") &&
     Number(r.paidAmount || 0) > 0 &&
     Number(r.paidAmount || 0) < Number(r.totalAmount || 0) - 0.01
   );
-  let isPaid = !isCancelledRes && !isUnpaidPre && !hasPartialPendingBalance && (isOta || Boolean(
+  let isPaid = !isCancelledRes && !isExpiredPreRes && !isUnpaidPre && !hasPartialPendingBalance && (isOta || Boolean(
     r.paymentStatus === "pago_total" ||
     r.paymentStatus === "pago" ||
     (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
   ));
 
-  // Se a reserva ainda não consta como paga e NÃO está cancelada (e não é B2B com cartão virtual/faturado), verifica ativamente no Mercado Pago / Extrato do Banco Inter
-  if (!isCancelledRes && !isPaid && !isB2b && Number(r.totalAmount) > 0) {
+  // Se a reserva ainda não consta como paga e NÃO está cancelada nem expirada (e não é B2B com cartão virtual/faturado), verifica ativamente no Mercado Pago / Extrato do Banco Inter
+  if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && Number(r.totalAmount) > 0) {
     const prefersCard = Boolean(
       req.query?.payment === "success" ||
       /cart[aã]o|card|credito|crédito|debito|débito|mercadopago/i.test(String(r.paymentMethod || ""))
@@ -32123,11 +32363,11 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   }
 
   // Reservas B2B e reservas já confirmadas com extensão parcial liberam check-in digital e senha da porta normalmente
-  const isPortalUnlocked = Boolean(!isCancelledRes && (isPaid || isB2b || (hasPartialPendingBalance && !isUnpaidPre)));
+  const isPortalUnlocked = Boolean(!isCancelledRes && !isExpiredPreRes && (isPaid || isB2b || (hasPartialPendingBalance && !isUnpaidPre)));
   canDoEarlyCheckin = Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && hasEarlyCheckinBenefit);
 
   // Se pendente com saldo a pagar e sem chave PIX ou com PIX de valor divergente (ex.: após alterar diárias), regenera cobrança PIX atualizada
-  if (!isCancelledRes && !isPaid && !isB2b && pendingAmount > 0 && (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmount))) {
+  if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && pendingAmount > 0 && (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmount))) {
     try {
       const cleanTxId = String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
       const staticPayload = generateStaticPixPayload({
@@ -32180,6 +32420,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     hideFinancialForGuest,
     isSeparateRequester,
     isRequesterView,
+    isExpiredPreReservation: isExpiredPreRes,
     requesterName: isSeparateRequester ? (portalRecips.requester?.name || r.agencyTradeName || r.agencyName || r.companyName || null) : null,
     reservation: {
       id: r.id,
@@ -32198,6 +32439,10 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       serproStatus: r.serproStatus || null,
       status: (r.status === "CHECKED_IN" || !r.status) ? "confirmada" : r.status,
       isCancelled: isCancelledRes,
+      isExpiredPreReservation: isExpiredPreRes,
+      expiresAt: r.expiresAt || null,
+      expiredAt: r.expiredAt || null,
+      holdDurationLabel: r.holdDurationLabel || null,
       cancelledAt: r.cancelledAt || null,
       cancellationReason: r.cancellationReason || null,
       refundStatus: r.refundStatus || null,
@@ -32226,12 +32471,12 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       paymentStatus: isPaid ? "pago_total" : (r.paymentStatus || "pendente"),
       paymentMethod: (r.mpPaymentId && !r.pixEndToEndId) ? (r.paymentMethod && r.paymentMethod !== "pix" ? r.paymentMethod : "cartao_credito") : (r.paymentMethod || (r.mpPaymentId ? "cartao_credito" : "pix")),
       paidAt: r.paidAt || null,
-      pixTxId: (isSettledByCard || hideFinancialForGuest) ? null : (r.pixTxId || null),
-      pixCopiaECola: hideFinancialForGuest ? null : (r.pixCopiaECola || null),
+      pixTxId: (isSettledByCard || hideFinancialForGuest || isExpiredPreRes) ? null : (r.pixTxId || null),
+      pixCopiaECola: (hideFinancialForGuest || isExpiredPreRes) ? null : (r.pixCopiaECola || null),
       pixEndToEndId: hideFinancialForGuest ? null : (r.pixEndToEndId || null),
       mpPaymentId: hideFinancialForGuest ? null : (r.mpPaymentId || null),
-      mpPreferenceId: hideFinancialForGuest ? null : (r.mpPreferenceId || null),
-      mpInitPoint: hideFinancialForGuest ? null : (r.mpInitPoint || null),
+      mpPreferenceId: (hideFinancialForGuest || isExpiredPreRes) ? null : (r.mpPreferenceId || null),
+      mpInitPoint: (hideFinancialForGuest || isExpiredPreRes) ? null : (r.mpInitPoint || null),
       hasBreakfast,
       includeBreakfast: hasBreakfast,
       breakfastToken,
@@ -40182,8 +40427,8 @@ const handleCheckout = async (req, res) => {
       autoInvoiceNumber = newInvoice.numeroNfse;
       autoInvoicePdf = newInvoice.danfseUrl;
 
-      const targetNfPhone = cleanPhone(confFiscal?.tomadorTelefone || r.guestPhone || guest?.phone || "");
-      if (targetNfPhone && targetNfPhone.endsWith("998505276") && typeof sendZapiMessage === "function") {
+      const targetNfPhone = cleanPhone(r.guestPhone || guest?.phone || confFiscal?.tomadorTelefone || "");
+      if (!r.nfHideFromGuest && targetNfPhone && targetNfPhone.length >= 10 && typeof sendZapiMessage === "function") {
         const linkNf = `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${newInvoice.chaveAcesso}`;
         const checkoutNfMsg = `✅ *Nota Fiscal Emitida no Check-out!*\n\n` +
           `Conforme combinado, sua NFS-e foi emitida automaticamente após a conclusão do seu check-out:\n` +
@@ -40198,6 +40443,8 @@ const handleCheckout = async (req, res) => {
           message: checkoutNfMsg,
           channelId: "ai_agent",
           recipientRole: "guest",
+          triggerEvent: "nfse_checkout_dispatch",
+          bypassTestMode: true,
           db
         }).catch(() => {});
       }
@@ -40484,6 +40731,7 @@ function formatTriggerTitle(trigger) {
   const map = {
     reservation_created: "Nova Reserva • Confirmação + Early Check-in",
     pre_reservation_created: "Pré-Reserva • Confirmação & Aguardando Pagamento",
+    pre_reservation_expired: "Pré-Reserva Expirada • Prazo de Pagamento Encerrado",
     payment_confirmed: "Pagamento Confirmado • Reserva Garantida",
     sameday_reservation: "Reserva de Hoje • Confirmação & Instruções",
     pre_checkin_completed: "Check-in Online Concluído • Confirmação & Instruções",
@@ -47803,10 +48051,54 @@ async function executeNfseEmissionInternal(payload) {
     return { success: false, badRequest: true, error: "Valor do serviço deve ser maior que zero." };
   }
 
-  const matchedRes = Array.isArray(db.reservations) && (payload.reservationId || payload.reservationCode)
-    ? db.reservations.find(r =>
-        (payload.reservationId && Number(r.id) === Number(payload.reservationId)) ||
-        (payload.reservationCode && String(r.code) === String(payload.reservationCode))
+  const rawDescText = String(payload.discriminacao || payload.descricaoServico || "");
+  const extractedDescGuestMatch = rawDescText.match(/hospedagem\s+de\s+([^,\n.]+?)(?:,\s*no\s+Flat|\s+-\s+CPF|\n|\.|$)/i);
+  const extractedDescGuestName = extractedDescGuestMatch ? extractedDescGuestMatch[1].trim() : "";
+  const candidateGuestName = (payload.guestName || extractedDescGuestName || (cleanDoc.length === 11 ? String(tomadorNome) : "")).trim();
+  const payloadCheckin = String(payload.checkinDate || payload.checkIn || "").substring(0, 10);
+  const payloadCheckout = String(payload.checkoutDate || payload.checkOut || "").substring(0, 10);
+  const payloadFlat = payload.flatNumber ? String(payload.flatNumber).trim() : "";
+
+  const matchedRes = Array.isArray(db.reservations)
+    ? (
+        ((payload.reservationId || payload.reservationCode) &&
+          db.reservations.find(r =>
+            r && (
+              (payload.reservationId && Number(r.id) === Number(payload.reservationId)) ||
+              (payload.reservationCode && String(r.code) === String(payload.reservationCode))
+            )
+          )) ||
+        (payloadFlat && payloadCheckin &&
+          db.reservations.find(r =>
+            r &&
+            r.status !== "cancelada" &&
+            r.status !== "cancelled" &&
+            String(r.flatNumber) === payloadFlat &&
+            String(r.checkinDate || "").substring(0, 10) === payloadCheckin &&
+            (!payloadCheckout || String(r.checkoutDate || "").substring(0, 10) === payloadCheckout)
+          )) ||
+        (candidateGuestName &&
+          db.reservations.find(r =>
+            r &&
+            r.status !== "cancelada" &&
+            r.status !== "cancelled" &&
+            r.guestName &&
+            String(r.guestName).trim().toLowerCase() === candidateGuestName.toLowerCase() &&
+            (!payloadFlat || String(r.flatNumber) === payloadFlat)
+          )) ||
+        null
+      )
+    : null;
+
+  const matchedGuest = Array.isArray(db.guests)
+    ? db.guests.find(g =>
+        g && (
+          (payload.guestId && Number(g.id) === Number(payload.guestId)) ||
+          (matchedRes?.guestId && Number(g.id) === Number(matchedRes.guestId)) ||
+          (cleanDoc.length === 11 && onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc) ||
+          (matchedRes?.guestDocument && onlyDigits(g.documentNumber || g.document || g.cpf || "") === onlyDigits(matchedRes.guestDocument)) ||
+          (candidateGuestName && String(g.fullName || g.name || "").trim().toLowerCase() === candidateGuestName.toLowerCase())
+        )
       )
     : null;
 
@@ -47895,7 +48187,19 @@ async function executeNfseEmissionInternal(payload) {
   const endUf = resolvedGeoPay.uf || normPayAddr.uf || "RJ";
   const endCodMun = resolvedGeoPay.codigoMunicipio || normPayAddr.ibge || "3301009";
   const cleanEmail = (payload.tomadorEmail || resolvedCheckin?.email || "").trim().toLowerCase();
-  const cleanTel = cleanPhone(payload.tomadorTelefone || resolvedCheckin?.telefone || "");
+  const rawTomadorTel = cleanPhone(payload.tomadorTelefone || resolvedCheckin?.telefone || "");
+  const guestWhatsappPhone = cleanPhone(
+    payload.guestPhone ||
+    matchedRes?.guestPhone ||
+    matchedRes?.guests?.[0]?.phone ||
+    matchedGuest?.phone ||
+    resolvedCheckin?.telefone ||
+    ""
+  );
+  const isRawTomadorLandline = rawTomadorTel && rawTomadorTel.replace(/^55/, "").length <= 10;
+  const cleanTel = (cleanDoc.length === 14 && guestWhatsappPhone && (!rawTomadorTel || isRawTomadorLandline))
+    ? guestWhatsappPhone
+    : (rawTomadorTel || guestWhatsappPhone);
 
   // Sincronização limpa de CRM ao emitir NFS-e para CNPJ (Agência -> db.agencies; Empresa -> db.companies)
   let resolvedAgencyId = payload.agencyId ? Number(payload.agencyId) : (existingAgencyByCnpj?.id ? Number(existingAgencyByCnpj.id) : (matchedRes?.agencyId ? Number(matchedRes.agencyId) : null));
@@ -48118,10 +48422,12 @@ async function executeNfseEmissionInternal(payload) {
       costCenter: payload.costCenter || matchedRes?.costCenter || null,
       nfDeliveryEmails: resolvedNfDeliveryEmails,
       nfHideFromGuest: resolvedNfHideFromGuest,
+      guestName: candidateGuestName || matchedRes?.guestName || matchedGuest?.fullName || matchedGuest?.name || null,
+      guestPhone: resolvedNfHideFromGuest ? "" : (guestWhatsappPhone || cleanTel),
       tomadorNome: toTitleCase(tomadorNome),
       tomadorCpfCnpj: cleanDoc,
       tomadorEmail: resolvedNfDeliveryEmails[0] || (resolvedNfHideFromGuest ? "" : cleanEmail),
-      tomadorTelefone: cleanTel,
+      tomadorTelefone: resolvedNfHideFromGuest ? rawTomadorTel : cleanTel,
       tomadorEndereco: endLogradouro,
       tomadorLogradouro: endLogradouro,
       tomadorNumero: endNumero,
@@ -48197,6 +48503,15 @@ async function executeNfseEmissionInternal(payload) {
       source: "national_engine"
     });
 
+    let whatsappDispatch = null;
+    if (process.env.NODE_ENV !== "test" && !newInvoice.nfHideFromGuest && !payload.skipAutoWhatsapp) {
+      try {
+        whatsappDispatch = await dispatchNfseInvoiceWhatsApp(newInvoice, { autoTriggered: true });
+      } catch (waErr) {
+        console.warn("[NFS-e Auto WhatsApp Dispatch Error]:", waErr.message);
+      }
+    }
+
     return {
       success: true,
       invoice: newInvoice,
@@ -48205,7 +48520,9 @@ async function executeNfseEmissionInternal(payload) {
       danfseUrl: newInvoice.danfseUrl,
       pdfUrl: newInvoice.pdfUrl,
       linkPrefeitura: newInvoice.linkPrefeitura,
-      qrCodeUrl: newInvoice.qrCodeUrl
+      qrCodeUrl: newInvoice.qrCodeUrl,
+      whatsappSent: Boolean(whatsappDispatch?.sent || whatsappDispatch?.pdfSent),
+      whatsappPhone: whatsappDispatch?.phone || null
     };
   } catch (err) {
     console.error("[NFS-e Internal Emission Error]", err);
@@ -48262,6 +48579,8 @@ app.post("/api/nfse/emit", async (req, res) => {
     pdfUrl: emissionResult.pdfUrl,
     linkPrefeitura: emissionResult.linkPrefeitura,
     qrCodeUrl: emissionResult.qrCodeUrl,
+    whatsappSent: Boolean(emissionResult.whatsappSent),
+    whatsappPhone: emissionResult.whatsappPhone || null,
     message: `Nota Fiscal Nº ${emissionResult.numeroNfse} emitida com sucesso pelo Emissor Nacional Gov.br (Padrão Nacional ADN)!`
   });
 });
@@ -48924,6 +49243,13 @@ async function processSingleNfseRetryItem(item) {
       !(p.reservationId && Number(q.payload?.reservationId) === Number(p.reservationId)) &&
       !(onlyDigits(q.payload?.tomadorCpfCnpj) === onlyDigits(p.tomadorCpfCnpj) && Number(q.payload?.valorServico) === Number(p.valorServico))
     );
+    if (process.env.NODE_ENV !== "test" && !newInvoice.nfHideFromGuest && !p.nfHideFromGuest) {
+      try {
+        await dispatchNfseInvoiceWhatsApp(newInvoice, { autoTriggered: true });
+      } catch (waErr) {
+        console.warn("[NFS-e Retry Auto WhatsApp Dispatch Error]:", waErr.message);
+      }
+    }
     saveDatabase();
     return { ok: true, success: true, invoice: newInvoice };
   } catch (err) {
@@ -49569,15 +49895,38 @@ app.post("/api/nfse/adn-sync", async (req, res) => {
   }
 });
 
-// Disparo Integrado do PDF Oficial da NFS-e no WhatsApp (Z-API send-document/pdf + Link Fallback)
-app.post("/api/nfse/whatsapp/:id", async (req, res) => {
-  getFiscalData();
-  const inv = findNfseInvoiceByAnyId(req.params.id);
-  if (!inv) return res.status(404).json({ error: "Nota não encontrada" });
+// Helper central de disparo da NFS-e (PDF + link) no WhatsApp com bypass da trava de teste (exclusivo NFS-e)
+async function dispatchNfseInvoiceWhatsApp(inv, opts = {}) {
+  if (!inv) return { success: false, sent: false, pdfSent: false };
 
-  const rawPhone = req.body?.phone || inv.tomadorTelefone || "";
+  const linkedRes = Array.isArray(db.reservations)
+    ? db.reservations.find(r =>
+        r && (
+          (inv.reservationId && Number(r.id) === Number(inv.reservationId)) ||
+          (inv.reservationCode && String(r.code) === String(inv.reservationCode))
+        )
+      )
+    : null;
+  const linkedGuest = Array.isArray(db.guests)
+    ? db.guests.find(g =>
+        g && (
+          (inv.guestId && Number(g.id) === Number(inv.guestId)) ||
+          (linkedRes?.guestId && Number(g.id) === Number(linkedRes.guestId)) ||
+          (inv.guestName && String(g.fullName || g.name || "").trim().toLowerCase() === String(inv.guestName).trim().toLowerCase())
+        )
+      )
+    : null;
+
+  const rawPhone =
+    opts.phone ||
+    (!inv.nfHideFromGuest && (inv.guestPhone || linkedRes?.guestPhone || linkedRes?.guests?.[0]?.phone || linkedGuest?.phone)) ||
+    inv.tomadorTelefone ||
+    linkedRes?.guestPhone ||
+    linkedGuest?.phone ||
+    "";
   const cleanPhoneNum = onlyDigits(rawPhone);
-  const firstName = (inv.tomadorNome || "Hóspede").split(" ")[0];
+  const displayRecipientName = (!inv.nfHideFromGuest && (inv.guestName || linkedRes?.guestName || linkedGuest?.fullName || linkedGuest?.name)) || inv.tomadorNome || "Hóspede";
+  const firstName = String(displayRecipientName).trim().split(/\s+/)[0] || "Hóspede";
   const numNota = String(inv.numeroNfse || inv.numeroNota || inv.id);
   const danfseUrl = `https://corpflats.com.br/api/nfse/danfse/${numNota}`;
   const pdfUrl = `https://corpflats.com.br/api/nfse/pdf/${numNota}`;
@@ -49593,6 +49942,7 @@ app.post("/api/nfse/whatsapp/:id", async (req, res) => {
   const whatsappUrl = `https://wa.me/${cleanPhoneNum.startsWith("55") ? cleanPhoneNum : `55${cleanPhoneNum}`}?text=${encodeURIComponent(captionText)}`;
 
   let pdfSent = false;
+  let textSent = false;
   let zapiResult = null;
   let pdfBytes = 0;
 
@@ -49605,7 +49955,7 @@ app.post("/api/nfse/whatsapp/:id", async (req, res) => {
       fs.writeFileSync(path.join(vaultDir, fileName), pdfBuf);
     } catch (_) {}
 
-    if (cleanPhoneNum.length >= 10 && req.body?.sendZapi !== false) {
+    if (cleanPhoneNum.length >= 10 && opts.sendZapi !== false) {
       const pdfBase64Uri = `data:application/pdf;base64,${pdfBuf.toString("base64")}`;
       zapiResult = await sendZapiDocument(db.zapiConfig || {}, {
         phone: cleanPhoneNum,
@@ -49615,24 +49965,71 @@ app.post("/api/nfse/whatsapp/:id", async (req, res) => {
         channelId: "reservations",
         recipientRole: "guest",
         triggerEvent: "nfse_pdf_dispatch",
+        bypassTestMode: true,
         db
       });
       pdfSent = Boolean(zapiResult?.success);
+
+      if (!pdfSent && typeof sendZapiMessage === "function") {
+        zapiResult = await sendZapiMessage(db.zapiConfig || {}, {
+          phone: cleanPhoneNum,
+          message: captionText,
+          channelId: "reservations",
+          recipientRole: "guest",
+          triggerEvent: "nfse_dispatch",
+          bypassTestMode: true,
+          db
+        });
+        textSent = Boolean(zapiResult?.success);
+      }
+
+      if ((pdfSent || textSent) && typeof appendMessageToConversation === "function") {
+        appendMessageToConversation(db, {
+          phone: cleanPhoneNum,
+          senderName: "CorpFlats",
+          fromMe: true,
+          text: captionText,
+          type: pdfSent ? "document" : "text",
+          documentName: pdfSent ? fileName : undefined,
+          documentUrl: pdfSent ? `/api/nfse/pdf/${numNota}` : undefined,
+          triggerEvent: "nfse_pdf_dispatch",
+          reservationCode: inv.reservationCode || linkedRes?.code || null,
+          status: "delivered",
+          timestamp: new Date().toISOString()
+        });
+      }
     }
   } catch (err) {
     console.warn("[NFS-e WhatsApp PDF Dispatch Error]:", err.message);
   }
 
-  res.json({
+  return {
     success: true,
+    sent: Boolean(pdfSent || textSent),
     pdfSent,
+    textSent,
+    phone: cleanPhoneNum,
     fileName,
     pdfBytes,
     pdfUrl,
     danfseUrl,
     whatsappUrl,
     zapiResult
+  };
+}
+
+// Disparo Integrado do PDF Oficial da NFS-e no WhatsApp (Z-API send-document/pdf + Link Fallback)
+app.post("/api/nfse/whatsapp/:id", async (req, res) => {
+  getFiscalData();
+  const inv = findNfseInvoiceByAnyId(req.params.id);
+  if (!inv) return res.status(404).json({ error: "Nota não encontrada" });
+
+  const dispatchResult = await dispatchNfseInvoiceWhatsApp(inv, {
+    phone: req.body?.phone,
+    sendZapi: req.body?.sendZapi
   });
+
+  res.json(dispatchResult);
 });
 
 // Lookup CNPJ / CPF publicly via BrasilAPI + MinhaReceita Fallback + Local CRM / Check-in Digital DB
@@ -59441,6 +59838,7 @@ app.get("/api/pwa/chat-icon.png", (req, res) => {
 
 // ── Página Oficial de Cópia Rápida de PIX (/copiar-pix/:code) ─────────────────
 app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) => {
+  sweepExpiredPreReservations(db, saveDatabase);
   const rawCode = String(req.params.code || req.query.code || req.query.reserva || "").trim();
   const r = (db.reservations || []).find(x => 
     (x.code && x.code.toUpperCase() === rawCode.toUpperCase()) || 
@@ -59451,9 +59849,25 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   const flatNumber = r?.flatNumber || r?.flatId || "";
   const totalAmount = Number(r?.totalAmount) || 0;
   const paidAmount = Number(r?.paidAmount) || 0;
-  const isAlreadyPaid = Boolean(r && !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (paidAmount >= totalAmount && totalAmount > 0)));
-  const pendingAmount = isAlreadyPaid ? 0 : (Math.max(0, totalAmount - paidAmount) || totalAmount);
-  let pixCode = isAlreadyPaid ? "" : (r?.pixCopiaECola || "");
+  const isExpiredPreRes = Boolean(r && r.status === "expirada");
+  const isAlreadyPaid = Boolean(r && !isExpiredPreRes && !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (paidAmount >= totalAmount && totalAmount > 0)));
+  const pendingAmount = (isAlreadyPaid || isExpiredPreRes) ? 0 : (Math.max(0, totalAmount - paidAmount) || totalAmount);
+  let pixCode = (isAlreadyPaid || isExpiredPreRes) ? "" : (r?.pixCopiaECola || "");
+
+  let formattedHoldExpiry = "";
+  if (r && r.status === "pre_reserva" && r.expiresAt) {
+    const expD = new Date(r.expiresAt);
+    if (!isNaN(expD.getTime())) {
+      formattedHoldExpiry = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      }).format(expD);
+    }
+  }
 
   if (pendingAmount > 0 && (!pixCode || (r && isPixPayloadStaleForAmount(r, pendingAmount)))) {
     const cleanTxId = (rawCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
@@ -59478,7 +59892,9 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   const qrCodeUrl = pixCode ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(pixCode)}` : "";
   const portalUrl = rawCode ? `/minha-reserva/${encodeURIComponent(rawCode)}` : "/minha-reserva";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
-  const whatsappUrl = `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou com uma dúvida sobre o pagamento PIX da reserva ${rawCode}.`)}`;
+  const whatsappUrl = isExpiredPreRes
+    ? `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Minha pré-reserva ${rawCode} expirou e eu ainda tenho interesse. Poderia consultar a disponibilidade e valores novamente?`)}`
+    : `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou com uma dúvida sobre o pagamento PIX da reserva ${rawCode}.`)}`;
 
   const pageHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -59517,9 +59933,14 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     <div class="title">Código PIX da Reserva</div>
     <div class="subtitle">Abra o app do seu banco e selecione <strong>PIX Copia e Cola</strong> para efetuar o pagamento.</div>
 
-    <div id="status-badge" class="badge-copied">
+    <div id="status-badge" class="badge-copied" style="${isExpiredPreRes ? 'display:none;' : ''}">
       <span>✅ Código PIX Copiado com Sucesso!</span>
     </div>
+
+    ${formattedHoldExpiry && !isExpiredPreRes ? `
+    <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fbbf24; font-size: 12.5px; font-weight: 700; padding: 10px 14px; border-radius: 12px; margin-bottom: 16px;">
+      ⏳ Pré-Reserva válida até <strong>${formattedHoldExpiry}</strong>
+    </div>` : ""}
 
     <div class="details">
       <div class="detail-row">
@@ -59559,6 +59980,12 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     <div class="qr-container">
       <img src="${qrCodeUrl}" alt="QR Code PIX" class="qr-img">
     </div>` : ""}
+    ` : isExpiredPreRes ? `
+    <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid #f59e0b; border-radius: 14px; padding: 18px; margin-bottom: 18px; color: #fde68a; font-size: 13.5px; line-height: 1.5;">
+      <div style="font-size: 16px; font-weight: 800; color: #fbbf24; margin-bottom: 6px;">⏳ Pré-Reserva Expirada</div>
+      O prazo de validade desta pré-reserva encerrou sem confirmação de pagamento e o apartamento foi liberado no calendário.<br><br>
+      Caso ainda tenha interesse, clique no botão abaixo para consultar a disponibilidade e reativar sua reserva pelo WhatsApp!
+    </div>
     ` : `
     <div style="padding: 20px; color: #f87171; font-size: 13px;">
       Nenhum código PIX ativo no momento ou a reserva já se encontra quitada.
@@ -60998,10 +61425,13 @@ app.get("/api/maids/inter-status", (req, res) => {
   });
 });
 
-// 6.4 Background Auto-Sync de Pagamentos Pix Banco Inter a cada 20 segundos
+// 6.4 Background Auto-Sync de Pagamentos Pix Banco Inter e Expiração de Pré-Reservas a cada 20 segundos
 setInterval(async () => {
   try {
     if (!db.reservations || !Array.isArray(db.reservations)) return;
+
+    // 0) Varredura de pré-reservas expiradas (remove do calendário e avisa no WhatsApp)
+    sweepExpiredPreReservations(db, saveDatabase);
 
     const now = new Date();
     const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);

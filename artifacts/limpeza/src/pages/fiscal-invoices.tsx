@@ -437,7 +437,9 @@ export default function FiscalInvoicesPage() {
     const compDoc = (comp.cnpj || r?.companyCnpj || "").replace(/\D/g, "")
     const compName = comp.corporateName || comp.tradeName || comp.razaoSocial || comp.name || r?.companyName || "Empresa"
     const compEmail = comp.financialEmail || comp.email || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
-    const compTel = (comp.phone || "").replace(/\D/g, "")
+    const guestWhatsApp = (guestInfo?.phone || r?.guestPhone || formTomadorTelefone || "").replace(/\D/g, "")
+    const rawCompTel = (comp.phone || "").replace(/\D/g, "")
+    const compTel = (!formNfHideFromGuest && guestWhatsApp) ? guestWhatsApp : (rawCompTel || guestWhatsApp)
     const compEnd = comp.address || comp.logradouro || comp.endereco || "Av. Pelinca"
     const compNum = comp.number || comp.numero || "100"
     const compComp = comp.complement || comp.complemento || ""
@@ -868,7 +870,12 @@ export default function FiscalInvoicesPage() {
     const agencyIdParam = urlParams.get("agencyId")
     const guestIdParam = urlParams.get("guestId")
 
-    if ((companyIdParam && companies.length === 0) || (agencyIdParam && agencies.length === 0) || (guestIdParam && guests.length === 0)) {
+    if (
+      (companyIdParam && companies.length === 0) ||
+      (agencyIdParam && agencies.length === 0) ||
+      (guestIdParam && guests.length === 0) ||
+      ((resCodeParam || flatParam || nomeParam) && reservations.length === 0 && guests.length === 0)
+    ) {
       return
     }
 
@@ -900,12 +907,37 @@ export default function FiscalInvoicesPage() {
         matchedCompany = companies.find(c => String(c.id) === String(companyIdParam))
       }
 
+      let matchedRes: any = null
+      if (reservations.length > 0) {
+        if (resCodeParam) {
+          matchedRes = reservations.find(r => String(r.code) === resCodeParam || String(r.id) === resCodeParam)
+        }
+        if (!matchedRes && flatParam && checkinParam) {
+          matchedRes = reservations.find(r =>
+            String(r.flatNumber) === String(flatParam) &&
+            String(r.checkinDate || "").substring(0, 10) === String(checkinParam).substring(0, 10)
+          )
+        }
+        if (!matchedRes && nomeParam) {
+          matchedRes = reservations.find(r =>
+            (r.guestName || "").trim().toLowerCase() === nomeParam.trim().toLowerCase() &&
+            (!flatParam || String(r.flatNumber) === String(flatParam))
+          )
+        }
+      }
+
       let matchedGuest: any = null
       if (guestIdParam && guests.length > 0) {
         matchedGuest = guests.find(g => String(g.id) === String(guestIdParam))
       }
       if (!matchedGuest && cleanDoc.length === 11 && guests.length > 0) {
         matchedGuest = guests.find(g => (g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "") === cleanDoc)
+      }
+      if (!matchedGuest && matchedRes?.guestId && guests.length > 0) {
+        matchedGuest = guests.find(g => String(g.id) === String(matchedRes.guestId))
+      }
+      if (!matchedGuest && nomeParam && guests.length > 0) {
+        matchedGuest = guests.find(g => (g.fullName || g.name || "").trim().toLowerCase() === nomeParam.trim().toLowerCase())
       }
       if (matchedGuest && matchedGuest.companyId && !matchedCompany && companies.length > 0) {
         matchedCompany = companies.find(c => String(c.id) === String(matchedGuest.companyId))
@@ -916,11 +948,6 @@ export default function FiscalInvoicesPage() {
       }
       if (!matchedCompany && cleanDoc.length === 14 && companies.length > 0) {
         matchedCompany = companies.find(c => (c.cnpj || "").replace(/\D/g, "") === cleanDoc)
-      }
-
-      let matchedRes: any = null
-      if (resCodeParam && reservations.length > 0) {
-        matchedRes = reservations.find(r => String(r.code) === resCodeParam || String(r.id) === resCodeParam)
       }
 
       if (matchedAgency) setLinkedAgency(matchedAgency)
@@ -1246,7 +1273,9 @@ export default function FiscalInvoicesPage() {
       invoiceRecipientType: tomadorMode === "agency" ? "agency" : tomadorMode === "pj" ? "company" : "guest",
       agencyId: tomadorMode === "agency" ? (linkedAgency?.id || linkedReservation?.agencyId || undefined) : (linkedReservation?.agencyId || undefined),
       companyId: tomadorMode === "pj" ? (linkedCompany?.id || linkedReservation?.companyId || undefined) : (linkedReservation?.companyId || undefined),
-      guestId: linkedGuest?.id || linkedReservation?.guestId || undefined,
+      guestId: linkedGuest?.id || selectedGuest?.id || linkedReservation?.guestId || undefined,
+      guestName: linkedGuest?.fullName || linkedGuest?.name || selectedGuest?.fullName || selectedGuest?.name || linkedReservation?.guestName || undefined,
+      guestPhone: (linkedGuest?.phone || selectedGuest?.phone || linkedReservation?.guestPhone || "").replace(/\D/g, "") || undefined,
       nfHideFromGuest: formNfHideFromGuest,
       nfDeliveryEmails: deliveryEmailsList.length > 0 ? deliveryEmailsList : undefined,
       tomadorNome: formTomadorNome || extractedData.tomadorNome,
@@ -1306,14 +1335,16 @@ export default function FiscalInvoicesPage() {
 
       toast({
         title: "NFS-e Autorizada com Sucesso! 🎉",
-        description: `Nota Nº ${successPayload.numeroNfse} autorizada via Emissor Nacional (Gov.br).`
+        description: data.whatsappSent
+          ? `Nota Nº ${successPayload.numeroNfse} autorizada e PDF enviado automaticamente no WhatsApp!`
+          : `Nota Nº ${successPayload.numeroNfse} autorizada via Emissor Nacional (Gov.br).`
       })
 
       setMessages(prev => [
         ...prev,
         {
           role: "assistant",
-          content: `🎉 NOTA FISCAL AUTORIZADA COM SUCESSO!\n\n🧾 **NFS-e Nº ${successPayload.numeroNfse}**\n🔑 Código: **${successPayload.codigoVerificacao}**\n🇧🇷 Emissor: Padrão Nacional (Gov.br / ADN)\n\nA nota já consta no Livro Fiscal e você pode abrir o espelho DANFSE ou o PDF oficial ao lado!`
+          content: `🎉 NOTA FISCAL AUTORIZADA COM SUCESSO!\n\n🧾 **NFS-e Nº ${successPayload.numeroNfse}**\n🔑 Código: **${successPayload.codigoVerificacao}**\n🇧🇷 Emissor: Padrão Nacional (Gov.br / ADN)\n${data.whatsappSent ? `📲 **WhatsApp:** PDF oficial enviado automaticamente para o hóspede!\n` : ""}\nA nota já consta no Livro Fiscal e você pode abrir o espelho DANFSE ou o PDF oficial ao lado!`
         }
       ])
     } catch (err: any) {
@@ -1401,7 +1432,16 @@ export default function FiscalInvoicesPage() {
       const resolvedIbge = data.codigoMunicipio || data.ibge || data.ibgeCode
       if (resolvedIbge) { setFormTomadorIbge(String(resolvedIbge)); nextOverrides.tomadorCodigoMunicipio = String(resolvedIbge) }
       if (data.email && !formTomadorEmail) { setFormTomadorEmail(data.email); nextOverrides.tomadorEmail = data.email }
-      if (data.telefone && !formTomadorTelefone) { setFormTomadorTelefone(data.telefone); nextOverrides.tomadorTelefone = data.telefone }
+      const guestMobileFallback = !formNfHideFromGuest
+        ? (linkedGuest?.phone || selectedGuest?.phone || linkedReservation?.guestPhone || "").replace(/\D/g, "")
+        : ""
+      if (guestMobileFallback && !formTomadorTelefone) {
+        setFormTomadorTelefone(guestMobileFallback)
+        nextOverrides.tomadorTelefone = guestMobileFallback
+      } else if (data.telefone && !formTomadorTelefone) {
+        setFormTomadorTelefone(data.telefone)
+        nextOverrides.tomadorTelefone = data.telefone
+      }
       toast({
         title: "CNPJ Encontrado",
         description: `${data.razaoSocial || 'Dados importados com sucesso'}${resolvedCity ? ` • ${resolvedCity}/${data.uf || 'RJ'}` : ''}`
@@ -2706,7 +2746,7 @@ export default function FiscalInvoicesPage() {
                       toast,
                       onClickZapi: async () => {
                         const invId = lastEmittedInvoice.numeroNfse || lastEmittedInvoice.id
-                        const phone = (lastEmittedInvoice.tomadorTelefone || "").replace(/\D/g, "")
+                        const phone = ((!lastEmittedInvoice.nfHideFromGuest && lastEmittedInvoice.guestPhone) || lastEmittedInvoice.tomadorTelefone || "").replace(/\D/g, "")
                         try {
                           const r = await fetch(`/api/nfse/whatsapp/${invId}`, {
                             method: "POST",
@@ -2715,19 +2755,19 @@ export default function FiscalInvoicesPage() {
                             credentials: "include"
                           })
                           const d = await r.json()
-                          if (r.ok && d.pdfSent) {
+                          if (r.ok && (d.pdfSent || d.sent)) {
                             toast({
                               title: "📄 PDF da NFS-e Enviado no WhatsApp!",
-                              description: `Arquivo ${d.fileName} entregue via Z-API para ${lastEmittedInvoice.tomadorNome}.`
+                              description: `Arquivo ${d.fileName} entregue via Z-API para ${lastEmittedInvoice.guestName || lastEmittedInvoice.tomadorNome}.`
                             })
                             return
                           }
                         } catch {}
-                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
+                        const message = `Olá, ${lastEmittedInvoice.guestName || lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
                         await sendDirectZapiWithFallback({
                           phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
                           message,
-                          recipientName: lastEmittedInvoice.tomadorNome || "Tomador",
+                          recipientName: lastEmittedInvoice.guestName || lastEmittedInvoice.tomadorNome || "Tomador",
                           triggerEvent: "nfse_dispatch",
                           label: `NFS-e Nº ${lastEmittedInvoice.numeroNfse}`,
                           toast
@@ -2735,8 +2775,9 @@ export default function FiscalInvoicesPage() {
                       },
                       getWaUrl: () => {
                         const invId = lastEmittedInvoice.numeroNfse || lastEmittedInvoice.id
-                        const message = `Olá, ${lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
-                        return buildDirectWaWebUrl(lastEmittedInvoice.tomadorTelefone, message)
+                        const targetPhone = (!lastEmittedInvoice.nfHideFromGuest && lastEmittedInvoice.guestPhone) || lastEmittedInvoice.tomadorTelefone
+                        const message = `Olá, ${lastEmittedInvoice.guestName || lastEmittedInvoice.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${lastEmittedInvoice.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
+                        return buildDirectWaWebUrl(targetPhone, message)
                       }
                     })}
                     className="font-bold text-xs rounded-xl h-8.5 gap-1.5 text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/10"
@@ -4082,7 +4123,7 @@ export default function FiscalInvoicesPage() {
                                       toast,
                                       onClickZapi: async () => {
                                         const invId = inv.numeroNfse || inv.id
-                                        const phone = (inv.tomadorTelefone || "").replace(/\D/g, "")
+                                        const phone = ((!inv.nfHideFromGuest && inv.guestPhone) || inv.tomadorTelefone || "").replace(/\D/g, "")
                                         try {
                                           const r = await fetch(`/api/nfse/whatsapp/${invId}`, {
                                             method: "POST",
@@ -4091,19 +4132,19 @@ export default function FiscalInvoicesPage() {
                                             credentials: "include"
                                           })
                                           const d = await r.json()
-                                          if (r.ok && d.pdfSent) {
+                                          if (r.ok && (d.pdfSent || d.sent)) {
                                             toast({
                                               title: "📄 PDF da NFS-e Enviado no WhatsApp!",
-                                              description: `Arquivo ${d.fileName} entregue via Z-API para ${inv.tomadorNome}.`
+                                              description: `Arquivo ${d.fileName} entregue via Z-API para ${inv.guestName || inv.tomadorNome}.`
                                             })
                                             return
                                           }
                                         } catch {}
-                                        const message = `Olá, ${inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
+                                        const message = `Olá, ${inv.guestName || inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
                                         await sendDirectZapiWithFallback({
                                           phone: phone ? (phone.startsWith("55") ? phone : `55${phone}`) : "",
                                           message,
-                                          recipientName: inv.tomadorNome || "Tomador",
+                                          recipientName: inv.guestName || inv.tomadorNome || "Tomador",
                                           triggerEvent: "nfse_dispatch",
                                           label: `NFS-e Nº ${inv.numeroNfse}`,
                                           toast
@@ -4111,8 +4152,9 @@ export default function FiscalInvoicesPage() {
                                       },
                                       getWaUrl: () => {
                                         const invId = inv.numeroNfse || inv.id
-                                        const message = `Olá, ${inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
-                                        return buildDirectWaWebUrl(inv.tomadorTelefone, message)
+                                        const targetPhone = (!inv.nfHideFromGuest && inv.guestPhone) || inv.tomadorTelefone
+                                        const message = `Olá, ${inv.guestName || inv.tomadorNome}! Segue o PDF da sua Nota Fiscal de Hospedagem CorpFlats (NFS-e Nº ${inv.numeroNfse}): https://corpflats.com.br/api/nfse/pdf/${invId}`
+                                        return buildDirectWaWebUrl(targetPhone, message)
                                       }
                                     })}
                                     className="h-7 px-1.5 text-[11px] font-bold rounded-lg text-emerald-600 hover:bg-emerald-500/10"

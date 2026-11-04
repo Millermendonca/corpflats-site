@@ -10401,7 +10401,7 @@ export async function executeWhatsAppFiscalEmission({
 
   if (typeof globalThis.executeNfseEmissionInternal === "function") {
     try {
-      const res = await globalThis.executeNfseEmissionInternal(payload, db);
+      const res = await globalThis.executeNfseEmissionInternal({ ...payload, skipAutoWhatsapp: true }, db);
       if (res && res.success) {
         if (typeof saveDatabase === "function") {
           try { await saveDatabase(); } catch (_) {}
@@ -10794,6 +10794,8 @@ export async function handleManagerFiscalApprovalReply({
         message: guestReply,
         channelId: "ai_agent",
         recipientRole: "guest",
+        triggerEvent: "nfse_dispatch",
+        bypassTestMode: true,
         db
       });
     }
