@@ -1243,7 +1243,7 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 📋 *Sua Hospedagem:*
 • Código da Reserva: *{{numero_reserva}}*
 • Acomodação: *Flat {{quarto}}*
-• Entrada (Check-in): *Hoje a partir das {{horario_liberacao_hoje}}*
+• Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Café da Manhã: *{{status_cafe}}*
 • Pagamento: *{{status_pagamento}}*
@@ -3472,6 +3472,13 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 
   // Estado dinâmico de liberação do flat para reservas do próprio dia (sameday_reservation)
+  const refNowForTags = reservation?._nowOverride instanceof Date
+    ? reservation._nowOverride
+    : (reservation?._nowOverride ? new Date(reservation._nowOverride) : new Date());
+  const { hour: nowBrHour, minute: nowBrMin } = getBrasiliaDateParts(refNowForTags);
+  const [stdChH, stdChM] = String(checkinTime || "14:00").split(":").map(Number);
+  const isBeforeStandardCheckin = nowBrHour < (stdChH || 14) || (nowBrHour === (stdChH || 14) && nowBrMin < (stdChM || 0));
+
   const sameDayReleaseState = getSameDayFlatReleaseState(db, reservation, reservation?._nowOverride || null);
   const horarioLiberacaoHoje = sameDayReleaseState.releaseTimeStr || checkinTime;
   let statusLiberacaoFlatHoje = "";
@@ -3479,8 +3486,17 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     statusLiberacaoFlatHoje = `✨ *Status do Flat ${flatNumber}:* *Limpo e Liberado para Entrada Imediata!* 🔑\nSua acomodação já está 100% pronta e higienizada esperando por você.`;
   } else if (!sameDayReleaseState.isFlatClean) {
     statusLiberacaoFlatHoje = `🧹 *Status do Flat ${flatNumber}:* *Em Preparação pela Governança*\nNossa equipe está preparando e higienizando sua acomodação neste momento. Assim que o flat estiver 100% pronto, enviaremos uma notificação aqui no WhatsApp liberando sua entrada!`;
+    if (isBeforeStandardCheckin) {
+      const normChan = normalizeReservationChannel(reservation.channel || reservation.source || "site");
+      const isOtaOrB2bChan = normChan === "booking" || normChan === "airbnb" || normChan === "b2b";
+      if (!isOtaOrB2bChan) {
+        statusLiberacaoFlatHoje += `\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nComo você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!`;
+      } else {
+        statusLiberacaoFlatHoje += `\n\n🔑 *Cortesia de Early Check-in (a partir das 12:00):*\nO horário padrão de check-in é a partir das ${checkinTime}, mas caso a higienização seja concluída antes, liberaremos sua entrada antecipada como cortesia a partir das 12:00 (mediante disponibilidade de limpeza) e avisaremos por aqui!`;
+      }
+    }
   } else {
-    statusLiberacaoFlatHoje = `🕙 *Status do Flat ${flatNumber}:* *Liberação programada a partir das ${horarioLiberacaoHoje}*\nEnviaremos a confirmação de liberação da sua acomodação aqui no WhatsApp no horário de entrada!`;
+    statusLiberacaoFlatHoje = `🕙 *Status do Flat ${flatNumber}:* *Liberação programada a partir das ${horarioLiberacaoHoje} (Cortesia Early Check-in)*\nO horário padrão de check-in é às ${checkinTime}, mas como sua acomodação já está higienizada, sua entrada antecipada está programada como cortesia a partir das ${horarioLiberacaoHoje}! Enviaremos a confirmação de liberação da sua acomodação aqui no WhatsApp no horário de entrada!`;
   }
 
   // Tag: {{status_cafe}}, {{mensagem_cafe_incluso}} e {{aviso_cafe_exclusivo_flat}}
@@ -7715,7 +7731,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               !tpl.message.includes("instrucao_checkin_ou_chegada") ||
               tpl.message.includes("Como sua reserva foi confirmada") ||
               !tpl.message.includes("status_pagamento") ||
-              !tpl.message.includes("status_liberacao_flat_hoje")
+              !tpl.message.includes("status_liberacao_flat_hoje") ||
+              tpl.message.includes("horario_liberacao_hoje")
             ) {
               tpl.title = defSame.title;
               tpl.description = defSame.description;
@@ -12237,8 +12254,11 @@ export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventNam
     (ROOM_READY_GROUP_EVENTS.has(eventName) ||
       (eventName === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(renderedMessage || ""))))
   ) {
-    const { todayStr } = getBrasiliaDateParts(new Date());
-    markReservationRoomReadySent(db, reservation, todayStr, new Date().toISOString(), eventName);
+    const refNow = reservation?._nowOverride instanceof Date
+      ? reservation._nowOverride
+      : (reservation?._nowOverride ? new Date(reservation._nowOverride) : new Date());
+    const { todayStr } = getBrasiliaDateParts(refNow);
+    markReservationRoomReadySent(db, reservation, todayStr, refNow.toISOString(), eventName);
   }
 
   return { waResult, emailLog, renderedMessage, renderedButtons };

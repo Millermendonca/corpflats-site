@@ -103,6 +103,11 @@ async function runTests() {
     assert.ok(samedayHistory, "Histórico deve registrar sameday_reservation");
     assert.match(
       samedayHistory.message,
+      /Entrada \(Check-in\): \*Hoje a partir das 14:00\*/,
+      "Cabeçalho deve exibir sempre o horário oficial de check-in (14:00)"
+    );
+    assert.match(
+      samedayHistory.message,
       /Status do Flat 512:\* \*Limpo e Liberado para Entrada Imediata!/,
       "Mensagem consolidada deve informar que o Flat 512 já está limpo e liberado para entrada imediata"
     );
@@ -240,6 +245,51 @@ async function runTests() {
       renderedBooking1100,
       /Liberação programada a partir das 12:00/,
       "Antes do horário de liberação do canal, deve informar o horário programado de liberação"
+    );
+
+    // Reserva direta às 08:34 BRT com flat em preparação pela governança (caso Eduardo RES-116-0629):
+    // Cabeçalho DEVE mostrar 14:00 e o corpo deve mostrar Em Preparação + Cortesia de Early Check-in mediante disponibilidade
+    const now0834 = new Date("2026-10-26T11:34:00.000Z"); // 08:34 BRT
+    db.cleaningRequests.push({
+      id: 2,
+      flatId: 512,
+      flatNumber: "512",
+      requestDate: todayStr,
+      status: "cleaning_now",
+      createdAt: now0834.toISOString()
+    });
+    const resEduardo0834 = {
+      id: 9005,
+      code: "RES-116-0629",
+      guestName: "Eduardo",
+      guestPhone: "5522999995555",
+      flatId: 512,
+      flatNumber: "512",
+      channel: "whatsapp",
+      status: "confirmada",
+      paymentStatus: "pago",
+      totalAmount: 300,
+      paidAmount: 300,
+      checkinDate: todayStr,
+      checkoutDate: tomorrowStr,
+      _nowOverride: now0834
+    };
+    const samedayTpl = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions");
+    const renderedEduardo = resolveWhatsAppTags(samedayTpl.message, resEduardo0834, db);
+    assert.match(
+      renderedEduardo,
+      /Entrada \(Check-in\): \*Hoje a partir das 14:00\*/,
+      "Cabeçalho nunca deve mostrar 10:00; deve mostrar sempre 'Hoje a partir das 14:00'"
+    );
+    assert.match(
+      renderedEduardo,
+      /Status do Flat 512:\* \*Em Preparação pela Governança\*/,
+      "Corpo deve informar que o flat está em preparação pela governança"
+    );
+    assert.match(
+      renderedEduardo,
+      /Benefício Exclusivo — Early Check-in a partir das 10:00[\s\S]*ESTRITAMENTE MEDIANTE DISPONIBILIDADE/,
+      "Corpo deve informar a cortesia de early check-in conforme disponibilidade e critérios"
     );
   }
 
