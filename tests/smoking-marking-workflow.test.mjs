@@ -512,6 +512,29 @@ async function runRealBackendTests() {
   assert.equal(futureCarlosAfterStay2.isSmoker, true, "Reserva futura deve preservar o alerta devido ao histórico anterior");
   console.log("✅ 4.10. Preservação de histórico de fumo multi-estadias validada com sucesso.");
 
+  // 4.11. Prevenção de falso positivo por placeholder "Hóspede 2" ou telefone corporativo B2B de outro hóspede
+  testDb.reservations.push({
+    id: "RES-UNRELATED-PLACEHOLDER",
+    code: "RES-UNRELATED-PLACEHOLDER",
+    flatId: 512,
+    flatNumber: "512",
+    guestId: 77, // Mesmo guestId corporativo/agência, mas hóspede titular diferente
+    guestName: "Iago Fernandes Zioto de Freitas",
+    guestPhone: "21999887766", // Mesmo telefone de agência
+    guests: [
+      { index: 1, name: "Iago Fernandes Zioto de Freitas" },
+      { index: 2, name: "Hóspede 2" }
+    ],
+    checkinDate: "2026-12-20",
+    checkoutDate: "2026-12-25",
+    status: "confirmada"
+  });
+  updateSmokingStatusForCleaning(req1, true, maidUser, "2026-11-04", testDb);
+  const unrelatedRes = testDb.reservations.find(r => r.code === "RES-UNRELATED-PLACEHOLDER");
+  assert.equal(Boolean(unrelatedRes.isSmoker), false, "Reserva de outro hóspede com placeholder 'Hóspede 2' ou telefone corporativo jamás deve ser marcada como fumante");
+  assert.equal(Boolean(unrelatedRes.smokerGuestAlert), false, "Reserva de outro hóspede jamais deve receber alerta de fumante");
+  console.log("✅ 4.11. Proteção anti-falso-positivo (Hóspede 2 / Telefone corporativo B2B) validada com sucesso.");
+
   if (httpServer && typeof httpServer.close === "function") {
     httpServer.close();
   }

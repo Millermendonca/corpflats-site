@@ -6887,9 +6887,57 @@ export function repairIncidentSept30(db) {
   return changed;
 }
 
+function sanitizeContaminatedSmokingFlags(targetDb = db) {
+  if (!targetDb) return false;
+  if (!targetDb.settings) targetDb.settings = {};
+  if (targetDb.settings.smokingContaminationCleanedV1) return false;
+  let cleaned = false;
+  for (const r of (targetDb.reservations || [])) {
+    if (r && (r.isSmoker || r.smokerGuestAlert || r.guestSmoked || r.smokedInRoom || r.smokingAlert)) {
+      delete r.isSmoker;
+      delete r.smokerGuestAlert;
+      delete r.guestSmoked;
+      delete r.smokedInRoom;
+      delete r.smokingAlert;
+      cleaned = true;
+    }
+  }
+  for (const g of (targetDb.guests || [])) {
+    if (g && (g.isSmoker || g.smokedInRoom || g.smokingReportedAt || g.smokingReportedBy || (Array.isArray(g.tags) && g.tags.some(t => String(t).toLowerCase() === "fumante")))) {
+      delete g.isSmoker;
+      delete g.smokedInRoom;
+      delete g.smokingReportedAt;
+      delete g.smokingReportedBy;
+      if (Array.isArray(g.tags)) {
+        g.tags = g.tags.filter(t => String(t).toLowerCase() !== "fumante");
+      }
+      cleaned = true;
+    }
+  }
+  for (const cr of (targetDb.cleaningRequests || [])) {
+    if (cr && (cr.smokedInRoom || cr.guestSmoked || cr.smokedMarkedAt || cr.smokedMarkedBy)) {
+      cr.smokedInRoom = false;
+      cr.guestSmoked = false;
+      delete cr.smokedMarkedAt;
+      delete cr.smokedMarkedBy;
+      cleaned = true;
+    }
+  }
+  targetDb.settings.smokingContaminationCleanedV1 = true;
+  if (typeof invalidateGuestIndexCache === "function") invalidateGuestIndexCache();
+  if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
+  return cleaned;
+}
+
 function sanitizeReservationFlags() {
   sanitizeMaidUsers();
   sanitizePeriodicTasks();
+  if (sanitizeContaminatedSmokingFlags(db)) {
+    try {
+      saveDatabase("clean_smoking_false_positives_v1");
+      console.log("[Auto-Fix] Falsos positivos de fumo limpos com sucesso.");
+    } catch (_) {}
+  }
   if (repairIncidentSept30(db)) {
     try {
       saveDatabase("repair_incident_sept30");
@@ -20642,6 +20690,47 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
   return item;
 }
 
+// ── Helper Estrito de Identidade Nominal para Marcação de Fumo ──────────────
+// Impede falsos positivos causados por placeholders ("Hóspede 2") ou telefones corporativos B2B.
+function isStrictSamePersonForSmoking(nameA, nameB, allowInitialMatch = false) {
+  if (!nameA || !nameB) return false;
+  if (typeof isSystemOrServiceOrderGuestName === "function" && (isSystemOrServiceOrderGuestName(nameA) || isSystemOrServiceOrderGuestName(nameB))) return false;
+  if (typeof isPlaceholderOrEmptyGuestName === "function" && (isPlaceholderOrEmptyGuestName(nameA) || isPlaceholderOrEmptyGuestName(nameB))) return false;
+
+  const cleanTokenize = (str) => {
+    const norm = String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    if (!norm) return [];
+    if (/^(hospede|acompanhante|visitante|a definir|sem nome|bloqueio|manutencao|teste|quarto|flat)(\s+\d+)?$/i.test(norm)) return [];
+    const stopWords = new Set(["de", "da", "do", "dos", "das", "del", "di", "du", "e", "jr", "junior", "filho", "filha", "neto", "neta", "sr", "sra", "dr", "dra"]);
+    return norm.split(" ").filter(t => t.length >= 1 && !stopWords.has(t));
+  };
+
+  const tokensA = cleanTokenize(nameA);
+  const tokensB = cleanTokenize(nameB);
+  if (tokensA.length === 0 || tokensB.length === 0) return false;
+
+  const fullA = tokensA.join(" ");
+  const fullB = tokensB.join(" ");
+  if (fullA === fullB && fullA.length >= 3) return true;
+
+  if (tokensA.length >= 2 && tokensB.length >= 2) {
+    if (tokensA[0] === tokensB[0] && tokensA[0].length >= 2) {
+      const shorter = tokensA.length <= tokensB.length ? tokensA : tokensB;
+      const longer = tokensA.length <= tokensB.length ? tokensB : tokensA;
+      if (shorter.every(t => longer.includes(t))) return true;
+    }
+    if (allowInitialMatch) {
+      const lastA = tokensA[tokensA.length - 1];
+      const lastB = tokensB[tokensB.length - 1];
+      if (lastA.length >= 3 && lastA === lastB) {
+        const hasInitialOrToken = tokensA.some(ta => tokensB.some(tb => ta === tb || (ta.length === 1 && tb.startsWith(ta)) || (tb.length === 1 && ta.startsWith(tb))));
+        if (hasInitialOrToken) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // ── Helper: Atualização de Fumo da Limpeza no Cadastro do Hóspede e Reservas Futuras ──
 function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, targetDate = null, dbInstance = null) {
   const currentDb = dbInstance || db;
@@ -20705,11 +20794,10 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
   }
   const cleanGuestCandidate = cleaningItem.leavingGuest || cleaningItem.currentGuest || cleaningItem.guestName;
   if (!res && cleanGuestCandidate) {
-    const lg = normalizeStr(cleanGuestCandidate);
     res = (currentDb.reservations || []).find(r =>
       r.status !== "cancelada" && r.status !== "cancelled" &&
       (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
-      r.guestName && (normalizeStr(r.guestName) === lg || normalizeStr(r.guestName).includes(lg) || lg.includes(normalizeStr(r.guestName)))
+      r.guestName && isStrictSamePersonForSmoking(r.guestName, cleanGuestCandidate, false)
     );
   }
   if (!res) {
@@ -20717,14 +20805,6 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
       r.status !== "cancelada" && r.status !== "cancelled" &&
       (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
       r.checkinDate <= effectiveDate && r.checkoutDate >= effectiveDate
-    );
-  }
-  if (!res && cleanGuestCandidate) {
-    const lg = normalizeStr(cleanGuestCandidate);
-    res = (currentDb.reservations || []).find(r =>
-      r.status !== "cancelada" && r.status !== "cancelled" &&
-      r.guestName && (normalizeStr(r.guestName) === lg || normalizeStr(r.guestName).includes(lg) || lg.includes(normalizeStr(r.guestName))) &&
-      (r.checkoutDate === effectiveDate || (r.checkinDate <= effectiveDate && r.checkoutDate >= effectiveDate))
     );
   }
 
@@ -20741,46 +20821,54 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
     res.updatedAt = now;
   }
 
-  // 2. Identificar e atualizar cadastro do hóspede em currentDb.guests
+  const primarySmokerName = res?.guestName || cleanGuestCandidate || "";
+
+  // 2. Identificar e atualizar cadastro do hóspede em currentDb.guests (com verificação estrita de identidade)
   if (!currentDb.guests) currentDb.guests = [];
   let guest = null;
   if (res?.guestId) {
-    guest = currentDb.guests.find(g => Number(g.id) === Number(res.guestId) || String(g.id) === String(res.guestId));
+    const cand = currentDb.guests.find(g => Number(g.id) === Number(res.guestId) || String(g.id) === String(res.guestId));
+    if (cand && (!primarySmokerName || isStrictSamePersonForSmoking(primarySmokerName, cand.fullName || cand.name, true))) {
+      guest = cand;
+    }
   }
   if (!guest && (res?.guestDocument || res?.document)) {
     const docClean = String(res.guestDocument || res.document).replace(/\D/g, "");
-    if (docClean) {
-      guest = currentDb.guests.find(g => (g.document && g.document.replace(/\D/g, "") === docClean) || (g.documentNumber && g.documentNumber.replace(/\D/g, "") === docClean));
+    if (docClean.length >= 8) {
+      const cand = currentDb.guests.find(g => (g.document && g.document.replace(/\D/g, "") === docClean) || (g.documentNumber && g.documentNumber.replace(/\D/g, "") === docClean));
+      if (cand && (!primarySmokerName || isStrictSamePersonForSmoking(primarySmokerName, cand.fullName || cand.name, true))) {
+        guest = cand;
+      }
     }
   }
-  if (!guest && res?.guestName) {
-    const norm = normalizeStr(res.guestName);
-    guest = currentDb.guests.find(g => (g.fullName && (normalizeStr(g.fullName) === norm || areGuestNamesCompatible(res.guestName, g.fullName))) || (g.name && (normalizeStr(g.name) === norm || areGuestNamesCompatible(res.guestName, g.name))));
+  if (!guest && primarySmokerName) {
+    guest = currentDb.guests.find(g => isStrictSamePersonForSmoking(primarySmokerName, g.fullName || g.name, false));
   }
-  if (!guest && cleanGuestCandidate) {
-    const norm = normalizeStr(cleanGuestCandidate);
-    guest = currentDb.guests.find(g => (g.fullName && (normalizeStr(g.fullName) === norm || areGuestNamesCompatible(cleanGuestCandidate, g.fullName))) || (g.name && (normalizeStr(g.name) === norm || areGuestNamesCompatible(cleanGuestCandidate, g.name))));
-  }
-  if (!guest && (res?.guestPhone || res?.phone)) {
+  if (!guest && (res?.guestPhone || res?.phone) && primarySmokerName) {
     const candPhone = res?.guestPhone || res?.phone;
-    guest = currentDb.guests.find(g => phonesMatch(g.phone, candPhone) || phonesMatch(g.phoneNumber, candPhone));
+    guest = currentDb.guests.find(g =>
+      (phonesMatch(g.phone, candPhone) || phonesMatch(g.phoneNumber, candPhone)) &&
+      isStrictSamePersonForSmoking(primarySmokerName, g.fullName || g.name, true)
+    );
   }
-  if (!guest && (res?.guestEmail || res?.email)) {
+  if (!guest && (res?.guestEmail || res?.email) && primarySmokerName) {
     const em = String(res.guestEmail || res.email).trim().toLowerCase();
     if (em.includes("@")) {
-      guest = currentDb.guests.find(g => g.email && String(g.email).trim().toLowerCase() === em);
+      guest = currentDb.guests.find(g =>
+        g.email && String(g.email).trim().toLowerCase() === em &&
+        isStrictSamePersonForSmoking(primarySmokerName, g.fullName || g.name, true)
+      );
     }
   }
 
-  // Se o cadastro não existe mas temos referência de hóspede (por reserva ou apontamento no card), cria o cadastro quando fumo é confirmado
-  if (!guest && isSmoker && (res || cleanGuestCandidate)) {
+  // Se o cadastro não existe mas temos referência nominal válida de hóspede, cria o cadastro quando fumo é confirmado
+  if (!guest && isSmoker && primarySmokerName && !isPlaceholderOrEmptyGuestName(primarySmokerName)) {
     const nextId = currentDb.guests.length > 0 ? Math.max(...currentDb.guests.map(g => Number(g.id) || 0)) + 1 : 1;
-    const nameForGuest = res?.guestName || cleanGuestCandidate || "Hóspede";
     guest = {
       id: nextId,
       guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
-      name: nameForGuest,
-      fullName: nameForGuest,
+      name: primarySmokerName,
+      fullName: primarySmokerName,
       document: res?.guestDocument || res?.document || "",
       documentNumber: res?.guestDocument || res?.document || "",
       phone: res?.guestPhone || res?.phone || "",
@@ -20793,27 +20881,7 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
     if (res) res.guestId = guest.id;
   }
 
-  if (guest) {
-    if (!Array.isArray(guest.tags)) guest.tags = [];
-    if (isSmoker) {
-      guest.isSmoker = true;
-      guest.smokedInRoom = true;
-      guest.smokingReportedAt = now;
-      guest.smokingReportedBy = userAuth?.name || userAuth?.username || "Camareira";
-      if (!guest.tags.includes("Fumante")) {
-        guest.tags.push("Fumante");
-      }
-    } else {
-      guest.isSmoker = false;
-      guest.smokedInRoom = false;
-      guest.tags = guest.tags.filter(t => t.toLowerCase() !== "fumante");
-      delete guest.smokingReportedAt;
-      delete guest.smokingReportedBy;
-    }
-    guest.updatedAt = now;
-  }
-
-  // 3. Atualizar reservas futuras deste hóspede
+  // 3. Atualizar reservas futuras exclusivamente deste mesmo hóspede (sem contaminar terceiros ou placeholders)
   const guestIds = new Set();
   if (guest?.id) guestIds.add(String(guest.id));
   if (res?.guestId) guestIds.add(String(res.guestId));
@@ -20860,19 +20928,10 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
   if (res?.guestName) rawGuestNames.push(res.guestName);
   if (cleanGuestCandidate) rawGuestNames.push(cleanGuestCandidate);
 
-  const guestNames = new Set(rawGuestNames.map(n => normalizeStr(n)).filter(Boolean));
-
-  const matchesAnyName = (candidateName) => {
+  const matchesAnyNameStrict = (candidateName, allowInitial = false) => {
     if (!candidateName) return false;
-    const candNorm = normalizeStr(candidateName);
-    if (!candNorm) return false;
-    if (guestNames.has(candNorm)) return true;
     for (const gn of rawGuestNames) {
-      if (typeof areGuestNamesCompatible === "function" && areGuestNamesCompatible(gn, candidateName)) {
-        return true;
-      }
-      const gnNorm = normalizeStr(gn);
-      if (gnNorm && (candNorm.includes(gnNorm) || gnNorm.includes(candNorm))) {
+      if (isStrictSamePersonForSmoking(gn, candidateName, allowInitial)) {
         return true;
       }
     }
@@ -20880,22 +20939,30 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
   };
 
   const isMatchingGuest = (otherRes) => {
-    if (otherRes.guestId && guestIds.has(String(otherRes.guestId))) return true;
+    if (!otherRes) return false;
     const doc = (otherRes.guestDocument || otherRes.document || otherRes.cpf || "").replace(/\D/g, "");
-    if (doc && guestDocs.has(doc)) return true;
-    if (matchesAnyPhone(otherRes.guestPhone || otherRes.phone)) return true;
+    if (doc.length >= 8 && guestDocs.has(doc)) {
+      if (!otherRes.guestName || matchesAnyNameStrict(otherRes.guestName, true)) return true;
+    }
+    if (otherRes.guestId && guestIds.has(String(otherRes.guestId))) {
+      if (!otherRes.guestName || matchesAnyNameStrict(otherRes.guestName, true)) return true;
+    }
+    if (matchesAnyPhone(otherRes.guestPhone || otherRes.phone)) {
+      if (matchesAnyNameStrict(otherRes.guestName, true)) return true;
+    }
     const email = cleanEmailStr(otherRes.guestEmail || otherRes.email);
-    if (email.includes("@") && guestEmails.has(email)) return true;
-    if (matchesAnyName(otherRes.guestName)) return true;
+    if (email.includes("@") && guestEmails.has(email)) {
+      if (matchesAnyNameStrict(otherRes.guestName, true)) return true;
+    }
+    if (matchesAnyNameStrict(otherRes.guestName, false)) return true;
+
     if (Array.isArray(otherRes.guests)) {
       for (const g of otherRes.guests) {
-        if (g?.guestId && guestIds.has(String(g.guestId))) return true;
-        const gDoc = (g?.cpf || g?.document || "").replace(/\D/g, "");
-        if (gDoc && guestDocs.has(gDoc)) return true;
-        if (matchesAnyPhone(g?.phone)) return true;
-        const gEmail = cleanEmailStr(g?.email);
-        if (gEmail.includes("@") && guestEmails.has(gEmail)) return true;
-        if (matchesAnyName(g?.name || g?.fullName)) return true;
+        if (!g) continue;
+        const gName = g.name || g.fullName || "";
+        const gDoc = (g.cpf || g.document || "").replace(/\D/g, "");
+        if (gDoc.length >= 8 && guestDocs.has(gDoc) && (!gName || matchesAnyNameStrict(gName, true))) return true;
+        if (gName && matchesAnyNameStrict(gName, false)) return true;
       }
     }
     return false;
@@ -20906,8 +20973,7 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
   const hasOtherSmokingReport = (currentDb.cleaningRequests || []).some(cr =>
     cr && String(cr.id) !== String(cleaningItem.id) && (cr.smokedInRoom || cr.guestSmoked) &&
     (
-      (guest?.id && (String(cr.guestId) === String(guest.id) || String(cr.reservationId) === String(res?.id))) ||
-      (cr.leavingGuest && matchesAnyName(cr.leavingGuest)) ||
+      (cr.leavingGuest && matchesAnyNameStrict(cr.leavingGuest, false)) ||
       (cr.reservationId && (currentDb.reservations || []).some(r => String(r.id) === String(cr.reservationId) && isMatchingGuest(r)))
     )
   ) || (currentDb.reservations || []).some(r =>
@@ -27010,6 +27076,10 @@ app.get("/api/pms/calendar", (req, res) => {
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
 
+  if (sanitizeContaminatedSmokingFlags(db)) {
+    setImmediate(() => saveDatabase("clean_smoking_false_positives_v1"));
+  }
+
   const now = Date.now();
   if (now - lastCalendarReconcileTime > 15000) {
     lastCalendarReconcileTime = now;
@@ -27193,6 +27263,11 @@ app.get("/api/pms/calendar", (req, res) => {
       isCheckingOutToday || (Boolean(r.actualCheckoutAt) && String(r.actualCheckoutAt).substring(0, 10) === todayStr)
     );
 
+    const isStrictSmokerMatch = Boolean(
+      r.smokerGuestAlert ||
+      (matchedGuest && (matchedGuest.isSmoker || matchedGuest.smokedInRoom || (Array.isArray(matchedGuest.tags) && matchedGuest.tags.includes("Fumante"))) && isStrictSamePersonForSmoking(r.guestName, matchedGuest.fullName || matchedGuest.name, true))
+    );
+
     const mappedRes = {
       ...r,
       code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
@@ -27204,10 +27279,10 @@ app.get("/api/pms/calendar", (req, res) => {
       autoEmitInvoice: autoInvoice,
       includeBreakfast: Boolean(r.includeBreakfast || r.hasBreakfast || r.ratePlan === "with_breakfast" || r.notes?.toLowerCase().includes("café") || r.notes?.toLowerCase().includes("cafe")),
       hasMinor: Boolean(r.hasMinor || matchedGuest?.isMinor || (r.guests || []).some(g => g.isMinor)),
-      isSmoker: Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || matchedGuest?.isSmoker || matchedGuest?.smokedInRoom || (matchedGuest?.tags || []).includes("Fumante")),
-      smokerGuestAlert: Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || matchedGuest?.isSmoker || matchedGuest?.smokedInRoom || (matchedGuest?.tags || []).includes("Fumante")),
-      guestSmoked: Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || matchedGuest?.isSmoker || matchedGuest?.smokedInRoom || (matchedGuest?.tags || []).includes("Fumante")),
-      smokingAlert: r.smokingAlert || (matchedGuest?.isSmoker ? "Hóspede com histórico de fumo no quarto" : undefined),
+      isSmoker: isStrictSmokerMatch,
+      smokerGuestAlert: isStrictSmokerMatch,
+      guestSmoked: Boolean(r.smokedInRoom || r.guestSmoked),
+      smokingAlert: isStrictSmokerMatch ? (r.smokingAlert || "Hóspede com histórico de fumo no quarto") : undefined,
       riskAttentionAlert: Boolean(r.riskAttentionAlert || matchedGuest?.riskAttentionAlert || (r.guests || []).some(g => g.riskAttentionAlert)),
       riskAttentionReason: r.riskAttentionReason || matchedGuest?.riskAttentionReason || (r.guests || []).find(g => g.riskAttentionAlert)?.riskAttentionReason || "",
       breakfastToken: r.breakfastToken || (r.code ? `bfk_${r.code.toLowerCase().replace(/[^a-z0-9]/g, '')}` : `bfk_${r.id}`),
