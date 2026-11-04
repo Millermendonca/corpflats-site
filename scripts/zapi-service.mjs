@@ -13143,12 +13143,12 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
     const now = reservation?._nowOverride instanceof Date
       ? reservation._nowOverride
-      : (reservation?._nowOverride ? new Date(reservation._nowOverride) : new Date());
-    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-    const brDate = new Date(nowUtc - (3 * 3600000));
-    const todayStr = brDate.toISOString().substring(0, 10);
-    const brHour = brDate.getUTCHours();
-    const brMinute = brDate.getUTCMinutes();
+      : (reservation?._nowOverride
+        ? new Date(reservation._nowOverride)
+        : (db?._nowOverride instanceof Date
+          ? db._nowOverride
+          : (db?._nowOverride ? new Date(db._nowOverride) : new Date())));
+    const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
 
     // Se a reserva for para HOJE e já passou das 07:01, converte automaticamente reservation_created em sameday_reservation
     // para enviar a mensagem única consolidada de entrada no mesmo dia sem redundância.
@@ -13161,8 +13161,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     }
 
     // REGRA DE OURO: NUNCA disparar mensagens para reservas cuja estadia terminou há mais de 3 dias
-    const threeDaysAgo = new Date(nowUtc - (3 * 24 + 3) * 3600000);
-    const threeDaysAgoStr = threeDaysAgo.toISOString().substring(0, 10);
+    const threeDaysAgoObj = new Date(`${todayStr}T12:00:00Z`);
+    threeDaysAgoObj.setUTCDate(threeDaysAgoObj.getUTCDate() - 3);
+    const threeDaysAgoStr = threeDaysAgoObj.toISOString().substring(0, 10);
     if (reservation.checkoutDate && reservation.checkoutDate < threeDaysAgoStr) {
       console.warn(`[WhatsApp Trigger] Evento '${eventName}' IGNORADO pois a reserva ${reservation?.code || reservation?.id} (${reservation?.guestName}) é antiga (checkout em ${reservation.checkoutDate}).`);
       return;
@@ -13219,6 +13220,35 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       }
       if (!isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr)) {
         console.log(`[WhatsApp Trigger] Evento 'checkin_cleaning_delay' IGNORADO para ${reservation.code || reservation.id} (${reservation.guestName}): Flat ${reservation.flatNumber} já está limpo/pronto.`);
+        return;
+      }
+    }
+
+    // Trava estrita para 'breakfast_reminder': nunca disparar se estiver fora da estadia ativa,
+    // sem café contratado, já com pedido realizado para amanhã, fora da janela 18:00–20:00, ou em Day-Use.
+    if (eventName === "breakfast_reminder") {
+      const tomorrowObj = new Date(`${todayStr}T12:00:00Z`);
+      tomorrowObj.setUTCDate(tomorrowObj.getUTCDate() + 1);
+      const tomorrowStr = tomorrowObj.toISOString().substring(0, 10);
+      const isStayActiveForTomorrow = Boolean(
+        reservation &&
+        reservation.checkinDate &&
+        reservation.checkoutDate &&
+        reservation.checkinDate !== reservation.checkoutDate &&
+        todayStr >= reservation.checkinDate &&
+        todayStr < reservation.checkoutDate &&
+        hasReservationBreakfast(reservation)
+      );
+      if (!isStayActiveForTomorrow) {
+        console.log(`[WhatsApp Trigger] Evento 'breakfast_reminder' IGNORADO para ${reservation?.code || reservation?.id} (${reservation?.guestName}): reserva fora da estadia ativa ou sem café contratado.`);
+        return;
+      }
+      if (brHour < 18 || brHour >= 20) {
+        console.log(`[WhatsApp Trigger] Evento 'breakfast_reminder' IGNORADO para ${reservation?.code || reservation?.id} (${reservation?.guestName}): fora da janela estrita 18:00–20:00 (horário atual: ${brHour}h).`);
+        return;
+      }
+      if (hasActiveBreakfastOrderForDate(db, reservation, tomorrowStr)) {
+        console.log(`[WhatsApp Trigger] Evento 'breakfast_reminder' IGNORADO para ${reservation?.code || reservation?.id} (${reservation?.guestName}): pedido de café de amanhã já realizado.`);
         return;
       }
     }
@@ -13464,8 +13494,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
           }
         }
 
-        // Validação global anti-duplicação (Histórico + In-Flight Lock) para eventos únicos e reservation_updated (janela de 30s)
-        if ((isSingleFireEvent || isUpdatedEvent) && (rCode || rId)) {
+        // Validação global anti-duplicação (Histórico + In-Flight Lock) para eventos únicos, reservation_updated (janela de 30s) e breakfast_reminder (diário)
+        const isBreakfastEvent = eventName === "breakfast_reminder" || tpl?.id === "tpl_breakfast_reminder";
+        if ((isSingleFireEvent || isUpdatedEvent || isBreakfastEvent) && (rCode || rId)) {
           if (target.phone) {
             const normTargetPhone = normalizePhoneForDedup(target.phone);
             const lockKey = (resKey && normTargetPhone)
@@ -14451,9 +14482,15 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
       return { dispatchedStages, skippedReason: `status_${st}` };
     }
 
-    const rawGuestPhone = reservation.guestPhone || reservation.guests?.[0]?.phone || "";
+    const recips = getReservationRecipients(reservation, db);
+    const rawGuestPhone = reservation.guestPhone || reservation.guests?.[0]?.phone || recips.guest?.phone || "";
     const cleanGuestPhone = String(rawGuestPhone).replace(/\D/g, "");
-    if (cleanGuestPhone.length < 10) {
+    const hasAnyValidPhone = Boolean(
+      (cleanGuestPhone && cleanGuestPhone.length >= 10) ||
+      (recips.requester?.cleanDigits && recips.requester.cleanDigits.length >= 10) ||
+      recips.companions.some(c => c.cleanDigits && c.cleanDigits.length >= 10)
+    );
+    if (!hasAnyValidPhone && !reservationHasAnyContact(reservation, db)) {
       return { dispatchedStages, skippedReason: "no_valid_guest_phone" };
     }
 
@@ -14475,7 +14512,8 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
       return { dispatchedStages, skippedReason: "past_checkout" };
     }
 
-    const normGuestPhone = normalizePhoneForDedup(cleanGuestPhone);
+    const effectivePhoneForDedup = cleanGuestPhone || recips.requester?.cleanDigits || recips.companions?.[0]?.cleanDigits || "";
+    const normGuestPhone = normalizePhoneForDedup(effectivePhoneForDedup);
     const rCodeUpper = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
     const rIdStr = reservation.id ? String(reservation.id) : "";
 
@@ -14493,7 +14531,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
       });
     };
 
-    const markQueuedStageCancelledForGuest = (eventsList, reason) => {
+    const markQueuedStageCancelledForGuest = (eventsList, reason, cancelAllRecipients = false) => {
       if (!Array.isArray(db.whatsappQueue)) return;
       const evSet = new Set(Array.isArray(eventsList) ? eventsList : [eventsList]);
       const nowIso = new Date().toISOString();
@@ -14503,7 +14541,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
         const qId = q.reservationId ? String(q.reservationId) : "";
         const isSameRes = (rCodeUpper && qCode === rCodeUpper) || (rIdStr && (qId === rIdStr || qCode === rIdStr));
         if (!isSameRes) continue;
-        if ((q.recipientType || "guest") !== "guest") continue;
+        if (!cancelAllRecipients && (q.recipientType || "guest") !== "guest") continue;
         if (evSet.has(q.triggerEvent)) {
           q.status = "cancelled";
           q.error = reason;
@@ -14647,10 +14685,17 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
           db,
           saveDatabase,
           "breakfast_reminder",
-          { ...guestOnlyRes, _skipAutoIntro: true },
+          {
+            ...reservation,
+            _forceInitialWelcome: true,
+            _allowScheduledTemplateImmediate: true,
+            _skipAutoIntro: true,
+            _fastIntroDelay: Boolean(options.fastDelay),
+            _nowOverride: now
+          },
           baseUrl
         );
-        markQueuedStageCancelledForGuest(["breakfast_reminder"], "Enviado via recuperação imediata (Catch-Up)");
+        markQueuedStageCancelledForGuest(["breakfast_reminder"], "Enviado via recuperação imediata (Catch-Up)", true);
         dispatchedStages.push("breakfast_reminder");
       }
     }

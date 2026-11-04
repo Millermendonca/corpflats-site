@@ -23,7 +23,9 @@ const {
   REQUESTER_AND_GUEST_TEMPLATE_IDS,
   GUEST_ONLY_STAY_AND_POST_EVENTS,
   GUEST_ONLY_TEMPLATE_IDS,
-  DEFAULT_WHATSAPP_TEMPLATES
+  DEFAULT_WHATSAPP_TEMPLATES,
+  triggerImmediateWhatsApp,
+  dispatchCatchUpGuestRulerMessages
 } = zapi;
 
 describe("Régua de Café da Manhã (breakfast_reminder) • Agendamento e Elegibilidade", () => {
@@ -511,5 +513,149 @@ describe("Régua de Café da Manhã (breakfast_reminder) • Agendamento e Elegi
     );
     assert.strictEqual(day2Queue.length, 1, "No Dia 2 da estadia, o lembrete de café deve ser agendado normalmente para a próxima manhã");
   });
+
+  it("15. triggerImmediateWhatsApp: trava determinística de regras de negócio e fronteiras estritas da janela (17:59:59, 20:00:00 e 20:00:01 bloqueados; 18:30 permitido)", async () => {
+    const baseDb = {
+      _nowOverride: "2026-11-04T18:30:00-03:00",
+      zapiConfig: { enabled: true, testModeOnly: false },
+      whatsappTemplates: [{ ...baseTpl, enabled: true }],
+      whatsappQueue: [],
+      whatsappHistory: [],
+      breakfastOrders: [],
+      reservations: []
+    };
+
+    const validResv = {
+      id: 596,
+      code: "RES-905-0596",
+      guestName: "Alessandra Dias",
+      guestPhone: "5521964120926",
+      includeBreakfast: true,
+      checkinDate: "2026-11-04",
+      checkoutDate: "2026-11-06",
+      status: "confirmada",
+      channel: "site"
+    };
+
+    // Caso A: Às 18:30 (dentro da janela) com café contratado -> Dispara com sucesso
+    const dbSuccess = JSON.parse(JSON.stringify(baseDb));
+    await triggerImmediateWhatsApp(dbSuccess, () => {}, "breakfast_reminder", validResv);
+    assert.strictEqual(dbSuccess.whatsappHistory.length, 1, "Às 18:30 o lembrete de café deve ser disparado");
+
+    // Caso B: Reserva SEM café contratado -> Bloqueia envio
+    const dbNoBf = JSON.parse(JSON.stringify(baseDb));
+    await triggerImmediateWhatsApp(dbNoBf, () => {}, "breakfast_reminder", { ...validResv, includeBreakfast: false, notes: "" });
+    assert.strictEqual(dbNoBf.whatsappHistory.length, 0, "Reserva sem café não pode receber lembrete");
+
+    // Caso C: Reserva Day-Use (checkin === checkout) -> Bloqueia envio
+    const dbDayUse = JSON.parse(JSON.stringify(baseDb));
+    await triggerImmediateWhatsApp(dbDayUse, () => {}, "breakfast_reminder", { ...validResv, checkoutDate: "2026-11-04" });
+    assert.strictEqual(dbDayUse.whatsappHistory.length, 0, "Reserva Day-Use não pode receber lembrete");
+
+    // Caso D: Pedido para amanhã já realizado -> Bloqueia envio
+    const dbOrdered = JSON.parse(JSON.stringify(baseDb));
+    dbOrdered.breakfastOrders = [{ id: "ord_1", reservationCode: "RES-905-0596", date: "2026-11-05", status: "confirmed" }];
+    await triggerImmediateWhatsApp(dbOrdered, () => {}, "breakfast_reminder", validResv);
+    assert.strictEqual(dbOrdered.whatsappHistory.length, 0, "Reserva com pedido de café já efetuado não pode receber lembrete");
+
+    // Caso E: Fronteira inferior 17:59:59 -> Bloqueia envio imediato
+    const dbAt1759 = { ...JSON.parse(JSON.stringify(baseDb)), _nowOverride: "2026-11-04T17:59:59-03:00" };
+    await triggerImmediateWhatsApp(dbAt1759, () => {}, "breakfast_reminder", validResv);
+    assert.strictEqual(dbAt1759.whatsappHistory.length, 0, "Às 17:59:59 o envio imediato deve ser estritamente bloqueado");
+
+    // Caso F: Fronteira superior 20:00:00 -> Bloqueia envio
+    const dbAt2000 = { ...JSON.parse(JSON.stringify(baseDb)), _nowOverride: "2026-11-04T20:00:00-03:00" };
+    await triggerImmediateWhatsApp(dbAt2000, () => {}, "breakfast_reminder", validResv);
+    assert.strictEqual(dbAt2000.whatsappHistory.length, 0, "Exatamente às 20:00:00 o disparo deve ser bloqueado");
+
+    // Caso G: Fronteira superior 20:00:01 -> Bloqueia envio
+    const dbAt2001 = { ...JSON.parse(JSON.stringify(baseDb)), _nowOverride: "2026-11-04T20:00:01-03:00" };
+    await triggerImmediateWhatsApp(dbAt2001, () => {}, "breakfast_reminder", validResv);
+    assert.strictEqual(dbAt2001.whatsappHistory.length, 0, "Após às 20:00:01 o disparo deve ser estritamente bloqueado");
+  });
+
+  it("16. triggerImmediateWhatsApp: anti-duplicação diária estrita para breakfast_reminder no mesmo dia", async () => {
+    const db = {
+      _nowOverride: "2026-11-04T18:30:00-03:00",
+      zapiConfig: { enabled: true, testModeOnly: false },
+      whatsappTemplates: [{ ...baseTpl, enabled: true }],
+      whatsappQueue: [],
+      whatsappHistory: [
+        {
+          id: "hist_already_sent_today",
+          reservationId: 596,
+          reservationCode: "RES-905-0596",
+          triggerEvent: "breakfast_reminder",
+          templateId: "tpl_breakfast_reminder",
+          guestPhone: "5521964120926",
+          recipientType: "guest",
+          status: "sent",
+          sentAt: "2026-11-04T18:00:05-03:00"
+        }
+      ],
+      breakfastOrders: [],
+      reservations: []
+    };
+
+    const resv = {
+      id: 596,
+      code: "RES-905-0596",
+      guestName: "Alessandra Dias",
+      guestPhone: "5521964120926",
+      includeBreakfast: true,
+      checkinDate: "2026-11-04",
+      checkoutDate: "2026-11-06",
+      status: "confirmada",
+      channel: "site"
+    };
+
+    const countBefore = db.whatsappHistory.length;
+    await triggerImmediateWhatsApp(db, () => {}, "breakfast_reminder", resv);
+    assert.strictEqual(db.whatsappHistory.length, countBefore, "Anti-dup: não deve gerar segundo registro de disparo no mesmo dia");
+  });
+
+  it("17. dispatchCatchUpGuestRulerMessages: dispara para solicitante em reservas B2B e cancela toda a fila pendente", async () => {
+    const db = {
+      _nowOverride: "2026-11-04T18:30:00-03:00",
+      zapiConfig: { enabled: true, testModeOnly: false },
+      whatsappTemplates: [{ ...baseTpl, enabled: true }],
+      whatsappQueue: [
+        {
+          id: "q_b2b_pending",
+          reservationCode: "RES-113-B2B-25152172",
+          reservationId: 550,
+          triggerEvent: "breakfast_reminder",
+          recipientType: "requester",
+          status: "scheduled",
+          scheduledFor: "2026-11-04T21:00:00.000Z"
+        }
+      ],
+      whatsappHistory: [],
+      breakfastOrders: [],
+      reservations: []
+    };
+
+    // Reserva B2B onde guestPhone está vazio, mas requesterPhone está preenchido
+    const b2bReservation = {
+      id: 550,
+      code: "RES-113-B2B-25152172",
+      guestName: "AVILA SAMUEL",
+      guestPhone: "", // Vazio
+      requesterName: "Agência B2B Corporativa",
+      requesterPhone: "41 998725041",
+      channel: "b2b",
+      checkinDate: "2026-11-04",
+      checkoutDate: "2026-11-06",
+      includeBreakfast: true,
+      status: "confirmada"
+    };
+
+    const result = await dispatchCatchUpGuestRulerMessages(db, () => {}, b2bReservation, { nowOverride: "2026-11-04T18:30:00-03:00" });
+    assert.ok(result.dispatchedStages.includes("breakfast_reminder"), "Catch-up deve disparar breakfast_reminder para B2B com telefone de solicitante");
+    assert.strictEqual(db.whatsappHistory.length, 1, "Histórico deve registrar envio ao solicitante da reserva B2B");
+    assert.strictEqual(db.whatsappHistory[0].guestPhone, "41 998725041");
+    assert.strictEqual(db.whatsappQueue[0].status, "cancelled", "Item pendente da fila de café deve ser cancelado após recuperação catch-up");
+  });
 });
+
 
