@@ -678,7 +678,7 @@ test("6. Frontend (pms-calendar.tsx) & Backend (PUT /api/pms/reservations/:id): 
     "pms-calendar.tsx deve exportar areGuestNamesCompatibleUI"
   );
   assert.ok(
-    calendarSrc.includes("surnamesB.some(t => surnamesA.has(t))"),
+    calendarSrc.includes("tokensB.slice(1).some(tb => tokensA.slice(1).some(ta => compatTokensMatch(ta, tb)))"),
     "areGuestNamesCompatibleUI deve exigir sobrenome em comum quando ambos os nomes possuem sobrenome"
   );
   assert.ok(
@@ -763,15 +763,52 @@ test("7. Regressão RES-712-0615: reservas recentes (id > 560) com mesmo WhatsAp
   reconcileAndMergeGuests(mockDb);
 
   const r615 = mockDb.reservations.find(r => r.id === 615);
+  const r295 = mockDb.reservations.find(r => r.id === 295);
   const g2603 = mockDb.guests.find(g => g.id === 2603);
+  const gMarco = mockDb.guests.find(g => g.id === 295);
   const qItem = mockDb.whatsappQueue[0];
   const conv = mockDb.whatsappConversations[0];
 
   assert.equal(r615.guestPhone, "+55 21 99670-1988");
   assert.equal(r615.guests[0].phone, "+55 21 99670-1988");
   assert.equal(g2603.phone, "+55 21 99670-1988");
+  assert.equal(r295.guestPhone, "21 99985-4881");
+  assert.equal(gMarco.phone, "21 99985-4881");
   assert.equal(qItem.guestPhone, "+55 21 99670-1988");
   assert.equal(conv.reservationCode, "RES-712-0615");
+  assert.equal(conv.name, "DANIELA MARTINS DE MESQUITA");
+});
+
+test("8. Blindagem CRM & Google Contatos: bloqueia 'Lucas Teste' (22997124021), 'Meta AI', LIDs, 'Ordem de Serviço', deduplica nomes de 1 palavra ('Goal') e não cria hóspede por conversa de WhatsApp avulsa", () => {
+  const { reconcileAndMergeGuests } = loadReconciliationSandbox();
+
+  const mockDb = {
+    guests: [
+      { id: 349, guestCode: "HOSP-00349", name: "Lucas Teste", fullName: "Lucas Teste", phone: "22997124021" },
+      { id: 330, guestCode: "HOSP-00330", name: "Meta AI", fullName: "Meta AI", phone: "1807055946647698" },
+      { id: 440, guestCode: "HOSP-00440", name: "CorpFlats", fullName: "CorpFlats", phone: "25337949788687" },
+      { id: 501, guestCode: "HOSP-00501", name: "Goal", fullName: "Goal", phone: "" },
+      { id: 502, guestCode: "HOSP-00502", name: "Goal", fullName: "Goal", phone: "" },
+      { id: 503, guestCode: "HOSP-00503", name: "A Definir (Aguardando Solicitante)", fullName: "A Definir (Aguardando Solicitante)", phone: "" }
+    ],
+    reservations: [
+      { id: 38, code: "RES-1010-0038", flatNumber: "1010", status: "completed", guestName: "Goal", guestPhone: "" },
+      { id: 39, code: "RES-1010-0039", flatNumber: "1010", status: "confirmada", guestName: "A Definir (Aguardando Solicitante)", guestPhone: "" }
+    ],
+    whatsappConversations: [
+      { phone: "5522999123456", name: "Contato Sem Reserva WhatsApp" }
+    ],
+    invoices: [],
+    guestAccounts: []
+  };
+
+  reconcileAndMergeGuests(mockDb, true);
+
+  assert.equal(mockDb.guests.some(g => g.name === "Lucas Teste" || g.phone === "22997124021"), false);
+  assert.equal(mockDb.guests.some(g => g.name === "Meta AI" || g.name === "CorpFlats"), false);
+  assert.equal(mockDb.guests.some(g => g.name.includes("A Definir")), false);
+  assert.equal(mockDb.guests.some(g => g.name === "Contato Sem Reserva WhatsApp"), false);
+  assert.equal(mockDb.guests.filter(g => g.name === "Goal").length, 1);
 });
 
 

@@ -10255,7 +10255,36 @@ function normalizeName(str) {
 function isSystemOrServiceOrderGuestName(str) {
   const n = normalizeName(str);
   if (!n) return false;
-  return /^(ordem\s+de\s+servico\b|os\s*#\d+|governanca\b|manutencao\b|recepcao\b|portaria\b|admin\b|sistema\b|equipe\s+corpflats\b|notificacao\s+interna\b)/i.test(n);
+  return /^(ordem\s+de\s+servico\b|os\s*#\d+|governanca\b|manutencao\b|recepcao\b|portaria\b|admin\b|sistema\b|equipe\s+corpflats\b|notificacao\s+interna\b|meta\s+ai\b|lucas\s+teste\b|hospede\s+teste\b)/i.test(n);
+}
+
+const INTERNAL_PROTECTED_PHONES = [
+  "22997124021", // CorpFlats WhatsApp Oficial
+  "2237040100",  // Recepção Soho
+  "22997873654", // Portaria / Garagem Soho
+  "22999922473", // Jefferson Bruno (Prestador OS Ar-Condicionado)
+  "22999082462", // Felipi Rangel Leandro (Prestador OS)
+  "22997048709", // Priscila da Silva Pinto (Equipe Governança)
+  "22997810703", // Tamires da Silva Rocha (Equipe Governança)
+  "2299887755",  // Telefone de teste
+  "2299887765",  // Telefone de teste
+  "2299887766"   // Telefone de teste
+];
+
+function isInternalOrForbiddenGuestPhone(phone) {
+  if (!phone) return false;
+  const rawDigits = String(phone).replace(/\D/g, "");
+  if (rawDigits.length > 13) return true; // Identificador @lid do WhatsApp (ex: 1807055946647698)
+  const norm = normalizePhone(phone);
+  if (!norm) return false;
+  return INTERNAL_PROTECTED_PHONES.some(ip => phonesMatch(norm, ip));
+}
+
+function isForbiddenTestOrInternalGuestName(str) {
+  const n = normalizeName(str).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!n) return false;
+  if (isSystemOrServiceOrderGuestName(str)) return true;
+  return /^(lucas\s+teste|meta\s+ai|corpflats|corp\s+flats|recepcao(\s+soho)?|portaria(\s+soho)?|garagem(\s+soho)?|hospede\s+sem\s+cafe|hospede\s+queen\s+casal|hospede\s+2\s+camas\s+solteiro|hospede\s+flexivel|hospede\s+teste(\s+producao)?|teste\s+producao|felipi\s+rangel\s+leandro|priscila\s+da\s+silva\s+pinto|tamires\s+da\s+silva\s+rocha|jefferson\s+bruno|v)$/i.test(n);
 }
 
 function isPlaceholderOrEmptyGuestName(str) {
@@ -11730,6 +11759,79 @@ export function healContaminatedGuestAndReservationLinks(database) {
     }
   }
 
+  // 1.79b. Restauração definitiva de Marco (HOSP-00011, telefone real 21 99985-4881) vs Daniela Martins de Mesquita (HOSP-02603, RES-712-0615, telefone exclusivo +55 21 99670-1988) e limpeza de telefone de OS (22999922473)
+  const marcoResCodes = new Set(["RES-512-0005", "RES-512-0075", "RES-1304-0176", "RES-512-0295", "RES-512-0356"]);
+  const marcoResIds = new Set([5, 75, 176, 295, 356]);
+  for (const rM of currentDb.reservations) {
+    if (!rM) continue;
+    const isMarcoRes = marcoResCodes.has(String(rM.code || "").trim().toUpperCase()) ||
+      marcoResIds.has(Number(rM.id)) ||
+      normalizeName(rM.guestName) === "marco";
+    if (isMarcoRes) {
+      if (!rM.guestPhone || phonesMatch(rM.guestPhone, "21996701988")) {
+        rM.guestPhone = "21 99985-4881";
+        changed = true;
+      }
+      if (Array.isArray(rM.guests) && rM.guests[0] && (!rM.guests[0].phone || phonesMatch(rM.guests[0].phone, "21996701988"))) {
+        rM.guests[0].phone = "21 99985-4881";
+        changed = true;
+      }
+    }
+    if (Number(rM.id) === 101 || rM.code === "RES-408-0101" || phonesMatch(rM.guestPhone, "22999922473")) {
+      if (phonesMatch(rM.guestPhone, "22999922473")) {
+        rM.guestPhone = "";
+        changed = true;
+      }
+      if (String(rM.guestName || "").trim() === 'V"') {
+        rM.guestName = "Hóspede";
+        changed = true;
+      }
+      if (Array.isArray(rM.guests) && rM.guests[0]) {
+        if (phonesMatch(rM.guests[0].phone, "22999922473")) rM.guests[0].phone = "";
+        if (String(rM.guests[0].name || "").trim() === 'V"') rM.guests[0].name = "Hóspede";
+      }
+    }
+  }
+  for (const gM of currentDb.guests) {
+    if (!gM) continue;
+    const gMName = normalizeName(gM.fullName || gM.name);
+    if (Number(gM.id) === 11 || gMName === "marco") {
+      if (!gM.phone || phonesMatch(gM.phone, "21996701988") || !phonesMatch(gM.phone, "21999854881")) {
+        gM.phone = "21 99985-4881";
+        changed = true;
+      }
+      if (Array.isArray(gM.additionalPhones) && gM.additionalPhones.length > 0) {
+        const bLen = gM.additionalPhones.length;
+        gM.additionalPhones = gM.additionalPhones.filter(ap => !phonesMatch(ap, "21996701988") && !phonesMatch(ap, "21999854881"));
+        if (gM.additionalPhones.length !== bLen) changed = true;
+      }
+    } else if (gMName.includes("daniela martins de mesquita") || normalizeDoc(gM.document || gM.documentNumber) === "12297831722") {
+      if (!gM.phone || !phonesMatch(gM.phone, "21996701988")) {
+        gM.phone = "+55 21 99670-1988";
+        changed = true;
+      }
+    } else {
+      if (phonesMatch(gM.phone, "21996701988")) {
+        gM.phone = "";
+        changed = true;
+      }
+      if (Array.isArray(gM.additionalPhones)) {
+        const bLen = gM.additionalPhones.length;
+        gM.additionalPhones = gM.additionalPhones.filter(ap => !phonesMatch(ap, "21996701988"));
+        if (gM.additionalPhones.length !== bLen) changed = true;
+      }
+    }
+    if (phonesMatch(gM.phone, "22999922473")) {
+      gM.phone = "";
+      changed = true;
+    }
+    if (Array.isArray(gM.additionalPhones)) {
+      const bLen = gM.additionalPhones.length;
+      gM.additionalPhones = gM.additionalPhones.filter(ap => !phonesMatch(ap, "22999922473") && !isInternalOrForbiddenGuestPhone(ap));
+      if (gM.additionalPhones.length !== bLen) changed = true;
+    }
+  }
+
   // Limpa o telefone 21976403551 (Roselene) de Raiza Castro Tavares e de qualquer outro hóspede/reserva incompatível da janela histórica
   for (const gOther of currentDb.guests) {
     if (!gOther || Number(gOther.id) === 143 || Number(gOther.id) > HISTORICAL_CONTAMINATION_MAX_GUEST_ID) continue;
@@ -11920,7 +12022,8 @@ export function healContaminatedGuestAndReservationLinks(database) {
       { phone: "21967558194", name: "Sergio", resCode: "RES-904-0014", flat: "904" },
       { phone: "21976403551", name: "Roselene", resCode: "RES-712-0012", flat: "712" },
       { phone: "28999136926", name: "Fabiana", resCode: "RES-509-0539", flat: "509" },
-      { phone: "21996701988", name: "Marco", resCode: "RES-512-0295", flat: "512" },
+      { phone: "21996701988", name: "DANIELA MARTINS DE MESQUITA", resCode: "RES-712-0615", flat: "712" },
+      { phone: "21999854881", name: "Marco", resCode: "RES-512-0356", flat: "512" },
       { phone: "22997257193", name: "Luísa dos Santos Monteiro Machado", resCode: "RES-1304-0284", flat: "1304" }
     ];
     for (const conv of currentDb.whatsappConversations) {
@@ -11983,6 +12086,8 @@ export function healContaminatedGuestAndReservationLinks(database) {
   authPhoneToName.set(normalizePhone("28981141553"), "Leonardo Portugal Federici");
   authPhoneToName.set(normalizePhone("27999793259"), "Rodinei Siqueira Gonçalves");
   authPhoneToName.set(normalizePhone("21992115153"), "Leonardo da Silva Rodrigues");
+  authPhoneToName.set(normalizePhone("21996701988"), "DANIELA MARTINS DE MESQUITA");
+  authPhoneToName.set(normalizePhone("21999854881"), "Marco");
 
   // Enriquecimento a partir de conversas WhatsApp onde o nome do contato é confirmado por uma reserva compatível
   for (const conv of (currentDb.whatsappConversations || [])) {
@@ -12241,24 +12346,40 @@ export function reconcileAndMergeGuests(database, force = false) {
       if (byPhone) return byPhone;
     }
 
-    // Prioridade 4: Nome completo (apenas quando possui nome + sobrenome reais e não há conflito de documento)
-    if (!isCandPlaceholder && cName && cName.length >= 5 && cName.split(/\s+/).filter(Boolean).length >= 2) {
+    // Prioridade 4: Nome completo ou nome único idêntico (quando não há conflito de documento/telefone/e-mail)
+    if (!isCandPlaceholder && !isSystemOrServiceOrderGuestName(cRawName) && cName && cName.length >= 2) {
+      const cWords = cName.split(/\s+/).filter(Boolean);
       return list.find(g => {
         if (!isNameCompatibleWith(g)) return false;
         const gDoc = normalizeDoc(g.document || g.documentNumber);
         if (cDoc && gDoc && cDoc !== gDoc) return false;
         const gName = normalizeName(g.fullName || g.name);
-        return gName === cName;
+        if (gName !== cName) return false;
+        if (cWords.length === 1) {
+          const gPhone = normalizePhone(g.phone || g.phoneNumber);
+          const gEmail = String(g.email || "").trim().toLowerCase();
+          if (cPhone && gPhone && !phonesMatch(cPhone, gPhone)) return false;
+          if (cEmail && gEmail && cEmail !== gEmail) return false;
+        }
+        return true;
       });
     }
 
     return undefined;
   };
 
-  // 1. Deduplica a base de hóspedes existente
+  // 1. Deduplica a base de hóspedes existente (filtrando cadastros fantasmas, de teste, internos e LIDs do WhatsApp)
   const deduplicated = [];
   for (const g of currentDb.guests) {
-    if (isDeleted(g)) continue;
+    if (!g || isDeleted(g)) continue;
+    const gRawName = g.fullName || g.name || "";
+    if (isForbiddenTestOrInternalGuestName(gRawName)) continue;
+    if (isInternalOrForbiddenGuestPhone(g.phone || g.phoneNumber)) continue;
+    const gDoc = normalizeDoc(g.document || g.documentNumber);
+    const gPhone = normalizePhone(g.phone || g.phoneNumber);
+    const gEmail = String(g.email || "").trim();
+    if (isPlaceholderOrEmptyGuestName(gRawName) && !gDoc && !gPhone && !gEmail) continue;
+
     const existing = findMatchingGuest(g, deduplicated);
     if (!existing) {
       deduplicated.push({ ...g });
@@ -12271,6 +12392,7 @@ export function reconcileAndMergeGuests(database, force = false) {
   if (Array.isArray(currentDb.guestAccounts)) {
     for (const acc of currentDb.guestAccounts) {
       if (isDeleted(acc)) continue;
+      if (isForbiddenTestOrInternalGuestName(acc.name) || isInternalOrForbiddenGuestPhone(acc.phone)) continue;
       let matched = findMatchingGuest(acc, deduplicated);
       if (!matched && (acc.name || acc.email || acc.document || acc.phone)) {
         const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
@@ -12293,6 +12415,11 @@ export function reconcileAndMergeGuests(database, force = false) {
 
   // 2. Processa todas as reservas (mestre e slots individuais)
   for (const r of currentDb.reservations) {
+    if (!r) continue;
+    if (isInternalOrForbiddenGuestPhone(r.guestPhone || r.phone)) {
+      r.guestPhone = "";
+      if (r.phone) r.phone = "";
+    }
     const rGuestCand = {
       guestId: r.guestId,
       name: r.guestName,
@@ -12321,9 +12448,11 @@ export function reconcileAndMergeGuests(database, force = false) {
     };
 
     if (isDeleted(rGuestCand)) continue;
+    const isCandValidName = !isPlaceholderOrEmptyGuestName(rGuestCand.name) && !isForbiddenTestOrInternalGuestName(rGuestCand.name);
+    const hasCandDoc = normalizeDoc(rGuestCand.document).length >= 8;
 
-    let matched = findMatchingGuest(rGuestCand, deduplicated);
-    if (!matched && (rGuestCand.name || rGuestCand.document || rGuestCand.phone)) {
+    let matched = (isCandValidName || hasCandDoc) ? findMatchingGuest(rGuestCand, deduplicated) : undefined;
+    if (!matched && (isCandValidName || hasCandDoc)) {
       const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
       matched = {
         id: nextId,
@@ -12339,11 +12468,16 @@ export function reconcileAndMergeGuests(database, force = false) {
       mergeGuestRecords(matched, rGuestCand);
       r.guestId = matched.id;
       r.guestCode = matched.guestCode;
+    } else if (!isCandValidName && !hasCandDoc) {
+      r.guestId = null;
+      delete r.guestCode;
     }
 
     if (Array.isArray(r.guests)) {
       for (const rg of r.guests) {
-        if (!rg.name || rg.name.startsWith("Hóspede ")) continue;
+        if (!rg || !rg.name || rg.name.startsWith("Hóspede ")) continue;
+        if (isPlaceholderOrEmptyGuestName(rg.name) || isForbiddenTestOrInternalGuestName(rg.name)) continue;
+        if (isInternalOrForbiddenGuestPhone(rg.phone)) rg.phone = "";
         const slotCand = {
           guestId: rg.guestId,
           name: rg.name,
@@ -12401,13 +12535,14 @@ export function reconcileAndMergeGuests(database, force = false) {
 
   // 3. Processa todas as notas fiscais (NFS-e)
   for (const inv of currentDb.invoices) {
-    if (!inv.tomadorNome && !inv.tomadorCpfCnpj) continue;
+    if (!inv || (!inv.tomadorNome && !inv.tomadorCpfCnpj)) continue;
+    if (isForbiddenTestOrInternalGuestName(inv.tomadorNome)) continue;
     const invCand = {
       name: inv.tomadorNome,
       fullName: inv.tomadorNome,
       document: inv.tomadorCpfCnpj,
       email: inv.tomadorEmail,
-      phone: inv.tomadorTelefone,
+      phone: isInternalOrForbiddenGuestPhone(inv.tomadorTelefone) ? "" : inv.tomadorTelefone,
       cep: inv.tomadorCep,
       address: inv.tomadorEndereco,
       number: inv.tomadorNumero,
@@ -12419,6 +12554,9 @@ export function reconcileAndMergeGuests(database, force = false) {
     };
 
     if (isDeleted(invCand)) continue;
+    const isInvValidName = !isPlaceholderOrEmptyGuestName(invCand.name) && !isForbiddenTestOrInternalGuestName(invCand.name);
+    const hasInvDoc = normalizeDoc(invCand.document).length >= 8;
+    if (!isInvValidName && !hasInvDoc) continue;
 
     let matched = findMatchingGuest(invCand, deduplicated);
     if (!matched) {
@@ -12443,13 +12581,14 @@ export function reconcileAndMergeGuests(database, force = false) {
   const isValidPersonName = (nm) => {
     const clean = String(nm || "").trim();
     if (!clean || clean.length < 2) return false;
-    if (isSystemOrServiceOrderGuestName(clean)) return false;
+    if (isSystemOrServiceOrderGuestName(clean) || isForbiddenTestOrInternalGuestName(clean)) return false;
     if (/^(h[oó]spede|guest|cliente|sem nome|whatsapp|desconhecido|unknown|\.+|-+)$/i.test(clean)) return false;
     if (/^\+?\d[\d\s().-]*$/.test(clean)) return false;
     return true;
   };
 
   const linkPhoneToReservationOrGuest = ({ phone, name, document, email, reservationCode, reservationId, companyName, createIfMissing = false, tags = [] }) => {
+    if (isInternalOrForbiddenGuestPhone(phone) || isForbiddenTestOrInternalGuestName(name)) return;
     const cleanP = normalizePhone(phone);
     if (!cleanP || cleanP.length < 8) return;
     if (isSystemOrServiceOrderGuestName(name)) return;
@@ -12548,7 +12687,7 @@ export function reconcileAndMergeGuests(database, force = false) {
         document: reqInfo.cpf || reqInfo.document,
         email: reqInfo.email || r.requesterEmail,
         companyName: r.companyName || r.agencyTradeName || r.agencyName,
-        createIfMissing: true,
+        createIfMissing: false,
         tags: ["Solicitante"]
       });
     }
@@ -12558,13 +12697,13 @@ export function reconcileAndMergeGuests(database, force = false) {
         name: r.agencyAgentName,
         email: r.agencyAgentEmail,
         companyName: r.agencyTradeName || r.agencyName || "Agência B2B",
-        createIfMissing: true,
+        createIfMissing: false,
         tags: ["Agente B2B"]
       });
     }
   }
 
-  // 3.5b. Conversas ativas do WhatsApp (db.whatsappConversations)
+  // 3.5b. Conversas ativas do WhatsApp (db.whatsappConversations) — apenas enriquece hóspedes/reservas existentes, NUNCA cria hóspede avulso sem reserva
   for (const conv of (currentDb.whatsappConversations || [])) {
     if (!conv || conv.isGroup) continue;
     const convPhone = String(conv.phone || conv.guestPhone || conv.remoteJid || conv.id || "").replace(/@.*$/, "");
@@ -12574,7 +12713,7 @@ export function reconcileAndMergeGuests(database, force = false) {
       name: convName,
       reservationCode: conv.reservationCode,
       reservationId: conv.reservationId,
-      createIfMissing: isValidPersonName(convName)
+      createIfMissing: false
     });
   }
 
@@ -12618,27 +12757,48 @@ export function reconcileAndMergeGuests(database, force = false) {
       email: item.guestEmail || item.email,
       reservationCode: item.reservationCode,
       reservationId: item.reservationId,
-      createIfMissing: isValidPersonName(nm)
+      createIfMissing: false
     });
   }
 
-  // 3.5e. Agentes de Agências de Viagens (db.agencies) e Contatos de Empresas Parceiras (db.companies)
-  for (const ag of (currentDb.agencies || [])) {
-    if (!ag) continue;
-    const agName = ag.tradeName || ag.corporateName || ag.name || "Agência";
-    for (const agent of (ag.agents || [])) {
-      if (agent?.phone && isValidPersonName(agent.name)) {
-        linkPhoneToReservationOrGuest({
-          phone: agent.phone,
-          name: agent.name,
-          email: agent.email,
-          companyName: agName,
-          createIfMissing: true,
-          tags: ["Agência B2B"]
-        });
+  // 3.8. Expurgo de registros órfãos/fantasmas sem reserva, nota fiscal ou conta vinculada
+  const activeLinkedGuestIds = new Set([33]);
+  for (const r of (currentDb.reservations || [])) {
+    if (!r) continue;
+    if (r.guestId) activeLinkedGuestIds.add(Number(r.guestId));
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        if (rg?.guestId) activeLinkedGuestIds.add(Number(rg.guestId));
       }
     }
   }
+  for (const acc of (currentDb.guestAccounts || [])) {
+    if (acc?.guestId) activeLinkedGuestIds.add(Number(acc.guestId));
+  }
+  for (const inv of (currentDb.invoices || [])) {
+    if (!inv) continue;
+    const mInv = findMatchingGuest({
+      name: inv.tomadorNome,
+      document: inv.tomadorCpfCnpj,
+      email: inv.tomadorEmail,
+      phone: inv.tomadorTelefone
+    }, deduplicated);
+    if (mInv?.id) activeLinkedGuestIds.add(Number(mInv.id));
+  }
+  const isFullDatabase = (currentDb.reservations || []).length > 20;
+  const filteredDeduplicated = deduplicated.filter(g => {
+    if (!g) return false;
+    const gId = Number(g.id);
+    if (activeLinkedGuestIds.has(gId) || g.createdManually) return true;
+    const gDoc = normalizeDoc(g.document || g.documentNumber);
+    const gPhone = normalizePhone(g.phone || g.phoneNumber);
+    const gEmail = String(g.email || "").trim();
+    if (!gDoc && !gPhone && !gEmail) return false;
+    if (isFullDatabase) return false;
+    return true;
+  });
+  deduplicated.length = 0;
+  deduplicated.push(...filteredDeduplicated);
 
   // 4. Garante ID e guestCode únicos intransferíveis e blindagem final de additionalPhones
   let maxId = 0;
@@ -36752,11 +36912,12 @@ function generateGuestVCard(database, guest) {
   return lines.join("\r\n");
 }
 
-async function getValidGoogleContactsAccessToken(database) {
+async function getValidGoogleContactsAccessToken(database, options = {}) {
   const cfg = ensureGoogleContactsConfig(database);
   if (!cfg.accessToken && !cfg.refreshToken) return null;
 
-  const isExpired = cfg.tokenExpiresAt && Date.now() > (cfg.tokenExpiresAt - 60000);
+  const forceRefresh = Boolean(options?.forceRefresh);
+  const isExpired = forceRefresh || !cfg.tokenExpiresAt || Date.now() > (cfg.tokenExpiresAt - 60000);
   if (cfg.accessToken && !isExpired) {
     return cfg.accessToken;
   }
@@ -36851,7 +37012,28 @@ export async function syncSingleGuestToGoogleContacts(database, guest, options =
   const cfg = ensureGoogleContactsConfig(targetDb);
   if (!guest) return { success: false, error: "Hóspede inválido." };
 
+  if (
+    Number(guest.id) === 33 ||
+    isForbiddenTestOrInternalGuestName(guest.fullName || guest.name) ||
+    isPlaceholderOrEmptyGuestName(guest.fullName || guest.name) ||
+    isInternalOrForbiddenGuestPhone(guest.phone || guest.phoneNumber)
+  ) {
+    return {
+      success: false,
+      skipped: true,
+      reason: "Contato interno, protegido ou de teste não sincronizável como hóspede UH"
+    };
+  }
+
   const contactData = buildGuestCallerIdContactData(targetDb, guest);
+  if (Array.isArray(targetDb?.reservations) && targetDb.reservations.length > 0 && !contactData.activeResCode) {
+    return {
+      success: false,
+      skipped: true,
+      reason: "Apenas hóspedes com reserva válida são sincronizados com o Google Contatos",
+      contactData
+    };
+  }
   if (isFakeGoogleContactResourceName(guest.googleContactResourceName)) {
     guest.googleContactResourceName = null;
     guest.googleContactEtag = null;
@@ -37137,7 +37319,7 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
     }
   }
 
-  const accessToken = await getValidGoogleContactsAccessToken(targetDb);
+  let accessToken = await getValidGoogleContactsAccessToken(targetDb);
   if (!accessToken) {
     for (const g of allGuests) {
       const c = buildGuestCallerIdContactData(targetDb, g);
@@ -37173,9 +37355,18 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
     let pageToken = "";
     for (let page = 0; page < 10; page++) {
       const connectionsUrl = `https://people.googleapis.com/v1/people/me/connections?personFields=names,phoneNumbers,emailAddresses,organizations,biographies,userDefined,metadata&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
-      const connRes = await fetch(connectionsUrl, {
+      let connRes = await fetch(connectionsUrl, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
+      if (connRes.status === 401 || connRes.status === 403) {
+        const refreshed = await getValidGoogleContactsAccessToken(targetDb, { forceRefresh: true });
+        if (refreshed && refreshed !== accessToken) {
+          accessToken = refreshed;
+          connRes = await fetch(connectionsUrl, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+        }
+      }
       if (connRes.status === 401 || connRes.status === 403) {
         cfg.tokenExpiresAt = 1;
         saveDatabase();
@@ -37296,12 +37487,37 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
   };
 
   const guestBundles = [];
+  const hasReservationsInDb = Array.isArray(targetDb?.reservations) && targetDb.reservations.length > 0;
   for (const g of allGuests) {
+    if (!g) continue;
+    if (
+      Number(g.id) === 33 ||
+      isForbiddenTestOrInternalGuestName(g.fullName || g.name) ||
+      isPlaceholderOrEmptyGuestName(g.fullName || g.name) ||
+      isInternalOrForbiddenGuestPhone(g.phone || g.phoneNumber)
+    ) {
+      g.googleContactResourceName = null;
+      g.googleContactEtag = null;
+      skippedCount++;
+      continue;
+    }
     const contactData = buildGuestCallerIdContactData(targetDb, g);
     g.googleContactDisplayName = contactData.displayName;
     if (!contactData.e164Phone || contactData.phoneDigits.length < 8) {
       skippedCount++;
       continue;
+    }
+    if (hasReservationsInDb && !contactData.activeResCode) {
+      const hasAnyValidRes = targetDb.reservations.some(r =>
+        r && r.status !== "cancelada" && r.status !== "cancelled" &&
+        (Number(r.guestId) === Number(g.id) || (Array.isArray(r.guests) && r.guests.some(rg => Number(rg?.guestId) === Number(g.id))))
+      );
+      if (!hasAnyValidRes) {
+        g.googleContactResourceName = null;
+        g.googleContactEtag = null;
+        skippedCount++;
+        continue;
+      }
     }
     const personPayload = buildGooglePersonPayload(contactData, g.id);
     const bundle = { guest: g, contactData, personPayload };
@@ -37312,8 +37528,149 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
     }
   }
 
+  // 1.2. Restauração e blindagem automática dos contatos internos e operacionais no Google Contatos
+  const protectedInternalResources = new Set();
+  const extraDuplicateInternalToDelete = [];
+  const buildCleanInternalPayload = (cleanName, phoneValues, orgName, orgTitle, bioNote) => ({
+    names: [{ givenName: cleanName, familyName: "", unstructuredName: cleanName }],
+    phoneNumbers: phoneValues.map(v => ({ value: v, type: "work" })),
+    organizations: [{ name: orgName, title: orgTitle, type: "work", current: true }],
+    biographies: [{ value: bioNote, contentType: "TEXT_PLAIN" }],
+    userDefined: []
+  });
+
+  const internalSpecs = [
+    {
+      key: "corpflats",
+      cleanName: "CorpFlats",
+      phones: ["+5522997124021", "(22) 99712-4021"],
+      orgName: "CorpFlats",
+      orgTitle: "Atendimento Oficial WhatsApp",
+      bio: "Contato Oficial CorpFlats",
+      matches: (entry) =>
+        entry.resourceName === "people/c665097223076018139" ||
+        entry.normPhones.some(p => phonesMatch(p, "22997124021")) ||
+        /^lucas\s+teste\b/i.test(entry.contactPersonName)
+    },
+    {
+      key: "miller",
+      cleanName: "Miller Mendonça Pessanha",
+      phones: ["+5522998505276", "(22) 99850-5276"],
+      orgName: "CorpFlats",
+      orgTitle: "Administração",
+      bio: "Administração CorpFlats",
+      matches: (entry) =>
+        entry.resourceName === "people/c4914615224608862756" ||
+        entry.normPhones.some(p => phonesMatch(p, "22998505276"))
+    },
+    {
+      key: "portaria_soho",
+      cleanName: "Portaria / Garagem Soho",
+      phones: ["+5522997873654", "(22) 99787-3654"],
+      orgName: "CorpFlats • Edifício Soho",
+      orgTitle: "Portaria e Garagem",
+      bio: "Portaria e Garagem Edifício Soho",
+      matches: (entry) =>
+        entry.normPhones.some(p => phonesMatch(p, "22997873654")) ||
+        /^portaria\b/i.test(entry.contactPersonName)
+    },
+    {
+      key: "felipi_os",
+      cleanName: "Felipi Rangel Leandro",
+      phones: ["+5522999082462", "(22) 99908-2462"],
+      orgName: "Prestador de Serviço",
+      orgTitle: "Manutenção",
+      bio: "Prestador de Serviço",
+      matches: (entry) =>
+        entry.resourceName === "people/c7991532134028326146" ||
+        entry.normPhones.some(p => phonesMatch(p, "22999082462"))
+    },
+    {
+      key: "priscila_equipe",
+      cleanName: "Priscila da Silva Pinto",
+      phones: ["+5522997048709", "(22) 99704-8709"],
+      orgName: "Equipe Governança",
+      orgTitle: "Camareira",
+      bio: "Equipe Governança",
+      matches: (entry) =>
+        entry.resourceName === "people/c1926963521653928002" ||
+        entry.normPhones.some(p => phonesMatch(p, "22997048709"))
+    },
+    {
+      key: "tamires_equipe",
+      cleanName: "Tamires da Silva Rocha",
+      phones: ["+5522997810703", "(22) 99781-0703"],
+      orgName: "Equipe Governança",
+      orgTitle: "Camareira",
+      bio: "Equipe Governança",
+      matches: (entry) =>
+        entry.resourceName === "people/c7860054758378652205" ||
+        entry.normPhones.some(p => phonesMatch(p, "22997810703"))
+    },
+    {
+      key: "jefferson_os",
+      cleanName: "Jefferson Bruno",
+      phones: ["+5522999922473", "(22) 99992-2473"],
+      orgName: "Prestador de Serviço",
+      orgTitle: "Ar-Condicionado / Manutenção",
+      bio: "Prestador de Serviço",
+      matches: (entry) =>
+        entry.normPhones.some(p => phonesMatch(p, "22999922473"))
+    },
+    {
+      key: "recepcao_soho",
+      cleanName: "Recepção Soho",
+      phones: ["+552237040100", "(22) 3704-0100"],
+      orgName: "CorpFlats • Edifício Soho",
+      orgTitle: "Recepção",
+      bio: "Recepção Edifício Soho • CorpFlats",
+      matches: (entry) => {
+        if (entry.normPhones.some(p => phonesMatch(p, "2237040100"))) return true;
+        if (/^(ordem\s+de\s+servi[cç]o|os\s*#\d+|recep[cç][aã]o\s+soho)/i.test(entry.contactPersonName)) {
+          const belongsToKnownGuest = entry.normPhones.some(ep => crmOwnerByNormPhone.has(ep));
+          return !belongsToKnownGuest;
+        }
+        return false;
+      }
+    }
+  ];
+
+  for (const spec of internalSpecs) {
+    const matchedEntries = Array.from(existingByResource.values()).filter(
+      e => e && e.resourceName && !protectedInternalResources.has(e.resourceName) && spec.matches(e)
+    );
+    if (matchedEntries.length > 0) {
+      const primary = matchedEntries[0];
+      protectedInternalResources.add(primary.resourceName);
+      const preservedPhones = primary.rawPhoneObjects
+        .map(pn => String(pn?.value || pn?.canonicalForm || "").trim())
+        .filter(Boolean);
+      const mergedPhones = Array.from(new Set([...spec.phones, ...(spec.key === "recepcao_soho" ? preservedPhones : [])]));
+      if (primary.etag) {
+        toUpdate.push({
+          guest: null,
+          contactData: {
+            fullName: spec.cleanName,
+            displayName: spec.cleanName,
+            e164Phone: mergedPhones[0] || ""
+          },
+          personPayload: buildCleanInternalPayload(spec.cleanName, mergedPhones, spec.orgName, spec.orgTitle, spec.bio),
+          resourceName: primary.resourceName,
+          etag: primary.etag
+        });
+      }
+      for (let i = 1; i < matchedEntries.length; i++) {
+        const dup = matchedEntries[i];
+        protectedInternalResources.add(dup.resourceName);
+        if (dup.isCorpFlatsManaged || /^(ordem\s+de\s+servi[cç]o|lucas\s+teste)/i.test(dup.contactPersonName)) {
+          extraDuplicateInternalToDelete.push(dup.resourceName);
+        }
+      }
+    }
+  }
+
   const isEntryCompatibleWithGuest = (entry, guestObj, cData) => {
-    if (!entry || !entry.resourceName) return false;
+    if (!entry || !entry.resourceName || protectedInternalResources.has(entry.resourceName)) return false;
     // Se outro hóspede no CRM detém legitimamente este resourceName e tem nome compatível com o contato atual no Google
     const ownedByCompatibleOtherInDb = allGuests.some(other =>
       other && Number(other.id) !== Number(guestObj.id) &&
@@ -37433,13 +37790,18 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
   }
 
   // 1.5. Varredura de Descontaminação de Contatos Órfãos ou Contaminados no Google Contatos
-  const toDeleteResourceNames = [];
+  const toDeleteResourceNames = [...extraDuplicateInternalToDelete];
   const toCleanPhonesEntries = [];
-  const claimedResources = new Set(toUpdate.map(u => u.resourceName));
+  const claimedResources = new Set([...protectedInternalResources, ...toUpdate.map(u => u.resourceName)]);
 
   for (const entry of existingByResource.values()) {
     if (!entry || !entry.resourceName || claimedResources.has(entry.resourceName)) continue;
-    if (!Array.isArray(entry.rawPhoneObjects) || entry.rawPhoneObjects.length === 0) continue;
+    if (!Array.isArray(entry.rawPhoneObjects) || entry.rawPhoneObjects.length === 0) {
+      if (entry.isCorpFlatsManaged || isSystemOrServiceOrderGuestName(entry.rawContactName) || isForbiddenTestOrInternalGuestName(entry.contactPersonName)) {
+        toDeleteResourceNames.push(entry.resourceName);
+      }
+      continue;
+    }
 
     const keptPhoneObjects = [];
     const foreignOwners = [];
@@ -37455,7 +37817,7 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
       }
 
       const isCompatibleWithEntryName = !entry.contactPersonName || areGuestNamesCompatible(entry.contactPersonName, owner.contactData.fullName);
-      const ownerAlreadyUpdatedElsewhere = toUpdate.some(u => Number(u.guest.id) === Number(owner.guest.id) && u.resourceName !== entry.resourceName);
+      const ownerAlreadyUpdatedElsewhere = toUpdate.some(u => u.guest && Number(u.guest.id) === Number(owner.guest.id) && u.resourceName !== entry.resourceName);
 
       if (!isCompatibleWithEntryName || (entry.isCorpFlatsManaged && ownerAlreadyUpdatedElsewhere)) {
         if (!foreignOwners.includes(owner)) foreignOwners.push(owner);
@@ -37469,7 +37831,7 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
         // Todos os telefones deste contato pertencem a hóspedes incompatíveis ou já atualizados em outro contato!
         const primaryOwner = foreignOwners[0] || null;
         const createIdx = primaryOwner
-          ? toCreate.findIndex(c => Number(c.guest.id) === Number(primaryOwner.guest.id))
+          ? toCreate.findIndex(c => c.guest && Number(c.guest.id) === Number(primaryOwner.guest.id))
           : -1;
 
         if (createIdx !== -1 && entry.etag) {
@@ -37494,6 +37856,16 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
           phoneNumbers: keptPhoneObjects
         });
       }
+    } else if (
+      !claimedResources.has(entry.resourceName) &&
+      (
+        entry.isCorpFlatsManaged ||
+        isSystemOrServiceOrderGuestName(entry.rawContactName) ||
+        isForbiddenTestOrInternalGuestName(entry.contactPersonName)
+      )
+    ) {
+      // Contato criado pelo CRM CorpFlats sem vínculo com nenhum hóspede real com reserva válida (ex: testes, 0 estadias, LIDs, duplicatas antigas)
+      toDeleteResourceNames.push(entry.resourceName);
     }
   }
 
@@ -37570,19 +37942,23 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
           const itemResult = results[item.resourceName];
           const resPerson = itemResult?.person;
           if (itemResult?.httpStatusCode && itemResult.httpStatusCode >= 400 && !resPerson) {
-            // Fallback individual caso o etag estivesse defasado ou o contato tenha sido removido
-            const fallbackRes = await syncSingleGuestToGoogleContacts(targetDb, item.guest, { skipSave: true });
-            if (fallbackRes?.success) updatedCount++;
-            else errorCount++;
+            if (item.guest) {
+              // Fallback individual caso o etag estivesse defasado ou o contato tenha sido removido
+              const fallbackRes = await syncSingleGuestToGoogleContacts(targetDb, item.guest, { skipSave: true });
+              if (fallbackRes?.success) updatedCount++;
+              else errorCount++;
+            }
             continue;
           }
-          item.guest.googleContactResourceName = resPerson?.resourceName || item.resourceName;
-          item.guest.googleContactEtag = resPerson?.etag || item.etag;
-          item.guest.googleContactSyncedAt = nowIso;
+          if (item.guest) {
+            item.guest.googleContactResourceName = resPerson?.resourceName || item.resourceName;
+            item.guest.googleContactEtag = resPerson?.etag || item.etag;
+            item.guest.googleContactSyncedAt = nowIso;
+          }
           updatedCount++;
           cfg.syncLogs.unshift({
             timestamp: nowIso,
-            guestId: item.guest.id,
+            guestId: item.guest ? item.guest.id : "INTERNAL",
             guestName: item.contactData.fullName,
             displayName: item.contactData.displayName,
             phone: item.contactData.e164Phone,
@@ -37650,13 +38026,13 @@ export async function executeFullGoogleContactsSyncAndRepair(database) {
   if (cfg.syncLogs.length > 40) cfg.syncLogs.length = 40;
   cfg.lastSyncAt = nowIso;
   cfg.totalSyncedCount = (Number(cfg.totalSyncedCount) || 0) + createdCount;
-  if (errorCount === 0 && (createdCount + updatedCount) > 0) {
-    cfg._googleContactsFullHealV5 = true;
+  if (errorCount === 0 && (createdCount + updatedCount + toDeleteResourceNames.length) > 0) {
+    cfg._googleContactsFullHealV6 = true;
   }
   saveDatabase();
 
   return {
-    success: errorCount === 0 || (createdCount + updatedCount) > 0,
+    success: errorCount === 0 || (createdCount + updatedCount + toDeleteResourceNames.length) > 0,
     totalProcessed: allGuests.length,
     syncedCount: createdCount + updatedCount,
     createdCount,
@@ -37678,12 +38054,12 @@ async function healContaminatedGoogleContactsPostBoot(database) {
     if (!targetDb || !Array.isArray(targetDb.guests)) return;
     const cfg = ensureGoogleContactsConfig(targetDb);
     if (!cfg.enabled || (!cfg.accessToken && !cfg.refreshToken)) return;
-    if (cfg._googleContactsFullHealV5) return;
+    if (cfg._googleContactsFullHealV6) return;
 
     isHealingGoogleContactsInFlight = true;
     const result = await executeFullGoogleContactsSyncAndRepair(targetDb);
     if (result?.success) {
-      console.log(`[GoogleContacts PostBoot Heal V5] Reparo completo concluído: ${result.updatedCount} atualizados, ${result.createdCount} criados, ${result.deletedCount || 0} duplicados removidos.`);
+      console.log(`[GoogleContacts PostBoot Heal V6] Reparo completo concluído: ${result.updatedCount} atualizados, ${result.createdCount} criados, ${result.deletedCount || 0} duplicados/inválidos removidos.`);
     }
   } catch (err) {
     console.warn("[GoogleContacts PostBoot Heal] Aviso:", err?.message || err);
@@ -37707,7 +38083,7 @@ app.get("/api/pms/guests/google-contacts/status", (req, res) => {
       g.googleContactEtag = null;
     }
   }
-  const guestsWithPhone = allGuests.filter(g => String(g.phone || g.phoneNumber || "").replace(/\D/g, "").length >= 8);
+  const guestsWithPhone = allGuests.filter(g => Number(g.id) !== 33 && String(g.phone || g.phoneNumber || "").replace(/\D/g, "").length >= 8);
   const syncedGuests = guestsWithPhone.filter(g => Boolean(g.googleContactSyncedAt || g.googleContactResourceName));
 
   const previewContacts = guestsWithPhone.slice(0, 6).map(g => buildGuestCallerIdContactData(db, g));
@@ -37715,7 +38091,7 @@ app.get("/api/pms/guests/google-contacts/status", (req, res) => {
   const isTokenExpired = Boolean(!cfg.refreshToken && cfg.tokenExpiresAt && Date.now() > cfg.tokenExpiresAt);
   const isConnected = Boolean((cfg.accessToken && !isTokenExpired) || cfg.refreshToken);
 
-  if (isConnected && !cfg._googleContactsFullHealV5) {
+  if (isConnected && !cfg._googleContactsFullHealV6) {
     setImmediate(() => {
       healContaminatedGoogleContactsPostBoot(db).catch(() => {});
     });
