@@ -728,7 +728,7 @@ export default function WhatsappAutomation() {
   const [previewModalItem, setPreviewModalItem] = useState<QueueItem | null>(null)
 
   // State: Oferta de Domingo Sem Pressa (Requisito R1 / Milestone 2)
-  const [sundayUpsellEnabled, setSundayUpsellEnabled] = useState<boolean>(true)
+  const [sundayUpsellEnabled, setSundayUpsellEnabled] = useState<boolean>(false)
   const [sundayUpsellPrice, setSundayUpsellPrice] = useState<number>(90)
   const [loadingSundayUpsell, setLoadingSundayUpsell] = useState<boolean>(false)
   const [savingSundayUpsell, setSavingSundayUpsell] = useState<boolean>(false)
@@ -1674,7 +1674,7 @@ export default function WhatsappAutomation() {
       if (res.ok) {
         const data = await res.json()
         if (data.config) {
-          setSundayUpsellEnabled(data.config.enabled !== false)
+          setSundayUpsellEnabled(Boolean(data.config.enabled))
           setSundayUpsellPrice(Number(data.config.sundayUpsellPrice) || 90)
         }
         if (data.lastRun) {
@@ -4818,12 +4818,10 @@ export default function WhatsappAutomation() {
                             </div>
                             <p className="text-xs text-foreground whitespace-pre-wrap font-sans leading-relaxed">
                               {renderPreviewText(
-                                "Olá, *{{primeiro_nome}}*! Tudo bem? Esperamos que esteja aproveitando muito sua estadia no *Flat {{quarto}}* do *CorpFlats Soho Residence*! ✨\n\n" +
-                                "Temos uma *oportunidade exclusiva* para o seu domingo:\n\n" +
-                                "Que tal aproveitar seu domingo inteiro sem pressa de ir embora, curtir a cidade, descansar e só liberar o flat na *segunda-feira até às 12:00h*? 🏖️\n\n" +
-                                "A diária padrão para esse período é de *{{valor_normal}}*, mas liberamos para você agora por apenas *{{valor_promocional}}* (uma economia de *{{economia}}*)! 🎁\n\n" +
-                                "Garantimos um bloqueio temporário exclusivo de *30 minutos* no sistema para o seu flat.\n\n" +
-                                "Para confirmar seu domingo sem pressa, basta efetuar o pagamento do PIX abaixo nos próximos 30 minutos:"
+                                "Olá, {{primeiro_nome}}! Tudo bem? Vi que o seu check-out aqui no flat {{quarto}} está programado para amanhã (domingo) às 12h.\n\n" +
+                                "Se você quiser aproveitar o domingo inteiro relaxando, sem precisar acordar cedo, correr com horário ou arrumar suas coisas pela manhã, liberei uma condição especial para você **sair amanhã a hora que quiser (check-out livre no domingo)** por apenas **{{valor_promocional}}** (em vez da tarifa normal de {{valor_normal}}).\n\n" +
+                                "E como bônus, já deixamos o seu flat liberado no sistema até **segunda-feira às 12h** sem custo extra — assim você pode sair no domingo à tarde ou à noite sem nenhuma pressa, ou até dormir de domingo para segunda se resolver esticar!\n\n" +
+                                "Já deixei essa condição pré-reservada para o seu flat e gerei o código PIX abaixo. Como o sistema só segura esse bloqueio promocional por **30 minutos**, se quiser aproveitar basta copiar e pagar o código abaixo que o sistema já confirma automaticamente:"
                               )}
                             </p>
                             <div className="text-right text-[10px] text-muted-foreground flex items-center justify-end gap-1">
@@ -4924,7 +4922,7 @@ export default function WhatsappAutomation() {
             })()}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {templates.map(tpl => {
+              {templates.filter(tpl => tpl.id !== "tpl_sunday_upsell" && tpl.triggerEvent !== "sunday_upsell_offer").map(tpl => {
                 const isImmediate = tpl.triggerTiming === "immediate"
                 const isBefore = tpl.triggerTiming === "before_event"
                 const isAfter = tpl.triggerTiming === "after_event"
