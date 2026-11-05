@@ -8,6 +8,7 @@ import { cancelGoogleOneTap } from '@/lib/auth-client';
 import { useGetMe, getGetMeQueryKey } from '@workspace/api-client-react';
 import { AccessDenied } from '@/components/access-denied';
 import { FloatingNewReservationButton } from '@/components/floating-new-reservation';
+import { CorpFlatsSplashScreen } from '@/components/brand-logo';
 import { hasModuleAccess } from '@/lib/permissions';
 
 const AdminAiCopilot = lazy(() => import('@/components/admin-ai-copilot').then(m => ({ default: m.AdminAiCopilot })));
@@ -205,14 +206,7 @@ function AdminGuard({ component: Component, moduleName, params }: { component: R
   }, [Component]);
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs text-muted-foreground font-semibold">Verificando permissões...</span>
-        </div>
-      </div>
-    );
+    return <CorpFlatsSplashScreen label="Verificando permissões..." />;
   }
 
   if (!user) {
@@ -245,14 +239,7 @@ function DevGuard({ component: Component, moduleName, params }: { component: Rea
   }, [Component]);
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs text-muted-foreground font-semibold">Verificando permissões de desenvolvedor...</span>
-        </div>
-      </div>
-    );
+    return <CorpFlatsSplashScreen label="Verificando permissões de desenvolvedor..." />;
   }
 
   if (!user) {
@@ -285,14 +272,7 @@ function ReceptionGuard({ component: Component, moduleName, params }: { componen
   }, [Component]);
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs text-muted-foreground font-semibold">Verificando credenciais...</span>
-        </div>
-      </div>
-    );
+    return <CorpFlatsSplashScreen label="Verificando credenciais..." />;
   }
 
   if (!user) {
@@ -325,14 +305,7 @@ function StaffGuard({ component: Component, moduleName = "o módulo de governan�
   }, [Component]);
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs text-muted-foreground font-semibold">Carregando governança...</span>
-        </div>
-      </div>
-    );
+    return <CorpFlatsSplashScreen label="Carregando governança..." />;
   }
 
   if (!user) {
@@ -365,14 +338,7 @@ function GuestPortalWrapper(props: any) {
 }
 
 function PageLoadingFallback() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
-      <div className="flex flex-col items-center gap-3">
-        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-        <span className="text-xs text-muted-foreground font-semibold">Carregando módulo...</span>
-      </div>
-    </div>
-  );
+  return <CorpFlatsSplashScreen label="Carregando módulo..." />;
 }
 
 function Router() {

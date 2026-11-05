@@ -21,6 +21,7 @@ import {
 import { Input } from "./ui/input"
 import { Label } from "./ui/label"
 import { QuickShoppingModal } from "./quick-shopping-modal"
+import { CorpFlatsIcon, CorpFlatsWordmark } from "./brand-logo"
 import { hasModuleAccess } from "@/lib/permissions"
 
 interface NavItem {
@@ -534,12 +535,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {/* Header Fixo Mobile (Celular) */}
       <header className="md:hidden sticky top-0 z-40 bg-card border-b border-border px-4 py-3 flex items-center justify-between shadow-xs print:hidden">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-black shadow-xs">
-            <Sparkles className="w-4 h-4" />
-          </div>
+          <CorpFlatsIcon className="w-8 h-8" />
           <div>
-            <span className="font-black text-sm block leading-tight text-foreground">CorpFlats</span>
-            <span className="text-[10px] text-muted-foreground font-semibold uppercase">
+            <CorpFlatsWordmark className="text-sm block leading-tight" />
+            <span className="text-[10px] text-[#C5A059] font-semibold uppercase tracking-wider">
               {isDev ? "Dev / Engenharia" : isAdmin ? "Administração" : isAnserveGestor ? "Gestor Anserve" : isAnserveRepositora ? "Repositora Anserve" : isRecepcao ? "Recepção" : "Camareira"}
             </span>
           </div>
@@ -717,12 +716,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
         {/* Brand Header */}
         <div className="p-3.5 flex items-center justify-between border-b border-border">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-black shadow-xs">
-              <Sparkles className="w-4 h-4" />
-            </div>
+            <CorpFlatsIcon className="w-8 h-8" />
             <div>
-              <span className="font-bold text-sm block leading-tight text-foreground">CorpFlats</span>
-              <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Gestão Hoteleira</span>
+              <CorpFlatsWordmark className="text-sm block leading-tight" />
+              <span className="text-[10px] text-[#C5A059] font-semibold uppercase tracking-wider">Gestão Hoteleira</span>
             </div>
           </div>
 
@@ -1140,12 +1137,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
             {/* Drawer Header */}
             <div className="p-4 border-b border-border flex items-center justify-between bg-muted/20">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-black">
-                  <Sparkles className="w-4 h-4" />
-                </div>
+                <CorpFlatsIcon className="w-8 h-8" />
                 <div>
-                  <span className="font-bold text-sm block leading-tight text-foreground">Menu do Sistema</span>
-                  <span className="text-[10px] text-muted-foreground font-semibold">Todas as telas e módulos</span>
+                  <CorpFlatsWordmark className="text-sm block leading-tight" />
+                  <span className="text-[10px] text-[#C5A059] font-semibold uppercase tracking-wider">Menu do Sistema</span>
                 </div>
               </div>
 

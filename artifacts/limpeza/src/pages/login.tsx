@@ -2,11 +2,12 @@ import { useState } from "react"
 import { useLocation } from "wouter"
 import { useLogin, useGetMe, getGetMeQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { Sparkles, AlertCircle } from "lucide-react"
+import { AlertCircle } from "lucide-react"
+import { CorpFlatsLogo } from "@/components/brand-logo"
 
 export default function Login() {
   const [username, setUsername] = useState("")
@@ -58,14 +59,15 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
-      <Card className="w-full max-w-sm shadow-xl border-border/80 rounded-2xl overflow-hidden">
-        <CardHeader className="text-center pb-4 pt-6 bg-muted/20 border-b">
-          <div className="mx-auto w-12 h-12 bg-primary text-primary-foreground rounded-2xl flex items-center justify-center mb-2 shadow-xs">
-            <Sparkles className="w-6 h-6" />
+    <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-[#091E26] via-[#0D2E3A] to-[#091E26] p-4">
+      <Card className="w-full max-w-sm shadow-2xl border-[#C5A059]/30 rounded-2xl overflow-hidden bg-card">
+        <CardHeader className="text-center pb-5 pt-7 bg-gradient-to-b from-[#091E26] to-[#0F3D4C] border-b border-[#C5A059]/25">
+          <div className="mx-auto flex items-center justify-center mb-2">
+            <CorpFlatsLogo variant="dark" animated={true} className="w-56 h-auto" />
           </div>
-          <CardTitle className="text-2xl font-black tracking-tight text-slate-900 dark:text-slate-100">Guest Flow</CardTitle>
-          <CardDescription className="text-xs">Sistema de Governança & Limpeza</CardDescription>
+          <CardDescription className="text-[11px] font-semibold uppercase tracking-widest text-[#C5A059]">
+            Gestão Hoteleira & Serviços Exclusivos
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-6">
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -100,7 +102,7 @@ export default function Login() {
               </div>
             )}
 
-            <Button type="submit" className="w-full font-bold shadow-xs mt-2" disabled={login.isPending}>
+            <Button type="submit" className="w-full font-bold shadow-xs mt-2 bg-[#0F3D4C] hover:bg-[#145266] text-white" disabled={login.isPending}>
               {login.isPending ? "Entrando..." : "Entrar no Sistema"}
             </Button>
           </form>
