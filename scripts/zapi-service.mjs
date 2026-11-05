@@ -4406,7 +4406,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const pmRaw = String(reservation?.paymentMethod || "pix").toLowerCase().trim();
   const isExplicitNonPixMethod = Boolean(pmRaw && !pmRaw.includes("pix") && (pmRaw.includes("cartao") || pmRaw.includes("credit") || pmRaw.includes("debit") || pmRaw.includes("faturado") || pmRaw.includes("vcn")));
 
-  if (isFullyPaidVal || ((tplId === "tpl_pre_reserva_lembrete" || triggerEv === "pre_reservation_expiring_soon") && isExplicitNonPixMethod)) {
+  if (isFullyPaidVal || ((templateId === "tpl_pre_reserva_lembrete" || triggerEvent === "pre_reservation_expiring_soon") && isExplicitNonPixMethod)) {
     list = list.filter(b => {
       if (!b) return false;
       const bId = String(b.id || "").toLowerCase();
@@ -5695,6 +5695,16 @@ export function calculateScheduledTime(template, reservation, db, options = {}) 
   const checkoutDateTime = new Date(`${checkoutDateStr}T${checkoutTimeStr}:00-03:00`);
 
   const timing = template.triggerTiming || "immediate";
+
+  if (
+    (template.triggerEvent === "pre_reservation_expiring_soon" || template.id === "tpl_pre_reserva_lembrete") &&
+    reservation?.reminderAt
+  ) {
+    const remDate = new Date(reservation.reminderAt);
+    if (!isNaN(remDate.getTime())) {
+      return remDate.toISOString();
+    }
+  }
 
   if (timing === "immediate") {
     return now.toISOString();
@@ -12493,6 +12503,26 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
     }
   }
 
+  // Trava final em tempo real para lembrete de expiração de pré-reserva (pre_reservation_expiring_soon):
+  // se a reserva já foi confirmada/paga, expirou, ou o lembrete já foi enviado anteriormente, cancela na fila
+  if (
+    (item.triggerEvent === "pre_reservation_expiring_soon" || item.templateId === "tpl_pre_reserva_lembrete") &&
+    method !== "manual_send_now"
+  ) {
+    const stLower = String(resv?.status || "").toLowerCase().trim();
+    const isStillPreRes = stLower === "pre_reserva" || stLower === "pendente" || stLower === "pending_payment";
+    const isPaidNow = resv?.paymentStatus === "pago_total" || resv?.paymentStatus === "pago" || (Number(resv?.paidAmount) >= Number(resv?.totalAmount) && Number(resv?.totalAmount) > 0);
+    if (!resv || !isStillPreRes || isPaidNow || resv.sendExpirationReminder === false || Boolean(resv.preReservationReminderSentAt)) {
+      item.status = "cancelled";
+      item.error = !resv || !isStillPreRes || isPaidNow
+        ? "Cancelado: pré-reserva já confirmada, paga ou encerrada"
+        : "Cancelado: lembrete de expiração já enviado ou desativado";
+      item.updatedAt = new Date().toISOString();
+      if (typeof saveDatabase === "function") saveDatabase();
+      return { waResult: null, emailLog: null, success: false, cancelled: true };
+    }
+  }
+
   let waResult = null;
   let emailLog = null;
 
@@ -12609,6 +12639,9 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
   if (anySuccess && resv && ROOM_READY_GROUP_EVENTS.has(item.triggerEvent)) {
     const { todayStr } = getBrasiliaDateParts(new Date());
     markReservationRoomReadySent(db, resv, todayStr, new Date().toISOString(), item.triggerEvent);
+  }
+  if (anySuccess && resv && (item.triggerEvent === "pre_reservation_expiring_soon" || item.templateId === "tpl_pre_reserva_lembrete")) {
+    resv.preReservationReminderSentAt = new Date().toISOString();
   }
   item.whatsappStatus = waResult ? (waSuccess ? "sent" : "failed") : (item.guestPhone ? "skipped" : "no_phone");
   if (item.guestEmail) item.emailStatus = emailLog ? "sent" : "skipped";
@@ -12884,10 +12917,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
     }
   }
 
-  // Exclui explicitamente 'checkin_cleaning_delay' e 'sunday_upsell_offer' do pré-agendamento automático na fila
+  // Exclui explicitamente 'checkin_cleaning_delay' e 'sunday_upsell_offer' do pré-agendamento automático na fila,
+  // mas inclui 'tpl_pre_reserva_lembrete' (pre_reservation_expiring_soon) quando houver reminderAt na pré-reserva
   const activeTemplates = db.whatsappTemplates.filter(t =>
     t.enabled &&
-    t.triggerTiming !== "immediate" &&
+    (t.triggerTiming !== "immediate" || t.triggerEvent === "pre_reservation_expiring_soon" || t.id === "tpl_pre_reserva_lembrete") &&
     t.triggerTiming !== "manual_sunday_upsell" &&
     t.triggerTiming !== "scheduled" &&
     t.triggerEvent !== "checkin_cleaning_delay" &&
@@ -12916,6 +12950,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
   );
 
   for (const resv of reservationsToProcess) {
+    try {
     const isCompletedOrCheckedOut = isReservationOrFlatCheckedOut(db, resv);
     if (isCompletedOrCheckedOut) {
       const cleanupRes = cancelPendingStayRemindersForCheckout(db, null, {
@@ -12931,6 +12966,22 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
     const resvChannel = resv.channel || resv.source || "site";
     const recipients = getReservationRecipients(resv, db);
 
+    const resvStatusLower = String(resv.status || "").toLowerCase().trim();
+    const isPreReservationStatus = resvStatusLower === "pre_reserva" || resvStatusLower === "pendente" || resvStatusLower === "pending_payment";
+    if (!isPreReservationStatus && Array.isArray(db.whatsappQueue)) {
+      for (const qItem of db.whatsappQueue) {
+        if (!qItem || (qItem.status !== "scheduled" && qItem.status !== "pending")) continue;
+        if (qItem.triggerEvent !== "payment_pending" && qItem.triggerEvent !== "pre_reservation_expiring_soon") continue;
+        const sameRes = (qItem.reservationCode && resv.code && qItem.reservationCode === resv.code) || (qItem.reservationId && resv.id && qItem.reservationId === resv.id);
+        if (sameRes) {
+          qItem.status = "cancelled";
+          qItem.error = resvStatusLower === "expirada" ? "Cancelado: pré-reserva expirada" : "Cancelado: reserva já confirmada";
+          qItem.updatedAt = nowIso;
+          hasChanges = true;
+        }
+      }
+    }
+
     for (const tpl of activeTemplates) {
       // Se a data de checkout já passou, APENAS processar post_checkout_review
       if (resv.checkoutDate < todayStr && tpl.triggerEvent !== "post_checkout_review") {
@@ -12942,19 +12993,22 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
         continue;
       }
 
-      // 1. Filtro de Pré-Reserva: tpl_payment_pending só agenda se a reserva ainda estiver com status de pré-reserva/pendente
-      const resvStatusLower = String(resv.status || "").toLowerCase().trim();
+      // 1. Filtro de Pré-Reserva: tpl_payment_pending e tpl_pre_reserva_lembrete só agendam se a reserva ainda estiver com status de pré-reserva/pendente
       if (resvStatusLower === "expirada") {
         continue;
       }
-      const isPreReservationStatus = resvStatusLower === "pre_reserva" || resvStatusLower === "pendente" || resvStatusLower === "pending_payment";
       if (isPreReservationStatus) {
-        if (tpl.triggerEvent !== "payment_pending") {
+        const isEligiblePreResReminder =
+          (tpl.triggerEvent === "pre_reservation_expiring_soon" || tpl.id === "tpl_pre_reserva_lembrete") &&
+          resv.sendExpirationReminder !== false &&
+          !resv.preReservationReminderSentAt &&
+          Boolean(resv.reminderAt);
+        if (tpl.triggerEvent !== "payment_pending" && !isEligiblePreResReminder) {
           continue;
         }
       } else {
-        // Se a reserva já está confirmada/ativa, nunca agendar payment_pending
-        if (tpl.triggerEvent === "payment_pending") {
+        // Se a reserva já está confirmada/ativa, nunca agendar payment_pending nem pre_reservation_expiring_soon
+        if (tpl.triggerEvent === "payment_pending" || tpl.triggerEvent === "pre_reservation_expiring_soon" || tpl.id === "tpl_pre_reserva_lembrete") {
           continue;
         }
       }
@@ -13116,6 +13170,9 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
           }
         }
       }
+    }
+    } catch (schedErr) {
+      console.warn(`[WhatsApp Scheduler] Erro ao agendar gatilhos para reserva ${resv?.code || resv?.id}:`, schedErr?.message || schedErr);
     }
   }
 

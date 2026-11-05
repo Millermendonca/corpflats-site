@@ -11371,8 +11371,16 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                         {pendingWa.length === 0 ? (
                           <div className="p-4 rounded-xl bg-muted/20 border border-dashed text-center text-xs text-muted-foreground space-y-1">
                             <CheckCircle2 className="w-5 h-5 mx-auto text-emerald-500/70 mb-1" />
-                            <p className="font-semibold text-foreground">Nenhuma mensagem pendente de WhatsApp</p>
-                            <p className="text-[11px]">Todas as mensagens programadas para esta reserva já foram enviadas ou a régua foi finalizada.</p>
+                            <p className="font-semibold text-foreground">
+                              {selectedRes?.status === "pre_reserva"
+                                ? "Aguardando confirmação da Pré-Reserva para agendar a régua de estadia"
+                                : "Nenhuma mensagem pendente de WhatsApp"}
+                            </p>
+                            <p className="text-[11px]">
+                              {selectedRes?.status === "pre_reserva"
+                                ? "As mensagens programadas da estadia (Pré-Check-in, Instruções de Chegada, Check-out e Avaliação) serão agendadas automaticamente assim que o pagamento for confirmado."
+                                : "Todas as mensagens programadas para esta reserva já foram enviadas ou a régua foi finalizada."}
+                            </p>
                           </div>
                         ) : (
                           <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1">

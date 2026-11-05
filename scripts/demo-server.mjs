@@ -14900,7 +14900,7 @@ function pruneDatabase() {
   const LIMITS = {
     whatsappHistory: 300,
     whatsappConversations: 120,
-    whatsappQueue: 100,
+    whatsappQueue: 500,
     whatsappInboundMessages: 150,
     whatsappDispatchHistory: 150,
     conciergeWhatsappLogs: 100,
@@ -14966,6 +14966,8 @@ function pruneDatabase() {
         let isPriority = false;
         if (key === "whatsappConversations") {
           isPriority = Boolean(item?.isDeveloper || item?.pinned || item?.fiscalConferenceState || item?.awaitingFiscalData || String(item?.phone || "").includes("98505276"));
+        } else if (key === "whatsappQueue") {
+          isPriority = Boolean(item?.status === "scheduled" || item?.status === "pending" || item?.status === "pending_approval");
         }
         const dateKey = toComparableIso(
           item?.updatedAt ||
@@ -14987,7 +14989,7 @@ function pruneDatabase() {
       });
 
       decorated.sort((a, b) => {
-        if (key === "whatsappConversations") {
+        if (key === "whatsappConversations" || key === "whatsappQueue") {
           if (a.isPriority && !b.isPriority) return -1;
           if (!a.isPriority && b.isPriority) return 1;
         }
@@ -28299,6 +28301,18 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
             r.updatedAt = nowIso;
             remindedCount++;
 
+            if (Array.isArray(targetDb.whatsappQueue)) {
+              for (const qItem of targetDb.whatsappQueue) {
+                if (!qItem || (qItem.status !== "scheduled" && qItem.status !== "pending")) continue;
+                const sameRes = (qItem.reservationCode && r.code && qItem.reservationCode === r.code) || (qItem.reservationId && r.id && qItem.reservationId === r.id);
+                if (sameRes && (qItem.triggerEvent === "pre_reservation_expiring_soon" || qItem.templateId === "tpl_pre_reserva_lembrete")) {
+                  qItem.status = "sent";
+                  qItem.sentAt = nowIso;
+                  qItem.updatedAt = nowIso;
+                }
+              }
+            }
+
             try {
               addReservationAuditLog(r, {
                 action: "expiration_reminder_sent",
@@ -28334,6 +28348,18 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
     r.expiredAt = nowIso;
     r.updatedAt = nowIso;
     expiredCount++;
+
+    if (Array.isArray(targetDb.whatsappQueue)) {
+      for (const qItem of targetDb.whatsappQueue) {
+        if (!qItem || (qItem.status !== "scheduled" && qItem.status !== "pending")) continue;
+        const sameRes = (qItem.reservationCode && r.code && qItem.reservationCode === r.code) || (qItem.reservationId && r.id && qItem.reservationId === r.id);
+        if (sameRes) {
+          qItem.status = "cancelled";
+          qItem.error = "Cancelado: pré-reserva expirada";
+          qItem.updatedAt = nowIso;
+        }
+      }
+    }
 
     try {
       addReservationAuditLog(r, {
@@ -29730,6 +29756,12 @@ app.post("/api/pms/reservations", async (req, res) => {
         triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation, baseUrl);
       }
     }
+  }
+
+  try {
+    scheduleUpcomingReservationTriggers(db, saveDatabase);
+  } catch (schedErr) {
+    console.warn("[PMS Reservation] Aviso ao agendar régua inicial de WhatsApp:", schedErr?.message || schedErr);
   }
 
   // Gatilho E-mail Recepção: Apenas se a reserva for para o dia de hoje (same-day check-in) e já tiver o hóspede definido.
@@ -41759,6 +41791,9 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
 
   if (r && (!pgPool || pgHydratedSuccessfully)) {
     ensureReservationScheduledEmails(db, saveDatabase, r);
+    try {
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+    } catch (_) {}
     const isB2b = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
     if (isB2b && (!r.guestPhone || !r.guestDocument) && !r.b2bCredentialCompletedAt && !r.b2bCredentialEmailSentAt) {
       const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
@@ -41834,30 +41869,39 @@ app.get("/api/pms/reservations/:id/communications", async (req, res) => {
     return false;
   };
 
-  // 4. Mensagens de WhatsApp Agendadas (Fila)
+  // 4. Mensagens de WhatsApp Agendadas (Fila) — vinculação estrita por reserva quando reservationCode/reservationId existir
   const whatsappQueue = (db.whatsappQueue || []).filter(q => {
     if (idMatches(q.reservationCode, q.reservationId)) return true;
+    if (q.reservationCode || q.reservationId) return false;
     if (phoneMatches(q.guestPhone)) return true;
     return false;
   });
 
-  // 5. Histórico de Mensagens de WhatsApp Enviadas
+  // 5. Histórico de Mensagens de WhatsApp Enviadas — nunca misturar mensagens de reservas anteriores/canceladas do mesmo hóspede
   const whatsappHistory = (db.whatsappHistory || []).filter(h => {
     if (idMatches(h.reservationCode, h.reservationId)) return true;
+    if (h.reservationCode || h.reservationId) return false;
+    if (r?.createdAt && h.sentAt && h.sentAt < r.createdAt) return false;
     if (phoneMatches(h.guestPhone)) return true;
     if (r?.guestName && h.guestName && h.guestName.toLowerCase().trim() === r.guestName.toLowerCase().trim()) {
-      if (h.reservationCode === resCode || !h.reservationCode) return true;
+      return true;
     }
     return false;
   });
 
-  // 6. Incorpora também mensagens outbound de WhatsApp das conversas ativas se houver
+  // 6. Incorpora também mensagens outbound de WhatsApp das conversas ativas se pertencerem a esta reserva
   const convs = (db.whatsappConversations || []).filter(c => phoneMatches(c.phone) || phoneMatches(c.id));
   convs.forEach(conv => {
     (conv.messages || []).forEach(m => {
       if (!m.fromMe) return;
-      const isRel = idMatches(m.reservationCode, m.reservationId) ||
-                    (m.triggerEvent && m.triggerEvent !== "chat_direct");
+      const hasExplicitRes = Boolean(m.reservationCode || m.reservationId);
+      const isRel = hasExplicitRes
+        ? idMatches(m.reservationCode, m.reservationId)
+        : Boolean(
+            m.triggerEvent &&
+            m.triggerEvent !== "chat_direct" &&
+            (!r?.createdAt || !m.timestamp || m.timestamp >= r.createdAt)
+          );
       if (isRel) {
         const already = whatsappHistory.some(h =>
           (h.id && m.id && h.id === m.id) ||
