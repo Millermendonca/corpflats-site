@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { useLocation } from "wouter"
 import { useGetMe } from "@workspace/api-client-react"
 import { Shell } from "@/components/layout"
+import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 import { useToast } from "@/hooks/use-toast"
 import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
 import { Button } from "@/components/ui/button"
@@ -2646,11 +2647,12 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
               <div className="p-5 sm:p-8 space-y-5 bg-card text-foreground text-xs">
                 <div className="flex items-center justify-between border-b border-border pb-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black text-lg">
-                      CF
-                    </div>
+                    <CorpFlatsIcon className="w-10 h-10" />
                     <div>
-                      <h2 className="text-base sm:text-xl font-black uppercase">CorpFlats Residence Service</h2>
+                      <h2 className="text-base sm:text-xl font-black uppercase flex items-center gap-1.5">
+                        <CorpFlatsWordmark className="text-base sm:text-xl" />
+                        <span>Residence Service</span>
+                      </h2>
                       <p className="text-[11px] text-muted-foreground">Demonstrativo de Fechamento de Diárias • Governança & Camareiras</p>
                     </div>
                   </div>

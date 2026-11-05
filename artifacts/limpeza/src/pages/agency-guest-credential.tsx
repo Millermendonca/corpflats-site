@@ -25,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo";
 
 export function isValidBrazilianCpf(rawCpf: string): boolean {
   const cpf = String(rawCpf || "").replace(/\D/g, "");
@@ -314,19 +315,23 @@ export default function AgencyGuestCredential() {
     <div className="min-h-screen bg-slate-950 text-slate-100 py-8 px-4 flex flex-col items-center">
       <div className="w-full max-w-2xl space-y-6">
         {/* Header Institucional CorpFlats */}
-        <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-teal-950/60 border border-teal-500/30 p-6 shadow-xl">
+        <div className="rounded-2xl bg-gradient-to-br from-[#091E26] via-[#0F3D4C] to-[#091E26] border border-[#C5A059]/40 p-6 shadow-xl">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div>
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-teal-400 bg-teal-500/10 border border-teal-500/20 px-2.5 py-1 rounded-full">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-[#E5C98B] bg-[#C5A059]/15 border border-[#C5A059]/35 px-2.5 py-1 rounded-full">
                 <ShieldCheck className="w-3.5 h-3.5" />{" "}
                 {isGuestSelfIdentifyMode
                   ? "Identificação da Reserva • Acesso do Hóspede"
                   : "Portal de Credenciamento do Hóspede"}
               </span>
-              <h1 className="text-2xl font-extrabold tracking-tight text-white mt-2">
-                CorpFlats • Edifício Soho
-              </h1>
-              <p className="text-xs text-slate-300 mt-0.5">
+              <div className="flex items-center gap-3 mt-3">
+                <CorpFlatsIcon className="w-10 h-10" />
+                <div>
+                  <CorpFlatsWordmark className="text-xl text-white block leading-none" />
+                  <span className="text-xs text-[#E5C98B] font-semibold">Edifício Soho Residence</span>
+                </div>
+              </div>
+              <p className="text-xs text-slate-300 mt-2">
                 {isGuestSelfIdentifyMode
                   ? "Localize sua reserva pelo código localizador e cadastre seus dados para receber as instruções no WhatsApp"
                   : "Credenciamento Antecipado e Liberação de Acesso do Hóspede na Portaria 24h"}

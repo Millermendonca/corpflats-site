@@ -13,6 +13,7 @@ import {
 import { format, addDays, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useLocation, useRoute } from "wouter"
+import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 
 interface GuestPreference {
   coffee: string
@@ -775,14 +776,10 @@ export default function GuestBreakfast() {
                 className="w-8 h-8 sm:w-9 sm:h-9 object-contain rounded-xl"
               />
             ) : (
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm group-hover:bg-slate-800 transition-colors">
-                CF
-              </div>
+              <CorpFlatsIcon className="w-8 h-8 sm:w-9 sm:h-9" />
             )}
             <div>
-              <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none">
-                {brandName}
-              </span>
+              <CorpFlatsWordmark className="text-base sm:text-lg text-[#0F3D4C] group-hover:text-[#091E26] transition-colors block leading-none" />
             </div>
           </div>
 
@@ -878,7 +875,7 @@ export default function GuestBreakfast() {
             <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                 <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-sky-600 shrink-0" />
+                  <Calendar className="w-4 h-4 text-[#0F3D4C] shrink-0" />
                   <span>1. Dias de Café da Manhã da sua Estadia</span>
                 </span>
                 <span className="text-[10px] text-slate-500 font-medium">Clique no dia para montar ou visualizar</span>
@@ -902,16 +899,16 @@ export default function GuestBreakfast() {
                       }}
                       className={`p-3.5 rounded-2xl border text-left transition-all relative flex flex-col justify-between gap-1.5 ${
                         isSelected
-                          ? "bg-sky-50/90 border-sky-500 ring-2 ring-sky-500/30 shadow-xs"
+                          ? "bg-[#0F3D4C]/[0.06] border-[#0F3D4C] ring-2 ring-[#C5A059]/35 shadow-xs"
                           : isScheduled
                             ? "bg-emerald-50/40 border-emerald-200 hover:border-emerald-300"
                             : isClosed
                               ? "bg-slate-50/60 border-slate-200 opacity-60 cursor-not-allowed"
-                              : "bg-white border-slate-200 hover:border-sky-300"
+                              : "bg-white border-slate-200 hover:border-[#C5A059]"
                       }`}
                     >
                       <div className="flex flex-wrap items-center justify-between gap-1.5 w-full">
-                        <span className={`font-black text-xs ${isSelected ? 'text-sky-950 font-black' : 'text-slate-800'}`}>
+                        <span className={`font-black text-xs ${isSelected ? 'text-[#091E26] font-black' : 'text-slate-800'}`}>
                           {formatDateDisplay(d.date)}
                         </span>
                         {isScheduled ? (
@@ -1309,19 +1306,19 @@ export default function GuestBreakfast() {
             </div>
           )}
 
-          {/* Escolha entre Café Padrão CorpFlats vs Personalizado */}
+            {/* Escolha entre Café Padrão CorpFlats vs Personalizado */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {/* Opção 1: Café Padrão CorpFlats */}
             <div 
               onClick={() => setCurrentType("standard")}
               className={`cursor-pointer p-3.5 sm:p-4 rounded-2xl border-2 transition-all flex items-start gap-3 sm:gap-3.5 relative ${
                 getCurrentType() === "standard"
-                  ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
+                  ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
                   : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
               }`}
             >
               <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                getCurrentType() === "standard" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
+                getCurrentType() === "standard" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-500"
               }`}>
                 <Coffee className="w-4 h-4 sm:w-5 sm:h-5" />
               </div>
@@ -1330,7 +1327,7 @@ export default function GuestBreakfast() {
                   <span className="font-black text-xs sm:text-sm text-slate-900 leading-snug">
                     Café Padrão CorpFlats
                   </span>
-                  <Badge className="shrink-0 whitespace-nowrap bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-[10px] px-2.5 py-0.5 rounded-full shadow-2xs inline-flex items-center justify-center gap-1 leading-none">
+                  <Badge className="shrink-0 whitespace-nowrap bg-[#C5A059] hover:bg-[#b08d47] text-[#091E26] font-extrabold text-[10px] px-2.5 py-0.5 rounded-full shadow-2xs inline-flex items-center justify-center gap-1 leading-none">
                     <span>Recomendado</span>
                     <span className="text-[10px]">⭐</span>
                   </Badge>
@@ -1346,12 +1343,12 @@ export default function GuestBreakfast() {
               onClick={() => setCurrentType("custom")}
               className={`cursor-pointer p-3.5 sm:p-4 rounded-2xl border-2 transition-all flex items-start gap-3 sm:gap-3.5 relative ${
                 getCurrentType() === "custom"
-                  ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
+                  ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
                   : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
               }`}
             >
               <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                getCurrentType() === "custom" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
+                getCurrentType() === "custom" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-500"
               }`}>
                 <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
               </div>
@@ -1797,13 +1794,13 @@ export default function GuestBreakfast() {
             type="button" 
             onClick={handleSubmitOrder}
             disabled={submitting}
-            className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-xs sm:text-base h-auto min-h-14 py-3 px-4 whitespace-normal leading-snug text-center rounded-2xl shadow-lg shadow-sky-600/25 gap-2 tracking-wide uppercase transition-all transform active:scale-98"
+            className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-black text-xs sm:text-base h-auto min-h-14 py-3 px-4 whitespace-normal leading-snug text-center rounded-2xl shadow-lg shadow-[#091E26]/25 gap-2 tracking-wide uppercase transition-all transform active:scale-98"
           >
             {submitting ? (
               <span>Agendando com a cozinha...</span>
             ) : (
               <>
-                <Coffee className="w-5 h-5 text-white shrink-0" />
+                <Coffee className="w-5 h-5 text-[#E5C98B] shrink-0" />
                 <span>Confirmar Pedido de Café da Manhã ({guestCount} {guestCount === 1 ? 'Pessoa' : 'Pessoas'}) 🚀</span>
               </>
             )}
@@ -1817,7 +1814,8 @@ export default function GuestBreakfast() {
       {/* ── Footer Corporativo / Hospitalidade ────────────────────────── */}
       <footer className="bg-white border-t border-slate-200/80 py-6 px-4 text-center text-xs text-slate-500 space-y-1.5 mt-auto">
         <div className="flex items-center justify-center gap-2 font-bold text-sm text-slate-800">
-          <span>{brandName}</span>
+          <CorpFlatsIcon className="w-6 h-6" />
+          <CorpFlatsWordmark className="text-xs text-[#0F3D4C]" />
           <span className="text-slate-300">•</span>
           <span className="text-slate-500 font-semibold text-xs">Room Service</span>
         </div>

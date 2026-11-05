@@ -10,6 +10,7 @@ import {
   ArrowLeft, Clock, Building2, Check, ExternalLink, Loader2,
   Lightbulb, ShieldCheck, DoorOpen
 } from "lucide-react"
+import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 
 interface ReservationContext {
   id: string | number
@@ -185,7 +186,15 @@ export default function GuestCheckout() {
 
   return (
     <div className="min-h-[100dvh] flex flex-col items-center justify-center bg-gradient-to-b from-slate-50 via-slate-100 to-slate-200 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4 sm:p-6">
-      <div className="w-full max-w-md">
+      <div className="w-full max-w-md space-y-4">
+        {/* Topo de Identidade CorpFlats */}
+        <div className="flex items-center justify-center gap-2.5 pb-1">
+          <CorpFlatsIcon className="w-9 h-9" />
+          <div className="flex flex-col text-left">
+            <CorpFlatsWordmark className="text-lg text-[#0F3D4C] dark:text-white leading-tight" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-[#C5A059] leading-tight">Check-out Expresso</span>
+          </div>
+        </div>
 
         {/* ── ESTADO 1: Carregando Contexto da Reserva ── */}
         {loadingContext ? (

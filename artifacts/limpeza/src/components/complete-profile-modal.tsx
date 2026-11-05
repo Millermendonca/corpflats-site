@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { User, Phone, ShieldCheck, Check, Sparkles, Car, Building2, AlertCircle } from "lucide-react"
 import { updateAccountProfile, saveSessionLocally, UserProfile } from "@/lib/auth-client"
 import { useToast } from "@/hooks/use-toast"
+import { CorpFlatsIcon } from "@/components/brand-logo"
 
 export function maskPhone(val: string): string {
   const digits = val.replace(/\D/g, "").slice(0, 11)
@@ -130,10 +131,8 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-6 space-y-4">
         <DialogHeader className="text-left space-y-1.5">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-sky-100 dark:bg-sky-950 flex items-center justify-center text-sky-600 shrink-0">
-              <Sparkles className="w-4 h-4" />
-            </div>
+          <div className="flex items-center gap-2.5">
+            <CorpFlatsIcon className="w-8 h-8" />
             <DialogTitle className="text-lg font-black text-slate-900 dark:text-slate-100">
               Complete seu Cadastro
             </DialogTitle>
@@ -252,7 +251,7 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
             <Button
               type="submit"
               disabled={loading}
-              className="w-full sm:w-auto bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-10 px-6 rounded-xl shadow-md gap-1.5 order-1 sm:order-2"
+              className="w-full sm:w-auto bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-bold text-xs h-10 px-6 rounded-xl shadow-md gap-1.5 order-1 sm:order-2"
             >
               {loading ? (
                 <span>Salvando...</span>

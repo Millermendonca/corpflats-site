@@ -250,24 +250,24 @@ export function FloatingNewReservationButton() {
             left: `${pos.x}px`,
             top: `${pos.y}px`,
           }}
-          className={`fixed z-40 print:hidden touch-none select-none flex items-center rounded-full bg-gradient-to-r from-primary via-blue-600 to-indigo-600 text-white shadow-xl border border-white/25 backdrop-blur-xs transition-shadow ${
+          className={`fixed z-40 print:hidden touch-none select-none flex items-center rounded-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] text-white shadow-xl border border-[#C5A059]/60 backdrop-blur-xs transition-shadow ${
             isDragging
-              ? 'cursor-grabbing scale-105 shadow-2xl ring-2 ring-white/50'
-              : 'cursor-grab hover:shadow-2xl hover:brightness-105 active:scale-95'
+              ? 'cursor-grabbing scale-105 shadow-2xl ring-2 ring-[#C5A059]/70'
+              : 'cursor-grab hover:shadow-2xl hover:brightness-110 active:scale-95'
           } ${isCompact ? 'p-1.5 gap-0.5' : 'pl-2 pr-2 py-2 gap-1.5'}`}
           title="Clique para abrir Nova Reserva • Segure e arraste para mover para qualquer lugar da tela"
         >
           {/* Ícone de arraste visível no modo expandido */}
           {!isCompact && (
-            <GripVertical className="w-3.5 h-3.5 text-white/70 shrink-0 -mr-0.5 pointer-events-none" />
+            <GripVertical className="w-3.5 h-3.5 text-[#C5A059]/80 shrink-0 -mr-0.5 pointer-events-none" />
           )}
 
           {/* Ícone principal + */}
-          <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center shrink-0 pointer-events-none">
+          <div className="w-6 h-6 rounded-full bg-[#C5A059]/20 border border-[#C5A059]/40 flex items-center justify-center shrink-0 pointer-events-none">
             {isCompact ? (
-              <CalendarPlus className="w-3.5 h-3.5 text-white" />
+              <CalendarPlus className="w-3.5 h-3.5 text-[#E5C98B]" />
             ) : (
-              <Plus className="w-4 h-4 text-white stroke-[2.5]" />
+              <Plus className="w-4 h-4 text-[#E5C98B] stroke-[2.5]" />
             )}
           </div>
 

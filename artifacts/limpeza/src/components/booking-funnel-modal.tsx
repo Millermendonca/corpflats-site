@@ -19,6 +19,7 @@ import { RoomConfig } from "@/pages/booking-engine"
 import { loginWithGooglePopup, updateAccountProfile, saveSessionLocally } from "@/lib/auth-client"
 import { maskPhone, maskCpf } from "@/components/complete-profile-modal"
 import { compressImage } from "@/lib/image-compression"
+import { CorpFlatsIcon } from "@/components/brand-logo"
 
 export function formatDisplayDate(dateStr: string): string {
   if (!dateStr) return ""
@@ -840,12 +841,8 @@ export function BookingFunnelModal({
       <DialogContent className="sm:max-w-2xl max-w-[96vw] w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-7 shadow-2xl max-h-[92vh] overflow-y-auto">
         <DialogHeader className="pb-2 border-b border-slate-100 dark:border-slate-800">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className={`w-8 h-8 rounded-xl text-white flex items-center justify-center font-black text-xs shadow-xs shrink-0 ${
-                currentStep === 4 && paymentMethod === "pix" && !isPixPaid ? "bg-amber-600" : "bg-sky-600"
-              }`}>
-                CF
-              </span>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <CorpFlatsIcon className="w-9 h-9" />
               <div className="min-w-0">
                 <DialogTitle className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100">
                   {currentStep === 4 
@@ -863,7 +860,7 @@ export function BookingFunnelModal({
             </div>
 
             {currentStep < 4 && (
-              <Badge className="bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 text-[11px] font-bold shrink-0">
+              <Badge className="bg-[#0F3D4C]/10 text-[#0F3D4C] border border-[#C5A059]/40 dark:bg-[#0F3D4C]/40 dark:text-[#E5C98B] text-[11px] font-bold shrink-0">
                 Etapa {currentStep} de 3
               </Badge>
             )}
@@ -881,16 +878,16 @@ export function BookingFunnelModal({
                   <div key={s.step} className="space-y-1">
                     <div className={`h-1.5 rounded-full transition-all duration-300 ${
                       currentStep === s.step 
-                        ? "bg-sky-600" 
+                        ? "bg-[#0F3D4C]" 
                         : currentStep > s.step 
-                        ? "bg-emerald-500" 
+                        ? "bg-[#C5A059]" 
                         : "bg-slate-200 dark:bg-slate-800"
                     }`} />
                     <span className={`text-[10px] font-bold block truncate ${
                       currentStep === s.step 
-                        ? "text-sky-600" 
+                        ? "text-[#0F3D4C] dark:text-[#E5C98B]" 
                         : currentStep > s.step 
-                        ? "text-emerald-600" 
+                        ? "text-[#C5A059]" 
                         : "text-slate-400"
                     }`}>
                       {s.label}
@@ -1306,10 +1303,10 @@ export function BookingFunnelModal({
 
               <Button
                 onClick={handleNextStep}
-                className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-auto min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
+                className="bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
               >
                 <span>Avançar para Seus Dados</span>
-                <ArrowRight className="w-4 h-4 shrink-0" />
+                <ArrowRight className="w-4 h-4 shrink-0 text-[#E5C98B]" />
               </Button>
             </div>
           </div>
@@ -1714,10 +1711,10 @@ export function BookingFunnelModal({
 
               <Button
                 onClick={handleNextStep}
-                className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-auto min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
+                className="bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-10 py-2.5 px-6 rounded-xl shadow-md gap-1.5 w-full sm:w-auto whitespace-normal leading-tight text-center"
               >
                 <span>Avançar para Pagamento</span>
-                <ArrowRight className="w-4 h-4 shrink-0" />
+                <ArrowRight className="w-4 h-4 shrink-0 text-[#E5C98B]" />
               </Button>
             </div>
           </div>

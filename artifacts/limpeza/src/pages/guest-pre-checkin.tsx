@@ -16,6 +16,7 @@ import {
 import { getCurrentSession, saveSessionLocally } from "@/lib/auth-client"
 import { compressImage } from "@/lib/image-compression"
 import { isValidBrazilianCpf } from "./agency-guest-credential"
+import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 
 const toDisplayDate = (val?: string | null): string => {
   if (!val) return ""
@@ -1598,13 +1599,9 @@ export default function GuestPreCheckin() {
                   className="w-8 h-8 sm:w-9 sm:h-9 object-contain rounded-xl shrink-0"
                 />
               ) : (
-                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm group-hover:bg-slate-800 transition-colors shrink-0">
-                  CF
-                </div>
+                <CorpFlatsIcon className="w-8 h-8 sm:w-9 sm:h-9" />
               )}
-              <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none truncate">
-                {brandName}
-              </span>
+              <CorpFlatsWordmark className="text-base sm:text-lg text-[#0F3D4C] group-hover:text-[#091E26] transition-colors block leading-none truncate" />
             </div>
 
             <a
@@ -1743,12 +1740,8 @@ export default function GuestPreCheckin() {
               onClick={() => setLocation(portalPath)}
               className="flex items-center gap-2 sm:gap-3 cursor-pointer group min-w-0 flex-1"
             >
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm shrink-0">
-                CF
-              </div>
-              <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 block leading-none truncate">
-                {brandName}
-              </span>
+              <CorpFlatsIcon className="w-8 h-8 sm:w-9 sm:h-9" />
+              <CorpFlatsWordmark className="text-base sm:text-lg text-[#0F3D4C] block leading-none truncate" />
             </div>
 
             <a
@@ -1862,14 +1855,10 @@ export default function GuestPreCheckin() {
                   className="w-8 h-8 sm:w-9 sm:h-9 object-contain rounded-xl shrink-0"
                 />
               ) : (
-                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm group-hover:bg-slate-800 transition-colors shrink-0">
-                  CF
-                </div>
+                <CorpFlatsIcon className="w-8 h-8 sm:w-9 sm:h-9" />
               )}
               <div className="min-w-0">
-                <span className="font-bold text-sm sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none truncate">
-                  {brandName}
-                </span>
+                <CorpFlatsWordmark className="text-sm sm:text-lg text-[#0F3D4C] group-hover:text-[#091E26] transition-colors block leading-none truncate" />
                 <span className="text-[10px] text-slate-500 font-medium block mt-0.5 leading-tight">
                   Check-in Digital Registrado • <span className="whitespace-nowrap font-mono">Apt {reservation?.flatNumber}</span>
                 </span>
@@ -2237,15 +2226,13 @@ export default function GuestPreCheckin() {
                       className="w-11 h-11 rounded-2xl object-contain shadow-xs"
                     />
                   ) : (
-                    <div className="w-11 h-11 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-base shadow-xs shrink-0">
-                      CF
-                    </div>
+                    <CorpFlatsIcon className="w-11 h-11" />
                   )}
                   <div>
                     <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight leading-tight">
                       Ficha Nacional de Registro de Hóspedes (FNHR)
                     </h2>
-                    <span className="text-[11px] text-sky-600 font-bold uppercase tracking-wider block">
+                    <span className="text-[11px] text-[#0F3D4C] font-bold uppercase tracking-wider block">
                       {brandName} • Edifício Soho Residence Service
                     </span>
                   </div>
@@ -2613,14 +2600,10 @@ export default function GuestPreCheckin() {
                 className="w-8 h-8 sm:w-9 sm:h-9 object-contain rounded-xl shrink-0"
               />
             ) : (
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm group-hover:bg-slate-800 transition-colors shrink-0">
-                CF
-              </div>
+              <CorpFlatsIcon className="w-8 h-8 sm:w-9 sm:h-9" />
             )}
             <div className="min-w-0">
-              <span className="font-bold text-sm sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none truncate">
-                {brandName}
-              </span>
+              <CorpFlatsWordmark className="text-sm sm:text-lg text-[#0F3D4C] group-hover:text-[#091E26] transition-colors block leading-none truncate" />
               <span className="text-[10px] text-slate-500 font-medium block mt-0.5 leading-tight">
                 {reservation?.flatNumber ? (
                   <>

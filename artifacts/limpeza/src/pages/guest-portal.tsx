@@ -19,6 +19,7 @@ import {
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { AddToCalendar } from "@/components/add-to-calendar"
+import { CorpFlatsIcon, CorpFlatsWordmark, CorpFlatsSplashScreen } from "@/components/brand-logo"
 import { generateLodgingJsonLd } from "@/lib/calendar-helper"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 
@@ -1293,12 +1294,7 @@ export default function GuestPortal() {
   }, [reservation?.pixCopiaECola])
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col items-center justify-center p-4">
-        <div className="animate-spin w-10 h-10 border-4 border-sky-600 border-t-transparent rounded-full mb-4" />
-        <p className="text-sm font-semibold text-slate-600">Carregando detalhes da sua reserva...</p>
-      </div>
-    )
+    return <CorpFlatsSplashScreen label="Carregando detalhes da sua reserva..." />
   }
 
   if (error || !data) {
@@ -1309,12 +1305,10 @@ export default function GuestPortal() {
           <div className="max-w-4xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
             <div 
               onClick={() => setLocation("/reservar")}
-              className="flex items-center gap-2 cursor-pointer hover:opacity-90 transition-opacity shrink-0"
+              className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition-opacity shrink-0"
             >
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-xs sm:text-base shadow-sm">
-                CF
-              </div>
-              <span className="font-extrabold text-base sm:text-lg tracking-tight text-slate-900">CorpFlats</span>
+              <CorpFlatsIcon className="w-8 h-8 sm:w-9 sm:h-9" />
+              <CorpFlatsWordmark className="text-base sm:text-lg text-[#0F3D4C]" />
             </div>
 
             <a
@@ -2299,14 +2293,10 @@ export default function GuestPortal() {
       <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-3 sm:px-8 py-2.5 sm:py-3 shadow-2xs w-full max-w-full">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-xs sm:text-base shadow-sm shrink-0">
-              CF
-            </div>
+            <CorpFlatsIcon className="w-8 h-8 sm:w-9 sm:h-9" />
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 sm:gap-2">
-                <span className="font-bold text-sm sm:text-base md:text-lg tracking-tight text-slate-900 leading-none shrink-0">
-                  CorpFlats
-                </span>
+                <CorpFlatsWordmark className="text-sm sm:text-base md:text-lg text-[#0F3D4C] leading-none shrink-0" />
                 {isCancelled ? (
                   <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
                     ✕ <span className="hidden sm:inline">Reserva Cancelada</span>

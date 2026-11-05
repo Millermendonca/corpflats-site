@@ -20,6 +20,7 @@ import { AddToCalendar } from "@/components/add-to-calendar"
 import { AuthModal } from "@/components/auth-modal"
 import { CompleteProfileModal } from "@/components/complete-profile-modal"
 import { BookingFunnelModal, formatDisplayDate } from "@/components/booking-funnel-modal"
+import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { initGoogleOneTap, cancelGoogleOneTap, clearGoogleCooldown, loginWithGooglePopup, getCurrentSession, logoutAccount, UserProfile } from "@/lib/auth-client"
 
@@ -926,7 +927,7 @@ export default function BookingEngine() {
       )}
 
       {/* ── Top Announcement Bar (Discreta & Elegante) ────────────────── */}
-      <div className="bg-slate-100/90 text-slate-500 border-b border-slate-200/50 text-[11px] sm:text-xs py-1.5 px-4 text-center tracking-normal font-medium flex items-center justify-center gap-1.5">
+      <div className="bg-[#091E26] text-[#E5C98B] border-b border-[#C5A059]/30 text-[11px] sm:text-xs py-1.5 px-4 text-center tracking-wide font-semibold flex items-center justify-center gap-1.5">
         <span
           contentEditable={isVisualEditMode}
           suppressContentEditableWarning={true}
@@ -952,27 +953,27 @@ export default function BookingEngine() {
                 className="w-8 h-8 object-contain rounded-lg shrink-0"
               />
             ) : (
-              <div className="w-8 h-8 rounded-lg bg-sky-600 group-hover:bg-sky-700 text-white flex items-center justify-center font-bold text-xs tracking-wider shadow-xs transition-colors shrink-0">
-                CF
-              </div>
+              <CorpFlatsIcon className="w-8 h-8 sm:w-9 sm:h-9" />
             )}
             <div>
-              <span
-                contentEditable={isVisualEditMode}
-                suppressContentEditableWarning={true}
-                onBlur={(e) => updateNestedConfig("branding.brandName", e.currentTarget.innerText)}
-                className={`font-bold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-sky-600 transition-colors block leading-none ${
-                  isVisualEditMode ? "outline-dashed outline-1 outline-sky-500 cursor-text rounded px-1" : ""
-                }`}
-              >
-                {brandName}
-              </span>
+              {isVisualEditMode ? (
+                <span
+                  contentEditable={true}
+                  suppressContentEditableWarning={true}
+                  onBlur={(e) => updateNestedConfig("branding.brandName", e.currentTarget.innerText)}
+                  className="font-bold text-base sm:text-lg tracking-tight text-[#0F3D4C] block leading-none outline-dashed outline-1 outline-[#C5A059] cursor-text rounded px-1"
+                >
+                  {brandName}
+                </span>
+              ) : (
+                <CorpFlatsWordmark className="text-sm sm:text-base text-[#0F3D4C] group-hover:text-[#091E26] transition-colors block leading-none" />
+              )}
               <span
                 contentEditable={isVisualEditMode}
                 suppressContentEditableWarning={true}
                 onBlur={(e) => updateNestedConfig("branding.logoSubtext", e.currentTarget.innerText)}
                 className={`text-[9.5px] sm:text-[10px] text-slate-500 font-medium tracking-wide block mt-0.5 ${
-                  isVisualEditMode ? "outline-dashed outline-1 outline-sky-500 cursor-text rounded px-1" : ""
+                  isVisualEditMode ? "outline-dashed outline-1 outline-[#C5A059] cursor-text rounded px-1" : ""
                 }`}
               >
                 {siteConfig?.branding?.logoSubtext || "Soho Residence"}
@@ -982,12 +983,12 @@ export default function BookingEngine() {
 
           {/* Links desktop discretos */}
           <div className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-600">
-            <a href="#tarifas" className="hover:text-sky-600 transition-colors">Tarifas</a>
-            <a href="#beneficios" className="hover:text-sky-600 transition-colors">Comodidades</a>
-            <a href="#galeria" className="hover:text-sky-600 transition-colors">Fotos</a>
-            <a href="#detalhes" className="hover:text-sky-600 transition-colors">O Flat</a>
-            <a href="#localizacao" className="hover:text-sky-600 transition-colors">Localização</a>
-            <a href="#faq" className="hover:text-sky-600 transition-colors">Dúvidas</a>
+            <a href="#tarifas" className="hover:text-[#0F3D4C] transition-colors">Tarifas</a>
+            <a href="#beneficios" className="hover:text-[#0F3D4C] transition-colors">Comodidades</a>
+            <a href="#galeria" className="hover:text-[#0F3D4C] transition-colors">Fotos</a>
+            <a href="#detalhes" className="hover:text-[#0F3D4C] transition-colors">O Flat</a>
+            <a href="#localizacao" className="hover:text-[#0F3D4C] transition-colors">Localização</a>
+            <a href="#faq" className="hover:text-[#0F3D4C] transition-colors">Dúvidas</a>
           </div>
 
           {/* Ações: Entrar/Conta + Reservar destacado */}
@@ -1034,7 +1035,7 @@ export default function BookingEngine() {
                 const el = document.getElementById("reserva-rapida")
                 if (el) el.scrollIntoView({ behavior: "smooth" })
               }}
-              className="hidden sm:inline-flex bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs h-8 px-3.5 rounded-lg shadow-xs transition-all shrink-0"
+              className="hidden sm:inline-flex bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-semibold text-xs h-8 px-3.5 rounded-lg shadow-xs transition-all shrink-0"
             >
               Reservar
             </Button>
@@ -1106,7 +1107,7 @@ export default function BookingEngine() {
             <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-100">
               <div className="space-y-1">
                 <label className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-sky-600" />
+                  <Calendar className="w-3 h-3 text-[#0F3D4C]" />
                   <span>Entrada</span>
                 </label>
                 <Input 
@@ -1120,7 +1121,7 @@ export default function BookingEngine() {
 
               <div className="space-y-1">
                 <label className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-sky-600" />
+                  <Calendar className="w-3 h-3 text-[#0F3D4C]" />
                   <span>Saída</span>
                 </label>
                 <Input 
@@ -1150,13 +1151,13 @@ export default function BookingEngine() {
                   onClick={() => setRatePlan("with_breakfast")}
                   className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
                     ratePlan === "with_breakfast"
-                      ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
+                      ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
                       : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                      ratePlan === "with_breakfast" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+                      ratePlan === "with_breakfast" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-600"
                     }`}>
                       <Coffee className="w-3.5 h-3.5" />
                     </div>
@@ -1164,7 +1165,7 @@ export default function BookingEngine() {
                       <div className="flex items-center gap-1.5 leading-none">
                         <span className="font-bold text-xs text-slate-900">COM CAFÉ</span>
                         {ratePlan === "with_breakfast" && (
-                          <span className="text-[8.5px] font-bold text-sky-700 bg-sky-100 px-1 py-0.5 rounded leading-none">Ativa</span>
+                          <span className="text-[8.5px] font-bold text-[#091E26] bg-[#C5A059]/25 border border-[#C5A059]/50 px-1.5 py-0.5 rounded leading-none">Ativa</span>
                         )}
                       </div>
                       <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Café da manhã no flat</p>
@@ -1183,13 +1184,13 @@ export default function BookingEngine() {
                   onClick={() => setRatePlan("room_only")}
                   className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
                     ratePlan === "room_only"
-                      ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
+                      ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
                       : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                      ratePlan === "room_only" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+                      ratePlan === "room_only" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-600"
                     }`}>
                       <Building2 className="w-3.5 h-3.5" />
                     </div>
@@ -1197,7 +1198,7 @@ export default function BookingEngine() {
                       <div className="flex items-center gap-1.5 leading-none">
                         <span className="font-bold text-xs text-slate-900">SEM CAFÉ</span>
                         {ratePlan === "room_only" && (
-                          <span className="text-[8.5px] font-bold text-sky-700 bg-sky-100 px-1 py-0.5 rounded leading-none">Ativa</span>
+                          <span className="text-[8.5px] font-bold text-[#091E26] bg-[#C5A059]/25 border border-[#C5A059]/50 px-1.5 py-0.5 rounded leading-none">Ativa</span>
                         )}
                       </div>
                       <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Tarifa econômica</p>
@@ -1218,10 +1219,10 @@ export default function BookingEngine() {
               <Button
                 onClick={() => handleStartBooking()}
                 disabled={availabilityData?.available === false}
-                className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm h-10.5 sm:h-11 rounded-xl shadow-md shadow-sky-600/20 transition-all flex items-center justify-center gap-2"
+                className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-bold text-xs sm:text-sm h-10.5 sm:h-11 rounded-xl shadow-md shadow-[#091E26]/20 transition-all flex items-center justify-center gap-2"
               >
                 <span>Reservar agora</span>
-                <ArrowRight className="w-4 h-4" />
+                <ArrowRight className="w-4 h-4 text-[#E5C98B]" />
               </Button>
 
               <div className="flex items-center justify-center gap-1.5 text-[10.5px] text-slate-500 font-medium">
@@ -1237,19 +1238,19 @@ export default function BookingEngine() {
       <section id="beneficios" className="w-full min-w-0 max-w-md sm:max-w-lg mx-auto px-4 py-8 sm:py-10">
         <div className="grid grid-cols-2 gap-3 sm:gap-4 text-slate-700">
           <div className="flex items-center gap-2.5">
-            <Wifi className="w-4 h-4 text-sky-600 shrink-0" />
+            <Wifi className="w-4 h-4 text-[#0F3D4C] shrink-0" />
             <span className="text-xs sm:text-sm font-medium">Wi-Fi 500 MB</span>
           </div>
           <div className="flex items-center gap-2.5">
-            <KeyRound className="w-4 h-4 text-sky-600 shrink-0" />
+            <KeyRound className="w-4 h-4 text-[#0F3D4C] shrink-0" />
             <span className="text-xs sm:text-sm font-medium">Check-in digital</span>
           </div>
           <div className="flex items-center gap-2.5">
-            <Wind className="w-4 h-4 text-sky-600 shrink-0" />
+            <Wind className="w-4 h-4 text-[#0F3D4C] shrink-0" />
             <span className="text-xs sm:text-sm font-medium">Ar-condicionado</span>
           </div>
           <div className="flex items-center gap-2.5">
-            <Car className="w-4 h-4 text-sky-600 shrink-0" />
+            <Car className="w-4 h-4 text-[#0F3D4C] shrink-0" />
             <span className="text-xs sm:text-sm font-medium">Garagem privativa</span>
           </div>
         </div>
@@ -1290,7 +1291,7 @@ export default function BookingEngine() {
                 type="button"
                 onClick={() => setActivePhotoIdx(idx)}
                 className={`h-14 flex-1 min-w-[64px] sm:min-w-0 rounded-xl overflow-hidden border-2 transition-all shrink-0 ${
-                  activePhotoIdx === idx ? "border-sky-600 ring-2 ring-sky-600/20" : "border-transparent opacity-60 hover:opacity-100"
+                  activePhotoIdx === idx ? "border-[#C5A059] ring-2 ring-[#C5A059]/30" : "border-transparent opacity-60 hover:opacity-100"
                 }`}
               >
                 <img src={photo.imageUrl} alt={photo.title} className="w-full h-full object-cover" />
@@ -1314,7 +1315,7 @@ export default function BookingEngine() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2">
             <h4 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-sky-600"></span>
+              <span className="w-2 h-2 rounded-full bg-[#C5A059]"></span>
               Acomodação & Conforto
             </h4>
             <ul className="text-xs text-slate-600 space-y-1.5 font-normal">
@@ -1327,7 +1328,7 @@ export default function BookingEngine() {
 
           <div className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2">
             <h4 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-sky-600"></span>
+              <span className="w-2 h-2 rounded-full bg-[#C5A059]"></span>
               Praticidade & Home Office
             </h4>
             <ul className="text-xs text-slate-600 space-y-1.5 font-normal">
@@ -1355,9 +1356,9 @@ export default function BookingEngine() {
           {amenitiesList.map((amenity: any, idx: number) => (
             <div
               key={amenity.id || idx}
-              className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2 hover:border-slate-300 transition-colors"
+              className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2 hover:border-[#C5A059]/60 transition-colors"
             >
-              <div className="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center">
+              <div className="w-8 h-8 rounded-lg bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center">
                 {renderAmenityIcon(amenity.icon)}
               </div>
               <div>
@@ -1382,7 +1383,7 @@ export default function BookingEngine() {
 
         <div className="p-5 rounded-2xl bg-white border border-slate-200/70 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0 mt-0.5">
+            <div className="w-9 h-9 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center shrink-0 mt-0.5">
               <MapPin className="w-5 h-5" />
             </div>
             <div className="space-y-0.5">
@@ -1399,7 +1400,7 @@ export default function BookingEngine() {
             href={siteConfig?.branding?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2"}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 px-3.5 py-2 rounded-xl transition-colors shrink-0"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#0F3D4C] hover:text-[#091E26] bg-[#0F3D4C]/8 hover:bg-[#0F3D4C]/15 border border-[#C5A059]/30 px-3.5 py-2 rounded-xl transition-colors shrink-0"
           >
             <span>Abrir no Google Maps</span>
             <ExternalLink className="w-3.5 h-3.5" />
@@ -1492,10 +1493,8 @@ export default function BookingEngine() {
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
           <div className="space-y-1">
             <div className="flex items-center justify-center sm:justify-start gap-2">
-              <div className="w-6 h-6 rounded-md bg-sky-600 text-white font-bold flex items-center justify-center text-[10px]">
-                CF
-              </div>
-              <span className="font-bold text-sm text-slate-900">{brandName}</span>
+              <CorpFlatsIcon className="w-7 h-7" />
+              <CorpFlatsWordmark className="text-sm text-[#0F3D4C]" />
             </div>
             <p className="text-[11px] text-slate-500">
               Edifício Soho Residence Service • Centro, Campos dos Goytacazes - RJ
@@ -1514,7 +1513,7 @@ export default function BookingEngine() {
             </a>
             <a
               href={`mailto:${siteConfig?.branding?.email || "reservas@corpflats.com.br"}`}
-              className="text-slate-600 hover:text-sky-600 break-all"
+              className="text-slate-600 hover:text-[#0F3D4C] break-all"
             >
               {siteConfig?.branding?.email || "reservas@corpflats.com.br"}
             </a>
@@ -1542,7 +1541,7 @@ export default function BookingEngine() {
 
         <Button
           onClick={() => handleStartBooking()}
-          className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-9 px-4 rounded-xl shadow-xs"
+          className="bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-bold text-xs h-9 px-4 rounded-xl shadow-xs"
         >
           Reservar agora
         </Button>

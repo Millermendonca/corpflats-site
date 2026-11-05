@@ -8,6 +8,7 @@ import {
   ExternalLink, Download, Lock, Calendar, Smartphone, 
   Globe, Hash, User, Building2, Copy, Check
 } from "lucide-react"
+import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 
 export default function VerifyFnrh() {
   const [, params] = useRoute("/verificar-ficha/:uuid")
@@ -56,13 +57,13 @@ export default function VerifyFnrh() {
         
         {/* Top Branding Header */}
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 bg-sky-50 border border-sky-200 rounded-full text-sky-700 text-xs font-bold shadow-2xs max-w-full">
-            <ShieldCheck className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#0F3D4C]/8 border border-[#C5A059]/40 rounded-full text-[#0F3D4C] text-xs font-bold shadow-2xs max-w-full">
+            <ShieldCheck className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
             <span className="leading-snug">Portal de Autenticidade Digital Oficial</span>
           </div>
-          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 flex flex-wrap items-center justify-center gap-2">
-            <span className="bg-slate-900 text-white px-2 py-0.5 rounded-lg text-base sm:text-lg shrink-0">CF</span>
-            <span>CorpFlats Hospedagem</span>
+          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 flex flex-wrap items-center justify-center gap-2.5">
+            <CorpFlatsIcon className="w-9 h-9" />
+            <CorpFlatsWordmark className="text-xl sm:text-2xl text-[#0F3D4C]" />
           </h1>
           <p className="text-xs text-slate-500">
             Validação de Assinatura Eletrônica e Integridade de Ficha FNRH

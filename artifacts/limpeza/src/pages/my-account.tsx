@@ -19,6 +19,7 @@ import {
 } from "@/lib/auth-client"
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { useToast } from "@/hooks/use-toast"
+import { CorpFlatsIcon, CorpFlatsWordmark, CorpFlatsSplashScreen } from "@/components/brand-logo"
 
 export default function MyAccount() {
   const [, setLocation] = useLocation()
@@ -418,14 +419,7 @@ export default function MyAccount() {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
-        <div className="p-12 text-center text-slate-500">
-          <div className="w-8 h-8 border-4 border-sky-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm font-medium">Carregando painel do hóspede...</p>
-        </div>
-      </div>
-    )
+    return <CorpFlatsSplashScreen label="Carregando painel do hóspede..." />
   }
 
   return (
@@ -435,14 +429,12 @@ export default function MyAccount() {
         <div className="max-w-5xl mx-auto px-4 sm:px-8 min-h-16 py-2 flex items-center justify-between gap-2">
           <div 
             onClick={() => setLocation("/reservar")} 
-            className="flex items-center gap-2 sm:gap-2.5 cursor-pointer hover:opacity-90 transition-opacity min-w-0"
+            className="flex items-center gap-2.5 sm:gap-3 cursor-pointer hover:opacity-90 transition-opacity min-w-0"
           >
-            <div className="w-9 h-9 rounded-xl bg-sky-600 text-white flex items-center justify-center font-black text-sm shadow-xs shrink-0">
-              CF
-            </div>
-            <div className="min-w-0">
-              <span className="font-black text-base tracking-tight text-slate-900 dark:text-slate-100">CorpFlats</span>
-              <span className="hidden sm:inline-block text-[11px] text-slate-400 ml-2 font-medium">Área do Hóspede</span>
+            <CorpFlatsIcon className="w-9 h-9" />
+            <div className="min-w-0 flex flex-col justify-center">
+              <CorpFlatsWordmark className="text-base text-[#0F3D4C] dark:text-white leading-tight" />
+              <span className="text-[10px] text-slate-500 font-semibold leading-tight mt-0.5">Área do Hóspede</span>
             </div>
           </div>
 
@@ -474,7 +466,7 @@ export default function MyAccount() {
         {/* Header do Usuário */}
         <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5 sm:gap-4 min-w-0 w-full sm:w-auto">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white flex items-center justify-center font-black text-xl shadow-md shrink-0">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-[#091E26] to-[#0F3D4C] border border-[#C5A059]/40 text-[#E5C98B] flex items-center justify-center font-black text-xl shadow-md shrink-0">
               {user?.name ? user.name.charAt(0).toUpperCase() : <User className="w-7 h-7" />}
             </div>
             <div className="min-w-0 flex-1">

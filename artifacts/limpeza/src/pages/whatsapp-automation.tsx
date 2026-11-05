@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { useLocation } from "wouter"
 import { useGetMe } from "@workspace/api-client-react"
 import { Shell } from "@/components/layout"
+import { CorpFlatsIcon } from "@/components/brand-logo"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -6005,9 +6006,7 @@ export default function WhatsappAutomation() {
 
                       {/* Top Bar WhatsApp */}
                       <div className="bg-[#075E54] text-white p-2.5 rounded-t-2xl flex items-center gap-2 shadow-xs">
-                        <div className="w-7 h-7 rounded-full bg-emerald-700 flex items-center justify-center font-bold text-xs border border-white/20">
-                          CF
-                        </div>
+                        <CorpFlatsIcon className="w-7 h-7 rounded-full" />
                         <div className="flex-1 min-w-0">
                           <span className="font-bold text-xs block leading-tight truncate">CorpFlats Soho</span>
                           <span className="text-[9px] text-emerald-200 block">online</span>

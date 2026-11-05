@@ -13,6 +13,7 @@ import {
   loginWithPasskey, requestPasswordReset, cancelGoogleOneTap, UserProfile 
 } from "@/lib/auth-client"
 import { useToast } from "@/hooks/use-toast"
+import { CorpFlatsIcon } from "@/components/brand-logo"
 
 interface AuthModalProps {
   open: boolean
@@ -183,8 +184,8 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800">
         <DialogHeader className="text-center space-y-1">
-          <div className="w-10 h-10 rounded-2xl bg-sky-100 dark:bg-sky-950 text-sky-600 dark:text-sky-400 flex items-center justify-center font-bold mx-auto mb-1">
-            <Shield className="w-5 h-5" />
+          <div className="flex justify-center mb-1">
+            <CorpFlatsIcon className="w-10 h-10" />
           </div>
           <DialogTitle className="text-xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
             {activeTab === "login" ? "Acessar Minha Conta" : activeTab === "register" ? "Criar Conta de Hóspede" : "Recuperar Senha"}
@@ -291,7 +292,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
               <Button
                 type="submit"
                 disabled={loading}
-                className="w-full h-10 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl shadow-md shadow-sky-600/20"
+                className="w-full h-10 bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs rounded-xl shadow-md"
               >
                 {loading ? "Entrando..." : "Acessar Conta"}
               </Button>
@@ -386,7 +387,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
               <Button
                 type="submit"
                 disabled={loading}
-                className="w-full h-9 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl shadow-md shadow-sky-600/20 mt-1"
+                className="w-full h-9 bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs rounded-xl shadow-md mt-1"
               >
                 {loading ? "Cadastrando..." : "Concluir Cadastro"}
               </Button>
@@ -429,7 +430,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-10 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl"
+                  className="w-full h-10 bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-bold text-xs rounded-xl"
                 >
                   {loading ? "Enviando..." : "Enviar Link de Recuperação"}
                 </Button>

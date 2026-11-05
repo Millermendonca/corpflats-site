@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
+import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SINTETIZADOR DE ÁUDIO DISCRETO (WEB AUDIO API — ZERO DEPENDÊNCIA DE MP3)
@@ -349,13 +350,13 @@ export default function LiveOperationsPanel() {
       <header className="grid grid-cols-12 items-center gap-3 bg-slate-900/80 border border-slate-800/90 px-3.5 py-2 rounded-2xl shrink-0 shadow-lg">
         {/* Identidade Esquerda (3 cols) */}
         <div className="col-span-3 flex items-center gap-2.5">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 flex items-center justify-center font-black text-base shadow-md shrink-0">
-            CF
-          </div>
+          <CorpFlatsIcon className="w-10 h-10" />
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-sm xl:text-base font-black text-white tracking-tight truncate">
-                CorpFlats • Command Center
+              <h1 className="text-sm xl:text-base font-black text-white tracking-tight truncate flex items-center gap-1.5">
+                <CorpFlatsWordmark className="text-sm xl:text-base text-white" />
+                <span className="text-[#C5A059]">•</span>
+                <span>Command Center</span>
               </h1>
               <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[9px] font-bold px-1.5 py-0 flex items-center gap-1 shrink-0">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
