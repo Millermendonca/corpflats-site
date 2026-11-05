@@ -18,6 +18,11 @@ import {
   ensureReservationAttachmentsReady
 } from "./mail-service.mjs";
 import { extractTextFromPdfBuffer } from "./pdf-extract-service.mjs";
+import {
+  detectB2bEmailIntent,
+  matchReservationForCancellation,
+  executeAutonomousB2bCancellation
+} from "./b2b-cancellation-service.mjs";
 
 // ── Cache em memória para Ciclo de Vida OAuth2 Zoho ───────────────────────────
 const zohoTokenCache = {
@@ -1135,7 +1140,86 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
             )
         );
 
+      const messagePreview = {
+        subject: mapped.subject,
+        text: mapped.snippet,
+        from: mapped.fromEmail
+      };
+      const previewIntent = detectB2bEmailIntent(messagePreview);
+      const isB2bCancellationCandidate =
+        mapped.direction === "inbound" &&
+        (previewIntent.isCancellation || /cancel/i.test(mapped.subject || ""));
+
+      if (isB2bCancellationCandidate && !existingMsg?.b2bCancelled) {
+        try {
+          let fetchedHtml = mapped.bodyHtml || "";
+          if (!fetchedHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
+            try {
+              const contentRes = await callZohoMailApi(
+                db,
+                `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/content`
+              );
+              if (contentRes.ok && contentRes.data?.content) {
+                fetchedHtml = contentRes.data.content;
+                mapped.bodyHtml = fetchedHtml;
+              }
+            } catch {}
+          }
+
+          let attachmentPdfText = "";
+          if (mapped.hasAttachments && mapped.zohoMessageId && mapped.zohoFolderId) {
+            try {
+              const attRes = await callZohoMailApi(
+                db,
+                `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachmentinfo`
+              );
+              if (attRes.ok && Array.isArray(attRes.data?.attachments)) {
+                for (const att of attRes.data.attachments) {
+                  const fname = String(att?.attachmentName || att?.filename || "");
+                  const mime = String(att?.contentType || "");
+                  if (fname.toLowerCase().endsWith(".pdf") || mime.toLowerCase() === "application/pdf") {
+                    try {
+                      const fileRes = await callZohoMailApi(
+                        db,
+                        `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachments/${att.attachmentId}`,
+                        { responseType: "buffer" }
+                      );
+                      if (fileRes.ok && Buffer.isBuffer(fileRes.data)) {
+                        const pdfText = extractTextFromPdfBuffer(fileRes.data);
+                        if (pdfText) attachmentPdfText += `\n${pdfText}`;
+                      }
+                    } catch {}
+                  }
+                }
+              }
+            } catch {}
+          }
+
+          const combinedText = [mapped.snippet || "", attachmentPdfText].filter(Boolean).join("\n");
+          const emailCancelData = {
+            subject: mapped.subject,
+            text: combinedText,
+            html: fetchedHtml,
+            from: mapped.fromEmail
+          };
+          const fullIntent = detectB2bEmailIntent(emailCancelData);
+          if (fullIntent.isCancellation) {
+            const cancelRes = await executeAutonomousB2bCancellation(db, emailCancelData, {
+              saveDatabase
+            });
+            if (cancelRes.cancelled) {
+              addedOrUpdated++;
+            }
+            mapped.b2bParsed = true;
+            mapped.b2bCancelled = cancelRes.cancelled;
+          }
+        } catch (cancelErr) {
+          console.warn("[B2B Sync Cancel] Erro ao processar cancelamento:", cancelErr?.message || cancelErr);
+        }
+      }
+
       const needsB2bParse =
+        !mapped.b2bCancelled &&
         isB2bConfirmationEmail &&
         (!existingMsg?.b2bParsed || (subjResNum && !hasCompleteB2bReservation));
 
@@ -4238,27 +4322,49 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
 
   const combinedRawText = [rawText, attachmentPdfText].filter(Boolean).join("\n");
 
-  const isB2bCandidate =
-    (rawSubj &&
-      (rawFrom.toLowerCase().includes("b2breservas") ||
-        /Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(rawSubj))) ||
-    /Confirma[cç][aã]o\s+d[ae]\s+Reserva|\bVOUCHER\b/i.test(combinedRawText);
+  const emailData = {
+    subject: rawSubj,
+    from: rawFrom,
+    html: rawHtml,
+    text: combinedRawText,
+    summary: rawText,
+    attachments
+  };
 
-  if (isB2bCandidate) {
+  let directCancelResult = null;
+  const intent = detectB2bEmailIntent(emailData);
+
+  if (intent.isCancellation) {
     try {
-      const parsedB2b = await fetchAndParseB2bVoucher({
-        rawText: combinedRawText,
-        htmlText: rawHtml,
-        subject: rawSubj
+      directCancelResult = await executeAutonomousB2bCancellation(db, emailData, {
+        saveDatabase
       });
-      if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
-        directIngest = ingestB2bVoucherIntoDb(db, parsedB2b, {
-          saveDatabase,
-          autoSendCredentialEmail: false
+    } catch (cancelErr) {
+      console.warn("[Zoho Webhook Direct B2B Cancel] Erro ao processar cancelamento:", cancelErr?.message || cancelErr);
+    }
+  } else {
+    const isB2bCandidate =
+      (rawSubj &&
+        (rawFrom.toLowerCase().includes("b2breservas") ||
+          /Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(rawSubj))) ||
+      /Confirma[cç][aã]o\s+d[ae]\s+Reserva|\bVOUCHER\b/i.test(combinedRawText);
+
+    if (isB2bCandidate) {
+      try {
+        const parsedB2b = await fetchAndParseB2bVoucher({
+          rawText: combinedRawText,
+          htmlText: rawHtml,
+          subject: rawSubj
         });
+        if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
+          directIngest = ingestB2bVoucherIntoDb(db, parsedB2b, {
+            saveDatabase,
+            autoSendCredentialEmail: false
+          });
+        }
+      } catch (err) {
+        console.warn("[Zoho Webhook Direct B2B] Aviso:", err?.message || err);
       }
-    } catch (err) {
-      console.warn("[Zoho Webhook Direct B2B] Aviso:", err?.message || err);
     }
   }
 
@@ -4278,6 +4384,8 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
     ok: true,
     synced: syncRes?.synced || 0,
     directIngestedReservation: directIngest?.reservation?.code || null,
+    directCancelledReservation: directCancelResult?.reservationCode || null,
+    directCancelled: directCancelResult?.cancelled || false,
     lastWebhookAt: nowIso
   };
 }
@@ -4343,6 +4451,9 @@ export async function ensureZohoWebhookRegistered(
   };
 }
 
-
-
+export {
+  detectB2bEmailIntent,
+  matchReservationForCancellation,
+  executeAutonomousB2bCancellation
+};
 
