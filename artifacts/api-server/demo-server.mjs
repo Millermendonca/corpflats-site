@@ -61257,61 +61257,105 @@ function serveSpaWithMetadata(distFolder, req, res) {
   }
 }
 
-// ── Ícone PNG Nativo para Instalação do PWA CorpFlats WhatsApp (/api/pwa/chat-icon.png) ──
+// ── Ícone PNG Nativo para Instalação do PWA CorpFlats (/api/pwa/chat-icon.png) ──
 const pwaIconCache = new Map();
 function buildPwaChatPngBuffer(size = 192) {
   const dim = size === 512 ? 512 : 192;
   if (pwaIconCache.has(dim)) return pwaIconCache.get(dim);
 
   const rawData = Buffer.alloc((dim * 4 + 1) * dim);
-  const center = dim / 2;
-  const bubbleRadius = dim * 0.31;
+  const scale = 180 / dim;
+  const aa = scale * 0.85;
+
+  const distToSeg = (px, py, x1, y1, x2, y2) => {
+    const vx = x2 - x1;
+    const vy = y2 - y1;
+    const l2 = vx * vx + vy * vy;
+    const t = Math.max(0, Math.min(1, ((px - x1) * vx + (py - y1) * vy) / l2));
+    const dx = px - (x1 + t * vx);
+    const dy = py - (y1 + t * vy);
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const smoothAlpha = (dist, halfWidth) => {
+    const d = dist - halfWidth;
+    if (d <= -aa) return 1;
+    if (d >= aa) return 0;
+    return (aa - d) / (2 * aa);
+  };
+
+  const cxC = 71.51;
+  const cyC = 90.0;
+  const rC = 40.0;
+  const cosOpen = (84.0 - cxC) / rC;
 
   for (let y = 0; y < dim; y++) {
     const rowStart = y * (dim * 4 + 1);
     rawData[rowStart] = 0; // filtro None
+    const v = (y + 0.5) * scale;
+
     for (let x = 0; x < dim; x++) {
       const px = rowStart + 1 + x * 4;
-      const dx = x - center;
-      const dy = y - center * 0.96;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const u = (x + 0.5) * scale;
 
-      // Cauda do balão do WhatsApp no canto inferior esquerdo
-      const inTail =
-        x >= dim * 0.20 &&
-        x <= dim * 0.38 &&
-        y >= dim * 0.56 &&
-        y <= dim * 0.78 &&
-        (x - dim * 0.20) * 1.1 >= (y - dim * 0.56) * 0.5;
+      // 1. Fundo Petróleo Noite (#091E26) com leve iluminação central (#0F3D4C)
+      const cdx = (u - 90) / 90;
+      const cdy = (v - 90) / 90;
+      const radial = Math.max(0, 1 - Math.sqrt(cdx * cdx + cdy * cdy));
+      let r = Math.round(9 + 6 * radial * 0.45);
+      let g = Math.round(30 + 31 * radial * 0.45);
+      let b = Math.round(38 + 38 * radial * 0.45);
 
-      // Badge roxo da Sofia IA no canto superior direito
-      const sdx = x - dim * 0.74;
-      const sdy = y - dim * 0.26;
-      const sDist = Math.sqrt(sdx * sdx + sdy * sdy);
-
-      if (sDist <= dim * 0.095) {
-        // Ponto central dourado (estrela Sofia) ou círculo roxo
-        if (Math.abs(sdx) + Math.abs(sdy) <= dim * 0.045) {
-          rawData[px] = 253; rawData[px + 1] = 224; rawData[px + 2] = 71; rawData[px + 3] = 255;
-        } else {
-          rawData[px] = 124; rawData[px + 1] = 58; rawData[px + 2] = 237; rawData[px + 3] = 255;
-        }
-      } else if (dist <= bubbleRadius || inTail) {
-        // Interior verde escuro (símbolo de telefone/chat) ou balão branco
-        const innerHole = dist <= bubbleRadius * 0.52 && (dx + dy > -bubbleRadius * 0.25) && (dx * dx + dy * dy > (bubbleRadius * 0.22) ** 2);
-        if (innerHole) {
-          rawData[px] = 0; rawData[px + 1] = 128; rawData[px + 2] = 105; rawData[px + 3] = 255;
-        } else {
-          rawData[px] = 255; rawData[px + 1] = 255; rawData[px + 2] = 255; rawData[px + 3] = 255;
-        }
-      } else {
-        // Gradiente Verde WhatsApp (#128C7E -> #075E54)
-        const ratio = (x + y) / (dim * 2);
-        rawData[px] = Math.round(22 * (1 - ratio) + 7 * ratio);
-        rawData[px + 1] = Math.round(163 * (1 - ratio) + 94 * ratio);
-        rawData[px + 2] = Math.round(106 * (1 - ratio) + 84 * ratio);
-        rawData[px + 3] = 255;
+      // 2. Moldura interna arredondada Bronze Champagne (#C5A059)
+      const qx = Math.abs(u - 90) - 49;
+      const qy = Math.abs(v - 90) - 49;
+      const dBox =
+        Math.sqrt(Math.max(qx, 0) ** 2 + Math.max(qy, 0) ** 2) +
+        Math.min(Math.max(qx, qy), 0) -
+        35;
+      const aFrame = smoothAlpha(Math.abs(dBox), 1.6) * 0.5;
+      if (aFrame > 0) {
+        r = Math.round(r * (1 - aFrame) + 197 * aFrame);
+        g = Math.round(g * (1 - aFrame) + 160 * aFrame);
+        b = Math.round(b * (1 - aFrame) + 89 * aFrame);
       }
+
+      // 3. Letra "C" em Branco Executivo (#F8FAFC)
+      const dxC = u - cxC;
+      const dyC = v - cyC;
+      const lenC = Math.sqrt(dxC * dxC + dyC * dyC) || 0.0001;
+      let distC;
+      if (dxC / lenC <= cosOpen) {
+        distC = Math.abs(lenC - rC);
+      } else {
+        const dTop = Math.sqrt((u - 84) ** 2 + (v - 52) ** 2);
+        const dBot = Math.sqrt((u - 84) ** 2 + (v - 128) ** 2);
+        distC = Math.min(dTop, dBot);
+      }
+      const aC = smoothAlpha(distC, 6.5);
+      if (aC > 0) {
+        r = Math.round(r * (1 - aC) + 248 * aC);
+        g = Math.round(g * (1 - aC) + 250 * aC);
+        b = Math.round(b * (1 - aC) + 252 * aC);
+      }
+
+      // 4. Letra "F" em Bronze Champagne (#C5A059)
+      const distF = Math.min(
+        distToSeg(u, v, 104, 128, 104, 52),
+        distToSeg(u, v, 104, 52, 142, 52),
+        distToSeg(u, v, 104, 88, 134, 88)
+      );
+      const aF = smoothAlpha(distF, 6.5);
+      if (aF > 0) {
+        r = Math.round(r * (1 - aF) + 197 * aF);
+        g = Math.round(g * (1 - aF) + 160 * aF);
+        b = Math.round(b * (1 - aF) + 89 * aF);
+      }
+
+      rawData[px] = r;
+      rawData[px + 1] = g;
+      rawData[px + 2] = b;
+      rawData[px + 3] = 255;
     }
   }
 
@@ -61358,7 +61402,7 @@ app.get("/api/pwa/chat-icon.png", (req, res) => {
   const size = Number(req.query.size) === 512 ? 512 : 192;
   const buf = buildPwaChatPngBuffer(size);
   res.setHeader("Content-Type", "image/png");
-  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.setHeader("Cache-Control", "public, max-age=300, must-revalidate");
   res.send(buf);
 });
 
