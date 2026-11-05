@@ -905,6 +905,7 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
     id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     timestamp: nowIso,
     action: "cancelled",
+    event: "B2B_EMAIL_AUTONOMOUS_CANCELLATION",
     actor: {
       id: null,
       name: "Sistema Autônomo B2B",

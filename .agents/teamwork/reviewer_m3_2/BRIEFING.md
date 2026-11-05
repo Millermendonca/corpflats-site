@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-22T13:05:00Z
+# BRIEFING — 2026-11-05T15:55:00Z
 
 ## Mission
-Revisão técnica e crítica adversarial profunda do Marco M3 (Escalas 6x1 44h, Art. 58 CLT, Horas Extras 50%/100%, Adicional Noturno e Gestão de Férias CLT).
+Revisão técnica de segurança operacional e integração do Marco M3 (Cancelamento Autônomo B2B, Invariante CHECKED_IN_CANCELLATION, Cascata Canônica PMS e Alerta WhatsApp Z-API ao Gestor).
 
 ## 🔒 My Identity
 - Archetype: reviewer & critic
@@ -10,6 +10,7 @@ Revisão técnica e crítica adversarial profunda do Marco M3 (Escalas 6x1 44h, 
 - Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
 - Milestone: M3
 - Instance: 2 of 2
+- Milestone Update (2026-11-05): Milestone 3 - B2B Email Ingestion & Autonomous Cancellation
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
@@ -17,32 +18,33 @@ Revisão técnica e crítica adversarial profunda do Marco M3 (Escalas 6x1 44h, 
 - Blindagem estrita de Cris (id: 2) e Grazi (id: 3) contra inclusão em regras CLT
 - Detecção ativa de violações de integridade (mockings fraudulentos, facade implementations, bypass)
 - Veredicto explícito: APPROVE ou REQUEST_CHANGES
+- Restrição M3: Verificar invariante CHECKED_IN_CANCELLATION, cascata canônica do PMS e paridade twin-server 39/39
 
 ## Current Parent
-- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Updated: 2026-10-22T13:05:00Z
+- Conversation ID: 360f24b1-a735-4f80-861f-c34322083e6f
+- Updated: 2026-11-05T15:55:00Z
 
 ## Review Scope
 - **Files to review**:
-  - `artifacts/api-server/hr/schedules.mjs`
-  - `scripts/hr/schedules.mjs`
-  - `artifacts/api-server/hr/whatsapp-automation.mjs`
-  - `scripts/hr/whatsapp-automation.mjs`
-  - `artifacts/api-server/hr/router.mjs`
-  - `tests/hr-m3-whatsapp-schedules.test.mjs`
-  - `tests/hr-m2-timekeeping-compliance.test.mjs`
-- **Interface contracts**: `PROJECT.md` (Features F15, F16, F17, F18) e `ORIGINAL_REQUEST.md` (R4, R7)
-- **Review criteria**: conformidade legal estrita (CLT, Súmulas e OJs do TST), integridade de código, exatidão dos feriados municipais/estaduais/nacionais, ausência de regressões, blindagem de prestadoras PJ.
+  - `artifacts/api-server/b2b-cancellation-service.mjs`
+  - `scripts/b2b-cancellation-service.mjs`
+  - `artifacts/api-server/zoho-mail-service.mjs`
+  - `scripts/zoho-mail-service.mjs`
+  - `tests/b2b-cancellation.test.mjs`
+  - `tests/b2b-voucher-extraction.test.mjs`
+  - `tests/b2b-voucher-dates.test.mjs`
+  - `scripts/check-twin-parity.mjs`
+- **Interface contracts**: `PROJECT.md` (Features F12, F13, F14, F15, F16) e `ORIGINAL_REQUEST.md` (R3)
+- **Review criteria**: Segurança operacional, invariante CHECKED_IN_CANCELLATION, cascata de cancelamento do PMS, integridade de auditoria, notificações WhatsApp Z-API, resiliência do parser e paridade twin-server.
 
 ## Key Decisions Made
-- Executadas as suítes pontuais autorizadas: `hr-m3-whatsapp-schedules.test.mjs` (12/12 PASS), `hr-m2-timekeeping-compliance.test.mjs` (10/10 PASS) e `hr-m1-backend-core.test.mjs` (7/7 PASS).
-- Realizada auditoria adversarial minuciosa do código-fonte de `schedules.mjs`.
-- Identificada violação de integridade e falhas graves de lógica:
-  1. INTEGRITY VIOLATION: Hardcoded test reference date em `getVacations` (`const refDate = new Date("2026-10-22T00:00:00.000Z");`).
-  2. FACADE / CRITICAL BUG: `calculateNightShiftAndExtension` assume que qualquer batida é turno noturno e aplica 420 min de adicional noturno a turnos diurnos (ex: 06h00 às 14h20).
-  3. MAJOR BUG: `calculatePunchTolerance` credita atrasos como horas extras (`creditedOvertimeMinutes = dailyTotalDelta`).
-  4. MAJOR DEFECT: `validateVacationSchedule` não verifica feriados ao aplicar o Art. 134 §3º CLT (proibição de início 2 dias antes).
-- Veredicto final: REQUEST_CHANGES.
+- Executados os testes pontuais obrigatórios com 100% PASS:
+  - `tests/b2b-cancellation.test.mjs` (17/17 pass)
+  - `tests/b2b-voucher-extraction.test.mjs` (15/15 pass)
+  - `tests/b2b-voucher-dates.test.mjs` (12/12 pass)
+  - `scripts/check-twin-parity.mjs` (39/39 files PASS)
+- Auditado código de `b2b-cancellation-service.mjs` contra a cascata canônica de `demo-server.mjs:37170-37368`.
+- Verificada integração nos dois fluxos de `zoho-mail-service.mjs`: webhook de entrada (`handleZohoIncomingWebhook`) e sincronização de cache (`syncZohoMessagesToCache`).
 
 ## Artifact Index
 - `.agents/teamwork/reviewer_m3_2/DISPATCH.md` — Histórico de despachos
@@ -52,21 +54,20 @@ Revisão técnica e crítica adversarial profunda do Marco M3 (Escalas 6x1 44h, 
 
 ## Review Checklist
 - **Items reviewed**:
-  - `getOfficialHolidays` (Campos, RJ, nacionais e móveis) -> Correto
-  - `generateMonthlySchedule` (6x1 44h 7h20 e 8h+4h) -> Correto
-  - `validateSundayRotation` (Art. 386 CLT e Portaria 671) -> Correto
-  - Blindagem de Cris e Grazi -> Aprovado
-  - `calculatePunchTolerance` -> REPROVADO (atraso vira hora extra)
-  - `calculateNightShiftAndExtension` -> REPROVADO (facade / turno diurno vira noturno)
-  - `validateVacationSchedule` -> REPROVADO (não checa feriados pré-férias)
-  - `getVacations` -> REPROVADO (data de teste hardcoded)
-- **Verdict**: REQUEST_CHANGES
-- **Unverified claims**: Nenhuma.
+  - `detectB2bEmailIntent`: diferenciação de voucher vs cancelamento real
+  - `matchReservationForCancellation`: busca determinística em 4 camadas (B2B num, RLOC, PMS code, heurística hóspede+data)
+  - Invariante `CHECKED_IN_CANCELLATION`: trava absoluta para status in_house/checked_in ou timestamps de check-in
+  - Cascata canônica PMS: liberação de quarto, limpeza governança, cancelamento café, cancelamento tarefas, deletedB2bSeeds
+  - Dupla auditoria: gravação em `reservation.auditLogs` e `db.auditLogs`
+  - Notificação ao gestor: disparos Z-API WhatsApp para 5522997124021 e central de notificações
+  - Paridade Twin-Server: 39/39 arquivos auditados dinamicamente
+- **Verdict**: APPROVE
+- **Unverified claims**: Nenhuma
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Batida diurna (06:00 às 14:20) em `calculateNightShiftAndExtension` -> FALHOU (concedeu 420 min de adicional noturno + 80 min extensão).
-  - Atraso de 8 min em `calculatePunchTolerance` -> FALHOU (concedeu 8 min de hora extra).
-  - Início de férias 2 dias antes de feriado em `validateVacationSchedule` -> FALHOU (permitiu 30/12 antes do feriado 01/01).
-  - Data de expiração de férias após 2026 em `getVacations` -> FALHOU (data hardcoded em 22/10/2026).
-- **Vulnerabilities found**: 4 vulnerabilidades (1 violação de integridade + 3 bugs críticos/maiores).
+  - Tentativa de cancelamento de hóspede in_house/checked_in -> BLOQUEADO COM SUCESSO
+  - E-mail com menção a regras de cancelamento em voucher -> NÃO CLASSIFICADO COMO CANCELAMENTO
+  - Desempate em ambiguidades de busca -> DETECTADO COMO AMBÍGUO E ALERTA DISPARADO SEM CANCELAR ÀS CEGAS
+  - Resiliência contra campos nulos no banco PMS -> TRATADO COM FALLBACKS SEGUROS
+- **Vulnerabilities found**: Nenhuma vulnerabilidade crítica ou violação de integridade.

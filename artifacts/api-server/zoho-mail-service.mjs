@@ -3209,6 +3209,60 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
 }
 
 /**
+ * Interface unificada para extração de dados estruturados de voucher B2B
+ * Suporta Buffer (PDF), URL externa HTTP, objeto com anexo ou texto bruto.
+ * Conforme especificação em PROJECT.md (M2).
+ *
+ * @param {Buffer|string|{ buffer?: Buffer, mimeType?: string, url?: string, text?: string, rawText?: string, html?: string }} source
+ * @returns {Promise<Object>} Dados estruturados do voucher (hóspede, datas, agência, faturamento, NFS-e)
+ */
+export async function extractVoucherData(source = {}) {
+  if (!source) return parseB2bVoucherText({});
+
+  // 1. Entrada direta em Buffer ou objeto com { buffer }
+  if (Buffer.isBuffer(source) || source?.buffer) {
+    const buf = Buffer.isBuffer(source) ? source : source.buffer;
+    const extractedText = extractTextFromPdfBuffer(buf);
+    return parseB2bVoucherText(extractedText);
+  }
+
+  // 2. Entrada de string (texto de voucher ou base64)
+  if (typeof source === "string") {
+    const trimmed = source.trim();
+    if (trimmed.startsWith("JVBER") || trimmed.startsWith("data:application/pdf;base64,")) {
+      const extractedText = extractTextFromPdfBuffer(trimmed);
+      return parseB2bVoucherText(extractedText);
+    }
+    return parseB2bVoucherText(source);
+  }
+
+  // 3. Entrada com URL para crawling HTTP
+  if (source.url || source.voucherUrl) {
+    const url = source.url || source.voucherUrl;
+    return fetchAndParseB2bVoucher({ ...source, voucherUrl: url, forceFetch: true });
+  }
+
+  // 4. Entrada com texto / html / anexo estruturado
+  if (source.attachments && Array.isArray(source.attachments)) {
+    const pdfAtt = source.attachments.find(
+      a =>
+        a &&
+        (a.contentType === "application/pdf" ||
+          String(a.filename || a.name || "").toLowerCase().endsWith(".pdf"))
+    );
+    if (pdfAtt && (pdfAtt.content || pdfAtt.buffer || pdfAtt.data)) {
+      const rawPdf = pdfAtt.content || pdfAtt.buffer || pdfAtt.data;
+      const pdfText = extractTextFromPdfBuffer(rawPdf);
+      const combined = `${source.text || source.rawText || ""}\n${pdfText}`.trim();
+      return parseB2bVoucherText(combined, source.html || source.htmlText, source.subject);
+    }
+  }
+
+  // 5. Fallback para parseB2bVoucherText
+  return parseB2bVoucherText(source);
+}
+
+/**
  * Localiza um Flat disponível sem conflito de datas no período informado
  */
 function findAvailableFlatForPeriod(db, checkinDate, checkoutDate) {

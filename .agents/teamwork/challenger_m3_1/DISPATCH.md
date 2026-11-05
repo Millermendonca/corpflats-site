@@ -1,31 +1,36 @@
-## 2026-10-22T12:54:38Z
-Você é o Challenger 1 (challenger_m3_1) para o Marco M3 (Estresse Adversarial de Matemática Trabalhista, Limiares do Art. 58 CLT, Hora Ficta Noturna e Férias).
-Seu diretório de trabalho exclusivo é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m3_1`
-A raiz do projeto é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
+# Dispatch — Challenger M3.1 (Milestone 3 Intent & Matching Challenger)
 
-MANDATÓRIO:
-1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
-2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md`.
-3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md`.
+## Role
+M3 Adversarial Intent & Lookup Challenger
 
-SUA MISSÃO ADVERSARIAL:
-1. Criar um script temporário em seu diretório de trabalho:
-   `.agents/teamwork/challenger_m3_1/stress_schedules_math.mjs`.
-2. Estressar a tolerância do Art. 58 CLT e Súmula 366 TST:
-   - Testar limiares exatos: variações de 4 min, 5 min (devem ser desconsideradas / 0 HE); variação de 6 min (deve computar a totalidade dos 6 min de HE).
-   - Testar soma diária: variações de 3, 2, 2, 3 min (soma = 10 min -> desconsiderado / 0 HE); variações de 3, 3, 3, 2 min (soma = 11 min -> computa a totalidade dos 11 min de HE!).
-3. Estressar os cálculos de Horário Noturno e Hora Ficta:
-   - Turno exatamente das 22:00 às 05:00 (7 horas de relógio -> deve resultar em exatamente 8,0 horas noturnas de trabalho!).
-   - Turno noturno com prorrogação: das 22:00 às 07:00 (7h noturnas + 2h diurnas prorrogadas -> per Súmula 60 TST, as 2h pós-05h também devem receber hora reduzida e 20%!).
-   - Turno puramente diurno (08:00 às 17:00) -> 0 horas noturnas.
-4. Estressar as regras de Férias CLT:
-   - Tentativa de agendar período de 13 dias (deve falhar se for o período principal, pois a CLT exige >= 14 dias).
-   - Tentativa de agendar período de 4 dias (deve falhar, pois a CLT exige >= 5 dias).
-   - Tentativa de iniciar férias na sexta-feira ou sábado quando o DSR é no domingo (deve falhar com rejeição per Art. 134 §3º CLT).
-   - Alerta de dobra: período concessivo a 30 dias do fim sem agendamento (deve acusar risco/alerta).
-5. Executar o script criado (`node .agents/teamwork/challenger_m3_1/stress_schedules_math.mjs`).
-6. NÃO alterar arquivos de produção do projeto.
-7. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
-8. Enviar mensagem ao orquestrador via `send_message`.
+## Task Objective
+Empirically stress-test the intent detection and reservation matching logic in `artifacts/api-server/b2b-cancellation-service.mjs`:
+1. Craft adversarial emails:
+   - Voucher confirmation email with aggressive cancellation penalty text (e.g. "Multa de cancelamento: se cancelar após 24h...") — must NOT be classified as cancellation (`isCancellation: false`).
+   - Cancellation email disguised as a reply or forward.
+   - Ambiguous emails matching multiple reservations — must NOT cancel blindly (`MULTIPLE_MATCHES`).
+   - Emails with no match in DB — must trigger `RESERVATION_NOT_FOUND` alert.
+2. Run point tests:
+   ```powershell
+   node tests/b2b-cancellation.test.mjs
+   node tests/b2b-voucher-extraction.test.mjs
+   node tests/b2b-voucher-dates.test.mjs
+   node scripts/check-twin-parity.mjs
+   ```
+3. Deliver `handoff.md` with explicit verdict `APPROVE` or `REQUEST_CHANGES` and send a message to orchestrator upon completion.
+
+
+## 2026-11-05T15:49:46Z
+From: 360f24b1-a735-4f80-861f-c34322083e6f
+Content:
+You are Challenger M3.1 (Intent & Lookup Challenger) for Milestone 3 in Guest-Flow-Manager.
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m3_1\
+Read DISPATCH.md in your working directory and ORIGINAL_REQUEST.md.
+Also read Worker M3.1 handoff at c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\teamwork_worker_m3_1\handoff.md.
+Empirically stress-test intent detection and 4-tier matching in b2b-cancellation-service.mjs.
+Run point tests:
+node tests/b2b-cancellation.test.mjs
+node tests/b2b-voucher-extraction.test.mjs
+node tests/b2b-voucher-dates.test.mjs
+node scripts/check-twin-parity.mjs
+Deliver handoff.md with explicit verdict APPROVE or REQUEST_CHANGES. Send message to orchestrator upon completion.

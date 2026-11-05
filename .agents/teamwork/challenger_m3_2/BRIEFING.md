@@ -1,67 +1,90 @@
-# BRIEFING — 2026-10-22T13:02:00Z
+# BRIEFING — 2026-11-05T15:58:00Z
 
 ## Mission
-Adversarial stress-testing of WhatsApp HR integration: contractor shielding (Cris & Grazi 403 Forbidden), silencing during DSR/Vacation/Medical leave, and reminder idempotency.
+Adversarial empirical stress-testing of Milestone 3: B2B autonomous cancellation, PMS cancellation cascade, and the CHECKED_IN_CANCELLATION safety invariant.
 
 ## 🔒 My Identity
 - Archetype: EMPIRICAL CHALLENGER
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m3_2
-- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Milestone: M3 (WhatsApp Stress, DSR/Férias Silence, Contractor Shielding)
+- Original parent: 360f24b1-a735-4f80-861f-c34322083e6f
+- Milestone: M3 (B2B Autonomous Cancellation & PMS Cascade Safety)
 - Instance: 2 of 2
 
 ## 🔒 Key Constraints
-- Review-only — do NOT modify implementation code of production
+- Review-only — do NOT modify production implementation code
 - NUNCA executar testes globais, varreduras ou em lote (AGENTS.md)
-- Testar empiricamente via `.agents/teamwork/challenger_m3_2/stress_whatsapp_security.mjs`
-- Verificar bloqueio absoluto de Cris e Grazi (IDs 2, 3, "2", "3", strings variantes)
-- Verificar silenciamento total em DSR, folga, férias e afastamento médico
-- Verificar idempotência de lembretes preventivos em `db.hrWhatsAppLogs`
+- Execute strictly point tests and dedicated empirical verification harnesses
+- Verify CHECKED_IN_CANCELLATION invariant (status in_house/checked_in or checkedInAt/actualCheckinTime)
+- Verify PMS cancellation cascade side-effects (cleaning requests, breakfast, tasks, seeds, audit logs)
+- Deliver handoff.md with explicit verdict APPROVE or REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Updated: 2026-10-22T13:02:00Z
+- Conversation ID: 360f24b1-a735-4f80-861f-c34322083e6f
+- Updated: 2026-11-05T15:58:00Z
 
 ## Review Scope
 - **Files to review**:
-  - `artifacts/api-server/hr/whatsapp-automation.mjs` & `scripts/hr/whatsapp-automation.mjs`
-  - `artifacts/api-server/hr/employees.mjs` & `scripts/hr/employees.mjs`
-  - `artifacts/api-server/hr/router.mjs` & `scripts/hr/router.mjs`
-  - `artifacts/api-server/hr/schedules.mjs` & `scripts/hr/schedules.mjs`
-  - `artifacts/api-server/hr/timekeeping.mjs` & `scripts/hr/timekeeping.mjs`
-  - `tests/hr-m3-whatsapp-schedules.test.mjs`
+  - `artifacts/api-server/b2b-cancellation-service.mjs` & `scripts/b2b-cancellation-service.mjs`
+  - `artifacts/api-server/zoho-mail-service.mjs` & `scripts/zoho-mail-service.mjs`
+  - `artifacts/api-server/demo-server.mjs` (PMS canonical cascade reference: lines 37282-37370)
+  - `tests/b2b-cancellation.test.mjs`
+  - `tests/b2b-voucher-extraction.test.mjs`
+  - `tests/b2b-voucher-dates.test.mjs`
+  - `scripts/check-twin-parity.mjs`
 - **Interface contracts**:
-  - `.agents/teamwork/ORIGINAL_REQUEST.md` § R1, R3, R4, R7
-  - `.agents/teamwork/orchestrator_17/PROJECT.md`
+  - `.agents/teamwork/ORIGINAL_REQUEST.md` § R3
+  - Worker M3.1 handoff at `.agents/teamwork/teamwork_worker_m3_1/handoff.md`
 - **Review criteria**:
-  - Cris (2) and Grazi (3) attempts throw 403 / security error across all HR endpoints
-  - Cris and Grazi excluded from scale reminders and mass scan
-  - DSR / Folga / Férias / Afastamento return 0 messages
-  - Reminder idempotency prevents duplicate messages in `db.hrWhatsAppLogs` on same day
+  - `CHECKED_IN_CANCELLATION` blocks cancellation 100% of the time for in-house/checked-in guests
+  - Canonical cascade mutates all associated entities (housekeeping, breakfast, tasks, seeds, calendarSequence)
+  - Ambiguous matches or not-found emails alert manager without corrupting PMS state
+  - Twin parity is maintained across all 39 runtime files
 
 ## Key Decisions Made
-- Executed 75 adversarial test vectors in `.agents/teamwork/challenger_m3_2/stress_whatsapp_security.mjs`.
-- Verified that contractor shielding blocks Cris (`2`, `"2"`, `"cris"`, `"CRIS"`, `"  2  "`, `"02"`, `"cris_diarista"`) and Grazi (`3`, `"3"`, `"grazi"`, `"GRAZI"`, `"03"`, `"grazi_prestadora"`) with HTTP 403 Forbidden across `/whatsapp/send-receipt`, `/whatsapp/balance/:id`, `/punch`, `/compliance/validate`, `/schedules/generate-month`, `/vacations/:id`, and `/vacations/schedule`.
-- Verified 100% silencing on DSR, Folga, Férias (`approved`, `aprovada`, `em_gozo`), and Afastamentos (`leave`, `afastamento`, `atestado`, `licenca`).
-- Verified daily idempotency in `db.hrWhatsAppLogs` prevents duplicate logs across multiple runs on the same date.
-- Veredito final: APPROVE.
+- Executed 16 adversarial test scenarios in `.agents/teamwork/challenger_m3_2/stress_cancellation_cascade.mjs`.
+- Verified `CHECKED_IN_CANCELLATION` invariant holds 100% for `in_house`, `checked_in`, `checkedInAt`, `actualCheckinTime`, and combinations:
+  - Reservation status is preserved intact.
+  - Zero housekeeping, breakfast, or task side-effects are triggered.
+  - Audit logs (`action: 'cancellation_blocked'`, `action: 'RESERVATION_CANCELLATION_BLOCKED_CHECKED_IN'`) are created.
+  - Urgent manager WhatsApp alert is dispatched to `5522997124021`.
+- Verified PMS canonical cascade in `b2b-cancellation-service.mjs` strictly adheres to `demo-server.mjs:37282-37370`:
+  - `status = 'cancelada'`, `cancelledAt`, `cancellationReason`, `calendarSequence` incremented.
+  - `deletedB2bSeeds` populated with B2B number and PMS code.
+  - Check-in cleaning instructions cleared, manual overrides (`manualTwinBeds`, `manualExtraMattress`, `manualAdminNote`) strictly preserved.
+  - Check-out cleaning conditionally deleted only when no other active checkout exists on that date.
+  - Completed cleanings (`status = 'clean'`) and admin-marked cards (`markedByAdmin: true`) strictly protected from deletion.
+  - Breakfast orders and service tasks cancelled.
+  - Dual audit logs and central notification generated.
+- Verified adversarial boundary conditions:
+  - Policy quotation in confirmation vouchers does not trigger cancellation (`isVoucher: true`, `isCancellation: false`).
+  - Empty or non-cancellation payloads return `NOT_A_CANCELLATION`.
+  - Non-existent reservations return `RESERVATION_NOT_FOUND` with manager alert.
+  - Ambiguous multiple candidate matches return `MULTIPLE_MATCHES`, refuse to cancel blindly, and alert manager.
+  - Double cancellation is idempotent.
+  - Tier 1 takes deterministic priority over body text noise.
+- Identified an adversarial finding: `demo-server.mjs` in legacy branches utilizes `CHECKED_IN` (uppercase), `checkin`, and `hospedado` (lines 17935, 30788, 37722, 44853). Recommended hardening `b2b-cancellation-service.mjs:618` with case normalization (`normStatus = String(reservation.status || "").toLowerCase().trim()`).
+- Verdict: **APPROVE**.
 
 ## Artifact Index
 - `DISPATCH.md` — Inbound instruction log
-- `BRIEFING.md` — Persistent identity and situational awareness
-- `progress.md` — Liveness and step tracker
-- `stress_whatsapp_security.mjs` — Adversarial test runner (75/75 PASS)
-- `handoff.md` — 5-component handoff report
+- `BRIEFING.md` — Situational awareness and persistent memory
+- `progress.md` — Liveness heartbeat and step tracker
+- `stress_cancellation_cascade.mjs` — Empirical stress harness (16/16 PASS)
+- `check_statuses.mjs` — Codebase reservation status analyzer
+- `handoff.md` — 5-component handoff report with verdict APPROVE
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Can contractor shielding be bypassed via string/number type confusion, leading zeros, case variations? (Tested: 35 variations -> all blocked with HTTP 403 / security exception).
-  - Can reminders be sent to Cris or Grazi? (Tested: direct reminder checks and mass scanner `processRemindersScan` -> 0 messages leaked).
-  - Does `checkEmployeeReminders` fail to check DSR / Vacation / Medical leave properly? (Tested: 10 scenarios across 5 distinct times of the day -> 100% silenced, `skipped: true`).
-  - Can `checkEmployeeReminders` or `processRemindersScan` be triggered multiple times in one day inserting duplicate logs? (Tested: 1st call logs 1 entry, 2nd and 3rd calls do not duplicate, exactly 1 entry preserved in `db.hrWhatsAppLogs`).
-- **Vulnerabilities found**: None. Shielding, silencing, and log idempotency are robust.
-- **Untested angles**: Hardware GPS spoofing (already tested in M2).
+  - Can in-house guests be wrongfully cancelled by spoofed or delayed cancellation emails? (Tested 5 canonical vectors: 100% blocked, status preserved).
+  - Does the cascade accidentally delete housekeeping cards for other guests checking out on the same day? (Tested: correctly preserved).
+  - Does the cascade wipe manual housekeeping bed configurations? (Tested: manual overrides strictly preserved).
+  - Does voucher confirmation email with cancellation policy trigger cancellation? (Tested: 100% classified as voucher, not cancellation).
+  - Can uppercase `CHECKED_IN` or legacy `checkin` bypass the invariant if `checkedInAt` is absent? (Tested: yes, identified as adversarial finding).
+- **Vulnerabilities found**:
+  - `reservation.status` case-sensitivity in `b2b-cancellation-service.mjs:618`: if a legacy reservation has `status: 'CHECKED_IN'`, `'checkin'`, or `'hospedado'` without `checkedInAt` timestamp, it evaluates to false. In production, checkin always sets `checkedInAt` or `status: 'in_house'`, but normalizing status with `.toLowerCase()` provides complete defense-in-depth.
+- **Untested angles**:
+  - Live Z-API network transport failure (mocked via test options).
 
 ## Loaded Skills
 - None specified for this prompt.

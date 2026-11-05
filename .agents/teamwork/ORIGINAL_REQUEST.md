@@ -1,46 +1,44 @@
 # Original User Request
 
-## Initial Request — 2026-11-04T22:16:33Z
+## Initial Request — 2026-11-05T12:30:20Z
 
-This is a single self-contained fix; keep it small and focused. Investigar o motivo pelo qual a mensagem de lembrete de café da manhã via WhatsApp (programada para 18:00) não foi enviada para Alessandra Dias (Flat 905), AVILA SAMUEL (Flat 113) e Patrícia Belchior de Carvalho (Flat 605) — todas com café contratado para a manhã seguinte e sem pedido efetuado —, e implementar a correção necessária na régua de envio respeitando todas as regras de negócio acordadas.
+Usar uma equipe muito profissional para implementar correções e aprimoramentos no sistema de monitoramento e ingestão autônoma de reservas e cancelamentos B2B via e-mail em ambiente de produção.
 
 Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
 Integrity mode: development
 
 ## Requirements
 
-### R1. Diagnóstico da Causa Raiz do Não-Disparo
-Investigar o histórico de execuções, agendamentos, dados de reserva e código do serviço da régua de envio (`artifacts/api-server/zapi-service.mjs`, `artifacts/api-server/demo-server.mjs`) para determinar por que o lembrete de café não disparou às 18:00 do dia 04/11/2026 para:
-- Flat 905 - Alessandra Dias (RES-905-0596, reservationId: 596)
-- Flat 113 - AVILA SAMUEL (RES-113-B2B-25152172, reservationId: 550)
-- Flat 605 - Patrícia Belchior de Carvalho (RES-605-0470, reservationId: 470)
-Documentar a causa raiz identificada (ex.: validação de datas, formato de telefone, checagem de status/no-show, ordenação de chaves ou filtro de pedidos existentes).
+### R1. Correção do cálculo de diárias e lançamento de reservas B2B
+O sistema de monitoramento de e-mails deve calcular e cadastrar a quantidade exata de diárias recebidas nas reservas B2B (corrigindo o problema de registrar apenas 1 diária quando a reserva possui 2 ou mais noites) e salvar os dados essenciais da estadia e dos hóspedes.
 
-### R2. Correção da Lógica da Régua de Café da Manhã
-Ajustar a rotina de envio para assegurar que todas as reservas elegíveis recebam o lembrete de café da manhã às 18:00, garantindo o cumprimento das seguintes regras:
-- Avaliar e agendar apenas nos dias de estadia ativa (data atual >= data de check-in e data atual < data de check-out) para hóspedes com café contratado que ainda não realizaram o pedido para a manhã seguinte.
-- Respeitar a janela estendida das 18:00 às 20:00 (permitir disparo até as 20:00 se a reserva ou contato for carregado logo após as 18:00, e bloquear estritamente após as 20:00).
-- Disparar para o solicitante/titular e também para eventuais acompanhantes cadastrados na reserva que possuam telefone.
-- Não bloquear o envio por status de no-show (enviar para todas as reservas com café contratado para o dia seguinte).
-- Manter a paridade estrita SHA-256 entre os arquivos alterados em `artifacts/api-server/` e seus espelhos em `scripts/`.
-- Conforme o `AGENTS.md`, executar apenas testes pontuais da alteração realizada, sem executar testes globais ou de outros módulos.
+### R2. Extração completa de dados de agência e faturamento via anexo PDF ou link do voucher
+O sistema deve inspecionar o e-mail em busca de voucher anexado em PDF ou, caso não haja anexo, acessar diretamente via requisição HTTP o link do voucher contido no corpo do e-mail. A partir do voucher (PDF ou página web), o sistema deve extrair e registrar todas as informações cadastrais da agência (nome da agência, CNPJ, agente emissor, telefone, e-mail), valores financeiros (valor total, comissão da agência) e as instruções completas para emissão de nota fiscal.
+
+### R3. Identificação de e-mails de cancelamento e cancelamento autônomo com notificação
+O sistema deve monitorar e identificar e-mails que sinalizem o cancelamento de reservas B2B, localizar a reserva correspondente no sistema e atualizar seu status para cancelado de forma autônoma. O cancelamento deve ser acompanhado de registro de auditoria e envio de alerta/notificação ao gestor.
+
+## Verification Resources
+- Reserva de exemplo no Flat 113 (Pires Hage), cujos dados originais recebidos no voucher por link de e-mail e os dados preenchidos manualmente servem como gabarito de conferência.
+- Histórico de e-mails reais de reservas e cancelamentos B2B disponíveis no sistema.
 
 ## Acceptance Criteria
 
-### Diagnóstico
-- [ ] Causa raiz do não-envio para Alessandra, Avila e Patrícia identificada e explicada objetivamente.
+### Integridade de Diárias e Dados da Reserva
+- [ ] Reservas B2B recebidas por e-mail com 2 ou mais diárias são cadastradas no sistema com a quantidade exata de noites e datas corretas de check-in e check-out.
+- [ ] Os dados da reserva do Flat 113 (Pires Hage) são validados contra o gabarito dos dados originais do voucher.
 
-### Elegibilidade e Regras de Disparo
-- [ ] A lógica de seleção inclui todas as reservas com café da manhã contratado sem pedido registrado para a manhã seguinte durante a estadia ativa (hoje >= check-in e hoje < check-out).
-- [ ] O disparo ocorre às 18:00 com janela estendida permitida até 20:00, bloqueando envios após as 20:00.
-- [ ] Acompanhantes cadastrados com telefone válido também são incluídos no agendamento do lembrete.
-- [ ] Reservas sem confirmação presencial de entrada (no-show) não são bloqueadas.
-- [ ] Paridade de arquivos entre `artifacts/api-server/` e `scripts/` validada e mantida (100% idênticos).
-- [ ] Teste automatizado pontual da correção implementado e executado com sucesso, sem execução de testes globais.
+### Extração do Voucher (PDF e Link Web)
+- [ ] Quando o e-mail contiver anexo em PDF, o sistema extrai o voucher diretamente do arquivo.
+- [ ] Quando o e-mail não contiver anexo em PDF, o sistema acessa via HTTP o link contido no corpo do e-mail e extrai as informações do voucher.
+- [ ] Todos os campos cadastrais da agência são preenchidos no sistema: nome da agência, CNPJ, agente emissor, telefone e e-mail de contato.
+- [ ] Os valores financeiros da reserva (valor total e comissão da agência) são extraídos e registrados.
+- [ ] As instruções contidas no voucher para emissão de nota fiscal são extraídas e vinculadas ao registro da reserva.
 
-## Verification Resources
-- Dados das reservas pendentes em 04/11/2026:
-  - RES-905-0596 (ID: 596, Flat 905, Alessandra Dias, tel: 5521964120926)
-  - RES-113-B2B-25152172 (ID: 550, Flat 113, AVILA SAMUEL, tel: 41 998725041)
-  - RES-605-0470 (ID: 470, Flat 605, Patrícia Belchior de Carvalho, tel: 3198171397)
-- Endpoint de verificação de pedidos de café: `/api/breakfast/orders?date=2026-11-05`
+### Cancelamento Autônomo e Notificação
+- [ ] E-mails de cancelamento recebidos identificam corretamente a reserva correspondente no sistema.
+- [ ] O status da reserva identificada é alterado para cancelado de forma autônoma no sistema.
+- [ ] Um alerta/notificação de cancelamento é gerado e enviado ao gestor, com registro da alteração.
+
+### Verificação Operacional
+- [ ] Testes de validação executados reproduzindo o fluxo com e-mails reais do histórico e o caso do Flat 113 confirmam o preenchimento de todos os campos sem erros de execução.

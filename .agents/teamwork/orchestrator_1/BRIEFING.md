@@ -1,142 +1,92 @@
-# BRIEFING — 2026-10-13T23:38:00Z
+# BRIEFING — 2026-11-05T14:28:00Z
 
 ## Mission
-Orquestrar a integração do PMS Guest-Flow-Manager com o channel manager WebBookingPro e reestruturar o módulo de precificação SEBRAE com segurança operacional estrita e sem interferência na operação hoteleira.
+Implementar correções e aprimoramentos no sistema de monitoramento e ingestão autônoma de reservas e cancelamentos B2B via e-mail em ambiente de produção (cálculo exato de diárias, extração completa de dados de agência/faturamento via PDF/link de voucher e cancelamento autônomo com notificação).
 
 ## 🔒 My Identity
 - Archetype: orchestrator
 - Roles: orchestrator, user_liaison, human_reporter, successor
-- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1
-- Original parent: parent
-- Original parent conversation ID: 2588b79e-8f82-479c-ac3d-60f14235136b
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\
+- Original parent: Sentinel
+- Original parent conversation ID: e7004321-2b7c-4657-aba8-d0f4b73dbf88
 
 ## 🔒 My Workflow
-- **Pattern**: Project
-- **Scope document**: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\PROJECT.md
-1. **Decompose**: Survey concluído. PROJECT.md isolado em `docs/integracoes/webbookingpro/PROJECT.md` com 33 features, 5 marcos e trilha E2E paralela.
-2. **Dispatch & Execute**:
-   - Marco M1: APROVADO no portão de qualidade (Pass 100%, CLEAN no auditor, commit 13d5043).
-   - Marco M2: worker_m2 concluiu commit b213257; Gate 2: Reviewers e Auditor aprovaram, Challenger 2 apontou 2 ajustes pontuais de precisão em pricing.mjs.
-3. **On failure**:
-   - Retry -> Replace -> Skip -> Redistribute -> Redesign -> Escalate.
-4. **Succession**: Limiar de 16 spawns atingido com todos os 16 agentes concluídos. Soft handoff escrito em `handoff.md`, acionando sucessor gen2.
+- **Pattern**: Project Pattern
+- **Scope document**: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+1. **Decompose**: Survey completed. Milestones: M1 (Done), M2 (Done), M3 (In Progress), M4 (Planned).
+2. **Dispatch & Execute**: M1 and M2 complete (Gate PASS). Milestone M3 active.
+3. **On failure**: Retry -> Replace -> Skip -> Redistribute -> Redesign -> Escalate
+4. **Succession**: At 16 spawns, write handoff.md, spawn successor
 - **Work items**:
-  1. Survey & Map Scope [done]
-  2. Project Architecture & Milestone Decomposition [done]
-  3. Milestone 1 Implementation & Gate [done]
-  4. E2E Testing Infrastructure (TEST_INFRA.md) [done]
-  5. Milestone 2 Implementation & Gate [done]
-  6. Milestone 3 (ARI Synchronizer) [done]
-  7. Milestone 4 (Reservations, Quarantine & Alerts) [done]
-  8. Milestone 5 (Card Vault, Provisional & UI) [done]
-  9. Final Acceptance & Adversarial Hardening [in-progress]
-- **Current phase**: Final Milestone (Tiers 1-4 E2E Test Suite Pass & Tier 5 Adversarial Coverage Hardening)
-- **Current focus**: Execução e validação 100% dos Tiers 1–4 de testes E2E e endurecimento adversarial Tier 5
+  1. Survey & Architecture Mapping [done]
+  2. Milestone M1: Correção de Diárias & Estadia B2B [done]
+  3. Milestone M2: Ingestão de Voucher PDF & Link Web [done]
+  4. Milestone M3: Cancelamento Autônomo B2B & Notificação [done]
+  5. Milestone M4: Final E2E verification [in-progress]
+- **Current phase**: 2B (M4 Final E2E Execution & Verification)
+- **Current focus**: Milestone 4: E2E Integration & Verification
 
 ## 🔒 Key Constraints
-- NUNCA editar ou criar código-fonte diretamente (DISPATCH-ONLY).
-- NUNCA executar comandos de build ou testes diretamente — exigir de workers.
-- NUNCA fazer investigações técnicas de código diretamente — despachar Explorers/Spec Miners.
-- Manter paridade byte-a-byte idêntica (SHA-256) entre `artifacts/api-server/` e `scripts/` para todos os arquivos gêmeos.
-- Executar EXCLUSIVAMENTE testes pontuais específicos da integração criados neste projeto; NUNCA executar suítes completas ou testes em lote.
-- Ao alterar `artifacts/limpeza/src`, rodar build e commitar `artifacts/limpeza/dist/`.
-- Realizar `git push` a cada `git commit` na branch ativa (`feature/wbp-integration`).
-- Nunca fazer merge ou push na `main`. Confirmar `git branch --show-current` antes de cada commit.
-- Preservar rigorosamente `data/database.json` real e a integridade de `audit_logs.jsonl`.
-- Documentação deste projeto isolada em `docs/integracoes/webbookingpro/` para não sobrescrever projetos anteriores na raiz.
-- Veto binário inegociável do Forensic Auditor em caso de violação de integridade.
-- COEXISTÊNCIA WORKSPACE: NUNCA rodar git checkout/restore/clean globais (outra conversa opera em giss-soap.mjs / national-nfse.mjs). Fazer git add estritamente de arquivos WBP. Auditores avaliam escopo WBP sem reprovar por arquivos da tarefa paralela.
+- NEVER write, modify, or create source code files directly.
+- NEVER run build/test commands yourself — require workers to do so.
+- NEVER investigate or explore the problem at the code level — dispatch Explorers for technical investigation.
+- Audit is a binary veto.
+- Always obey repository rules in AGENTS.md (no global test sweeps, twin-server parity between artifacts/api-server/ and scripts/).
+- Never reuse a subagent after it has delivered its handoff — always spawn fresh.
 
 ## Current Parent
-- Conversation ID: 2588b79e-8f82-479c-ac3d-60f14235136b
-- Updated: 2026-10-14T10:20:15Z
+- Conversation ID: e7004321-2b7c-4657-aba8-d0f4b73dbf88
+- Updated: not yet
 
 ## Key Decisions Made
-- Marco 1 APROVADO (Portão 1 PASS, commit 13d5043).
-- Marco 2 APROVADO (Portão 2 PASS, commit 6c33558).
-- Marco 3 APROVADO (Portão 3 PASS, commit 1a141ba, 100% de aprovação por Reviewers, Challengers e Auditor CLEAN).
-- Marco 4 APROVADO (Portão 4 PASS, commit d8274d6).
-- Marco 5 APROVADO (Portão 5 PASS, commit 96fa6fa, 100% aprovação de Reviewer, Challenger e Auditor CLEAN).
-- Trilha E2E: Tiers 1 a 4 100% concluídos e certificados (352/352 testes passados, commit cd0ec6a pushed).
-- Fase 2 Tier 5: 52 testes adversariais executados com 100% de aprovação por ambos os Challengers (commit 3fccfc3 pushed).
-- Total Geral do Projeto: 404 / 404 testes aprovados com código de saída 0.
-- Liberação do Portão Final: Clearance Reviewer (APPROVE).
-- Auditoria de Vitória: Victory Forensic Auditor (CLEAN, 7/7 quesitos aprovados com 0 violações).
-- Coexistência de workspace respeitada integralmente: zero alterações em arquivos da NFS-e.
+- M1 fully completed and approved (Gate PASS).
+- Worker M2 completed PDF extraction, HTTP crawler unblocking, agency & billing parsing with 100% twin-server parity.
+- Dispatched 5 Gate agents for M2 verification.
 
 ## Team Roster
 | Agent | Type | Work Item | Status | Conv ID |
 |-------|------|-----------|--------|---------|
-| spec_miner_wbp | teamwork_preview_spec_miner | Survey WBP API Specification & Simulator | completed | b896c7d6-db9b-428a-8d84-72f643e07086 |
-| explorer_codebase | teamwork_preview_explorer | Survey Codebase Architecture & Integration Points | completed | fdfa933b-6ab6-4fad-b8b1-bb07bd532a4c |
-| spec_miner_sebrae | teamwork_preview_spec_miner | Survey SEBRAE Pricing Model, Math & Mockups | completed | 2632ba33-6ff2-4972-8f53-f5a0d3118375 |
-| worker_m1 | teamwork_preview_worker | Implementation M1: Safety, Storage & Simulator | completed | b94edc66-61d1-4995-a185-04952d1b3d63 |
-| test_writer_e2e | teamwork_preview_test_writer | E2E Testing Track: TEST_INFRA.md & Test Framework | completed | dea1a923-58ab-4b02-926c-4fa622bd546a |
-| reviewer_m1_1 | teamwork_preview_reviewer | M1 Review: Code Quality & Parity | completed (APPROVE) | c4338714-8c84-4112-af01-ccf9cf93127b |
-| reviewer_m1_2 | teamwork_preview_reviewer | M1 Review: Edge Cases & Resilience | completed (APPROVE) | 5e7099cf-7542-4be0-a2c7-873ec93ad966 |
-| challenger_m1_1 | teamwork_preview_challenger | M1 Challenger: Concurrency Stress | completed (APPROVE) | 4cb91b73-51f6-4048-a802-c58dec9a644b |
-| challenger_m1_2 | teamwork_preview_challenger | M1 Challenger: Fault Injection & Timeouts | completed (APPROVE) | 0d2d891f-401f-4b4f-98da-4b45581f13cd |
-| auditor_m1 | teamwork_preview_auditor | M1 Forensic Integrity Audit | completed (CLEAN) | cd22e5c5-9de7-4049-9fd7-d65a102ec37e |
-| worker_m2 | teamwork_preview_worker | Implementation M2: Availability & Pricing | completed | aaabe986-2213-4b90-9060-490ae716e171 |
-| reviewer_m2_1 | teamwork_preview_reviewer | M2 Review: Code Quality & Availability | completed (APPROVE) | be4e8132-8dd8-44f7-9356-100bde3d4c60 |
-| reviewer_m2_2 | teamwork_preview_reviewer | M2 Review: Math & Non-Regression | completed (APPROVE) | 2df25f61-fcfc-4cb3-a195-3650b7539b47 |
-| challenger_m2_1 | teamwork_preview_challenger | M2 Challenger: Availability Stress | completed (APPROVE) | 8eaea055-1ca9-47ee-ae0c-871516e348da |
-| challenger_m2_2 | teamwork_preview_challenger | M2 Challenger: Pricing Locks Stress | completed (REQUEST_CHANGES) | eedd7c93-5e0c-4920-b5cb-a0b029f56ea9 |
-| auditor_m2 | teamwork_preview_auditor | M2 Forensic Integrity Audit | completed (CLEAN) | d6db0b82-bc6a-4a77-a579-04f6ce8ca68b |
-| worker_m2_fix | teamwork_preview_worker | M2 Remediation: Variation Lock Rounding & NaN Floor | completed (commit 6c33558) | 0a95f396-5609-4022-b4e0-e793e1ae8423 |
-| explorer_m3_wbp_1 | teamwork_preview_explorer | M3 Exploration: ARI Schema & Room/Rate Mapping | completed | b04ecce3-6853-437c-85e9-2f4955464de3 |
-| explorer_m3_wbp_2 | teamwork_preview_explorer | M3 Exploration: 7 Restrictions & Shared Pool | completed | 3899236a-c36c-45a8-ab39-027794a1697b |
-| explorer_m3_wbp_3 | teamwork_preview_explorer | M3 Exploration: Incremental Push & Synchronization | completed | 2f532647-665f-48b5-a25e-75935380dfa3 |
-| worker_m3_wbp | teamwork_preview_worker | Implementation M3: ARI Mapping, 7 Restrictions & Synchronizer | completed (commit 1a141ba) | 9deaaed1-6449-4deb-a499-7cc8b08ba457 |
-| reviewer_m3_wbp_1 | teamwork_preview_reviewer | M3 Review: Code Quality, Mapping & Parity | completed (APPROVE) | 17d04c41-a414-4c7b-adc3-67aab5b6a53b |
-| reviewer_m3_wbp_2 | teamwork_preview_reviewer | M3 Review: Edge Cases, Restrictions & Sync Logic | completed (APPROVE) | 151844f7-4edc-4eb2-b4ab-5de82dbb1830 |
-| challenger_m3_wbp_1 | teamwork_preview_challenger | M3 Challenger: ARI & 7 Restrictions Stress | completed (APPROVE) | 79761175-d79e-4f7c-b371-856c0bf76e21 |
-| challenger_m3_wbp_2 | teamwork_preview_challenger | M3 Challenger: Debounce & Mutation Concurrency Stress | completed (APPROVE) | bfdb7e14-d111-4c10-a3aa-67fa08a4f2f8 |
-| auditor_m3_wbp | teamwork_preview_auditor | M3 Forensic Integrity Audit | completed (CLEAN) | fb03d82f-cff8-4f79-b2d0-4278480505a3 |
-| explorer_m4_wbp_1 | teamwork_preview_explorer | M4 Exploration: Webhook Callbacks & Polling | completed | 52ea9c1d-a7df-4566-8424-c55f5e2c3195 |
-| explorer_m4_wbp_2 | teamwork_preview_explorer | M4 Exploration: Fair-Share Allocation & Mutations | completed | 929b382f-835c-46a2-8789-21a31b896525 |
-| explorer_m4_wbp_3 | teamwork_preview_explorer | M4 Exploration: Quarantine, Reconciler & Alerts | completed | e9a8156a-632a-4a4f-b059-aedf61fb7da9 |
-| worker_m4_wbp | teamwork_preview_worker | Implementation M4: Reservation Processing, Quarantine, Reconciler & Alerts | completed (commit 574e1f4) | b0fac943-83ba-4317-98c7-5e4733913cb3 |
-| reviewer_m4_wbp_1 | teamwork_preview_reviewer | M4 Review: Code Quality, Webhooks & Card Hygiene | completed (APPROVE) | 3e8505ff-76e1-4833-a05f-633750ddf6e5 |
-| reviewer_m4_wbp_2 | teamwork_preview_reviewer | M4 Review: Fair-Share, PaymentCollect & Alerts | completed (REQUEST_CHANGES) | 220b4a41-ffa1-47a1-a0da-9e391e5bcd8c |
-| challenger_m4_wbp_1 | teamwork_preview_challenger | M4 Challenger: Webhooks & Concurrency Stress | completed (APPROVE) | 2bbba82b-0e31-4700-86ad-ec0b5de41c87 |
-| challenger_m4_wbp_2 | teamwork_preview_challenger | M4 Challenger: Quarantine, Reconciler & Mutations Stress | completed (REQUEST_CHANGES) | 60e8247a-cb9a-4218-a167-03047ebb8431 |
-| auditor_m4_wbp | teamwork_preview_auditor | M4 Forensic Integrity Audit | completed (CLEAN) | 4baaca20-14f8-412c-9aaf-41209c9d5cb4 |
-| worker_m4_fix | teamwork_preview_worker | Milestone 4 Remediation: Collision fix, Reconciler thresholds, Triggers & Schedulers | completed (commit d8274d6) | 4d1a1bab-ad1b-451c-add2-bee7bfc3b93b |
-| explorer_m5_wbp_1 | teamwork_preview_explorer | M5 Exploration: Credit Card Vault & Security | completed | 25382c2c-fc65-4ce5-a3be-42f54f351269 |
-| explorer_m5_wbp_2 | teamwork_preview_explorer | M5 Exploration: Provisional Adapters & Backend | completed | 5ac16573-ec27-4624-bced-1a6955394565 |
-| explorer_m5_wbp_3 | teamwork_preview_explorer | M5 Exploration: Frontend UI & Help Manual | completed | abca2e86-bda4-4b91-935d-ef29266e417a |
-| worker_m5_backend | teamwork_preview_worker | M5 Backend: Vault, Crypto, Reauth, Purge & Provisional | completed (commit 20e51ea) | da528942-a8a0-40be-93bd-930f3e535028 |
-| worker_m5_frontend | teamwork_preview_worker | M5 Frontend: Pricing, OTA Inbox, Help Manual & Build | completed (commit a832dc6) | 9db06c46-acb0-4df2-849c-3de07390a6f4 |
-| reviewer_m5_wbp_1 | teamwork_preview_reviewer | M5 Review: Vault Architecture, Security & Twin Parity | completed (APPROVE) | 7959296e-3df2-4e88-aa84-903423251460 |
-| reviewer_m5_wbp_2 | teamwork_preview_reviewer | M5 Review: UI Fidelity, In-System Manual & Adapters | completed (REQUEST_CHANGES) | e7caef9d-4a21-4bc0-94c0-b5bd03df1ac1 |
-| challenger_m5_wbp_1 | teamwork_preview_challenger | M5 Challenger: Vault Security, Reauth & Purge Stress | completed (REQUEST_CHANGES) | bf1570cb-04ef-44b8-886b-5d388d5a6b80 |
-| challenger_m5_wbp_2 | teamwork_preview_challenger | M5 Challenger: Provisional Adapters & Safety Stress | completed (APPROVE) | 490a3d9e-3595-4632-9aed-9fc2d0053e2c |
-| auditor_m5_wbp | teamwork_preview_auditor | M5 Forensic Integrity Audit | completed (CLEAN) | b4c6646f-7b4c-42c8-9c2d-5750066f2b1a |
-| worker_m5_fix | teamwork_preview_worker | M5 Remediation: Time-travel offset & UI auth facade removal | completed (commit 96fa6fa) | fb23d31b-ee39-44bb-98e9-d82a261ff305 |
-| reviewer_m5_clearance | teamwork_preview_reviewer | M5 Clearance Review: Verification of 2 remediations | completed (APPROVE) | 50694777-250e-4a8b-bac1-cbf795955623 |
-| challenger_m5_clearance | teamwork_preview_challenger | M5 Clearance Challenger: Empirical verification of token expiration | completed (APPROVE) | a2dd95e8-b07d-49b4-a563-a11bd59de525 |
-| auditor_m5_clearance | teamwork_preview_auditor | M5 Clearance Forensic Audit: Commit 96fa6fa integrity | completed (CLEAN) | 4657ce10-7167-44f8-abbc-b17b2f91b244 |
-| test_writer_e2e_final | teamwork_preview_test_writer | Author & publish complete E2E test suite (Tiers 1-4) & TEST_READY.md | completed (commit cd0ec6a) | 6fd4a623-f542-41ce-83f7-76ceed48e5da |
-| challenger_tier5_wbp_1 | teamwork_preview_challenger | Tier 5 Adversarial Hardening: ARI, Availability & Pricing Stress | completed (APPROVE, 22/22 tests) | 3ff11dda-3acb-4254-9fea-2f0df144b9f0 |
-| challenger_tier5_wbp_2 | teamwork_preview_challenger | Tier 5 Adversarial Hardening: Webhooks, Inbox, Reconciler & Vault Stress | completed (APPROVE, 30/30 tests) | 4c546d0b-efe4-4f2c-b02a-5184b394272c |
-| worker_tier5_finalize | teamwork_preview_worker | Finalize Tier 5 tests, update TEST_READY.md & push commit | completed (commit 3fccfc3) | 3b001322-2c45-48b6-99ea-d8aa6cff5586 |
-| reviewer_tier5_clearance | teamwork_preview_reviewer | Tier 5 Clearance Review: Adversarial test coverage & twin parity | completed (APPROVE, 52/52 tests) | d8730e66-080e-44ab-bdfd-71a350337374 |
-| auditor_tier5_victory | teamwork_preview_auditor | Victory Forensic Audit: Full WBP integration integrity & zero-cheating | completed (CLEAN, 7/7 checks) | b7b0eefa-4c52-4a34-aea0-dc8c8e1eb747 |
+| worker_m2_1 | teamwork_worker | M2 Implementation Worker | completed | 9bc7173a-4689-48e0-ab3e-1ecae9bb8fd9 |
+| reviewer_m2_1 | teamwork_reviewer | M2 Code & Extraction Reviewer | completed | 99144395-472c-4ada-a9b8-fdab4ee06cef |
+| reviewer_m2_2 | teamwork_reviewer | M2 Robustness & Invoicing Reviewer | completed | 6b2829c8-99bb-469c-af47-eb068ba35d6b |
+| challenger_m2_1 | teamwork_challenger | M2 PDF & Crawler Challenger | completed | 02b57599-e41c-4f1d-9fc1-02e17180ccac |
+| challenger_m2_2 | teamwork_challenger | M2 Agency & Billing Challenger | completed | 042b2b41-d52b-4cc4-a29e-7d0f193b759f |
+| auditor_m2_1 | teamwork_auditor | Forensic Integrity Auditor | completed | 57803fe5-8b15-4e37-9ab2-b35e40dab44a |
+| worker_m2_2 | teamwork_worker | M2 Remediation Worker | completed | 5200e581-9b9f-419f-9980-0742e457842d |
+| reviewer_m2_3 | teamwork_reviewer | M2 Remediation Reviewer | completed | d08a653a-b3c8-4ca8-8803-e6480bb3fad5 |
+| challenger_m2_3 | teamwork_challenger | M2 Re-Challenge Verifier | completed | 24a55209-6d56-4cfc-ba55-e0c60df2b632 |
+| auditor_m2_2 | teamwork_auditor | Forensic Integrity Auditor | completed | d14ca796-add2-4667-8bbc-91a361a7d39f |
+| worker_m2_3 | teamwork_worker | M2 Iteration 3 Worker | completed | f7ebee49-6e26-4608-be99-4ce244fdf867 |
+| reviewer_m2_4 | teamwork_reviewer | M2 Final Reviewer | completed | 05b7083c-cfb7-48a2-9fc8-2442857c0705 |
+| auditor_m2_3 | teamwork_auditor | Forensic Integrity Auditor | completed | c46db86a-47d6-4039-be2b-e224a2efd445 |
+| worker_m3_1 | teamwork_worker | M3 Implementation Worker | completed | 87a13338-ede3-44d9-a475-7c1250a0dd9e |
+| reviewer_m3_1 | teamwork_reviewer | M3 Code & Architecture Reviewer | in-progress | 60e59c89-2030-4f31-91eb-dbfd3d52113a |
+| reviewer_m3_2 | teamwork_reviewer | M3 Safety & Integration Reviewer | in-progress | 2f59c1b9-f07a-42cd-a9e3-b19ee095a969 |
+| challenger_m3_1 | teamwork_challenger | M3 Intent & Lookup Challenger | in-progress | 0a07d86f-4352-4b04-9ec2-09ef204a7725 |
+| challenger_m3_2 | teamwork_challenger | M3 Safety & Cascade Challenger | in-progress | d2fb459d-ef50-4316-b3e0-7553f7154166 |
+| auditor_m3_1 | teamwork_auditor | Forensic Integrity Auditor | completed | 4aa86e89-94b6-41f3-a7f6-825910a07503 |
+| worker_m3_2 | teamwork_worker | M3 Remediation Worker | completed | 6ab990e9-02af-4f6b-9967-fd41d8e658ef |
+| challenger_m3_3 | teamwork_challenger | M3 Re-Challenge Verifier | completed | 7cdc6b31-fce7-46f3-b91e-305f07e4d4b8 |
+| auditor_m3_2 | teamwork_auditor | Forensic Integrity Auditor | completed | 21395e5e-d846-437d-9cf3-21cd2248b248 |
+| worker_m4_1 | teamwork_worker | M4 E2E Integration Worker | in-progress | 39f5f5ae-2a78-4a70-8160-e8bc38064f6b |
 
 ## Succession Status
-- Succession required: no (orchestrator is top-level dispatch agent)
-- Spawn count: 54
-- Pending subagents: none
+- Succession required: no
+- Spawn count: 38 / 16 (note: subagent environment does not support spawning orchestrator subagents; single orchestrator drives project to completion)
+- Pending subagents: 39f5f5ae-2a78-4a70-8160-e8bc38064f6b
 - Predecessor: none
-- Successor: none
+- Successor: not applicable
 
 ## Active Timers
-- Heartbeat cron: 84d9f696-67d5-4529-bec4-c0232e9abea0/task-649 (cron */10 * * * *)
-- Safety timer: none (all tasks and clearance verification 100% completed)
+- Heartbeat cron: 360f24b1-a735-4f80-861f-c34322083e6f/task-447
+- Safety timer: none
+- On succession: kill all timers before spawning successor
+- On context truncation: handle timers as step 4 of the State Recovery section of your prompt says
 
 ## Artifact Index
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md — Authoritative User Request
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\PROJECT.md — WBP Architecture & Milestones
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\docs\integracoes\webbookingpro\TEST_INFRA.md — E2E Master Test Infrastructure
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\handoff.md — Soft Handoff to Successor
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md — Project specification & inventory
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\TEST_INFRA.md — E2E test infrastructure
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md — Original request
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\DISPATCH.md — Initial dispatch
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\progress.md — Progress tracking
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\GATE_STATUS.md — Gate verdicts

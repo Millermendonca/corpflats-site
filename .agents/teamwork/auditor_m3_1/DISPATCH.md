@@ -1,21 +1,31 @@
-## 2026-10-11T03:10:11Z
-Você é o Forensic Auditor para o Milestone M3 do CorpFlats (Frontend Admin UI - R5).
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m3_1
-O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-O arquivo de escopo do projeto é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
-O arquivo de despacho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\DISPATCH.md
-O relatório do worker é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md
-Você DEVE LER esses arquivos antes de iniciar.
+# Dispatch — Forensic Auditor M3.1 (Milestone 3 Forensic Audit)
 
-Missão de Auditoria Forense de Integridade:
-1. Integridade de Código:
-   - Verifique se a implementação em `artifacts/limpeza/src/pages/whatsapp-automation.tsx` e `artifacts/limpeza/src/pages/tarifas.tsx` é genuína, sem dados hardcoded que finjam estar conectados à API.
-   - Verifique se as chamadas para `GET/POST /api/bot-actions/settings` e `/api/tariffs/*` utilizam a rede e tratam respostas reais do servidor.
-2. Integridade do Build e Git:
-   - Verifique se `npm --prefix artifacts/limpeza run build` compila com código 0 e se os arquivos gerados em `artifacts/limpeza/dist/public` correspondem ao build do código-fonte.
-   - Verifique se o commit e `git push origin main` foram executados e refletidos no histórico git (`git log -1`).
-3. Twin-Server Parity Check:
-   - Confirme que os arquivos de backend espelho (`demo-server.mjs`, `whatsapp-ai-service.mjs`, etc.) continuam com paridade SHA-256 byte-a-byte idêntica (sem derivações inadvertidas).
-4. Emita seu veredicto: CLEAN ou INTEGRITY VIOLATION.
-Escreva seu relatório em `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m3_1\handoff.md`.
-Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).
+## Role
+Forensic Integrity Auditor for Milestone 3
+
+## Task Objective
+Audit Milestone 3 for genuine implementation logic, zero facades, zero hardcoding, and strict twin-server parity.
+
+## Audit Checks
+1. Inspect `artifacts/api-server/b2b-cancellation-service.mjs` and `scripts/b2b-cancellation-service.mjs`:
+   - Genuine intent detection and regexes.
+   - Genuine 4-tier lookup implementation.
+   - Genuine cascade execution and room release.
+   - Absence of test-specific hardcoding or facades.
+2. Verify twin-server parity: `node scripts/check-twin-parity.mjs` (must pass 39/39 files 100%).
+3. Run point tests:
+   ```powershell
+   node tests/b2b-cancellation.test.mjs
+   node tests/b2b-voucher-extraction.test.mjs
+   node tests/b2b-voucher-dates.test.mjs
+   ```
+4. Deliver `handoff.md` with explicit verdict `CLEAN` or `INTEGRITY VIOLATION` and send message to orchestrator upon completion.
+
+
+## 2026-11-05T15:49:50Z
+You are Forensic Auditor M3.1 for Milestone 3 in Guest-Flow-Manager.
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m3_1\
+Read DISPATCH.md in your working directory and ORIGINAL_REQUEST.md.
+Also read Worker M3.1 handoff at c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\teamwork_worker_m3_1\handoff.md.
+Audit the codebase for authentic implementation logic, absence of facades, absence of hardcoding, and verify twin-server parity with `node scripts/check-twin-parity.mjs` (39/39 files).
+Deliver handoff.md with explicit verdict CLEAN or INTEGRITY VIOLATION. Send message to orchestrator upon completion.

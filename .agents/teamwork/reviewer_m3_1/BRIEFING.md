@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-22T13:00:00Z
+# BRIEFING — 2026-11-05T15:56:00Z
 
 ## Mission
-Technical Quality & Adversarial Review of Milestone M3 (WhatsApp Automation, REP-P Receipts, Hour Balance, Preventive Reminders).
+Technical Quality & Adversarial Review of Milestone 3: B2B Autonomous Cancellation & Notification (`b2b-cancellation-service.mjs`, `zoho-mail-service.mjs`).
 
 ## 🔒 My Identity
 - Archetype: reviewer_and_adversarial_critic
@@ -10,57 +10,63 @@ Technical Quality & Adversarial Review of Milestone M3 (WhatsApp Automation, REP
 - Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
 - Milestone: M3 (Automação WhatsApp, Comprovantes REP-P, Saldo de Horas e Lembretes Preventivos)
 - Instance: 1 of 1
+- Appended Identity:
+  - Parent: 360f24b1-a735-4f80-861f-c34322083e6f
+  - Milestone: M3 (Cancelamento Autônomo B2B & Notificação de Gestor)
+  - Date: 2026-11-05
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Respect strict test scope: NEVER run global tests (`tests/*.test.mjs`), ONLY `tests/hr-m3-whatsapp-schedules.test.mjs` and regression tests
+- Respect strict test scope: NEVER run global tests (`tests/*.test.mjs`), ONLY `tests/b2b-cancellation.test.mjs`, `tests/b2b-voucher-extraction.test.mjs`, `tests/b2b-voucher-dates.test.mjs`, and `scripts/check-twin-parity.mjs`
 - Actively check for integrity violations: hardcoded results, dummy logic, facade implementations, bypassed tasks
-- Maintain twin parity verification (34/34 files matching SHA-256)
+- Maintain twin parity verification (39/39 files matching SHA-256)
+- Check canonical PMS cancellation cascade in `demo-server.mjs:37170-37328`
+- Check safety invariant `CHECKED_IN_CANCELLATION`
 
 ## Current Parent
-- Conversation ID: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Updated: 2026-10-22T13:00:00Z
+- Conversation ID: 360f24b1-a735-4f80-861f-c34322083e6f
+- Updated: 2026-11-05T15:56:00Z
 
 ## Review Scope
 - **Files reviewed**:
-  - `artifacts/api-server/hr/whatsapp-automation.mjs` & `scripts/hr/whatsapp-automation.mjs`
-  - `artifacts/api-server/hr/schedules.mjs` & `scripts/hr/schedules.mjs`
-  - `artifacts/api-server/hr/timekeeping.mjs` & `scripts/hr/timekeeping.mjs`
-  - `artifacts/api-server/hr/router.mjs` & `scripts/hr/router.mjs`
-  - `artifacts/api-server/hr/employees.mjs` & `scripts/hr/employees.mjs`
-  - `artifacts/api-server/hr/index.mjs` & `scripts/hr/index.mjs`
-  - `tests/hr-m3-whatsapp-schedules.test.mjs`
+  - `artifacts/api-server/b2b-cancellation-service.mjs` & `scripts/b2b-cancellation-service.mjs`
+  - `artifacts/api-server/zoho-mail-service.mjs` & `scripts/zoho-mail-service.mjs`
+  - `tests/b2b-cancellation.test.mjs`
+  - `artifacts/api-server/demo-server.mjs:37170-37328` (canonical PMS cascade reference)
 - **Interface contracts**:
-  - `.agents/teamwork/ORIGINAL_REQUEST.md` (R3)
-  - `.agents/teamwork/orchestrator_17/PROJECT.md` (F12, F13, F14)
-  - `.agents/teamwork/worker_m3/handoff.md`
-- **Review criteria**: Correctness, CLT/Portaria 671 compliance, integrity, edge cases, twin parity.
+  - `ORIGINAL_REQUEST.md` (R3: Identificação de e-mails de cancelamento e cancelamento autônomo com notificação)
+  - Worker M3.1 handoff in `.agents/teamwork/teamwork_worker_m3_1/handoff.md`
+- **Review criteria**: Correctness, integrity, safety invariant conformance, PMS cascade fidelity, twin-server SHA-256 parity, edge case resilience.
 
 ## Key Decisions Made
-- All tests passed without failures or regressions.
-- No integrity violations or facade implementations detected.
-- Verified 34/34 twin parity.
+- Confirmed zero integrity violations (no dummy logic, no hardcoded cheating, no bypassed tasks).
+- Confirmed 100% test pass on M3 (17/17), M2 (15/15), M1 (12/12) point test suites.
+- Confirmed 100% twin-server parity (39/39 files matching SHA-256).
+- Identified 1 Major finding (idempotency on already cancelled reservations), 3 Minor findings (intent regex precedence on policy notices, alertSent flag consistency, additional checked-in status variants).
 - Issued APPROVE verdict.
 
 ## Artifact Index
 - `BRIEFING.md` — persistent working memory
 - `progress.md` — liveness heartbeat
+- `DISPATCH.md` — dispatch history
 - `handoff.md` — final review report with verdict
 
 ## Review Checklist
-- **Items reviewed**: whatsapp-automation.mjs, schedules.mjs, timekeeping.mjs, router.mjs, index.mjs, demo-server.mjs, test suites M1, M2, M3.
+- **Items reviewed**:
+  - `b2b-cancellation-service.mjs` (F12, F13, F14, F15, F16)
+  - `zoho-mail-service.mjs` (webhook + sync integration)
+  - `tests/b2b-cancellation.test.mjs` (17 tests)
+  - Canonical cascade in `demo-server.mjs:37170-37328`
+  - Parity check in `scripts/check-twin-parity.mjs` (39/39 files)
 - **Verdict**: APPROVE
-- **Unverified claims**: None (all claims from worker_m3 independently verified).
+- **Unverified claims**: None.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Attempting to dispatch receipts to prestadoras (Cris/Grazi): Blocked with HTTP 403 / PRESTADORA_SECURITY_BLOCK.
-  - Attempting to compute balance for prestadoras: Blocked.
-  - Attempting to receive reminders for prestadoras: Skipped with reason "is_prestadora".
-  - Attempting to trigger reminders on DSR, vacation, or leave: Silenced correctly.
-  - Exceeding Art. 58 CLT tolerance by 1 minute: Entire delta computed per Súmula 366 TST.
-  - Overtime segregation: 50% on weekdays, 100% on DSR/holidays.
-  - Night shift reduction & extension: 60/52.5 multiplier (1.142857) + Súmula 60 TST.
-  - Vacation rules: Max 3 periods, min 14d, min 5d, pre-DSR start forbidden, double pay alert.
-- **Vulnerabilities found**: None.
-- **Untested angles**: Real WhatsApp live transmission (tested in simulation/mock mode as required by environment).
+  - Intent detection with newsletter/policy notice in subject: Confirmed edge case where `hasSubjectCancellation` fires before `isOnlyPolicyNotice`.
+  - Cancellation of already cancelled reservation: Confirmed lack of early idempotent exit (re-cancels, overwrites cancelledAt, sends duplicate WhatsApp).
+  - Safety invariant on in-house guest: Confirmed blocked with `CHECKED_IN_CANCELLATION`, status preserved, urgent WhatsApp sent.
+  - Multi-night housekeeping & breakfast cascade: Confirmed alignment with demo-server.mjs.
+  - 4-Tier matching ambiguity: Confirmed returns `matched: false`, alerts manager without blindly cancelling.
+- **Vulnerabilities found**: 1 Major (re-cancellation idempotency), 3 Minor.
+- **Untested angles**: Live production Z-API network transport (mocked in tests, verified with Promise.race fallback in code).

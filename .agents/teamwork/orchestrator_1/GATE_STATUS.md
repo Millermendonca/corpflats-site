@@ -1,75 +1,95 @@
-# Gate Status — Milestone 3 (Iteration 1)
+# Gate Status — Milestone 1 (M1: Correção de Diárias & Estadia B2B)
 
-## Gate — Milestone 3
+## Gate — Iteration 1
 | Agent | Role | Verdict | Source |
 |-------|------|---------|--------|
-| worker_m3_wbp | teamwork_preview_worker | DONE (commit 1a141ba, 21/21 M3 tests pass, 25/25 M2 non-regression pass) | handoff.md |
-| reviewer_m3_wbp_1 | teamwork_preview_reviewer | APPROVE | handoff.md |
-| reviewer_m3_wbp_2 | teamwork_preview_reviewer | APPROVE | handoff.md |
-| challenger_m3_wbp_1 | teamwork_preview_challenger | APPROVE (24/24 tests pass) | handoff.md |
-| challenger_m3_wbp_2 | teamwork_preview_challenger | APPROVE (12/12 tests pass, 20-mutation burst debounced <10s, GUID reuse verified) | handoff.md |
-| auditor_m3_wbp | teamwork_preview_auditor | CLEAN (0 violations) | handoff.md |
+| worker_m1_1 | teamwork_worker | DONE (11/11 pass, 100% parity) | handoff.md |
+| reviewer_m1_1 | teamwork_reviewer | APPROVE | handoff.md |
+| reviewer_m1_2 | teamwork_reviewer | APPROVE | handoff.md |
+| challenger_m1_1 | teamwork_challenger | REQUEST_CHANGES | handoff.md |
+| challenger_m1_2 | teamwork_challenger | APPROVE | handoff.md |
+| auditor_m1_1 | teamwork_auditor | CLEAN | handoff.md |
 
-Gate Result: **PASS** (100% approval across all 5 verification agents, Auditor CLEAN, database intact)
+Gate Result: **FAIL** (challenger_m1_1 REQUEST_CHANGES: Ano em período curto virando ano "30/12 a 02/01/2027" gerava checkin em ano posterior ao checkout; falta de trava para checkoutDate <= checkinDate; espaços opcionais em delimitadores de data).
 
-## Gate — Milestone 4 (Iteration 1)
+---
+
+## Gate — Iteration 2
 | Agent | Role | Verdict | Source |
 |-------|------|---------|--------|
-| worker_m4_wbp | teamwork_preview_worker | DONE (commit 574e1f4, 22/22 M4 tests pass, 21/21 M3 regression pass) | handoff.md |
-| reviewer_m4_wbp_1 | teamwork_preview_reviewer | APPROVE | handoff.md |
-| reviewer_m4_wbp_2 | teamwork_preview_reviewer | REQUEST_CHANGES (triggers MAINTENANCE_BLOCKED/MALFORMED_PAYLOAD, reconciler score >= 80, schedulers in demo-server) | handoff.md |
-| challenger_m4_wbp_1 | teamwork_preview_challenger | APPROVE (5/5 suites pass, 25 concurrent webhooks deduplicated, 15 flats fair-share, 20th to OVERBOOKING) | handoff.md |
-| challenger_m4_wbp_2 | teamwork_preview_challenger | REQUEST_CHANGES (primitive flatNumber collision in handleOtaModification, reconciler isAmbiguous nameSim >= 0.50) | handoff.md |
-| auditor_m4_wbp | teamwork_preview_auditor | CLEAN (0 violations, card hygiene verified, 100% twin parity, DB intact) | handoff.md |
+| worker_m1_2 | teamwork_worker | DONE (12/12 pass, 22/22 stress pass, 100% parity) | handoff.md |
+| reviewer_m1_1 | teamwork_reviewer | APPROVE | handoff.md |
+| reviewer_m1_2 | teamwork_reviewer | APPROVE | handoff.md |
+| challenger_m1_2 | teamwork_challenger | APPROVE | handoff.md |
+| challenger_m1_3 | teamwork_challenger | APPROVE (22/22 stress pass, year-transition verified) | handoff.md |
+| auditor_m1_2 | teamwork_auditor | CLEAN (100% genuine logic, 0 cheats, 37/37 twin parity) | handoff.md |
 
-Gate Result: **FAIL** (Reviewer 2 and Challenger 2 requested fixes: primitive flat in collision check, reconciler nameSim threshold & 80 pts adjustment, MAINTENANCE_BLOCKED/MALFORMED_PAYLOAD triggers, and demo-server schedulers)
+Gate Result: **PASS**
 
-## Gate — Milestone 4 (Iteration 2 — Clearance)
+---
+
+# Gate Status — Milestone 2 (M2: Ingestão Completa de Voucher PDF & Link)
+
+## Gate — Iteration 1
 | Agent | Role | Verdict | Source |
 |-------|------|---------|--------|
-| worker_m4_fix | teamwork_preview_worker | DONE (commit d8274d6, 26/26 M4 tests pass, 25/25 challenger tests pass, 100% parity) | handoff.md |
-| reviewer_m4_clearance | teamwork_preview_reviewer | APPROVE (all 5 defects verified, 26/26 M4 tests pass, 100% parity across 15 files) | handoff.md |
-| challenger_m4_clearance | teamwork_preview_challenger | APPROVE (25/25 challenger tests pass, 5/5 concurrency tests pass, collision & reconciler false-positives 100% resolved) | handoff.md |
-| auditor_m4_clearance | teamwork_preview_auditor | CLEAN (0 violations, card hygiene verified, 100% parity across 11 files, DB intact) | handoff.md |
+| worker_m2_1 | teamwork_worker | DONE (13/13 pass, 100% parity) | handoff.md |
+| reviewer_m2_1 | teamwork_reviewer | REQUEST_CHANGES | handoff.md |
+| reviewer_m2_2 | teamwork_reviewer | APPROVE | handoff.md |
+| challenger_m2_1 | teamwork_challenger | REQUEST_CHANGES | handoff.md |
+| challenger_m2_2 | teamwork_challenger | REQUEST_CHANGES | handoff.md |
+| auditor_m2_1 | teamwork_auditor | CLEAN | handoff.md |
 
-## Gate — Milestone 5 (Iteration 1)
+Gate Result: **FAIL** (REQUEST_CHANGES: ReDoS e parênteses aninhados em pdf-extract-service; poluição cruzada de contatos/CNPJ hóspede-empresa-agência em zoho-mail-service; deduplicação de agências e empresas por CNPJ em ingestB2bVoucherIntoDb).
+
+---
+
+## Gate — Iteration 2
 | Agent | Role | Verdict | Source |
 |-------|------|---------|--------|
-| worker_m5_backend | teamwork_preview_worker | DONE (commit 20e51ea, 11/11 M5 tests pass, 100% parity across 13 twin pairs) | handoff.md |
-| worker_m5_frontend | teamwork_preview_worker | DONE (commit a832dc6, npm run build exit code 0) | handoff.md |
-| reviewer_m5_wbp_1 | teamwork_preview_reviewer | APPROVE (AES-256-GCM vault, in-memory CVV discard, 13 twin pairs SHA-256 identical) | handoff.md |
-| reviewer_m5_wbp_2 | teamwork_preview_reviewer | REQUEST_CHANGES (facade authentication fallback in SecureCardModal.tsx must be removed) | handoff.md |
-| challenger_m5_wbp_1 | teamwork_preview_challenger | REQUEST_CHANGES (token expiration must account for global.__simulatedTimeOffsetMs in vault.mjs) | handoff.md |
-| challenger_m5_wbp_2 | teamwork_preview_challenger | APPROVE (10/10 empirical tests pass, provisional default-disabled, SEBRAE math contract) | handoff.md |
-| auditor_m5_wbp | teamwork_preview_auditor | CLEAN (0 integrity violations, card hygiene verified, 13 twin pairs matched, DB intact) | handoff.md |
+| worker_m2_2 | teamwork_worker | DONE (10/10 empirical, 15/15 extraction, 12/12 dates, 38/38 parity) | handoff.md |
+| reviewer_m2_3 | teamwork_reviewer | REQUEST_CHANGES | handoff.md |
+| challenger_m2_3 | teamwork_challenger | APPROVE (11/11 edge cases, 10/10 empirical, 15/15 extraction) | handoff.md |
+| auditor_m2_2 | teamwork_auditor | CLEAN (0 facades, 0 hardcoding, 38/38 twin parity) | handoff.md |
 
-Gate Result: **FAIL** (Reviewer 2 requested removal of facade fallback in SecureCardModal.tsx; Challenger 1 requested simulatedTimeOffsetMs integration in vault.mjs for token expiration)
+Gate Result: **FAIL** (reviewer_m2_3 REQUEST_CHANGES: Algorithmic complexity DoS vulnerability in pdf-extract-service.mjs:268-271 on unclosed brackets in streams with text operators. Line 270 called continue without advancing i, yielding O(N^2) quadratic scans of 13.5s for 50KB payload. Remediate with `i = len; break;` and mirror to scripts/).
 
-## Gate — Milestone 5 (Iteration 2 — Clearance)
+---
+
+## Gate — Iteration 3
 | Agent | Role | Verdict | Source |
 |-------|------|---------|--------|
-| worker_m5_fix | teamwork_preview_worker | DONE (commit 96fa6fa, 53 targeted tests pass, 100% parity across 13 twin pairs, dist updated) | handoff.md |
-| reviewer_m5_clearance | teamwork_preview_reviewer | APPROVE (all 2 defects verified, zero facade auth, getEffectiveNow time-travel, 100% parity across 13 pairs) | handoff.md |
-| challenger_m5_clearance | teamwork_preview_challenger | APPROVE (Subtest 2.1 token expiration at 301s passes 100%, 16/16 challenger tests pass) | handoff.md |
-| auditor_m5_clearance | teamwork_preview_auditor | CLEAN (0 integrity violations, PCI zero-PAN/CVV verified, 13/13 twin pairs SHA-256 match, DB intact) | handoff.md |
+| worker_m2_3 | teamwork_worker | DONE (50k brackets benchmark 8ms, 48/48 pass, 38/38 parity) | handoff.md |
+| reviewer_m2_4 | teamwork_reviewer | APPROVE (11ms benchmark, 48/48 pass, all stress probes passed) | handoff.md |
+| challenger_m2_3 | teamwork_challenger | APPROVE (11/11 edge cases, 10/10 empirical, 15/15 extraction) | handoff.md |
+| auditor_m2_3 | teamwork_auditor | CLEAN (0 facades, 0 hardcoding, 38/38 twin parity, genuine O(N)) | handoff.md |
 
-Gate Result: **PASS** (100% approval across all clearance verification agents, Auditor CLEAN, database intact)
+Gate Result: **PASS**
 
+---
 
-## Gate — Final Milestone: Phase 1 (Master E2E Test Suite Tiers 1–4)
+# Gate Status — Milestone 3 (M3: Cancelamento Autônomo B2B & Notificação)
+
+## Gate — Iteration 1
 | Agent | Role | Verdict | Source |
-|---|---|---|---|
-| test_writer_e2e_final | teamwork_preview_test_writer | DONE (commit cd0ec6a, 352/352 tests pass, 100% exit code 0 across Tiers 1-4, TEST_READY.md published, baseline DB intact 7e94a217...) | handoff.md |
+|-------|------|---------|--------|
+| worker_m3_1 | teamwork_worker | DONE (17/17 pass, 39/39 parity) | handoff.md |
+| reviewer_m3_1 | teamwork_reviewer | APPROVE | handoff.md |
+| reviewer_m3_2 | teamwork_reviewer | APPROVE | handoff.md |
+| challenger_m3_1 | teamwork_challenger | REQUEST_CHANGES (8/11 fail in adversarial suite) | handoff.md |
+| challenger_m3_2 | teamwork_challenger | APPROVE (16/16 cascade stress pass) | handoff.md |
+| auditor_m3_1 | teamwork_auditor | CLEAN (0 facades, 0 hardcoding, 39/39 parity) | handoff.md |
 
-Gate Result: **PASS** (100% test pass rate across all 352 test cases, zero database pollution, zero operational leakage, commit cd0ec6a pushed)
+Gate Result: **FAIL** (challenger_m3_1 REQUEST_CHANGES: 1. False positive cancellation on vouchers with policy text in body; 2. False negative cancellation on reply/forward to confirmation threads; 3. RLOC regex collision matching Portuguese word "localizado" and matching notes).
 
-## Gate — Final Milestone: Phase 2 (Tier 5 Adversarial Coverage Hardening & Victory Clearance)
+---
+
+## Gate — Iteration 2
 | Agent | Role | Verdict | Source |
-|---|---|---|---|
-| challenger_tier5_wbp_1 | teamwork_preview_challenger | APPROVE (22/22 tests pass, SEBRAE math, floor/variation locks, leap year 29-Feb, ARI batching) | handoff.md |
-| challenger_tier5_wbp_2 | teamwork_preview_challenger | APPROVE (30/30 tests pass, 20 concurrent webhooks deduplication, 19 flats fair-share, checked-in guard, 300s token burn) | handoff.md |
-| worker_tier5_finalize | teamwork_preview_worker | DONE (commit 3fccfc3 pushed, TEST_READY.md & PROJECT.md updated, 404 tests certified) | handoff.md |
-| reviewer_tier5_clearance | teamwork_preview_reviewer | APPROVE (52/52 Tier 5 tests verified, 404 master tests verified, 13/13 twin pairs 100% SHA-256 match, DB intact) | handoff.md |
-| auditor_tier5_victory | teamwork_preview_auditor | CLEAN (0 integrity violations across 7 checks, zero PAN/CVV in 27 files, 13/13 twin pairs match, workspace coexistence clean) | handoff.md |
+|-------|------|---------|--------|
+| worker_m3_2 | teamwork_worker | DONE (11/11 adversarial, 17/17 pass, 39/39 parity) | handoff.md |
+| challenger_m3_3 | teamwork_challenger | APPROVE (11/11 pass, 10 in-house variants verified) | handoff.md |
+| auditor_m3_2 | teamwork_auditor | CLEAN (0 facades, 0 hardcoding, 39/39 parity) | handoff.md |
 
-Gate Result: **PASS** (100% approval across all Challengers, Reviewer APPROVE, Victory Forensic Auditor CLEAN, 404/404 tests passing with exit code 0, commit 3fccfc3 pushed to origin feature/wbp-integration)
+Gate Result: **PASS**
+

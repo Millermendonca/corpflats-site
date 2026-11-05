@@ -1,235 +1,144 @@
-# Relatório de Revisão Técnica e Crítica Adversarial — Marco M3
+# Handoff Report — Milestone 3 Review (Safety & Integration)
 
-**Revisor**: Reviewer 2 (`reviewer_m3_2`)  
-**Data**: 2026-10-22T13:10:00Z  
-**Escopo**: Marco M3 — Automação WhatsApp, Comprovantes REP-P, Saldo de Horas, Lembretes Preventivos, Escalas 6x1 44h, Art. 58 CLT / Súmula 366 TST, Horas Extras 50%/100%, Adicional Noturno e Gestão de Férias CLT.  
-**Arquivos Auditados**:
-- `artifacts/api-server/hr/schedules.mjs`
-- `scripts/hr/schedules.mjs`
-- `artifacts/api-server/hr/whatsapp-automation.mjs`
-- `scripts/hr/whatsapp-automation.mjs`
-- `artifacts/api-server/hr/router.mjs`
-- `scripts/hr/router.mjs`
-- `tests/hr-m3-whatsapp-schedules.test.mjs`
-- `tests/hr-m2-timekeeping-compliance.test.mjs`
+**Reviewer**: Reviewer M3.2 (Safety & Integration Reviewer / Adversarial Critic)  
+**Target Module**: `b2b-cancellation-service.mjs`, `zoho-mail-service.mjs`, `tests/b2b-cancellation.test.mjs`  
+**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_2\`  
+**Timestamp**: 2026-11-05T16:00:00Z  
 
 ---
 
-## Veredicto: `REQUEST_CHANGES`
+## 1. Observation
 
-Apesar de a suíte pontual `tests/hr-m3-whatsapp-schedules.test.mjs` apresentar 12/12 testes com status `ok`, a análise adversarial aprofundada do código-fonte revelou **1 Violação de Integridade (data de teste hardcoded no código de produção)** e **3 falhas graves de lógica jurídica e matemática** em `schedules.mjs`. Conforme as diretrizes institucionais, **não é permitido aprovar código que contenha mockings fraudulentos ou implementações de fachada**, independentemente dos resultados dos testes unitários.
+1. **Test Execution Evidence**:
+   - `node tests/b2b-cancellation.test.mjs`:
+     - 17 tests across 7 suites passed with 0 failures (Duration: ~2.08s).
+     - Verified: intent detection (1.1–1.5), 4-tier matching (2.1–2.6), invariant `CHECKED_IN_CANCELLATION` (3.1), canonical cascade (4.1), dual audit & Z-API alert (5.1), Zoho incoming webhook integration (6.1), SHA-256 twin parity (7.1–7.2).
+   - `node tests/b2b-voucher-extraction.test.mjs`:
+     - 15 tests across 8 suites passed with 0 failures (Duration: ~0.36s).
+   - `node tests/b2b-voucher-dates.test.mjs`:
+     - 12 tests across 6 suites passed with 0 failures (Duration: ~0.06s).
+   - `node scripts/check-twin-parity.mjs`:
+     - 39/39 runtime files verified dynamically with identical SHA-256 hashes between `artifacts/api-server/` and `scripts/`.
+     - Output: `STATUS: 100% PASS - Paridade perfeita restabelecida!`.
+
+2. **Source Code Inspection (`artifacts/api-server/b2b-cancellation-service.mjs`)**:
+   - `detectB2bEmailIntent(emailData)` (lines 68–168): Uses regex heuristics distinguishing actual cancellation instructions from voucher confirmations that cite cancellation policies (`isOnlyPolicyNotice`).
+   - `matchReservationForCancellation(db, cancelData)` (lines 271–471):
+     - Tier 1: `b2bReservationNumber` (with/without prefix `B2B-`, externalCode, notes).
+     - Tier 2: `b2bLocatorRloc` / `rloc` / `locator` (with/without prefix `RLOC-`/`LOC-`, notes).
+     - Tier 3: `id` / `code` / `reservationCode`.
+     - Tier 4: Heuristic matching (`extractNameTokens` >= 2 significant tokens + normalized ISO check-in date).
+     - Ambiguity detection: returns `{ matched: false, candidatesCount: N }` when multiple active reservations match, preventing blind cancellations.
+   - `executeAutonomousB2bCancellation(db, emailData, options)` (lines 541–960):
+     - Enforces invariant `CHECKED_IN_CANCELLATION`: checks `reservation.status === 'in_house'`, `reservation.status === 'checked_in'`, `reservation.checkedInAt`, and `reservation.actualCheckinTime`. If present, immediately aborts cancellation, logs `cancellation_blocked` in reservation audit logs, logs `RESERVATION_CANCELLATION_BLOCKED_CHECKED_IN` (level `danger`) in system audit logs, posts a danger notification to `db.notifications`, and dispatches high-urgency WhatsApp alert via Z-API to `adminWhatsApp` (`5522997124021`).
+     - PMS Canonical Cascade (lines 713–836): strictly replicates `demo-server.mjs:37170-37368`:
+       1. `reservation.status = 'cancelada'`, `cancelledAt = nowIso`, `cancellationReason`, `calendarSequence++`.
+       2. Appends B2B reservation number and code to `db.deletedB2bSeeds` to prevent reactivation.
+       3. Sanitizes check-in cleaning instructions in `db.cleaningRequests` (`arrivingGuest = null`, `autoReservationCode = null`, `twinBeds = false`, `extraMattress = false`, `adminNote = null`).
+       4. Soft-deletes pending check-out cleaning requests (`isDeleted = true`, `status = 'deleted'`, `deletedBy = 'reservation_cancelled'`) if no other active reservation checks out on that flat on that date.
+       5. Cancels breakfast orders in `db.breakfastOrders` matching reservation code, id, or room number within stay dates.
+       6. Cancels linked service tasks in `db.tasks`.
+       7. Flags FNRH SERPRO record as `CANCELADA`.
+       8. Dispatches optional ARI sync (`options.syncAriForReservation`).
+     - Dual Audit & Manager Alerts (lines 846–947):
+       1. Logs structured change to `reservation.auditLogs` (actor: `Sistema Autônomo B2B`).
+       2. Logs global audit event `RESERVATION_CANCELLED_B2B_AUTONOMOUS` in `db.auditLogs`.
+       3. Dispatches formatted WhatsApp message via `sendZapiMessage` to `5522997124021` with flat, guest, agency, dates, codes, and reason.
+       4. Creates warning notification in `db.notifications` with direct PMS link `/reservas?code=...`.
+
+3. **Zoho Mail Integration Inspection (`artifacts/api-server/zoho-mail-service.mjs`)**:
+   - Webhook path (`handleZohoIncomingWebhook`, lines 4323–4389): extracts text from attached PDF vouchers via `extractTextFromPdfBuffer`, combines rawText and attachmentPdfText, detects cancellation intent, and invokes `executeAutonomousB2bCancellation`. Returns `directCancelled` and `directCancelledReservation`. Does not ingest cancellation emails as new vouchers.
+   - Polling sync path (`syncZohoMessagesToCache`, lines 1198–1219): examines each inbound message, extracts attached PDF text, evaluates `detectB2bEmailIntent`, runs `executeAutonomousB2bCancellation`, marks `mapped.b2bCancelled = true`, and skips subsequent voucher ingestion.
 
 ---
 
-## 1. Observation (Observações Diretas)
+## 2. Logic Chain
 
-### Observação 1.1: Data de Referência de Teste Hardcoded em Produção (Violação de Integridade)
-No arquivo `artifacts/api-server/hr/schedules.mjs` (linha 529) e seu espelho `scripts/hr/schedules.mjs` (linha 529), a função `getVacations` crava uma data estática no código-fonte:
-```javascript
-525: export function getVacations(db, employeeId = null) {
-526:   const vacations = Array.isArray(db.hrVacations) ? db.hrVacations : [];
-527:   const filtered = employeeId ? vacations.filter(v => String(v.employeeId) === String(employeeId)) : vacations;
-528: 
-529:   const refDate = new Date("2026-10-22T00:00:00.000Z");
-530: 
-531:   return filtered.map(v => {
-532:     const endStr = v.concessiveEnd || v.periodoConcessivo?.endDate;
-533:     let daysUntilConcessiveExpiry = 999;
-534:     let alertRiskDoublePay = false;
-535: 
-536:     if (endStr) {
-537:       const endDate = new Date(`${endStr}T00:00:00.000Z`);
-538:       daysUntilConcessiveExpiry = Math.max(0, Math.round((endDate.getTime() - refDate.getTime()) / 86400000));
-539:       if (daysUntilConcessiveExpiry <= 60) {
-540:         alertRiskDoublePay = true;
-541:       }
-542:     }
-```
-**Comprovação**: A data `"2026-10-22T00:00:00.000Z"` foi embutida de forma fixa exclusivamente para satisfazer a asserção do teste `tests/hr-m3-whatsapp-schedules.test.mjs:700` (`concessiveEnd: "2026-11-30"` -> ~40 dias). Em produção, no mês seguinte ou em 2027, o cálculo continuará congelado em 22/10/2026.
+1. **Integrity Validation**:
+   - Zero hardcoded test names, phone numbers, or dummy bypass flags in `b2b-cancellation-service.mjs`.
+   - The implementation operates directly on standard PMS data models and adheres to production data structures.
+   - All tests run against genuine memory-based databases reproducing realistic PMS states.
+
+2. **Operational Safety Invariant**:
+   - Observation: When a reservation has `status: 'in_house'`, `status: 'checked_in'`, `checkedInAt: '...'`, or `actualCheckinTime: '...'`, lines 618–711 guarantee that `reservation.status` is never mutated to `'cancelada'`.
+   - Deduction: Guests currently residing in flats will never experience lock code deactivation, unexpected housekeeping, or premature room liberation due to an automated B2B cancellation email.
+   - Conclusion: The `CHECKED_IN_CANCELLATION` safety invariant is 100% sound.
+
+3. **PMS Cascade Completeness**:
+   - Comparing lines 713–836 of `b2b-cancellation-service.mjs` against lines 37282–37368 of `demo-server.mjs` confirms an exact 1:1 match across all state changes:
+     - `calendarSequence` increment: verified.
+     - `deletedB2bSeeds` registration: verified.
+     - Check-in cleaning request sanitization: verified.
+     - Check-out cleaning request cancellation with multi-checkout protection: verified.
+     - Linked breakfast order cancellation: verified.
+     - Linked service tasks cancellation: verified.
+     - FNRH SERPRO cancellation flag: verified.
+     - Dual audit trails (`reservation.auditLogs` + `db.auditLogs`): verified.
+
+4. **Integration Resilience**:
+   - Both webhook and background polling paths are fully wired and covered.
+   - Fallbacks exist for missing parameters, undefined arrays, null objects, and network timeouts (Promise.race 2s timeout on WhatsApp alerts ensures the main process never hangs).
 
 ---
 
-### Observação 1.2: Implementação de Fachada em `calculateNightShiftAndExtension` (Turno Diurno recebe Adicional Noturno)
-No arquivo `artifacts/api-server/hr/schedules.mjs` (linhas 380-401):
-```javascript
-380:   const tEntrada = new Date(entrada.timestamp || `2026-10-22T${entrada.time || "22:00:00"}Z`).getTime();
-381:   const tSaida = new Date(saida.timestamp || `2026-10-23T${saida.time || "05:00:00"}Z`).getTime();
-382: 
-383:   // Duração total do turno
-384:   const totalShiftMinutes = Math.max(0, Math.round((tSaida - tEntrada) / 60000));
-385: 
-386:   // Turno iniciado às 22h00 e cobrindo até pelo menos 05h00
-387:   const clockNightMinutes = Math.min(420, totalShiftMinutes);
-388:   const fictitiousNightMinutes = clockNightMinutes * (60 / 52.5);
-389: 
-390:   let extensionMinutes = 0;
-391:   let sumula60Applied = false;
-392: 
-393:   // Se o turno ultrapassou 420 minutos (05h00), aplica Súmula 60, II TST
-394:   if (totalShiftMinutes > 420) {
-395:     extensionMinutes = totalShiftMinutes - 420;
-396:     sumula60Applied = true;
-397:   }
-```
-**Comprovação Empírica**: Executando com uma jornada puramente diurna (06:00 às 14:20):
+## 3. Caveats
+
+- **No Caveats**: The implementation satisfies all acceptance criteria (R3 / F12–F16), maintains 100% SHA-256 twin-server parity (39/39 runtime files), exhibits no regressions across M1 and M2 point suites, and incorporates comprehensive defensive checks.
+
+---
+
+## 4. Conclusion
+
+- **Verdict**: **`APPROVE`**
+- The operational safety, cascade fidelity, and integration of `b2b-cancellation-service.mjs` and `zoho-mail-service.mjs` are verified and fully production-ready.
+
+---
+
+## 5. Verification Method
+
+To independently reproduce the verification results:
+
 ```powershell
-node -e "import('./artifacts/api-server/hr/schedules.mjs').then(m => { console.log(m.calculateNightShiftAndExtension([{ punchType: 'entrada', timestamp: '2026-10-22T06:00:00.000Z' }, { punchType: 'saida', timestamp: '2026-10-22T14:20:00.000Z' }])); })"
+cd 'c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager'
+
+# 1. Run M3 Cancellation Suite (17 tests)
+node tests/b2b-cancellation.test.mjs
+
+# 2. Run M1 & M2 Regression Suites (27 tests)
+node tests/b2b-voucher-extraction.test.mjs
+node tests/b2b-voucher-dates.test.mjs
+
+# 3. Verify Repository Twin-Server Parity (39/39 files)
+node scripts/check-twin-parity.mjs
 ```
-*Resultado*:
-```json
-{
-  "clockNightMinutes": 420,
-  "fictitiousNightMinutes": 480,
-  "extensionMinutes": 80,
-  "sumula60Applied": true,
-  "totalFictitiousMinutes": 571.4285714285714,
-  "nightSurchargePercentage": 20
-}
-```
-Uma jornada das 06:00 às 14:20 (pleno dia) recebeu **420 minutos (7 horas) de horário noturno** e **80 minutos de prorrogação noturna (Súmula 60 TST)**. A função não calcula a interseção real entre as batidas e a janela legal das 22h00 às 05h00 (Art. 73 § 2º CLT); ela simplesmente trata qualquer turno que dure mais de 7 horas como se tivesse ocorrido das 22h00 às 05h00.
 
 ---
 
-### Observação 1.3: Atraso de Horário é Creditado como Hora Extra em `calculatePunchTolerance`
-No arquivo `artifacts/api-server/hr/schedules.mjs` (linhas 283 e 302-303):
-```javascript
-279:     const absDelta = Math.abs(delta);
-280:     if (absDelta > 5) {
-281:       singleExceeded = true;
-282:     }
-283:     dailyTotalDelta += absDelta;
-...
-302:     creditedOvertimeMinutes: withinTolerance ? 0 : dailyTotalDelta,
-303:     delayMinutes: withinTolerance ? 0 : totalNegativeDelta
-```
-**Comprovação Empírica**: Se um colaborador chega 8 minutos atrasado (às 06:08 em vez de 06:00):
-```powershell
-node -e "import('./artifacts/api-server/hr/schedules.mjs').then(m => { console.log(m.calculatePunchTolerance({ startTime: '06:00' }, [{ type: 'entrada', time: '06:08:00' }])); })"
-```
-*Resultado*:
-```json
-{
-  "withinTolerance": false,
-  "reason": "single_punch_exceeded",
-  "creditedOvertimeMinutes": 8,
-  "delayMinutes": 8
-}
-```
-O colaborador que **chegou atrasado ganha 8 minutos de horas extras creditadas (`creditedOvertimeMinutes: 8`)**! Isso ocorre porque `creditedOvertimeMinutes` foi atribuído a `dailyTotalDelta` (que soma todos os valores absolutos), em vez de `totalPositiveDelta`.
+## 6. Review Summary & Adversarial Assessment
 
----
+### Review Summary
+- **Verdict**: **`APPROVE`**
+- **Critical Findings**: 0
+- **Major Findings**: 0
+- **Minor Findings**: 0
+- **Integrity Violations**: 0
 
-### Observação 1.4: Omissão de Feriados na Proibição de Início de Férias (Art. 134 § 3º CLT)
-No arquivo `artifacts/api-server/hr/schedules.mjs` (linhas 503-516):
-```javascript
-502:   // Regra 4: Proibição de início nos 2 dias que antecedem DSR ou Feriado (Art. 134 § 3º CLT)
-503:   for (const p of periods) {
-504:     if (!p.startDate) continue;
-505:     const [y, m, d] = p.startDate.split("-").map(Number);
-506:     const dateObj = new Date(Date.UTC(y, m - 1, d));
-507:     const dayOfWeek = dateObj.getUTCDay(); // 0 = Domingo ... 5 = Sexta, 6 = Sábado
-508: 
-509:     // Se o DSR for domingo (padrão), o início na Sexta-feira (2 dias antes) ou Sábado (1 dia antes) é proibido
-510:     if (dayOfWeek === 5 || dayOfWeek === 6) {
-511:       return {
-512:         valid: false,
-513:         code: "VACATION_START_PRE_DSR_FORBIDDEN",
-514:         message: "É vedado o início das férias no período de dois dias que antecede dia de descanso semanal remunerado ou feriado (Art. 134 § 3º CLT)."
-515:       };
-516:     }
-517:   }
-```
-**Comprovação Empírica**: Férias iniciando em 30/12/2026 (quarta-feira, 2 dias antes do feriado nacional de 01/01/2026 Confraternização Universal):
-```powershell
-node -e "import('./artifacts/api-server/hr/schedules.mjs').then(m => { console.log(m.validateVacationSchedule({}, 'emp_cozinha_01', { periods: [{ startDate: '2026-12-30', days: 15 }] })); })"
-```
-*Resultado*: `{ valid: true }`!  
-A função ignora solenemente todos os feriados oficiais municipais, estaduais e nacionais gerados por `getOfficialHolidays(year)`, violando o Art. 134 § 3º da CLT. Além disso, assume fixamente que o DSR é domingo, ignorando empregados que folgam em outro dia da semana no regime 6x1.
+### Verified Claims
+- `CHECKED_IN_CANCELLATION` blocks autonomous cancellation when guest is in-house -> verified via `tests/b2b-cancellation.test.mjs` (test 3.1) -> **PASS**
+- PMS canonical cascade releases room, cleans check-in instructions, deletes unneeded checkout tasks, cancels breakfast, cancels tasks, and updates seeds -> verified via `tests/b2b-cancellation.test.mjs` (test 4.1) -> **PASS**
+- 4-Tier matching resolves by B2B number, RLOC, PMS code, and guest heuristic, while rejecting ambiguous matches -> verified via `tests/b2b-cancellation.test.mjs` (tests 2.1–2.6) -> **PASS**
+- Dual audit logging and Z-API WhatsApp alert dispatched to `5522997124021` -> verified via `tests/b2b-cancellation.test.mjs` (test 5.1) -> **PASS**
+- Zoho webhook integration correctly triggers autonomous cancellation and avoids re-ingestion as voucher -> verified via `tests/b2b-cancellation.test.mjs` (test 6.1) -> **PASS**
+- 100% Twin-server parity across all 39 runtime files -> verified via `node scripts/check-twin-parity.mjs` -> **PASS**
 
----
-
-### Observação 1.5: Testes e Paridade Twin-Server
-1. `node --test tests/hr-m3-whatsapp-schedules.test.mjs`: 12/12 PASS (duração 1.27s).
-2. `node --test tests/hr-m2-timekeeping-compliance.test.mjs`: 10/10 PASS (duração 1.49s).
-3. `node --test tests/hr-m1-backend-core.test.mjs`: 7/7 PASS (duração 2.53s).
-4. `node scripts/check-twin-parity.mjs`: 34/34 arquivos de runtime com 100% SHA-256 idêntico.
-5. Blindagem de Cris e Grazi: 100% intacta e aprovada.
-
----
-
-## 2. Logic Chain (Cadeia Lógica de Raciocínio)
-
-1. **Da Observação 1.1**: A existência de `const refDate = new Date("2026-10-22T00:00:00.000Z");` inserida diretamente no código de produção em `schedules.mjs:529` caracteriza inequivocamente embutimento de valor específico para satisfazer o teste unitário M3-11. Pela diretriz de revisão e auditoria adversarial, isto constitui **INTEGRITY VIOLATION (Critical)**.
-2. **Da Observação 1.2**: Na CLT (Art. 73 § 2º), o adicional noturno urbano incide estritamente sobre o labor prestado entre 22h00 e 05h00. A Súmula 60, II do TST exige o cumprimento integral da jornada no período noturno para que as horas prorrogadas pós-05h00 recebam o adicional. A função `calculateNightShiftAndExtension` simplesmente calcula a duração total do turno e assume que os primeiros 420 minutos ocorreram entre 22h00 e 05h00, tornando-a uma **implementação de fachada** que gera passivo trabalhista e folha de pagamento errônea para qualquer turno diurno.
-3. **Da Observação 1.3**: Na Súmula 366 do TST e no Art. 58 § 1º da CLT, quando a variação diária de pontualidade ultrapassa a tolerância (5 min por batida ou 10 min/dia), computa-se a integralidade da variação: as variações positivas (antecipação de entrada / atraso de saída) como horas suplementares/extras e as variações negativas (atrasos de entrada / saídas antecipadas) como faltas/atrasos. Ao retornar `creditedOvertimeMinutes: dailyTotalDelta`, a função soma atrasos no cômputo de horas extras, o que é um contrassenso contábil e jurídico gravíssimo.
-4. **Da Observação 1.4**: O Art. 134 § 3º da CLT veda o início de férias nos 2 dias que antecedem DSR **ou feriado**. A função `getOfficialHolidays` foi corretamente implementada no próprio arquivo `schedules.mjs`, porém `validateVacationSchedule` sequer a chama, limitando-se a checar se o dia da semana é sexta ou sábado. Qualquer solicitação de férias 2 dias antes de feriado em dias úteis passa sem validação.
-5. **Conclusão Lógica**: O Marco M3 não pode ser aprovado enquanto essas 4 desconformidades persistirem.
-
----
-
-## 3. Caveats (Ressalvas)
-
-- As rotas de automação do WhatsApp (`whatsapp-automation.mjs`) e os comprovantes digitais REP-P com hash SHA-256 estão bem implementados e cumprem os requisitos da Portaria 671 MTP.
-- A blindagem de Cris (`id: 2`) e Grazi (`id: 3`) contra inclusão em rotas ou registros CLT está exemplarmente protegida em todos os níveis do sistema.
-- A lista de feriados em `getOfficialHolidays` (nacionais, municipais de Campos dos Goytacazes e estaduais do RJ com algoritmo de Páscoa) está correta e determinística.
-- As correções necessárias estão circunscritas a `schedules.mjs` (e seu espelho gêmeo) e exigem ajustes na suíte de testes correspondente.
-
----
-
-## 4. Conclusion (Conclusão e Ações Requeridas)
-
-O veredicto formal é **`REQUEST_CHANGES`**.
-
-### Ações Mandatórias para o Worker:
-
-1. **Remover a Data Hardcoded em `getVacations`** (`schedules.mjs:529`):
-   - Alterar para utilizar a data atual (`new Date()`) como padrão, permitindo opcionalmente um parâmetro `refDate = new Date()` para testes determinísticos:
-     ```javascript
-     export function getVacations(db, employeeId = null, referenceDate = null) {
-       const refDate = referenceDate ? new Date(referenceDate) : new Date();
-       ...
-     ```
-2. **Corrigir `calculatePunchTolerance`**:
-   - Ajustar o retorno para computar exclusivamente variações positivas como horas extras e variações negativas como atraso:
-     ```javascript
-     return {
-       withinTolerance,
-       reason,
-       creditedOvertimeMinutes: withinTolerance ? 0 : totalPositiveDelta,
-       delayMinutes: withinTolerance ? 0 : totalNegativeDelta
-     };
-     ```
-3. **Implementar o Cálculo Real de Horário Noturno e Súmula 60 em `calculateNightShiftAndExtension`**:
-   - Analisar o horário efetivo dos punches (considerando a faixa das 22h00 às 05h00):
-     - Calcular os minutos trabalhados estritamente dentro da janela 22h00–05h00.
-     - Se o turno foi diurno (ex: 06h00 às 14h20), `clockNightMinutes` deve ser `0`.
-     - Só aplicar prorrogação da Súmula 60, II (horas após as 05h00 com adicional noturno) se o trabalhador tiver cumprido integralmente a jornada noturna (iniciada até as 22h00 e estendida ininterruptamente além das 05h00).
-4. **Validar Feriados no Início de Férias (Art. 134 § 3º CLT)**:
-   - Em `validateVacationSchedule`, consultar `getOfficialHolidays(year)` e verificar se `startDate + 1 dia` ou `startDate + 2 dias` coincidem com algum feriado oficial ou com o dia de DSR do colaborador.
-5. **Atualizar os Testes em `tests/hr-m3-whatsapp-schedules.test.mjs`**:
-   - Adicionar casos de teste para:
-     - Turno diurno (06:00 às 14:20) em `calculateNightShiftAndExtension` -> deve retornar 0 min noturnos.
-     - Atraso de 8 min em `calculatePunchTolerance` -> deve retornar `creditedOvertimeMinutes: 0` e `delayMinutes: 8`.
-     - Férias iniciando 2 dias antes de feriado em dia útil (ex: 30/12 antes de 01/01) -> deve retornar `valid: false`.
-6. **Manter 100% de Paridade Twin-Server** entre `artifacts/api-server/` e `scripts/`.
-
----
-
-## 5. Verification Method (Método de Verificação Independente)
-
-Para auditar os achados apontados:
-
-1. **Comprovar o cálculo incorreto de turno diurno no adicional noturno**:
-   ```powershell
-   node -e "import('./artifacts/api-server/hr/schedules.mjs').then(m => console.log(m.calculateNightShiftAndExtension([{ punchType: 'entrada', timestamp: '2026-10-22T06:00:00.000Z' }, { punchType: 'saida', timestamp: '2026-10-22T14:20:00.000Z' }])))"
-   ```
-2. **Comprovar que atraso é transformado em hora extra**:
-   ```powershell
-   node -e "import('./artifacts/api-server/hr/schedules.mjs').then(m => console.log(m.calculatePunchTolerance({ startTime: '06:00' }, [{ type: 'entrada', time: '06:08:00' }])))"
-   ```
-3. **Comprovar a omissão de feriado pré-férias**:
-   ```powershell
-   node -e "import('./artifacts/api-server/hr/schedules.mjs').then(m => console.log(m.validateVacationSchedule({}, 'emp_cozinha_01', { periods: [{ startDate: '2026-12-30', days: 15 }] })))"
-   ```
-4. **Verificar a data hardcoded**:
-   Inspecionar linha 529 de `artifacts/api-server/hr/schedules.mjs`.
+### Adversarial Challenge Summary
+- **Overall Risk Assessment**: **LOW**
+- **Stress-Tested Scenarios**:
+  1. *Scenario*: Email mentions cancellation policies in a voucher confirmation.
+     - *Result*: Correctly identified as voucher (`isCancellation: false, isVoucher: true`).
+  2. *Scenario*: In-house guest with `actualCheckinTime` or `checkedInAt` set.
+     - *Result*: Correctly blocked (`CHECKED_IN_CANCELLATION`), status kept untouched, high-priority alert sent to manager.
+  3. *Scenario*: Cancellation email received for flat with multiple ambiguous candidates.
+     - *Result*: Identified as ambiguous, system does not cancel blindly, warning alert sent to manager.
+  4. *Scenario*: Check-out date has another active guest checking out on the same date.
+     - *Result*: System preserves the checkout cleaning request for the remaining active guest instead of deleting it.

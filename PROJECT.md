@@ -42,7 +42,7 @@
 | M1 | Correção de Diárias & Estadia B2B | F1, F2, F3, F4 | none | DONE |
 | M2 | Ingestão Completa de Voucher (PDF & Link) | F5, F6, F7, F8, F9, F10, F11 | M1 | DONE |
 | M3 | Cancelamento Autônomo B2B & Notificação | F12, F13, F14, F15, F16 | M2 | DONE |
-| M4 | E2E Integration & Verification | F17 (Tiers 1-4 + Adversarial) | M1, M2, M3 | PLANNED |
+| M4 | E2E Integration & Verification | F17 (Tiers 1-4 + Adversarial) | M1, M2, M3 | IN_PROGRESS |
 
 ## Interface Contracts
 

@@ -1,180 +1,196 @@
-# Relatório Handoff: Estresse Adversarial de Matemática Trabalhista CLT (Marco M3)
+# Challenger Handoff Report — Milestone 3 (Intent & Lookup Adversarial Stress)
 
-**Agente**: `challenger_m3_1` (Critic / Empirical Challenger)  
-**Destinatário**: Project Orchestrator (`58ecb31f-60d2-4e1e-9aac-82400a58c263`)  
-**Data**: 2026-10-22T13:00:00Z  
-**Tipo**: Hard (Revisão Concluída com Diagnóstico Empírico)  
-**Veredicto**: `REQUEST_CHANGES` (Bloqueante para homologação do M3)  
-
----
-
-## 1. Observation (Observações Diretas)
-
-1. **Execução do Script de Estresse Adversarial**:
-   - Comando executado:
-     ```powershell
-     node .agents/teamwork/challenger_m3_1/stress_schedules_math.mjs
-     ```
-   - Resultado do Teste Adversarial:
-     ```
-     ================================================================================
-     INICIANDO SUÍTE ADVERSARIAL: MATEMÁTICA TRABALHISTA CLT (MARCO M3)
-     ================================================================================
-
-     --- GRUPO 1: Tolerância Art. 58 CLT e Súmula 366 TST ---
-     ✅ PASS [Art. 58 CLT] Limiar 4 min: deve ser desconsiderado (withinTolerance=true, 0 HE)
-     ✅ PASS [Art. 58 CLT] Limiar 5 min exatos: deve ser desconsiderado (withinTolerance=true, 0 HE)
-     ✅ PASS [Art. 58 CLT / Súmula 366 TST] Limiar 6 min: extrapola tolerância individual e computa a TOTALIDADE dos 6 min
-     ✅ PASS [Art. 58 CLT] Soma diária 10 min (3+2+2+3): dentro do teto diário (withinTolerance=true, 0 HE)
-     ✅ PASS [Art. 58 CLT / Súmula 366 TST] Soma diária 11 min (3+3+3+2): extrapola teto diário e computa TOTALIDADE de 11 min
-
-     --- GRUPO 2: Horário Noturno e Hora Ficta (CLT Art. 73 e Súmula 60 TST) ---
-     ✅ PASS [Horário Noturno] Turno 22:00 às 05:00: 7h relógio (420 min) -> exatamente 8,0h noturnas fictas (480 min)
-     ✅ PASS [Súmula 60 TST] Turno 22:00 às 07:00: 7h noturnas + 2h prorrogação pós-05h com hora ficta e 20%
-     ❌ FAIL [Horário Noturno] Turno puramente diurno (08:00 às 17:00): deve resultar em exatamente 0 horas noturnas
-        Esperado: {"clockNightMinutes":0,"fictitiousNightMinutes":0,"extensionMinutes":0,"sumula60Applied":false,"totalFictitiousMinutes":0}
-        Obtido:   {"clockNightMinutes":420,"fictitiousNightMinutes":480,"extensionMinutes":120,"sumula60Applied":true,"totalFictitiousMinutes":617.1428571428571}
-        Detalhes: {"clockNightMinutes":420,"fictitiousNightMinutes":480,"extensionMinutes":120,"sumula60Applied":true,"totalFictitiousMinutes":617.1428571428571,"nightSurchargePercentage":20}
-     ❌ FAIL [Horário Noturno] Turno misto 18:00 às 23:00: apenas 1h noturna (22h-23h = 60 min) sem prorrogação
-        Esperado: {"clockNightMinutes":60,"fictitiousNightMinutes":68.57,"extensionMinutes":0,"sumula60Applied":false}
-        Obtido:   {"clockNightMinutes":300,"fictitiousNightMinutes":342.86,"extensionMinutes":0,"sumula60Applied":false}
-        Detalhes: {"clockNightMinutes":300,"fictitiousNightMinutes":342.85714285714283,"extensionMinutes":0,"sumula60Applied":false,"totalFictitiousMinutes":342.85714285714283,"nightSurchargePercentage":20}
-
-     --- GRUPO 3: Regras de Férias CLT (Art. 134 e Art. 137 CLT) ---
-     ✅ PASS [Férias CLT Art. 134 §1º] Período máximo de 13 dias: deve rejeitar com VACATION_MIN_14_DAYS_REQUIRED
-     ✅ PASS [Férias CLT Art. 134 §1º] Período de 4 dias: deve rejeitar com VACATION_MIN_5_DAYS_REQUIRED
-     ✅ PASS [Férias CLT Art. 134 §3º] Início em Sexta-feira (2 dias pré-DSR domingo): deve rejeitar com VACATION_START_PRE_DSR_FORBIDDEN
-     ✅ PASS [Férias CLT Art. 134 §3º] Início em Sábado (1 dia pré-DSR domingo): deve rejeitar com VACATION_START_PRE_DSR_FORBIDDEN
-     ✅ PASS [Férias CLT Art. 137] Alerta de dobra: período concessivo a 30 dias do fim acusa alertRiskDoublePay=true
-     ✅ PASS [Férias scheduleVacation] scheduleVacation deve lançar exceção 422 ao tentar agendar em sexta-feira
-
-     --- GRUPO 4: Férias Antecedendo Feriado Oficial (Art. 134 § 3º CLT) ---
-     ❌ FAIL [Férias CLT Art. 134 §3º (Feriado)] Início em 24/12 (1 dia antes de feriado 25/12): deve proibir início pré-feriado
-        Esperado: {"valid":false,"code":"VACATION_START_PRE_HOLIDAY_OR_DSR_FORBIDDEN"}
-        Obtido:   {"valid":true}
-        Detalhes: {"valid":true}
-
-     ================================================================================
-     RESUMO DO ESTRESSE ADVERSARIAL
-     ================================================================================
-     Total de testes: 16
-     Passaram: 13
-     Falharam: 3
-     ```
-
-2. **Inspeção de Código — `artifacts/api-server/hr/schedules.mjs` (Linhas 380 a 409)**:
-   ```javascript
-   const tEntrada = new Date(entrada.timestamp || `2026-10-22T${entrada.time || "22:00:00"}Z`).getTime();
-   const tSaida = new Date(saida.timestamp || `2026-10-23T${saida.time || "05:00:00"}Z`).getTime();
-
-   // Duração total do turno
-   const totalShiftMinutes = Math.max(0, Math.round((tSaida - tEntrada) / 60000));
-
-   // Turno iniciado às 22h00 e cobrindo até pelo menos 05h00
-   const clockNightMinutes = Math.min(420, totalShiftMinutes);
-   const fictitiousNightMinutes = clockNightMinutes * (60 / 52.5);
-
-   let extensionMinutes = 0;
-   let sumula60Applied = false;
-
-   // Se o turno ultrapassou 420 minutos (05h00), aplica Súmula 60, II TST
-   if (totalShiftMinutes > 420) {
-     extensionMinutes = totalShiftMinutes - 420;
-     sumula60Applied = true;
-   }
-
-   const totalEligibleClockMinutes = clockNightMinutes + (sumula60Applied ? extensionMinutes : 0);
-   const totalFictitiousMinutes = totalEligibleClockMinutes * (60 / 52.5);
-   ```
-   - O código não verifica a interseção do horário real com a faixa noturna (22h00 às 05h00). Ele assume que qualquer turno informado tem 420 min de jornada noturna iniciando às 22h00.
-   - Além disso, se o `timestamp` não for fornecido e apenas o `time` for passado, o código hardcodeia `2026-10-22` para a entrada e `2026-10-23` para a saída, gerando turnos fantasmas de mais de 30 horas para jornadas diurnas sem data explícita.
-   - O endpoint exposto em produção `POST /api/hr/schedules/calculate-overtime-night` chama diretamente essa função na linha 611 de `router.mjs`.
-
-3. **Inspeção de Código — `artifacts/api-server/hr/schedules.mjs` (Linhas 502 a 517)**:
-   ```javascript
-   // Regra 4: Proibição de início nos 2 dias que antecedem DSR ou Feriado (Art. 134 § 3º CLT)
-   for (const p of periods) {
-     if (!p.startDate) continue;
-     const [y, m, d] = p.startDate.split("-").map(Number);
-     const dateObj = new Date(Date.UTC(y, m - 1, d));
-     const dayOfWeek = dateObj.getUTCDay(); // 0 = Domingo ... 5 = Sexta, 6 = Sábado
-
-     // Se o DSR for domingo (padrão), o início na Sexta-feira (2 dias antes) ou Sábado (1 dia antes) é proibido
-     if (dayOfWeek === 5 || dayOfWeek === 6) {
-       return {
-         valid: false,
-         code: "VACATION_START_PRE_DSR_FORBIDDEN",
-         message: "É vedado o início das férias no período de dois dias que antecede dia de descanso semanal remunerado ou feriado (Art. 134 § 3º CLT)."
-       };
-     }
-   }
-   ```
-   - O código ignora completamente os feriados oficiais (que já estão mapeados na mesma biblioteca via `getOfficialHolidays(year)`). Uma tentativa de iniciar férias na quinta-feira 24/12 (véspera de Natal) é erroneamente aprovada como válida.
+**Agent**: Challenger M3.1 (Intent & Lookup Challenger)  
+**Target Project**: CorpFlats Guest-Flow-Manager  
+**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m3_1\`  
+**Timestamp**: 2026-11-05T16:00:00Z  
+**Verdict**: **REQUEST_CHANGES**
 
 ---
 
-## 2. Logic Chain (Cadeia Lógica de Raciocínio)
+## 1. Observation
 
-1. **Tolerância Art. 58 CLT e Súmula 366 TST**:
-   - As premissas legais da CLT e do TST determinam que variações de até 5 minutos por batida (com teto de 10 minutos diários) não devem ser computadas.
-   - No entanto, uma vez ultrapassado o teto de 5 minutos em uma batida ou de 10 minutos na soma diária, computa-se a totalidade dos minutos como horas extras.
-   - O teste comprovou empiricamente que a função `calculatePunchTolerance` atende 100% a essa lógica nos 5 cenários testados (4 min ok, 5 min ok, 6 min computa 6 min; 10 min ok, 11 min computa 11 min).
+### 1.1 Baseline Point Tests Execution
+All 4 mandatory baseline test commands passed:
+- `node tests/b2b-cancellation.test.mjs`: 17 passed, 0 failed, duration ~2.09s.
+- `node tests/b2b-voucher-extraction.test.mjs`: 15 passed, 0 failed, duration ~0.33s.
+- `node tests/b2b-voucher-dates.test.mjs`: 12 passed, 0 failed, duration ~0.06s.
+- `node scripts/check-twin-parity.mjs`: 39/39 runtime files in 100% SHA-256 parity.
 
-2. **Cálculo de Adicional Noturno e Hora Ficta**:
-   - Pelo Art. 73 da CLT, o trabalho noturno urbano é compreendido exclusivamente entre as 22h00 de um dia e as 05h00 do dia seguinte.
-   - A hora ficta reduzida (52m30s) e o adicional noturno de 20% aplicam-se apenas às horas trabalhadas dentro desse intervalo e, pela Súmula 60, II do TST, às horas prorrogadas após as 05h00 caso a jornada noturna tenha sido integralmente cumprida.
-   - A implementação de `calculateNightShiftAndExtension` parte da falsa premissa de que qualquer turno recebido é noturno a partir das 22h00. Quando submetida a um turno puramente diurno (08:00 às 17:00), a função atribui 420 minutos noturnos + 120 minutos de prorrogação (totalizando 617,14 min fictos). Em um turno misto (18:00 às 23:00, onde apenas 1 hora é noturna), a função atribui 300 minutos noturnos.
-   - Essa falha gera passivo e distorção na apuração de folha (Marco M4) e no endpoint `POST /api/hr/schedules/calculate-overtime-night`.
+### 1.2 Adversarial Stress Suite Execution (`tests/adversarial-b2b-cancellation.test.mjs`)
+Running `node tests/adversarial-b2b-cancellation.test.mjs` resulted in:
+`# tests 11, suites 7, pass 3, fail 8, duration_ms 2040.8381`.
 
-3. **Validação de Férias nos 2 Dias que Antecedem Feriados**:
-   - O Art. 134 § 3º da CLT veda o início das férias "no período de dois dias que antecede feriado ou dia de descanso semanal remunerado".
-   - Enquanto a validação contra o DSR dominical (sextas e sábados) está correta, a validação contra feriados oficiais não foi implementada, permitindo o agendamento de férias em vésperas de feriados nacionais, estaduais e municipais de Campos dos Goytacazes/RJ.
+Verbatim test failure outputs:
+```text
+not ok 1 - 1.1 Voucher with "Voucher de Hospedagem" subject and policy text in body must NOT be isCancellation
+  operator: 'strictEqual', expected: false, actual: true
+  stack: tests/adversarial-b2b-cancellation.test.mjs:95:14
+
+not ok 2 - 1.2 Voucher with "Novo Voucher" subject and "O cancelamento da reserva" must NOT be isCancellation
+  operator: 'strictEqual', expected: false, actual: true
+  stack: tests/adversarial-b2b-cancellation.test.mjs:106:14
+
+not ok 3 - 1.3 Execution safety: executeAutonomousB2bCancellation must NOT cancel a reservation on voucher email
+  operator: 'strictEqual', expected: false, actual: true
+  stack: tests/adversarial-b2b-cancellation.test.mjs:122:14
+
+not ok 4 - 2.1 Reply to confirmation email (Re: Confirmação de Reserva) with cancel request must be isCancellation
+  operator: 'strictEqual', expected: true, actual: false
+  stack: tests/adversarial-b2b-cancellation.test.mjs:139:14
+
+not ok 5 - 2.2 Forward of confirmation email (Fwd: Confirmação de Reserva) with cancel command must be isCancellation
+  operator: 'strictEqual', expected: true, actual: false
+  stack: tests/adversarial-b2b-cancellation.test.mjs:150:14
+
+not ok 6 - 2.3 Brazilian Portuguese prefix (RES: Confirmação de Reserva) with cancel request must be isCancellation
+  operator: 'strictEqual', expected: true, actual: false
+  stack: tests/adversarial-b2b-cancellation.test.mjs:160:14
+
+not ok 7 - 3.1 Regex should not extract "ALIZADO" as RLOC from Portuguese word "localizado"
+  operator: 'notStrictEqual', expected: 'ALIZADO', actual: 'ALIZADO'
+  stack: tests/adversarial-b2b-cancellation.test.mjs:170:14
+
+not ok 8 - 3.2 matchReservationForCancellation must NOT match unrelated reservation having "localizado" in notes
+  operator: 'strictEqual', expected: false, actual: true
+  stack: tests/adversarial-b2b-cancellation.test.mjs:180:14
+```
+
+### 1.3 Code Inspection & Verbatim Code Evidences
+
+#### Observation O1: `detectB2bEmailIntent` in `artifacts/api-server/b2b-cancellation-service.mjs:107-151`
+```javascript
+107:  const bodyActionCancellationPattern =
+108:    /(?:SOLICITA(?:MOS)?\s+(?:O\s+)?CANCELAMENTO|PEDIMOS\s+(?:O\s+)?CANCELAMENTO|FAVOR\s+CANCELAR|PROCEDER\s+COM\s+O\s+CANCELAMENTO|CANCELAMENTO\s+DA\s+RESERVA|CANCELAMENTO\s+DO\s+VOUCHER|CONFIRMAMOS\s+O\s+CANCELAMENTO|RESERVA\s+(?:FOI|ESTA|ESTÁ)\s+CANCELADA|PLEASE\s+CANCEL\s+THE\s+BOOKING|WE\s+REQUEST\s+CANCELLATION)/i;
+...
+134:  if (hasBodyActionCancellation && !cleanSubject.includes("CONFIRMACAO DE RESERVA")) {
+135:    return {
+136:      isCancellation: true,
+137:      isVoucher: false,
+138:      confidence: 0.92,
+139:      cancellationKeywords: Array.from(new Set(cancellationKeywordsFound))
+140:    };
+141:  }
+142:
+143:  if (hasVoucherSignals) {
+144:    // É um voucher/confirmação que eventualmente citou regras de cancelamento
+145:    return {
+146:      isCancellation: false,
+147:      isVoucher: true,
+148:      confidence: 0.95,
+149:      cancellationKeywords: []
+150:    };
+151:  }
+```
+
+#### Observation O2: `extractCancellationData` in `artifacts/api-server/b2b-cancellation-service.mjs:207-212`
+```javascript
+207:  const rlocMatch =
+208:    combined.match(/(?:localizador|rloc|locator|loc)[:\s#]+(?:rloc[-_\s]?)?([A-Z0-9_-]{3,15})\b/i) ||
+209:    combined.match(/\b(?:RLOC|LOC)[-_\s]?([A-Z0-9]{4,10})\b/i);
+210:  if (rlocMatch) {
+211:    rloc = rlocMatch[1].trim().toUpperCase();
+212:  }
+```
+
+#### Observation O3: `matchReservationForCancellation` (Tier 2) in `artifacts/api-server/b2b-cancellation-service.mjs:347-353`
+```javascript
+347:      return (
+348:        rlocVal === rawRloc ||
+349:        (cleanRloc && (rlocVal === `RLOC-${cleanRloc}` || rlocVal === `LOC-${cleanRloc}` || rlocVal === cleanRloc)) ||
+350:        extVal === rawRloc ||
+351:        (cleanRloc && (extVal === `RLOC-${cleanRloc}` || extVal === `LOC-${cleanRloc}` || extVal === cleanRloc)) ||
+352:        notesVal.includes(rawRloc) ||
+353:        (cleanRloc && notesVal.includes(cleanRloc))
+354:      );
+```
 
 ---
 
-## 3. Caveats (Ressalvas)
+## 2. Logic Chain
 
-- A suíte de testes original do worker (`tests/hr-m3-whatsapp-schedules.test.mjs`) passou 12/12 porque o teste `M3-10` continha apenas casos positivos noturnos (22h às 05h e 22h às 07h), omitindo os casos negativos (turnos diurnos e turnos mistos).
-- O módulo `calculateDayOvertimeAndNight` opera corretamente para horas extras a 50% e 100% em dias úteis, DSR e feriados.
-- Em respeito rigoroso ao `AGENTS.md` e às instruções do orquestrador, nenhum arquivo de produção foi alterado pelo Challenger.
+1. **Vulnerability 1 — False Positive Cancellation of Vouchers (Tests 1.1, 1.2, 1.3)**:
+   - From O1, `bodyActionCancellationPattern` includes the passive noun phrase `CANCELAMENTO\s+DA\s+RESERVA`.
+   - In Portuguese, cancellation policy disclaimers in voucher emails routinely contain this exact phrase (e.g. *"A política de cancelamento da reserva estabelece..."*, *"Em caso de cancelamento da reserva..."*, *"O cancelamento da reserva pode ser feito sem custos..."*).
+   - If the subject is `VOUCHER DE HOSPEDAGEM` or `Novo Voucher`, `!cleanSubject.includes("CONFIRMACAO DE RESERVA")` evaluates to `true`.
+   - Line 134 evaluates before line 143 (`hasVoucherSignals`). The check `isOnlyPolicyNotice` is never consulted on line 134.
+   - Therefore, `detectB2bEmailIntent` returns `{ isCancellation: true, isVoucher: false, confidence: 0.92 }`.
+   - In `executeAutonomousB2bCancellation`, this results in the immediate cancellation of legitimate active reservations in the PMS (`status = 'cancelada'`, housekeeping requests erased, breakfast cancelled).
+
+2. **Vulnerability 2 — False Negative on Cancellation Replies & Forwards (Tests 2.1, 2.2, 2.3)**:
+   - When agencies request cancellations, they standardly reply to or forward the original confirmation email thread (`Re: Confirmação de Reserva - B2B-25055349`, `RES: Confirmação de Reserva...`, `Fwd: Confirmação de Reserva...`).
+   - The email body contains explicit imperative commands (e.g. *"solicitamos o cancelamento da reserva"*, *"favor cancelar"*), which set `hasBodyActionCancellation = true`.
+   - However, because the email subject retains `"Confirmação de Reserva"`, `!cleanSubject.includes("CONFIRMACAO DE RESERVA")` on line 134 evaluates to `false`.
+   - Execution falls through to line 143 (`hasVoucherSignals`), which matches `"Confirmação de Reserva"` in the subject and returns `{ isCancellation: false, isVoucher: true }`.
+   - The authentic cancellation request is ignored; the reservation remains active in the PMS (`status = 'confirmada'`), locking the flat and causing operational losses.
+
+3. **Vulnerability 3 — Catastrophic False Positive Match via RLOC from Portuguese Vocabulary (Tests 3.1, 3.2)**:
+   - From O2, `\b(?:RLOC|LOC)[-_\s]?([A-Z0-9]{4,10})\b/i` has an optional separator (`[-_\s]?`).
+   - The word `localizado` starts with `loc`, followed by empty separator, followed by `alizado` (7 letters, matching `[A-Z0-9]{4,10}`).
+   - `extractCancellationData` parses `localizado` as `rloc = 'ALIZADO'`.
+   - From O3, Tier 2 matching searches `notesVal.includes(rawRloc)` in reservation notes.
+   - If an unrelated reservation in the database has notes mentioning `"Flat bem localizado e silencioso"`, `notesVal.includes("ALIZADO")` evaluates to `true`.
+   - If only 1 reservation in the DB has "localizado" in its notes, `matchReservationForCancellation` declares a Tier 2 RLOC match (`matched: true, matchedBy: 'rloc'`) and cancels the unrelated reservation.
+
+4. **Robust Areas Verified (Tests 4.1, 5.1, 6.1)**:
+   - Ambiguous emails with duplicate active matches properly block blind cancellation (`MULTIPLE_MATCHES`).
+   - Unmatched cancellation emails properly generate a `B2B_CANCELLATION_RESERVATION_NOT_FOUND` audit log and dispatch a warning alert via Z-API.
+   - The operational safety invariant `CHECKED_IN_CANCELLATION` strictly blocks cancellations when a guest has `in_house`, `checked_in`, `checkedInAt`, or `actualCheckinTime`.
 
 ---
 
-## 4. Conclusion (Conclusão e Recomendações)
+## 3. Caveats
 
-**Veredicto**: `REQUEST_CHANGES`.
-
-### Correções Necessárias para o Worker:
-
-1. **Refatorar `calculateNightShiftAndExtension` em `artifacts/api-server/hr/schedules.mjs` e `scripts/hr/schedules.mjs`**:
-   - Realizar o cálculo minuto a minuto ou por fatias de intervalo entre o horário de entrada e o de saída:
-     - Identificar a quantidade de minutos efetivamente trabalhados dentro da janela legal das 22:00 às 05:00 (`clockNightMinutes`).
-     - Se o colaborador cumpriu integralmente o período noturno (entrada <= 22:00 e trabalhou até 05:00) e continuou trabalhando além das 05:00, calcular os minutos pós-05:00 como `extensionMinutes` e setar `sumula60Applied = true` (Súmula 60, II TST).
-     - Se o turno não cruzar a janela das 22:00 às 05:00 (como 08:00 às 17:00), retornar `clockNightMinutes: 0`, `fictitiousNightMinutes: 0`, `extensionMinutes: 0`, `sumula60Applied: false`, `totalFictitiousMinutes: 0`.
-
-2. **Adicionar checagem de feriados em `validateVacationSchedule`**:
-   - Obter a lista de feriados via `getOfficialHolidays(year)`.
-   - Para cada período solicitado, verificar se a `startDate` cai em um feriado oficial ou nos 2 dias que o antecedem (ex: feriado em `H`, proibido iniciar em `H`, `H-1` e `H-2`).
-   - Se coincidir, rejeitar com `valid: false`, `code: "VACATION_START_PRE_HOLIDAY_FORBIDDEN"` e mensagem explicativa citando o Art. 134 § 3º da CLT.
-
-3. **Atualizar Paridade Twin-Server e Suíte de Testes M3**:
-   - Replicar as alterações identicamente em `scripts/hr/schedules.mjs`.
-   - Adicionar o caso do turno diurno e do início pré-feriado no teste `tests/hr-m3-whatsapp-schedules.test.mjs`.
-   - Garantir 100% de paridade SHA-256 via `node scripts/check-twin-parity.mjs`.
+- The worker correctly adhered to the Twin-Server Parity rule (39/39 runtime files in 100% SHA-256 parity).
+- The PMS cascade logic (freeing flats, housekeeping hygiene, breakfast orders, deleted B2B seeds, dual audit logs, and WhatsApp alerting) works accurately once a valid cancellation is matched.
+- The issues identified are strictly confined to intent classification (`detectB2bEmailIntent`) and lookup extraction boundaries (`extractCancellationData` / `matchReservationForCancellation`).
 
 ---
 
-## 5. Verification Method (Método de Verificação Independente)
+## 4. Conclusion
 
-Para reproduzir empiricamente o diagnóstico:
+**Verdict: REQUEST_CHANGES.**
 
-1. **Executar o script de estresse adversarial**:
-   ```powershell
-   node .agents/teamwork/challenger_m3_1/stress_schedules_math.mjs
-   ```
-   *Comportamento observado*: 13 testes aprovados e 3 testes falhando com código de saída 1.
+Milestone 3 cannot be approved for production in its current state because:
+1. **Critical Safety Risk**: Incoming voucher confirmation emails with standard policy text will autonomously cancel confirmed reservations.
+2. **Operational Failure**: Cancellation requests sent as replies/forwards to confirmation threads are silently ignored.
+3. **Data Integrity Risk**: Normal Portuguese words like `localizado` in email text trigger false RLOC matches against reservation notes, resulting in cancellation of unrelated bookings.
 
-2. **Verificar os testes pontuais de regressão**:
-   ```powershell
-   node --test tests/hr-m3-whatsapp-schedules.test.mjs
-   ```
+### Actionable Remediation Required:
+1. **In `detectB2bEmailIntent`**:
+   - Remove passive noun phrase `CANCELAMENTO\s+DA\s+RESERVA` from `bodyActionCancellationPattern`. Require imperative verb triggers (e.g. `(?:SOLICITA(?:MOS)?|PEDIMOS|FAVOR|PROCEDER\s+COM\s+O|EFETUAR\s+O|CONFIRMAMOS\s+O)\s+(?:O\s+)?CANCELAMENTO` or `FAVOR\s+CANCELAR` or `RESERVA\s+(?:FOI|ESTA|ESTÁ)\s+CANCELADA`).
+   - If `isOnlyPolicyNotice` is true, do not treat policy mentions as cancellation actions.
+   - Strip reply/forward subject prefixes (`/^(?:RE|RES|FWD|ENC|FORWARD)[:\s_-]+/i`) before subject pattern analysis.
+   - If the body contains an explicit cancellation action command, prioritize it even if the historical subject contains `"Confirmação de Reserva"`.
+2. **In `extractCancellationData`**:
+   - Fix the RLOC regex to require a strict delimiter after `LOC`, e.g. `\b(?:RLOC[-_:\s]?|LOC[-_:\s]+)([A-Z0-9]{4,10})\b/i`. Never match bare `LOC` directly attached to letters (`localizado`, `localidade`, `location`).
+   - Support 6-digit B2B numbers in `numLabelMatch` without requiring `B2B-` (`\d{6,10}`).
+3. **In `matchReservationForCancellation`**:
+   - In Tier 2 notes matching, require word boundaries or explicit `RLOC-`/`LOC-` prefix before matching against notes.
+4. **Mirror changes**:
+   - Maintain 100% SHA-256 twin parity between `artifacts/api-server/` and `scripts/`.
+   - Ensure all 11 tests in `tests/adversarial-b2b-cancellation.test.mjs` pass alongside `tests/b2b-cancellation.test.mjs`.
+
+---
+
+## 5. Verification Method
+
+To independently verify the bugs and subsequent fixes, run:
+
+```powershell
+cd 'c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager'
+
+# 1. Run Challenger's Adversarial Stress Harness
+node tests/adversarial-b2b-cancellation.test.mjs
+
+# 2. Run Baseline Point Tests
+node tests/b2b-cancellation.test.mjs
+node tests/b2b-voucher-extraction.test.mjs
+node tests/b2b-voucher-dates.test.mjs
+
+# 3. Verify Twin-Server Parity
+node scripts/check-twin-parity.mjs
+```
+
+**Invalidation / Acceptance Condition**:
+All 11 tests in `tests/adversarial-b2b-cancellation.test.mjs` must pass with exit code 0 (`pass 11, fail 0`), with 0 regressions on baseline tests, and 100% twin parity maintained.

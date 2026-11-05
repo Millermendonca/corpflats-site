@@ -1,26 +1,40 @@
-## 2026-10-22T12:54:38Z
-Você é o Reviewer 2 (reviewer_m3_2) para o Marco M3 (Escalas 6x1 44h, Art. 58 CLT, Horas Extras 50%/100%, Adicional Noturno e Gestão de Férias CLT).
-Seu diretório de trabalho exclusivo é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_2`
-A raiz do projeto é:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
+# Dispatch — Reviewer M3.2 (Milestone 3 Safety & Integration Reviewer)
 
-MANDATÓRIO:
-1. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (seções R4 e R7).
-2. Leia `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_17\PROJECT.md` (Features F15, F16, F17, F18).
-3. Leia o relatório do worker: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3\handoff.md`.
+## Role
+M3 Safety & Operational Invariant Reviewer
 
-SUA MISSÃO DE REVISÃO TÉCNICA:
-1. Examinar minuciosamente o código implementado em `artifacts/api-server/hr/schedules.mjs` e seu espelho em `scripts/hr/schedules.mjs`:
-   - Feriados oficiais: municipais de Campos dos Goytacazes/RJ (Santo Amaro 15/01, Santíssimo Salvador 06/08), estadual do RJ (São Jorge 23/04), móveis e nacionais.
-   - `generateMonthlySchedule`: grade 6x1 44h (modalidades 7h20 e 8h+4h), limite de 6 dias consecutivos sem folga (OJ 410 TST), revezamento dominical (quinzenal para mulheres per Art. 386 CLT e máx 7 semanas para homens).
-   - `calculatePunchTolerance`: Art. 58 §1º CLT (5 min/batida, 10 min/dia) e aplicação estrita da regra da integralidade (Súmula 366 TST).
-   - `calculateDayOvertimeAndNight`: apuração de horas extras 50% em dias normais e 100% em DSR trabalhado e feriados (Lei 605/49 Art. 9º).
-   - `calculateNightShiftAndExtension`: horário noturno urbano (22h00 às 05h00), hora ficta de 52m30s (fator 60/52.5 = 1.142857), adicional de 20% e prorrogação pós-05h00 per Súmula 60, II do TST.
-   - Gestão de Férias: validação do Art. 134 CLT (máx 3 períodos, um >= 14 dias, nenhum < 5 dias, proibição de início 2 dias antes de DSR ou feriado) e alerta de risco de dobra do concessivo (Art. 137 CLT).
-   - Blindagem estrita de Cris (`id: 2`) e Grazi (`id: 3`): nenhuma rotina CLT deve aceitar ou processar prestadoras.
-2. Executar as verificações pontuais:
-   - `node --test tests/hr-m3-whatsapp-schedules.test.mjs` (NUNCA rodar testes globais).
-   - `node --test tests/hr-m2-timekeeping-compliance.test.mjs` (verificar ausência de regressões).
-3. Escrever seu relatório em `handoff.md` com veredicto explícito: `APPROVE` ou `REQUEST_CHANGES`.
-4. Enviar mensagem ao orquestrador via `send_message`.
+## Task Objective
+Review the operational safety of autonomous cancellations:
+1. Verify `CHECKED_IN_CANCELLATION` invariant: status `'in_house'`, `'checked_in'`, or `checkedInAt` / `actualCheckinTime` must never be cancelled autonomously. Must alert manager with high priority.
+2. Verify PMS cancellation cascade: room release, cleaning request deletion/cleanup, breakfast cancellation, and task cancellation.
+3. Verify integration in `zoho-mail-service.mjs`: incoming webhook and polling sync paths.
+4. Verify twin-server parity: `node scripts/check-twin-parity.mjs` (39/39 files).
+5. Run point tests:
+   ```powershell
+   node tests/b2b-cancellation.test.mjs
+   node tests/b2b-voucher-extraction.test.mjs
+   node tests/b2b-voucher-dates.test.mjs
+   ```
+
+## Output
+Deliver `handoff.md` with explicit verdict `APPROVE` or `REQUEST_CHANGES` and send a message to orchestrator upon completion.
+
+
+## 2026-11-05T15:49:44Z
+You are Reviewer M3.2 (Safety & Integration Reviewer) for Milestone 3 in Guest-Flow-Manager.
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_2\
+Read DISPATCH.md in your working directory and ORIGINAL_REQUEST.md.
+Also read Worker M3.1 handoff at c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\teamwork_worker_m3_1\handoff.md.
+Review the operational safety of b2b-cancellation-service.mjs (CHECKED_IN_CANCELLATION invariant, cascade, zoho integration).
+Run point tests:
+node tests/b2b-cancellation.test.mjs
+node tests/b2b-voucher-extraction.test.mjs
+node tests/b2b-voucher-dates.test.mjs
+node scripts/check-twin-parity.mjs
+Deliver handoff.md with explicit verdict APPROVE or REQUEST_CHANGES. Send message to orchestrator upon completion.
+
+
+## 2026-11-05T15:53:54Z
+**Context**: Milestone 3 Safety & Integration Review
+**Content**: Please note that your assignment is Milestone 3 of the B2B Email Ingestion project (`artifacts/api-server/b2b-cancellation-service.mjs`, `zoho-mail-service.mjs`, and `tests/b2b-cancellation.test.mjs`), as detailed in your `DISPATCH.md`. Please re-initialize your `BRIEFING.md` and `progress.md` for Milestone 3 (ignoring any legacy files from past runs), review `b2b-cancellation-service.mjs` and the cancellation cascade, and deliver `handoff.md`.
+**Action**: Please update progress.md and deliver your handoff report once review and point tests pass.
