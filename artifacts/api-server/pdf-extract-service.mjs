@@ -266,8 +266,9 @@ function parsePdfContentStream(streamText) {
         }
 
         if (closeIdx === -1) {
-          // Bracket não fechado: avança para evitar loop
-          continue;
+          // Bracket não fechado: encerra varredura do bloco (não há ']' restante)
+          i = len;
+          break;
         }
 
         const arrayContent = block.slice(arrStart, closeIdx);

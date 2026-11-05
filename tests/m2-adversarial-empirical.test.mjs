@@ -195,9 +195,9 @@ Política de Cancelamento: Cancelamento gratuito até 24h antes.
     it('Probe 6: Binary or malformed stream with repeated brackets should not freeze event loop', () => {
       const largeBinary = Buffer.alloc(50000, 0x5b); // '[' repeated 50,000 times
       const pdf = Buffer.concat([
-        Buffer.from('%PDF-1.4\nstream\n'),
+        Buffer.from('%PDF-1.4\nstream\nBT\nT*\n'),
         largeBinary,
-        Buffer.from('\nendstream\n%%EOF')
+        Buffer.from('\nET\nendstream\n%%EOF')
       ]);
 
       const t0 = Date.now();
