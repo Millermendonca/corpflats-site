@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { format, addDays, parseISO, differenceInDays, isValid } from "date-fns"
 import { useToast } from "@/hooks/use-toast"
@@ -522,25 +522,48 @@ export function FlatCard({
   const [extraMattressSetting, setExtraMattressSetting] = useState<boolean>(
     Boolean(request?.extraMattress)
   )
-  const [adminNoteText, setAdminNoteText] = useState<string>(
-    (typeof request?.adminNote === "string" ? request.adminNote : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))).trim()
-  )
+  const extractServerCardNote = () => {
+    const raw = (typeof request?.adminNote === "string"
+      ? request.adminNote
+      : (typeof flat?.setupInfo?.specialRequests === "string"
+          ? flat.setupInfo.specialRequests
+          : (request?.status === "pending_issue" && typeof request?.pendingObservation === "string" ? request.pendingObservation : ""))
+    ).trim()
+    if (!raw) return ""
+    return raw
+      .replace(/(?:•\s*)?Check-out\s+confirmado[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Check-out\s+expresso[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Confirmado\s+na\s+Portaria[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Limpeza\s+de\s+check-out\s+gerada\s+automaticamente[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Quarto\s+desocupado[^\n•]*/gi, "")
+      .replace(/^[•\s\-,|]+|[•\s\-,|]+$/g, "")
+      .trim()
+  }
+
+  const serverCardNote = extractServerCardNote()
+  const [adminNoteText, setAdminNoteText] = useState<string>(serverCardNote)
   const [isSavingInstructions, setIsSavingInstructions] = useState(false)
+  const [isInlineNoteFocused, setIsInlineNoteFocused] = useState(false)
+  const [inlineNoteSavedFlash, setInlineNoteSavedFlash] = useState(false)
+  const lastSyncedServerNoteRef = useRef<string>(serverCardNote)
 
   useEffect(() => {
     const twin = Boolean(request?.twinBeds)
     const mattress = Boolean(request?.extraMattress)
-    const note = (typeof request?.adminNote === "string" ? request.adminNote : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))).trim()
 
     setTwinBedsSetting(twin)
     setExtraMattressSetting(mattress)
-    setAdminNoteText(note)
-  }, [request?.twinBeds, request?.extraMattress, flat?.setupInfo?.specialRequests, request?.adminNote, request?.pendingObservation])
 
-  const handleSaveInstructions = async (e: React.FormEvent) => {
-    e.preventDefault()
+    if (serverCardNote !== lastSyncedServerNoteRef.current && !isInlineNoteFocused) {
+      setAdminNoteText(serverCardNote)
+      lastSyncedServerNoteRef.current = serverCardNote
+    }
+  }, [request?.twinBeds, request?.extraMattress, serverCardNote, isInlineNoteFocused])
+
+  const saveCardObservation = async (noteToSave: string, closeModal = false) => {
     setIsSavingInstructions(true)
     try {
+      const cleanNote = noteToSave.trim()
       const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
       const res = await fetch(`/api/cleaning/requests/${activeReqId}/admin-instructions`, {
         method: "PATCH",
@@ -551,16 +574,24 @@ export function FlatCard({
           requestDate: date,
           twinBeds: twinBedsSetting,
           extraMattress: extraMattressSetting,
-          adminNote: adminNoteText.trim() ? adminNoteText.trim() : null,
+          adminNote: cleanNote ? cleanNote : null,
         })
       })
       if (!res.ok) {
         throw new Error("Erro ao salvar instruções no servidor.")
       }
-      setInstructionsModalOpen(false)
+      setAdminNoteText(cleanNote)
+      lastSyncedServerNoteRef.current = cleanNote
+      if (closeModal) {
+        setInstructionsModalOpen(false)
+      }
+      setInlineNoteSavedFlash(true)
+      setTimeout(() => setInlineNoteSavedFlash(false), 2200)
       toast({
-        title: "Instruções salvas",
-        description: "As configurações de quarto e recado para a camareira foram atualizadas com sucesso."
+        title: cleanNote ? "Observação salva no card" : "Observação removida",
+        description: cleanNote
+          ? `Ação registrada para as camareiras no Flat ${flat.flatNumber || flat.number} (descartável após a limpeza).`
+          : `A observação do Flat ${flat.flatNumber || flat.number} foi limpa deste card.`
       })
       queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date }) })
       queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date }) })
@@ -573,6 +604,11 @@ export function FlatCard({
     } finally {
       setIsSavingInstructions(false)
     }
+  }
+
+  const handleSaveInstructions = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await saveCardObservation(adminNoteText, true)
   }
 
   useEffect(() => {
@@ -652,21 +688,7 @@ export function FlatCard({
   // reserva e não deve acionar o indicador de instrução de camas para a camareira.
   const isTwinBeds = Boolean(request?.twinBeds)
   const hasExtraMattress = Boolean(request?.extraMattress)
-  const maidNoteText = (() => {
-    const raw = (typeof request?.adminNote === "string" 
-      ? request.adminNote 
-      : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))
-    ).trim()
-    if (!raw) return ""
-    return raw
-      .replace(/(?:•\s*)?Check-out\s+confirmado[^\n•]*/gi, "")
-      .replace(/(?:•\s*)?Check-out\s+expresso[^\n•]*/gi, "")
-      .replace(/(?:•\s*)?Confirmado\s+na\s+Portaria[^\n•]*/gi, "")
-      .replace(/(?:•\s*)?Limpeza\s+de\s+check-out\s+gerada\s+automaticamente[^\n•]*/gi, "")
-      .replace(/(?:•\s*)?Quarto\s+desocupado[^\n•]*/gi, "")
-      .replace(/^[•\s\-,|]+|[•\s\-,|]+$/g, "")
-      .trim()
-  })()
+  const maidNoteText = serverCardNote
   const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
   const pendingSurveys = flat?.pendingSurveys || []
 
@@ -2002,53 +2024,146 @@ export function FlatCard({
               </div>
             )}
 
-            {/* Instruções para a Camareira (Limpeza Padrão / Preparação de Check-in) */}
-            {!isInstruction && !isServiceCleaning && (isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText) && (
-              <div 
+            {/* Instruções para a Camareira (Limpeza Padrão / Preparação de Check-in / Observação Descartável do Card) */}
+            {!isInstruction && (
+              (isAdmin && currentStatus !== "clean") ||
+              isTwinBeds ||
+              hasExtraMattress ||
+              flat?.setupInfo?.prefersHighFloor ||
+              maidNoteText
+            ) && (
+              <div
                 className={cn(
-                  "bg-amber-500/10 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700/60 rounded-xl p-2.5 text-xs space-y-2",
-                  isAdmin && "cursor-pointer hover:border-amber-400 hover:bg-amber-500/15 transition-all"
+                  "rounded-xl p-2.5 text-xs space-y-2 transition-all border",
+                  (isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText)
+                    ? "bg-amber-500/10 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700/60"
+                    : "bg-slate-500/5 dark:bg-slate-900/40 border-slate-200/80 dark:border-slate-800/80"
                 )}
-                onClick={isAdmin ? () => setInstructionsModalOpen(true) : undefined}
-                title={isAdmin ? "Clique para editar instruções e notas deste quarto" : undefined}
               >
                 <div className="font-bold text-amber-950 dark:text-amber-200 flex items-center justify-between gap-1.5">
                   <div className="flex items-center gap-1.5">
-                    <BedDouble className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                    <span>Instruções da Governança / Preparação:</span>
+                    <BedDouble className={cn(
+                      "w-4 h-4 shrink-0",
+                      (isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText)
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-slate-500 dark:text-slate-400"
+                    )} />
+                    <span className={cn(
+                      !(isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText) &&
+                        "text-slate-700 dark:text-slate-300"
+                    )}>
+                      Observação p/ Camareira (neste card):
+                    </span>
                   </div>
                   {isAdmin && (
-                    <span className="text-[10px] text-amber-800 dark:text-amber-300 font-semibold underline flex items-center gap-0.5">
-                      ✏️ Recado / Nota
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setInstructionsModalOpen(true)}
+                      className="text-[10px] text-amber-800 dark:text-amber-300 hover:text-amber-950 dark:hover:text-amber-100 font-semibold underline flex items-center gap-0.5 cursor-pointer"
+                      title="Configurar camas de solteiro ou colchão extra"
+                    >
+                      ⚙️ Camas / Colchão
+                    </button>
                   )}
                 </div>
 
-                <div className="flex flex-wrap gap-1.5">
-                  {isTwinBeds && (
-                    <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
-                      <span>🛏️ Montar 2 Camas de Solteiro</span>
-                    </Badge>
-                  )}
-                  {hasExtraMattress && (
-                    <Badge className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
-                      <span>➕ Colocar Colchão Extra</span>
-                    </Badge>
-                  )}
-                  {flat?.setupInfo?.prefersHighFloor && (
-                    <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
-                      <span>🏢 Prefere Andar Alto</span>
-                    </Badge>
-                  )}
-                </div>
-
-                {maidNoteText && (
-                  <div className="bg-background/90 p-2 rounded-lg border border-amber-300/80 dark:border-amber-700/60 text-[11px] text-foreground leading-snug">
-                    <span className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1 mb-0.5 text-[10px]">
-                      📝 Nota / Recado para a Camareira:
-                    </span>
-                    <p className="whitespace-pre-wrap font-medium">{maidNoteText}</p>
+                {(isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor) && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {isTwinBeds && (
+                      <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
+                        <span>🛏️ Montar 2 Camas de Solteiro</span>
+                      </Badge>
+                    )}
+                    {hasExtraMattress && (
+                      <Badge className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
+                        <span>➕ Colocar Colchão Extra</span>
+                      </Badge>
+                    )}
+                    {flat?.setupInfo?.prefersHighFloor && (
+                      <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
+                        <span>🏢 Prefere Andar Alto</span>
+                      </Badge>
+                    )}
                   </div>
+                )}
+
+                {isAdmin && currentStatus !== "clean" ? (
+                  <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-start gap-1.5">
+                      <Textarea
+                        value={adminNoteText}
+                        onChange={(e) => setAdminNoteText(e.target.value)}
+                        onFocus={() => setIsInlineNoteFocused(true)}
+                        onBlur={() => setIsInlineNoteFocused(false)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault()
+                            if (!isSavingInstructions && adminNoteText.trim() !== maidNoteText) {
+                              saveCardObservation(adminNoteText, false)
+                            }
+                          }
+                        }}
+                        rows={2}
+                        placeholder="Digite uma ação/observação p/ as camareiras neste flat (descartável após limpar)..."
+                        className="min-h-[46px] text-[11px] leading-snug py-1.5 px-2 bg-background/95 border-amber-300/80 dark:border-amber-700/60 focus-visible:ring-amber-500 resize-none flex-1"
+                        data-testid={`input-inline-maid-note-${flat.flatNumber}`}
+                      />
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={isSavingInstructions || adminNoteText.trim() === maidNoteText}
+                          onClick={() => saveCardObservation(adminNoteText, false)}
+                          className={cn(
+                            "h-7 px-2.5 text-[10px] font-bold rounded-lg shadow-2xs",
+                            adminNoteText.trim() !== maidNoteText
+                              ? "bg-amber-600 hover:bg-amber-700 text-white"
+                              : "bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                          )}
+                          data-testid={`button-save-inline-maid-note-${flat.flatNumber}`}
+                        >
+                          {isSavingInstructions ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : inlineNoteSavedFlash && adminNoteText.trim() === maidNoteText ? (
+                            <span className="flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400">
+                              <Check className="w-3 h-3" /> Salvo
+                            </span>
+                          ) : (
+                            "Salvar"
+                          )}
+                        </Button>
+                        {(maidNoteText || adminNoteText.trim()) && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isSavingInstructions}
+                            onClick={() => {
+                              if (maidNoteText) {
+                                saveCardObservation("", false)
+                              } else {
+                                setAdminNoteText("")
+                              }
+                            }}
+                            title="Limpar observação deste card"
+                            className="h-6 px-2 text-[10px] font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-rose-200 dark:border-rose-800/60 rounded-lg"
+                            data-testid={`button-clear-inline-maid-note-${flat.flatNumber}`}
+                          >
+                            <X className="w-3 h-3 mr-0.5" /> Limpar
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  maidNoteText && (
+                    <div className="bg-background/90 p-2 rounded-lg border border-amber-300/80 dark:border-amber-700/60 text-[11px] text-foreground leading-snug">
+                      <span className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1 mb-0.5 text-[10px]">
+                        📝 Nota / Recado para a Camareira:
+                      </span>
+                      <p className="whitespace-pre-wrap font-medium">{maidNoteText}</p>
+                    </div>
+                  )
                 )}
               </div>
             )}

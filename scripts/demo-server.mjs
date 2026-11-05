@@ -19195,10 +19195,33 @@ app.patch("/api/cleaning/requests/:requestId/admin-instructions", (req, res) => 
   if (typeof isPaidCleaning === "boolean") {
     item.isPaidCleaning = isPaidCleaning;
   }
+  const targetDate = requestDate || item.requestDate || getTodayStr();
   if (adminNote !== undefined) {
     item.adminNote = adminNote ? String(adminNote).trim() : null;
-    item.pendingObservation = item.adminNote;
+    if (item.status !== "pending_issue") {
+      item.pendingObservation = item.adminNote;
+    }
     item.manualAdminNote = true;
+
+    // Se a observação veio carregada de um card pendente de dia anterior, sincroniza também nos registros anteriores não limpos do mesmo flat
+    for (const priorReq of (db.cleaningRequests || [])) {
+      if (
+        priorReq.id !== item.id &&
+        !priorReq.isDeleted &&
+        priorReq.status !== "deleted" &&
+        priorReq.status !== "clean" &&
+        (Number(priorReq.flatId) === Number(item.flatId) || String(priorReq.flatNumber) === String(item.flatNumber)) &&
+        priorReq.requestDate &&
+        priorReq.requestDate < targetDate &&
+        (priorReq.manualAdminNote || priorReq.isManualInstruction)
+      ) {
+        priorReq.adminNote = item.adminNote;
+        if (priorReq.status !== "pending_issue") {
+          priorReq.pendingObservation = item.adminNote;
+        }
+        priorReq.updatedAt = new Date().toISOString();
+      }
+    }
   }
   item.updatedAt = new Date().toISOString();
 
@@ -19209,14 +19232,13 @@ app.patch("/api/cleaning/requests/:requestId/admin-instructions", (req, res) => 
     invalidateRequestsForDateCache();
   }
 
-  // Sincroniza a reserva correspondente no flat para a data de check-in / estadia
-  const targetDate = requestDate || item.requestDate || getTodayStr();
+  // Sincroniza apenas camas/colchão na reserva correspondente (NUNCA sobrescreve specialRequests/notes da reserva com observação descartável do card)
   const relatedRes = (db.reservations || []).find(r =>
     (Number(r.flatId) === Number(item.flatId) || String(r.flatNumber) === String(item.flatNumber)) &&
     r.status !== "cancelada" && r.status !== "cancelado" &&
     (r.checkinDate === targetDate || (r.checkinDate <= targetDate && r.checkoutDate >= targetDate))
   );
-  if (relatedRes) {
+  if (relatedRes && (typeof twinBeds === "boolean" || typeof extraMattress === "boolean")) {
     if (typeof twinBeds === "boolean") {
       relatedRes.twinBeds = twinBeds;
       if (!twinBeds && (relatedRes.bedType === "2 Solteiro" || relatedRes.bedType === "twin")) {
@@ -19227,13 +19249,6 @@ app.patch("/api/cleaning/requests/:requestId/admin-instructions", (req, res) => 
     }
     if (typeof extraMattress === "boolean") {
       relatedRes.extraMattress = extraMattress;
-    }
-    if (adminNote !== undefined) {
-      const cleanNote = adminNote ? String(adminNote).trim() : "";
-      relatedRes.specialRequests = cleanNote;
-      if (!cleanNote || relatedRes.notes === "Teste" || relatedRes.notes === relatedRes.specialRequests) {
-        relatedRes.notes = cleanNote;
-      }
     }
     relatedRes.updatedAt = new Date().toISOString();
   }
@@ -19334,13 +19349,11 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     existing.twinBeds = resolvedTwinBeds;
     existing.manualTwinBeds = true;
     existing.manualExtraMattress = true;
-    existing.manualAdminNote = true;
-    existing.isManualInstruction = true;
-    if (noteText) {
-      existing.adminNote = noteText;
-      existing.pendingObservation = noteText;
-      existing.notes = noteText;
-    }
+    existing.manualAdminNote = Boolean(noteText);
+    existing.isManualInstruction = Boolean(noteText || resolvedTwinBeds || isInstruction);
+    existing.adminNote = noteText || null;
+    existing.pendingObservation = noteText || null;
+    existing.notes = noteText || null;
     if (assignedUser) {
       existing.assignedUserId = assignedUser.id;
       existing.assignedUsername = assignedUser.username;
@@ -19575,6 +19588,37 @@ function getRequestsForDate(dateStr, isNested = false) {
     return cleaned.length > 0 ? cleaned : null;
   };
 
+  // Busca observação manual de card anterior do mesmo flat que ficou pendente (não limpo) até ser concluído
+  const findUncleanedPriorManualNote = (fNumber, fId, targetDate) => {
+    if (typeof getTodayStr === "function" && targetDate < getTodayStr()) return null;
+    const candidates = (db.cleaningRequests || []).filter(r => {
+      if (!r || r.isDeleted || r.status === "deleted") return false;
+      const isSameFlat = (String(r.flatNumber) === String(fNumber)) || (fId && Number(r.flatId) === Number(fId));
+      if (!isSameFlat) return false;
+      const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
+      if (isInst) return false;
+      if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= targetDate) return false;
+      if (r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
+      if (!r.manualAdminNote) return false;
+      const cleanNote = sanitizeCardNote(r.adminNote);
+      if (!cleanNote) return false;
+      const alreadyResolvedAfter = (db.cleaningRequests || []).some(c =>
+        ((String(c.flatNumber) === String(fNumber)) || (fId && Number(c.flatId) === Number(fId))) &&
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction" &&
+        c.type !== "instruction" &&
+        c.type !== "bed_adjustment_only" &&
+        (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= r.requestDate &&
+        (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) <= targetDate &&
+        (c.status === "clean" || ((c.status === "deleted" || c.isDeleted) && (!r.createdAt || !c.deletedAt || c.deletedAt >= r.createdAt)))
+      );
+      return !alreadyResolvedAfter;
+    });
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => String(b.requestDate).localeCompare(String(a.requestDate)));
+    return sanitizeCardNote(candidates[0].adminNote);
+  };
+
   // Se a consulta for para uma data futura (ex: amanhã), garante que as solicitações de hoje já estão geradas e sincronizadas
   if (!isNested && typeof getTodayStr === "function" && dateStr > getTodayStr()) {
     getRequestsForDate(getTodayStr(), true);
@@ -19719,6 +19763,16 @@ function getRequestsForDate(dateStr, isNested = false) {
       };
       db.cleaningRequests.push(card);
       shouldSaveDb = true;
+    }
+
+    if (!card.manualAdminNote && !card.adminNote && card.status !== "clean") {
+      const carriedStayoverNote = findUncleanedPriorManualNote(fNumber, flat.id, dateStr);
+      if (carriedStayoverNote) {
+        card.adminNote = carriedStayoverNote;
+        card.pendingObservation = carriedStayoverNote;
+        card.manualAdminNote = true;
+        shouldSaveDb = true;
+      }
     }
 
     requestsForDate.push(card);
@@ -19934,25 +19988,38 @@ function getRequestsForDate(dateStr, isNested = false) {
       ? Boolean(existingCleaning.extraMattress)
       : arrivingHasMattress;
 
-    // Extrai nota da reserva que está chegando hoje
-    const arrivingMaidNote = arrivingRes ? ((arrivingRes.specialRequests || "").trim() || (arrivingRes.notes || "").trim() || null) : null;
-    let resolvedAdminNote = null;
-    if (isManualNote && existingCleaning && existingCleaning.adminNote !== undefined) {
-      resolvedAdminNote = existingCleaning.adminNote;
-    } else if (arrivingMaidNote && !arrivingMaidNote.includes("Limpeza de check-out gerada automaticamente") && arrivingMaidNote.toLowerCase() !== "teste") {
-      resolvedAdminNote = arrivingMaidNote;
-    } else if (!isManualNote && (resolvedTwinBeds || resolvedExtraMattress)) {
-      const parts = [];
-      if (resolvedTwinBeds) parts.push("Separar as camas, colocar como 2 solteiras");
-      if (resolvedExtraMattress) parts.push("Colocar 1 colchão extra");
-      resolvedAdminNote = parts.join(" • ");
-    }
-
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
     const isFutureDate = typeof getTodayStr === "function" && dateStr > getTodayStr();
     let resolvedStatus = existingCleaning ? existingCleaning.status : (auditCleanEvent ? "clean" : "dirty");
     if (isFutureDate && resolvedStatus === "clean" && (!existingCleaning?.completedAt || existingCleaning.completedAt.substring(0, 10) < dateStr)) {
       resolvedStatus = "dirty";
+    }
+
+    // Extrai nota da reserva que está chegando hoje + eventual observação manual pendente de dia anterior não limpo
+    const arrivingMaidNoteRaw = arrivingRes ? ((arrivingRes.specialRequests || "").trim() || (arrivingRes.notes || "").trim() || null) : null;
+    const validArrivingMaidNote = (arrivingMaidNoteRaw && !arrivingMaidNoteRaw.includes("Limpeza de check-out gerada automaticamente") && arrivingMaidNoteRaw.toLowerCase() !== "teste")
+      ? sanitizeCardNote(arrivingMaidNoteRaw)
+      : null;
+    const carriedPriorManualNote = (!isManualNote && resolvedStatus !== "clean")
+      ? findUncleanedPriorManualNote(flatNumber, flat.id, dateStr)
+      : null;
+
+    let resolvedAdminNote = null;
+    if (isManualNote && existingCleaning) {
+      resolvedAdminNote = existingCleaning.adminNote || null;
+    } else if (carriedPriorManualNote && validArrivingMaidNote) {
+      resolvedAdminNote = carriedPriorManualNote.includes(validArrivingMaidNote)
+        ? carriedPriorManualNote
+        : `${carriedPriorManualNote} • ${validArrivingMaidNote}`;
+    } else if (carriedPriorManualNote) {
+      resolvedAdminNote = carriedPriorManualNote;
+    } else if (validArrivingMaidNote) {
+      resolvedAdminNote = validArrivingMaidNote;
+    } else if (!isManualNote && (resolvedTwinBeds || resolvedExtraMattress)) {
+      const parts = [];
+      if (resolvedTwinBeds) parts.push("Separar as camas, colocar como 2 solteiras");
+      if (resolvedExtraMattress) parts.push("Colocar 1 colchão extra");
+      resolvedAdminNote = parts.join(" • ");
     }
     const resolvedMaidName = resolvedStatus === "clean"
       ? (existingCleaning?.assignedUsername || existingCleaning?.assignedUserName || auditCleanEvent?.details?.assignedMaidName || (auditCleanEvent ? "Cris" : null))
@@ -20019,12 +20086,16 @@ function getRequestsForDate(dateStr, isNested = false) {
       isExtended: false,
       twinBeds: resolvedTwinBeds,
       extraMattress: resolvedExtraMattress,
+      manualTwinBeds: Boolean(existingCleaning?.manualTwinBeds),
+      manualExtraMattress: Boolean(existingCleaning?.manualExtraMattress),
+      manualAdminNote: Boolean(existingCleaning?.manualAdminNote || carriedPriorManualNote),
+      isManualInstruction: Boolean(existingCleaning?.isManualInstruction),
       autoReservationCode: arrivingRes ? arrivingRes.code : (existingCleaning?.autoReservationCode || null),
       autoReservationId: arrivingRes ? arrivingRes.id : (existingCleaning?.autoReservationId || null),
       adminNote: cleanExistingAdmin,
       leavingGuest: pmsRes.guestName || pmsRes.title || "Hóspede",
       arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : null,
-      pendingObservation: cleanExistingPendingObs,
+      pendingObservation: resolvedStatus === "pending_issue" ? (cleanExistingPendingObs || cleanExistingAdmin) : cleanExistingAdmin,
       smokedInRoom: resolvedSmoked,
       guestSmoked: resolvedSmoked,
       smokedMarkedAt: existingCleaning?.smokedMarkedAt || null,
@@ -20060,11 +20131,14 @@ function getRequestsForDate(dateStr, isNested = false) {
         existingCleaning.vacantSource = resolvedVacantSource;
         shouldSaveDb = true;
       }
-      if (existingCleaning.twinBeds !== resolvedTwinBeds || existingCleaning.extraMattress !== resolvedExtraMattress || existingCleaning.adminNote !== cleanExistingAdmin) {
+      if (existingCleaning.twinBeds !== resolvedTwinBeds || existingCleaning.extraMattress !== resolvedExtraMattress || existingCleaning.adminNote !== cleanExistingAdmin || (carriedPriorManualNote && !existingCleaning.manualAdminNote)) {
         existingCleaning.twinBeds = resolvedTwinBeds;
         existingCleaning.extraMattress = resolvedExtraMattress;
         existingCleaning.adminNote = cleanExistingAdmin;
         existingCleaning.pendingObservation = cleanExistingAdmin;
+        if (carriedPriorManualNote) {
+          existingCleaning.manualAdminNote = true;
+        }
         if (!isManualTwin && !arrivingRes) {
           existingCleaning.autoReservationCode = null;
           existingCleaning.autoReservationId = null;
@@ -20205,7 +20279,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         if (String(r.flatNumber) !== "509" && r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation && (!currentStayRes || r.requestDate !== currentStayRes.checkoutDate)) return false;
       }
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
-      if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout" && !(r.source === "service_order" && r.serviceOrderId && r.requestDate >= "2026-11-01")) return false;
+      if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout" && !(r.source === "service_order" && r.serviceOrderId && r.requestDate >= "2026-11-01") && !(r.manualAdminNote && r.adminNote)) return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
 
       // Descarta cards de checkout órfãos cuja reserva associada na data foi cancelada, no_show ou remarcada
@@ -20244,11 +20318,21 @@ function getRequestsForDate(dateStr, isNested = false) {
 
         const resolvedTwin = isManualTwin ? Boolean(prevReq.twinBeds) : Boolean(arrivingToday && (arrivingToday.twinBeds || arrivingToday.bedType === "2 Solteiro" || arrivingToday.bedType === "twin"));
         const resolvedMattress = isManualMattress ? Boolean(prevReq.extraMattress) : Boolean(arrivingToday && arrivingToday.extraMattress);
+        const arrNoteRaw = arrivingToday ? ((arrivingToday.specialRequests || "").trim() || (arrivingToday.notes || "").trim() || null) : null;
+        const validArrNote = (arrNoteRaw && !arrNoteRaw.includes("Limpeza de check-out gerada automaticamente") && arrNoteRaw.toLowerCase() !== "teste")
+          ? sanitizeCardNote(arrNoteRaw)
+          : null;
         let resolvedNote = prevReq.adminNote;
-        if (!isManualNote) {
-          const arrNote = arrivingToday ? ((arrivingToday.specialRequests || "").trim() || (arrivingToday.notes || "").trim() || null) : null;
-          if (arrNote && !arrNote.includes("Limpeza de check-out gerada automaticamente") && arrNote.toLowerCase() !== "teste") {
-            resolvedNote = arrNote;
+        if (isManualNote) {
+          const cleanPrevNote = sanitizeCardNote(prevReq.adminNote);
+          if (cleanPrevNote && validArrNote && !cleanPrevNote.includes(validArrNote)) {
+            resolvedNote = `${cleanPrevNote} • ${validArrNote}`;
+          } else {
+            resolvedNote = cleanPrevNote;
+          }
+        } else {
+          if (validArrNote) {
+            resolvedNote = validArrNote;
           } else if (resolvedTwin || resolvedMattress) {
             const parts = [];
             if (resolvedTwin) parts.push("Separar as camas, colocar como 2 solteiras");
@@ -20449,29 +20533,41 @@ app.get("/api/reservations/checkouts", (req, res) => {
 
     const hasPrefersHighFloor = Boolean(arrivingTodayRes && arrivingTodayRes.prefersHighFloor);
 
-    // Nota da camareira da reserva que chega hoje
+    // Nota da camareira da reserva que chega hoje ou observação manual descartável do card
     const resNoteForMaid = (arrivingTodayRes && ((arrivingTodayRes.specialRequests || "").trim() || (arrivingTodayRes.notes || "").trim())) || null;
     let resolvedSpecialRequests = null;
-    if (isManualNote && req_.adminNote) {
-      let cleanAdminNote = String(req_.adminNote).trim();
-      if (cleanAdminNote.includes("Pagamento integral") || cleanAdminNote.includes("Quitação de saldo") || cleanAdminNote.includes("Limpeza de check-out gerada automaticamente")) {
-        cleanAdminNote = "";
+    if (Boolean(req_.manualAdminNote)) {
+      if (req_.adminNote) {
+        let cleanAdminNote = String(req_.adminNote).trim();
+        if (cleanAdminNote.includes("Pagamento integral") || cleanAdminNote.includes("Quitação de saldo") || cleanAdminNote.includes("Limpeza de check-out gerada automaticamente")) {
+          cleanAdminNote = "";
+        }
+        resolvedSpecialRequests = sanitizeCardNote(cleanAdminNote);
+      } else {
+        resolvedSpecialRequests = null;
       }
-      resolvedSpecialRequests = sanitizeCardNote(cleanAdminNote);
-    }
-    if (!resolvedSpecialRequests && resNoteForMaid) {
-      let cleanResNote = String(resNoteForMaid).trim();
-      if (cleanResNote.includes("Pagamento integral") || cleanResNote.includes("Quitação de saldo") || cleanResNote.includes("Limpeza de check-out gerada automaticamente") || cleanResNote.toLowerCase() === "teste") {
-        cleanResNote = "";
+    } else {
+      if (isManualNote && req_.adminNote) {
+        let cleanAdminNote = String(req_.adminNote).trim();
+        if (cleanAdminNote.includes("Pagamento integral") || cleanAdminNote.includes("Quitação de saldo") || cleanAdminNote.includes("Limpeza de check-out gerada automaticamente")) {
+          cleanAdminNote = "";
+        }
+        resolvedSpecialRequests = sanitizeCardNote(cleanAdminNote);
       }
-      resolvedSpecialRequests = sanitizeCardNote(cleanResNote);
-    }
-    if (!resolvedSpecialRequests && (hasTwinBeds || hasExtraMattress)) {
-      const autoNotes = [];
-      if (hasTwinBeds) autoNotes.push("Separar as camas, colocar como 2 solteiras");
-      if (hasExtraMattress) autoNotes.push("Colocar 1 colchão extra");
-      if (autoNotes.length > 0) {
-        resolvedSpecialRequests = autoNotes.join(" • ");
+      if (!resolvedSpecialRequests && resNoteForMaid) {
+        let cleanResNote = String(resNoteForMaid).trim();
+        if (cleanResNote.includes("Pagamento integral") || cleanResNote.includes("Quitação de saldo") || cleanResNote.includes("Limpeza de check-out gerada automaticamente") || cleanResNote.toLowerCase() === "teste") {
+          cleanResNote = "";
+        }
+        resolvedSpecialRequests = sanitizeCardNote(cleanResNote);
+      }
+      if (!resolvedSpecialRequests && (hasTwinBeds || hasExtraMattress)) {
+        const autoNotes = [];
+        if (hasTwinBeds) autoNotes.push("Separar as camas, colocar como 2 solteiras");
+        if (hasExtraMattress) autoNotes.push("Colocar 1 colchão extra");
+        if (autoNotes.length > 0) {
+          resolvedSpecialRequests = autoNotes.join(" • ");
+        }
       }
     }
 
@@ -20638,7 +20734,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
         twinBeds: hasTwinBeds,
         extraMattress: hasExtraMattress,
         adminNote: resolvedSpecialRequests,
-        pendingObservation: cleanPendingObs || resolvedSpecialRequests,
+        pendingObservation: req_.status === "pending_issue" ? (cleanPendingObs || resolvedSpecialRequests) : resolvedSpecialRequests,
         arrivingGuest: isStayover ? null : (arrivingTodayRes?.guestName || req_.arrivingGuest || null),
         leavingGuest: (isStayover || isServiceCleaning) ? null : (req_.leavingGuest || null),
         currentGuest: currentGuest,
@@ -22594,6 +22690,10 @@ app.delete("/api/cleaning/requests/:id", (req, res) => {
     target.deletedAt = nowIso;
     target.deletedBy = userAuth.username || "admin";
     if (pmsRes?.id) target.deletedReservationId = pmsRes.id;
+    target.adminNote = null;
+    target.pendingObservation = null;
+    target.manualAdminNote = false;
+    target.isManualInstruction = false;
     target.assignedUserId = null;
     target.assignedUsername = null;
     target.assignedUserName = null;
