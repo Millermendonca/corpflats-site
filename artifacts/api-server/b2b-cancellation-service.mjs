@@ -78,7 +78,11 @@ export function detectB2bEmailIntent(emailData = {}) {
     html = String(emailData.html || emailData.bodyHtml || emailData.content || "").trim();
   }
 
-  const cleanSubject = normalizeStr(subject);
+  // Remove prefixos comuns de resposta e encaminhamento de threads de e-mail (Re:, RES:, Fwd:, ENC:, etc.)
+  const threadPrefixRegex = /^(?:(?:RE|RES|FWD|ENC|FORWARD|RESPOSTA|ENCAMINHADO)[\s:_-]+)+/i;
+  const strippedSubject = subject.replace(threadPrefixRegex, "").trim();
+
+  const cleanSubject = normalizeStr(strippedSubject);
   const cleanBody = normalizeStr(`${text}\n${html.replace(/<[^>]+>/g, " ")}`);
   const fullText = `${cleanSubject}\n${cleanBody}`;
 
@@ -101,27 +105,42 @@ export function detectB2bEmailIntent(emailData = {}) {
 
   // Padrões explícitos de cancelamento no assunto
   const subjectCancellationPattern =
-    /(?:CANCELAMENTO|CANCELLATION|BOOKING\s+CANCELL?ATION|CANCELLATION\s+OF\s+BOOKING|BOOKING\s+CANCELL?ED|RESERVA\s+(?:FOI\s+)?CANCELADA|SOLICITA[CÇ][AÃ]O\s+DE\s+CANCELAMENTO|CANCELAMENTO\s+EFETUADO)/i;
+    /(?:CANCELAMENTO\s+D[EO]\s+RESERVA|SOLICITA[CÇ][AÃ]O\s+DE\s+CANCELAMENTO|CANCELAMENTO\s+EFETUADO|PEDIDO\s+DE\s+CANCELAMENTO|\bCANCELAMENTO\b|\bCANCELLATION\b|BOOKING\s+CANCELL?ATION|CANCELLATION\s+OF\s+BOOKING|BOOKING\s+CANCELL?ED|RESERVA\s+(?:FOI\s+)?CANCELADA)/i;
+
+  const isSubjectPolicyNotice =
+    /(?:POL[IÍ]TICA\s+DE\s+CANCELAMENTO|REGRAS?\s+DE\s+CANCELAMENTO)/i.test(cleanSubject);
 
   // Padrões imperativos / de ação de cancelamento no corpo do e-mail
+  // ATENÇÃO: NÃO incluir a locução passiva "CANCELAMENTO DA RESERVA", que surge rotineiramente em cláusulas de política em vouchers
   const bodyActionCancellationPattern =
-    /(?:SOLICITA(?:MOS)?\s+(?:O\s+)?CANCELAMENTO|PEDIMOS\s+(?:O\s+)?CANCELAMENTO|FAVOR\s+CANCELAR|PROCEDER\s+COM\s+O\s+CANCELAMENTO|CANCELAMENTO\s+DA\s+RESERVA|CANCELAMENTO\s+DO\s+VOUCHER|CONFIRMAMOS\s+O\s+CANCELAMENTO|RESERVA\s+(?:FOI|ESTA|ESTÁ)\s+CANCELADA|PLEASE\s+CANCEL\s+THE\s+BOOKING|WE\s+REQUEST\s+CANCELLATION)/i;
+    /(?:(?:SOLICITA(?:MOS)?|PEDIMOS|FAVOR|PROCEDER\s+COM\s+O|EFETUAR\s+O|CONFIRMAMOS\s+O)\s+(?:O\s+)?CANCELAMENTO|FAVOR\s+CANCELAR|RESERVA\s+(?:FOI|ESTA|ESTÁ)\s+CANCELADA|PLEASE\s+CANCEL\s+(?:THE\s+)?BOOKING|WE\s+REQUEST\s+(?:THE\s+)?CANCELLATION|(?:RESERVATION|BOOKING)\s+HAS\s+BEEN\s+CANCELLED)/i;
 
   // Padrões de voucher / confirmação
   const voucherPattern =
     /(?:CONFIRMA[CÇ][AÃ]O\s+D[AE]\s+RESERVA|\bVOUCHER\b|CONFIRMED\s+BOOKING|BOOKING\s+CONFIRMATION|NOVO\s+VOUCHER)/i;
 
-  // Padrões de falso positivo (menção de regras/política de cancelamento em vouchers)
+  // Padrões de menção de política/regras de cancelamento
   const isOnlyPolicyNotice =
-    /(?:POL[IÍ]TICA\s+DE\s+CANCELAMENTO|REGRAS?\s+DE\s+CANCELAMENTO|CANCELAMENTO\s+GRATUITO|TAXA\s+DE\s+CANCELAMENTO|MULTA\s+DE\s+CANCELAMENTO|EM\s+CASO\s+DE\s+CANCELAMENTO)/i.test(
+    /(?:POL[IÍ]TICA\s+DE\s+CANCELAMENTO|REGRAS?(?:\s+DE|\s*:)?\s+CANCELAMENTO|CANCELAMENTO\s+GRATUITO|TAXA\s+DE\s+CANCELAMENTO|MULTA\s+DE\s+CANCELAMENTO|EM\s+CASO\s+DE\s+CANCELAMENTO|CANCELAMENTO\s+.*?\s+SEM\s+CUSTOS)/i.test(
       fullText
     );
 
-  const hasSubjectCancellation = subjectCancellationPattern.test(cleanSubject);
+  const hasSubjectCancellation = subjectCancellationPattern.test(cleanSubject) && !isSubjectPolicyNotice;
   const hasBodyActionCancellation = bodyActionCancellationPattern.test(cleanBody);
   const hasVoucherSignals = voucherPattern.test(cleanSubject) || voucherPattern.test(cleanBody);
 
-  // Decisão e cálculo de confiança
+  // 1. Prioridade máxima: se o corpo contém comando de ação de cancelamento explícito,
+  // cancelamento prevalece mesmo se o assunto da thread contiver "Confirmação de Reserva" (reply/forward histórico)
+  if (hasBodyActionCancellation) {
+    return {
+      isCancellation: true,
+      isVoucher: false,
+      confidence: 0.95,
+      cancellationKeywords: Array.from(new Set(cancellationKeywordsFound))
+    };
+  }
+
+  // 2. Assunto com cancelamento explícito (e que não seja mero comunicado de política)
   if (hasSubjectCancellation) {
     return {
       isCancellation: true,
@@ -131,17 +150,8 @@ export function detectB2bEmailIntent(emailData = {}) {
     };
   }
 
-  if (hasBodyActionCancellation && !cleanSubject.includes("CONFIRMACAO DE RESERVA")) {
-    return {
-      isCancellation: true,
-      isVoucher: false,
-      confidence: 0.92,
-      cancellationKeywords: Array.from(new Set(cancellationKeywordsFound))
-    };
-  }
-
+  // 3. Voucher/confirmação que eventualmente citou regras/política de cancelamento
   if (hasVoucherSignals) {
-    // É um voucher/confirmação que eventualmente citou regras de cancelamento
     return {
       isCancellation: false,
       isVoucher: true,
@@ -150,7 +160,18 @@ export function detectB2bEmailIntent(emailData = {}) {
     };
   }
 
-  if (cancellationKeywordsFound.length > 0 && !isOnlyPolicyNotice && (hasBodyActionCancellation || /CANCEL/i.test(cleanSubject))) {
+  // 4. Apenas comunicado de política/regras sem comando ativo nem voucher
+  if (isOnlyPolicyNotice) {
+    return {
+      isCancellation: false,
+      isVoucher: false,
+      confidence: 0.0,
+      cancellationKeywords: []
+    };
+  }
+
+  // 5. Fallback com palavras-chave de cancelamento sem sinais de voucher nem de política
+  if (cancellationKeywordsFound.length > 0 && !isOnlyPolicyNotice && /CANCEL/i.test(cleanSubject)) {
     return {
       isCancellation: true,
       isVoucher: false,
@@ -191,7 +212,7 @@ export function extractCancellationData(emailData = {}) {
   if (b2bPrefixMatch) {
     b2bReservationNumber = b2bPrefixMatch[1];
   } else {
-    const numLabelMatch = combined.match(/(?:reserva|voucher|b2b|n[ºo°]|número|pedido)[:\s#]*(\d{7,10})\b/i);
+    const numLabelMatch = combined.match(/(?:reserva|voucher|b2b|n[ºo°]|número|pedido)[:\s#]*(\d{6,10})\b/i);
     if (numLabelMatch) {
       b2bReservationNumber = numLabelMatch[1];
     } else {
@@ -206,7 +227,7 @@ export function extractCancellationData(emailData = {}) {
   let rloc = null;
   const rlocMatch =
     combined.match(/(?:localizador|rloc|locator|loc)[:\s#]+(?:rloc[-_\s]?)?([A-Z0-9_-]{3,15})\b/i) ||
-    combined.match(/\b(?:RLOC|LOC)[-_\s]?([A-Z0-9]{4,10})\b/i);
+    combined.match(/\b(?:RLOC[-_:\s]?|LOC[-_:\s]+)([A-Z0-9]{4,10})\b/i);
   if (rlocMatch) {
     rloc = rlocMatch[1].trim().toUpperCase();
   }
@@ -343,13 +364,31 @@ export function matchReservationForCancellation(db, cancelData = {}) {
       const rlocVal = String(r.b2bLocatorRloc || r.locator || r.rloc || "").trim().toUpperCase();
       const extVal = String(r.externalCode || "").trim().toUpperCase();
       const notesVal = String(r.notes || "").toUpperCase();
+
+      let notesMatch = false;
+      if (notesVal) {
+        const tokensToTest = [];
+        if (rawRloc) tokensToTest.push(rawRloc);
+        if (cleanRloc) tokensToTest.push(cleanRloc);
+
+        for (const tok of tokensToTest) {
+          if (!tok || tok.length < 3) continue;
+          const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const explicitPrefixRegex = new RegExp(`(?:RLOC|LOC)[-_:\\s]+${escaped}\\b`, "i");
+          const wordBoundaryRegex = new RegExp(`\\b${escaped}\\b`, "i");
+          if (explicitPrefixRegex.test(notesVal) || wordBoundaryRegex.test(notesVal)) {
+            notesMatch = true;
+            break;
+          }
+        }
+      }
+
       return (
         rlocVal === rawRloc ||
         (cleanRloc && (rlocVal === `RLOC-${cleanRloc}` || rlocVal === `LOC-${cleanRloc}` || rlocVal === cleanRloc)) ||
         extVal === rawRloc ||
         (cleanRloc && (extVal === `RLOC-${cleanRloc}` || extVal === `LOC-${cleanRloc}` || extVal === cleanRloc)) ||
-        notesVal.includes(rawRloc) ||
-        (cleanRloc && notesVal.includes(cleanRloc))
+        notesMatch
       );
     });
 
@@ -614,10 +653,27 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
   const reservation = matchResult.reservation;
   const adminPhone = db?.settings?.adminWhatsApp || DEFAULT_ADMIN_WHATSAPP;
 
+  // ── IDEMPOTÊNCIA: Reserva já cancelada anteriormente ───────────────────────
+  const currentStatus = String(reservation.status || "").toLowerCase().trim();
+  if (currentStatus === "cancelada" || currentStatus === "cancelled") {
+    return {
+      success: true,
+      cancelled: false,
+      alreadyCancelled: true,
+      reservationCode: reservation.code || String(reservation.id),
+      reservation,
+      matchedBy: matchResult.matchedBy,
+      alertSent: false
+    };
+  }
+
   // ── INVARIANTE CHECKED_IN_CANCELLATION: Bloqueio de cancelamento com hóspede em estada ──
   const isCheckedIn =
-    reservation.status === "in_house" ||
-    reservation.status === "checked_in" ||
+    currentStatus === "in_house" ||
+    currentStatus === "checked_in" ||
+    currentStatus === "hospedado" ||
+    currentStatus === "checkin_realizado" ||
+    Boolean(reservation.checkedIn) ||
     Boolean(reservation.checkedInAt) ||
     Boolean(reservation.actualCheckinTime);
 
@@ -941,7 +997,7 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
       alertSent = true;
     } catch (zErr) {
       console.warn("[B2B Cancellation] Aviso ao enviar WhatsApp ao gestor:", zErr?.message || zErr);
-      alertSent = true;
+      alertSent = false;
     }
   }
 
