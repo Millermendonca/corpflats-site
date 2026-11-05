@@ -265,6 +265,7 @@ const TAG_GROUPS = [
     category: "🔄 Alterações na Reserva",
     tags: [
       { tag: "{{alerta_mudanca_flat}}", label: "Alerta de Mudança de Flat (Condicional)", example: "⚠️ *ATENÇÃO: MUDANÇA PARA O FLAT 113*" },
+      { tag: "{{confirmacao_mudanca_flat}}", label: "Pedido de OK na Troca de Flat (Condicional)", example: "Por favor, confirme com *OK* que viu a mudança." },
       { tag: "{{resumo_alteracoes}}", label: "Itens Alterados (Antigo Riscado / Novo em Destaque)", example: "• *Acomodação / Quarto:*\n  ❌ Flat anterior: ~Flat 101~\n  ✅ *SEU NOVO FLAT: Flat 113* 🔑" },
     ]
   },
@@ -2444,6 +2445,7 @@ export default function WhatsappAutomation() {
       "{{status_cafe}}": (targetRes.includeBreakfast || targetRes.ratePlan === "with_breakfast") ? "Incluso" : "Não incluso",
       "{{aviso_cafe_exclusivo_flat}}": (targetRes.includeBreakfast || targetRes.ratePlan === "with_breakfast") ? "☕ *Sobre o seu Café da Manhã:* informamos que em nossas hospedagens o café da manhã é servido *exclusivamente no flat* (entregue diretamente na sua acomodação no horário agendado por você)." : "",
       "{{alerta_mudanca_flat}}": `⚠️ *ATENÇÃO: MUDANÇA PARA O FLAT ${targetRes.flatNumber || "113"}*\n\n`,
+      "{{confirmacao_mudanca_flat}}": `\n\nPor favor, confirme com *OK* que viu a mudança.`,
       "{{resumo_alteracoes}}": `• *Acomodação / Quarto:*\n  ❌ Flat anterior: ~Flat 101~\n  ✅ *SEU NOVO FLAT: Flat ${targetRes.flatNumber || "113"}* 🔑\n• *Data de Entrada (Check-in):*\n  ❌ Anterior: ~03/09/2026~\n  ✅ *Atualizado: 05/09/2026*\n• *Valor Total:*\n  ❌ Anterior: ~R$ 450,00~\n  ✅ *Atualizado: R$ 600,00*`
     }
 

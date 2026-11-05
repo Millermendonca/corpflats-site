@@ -764,9 +764,7 @@ Qualquer dúvida ou necessidade, estamos à sua total disposição por aqui.`,
 Sua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* foi alterada.
 
 Confira o que foi atualizado:
-{{resumo_alteracoes}}
-
-Por favor, confirme com *OK* que viu a mudança.`,
+{{resumo_alteracoes}}{{confirmacao_mudanca_flat}}`,
     footer: "CorpFlats • Central de Atendimento",
     buttons: [
       { id: "btn_checkin", type: "URL", label: "📝 Assinar Ficha Atualizada", url: "{{link_checkin_digital}}" },
@@ -3649,10 +3647,11 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     }
   }
 
-  // ── Tag: {{resumo_alteracoes}} & {{alerta_mudanca_flat}} ──────────────────
+  // ── Tag: {{resumo_alteracoes}}, {{alerta_mudanca_flat}} & {{confirmacao_mudanca_flat}} ──
   // Formata a lista de campos alterados (antigo riscado em cima e novo embaixo)
   let resumoAlteracoes = "";
   let alertaMudancaFlat = "";
+  let confirmacaoMudancaFlat = "";
   const changes = reservation._changesContext || [];
   const hasChanges = (Array.isArray(changes) && changes.length > 0) ||
     (changes && typeof changes === "object" && !Array.isArray(changes) && Object.keys(changes).length > 0);
@@ -3666,6 +3665,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       if (rawNewFlat) {
         alertaMudancaFlat = `⚠️ *ATENÇÃO: MUDANÇA PARA O FLAT ${rawNewFlat}*\n\n`;
       }
+      confirmacaoMudancaFlat = `\n\nPor favor, confirme com *OK* que viu a mudança.`;
     }
   }
   if (!resumoAlteracoes) {
@@ -3855,6 +3855,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{data_pagamento}}": formatDateBr(reservation.paidAt || new Date().toISOString()),
     "{{resumo_alteracoes}}": resumoAlteracoes,
     "{{alerta_mudanca_flat}}": alertaMudancaFlat,
+    "{{confirmacao_mudanca_flat}}": confirmacaoMudancaFlat,
     "{{nome_camareira}}": reservation.maidName || reservation.foundBy || "Camareira",
     "{{whatsapp_camareira}}": reservation.maidPhone || "",
     "{{link_whatsapp_camareira}}": reservation.maidWhatsAppUrl || (reservation.maidPhone ? `https://wa.me/55${String(reservation.maidPhone).replace(/\D/g, "").replace(/^55/, "")}` : ""),
@@ -3934,11 +3935,15 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       .replace(/^[ \t]*[^\n]*(?:Assinar Ficha Atualizada|Assinar o Termo Atualizado|re-assinar|assinar novamente)[^\n]*\n?/gim, "");
   }
   if (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated") {
-    if (alertaMudancaFlat && !rendered.includes("ATENÇÃO: MUDANÇA PARA O FLAT")) {
-      rendered = `${alertaMudancaFlat}${rendered.trimStart()}`;
-    }
-    if (!/confirme\s+com\s+\*?ok\*?/i.test(rendered)) {
-      rendered = `${rendered.trimEnd()}\n\nPor favor, confirme com *OK* que viu a mudança.`;
+    if (alertaMudancaFlat) {
+      if (!rendered.includes("ATENÇÃO: MUDANÇA PARA O FLAT")) {
+        rendered = `${alertaMudancaFlat}${rendered.trimStart()}`;
+      }
+      if (!/confirme\s+com\s+\*?ok\*?/i.test(rendered)) {
+        rendered = `${rendered.trimEnd()}\n\nPor favor, confirme com *OK* que viu a mudança.`;
+      }
+    } else {
+      rendered = rendered.replace(/\n*Por favor,\s*confirme com \*?OK\*? que viu a mudança\.?/gi, "");
     }
   }
 
@@ -8058,7 +8063,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             if (
               tpl.message.includes("permanecem inalterados") ||
               !tpl.message.includes("{{alerta_mudanca_flat}}") ||
-              !tpl.message.includes("confirme com *OK*")
+              !tpl.message.includes("{{confirmacao_mudanca_flat}}")
             ) {
               tpl.message = defUpdated.message;
               tpl.description = defUpdated.description;
