@@ -333,6 +333,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
   const isResCamposResident = (r: any, g?: any) => {
     if (!r) return false;
+    if (r.isCamposResident === false) return false;
     if (r.isCamposResident === true) return true;
     const isCamposCityName = (s?: string) => {
       if (!s) return false;
@@ -375,24 +376,34 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       return cleanCep.startsWith("280") || cleanCep.startsWith("281");
     };
 
-    const allowGuestFallback = r.isCamposResident !== false;
+    const allowGuestFallback = r.isCamposResident !== false && g?.isCamposResident !== false;
     if (allowGuestFallback && g?.isCamposResident === true) return true;
 
+    const guestHasVerifiedOriginOrAddr = Boolean(
+      g?.fnhrCompleted ||
+      g?.originCity ||
+      isCamposCepStr(g?.cep, g?.address || g?.street) ||
+      (g?.address && !/^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(String(g.address).trim())) ||
+      (g?.street && !/^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(String(g.street).trim()))
+    );
+
     const primaryCity = String(
-      r.guestCity || r.city || r.originCity || (allowGuestFallback ? (g?.city || g?.originCity) : "") || ""
+      r.guestCity || r.city || r.originCity || (allowGuestFallback && guestHasVerifiedOriginOrAddr ? (g?.city || g?.originCity) : "") || ""
     ).trim();
     if (primaryCity && !isCamposCityName(primaryCity) && !isCamposCityName(r.originCity)) {
       return false;
     }
 
     if (isCamposCityName(r.originCity) || isCamposCityName(r.guestCity) || isCamposCityName(r.city) || isCamposAddrStr(r.guestAddress)) return true;
-    if (allowGuestFallback && (isCamposCityName(g?.city) || isCamposCityName(g?.originCity) || isCamposAddrStr(g?.address))) return true;
+    if (allowGuestFallback && guestHasVerifiedOriginOrAddr && (isCamposCityName(g?.city) || isCamposCityName(g?.originCity) || isCamposAddrStr(g?.address))) return true;
     if (r.riskAttentionReason && isCamposCityName(r.riskAttentionReason)) return true;
     if (Array.isArray(r.guests) && r.guests.some((guest: any) =>
-      guest?.isCamposResident === true ||
-      isCamposCityName(guest?.city) ||
-      isCamposCityName(guest?.originCity) ||
-      isCamposAddrStr(guest?.address)
+      guest?.isCamposResident !== false && (
+        guest?.isCamposResident === true ||
+        isCamposCityName(guest?.originCity) ||
+        isCamposAddrStr(guest?.address) ||
+        (guest?.hasCompletedCheckin && isCamposCityName(guest?.city))
+      )
     )) {
       return true;
     }
@@ -6296,7 +6307,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       Flat {selectedRes.flatNumber}
                     </Badge>
                   )}
-                  {(formIsCamposResident || selectedRes?.isCamposResident || isResCamposResident(selectedRes, data.guests.find(g => g.id === selectedRes?.guestId))) && (
+                  {formIsCamposResident && (
                     <Badge className="text-xs font-bold bg-purple-700 hover:bg-purple-800 text-white shrink-0 gap-1 shadow-xs">
                       📍 Campos/RJ
                     </Badge>
@@ -6405,7 +6416,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                 )}
 
                 {/* Banner de Radar Operacional: Hóspede de Campos dos Goytacazes/RJ */}
-                {(formIsCamposResident || selectedRes?.isCamposResident || isResCamposResident(selectedRes, data.guests.find(g => g.id === selectedRes?.guestId))) && (
+                {formIsCamposResident && (
                   <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-700 dark:text-purple-300 flex items-center justify-center shrink-0 text-base">

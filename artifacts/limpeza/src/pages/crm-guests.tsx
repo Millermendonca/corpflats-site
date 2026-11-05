@@ -66,14 +66,14 @@ export default function CrmGuests() {
   const [formPhone, setFormPhone] = useState("")
   const [formEmail, setFormEmail] = useState("")
   const [formDocument, setFormDocument] = useState("")
-  const [formCity, setFormCity] = useState("Campos dos Goytacazes")
-  const [formState, setFormState] = useState("RJ")
+  const [formCity, setFormCity] = useState("")
+  const [formState, setFormState] = useState("")
   const [formCep, setFormCep] = useState("")
   const [formAddress, setFormAddress] = useState("")
   const [formNumber, setFormNumber] = useState("")
   const [formComplement, setFormComplement] = useState("")
   const [formNeighborhood, setFormNeighborhood] = useState("")
-  const [formIbgeCode, setFormIbgeCode] = useState("3301009")
+  const [formIbgeCode, setFormIbgeCode] = useState("")
   const [loadingGuestCep, setLoadingGuestCep] = useState(false)
   const [formCompanyId, setFormCompanyId] = useState("")
   const [formNotes, setFormNotes] = useState("")
@@ -610,14 +610,14 @@ export default function CrmGuests() {
     setFormPhone("")
     setFormEmail("")
     setFormDocument("")
-    setFormCity("Campos dos Goytacazes")
-    setFormState("RJ")
+    setFormCity("")
+    setFormState("")
     setFormCep("")
     setFormAddress("")
     setFormNumber("")
     setFormComplement("")
     setFormNeighborhood("")
-    setFormIbgeCode("3301009")
+    setFormIbgeCode("")
     setFormCompanyId("")
     setFormDocPhotoUrl("")
     setFormDocFileName("")
@@ -640,14 +640,14 @@ export default function CrmGuests() {
     setFormPhone(g.phone || "")
     setFormEmail(g.email || "")
     setFormDocument(g.documentNumber || g.document || "")
-    setFormCity(String(g.city || g.cidade || "Campos dos Goytacazes").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim())
-    setFormState(g.state || g.uf || "RJ")
+    setFormCity(String(g.city || g.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim())
+    setFormState(g.state || g.uf || "")
     const rawCep = String(g.cep || g.guestCep || g.zipCode || "").replace(/\D/g, "").slice(0, 8); setFormCep(rawCep.length > 5 ? `${rawCep.slice(0, 5)}-${rawCep.slice(5)}` : rawCep)
     setFormAddress(g.address || g.logradouro || "")
     setFormNumber(g.number || g.numero || "")
     setFormComplement(g.complement || g.complemento || "")
     setFormNeighborhood(g.neighborhood || g.bairro || "")
-    setFormIbgeCode(g.ibgeCode || g.codigoMunicipio || "3301009")
+    setFormIbgeCode(g.ibgeCode || g.codigoMunicipio || "")
     setFormCompanyId(g.companyId ? String(g.companyId) : "")
     setFormDocPhotoUrl(g.docPhotoUrl || "")
     setFormDocFileName(g.docPhotoUrl ? "documento_anexado" : "")
@@ -697,8 +697,8 @@ export default function CrmGuests() {
         bairro: formNeighborhood.trim(),
         state: formState.trim().toUpperCase(),
         uf: formState.trim().toUpperCase(),
-        ibgeCode: formIbgeCode.trim() || "3301009",
-        codigoMunicipio: formIbgeCode.trim() || "3301009"
+        ibgeCode: formIbgeCode.trim() || (/campos\s+dos\s+go[yi]tacazes/i.test(formCity.trim()) ? "3301009" : ""),
+        codigoMunicipio: formIbgeCode.trim() || (/campos\s+dos\s+go[yi]tacazes/i.test(formCity.trim()) ? "3301009" : "")
       }
 
       if (formDocPhotoUrl) {

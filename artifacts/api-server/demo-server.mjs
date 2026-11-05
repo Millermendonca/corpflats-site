@@ -10150,7 +10150,7 @@ async function _loadDatabaseImpl() {
         email: "millerpessanha@gmail.com",
         document: "12585736792",
         companyName: "",
-        city: "Campos dos Goytacazes",
+        city: "",
         notes: "Gestor e Desenvolvedor CorpFlats",
         tags: ["VIP", "Proprietário", "Gestor"],
         isMonthlyGuest: true,
@@ -10641,10 +10641,17 @@ export function mergeGuestRecords(target, source, database) {
   if ((!target.cep || isGenericPelincaCep(target.cep)) && srcCep && (!isGenericPelincaCep(srcCep) || !target.cep)) {
     target.cep = srcCep;
   }
+  const srcHasRealAddrOrCep = Boolean(
+    (srcAddr && !isGenericPelincaAddr(srcAddr)) ||
+    (srcCep && !isGenericPelincaCep(srcCep))
+  );
   if (!target.city && (source.city || source.cidade || source.municipio || source.tomadorCidade)) {
     const ct = String(source.city || source.cidade || source.municipio || source.tomadorCidade).replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
-    target.city = ct;
-    target.cidade = ct;
+    const isDefaultCamposFallback = /^campos(\s+dos\s+go[yi]tacazes)?$/i.test(ct);
+    if (!isDefaultCamposFallback || srcHasRealAddrOrCep || source.isCamposResident === true || source.fnhrCompleted || source.hasCompletedCheckin) {
+      target.city = ct;
+      target.cidade = ct;
+    }
   } else if (target.city && /\/\s*[A-Za-z]{2}\s*$/.test(target.city)) {
     const cleanCt = String(target.city).replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
     target.city = cleanCt;
@@ -11650,7 +11657,6 @@ export function healContaminatedGuestAndReservationLinks(database) {
     g33.document = "12585736792";
     g33.documentNumber = "12585736792";
     g33.email = "millerpessanha@gmail.com";
-    g33.city = "Campos dos Goytacazes";
     if (g33.street === "Rua Maestro Francisco Braga" || g33.neighborhood === "Copacabana" || g33.vehiclePlate === "SRL9E08") {
       for (const f of ["address", "street", "logradouro", "number", "streetNumber", "numero", "complement", "complemento", "neighborhood", "bairro", "cep", "state", "uf", "vehicle", "vehiclePlate", "vehicleBrand", "vehicleModel", "vehicleColor"]) {
         delete g33[f];
@@ -11709,6 +11715,44 @@ export function healContaminatedGuestAndReservationLinks(database) {
         g.googleContactEtag = null;
         g.googleContactSyncedAt = null;
         g.googleContactDisplayName = null;
+        changed = true;
+      }
+    }
+    const gCityTrim = String(g.city || g.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
+    if (/^campos(\s+dos\s+go[yi]tacazes)?$/i.test(gCityTrim) && g.isCamposResident !== true && !g.aiDocInspection?.isCamposResident) {
+      const gRealAddr = String(g.street || g.address || g.logradouro || "").trim();
+      const gRealCep = String(g.cep || "").replace(/\D/g, "");
+      const hasRealCamposProof = Boolean(
+        (gRealAddr && !isGenericPelincaAddr(gRealAddr)) ||
+        (gRealCep && !isGenericPelincaCep(gRealCep) && (gRealCep.startsWith("280") || gRealCep.startsWith("281")))
+      );
+      if (!hasRealCamposProof) {
+        g.city = "";
+        g.cidade = "";
+        if (g.ibgeCode === "3301009") {
+          g.ibgeCode = "";
+          g.codigoMunicipio = "";
+        }
+        changed = true;
+      }
+    }
+  }
+  for (const r of currentDb.reservations) {
+    if (!r) continue;
+    const rCityTrim = String(r.guestCity || r.city || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
+    if (/^campos(\s+dos\s+go[yi]tacazes)?$/i.test(rCityTrim) && r.isCamposResident !== true && !r.aiDocInspection?.isCamposResident) {
+      const rRealAddr = String(r.guestStreet || r.street || r.guestAddress || r.address || "").trim();
+      const rRealCep = String(r.guestCep || r.cep || "").replace(/\D/g, "");
+      const hasRealResProof = Boolean(
+        (rRealAddr && !isGenericPelincaAddr(rRealAddr)) ||
+        (rRealCep && !isGenericPelincaCep(rRealCep) && (rRealCep.startsWith("280") || rRealCep.startsWith("281")))
+      );
+      if (!hasRealResProof) {
+        if (r.guestCity) r.guestCity = "";
+        if (r.city) r.city = "";
+        if (r.guests?.[0] && /^campos(\s+dos\s+go[yi]tacazes)?$/i.test(String(r.guests[0].city || "").trim()) && r.guests[0].isCamposResident !== true) {
+          r.guests[0].city = "";
+        }
         changed = true;
       }
     }
@@ -12622,6 +12666,12 @@ export function reconcileAndMergeGuests(database, force = false) {
   for (const inv of currentDb.invoices) {
     if (!inv || (!inv.tomadorNome && !inv.tomadorCpfCnpj)) continue;
     if (isForbiddenTestOrInternalGuestName(inv.tomadorNome)) continue;
+    const invHasRealAddr = Boolean(
+      (inv.tomadorEndereco && !isGenericPelincaAddr(inv.tomadorEndereco)) ||
+      (inv.tomadorCep && !isGenericPelincaCep(inv.tomadorCep))
+    );
+    const invCityRaw = String(inv.tomadorCidade || "").trim();
+    const isFallbackCamposOnInv = /^campos(\s+dos\s+go[yi]tacazes)?$/i.test(invCityRaw) && !invHasRealAddr;
     const invCand = {
       name: inv.tomadorNome,
       fullName: inv.tomadorNome,
@@ -12633,9 +12683,9 @@ export function reconcileAndMergeGuests(database, force = false) {
       number: inv.tomadorNumero,
       complement: inv.tomadorComplemento,
       neighborhood: inv.tomadorBairro,
-      city: inv.tomadorCidade,
-      state: inv.tomadorUf,
-      ibgeCode: inv.tomadorCodigoMunicipio
+      city: isFallbackCamposOnInv ? "" : inv.tomadorCidade,
+      state: isFallbackCamposOnInv ? "" : inv.tomadorUf,
+      ibgeCode: isFallbackCamposOnInv ? "" : inv.tomadorCodigoMunicipio
     };
 
     if (isDeleted(invCand)) continue;
@@ -29522,6 +29572,28 @@ app.post("/api/pms/reservations", async (req, res) => {
     ? resolvePreReservationHold(req.body, checkinDate)
     : null;
 
+  const wasLinkedFromCrmInForm = Boolean(req.body.guestId && req.body.guestId !== "manual");
+  const resolvedIsCamposOnCreate = req.body.isCamposResident === true
+    ? true
+    : (req.body.isCamposResident === false
+        ? (wasLinkedFromCrmInForm ? false : Boolean(guest?.isCamposResident === true))
+        : Boolean(guest?.isCamposResident === true));
+  if (guest && req.body.isCamposResident !== undefined) {
+    if (resolvedIsCamposOnCreate) {
+      guest.isCamposResident = true;
+      guest.riskAttentionAlert = true;
+      if (!guest.riskAttentionReason) {
+        guest.riskAttentionReason = "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ";
+      }
+    } else if (wasLinkedFromCrmInForm && guest.isCamposResident === true) {
+      guest.isCamposResident = false;
+      if (!guest.riskAttentionReason || /campos/i.test(String(guest.riskAttentionReason))) {
+        guest.riskAttentionAlert = false;
+        guest.riskAttentionReason = "";
+      }
+    }
+  }
+
   const newReservation = {
     id: resId,
     code: resolvedCode,
@@ -29618,9 +29690,9 @@ app.post("/api/pms/reservations", async (req, res) => {
     docPhotoUrl: req.body.docPhotoUrl || guest?.docPhotoUrl || null,
     hasMinor: Boolean(req.body.hasMinor || guest?.isMinor),
     minorAge: req.body.minorAge || guest?.minorAge || null,
-    isCamposResident: Boolean(req.body.isCamposResident || guest?.isCamposResident),
-    riskAttentionAlert: Boolean(req.body.riskAttentionAlert || req.body.isCamposResident || guest?.riskAttentionAlert || guest?.isCamposResident),
-    riskAttentionReason: req.body.riskAttentionReason || (req.body.isCamposResident || guest?.isCamposResident ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" : (guest?.riskAttentionReason || "")),
+    isCamposResident: resolvedIsCamposOnCreate,
+    riskAttentionAlert: Boolean(req.body.riskAttentionAlert || resolvedIsCamposOnCreate || (req.body.isCamposResident === undefined && guest?.riskAttentionAlert)),
+    riskAttentionReason: req.body.riskAttentionReason || (resolvedIsCamposOnCreate ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" : ""),
     isFlatLocked: Boolean(req.body.isFlatLocked || req.body.flatLocked),
     flatLocked: Boolean(req.body.isFlatLocked || req.body.flatLocked),
     flatLockReason: req.body.flatLockReason ? String(req.body.flatLockReason).trim() : (req.body.isFlatLocked || req.body.flatLocked ? "Quarto preferencial bloqueado" : ""),
@@ -31009,6 +31081,46 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldRatesSumBeforeEdit = oldDailyRatesBeforeEdit.reduce((acc, d) => acc + (Number(d.rate ?? d.amount) || 0), 0);
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+  if (req.body.isCamposResident !== undefined) {
+    const isCamposVal = Boolean(req.body.isCamposResident);
+    r.isCamposResident = isCamposVal;
+    const linkedCrmGuest = r.guestId ? (db.guests || []).find(g => g && Number(g.id) === Number(r.guestId)) : null;
+    if (isCamposVal) {
+      r.riskAttentionAlert = true;
+      if (!r.riskAttentionReason) {
+        r.riskAttentionReason = "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ";
+      }
+      if (Array.isArray(r.guests) && r.guests[0]) {
+        r.guests[0].isCamposResident = true;
+      }
+      if (linkedCrmGuest) {
+        linkedCrmGuest.isCamposResident = true;
+        linkedCrmGuest.riskAttentionAlert = true;
+        if (!linkedCrmGuest.riskAttentionReason) {
+          linkedCrmGuest.riskAttentionReason = r.riskAttentionReason;
+        }
+      }
+    } else {
+      if (req.body.riskAttentionAlert === undefined && (!r.riskAttentionReason || /campos/i.test(String(r.riskAttentionReason)))) {
+        r.riskAttentionAlert = false;
+        r.riskAttentionReason = "";
+      }
+      if (Array.isArray(r.guests) && r.guests[0]) {
+        r.guests[0].isCamposResident = false;
+        if (!r.guests[0].riskAttentionReason || /campos/i.test(String(r.guests[0].riskAttentionReason))) {
+          r.guests[0].riskAttentionAlert = false;
+          r.guests[0].riskAttentionReason = "";
+        }
+      }
+      if (linkedCrmGuest) {
+        linkedCrmGuest.isCamposResident = false;
+        if (!linkedCrmGuest.riskAttentionReason || /campos/i.test(String(linkedCrmGuest.riskAttentionReason))) {
+          linkedCrmGuest.riskAttentionAlert = false;
+          linkedCrmGuest.riskAttentionReason = "";
+        }
+      }
+    }
   }
 
   const incomingRawName = req.body.guestName !== undefined ? String(req.body.guestName || "").trim() : r.guestName;
@@ -48705,9 +48817,11 @@ app.post("/api/invoices/chat", async (req, res) => {
             existingGuest.complement = result.data.tomadorComplemento || existingGuest.complement || "";
             existingGuest.neighborhood = result.data.tomadorBairro || existingGuest.neighborhood || "";
             existingGuest.cep = result.data.tomadorCep || existingGuest.cep || "";
-            existingGuest.city = result.data.tomadorCidade || existingGuest.city || "Campos dos Goytacazes";
-            existingGuest.state = result.data.tomadorUf || existingGuest.state || "RJ";
-            existingGuest.ibgeCode = result.data.tomadorCodigoMunicipio || existingGuest.ibgeCode || "3301009";
+            if (!incomingIsGeneric && result.data.tomadorCidade) {
+              existingGuest.city = result.data.tomadorCidade;
+              existingGuest.state = result.data.tomadorUf || existingGuest.state || "";
+              existingGuest.ibgeCode = result.data.tomadorCodigoMunicipio || existingGuest.ibgeCode || "";
+            }
           }
           existingGuest.updatedAt = new Date().toISOString();
         } else {
@@ -48720,17 +48834,17 @@ app.post("/api/invoices/chat", async (req, res) => {
             documentType: "cpf",
             email: result.data.tomadorEmail || "",
             phone: result.data.tomadorTelefone || "",
-            address: result.data.tomadorEndereco || "",
-            street: result.data.tomadorEndereco || "",
-            logradouro: result.data.tomadorEndereco || "",
-            number: result.data.tomadorNumero || "",
-            streetNumber: result.data.tomadorNumero || "",
-            complement: result.data.tomadorComplemento || "",
-            neighborhood: result.data.tomadorBairro || "",
-            cep: result.data.tomadorCep || "",
-            city: result.data.tomadorCidade || "Campos dos Goytacazes",
-            state: result.data.tomadorUf || "RJ",
-            ibgeCode: result.data.tomadorCodigoMunicipio || "3301009",
+            address: incomingIsGeneric ? "" : (result.data.tomadorEndereco || ""),
+            street: incomingIsGeneric ? "" : (result.data.tomadorEndereco || ""),
+            logradouro: incomingIsGeneric ? "" : (result.data.tomadorEndereco || ""),
+            number: incomingIsGeneric ? "" : (result.data.tomadorNumero || ""),
+            streetNumber: incomingIsGeneric ? "" : (result.data.tomadorNumero || ""),
+            complement: incomingIsGeneric ? "" : (result.data.tomadorComplemento || ""),
+            neighborhood: incomingIsGeneric ? "" : (result.data.tomadorBairro || ""),
+            cep: incomingIsGeneric ? "" : (result.data.tomadorCep || ""),
+            city: incomingIsGeneric ? "" : (result.data.tomadorCidade || ""),
+            state: incomingIsGeneric ? "" : (result.data.tomadorUf || ""),
+            ibgeCode: incomingIsGeneric ? "" : (result.data.tomadorCodigoMunicipio || ""),
             notes: "Cadastrado automaticamente via Chat Assistente Fiscal",
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()

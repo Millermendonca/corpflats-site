@@ -250,23 +250,25 @@ export function ReservationHoverCard({
   }
   const primaryHoverCity = String(resItem.guestCity || resItem.city || resItem.originCity || "").trim()
   const hasNonCamposPrimaryCity = Boolean(primaryHoverCity && !isCamposCityStr(primaryHoverCity) && !isCamposCityStr(resItem.originCity))
-  const isCampos = Boolean(
-    resItem.isCamposResident === true ||
-    (!hasNonCamposPrimaryCity && (
-      isCamposCityStr(resItem.originCity) ||
-      isCamposCityStr(resItem.guestCity) ||
-      isCamposCityStr(resItem.city) ||
-      isCamposAddrStr(resItem.guestAddress) ||
-      isCamposCityStr(resItem.riskAttentionReason) ||
-      (Array.isArray(resItem.guests) && resItem.guests.some((g: any) =>
-        g?.isCamposResident === true ||
-        isCamposCityStr(g?.originCity) ||
-        isCamposCityStr(g?.city) ||
-        isCamposAddrStr(g?.address)
-      )) ||
-      isCamposCepStr(resItem.guestCep || resItem.cep, resItem.guestAddress || resItem.address)
-    ))
-  )
+  const isCampos = resItem.isCamposResident === false
+    ? false
+    : Boolean(
+        resItem.isCamposResident === true ||
+        (!hasNonCamposPrimaryCity && (
+          isCamposCityStr(resItem.originCity) ||
+          isCamposCityStr(resItem.guestCity) ||
+          isCamposCityStr(resItem.city) ||
+          isCamposAddrStr(resItem.guestAddress) ||
+          isCamposCityStr(resItem.riskAttentionReason) ||
+          (Array.isArray(resItem.guests) && resItem.guests.some((g: any) =>
+            g?.isCamposResident === true ||
+            isCamposCityStr(g?.originCity) ||
+            isCamposCityStr(g?.city) ||
+            isCamposAddrStr(g?.address)
+          )) ||
+          isCamposCepStr(resItem.guestCep || resItem.cep, resItem.guestAddress || resItem.address)
+        ))
+      )
   const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1
   const checkinStr = format(parseISO(resItem.checkinDate), "dd/MM")
   const checkoutStr = format(parseISO(resItem.checkoutDate), "dd/MM")
