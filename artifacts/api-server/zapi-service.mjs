@@ -8311,7 +8311,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       db.broadcastCampaigns = [];
     } else {
       for (const camp of db.broadcastCampaigns) {
-        if (camp && camp.status === "running") {
+        if (!camp) continue;
+        if (Array.isArray(camp.recipients)) {
+          for (const rec of camp.recipients) {
+            if (rec && rec.status === "sending") {
+              rec.status = "pending";
+            }
+          }
+          camp.sentCount = camp.recipients.filter(r => r && r.status === "sent").length;
+          camp.failedCount = camp.recipients.filter(r => r && r.status === "failed").length;
+          camp.pendingCount = camp.recipients.filter(r => r && r.status === "pending").length;
+        }
+        if (camp.status === "running") {
           camp.status = "paused";
           camp.interruptedByRestart = true;
           camp.updatedAt = new Date().toISOString();

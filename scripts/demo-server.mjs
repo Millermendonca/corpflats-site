@@ -55278,6 +55278,7 @@ function buildBroadcastDataset() {
   const reservations = Array.isArray(db.reservations) ? db.reservations : [];
   const guests = Array.isArray(db.guests) ? db.guests : [];
   const invoices = Array.isArray(db.invoices) ? db.invoices : [];
+  const fnrhDocs = Array.isArray(db.fnrhAuditDocuments) ? db.fnrhAuditDocuments : [];
   const cleaningRequestsToday = typeof getRequestsForDate === "function" ? getRequestsForDate(todayStr) : [];
 
   const guestById = new Map();
@@ -55288,7 +55289,7 @@ function buildBroadcastDataset() {
   for (const g of guests) {
     if (!g) continue;
     if (g.id !== undefined && g.id !== null) guestById.set(String(g.id), g);
-    const doc = String(g.documentNumber || g.document || "").replace(/\D/g, "");
+    const doc = String(g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "");
     if (doc) guestByDoc.set(doc, g);
     const ph = cleanWhatsAppPhone(g.phone || g.phoneNumber || "");
     if (ph && ph.length >= 10) guestByPhone.set(ph, g);
@@ -55298,14 +55299,104 @@ function buildBroadcastDataset() {
 
   const invLocalityByDoc = new Map();
   const invLocalityByName = new Map();
+  const invLocalityByPhone = new Map();
+  const invLocalityByResId = new Map();
+  const invLocalityByResCode = new Map();
+  const invLocalityByInvoiceId = new Map();
+  const invLocalityByGuestId = new Map();
+  const invMetaByGuestKey = new Map();
+
+  const registerInvoiceLocality = (inv, loc) => {
+    if (!loc.city && !loc.state) return;
+    if (inv.id !== undefined && inv.id !== null && !invLocalityByInvoiceId.has(String(inv.id))) {
+      invLocalityByInvoiceId.set(String(inv.id), loc);
+    }
+    if (inv.guestId !== undefined && inv.guestId !== null && !invLocalityByGuestId.has(String(inv.guestId))) {
+      invLocalityByGuestId.set(String(inv.guestId), loc);
+    }
+    if (inv.reservationId !== undefined && inv.reservationId !== null && !invLocalityByResId.has(String(inv.reservationId))) {
+      invLocalityByResId.set(String(inv.reservationId), loc);
+    }
+    if (Array.isArray(inv.reservationIds)) {
+      for (const rId of inv.reservationIds) {
+        if (rId !== undefined && rId !== null && !invLocalityByResId.has(String(rId))) {
+          invLocalityByResId.set(String(rId), loc);
+        }
+      }
+    }
+    if (inv.reservationCode && !invLocalityByResCode.has(String(inv.reservationCode))) {
+      invLocalityByResCode.set(String(inv.reservationCode), loc);
+    }
+    if (Array.isArray(inv.reservationCodes)) {
+      for (const rCode of inv.reservationCodes) {
+        if (rCode && !invLocalityByResCode.has(String(rCode))) {
+          invLocalityByResCode.set(String(rCode), loc);
+        }
+      }
+    }
+    const doc = String(inv.tomadorCpfCnpj || inv.guestDocument || inv.document || "").replace(/\D/g, "");
+    if (doc && !invLocalityByDoc.has(doc)) invLocalityByDoc.set(doc, loc);
+    const ph1 = cleanWhatsAppPhone(inv.guestPhone || "");
+    if (ph1 && ph1.length >= 10 && !invLocalityByPhone.has(ph1)) invLocalityByPhone.set(ph1, loc);
+    const ph2 = cleanWhatsAppPhone(inv.tomadorTelefone || "");
+    if (ph2 && ph2.length >= 10 && !invLocalityByPhone.has(ph2)) invLocalityByPhone.set(ph2, loc);
+    const nm1 = normalizeName(inv.guestName || "");
+    if (nm1 && nm1.length >= 4 && !invLocalityByName.has(nm1)) invLocalityByName.set(nm1, loc);
+    const nm2 = normalizeName(inv.tomadorNome || "");
+    if (nm2 && nm2.length >= 4 && !invLocalityByName.has(nm2)) invLocalityByName.set(nm2, loc);
+  };
+
   for (const inv of invoices) {
     if (!inv) continue;
-    const loc = normalizeBroadcastLocality(inv.tomadorCidade, inv.tomadorUf);
-    if (!loc.city && !loc.state) continue;
+    const loc = normalizeBroadcastLocality(
+      inv.tomadorCidade ||
+        inv.city ||
+        inv.cidade ||
+        inv.guestCity ||
+        inv.endereco?.municipio ||
+        inv.endereco?.cidade ||
+        inv.tomador?.cidade ||
+        inv.tomador?.endereco?.municipio,
+      inv.tomadorUf ||
+        inv.state ||
+        inv.uf ||
+        inv.guestState ||
+        inv.endereco?.uf ||
+        inv.endereco?.estado ||
+        inv.tomador?.uf ||
+        inv.tomador?.endereco?.uf
+    );
+    registerInvoiceLocality(inv, loc);
+
     const doc = String(inv.tomadorCpfCnpj || "").replace(/\D/g, "");
+    const ph = cleanWhatsAppPhone(inv.guestPhone || inv.tomadorTelefone || "");
+    const stayDate = String(inv.checkoutDate || inv.checkinDate || (inv.dataEmissao ? String(inv.dataEmissao).slice(0, 10) : "") || "").trim();
+    const flatNum = String(inv.flatNumber || "").trim();
+    if (stayDate || flatNum) {
+      if (doc && !invMetaByGuestKey.has(`doc_${doc}`)) invMetaByGuestKey.set(`doc_${doc}`, { stayDate, flatNum });
+      if (ph && !invMetaByGuestKey.has(`ph_${ph}`)) invMetaByGuestKey.set(`ph_${ph}`, { stayDate, flatNum });
+      if (inv.guestId && !invMetaByGuestKey.has(`id_${inv.guestId}`)) invMetaByGuestKey.set(`id_${inv.guestId}`, { stayDate, flatNum });
+    }
+  }
+
+  for (const fDoc of fnrhDocs) {
+    if (!fDoc) continue;
+    const loc = normalizeBroadcastLocality(
+      fDoc.city || fDoc.guestCity || fDoc.cidade,
+      fDoc.state || fDoc.guestState || fDoc.uf
+    );
+    if (!loc.city && !loc.state) continue;
+    if (fDoc.reservationId && !invLocalityByResId.has(String(fDoc.reservationId))) {
+      invLocalityByResId.set(String(fDoc.reservationId), loc);
+    }
+    if (fDoc.reservationCode && !invLocalityByResCode.has(String(fDoc.reservationCode))) {
+      invLocalityByResCode.set(String(fDoc.reservationCode), loc);
+    }
+    if (fDoc.guestId && !invLocalityByGuestId.has(String(fDoc.guestId))) {
+      invLocalityByGuestId.set(String(fDoc.guestId), loc);
+    }
+    const doc = String(fDoc.document || fDoc.cpf || "").replace(/\D/g, "");
     if (doc && !invLocalityByDoc.has(doc)) invLocalityByDoc.set(doc, loc);
-    const nm = normalizeName(inv.tomadorNome || "");
-    if (nm && !invLocalityByName.has(nm)) invLocalityByName.set(nm, loc);
   }
 
   // Contagem de estadias válidas por hóspede (CPF, telefone limpo ou guestId)
@@ -55317,8 +55408,9 @@ function buildBroadcastDataset() {
     if (!r) continue;
     const st = String(r.status || "").toLowerCase().trim();
     if (["cancelada", "cancelled", "cancelado", "expirada", "no_show"].includes(st)) continue;
-    const ph = cleanWhatsAppPhone(r.guestPhone || r.guests?.[0]?.phone || "");
-    const doc = String(r.guestDocument || r.document || r.guests?.[0]?.cpf || "").replace(/\D/g, "");
+    const titular = (Array.isArray(r.guests) && (r.guests.find(g => Number(g?.index) === 1) || r.guests[0])) || null;
+    const ph = cleanWhatsAppPhone(r.guestPhone || titular?.phone || "");
+    const doc = String(r.guestDocument || r.guestCpf || r.cpf || r.document || titular?.cpf || titular?.document || "").replace(/\D/g, "");
     const gId = r.guestId !== undefined && r.guestId !== null ? String(r.guestId) : "";
     if (ph && ph.length >= 10) stayCountByPhone.set(ph, (stayCountByPhone.get(ph) || 0) + 1);
     if (doc && doc.length >= 11) stayCountByDoc.set(doc, (stayCountByDoc.get(doc) || 0) + 1);
@@ -55327,16 +55419,22 @@ function buildBroadcastDataset() {
 
   const records = [];
   const matchedCrmGuestIds = new Set();
+  const matchedReservationPhones = new Set();
+  const matchedReservationDocs = new Set();
+  const knownLocalityByPhone = new Map();
+  const knownLocalityByDoc = new Map();
+  const knownLocalityByGuestId = new Map();
 
   for (const r of reservations) {
     if (!r) continue;
     const st = String(r.status || "").toLowerCase().trim();
     if (["cancelada", "cancelled", "cancelado", "expirada", "no_show"].includes(st)) continue;
 
-    const rDoc = String(r.guestDocument || r.document || r.guests?.[0]?.cpf || "").replace(/\D/g, "");
-    const rawGuestPhone = r.guestPhone || r.guests?.[0]?.phone || r.b2bRequesterPhone || r.requesterPhone || "";
+    const titularGuest = (Array.isArray(r.guests) && (r.guests.find(g => Number(g?.index) === 1) || r.guests[0])) || null;
+    const rDoc = String(r.guestDocument || r.guestCpf || r.cpf || r.document || titularGuest?.cpf || titularGuest?.document || "").replace(/\D/g, "");
+    const rawGuestPhone = r.guestPhone || titularGuest?.phone || r.b2bRequesterPhone || r.requesterPhone || "";
     const cleanPhone = cleanWhatsAppPhone(rawGuestPhone);
-    const rawName = String(r.guestName || r.guests?.[0]?.name || "").trim();
+    const rawName = String(r.guestName || titularGuest?.name || "").trim();
     const normRName = normalizeName(rawName);
 
     const crmGuest =
@@ -55346,21 +55444,69 @@ function buildBroadcastDataset() {
       (normRName ? guestByName.get(normRName) : null) ||
       null;
 
-    if (crmGuest?.id !== undefined && crmGuest?.id !== null) {
-      matchedCrmGuestIds.add(String(crmGuest.id));
+    const resolvedGuestId = crmGuest?.id !== undefined && crmGuest?.id !== null
+      ? crmGuest.id
+      : (r.guestId !== undefined && r.guestId !== null ? r.guestId : null);
+
+    if (resolvedGuestId !== null) {
+      matchedCrmGuestIds.add(String(resolvedGuestId));
     }
 
     const effectivePhone = cleanPhone || cleanWhatsAppPhone(crmGuest?.phone || crmGuest?.phoneNumber || "");
-    const isValidWhatsapp = Boolean(effectivePhone && effectivePhone.length >= 10);
+    const effectiveDoc = rDoc || String(crmGuest?.documentNumber || crmGuest?.document || crmGuest?.cpf || "").replace(/\D/g, "");
+    if (effectivePhone && effectivePhone.length >= 10) matchedReservationPhones.add(effectivePhone);
+    if (effectiveDoc && effectiveDoc.length >= 11) matchedReservationDocs.add(effectiveDoc);
 
-    // Localidade enriquecida (Reserva -> Hóspede Titular -> CRM -> Nota Fiscal)
-    let loc = normalizeBroadcastLocality(
-      r.city || r.guests?.[0]?.city || crmGuest?.city || crmGuest?.cidade,
-      r.state || r.uf || r.guests?.[0]?.state || r.guests?.[0]?.uf || crmGuest?.state || crmGuest?.uf
-    );
+    const isValidWhatsapp = Boolean(effectivePhone && effectivePhone.length >= 10);
+    const fNum = String(r.flatNumber || r.flatId || "").trim();
+    const resCode = r.code || r.reservationCode || `RES-${fNum || "000"}-${String(r.id).padStart(4, "0")}`;
+
+    // Localidade enriquecida (Reserva [guestCity/city/originCity] -> Hóspede Titular -> CRM -> Nota Fiscal / FNRH)
+    const rawCityCandidate =
+      r.guestCity ||
+      r.city ||
+      r.originCity ||
+      titularGuest?.guestCity ||
+      titularGuest?.city ||
+      titularGuest?.originCity ||
+      crmGuest?.city ||
+      crmGuest?.cidade ||
+      crmGuest?.guestCity ||
+      crmGuest?.originCity ||
+      "";
+    const rawStateCandidate =
+      r.guestState ||
+      r.state ||
+      r.uf ||
+      r.originState ||
+      titularGuest?.guestState ||
+      titularGuest?.state ||
+      titularGuest?.uf ||
+      titularGuest?.originState ||
+      crmGuest?.state ||
+      crmGuest?.uf ||
+      crmGuest?.guestState ||
+      crmGuest?.originState ||
+      "";
+
+    let loc = normalizeBroadcastLocality(rawCityCandidate, rawStateCandidate);
     if (!loc.city && !loc.state) {
-      const invLoc = (rDoc && invLocalityByDoc.get(rDoc)) || (normRName && invLocalityByName.get(normRName)) || null;
+      const invLoc =
+        (r.invoiceId !== undefined && r.invoiceId !== null && invLocalityByInvoiceId.get(String(r.invoiceId))) ||
+        (r.id !== undefined && r.id !== null && invLocalityByResId.get(String(r.id))) ||
+        (resCode && invLocalityByResCode.get(String(resCode))) ||
+        (resolvedGuestId !== null && invLocalityByGuestId.get(String(resolvedGuestId))) ||
+        (effectiveDoc && invLocalityByDoc.get(effectiveDoc)) ||
+        (effectivePhone && invLocalityByPhone.get(effectivePhone)) ||
+        (normRName && invLocalityByName.get(normRName)) ||
+        null;
       if (invLoc) loc = invLoc;
+    }
+
+    if (loc.city || loc.state) {
+      if (effectivePhone) knownLocalityByPhone.set(effectivePhone, loc);
+      if (effectiveDoc) knownLocalityByDoc.set(effectiveDoc, loc);
+      if (resolvedGuestId !== null) knownLocalityByGuestId.set(String(resolvedGuestId), loc);
     }
 
     // Classificação de Momento da Reserva (Pré-check-in / In-house / Pós-check-out)
@@ -55369,13 +55515,12 @@ function buildBroadcastDataset() {
     const checkinScheduledMs = parseBrasiliaDateTimeMs(r.checkinDate, checkinTime);
     const checkoutScheduledMs = parseBrasiliaDateTimeMs(r.checkoutDate, checkoutTime);
 
-    const actualCheckinIso = r.actualCheckinAt || r.guestSelfCheckinAt || r.guests?.[0]?.entryAuthorizedAt || null;
+    const actualCheckinIso = r.actualCheckinAt || r.guestSelfCheckinAt || titularGuest?.entryAuthorizedAt || null;
     const actualCheckinMs = actualCheckinIso ? new Date(actualCheckinIso).getTime() : checkinScheduledMs;
 
     const actualCheckoutIso = r.actualCheckoutAt || r.earlyCheckoutAt || null;
     const actualCheckoutMs = actualCheckoutIso ? new Date(actualCheckoutIso).getTime() : checkoutScheduledMs;
 
-    const fNum = String(r.flatNumber || r.flatId || "").trim();
     const todayCleanReq = cleaningRequestsToday.find(cr =>
       (String(cr.flatNumber) === fNum || (r.flatId && cr.flatId === r.flatId)) &&
       !cr.isInstructionOnly &&
@@ -55391,9 +55536,9 @@ function buildBroadcastDataset() {
       )
     );
 
-    const isArrivingTodayForFuture = r.checkinDate === todayStr && r.checkoutDate > todayStr;
+    const isArrivingTodayForFuture = Boolean(r.checkinDate === todayStr && r.checkoutDate && r.checkoutDate > todayStr);
     const isCheckedOut = Boolean(
-      r.checkoutDate < todayStr ||
+      (r.checkoutDate && r.checkoutDate < todayStr) ||
       (!isArrivingTodayForFuture && (
         r.checkoutDone ||
         r.earlyCheckout ||
@@ -55409,9 +55554,9 @@ function buildBroadcastDataset() {
     let moment = "pre_checkin";
     if (isCheckedOut) {
       moment = "post_checkout";
-    } else if (r.checkinDate < todayStr && r.checkoutDate >= todayStr) {
+    } else if (r.checkinDate && r.checkinDate < todayStr && r.checkoutDate && r.checkoutDate >= todayStr) {
       moment = "in_house";
-    } else if (r.checkinDate === todayStr && r.checkoutDate >= todayStr) {
+    } else if (r.checkinDate === todayStr && (!r.checkoutDate || r.checkoutDate >= todayStr)) {
       if (physicallyIn || st === "hospedado" || st === "in_house" || st === "checked_in") {
         moment = "in_house";
       } else {
@@ -55424,7 +55569,6 @@ function buildBroadcastDataset() {
     const channelInfo = classifyBroadcastChannel(r);
 
     // Status de Check-in / Cadastro
-    const titularGuest = Array.isArray(r.guests) && r.guests.length > 0 ? r.guests[0] : null;
     const isRegistrationCompleted = Boolean(
       r.fnhrCompleted ||
       r.preCheckinCompleted ||
@@ -55432,7 +55576,7 @@ function buildBroadcastDataset() {
       r.actualCheckinAt ||
       titularGuest?.hasCompletedCheckin ||
       titularGuest?.status === "CHECKED_IN" ||
-      (rDoc.length >= 11 && isValidWhatsapp && !isPendingGuestName(rawName))
+      (effectiveDoc.length >= 11 && isValidWhatsapp && !isPendingGuestName(rawName))
     );
     const checkinStatus = isRegistrationCompleted ? "completed" : "pending";
 
@@ -55441,8 +55585,8 @@ function buildBroadcastDataset() {
       1,
       Number(crmGuest?.totalStays) || 0,
       effectivePhone ? (stayCountByPhone.get(effectivePhone) || 0) : 0,
-      rDoc ? (stayCountByDoc.get(rDoc) || 0) : 0,
-      r.guestId ? (stayCountByGuestId.get(String(r.guestId)) || 0) : 0
+      effectiveDoc ? (stayCountByDoc.get(effectiveDoc) || 0) : 0,
+      resolvedGuestId !== null ? (stayCountByGuestId.get(String(resolvedGuestId)) || 0) : 0
     );
     const recurrence = totalStays >= 2 ? "recurring" : "first_stay";
 
@@ -55454,14 +55598,13 @@ function buildBroadcastDataset() {
 
     const safeFullName = isPendingGuestName(displayName) ? "Hóspede" : displayName;
     const safeFirstName = toTitleCasePtBr(safeFullName.split(/\s+/)[0] || "Hóspede");
-    const resCode = r.code || r.reservationCode || `RES-${fNum || "000"}-${String(r.id).padStart(4, "0")}`;
     const guestKey = effectivePhone
       ? `phone_${effectivePhone}`
       : `res_${r.id || resCode}`;
 
     records.push({
       guestKey,
-      guestId: crmGuest?.id || r.guestId || null,
+      guestId: resolvedGuestId,
       reservationId: r.id,
       reservationCode: resCode,
       name: displayName,
@@ -55470,7 +55613,7 @@ function buildBroadcastDataset() {
       phone: effectivePhone,
       formattedPhone: formatBroadcastPhoneDisplay(effectivePhone, rawGuestPhone),
       isValidWhatsapp,
-      document: rDoc || crmGuest?.document || "",
+      document: effectiveDoc,
       email: r.guestEmail || crmGuest?.email || "",
       city: loc.city,
       state: loc.state,
@@ -55500,20 +55643,49 @@ function buildBroadcastDataset() {
     });
   }
 
-  // Adiciona hóspedes do CRM que não possuem reserva vinculada em db.reservations (ex: histórico de notas fiscais ou cadastro avulso)
+  // Adiciona hóspedes do CRM que não possuem reserva ativa/histórica vinculada em db.reservations
   for (const g of guests) {
-    if (!g || (g.id !== undefined && g.id !== null && matchedCrmGuestIds.has(String(g.id)))) continue;
+    if (!g) continue;
+    const gIdStr = g.id !== undefined && g.id !== null ? String(g.id) : "";
     const gDoc = String(g.documentNumber || g.document || "").replace(/\D/g, "");
     const cleanPhone = cleanWhatsAppPhone(g.phone || g.phoneNumber || "");
+    if (
+      (gIdStr && matchedCrmGuestIds.has(gIdStr)) ||
+      (cleanPhone && matchedReservationPhones.has(cleanPhone)) ||
+      (gDoc && gDoc.length >= 11 && matchedReservationDocs.has(gDoc))
+    ) {
+      continue;
+    }
+
     const rawName = String(g.fullName || g.name || "").trim();
     if (!rawName && !cleanPhone) continue;
 
-    let loc = normalizeBroadcastLocality(g.city || g.cidade, g.state || g.uf);
+    let loc = normalizeBroadcastLocality(
+      g.city || g.cidade || g.guestCity || g.originCity,
+      g.state || g.uf || g.guestState || g.originState
+    );
     if (!loc.city && !loc.state) {
       const normGName = normalizeName(rawName);
-      const invLoc = (gDoc && invLocalityByDoc.get(gDoc)) || (normGName && invLocalityByName.get(normGName)) || null;
+      const invLoc =
+        (gIdStr && invLocalityByGuestId.get(gIdStr)) ||
+        (gDoc && invLocalityByDoc.get(gDoc)) ||
+        (cleanPhone && invLocalityByPhone.get(cleanPhone)) ||
+        (normGName && invLocalityByName.get(normGName)) ||
+        null;
       if (invLoc) loc = invLoc;
     }
+
+    if (loc.city || loc.state) {
+      if (cleanPhone) knownLocalityByPhone.set(cleanPhone, loc);
+      if (gDoc) knownLocalityByDoc.set(gDoc, loc);
+      if (gIdStr) knownLocalityByGuestId.set(gIdStr, loc);
+    }
+
+    const invMeta =
+      (gIdStr && invMetaByGuestKey.get(`id_${gIdStr}`)) ||
+      (gDoc && invMetaByGuestKey.get(`doc_${gDoc}`)) ||
+      (cleanPhone && invMetaByGuestKey.get(`ph_${cleanPhone}`)) ||
+      null;
 
     const isValidWhatsapp = Boolean(cleanPhone && cleanPhone.length >= 10);
     const totalStays = Math.max(1, Number(g.totalStays) || 1);
@@ -55521,7 +55693,8 @@ function buildBroadcastDataset() {
     const checkinStatus = (gDoc.length >= 11 && isValidWhatsapp) ? "completed" : "pending";
     const safeFullName = isPendingGuestName(rawName) ? "Hóspede" : rawName;
     const safeFirstName = toTitleCasePtBr(safeFullName.split(/\s+/)[0] || "Hóspede");
-    const lastStay = g.lastStayDate || "";
+    const lastStay = g.lastStayDate || invMeta?.stayDate || "";
+    const flatNum = String(g.favoriteFlat || invMeta?.flatNum || "").trim();
 
     records.push({
       guestKey: cleanPhone ? `phone_${cleanPhone}` : `crm_${g.id}`,
@@ -55542,8 +55715,8 @@ function buildBroadcastDataset() {
       localityLabel: loc.label,
       channel: g.companyId ? "b2b" : "outros",
       channelLabel: g.companyId ? "B2B / Corporativo" : "Cadastro CRM",
-      flatNumber: g.favoriteFlat || "",
-      unitsLabel: g.favoriteFlat || "",
+      flatNumber: flatNum,
+      unitsLabel: flatNum,
       checkinDate: lastStay,
       checkinTime: "14:00",
       checkoutDate: lastStay,
@@ -55564,6 +55737,22 @@ function buildBroadcastDataset() {
     });
   }
 
+  // Segunda passagem: propaga localidade conhecida entre múltiplas reservas do mesmo hóspede
+  for (const rec of records) {
+    if (rec.city || rec.state) continue;
+    const fallbackLoc =
+      (rec.phone && knownLocalityByPhone.get(rec.phone)) ||
+      (rec.document && knownLocalityByDoc.get(rec.document)) ||
+      (rec.guestId !== null && rec.guestId !== undefined && knownLocalityByGuestId.get(String(rec.guestId))) ||
+      null;
+    if (fallbackLoc) {
+      rec.city = fallbackLoc.city;
+      rec.state = fallbackLoc.state;
+      rec.localityKey = fallbackLoc.key;
+      rec.localityLabel = fallbackLoc.label;
+    }
+  }
+
   return { records, todayStr, nowMs };
 }
 
@@ -55575,7 +55764,7 @@ function matchesSingleMomentFilter(rec, momentType, filters, todayStr, nowMs) {
       const hours = Math.max(1, Number(filters.preCheckinHours) || 24);
       if (!rec.checkinScheduledMs) return false;
       const diffHours = (rec.checkinScheduledMs - nowMs) / 3600000;
-      return diffHours >= -4 && diffHours <= hours;
+      return diffHours >= -12 && diffHours <= hours;
     }
     if (mode === "next_days") {
       const days = Math.max(1, Number(filters.preCheckinDays) || 7);
@@ -55593,11 +55782,7 @@ function matchesSingleMomentFilter(rec, momentType, filters, todayStr, nowMs) {
   }
 
   if (momentType === "in_house") {
-    // Permite considerar hóspedes do dia cujo horário já iniciou ou já deram entrada
-    const isCurrentlyInHouse =
-      rec.moment === "in_house" ||
-      (!rec.isCheckedOut && rec.checkinDate === todayStr && rec.checkoutDate >= todayStr && rec.checkinScheduledMs && nowMs >= rec.checkinScheduledMs);
-    if (!isCurrentlyInHouse) return false;
+    if (rec.moment !== "in_house") return false;
 
     const mode = String(filters.inHouseMode || "all");
     if (mode === "entered_last_hours") {
@@ -55693,17 +55878,36 @@ function deduplicateBroadcastRecords(matchingRecords, nowMs) {
 
     const primary = { ...group[0], guestKey: dedupKey };
     if (group.length > 1) {
+      // Backfill de dados cadastrais/localidade a partir das outras reservas do mesmo hóspede se ausentes na reserva principal
+      for (let i = 1; i < group.length; i++) {
+        const alt = group[i];
+        if (!primary.city && alt.city) {
+          primary.city = alt.city;
+          primary.state = alt.state || primary.state;
+          primary.localityKey = alt.localityKey;
+          primary.localityLabel = alt.localityLabel;
+        }
+        if (!primary.state && alt.state) primary.state = alt.state;
+        if (!primary.document && alt.document) primary.document = alt.document;
+        if (!primary.email && alt.email) primary.email = alt.email;
+        if (!primary.guestId && alt.guestId) primary.guestId = alt.guestId;
+        if (!primary.companyName && alt.companyName) primary.companyName = alt.companyName;
+        if (isPendingGuestName(primary.name) && !isPendingGuestName(alt.name)) {
+          primary.name = alt.name;
+          primary.fullName = alt.fullName;
+          primary.firstName = alt.firstName;
+        }
+      }
+
       const activeUnits = Array.from(
         new Set(
           group
             .filter(g => g.moment === primary.moment && g.flatNumber)
-            .map(g => String(g.flatNumber))
+            .map(g => String(g.flatNumber).trim())
         )
-      );
+      ).sort((a, b) => (Number(a) - Number(b)) || a.localeCompare(b, "pt-BR"));
       if (activeUnits.length > 1) {
-        primary.unitsLabel = activeUnits.length === 2
-          ? `${activeUnits[0]} e ${activeUnits[1]}`
-          : `${activeUnits.slice(0, -1).join(", ")} e ${activeUnits[activeUnits.length - 1]}`;
+        primary.unitsLabel = activeUnits.join(", ");
       }
       primary.deduplicatedCount = group.length;
       primary.groupedReservationCodes = Array.from(new Set(group.map(g => g.reservationCode).filter(Boolean)));
@@ -55757,13 +55961,12 @@ function renderBroadcastMessageForRecipient(templateText, recipient, dbInstance)
     channelLabel: recipient?.channelLabel || undefined
   };
 
-  let rendered = resolveWhatsAppTags(templateText, syntheticRes, activeDb);
-
-  // Garantia explícita para variáveis caso o texto ainda contenha alguma das 6 variáveis principais
+  // Resolve primeiro as 6 variáveis explícitas do Disparo Inteligente (com suporte a múltiplas unidades agrupadas e Title Case)
   const firstName = toTitleCasePtBr(String(recipient?.firstName || (recipient?.name || "Hóspede").split(/\s+/)[0] || "Hóspede"));
-  const fullName = isPendingGuestName(recipient?.fullName || recipient?.name)
+  const rawFull = String(recipient?.fullName || recipient?.name || "Hóspede").trim();
+  const fullName = isPendingGuestName(rawFull)
     ? "Hóspede"
-    : String(recipient?.fullName || recipient?.name || "Hóspede").trim();
+    : (rawFull === rawFull.toUpperCase() ? toTitleCasePtBr(rawFull) : rawFull);
   const unitStr = String(recipient?.unitsLabel ?? recipient?.flatNumber ?? "").trim();
   const checkinBr = syntheticRes.checkinDate && /^\d{4}-\d{2}-\d{2}$/.test(syntheticRes.checkinDate)
     ? syntheticRes.checkinDate.split("-").reverse().join("/")
@@ -55773,27 +55976,45 @@ function renderBroadcastMessageForRecipient(templateText, recipient, dbInstance)
     : String(syntheticRes.checkoutDate || "");
   const channelLabel = String(recipient?.channelLabel || classifyBroadcastChannel(syntheticRes).label);
 
+  let rendered = String(templateText);
   const explicitMap = {
     "{{primeiro_nome}}": firstName,
     "{{nome_completo}}": fullName,
     "{{unidade}}": unitStr,
+    "{{quarto}}": unitStr,
     "{{data_checkin}}": checkinBr,
     "{{data_checkout}}": checkoutBr,
-    "{{canal}}": channelLabel
+    "{{canal}}": channelLabel,
+    "{{canal_reserva}}": channelLabel
   };
   for (const [k, v] of Object.entries(explicitMap)) {
     if (rendered.includes(k)) {
       rendered = rendered.split(k).join(v);
     }
   }
+
+  // Em seguida, aplica o resolvedor global (60+ tags como {{codigo_reserva}}, {{link_portal}}, {{senha_porta}}, etc.)
+  if (rendered.includes("{{")) {
+    rendered = resolveWhatsAppTags(rendered, syntheticRes, activeDb);
+  }
   return rendered;
 }
 
 async function runBroadcastCampaignWorker(campaignId) {
   if (activeBroadcastWorkers.get(campaignId)) return;
-  activeBroadcastWorkers.set(campaignId, true);
+  const workerController = { cancelSleep: null };
+  activeBroadcastWorkers.set(campaignId, workerController);
 
   try {
+    const initialCampaign = (db.broadcastCampaigns || []).find(c => c && c.id === campaignId);
+    if (initialCampaign && Array.isArray(initialCampaign.recipients)) {
+      for (const r of initialCampaign.recipients) {
+        if (r && r.status === "sending") {
+          r.status = "pending";
+        }
+      }
+    }
+
     while (true) {
       const campaign = (db.broadcastCampaigns || []).find(c => c && c.id === campaignId);
       if (!campaign || campaign.status !== "running") {
@@ -55802,10 +56023,12 @@ async function runBroadcastCampaignWorker(campaignId) {
 
       const nextRecipient = (campaign.recipients || []).find(r => r && r.status === "pending");
       if (!nextRecipient) {
-        campaign.status = "completed";
-        campaign.completedAt = new Date().toISOString();
-        campaign.updatedAt = campaign.completedAt;
-        saveDatabase();
+        if (campaign.status === "running") {
+          campaign.status = "completed";
+          campaign.completedAt = new Date().toISOString();
+          campaign.updatedAt = campaign.completedAt;
+          saveDatabase();
+        }
         break;
       }
 
@@ -55897,7 +56120,12 @@ async function runBroadcastCampaignWorker(campaignId) {
       campaign.updatedAt = new Date().toISOString();
       saveDatabase();
 
-      // Verifica se ainda há pendentes e se a campanha continua em "running" antes de aguardar o delay
+      // Se a campanha foi pausada ou cancelada enquanto a mensagem estava sendo enviada, interrompe imediatamente
+      if (campaign.status !== "running") {
+        break;
+      }
+
+      // Verifica se ainda há pendentes antes de aguardar o delay
       const hasMore = recs.some(r => r.status === "pending");
       if (!hasMore) {
         campaign.status = "completed";
@@ -55907,15 +56135,21 @@ async function runBroadcastCampaignWorker(campaignId) {
         break;
       }
 
-      if (campaign.status !== "running") {
-        break;
-      }
-
       const minMs = Math.max(1000, (Number(campaign.minDelaySeconds) || 3) * 1000);
       const maxMs = Math.max(minMs, (Number(campaign.maxDelaySeconds) || 8) * 1000);
       const waitMs = Math.floor(minMs + Math.random() * (maxMs - minMs + 1));
 
-      await new Promise(resolve => setTimeout(resolve, waitMs));
+      await new Promise(resolve => {
+        const timer = setTimeout(() => {
+          workerController.cancelSleep = null;
+          resolve();
+        }, waitMs);
+        workerController.cancelSleep = () => {
+          clearTimeout(timer);
+          workerController.cancelSleep = null;
+          resolve();
+        };
+      });
     }
   } finally {
     activeBroadcastWorkers.delete(campaignId);
@@ -55926,7 +56160,8 @@ async function runBroadcastCampaignWorker(campaignId) {
 app.get("/api/whatsapp/broadcast/metadata", (req, res) => {
   if (!requireBroadcastAccess(req, res)) return;
   try {
-    const { records, todayStr } = buildBroadcastDataset();
+    const { records, todayStr, nowMs } = buildBroadcastDataset();
+    const deduplicatedGuests = deduplicateBroadcastRecords(records, nowMs);
 
     const localityMap = new Map();
     const stateMap = new Map();
@@ -55944,19 +56179,32 @@ app.get("/api/whatsapp/broadcast/metadata", (req, res) => {
       post_checkout: 0
     };
 
-    // Usa conjunto por telefone/hóspede para contagem fiel de localidades e canais
-    const seenPhonesForMeta = new Set();
-    for (const rec of records) {
+    const seenGuestsPerLocality = new Map();
+    const seenGuestsPerState = new Map();
+    const seenGuestsPerChannel = new Map();
+    const seenGuestsPerMoment = new Map();
+
+    // Contabiliza sobre os registros deduplicados primeiro e complementa com histórico de localidades/canais
+    for (const rec of [...deduplicatedGuests, ...records]) {
+      const metaKey = rec.phone || rec.guestKey;
+
       if (momentCounts[rec.moment] !== undefined) {
-        momentCounts[rec.moment]++;
-      }
-      if (channelMap.has(rec.channel)) {
-        channelMap.get(rec.channel).count++;
+        if (!seenGuestsPerMoment.has(rec.moment)) seenGuestsPerMoment.set(rec.moment, new Set());
+        const mSet = seenGuestsPerMoment.get(rec.moment);
+        if (!mSet.has(metaKey)) {
+          mSet.add(metaKey);
+          momentCounts[rec.moment]++;
+        }
       }
 
-      const metaKey = rec.phone || rec.guestKey;
-      const isFirstForGuest = !seenPhonesForMeta.has(metaKey);
-      if (isFirstForGuest) seenPhonesForMeta.add(metaKey);
+      if (channelMap.has(rec.channel)) {
+        if (!seenGuestsPerChannel.has(rec.channel)) seenGuestsPerChannel.set(rec.channel, new Set());
+        const cSet = seenGuestsPerChannel.get(rec.channel);
+        if (!cSet.has(metaKey)) {
+          cSet.add(metaKey);
+          channelMap.get(rec.channel).count++;
+        }
+      }
 
       if (rec.city && rec.localityKey) {
         let entry = localityMap.get(rec.localityKey);
@@ -55969,12 +56217,24 @@ app.get("/api/whatsapp/broadcast/metadata", (req, res) => {
             count: 0
           };
           localityMap.set(rec.localityKey, entry);
+          seenGuestsPerLocality.set(rec.localityKey, new Set());
         }
-        if (isFirstForGuest) entry.count++;
+        const locSet = seenGuestsPerLocality.get(rec.localityKey);
+        if (!locSet.has(metaKey)) {
+          locSet.add(metaKey);
+          entry.count++;
+        }
       }
 
       if (rec.state) {
-        stateMap.set(rec.state, (stateMap.get(rec.state) || 0) + (isFirstForGuest ? 1 : 0));
+        if (!seenGuestsPerState.has(rec.state)) {
+          seenGuestsPerState.set(rec.state, new Set());
+        }
+        const stSet = seenGuestsPerState.get(rec.state);
+        if (!stSet.has(metaKey)) {
+          stSet.add(metaKey);
+          stateMap.set(rec.state, (stateMap.get(rec.state) || 0) + 1);
+        }
       }
     }
 
@@ -56038,6 +56298,7 @@ app.post("/api/whatsapp/broadcast/segment", (req, res) => {
     const selectedCities = Array.isArray(filters.cities)
       ? filters.cities.map(c => String(c).toLowerCase().trim()).filter(Boolean)
       : [];
+    const selectedCitiesNorm = selectedCities.map(c => normalizeName(c));
     const selectedStates = Array.isArray(filters.states)
       ? filters.states.map(s => String(s).toUpperCase().trim()).filter(Boolean)
       : [];
@@ -56075,11 +56336,14 @@ app.post("/api/whatsapp/broadcast/segment", (req, res) => {
 
       // Categoria Localidade (AND entre categorias, OR entre cidades/UFs marcadas)
       if (selectedCities.length > 0 || selectedStates.length > 0) {
+        const recCityNorm = normalizeName(rec.city || "");
+        const recLocKeyLower = String(rec.localityKey || "").toLowerCase();
         const cityMatch = selectedCities.length > 0 && Boolean(
-          rec.localityKey && (
-            selectedCities.includes(rec.localityKey.toLowerCase()) ||
+          rec.city && (
+            selectedCities.includes(recLocKeyLower) ||
             selectedCities.includes(rec.city.toLowerCase()) ||
-            selectedCities.includes(normalizeName(rec.city))
+            selectedCitiesNorm.includes(recCityNorm) ||
+            selectedCitiesNorm.includes(normalizeName(recLocKeyLower))
           )
         );
         // Se uma UF foi marcada e o usuário também marcou cidades específicas daquela UF, refina para as cidades marcadas naquela UF
@@ -56256,6 +56520,13 @@ app.post("/api/whatsapp/broadcast/send", (req, res) => {
   const userAuth = requireBroadcastAccess(req, res);
   if (!userAuth) return;
   try {
+    const runningCampaign = (db.broadcastCampaigns || []).find(c => c && c.status === "running");
+    if (runningCampaign) {
+      return res.status(409).json({
+        error: `Já existe uma campanha de disparo em execução ("${runningCampaign.name}"). Pause, cancele ou aguarde sua conclusão antes de iniciar outra.`
+      });
+    }
+
     const {
       name,
       messageTemplate,
@@ -56413,15 +56684,37 @@ app.post("/api/whatsapp/broadcast/campaigns/:id/control", (req, res) => {
   }
   const action = String(req.body?.action || "").toLowerCase();
   const nowIso = new Date().toISOString();
+  const workerCtrl = activeBroadcastWorkers.get(campaign.id);
 
   if (action === "pause") {
     if (campaign.status === "running") {
       campaign.status = "paused";
       campaign.updatedAt = nowIso;
+      if (workerCtrl && typeof workerCtrl.cancelSleep === "function") {
+        workerCtrl.cancelSleep();
+      }
       saveDatabase();
     }
   } else if (action === "resume") {
     if (campaign.status === "paused") {
+      const otherRunning = (db.broadcastCampaigns || []).find(
+        c => c && c.id !== campaign.id && c.status === "running"
+      );
+      if (otherRunning) {
+        return res.status(409).json({
+          error: `Já existe outra campanha em execução ("${otherRunning.name}"). Pause-a antes de retomar esta fila.`
+        });
+      }
+      if (Array.isArray(campaign.recipients)) {
+        for (const r of campaign.recipients) {
+          if (r && r.status === "sending") {
+            r.status = "pending";
+          }
+        }
+        campaign.sentCount = campaign.recipients.filter(r => r.status === "sent").length;
+        campaign.failedCount = campaign.recipients.filter(r => r.status === "failed").length;
+        campaign.pendingCount = campaign.recipients.filter(r => r.status === "pending").length;
+      }
       campaign.status = "running";
       campaign.interruptedByRestart = false;
       campaign.updatedAt = nowIso;
@@ -56437,6 +56730,19 @@ app.post("/api/whatsapp/broadcast/campaigns/:id/control", (req, res) => {
       campaign.status = "cancelled";
       campaign.completedAt = nowIso;
       campaign.updatedAt = nowIso;
+      if (Array.isArray(campaign.recipients)) {
+        for (const r of campaign.recipients) {
+          if (r && r.status === "sending") {
+            r.status = "pending";
+          }
+        }
+        campaign.sentCount = campaign.recipients.filter(r => r.status === "sent").length;
+        campaign.failedCount = campaign.recipients.filter(r => r.status === "failed").length;
+        campaign.pendingCount = campaign.recipients.filter(r => r.status === "pending").length;
+      }
+      if (workerCtrl && typeof workerCtrl.cancelSleep === "function") {
+        workerCtrl.cancelSleep();
+      }
       saveDatabase();
     }
   } else {

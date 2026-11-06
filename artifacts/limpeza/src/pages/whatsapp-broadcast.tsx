@@ -232,7 +232,7 @@ const QUICK_BROADCAST_TEMPLATES = [
 ]
 
 function formatDateBrShort(isoDate: string): string {
-  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return isoDate || "—"
+  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return isoDate || ""
   const [y, m, d] = isoDate.split("-")
   return `${d}/${m}/${y}`
 }
@@ -251,7 +251,7 @@ function renderClientPreview(templateText: string, guest: BroadcastGuest | null)
   }
   const firstName = g.firstName || (g.name || "Hóspede").split(" ")[0] || "Hóspede"
   const fullName = g.fullName || g.name || "Hóspede"
-  const unit = g.unitsLabel || g.flatNumber || "—"
+  const unit = g.unitsLabel || g.flatNumber || ""
   const checkin = formatDateBrShort(g.checkinDate)
   const checkout = formatDateBrShort(g.checkoutDate)
   const canal = g.channelLabel || "Site Próprio"
@@ -315,6 +315,7 @@ export default function WhatsappBroadcastPage() {
   const [campaignName, setCampaignName] = useState<string>("")
   const [messageTemplate, setMessageTemplate] = useState<string>(QUICK_BROADCAST_TEMPLATES[0].text)
   const [selectedPreviewGuestKey, setSelectedPreviewGuestKey] = useState<string | null>(null)
+  const [serverPreviewText, setServerPreviewText] = useState<string | null>(null)
   const [minDelaySeconds, setMinDelaySeconds] = useState<number>(3)
   const [maxDelaySeconds, setMaxDelaySeconds] = useState<number>(8)
   const [confirmSendOpen, setConfirmSendOpen] = useState<boolean>(false)
@@ -325,10 +326,12 @@ export default function WhatsappBroadcastPage() {
   const [testPhoneInput, setTestPhoneInput] = useState<string>("")
   const [isSendingTest, setIsSendingTest] = useState<boolean>(false)
 
-  // Campanha em Execução e Histórico
+  // Campanha em Execução, Histórico e Log Detalhado por Destinatário
   const [activeCampaign, setActiveCampaign] = useState<BroadcastCampaign | null>(null)
   const [campaignsHistory, setCampaignsHistory] = useState<BroadcastCampaign[]>([])
   const [historyModalOpen, setHistoryModalOpen] = useState<boolean>(false)
+  const [inspectedCampaign, setInspectedCampaign] = useState<BroadcastCampaign | null>(null)
+  const [campaignDetailModalOpen, setCampaignDetailModalOpen] = useState<boolean>(false)
 
   // Carrega metadados iniciais
   const fetchMetadata = useCallback(async () => {
@@ -429,6 +432,7 @@ export default function WhatsappBroadcastPage() {
         const data = await res.json()
         if (data.campaign) {
           setActiveCampaign(data.campaign)
+          setInspectedCampaign(prev => (prev && prev.id === data.campaign.id ? data.campaign : prev))
           if (data.campaign.status === "completed") {
             toast({
               title: "Disparo concluído!",
@@ -517,10 +521,42 @@ export default function WhatsappBroadcastPage() {
     return finalRecipients[0] || filteredGuests[0] || null
   }, [selectedPreviewGuestKey, finalRecipients, filteredGuests])
 
-  const renderedPreviewText = useMemo(
+  const localPreviewText = useMemo(
     () => renderClientPreview(messageTemplate, previewGuest),
     [messageTemplate, previewGuest]
   )
+
+  // Se ainda restar alguma tag {{...}} do sistema após o preview local, resolve no backend com debounce
+  useEffect(() => {
+    if (!localPreviewText.includes("{{")) {
+      setServerPreviewText(null)
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/whatsapp/broadcast/preview-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messageTemplate,
+            recipient: previewGuest
+          })
+        })
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled && typeof data.renderedMessage === "string") {
+          setServerPreviewText(data.renderedMessage)
+        }
+      } catch {}
+    }, 200)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [localPreviewText, messageTemplate, previewGuest])
+
+  const renderedPreviewText = serverPreviewText ?? localPreviewText
 
   // Cidades filtradas pela busca rápida e/ou UFs no dropdown
   const visibleLocalities = useMemo(() => {
@@ -568,7 +604,9 @@ export default function WhatsappBroadcastPage() {
   // Manipuladores de Inclusão / Exclusão Manual
   const toggleRecipientCheckbox = (guest: BroadcastGuest) => {
     if (guest.originType === "manual") {
-      setManuallyAddedGuests(prev => prev.filter(g => g.guestKey !== guest.guestKey))
+      setManuallyAddedGuests(prev =>
+        prev.filter(g => g.guestKey !== guest.guestKey && (!guest.phone || g.phone !== guest.phone))
+      )
       return
     }
     setExcludedGuestIds(prev => {
@@ -577,12 +615,25 @@ export default function WhatsappBroadcastPage() {
         next.delete(guest.guestKey)
       } else {
         next.add(guest.guestKey)
+        // Se o hóspede também havia sido adicionado manualmente antes de entrar no filtro, remove de manuallyAddedGuests
+        setManuallyAddedGuests(mPrev =>
+          mPrev.filter(g => g.guestKey !== guest.guestKey && (!guest.phone || g.phone !== guest.phone))
+        )
       }
       return next
     })
   }
 
   const handleAddManualGuest = (guest: BroadcastGuest) => {
+    if (!guest.isValidWhatsapp || !guest.phone || guest.phone.length < 10) {
+      toast({
+        title: "Sem WhatsApp válido",
+        description: `${guest.name} não possui um número de celular WhatsApp válido cadastrado para receber disparos.`,
+        variant: "destructive"
+      })
+      return
+    }
+
     const isCurrentlyInFiltered = filteredGuests.some(g => g.guestKey === guest.guestKey)
     // Se o hóspede estava na lista de excluídos do filtro, remove a exclusão
     if (excludedGuestIds.has(guest.guestKey)) {
@@ -781,6 +832,19 @@ export default function WhatsappBroadcastPage() {
     } catch {}
   }
 
+  const openCampaignDetails = async (campaignId: string) => {
+    try {
+      const res = await fetch(`/api/whatsapp/broadcast/campaigns/${campaignId}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.campaign) {
+          setInspectedCampaign(data.campaign)
+          setCampaignDetailModalOpen(true)
+        }
+      }
+    } catch {}
+  }
+
   // Contagem de filtros ativos para feedback visual
   const activeFilterBadgesCount = useMemo(() => {
     let count = 0
@@ -909,7 +973,16 @@ export default function WhatsappBroadcastPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => openCampaignDetails(activeCampaign.id)}
+                    className="h-8 gap-1.5 text-xs font-bold"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Ver Log de Envios
+                  </Button>
                   {activeCampaign.status === "running" && (
                     <Button
                       size="sm"
@@ -1762,41 +1835,46 @@ export default function WhatsappBroadcastPage() {
 
               {/* Contador Matemático Obrigatório:
                   Total filtrado (X) - Excluídos manualmente (Y) + Incluídos manualmente (Z) = Total para envio (W) */}
-              <div className="grid grid-cols-4 gap-1.5 bg-background border border-border rounded-xl p-2 text-center">
-                <div className="p-1.5 rounded-lg bg-muted/40">
-                  <span className="text-[10px] font-semibold text-muted-foreground block">
-                    Total filtrado
-                  </span>
-                  <span className="text-sm font-black text-foreground">
-                    {totalFilteredCount}
-                  </span>
-                </div>
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-4 gap-1.5 bg-background border border-border rounded-xl p-2 text-center">
+                  <div className="p-1.5 rounded-lg bg-muted/40">
+                    <span className="text-[10px] font-semibold text-muted-foreground block">
+                      Total filtrado
+                    </span>
+                    <span className="text-sm font-black text-foreground">
+                      {totalFilteredCount}
+                    </span>
+                  </div>
 
-                <div className="p-1.5 rounded-lg bg-rose-500/5 border border-rose-500/20">
-                  <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400 block">
-                    - Excluídos man.
-                  </span>
-                  <span className="text-sm font-black text-rose-600 dark:text-rose-400">
-                    {activeExcludedCount}
-                  </span>
-                </div>
+                  <div className="p-1.5 rounded-lg bg-rose-500/5 border border-rose-500/20">
+                    <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400 block">
+                      - Excluídos man.
+                    </span>
+                    <span className="text-sm font-black text-rose-600 dark:text-rose-400">
+                      {activeExcludedCount}
+                    </span>
+                  </div>
 
-                <div className="p-1.5 rounded-lg bg-indigo-500/5 border border-indigo-500/20">
-                  <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 block">
-                    + Incluídos man.
-                  </span>
-                  <span className="text-sm font-black text-indigo-600 dark:text-indigo-400">
-                    {effectiveManualGuests.length}
-                  </span>
-                </div>
+                  <div className="p-1.5 rounded-lg bg-indigo-500/5 border border-indigo-500/20">
+                    <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 block">
+                      + Incluídos man.
+                    </span>
+                    <span className="text-sm font-black text-indigo-600 dark:text-indigo-400">
+                      {effectiveManualGuests.length}
+                    </span>
+                  </div>
 
-                <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
-                  <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 block">
-                    = Total p/ Envio
-                  </span>
-                  <span className="text-base font-black text-emerald-600 dark:text-emerald-400">
-                    {finalRecipients.length}
-                  </span>
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
+                    <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 block">
+                      = Total p/ Envio
+                    </span>
+                    <span className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                      {finalRecipients.length}
+                    </span>
+                  </div>
+                </div>
+                <div className="px-2 py-1 rounded-lg bg-muted/40 border border-border/60 text-[10px] text-center font-semibold text-muted-foreground">
+                  Total filtrado (<strong className="text-foreground">{totalFilteredCount}</strong>) - Excluídos manualmente (<strong className="text-rose-600 dark:text-rose-400">{activeExcludedCount}</strong>) + Incluídos manualmente (<strong className="text-indigo-600 dark:text-indigo-400">{effectiveManualGuests.length}</strong>) = Total para envio (<strong className="text-emerald-600 dark:text-emerald-400">{finalRecipients.length}</strong>)
                 </div>
               </div>
 
@@ -1840,11 +1918,14 @@ export default function WhatsappBroadcastPage() {
                         const alreadyIncluded = finalRecipients.some(
                           r => r.guestKey === candidate.guestKey || (r.phone && candidate.phone && r.phone === candidate.phone)
                         )
+                        const hasValidPhone = Boolean(candidate.isValidWhatsapp && candidate.phone && candidate.phone.length >= 10)
                         return (
                           <div
                             key={candidate.guestKey}
                             onClick={() => handleAddManualGuest(candidate)}
-                            className="px-3 py-2 hover:bg-muted/60 cursor-pointer flex items-center justify-between gap-2 text-xs transition-colors"
+                            className={`px-3 py-2 flex items-center justify-between gap-2 text-xs transition-colors ${
+                              hasValidPhone ? "hover:bg-muted/60 cursor-pointer" : "opacity-60 cursor-not-allowed bg-muted/20"
+                            }`}
                           >
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5">
@@ -1859,7 +1940,9 @@ export default function WhatsappBroadcastPage() {
                                 </Badge>
                               </div>
                               <div className="text-[10px] text-muted-foreground flex items-center gap-2 mt-0.5">
-                                <span>{candidate.formattedPhone || "Sem telefone"}</span>
+                                <span className={!hasValidPhone ? "text-rose-600 font-semibold" : ""}>
+                                  {candidate.formattedPhone || "Sem WhatsApp válido"}
+                                </span>
                                 {candidate.localityLabel && <span>• {candidate.localityLabel}</span>}
                                 {candidate.checkinDate && (
                                   <span>• {formatDateBrShort(candidate.checkinDate)} a {formatDateBrShort(candidate.checkoutDate)}</span>
@@ -1868,10 +1951,11 @@ export default function WhatsappBroadcastPage() {
                             </div>
                             <Button
                               size="sm"
-                              variant={alreadyIncluded ? "secondary" : "default"}
+                              disabled={!hasValidPhone}
+                              variant={alreadyIncluded ? "secondary" : !hasValidPhone ? "outline" : "default"}
                               className="h-7 px-2.5 text-[11px] font-bold shrink-0"
                             >
-                              {alreadyIncluded ? "Já na lista" : "+ Incluir"}
+                              {!hasValidPhone ? "Sem WhatsApp" : alreadyIncluded ? "Já na lista" : "+ Incluir"}
                             </Button>
                           </div>
                         )
@@ -2395,19 +2479,11 @@ export default function WhatsappBroadcastPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 px-2 text-[10px] font-bold"
-                        onClick={async () => {
-                          const r = await fetch(`/api/whatsapp/broadcast/campaigns/${camp.id}`)
-                          if (r.ok) {
-                            const d = await r.json()
-                            if (d.campaign) {
-                              setActiveCampaign(d.campaign)
-                              setHistoryModalOpen(false)
-                            }
-                          }
-                        }}
+                        className="h-7 px-2 text-[10px] font-bold gap-1"
+                        onClick={() => openCampaignDetails(camp.id)}
                       >
-                        Ver Detalhes
+                        <Eye className="w-3 h-3" />
+                        Ver Detalhes & Log
                       </Button>
                     </div>
                   </div>
@@ -2426,6 +2502,140 @@ export default function WhatsappBroadcastPage() {
               ))
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Detalhes e Log Individual de Envios da Campanha */}
+      <Dialog open={campaignDetailModalOpen} onOpenChange={setCampaignDetailModalOpen}>
+        <DialogContent className="max-w-3xl rounded-2xl max-h-[88vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              Log Detalhado de Disparo • {inspectedCampaign?.name || "Campanha"}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Auditoria individual por destinatário, status de entrega na Z-API, horário de processamento e mensagem personalizada enviada.
+            </DialogDescription>
+          </DialogHeader>
+
+          {inspectedCampaign && (
+            <div className="space-y-3 py-1 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2.5 rounded-xl bg-muted/40 border border-border text-center">
+                <div>
+                  <span className="text-[10px] text-muted-foreground block">Total na Fila</span>
+                  <strong className="text-sm">{inspectedCampaign.totalCount}</strong>
+                </div>
+                <div>
+                  <span className="text-[10px] text-emerald-600 block">✓ Enviados</span>
+                  <strong className="text-sm text-emerald-600">{inspectedCampaign.sentCount}</strong>
+                </div>
+                <div>
+                  <span className="text-[10px] text-rose-600 block">✕ Falhas</span>
+                  <strong className="text-sm text-rose-600">{inspectedCampaign.failedCount}</strong>
+                </div>
+                <div>
+                  <span className="text-[10px] text-amber-600 block">⏳ Pendentes</span>
+                  <strong className="text-sm text-amber-600">{inspectedCampaign.pendingCount}</strong>
+                </div>
+              </div>
+
+              {inspectedCampaign.filtersSnapshot && (
+                <div className="px-3 py-1.5 rounded-xl bg-background border border-border text-[11px] flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-muted-foreground">
+                    Equação registrada no disparo:{" "}
+                    <strong>Total filtrado ({inspectedCampaign.filtersSnapshot.filteredCount})</strong>{" "}
+                    - <span className="text-rose-600 font-bold">Excluídos ({inspectedCampaign.filtersSnapshot.excludedCount})</span>{" "}
+                    + <span className="text-indigo-600 font-bold">Manuais ({inspectedCampaign.filtersSnapshot.manualCount})</span>{" "}
+                    = <span className="text-emerald-600 font-black">Total ({inspectedCampaign.filtersSnapshot.finalCount})</span>
+                  </span>
+                  <Badge variant="outline" className="text-[10px]">
+                    Delay: {inspectedCampaign.minDelaySeconds}s–{inspectedCampaign.maxDelaySeconds}s
+                  </Badge>
+                </div>
+              )}
+
+              <div className="border border-border rounded-xl overflow-hidden divide-y divide-border max-h-[48vh] overflow-y-auto">
+                {(inspectedCampaign.recipients || []).length === 0 ? (
+                  <div className="p-6 text-center text-muted-foreground">
+                    Nenhum destinatário registrado nesta campanha.
+                  </div>
+                ) : (
+                  (inspectedCampaign.recipients || []).map((rec, idx) => {
+                    const statusBadge =
+                      rec.status === "sent"
+                        ? { label: "✓ Enviado", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30" }
+                        : rec.status === "failed"
+                        ? { label: "✕ Falha", cls: "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30" }
+                        : rec.status === "sending"
+                        ? { label: "🔄 Enviando...", cls: "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30" }
+                        : { label: "⏳ Na fila", cls: "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30" }
+
+                    return (
+                      <div key={rec.guestKey || idx} className="p-2.5 bg-background/60 space-y-1">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-foreground">{rec.name}</span>
+                            <span className="font-mono text-[11px] text-muted-foreground">
+                              ({rec.formattedPhone || rec.phone})
+                            </span>
+                            {rec.flatNumber && (
+                              <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+                                Flat {rec.flatNumber}
+                              </Badge>
+                            )}
+                            {rec.originType === "manual" ? (
+                              <Badge className="h-4 px-1.5 text-[9px] bg-indigo-600 text-white">
+                                Inclusão Manual
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="h-4 px-1.5 text-[9px] text-muted-foreground">
+                                Filtro
+                              </Badge>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {rec.sentAt && (
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                {new Date(rec.sentAt).toLocaleTimeString("pt-BR")}
+                              </span>
+                            )}
+                            <Badge variant="outline" className={`h-5 px-2 text-[10px] font-bold ${statusBadge.cls}`}>
+                              {statusBadge.label}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {rec.error && (
+                          <div className="text-[11px] text-rose-600 dark:text-rose-400 flex items-center gap-1 font-medium">
+                            <AlertTriangle className="w-3 h-3 shrink-0" />
+                            <span>{rec.error}</span>
+                          </div>
+                        )}
+
+                        {rec.renderedMessage && (
+                          <details className="text-[11px] text-muted-foreground pt-0.5">
+                            <summary className="cursor-pointer hover:text-foreground font-semibold select-none">
+                              Ver mensagem personalizada enviada
+                            </summary>
+                            <div className="mt-1 p-2 rounded-lg bg-muted/50 border border-border/60 whitespace-pre-wrap text-foreground font-sans">
+                              {rec.renderedMessage}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setCampaignDetailModalOpen(false)}>
+              Fechar
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Shell>
