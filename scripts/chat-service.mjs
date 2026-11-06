@@ -1,4 +1,10 @@
-import { lookupCep, lookupCnpj } from "./lookup.mjs";
+import {
+  lookupCep,
+  lookupCnpj,
+  resolveKnownCnpjDirectory,
+  isGenericPelincaCompanyAddress,
+  enrichCrmEntityWithCnpjData
+} from "./lookup.mjs";
 import { isValidCpf, isValidCnpj, normalizeTomadorAddressFields } from "./national-nfse.mjs";
 
 export function onlyDigits(str = "") {
@@ -117,7 +123,11 @@ export function extractNormalizedGuestAddress(src = {}, fallbackDoc = "") {
     if (!rawNum || rawNum === "100") rawNum = commaMatch[2].trim();
   }
 
-  const isGenericPelinca = !rawEnd || /^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?$/i.test(rawEnd);
+  const isGenericPelinca = isGenericPelincaCompanyAddress({
+    address: rawEnd,
+    number: rawNum,
+    cep: rawCep
+  });
   if (isGenericPelinca && docDigits === "12585736792") {
     return {
       logradouro: "Rua Sebastião Rangel",
@@ -129,6 +139,21 @@ export function extractNormalizedGuestAddress(src = {}, fallbackDoc = "") {
       cep: "28024030",
       ibge: "3301009"
     };
+  }
+  if (isGenericPelinca && docDigits.length === 14) {
+    const knownPj = resolveKnownCnpjDirectory(docDigits);
+    if (knownPj) {
+      return {
+        logradouro: knownPj.logradouro,
+        numero: knownPj.numero || "S/N",
+        complemento: rawComp || knownPj.complemento || "",
+        bairro: knownPj.bairro || "Centro",
+        cidade: knownPj.cidade || "São Paulo",
+        uf: knownPj.uf || "SP",
+        cep: knownPj.cep || "",
+        ibge: knownPj.codigoMunicipio || "3550308"
+      };
+    }
   }
 
   const norm = normalizeTomadorAddressFields({
@@ -362,7 +387,16 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     corporateName: r.companyName,
     tradeName: r.companyName,
     cnpj: r.companyCnpj || "",
-    financialEmail: (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
+    financialEmail: (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "",
+    address: r.companyAddress || "",
+    logradouro: r.companyAddress || "",
+    number: r.companyNumber || "",
+    complement: r.companyComplement || "",
+    neighborhood: r.companyNeighborhood || "",
+    cep: r.companyCep || "",
+    city: r.companyCity || "",
+    state: r.companyState || "",
+    ibgeCode: r.companyIbgeCode || ""
   } : null);
 
   const effectiveAgencyId = r?.agencyId || primaryGuest?.agencyId || options?.agency?.id || null;
@@ -381,7 +415,16 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     tradeName: r.agencyTradeName || r.agencyName,
     cnpj: r.agencyCnpj || "",
     financialEmail: r.agencyAgentEmail || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "",
-    phone: r.agencyAgentPhone || ""
+    phone: r.agencyAgentPhone || "",
+    address: r.agencyAddress || "",
+    logradouro: r.agencyAddress || "",
+    number: r.agencyNumber || "",
+    complement: r.agencyComplement || "",
+    neighborhood: r.agencyNeighborhood || "",
+    cep: r.agencyCep || "",
+    city: r.agencyCity || "",
+    state: r.agencyState || "",
+    ibgeCode: r.agencyIbgeCode || ""
   } : null);
 
   // Dados da estadia (idênticos a populateStayFromReservation no /notas)
@@ -447,49 +490,73 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
   };
 
   const companyDoc = onlyDigits(crmComp?.cnpj || r?.companyCnpj || primaryGuest?.companyCnpj || primaryGuest?.companyData?.cnpj || "");
+  if (companyDoc.length === 14 && crmComp && (!crmComp.address || isGenericPelincaCompanyAddress(crmComp))) {
+    const knownComp = resolveKnownCnpjDirectory(companyDoc);
+    if (knownComp) {
+      enrichCrmEntityWithCnpjData(crmComp, knownComp);
+    } else if (process.env.NODE_ENV !== "test") {
+      lookupCnpj(companyDoc, db).catch(() => {});
+    }
+  }
+  const knownCompFallback = companyDoc.length === 14 ? resolveKnownCnpjDirectory(companyDoc) : null;
+  const compAddrSource = (crmComp && !isGenericPelincaCompanyAddress(crmComp) && (crmComp.address || crmComp.logradouro || crmComp.street || crmComp.endereco))
+    ? crmComp
+    : (knownCompFallback || crmComp || {});
   const companyOption = (crmComp || companyDoc.length === 14) ? {
     type: "company",
     tomadorTipo: "PJ",
     tomadorType: "pj",
     tomadorPadrao: "PJ",
     companyId: crmComp?.id ? Number(crmComp.id) : (effectiveCompanyId ? Number(effectiveCompanyId) : null),
-    name: toTitleCaseLocal(crmComp?.corporateName || crmComp?.tradeName || crmComp?.razaoSocial || crmComp?.name || r?.companyName || primaryGuest?.companyName || "Empresa"),
+    name: toTitleCaseLocal(crmComp?.corporateName || crmComp?.tradeName || crmComp?.razaoSocial || crmComp?.name || r?.companyName || primaryGuest?.companyName || knownCompFallback?.razaoSocial || "Empresa"),
     doc: companyDoc,
-    tomadorNome: toTitleCaseLocal(crmComp?.corporateName || crmComp?.tradeName || crmComp?.razaoSocial || crmComp?.name || r?.companyName || primaryGuest?.companyName || "Empresa"),
+    tomadorNome: toTitleCaseLocal(crmComp?.corporateName || crmComp?.tradeName || crmComp?.razaoSocial || crmComp?.name || r?.companyName || primaryGuest?.companyName || knownCompFallback?.razaoSocial || "Empresa"),
     tomadorCpfCnpj: companyDoc,
     tomadorEmail: (crmComp?.financialEmail || crmComp?.email || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || guestEmail || "").trim().toLowerCase(),
-    tomadorTelefone: onlyDigits(crmComp?.phone || guestPhone || ""),
-    tomadorEndereco: String(crmComp?.address || crmComp?.logradouro || crmComp?.street || crmComp?.endereco || "Av. Pelinca").trim(),
-    tomadorNumero: String(crmComp?.number || crmComp?.numero || crmComp?.streetNumber || "100").trim(),
-    tomadorComplemento: String(crmComp?.complement || crmComp?.complemento || "").trim(),
-    tomadorBairro: String(crmComp?.neighborhood || crmComp?.bairro || "Pelinca").trim(),
-    tomadorCep: onlyDigits(crmComp?.cep || crmComp?.zipCode || "28035000") || "28035000",
-    tomadorCidade: String(crmComp?.city || crmComp?.cidade || "Campos dos Goytacazes").trim(),
-    tomadorUf: String(crmComp?.state || crmComp?.uf || "RJ").trim().toUpperCase(),
-    tomadorCodigoMunicipio: onlyDigits(crmComp?.ibgeCode || crmComp?.codigoMunicipio || "3301009") || "3301009"
+    tomadorTelefone: onlyDigits(crmComp?.phone || knownCompFallback?.telefone || guestPhone || ""),
+    tomadorEndereco: String(compAddrSource?.address || compAddrSource?.logradouro || compAddrSource?.street || compAddrSource?.endereco || "Av. Pelinca").trim(),
+    tomadorNumero: String(compAddrSource?.number || compAddrSource?.numero || compAddrSource?.streetNumber || "100").trim(),
+    tomadorComplemento: String(compAddrSource?.complement || compAddrSource?.complemento || "").trim(),
+    tomadorBairro: String(compAddrSource?.neighborhood || compAddrSource?.bairro || "Pelinca").trim(),
+    tomadorCep: onlyDigits(compAddrSource?.cep || compAddrSource?.zipCode || "28035000") || "28035000",
+    tomadorCidade: String(compAddrSource?.city || compAddrSource?.cidade || "Campos dos Goytacazes").trim(),
+    tomadorUf: String(compAddrSource?.state || compAddrSource?.uf || "RJ").trim().toUpperCase(),
+    tomadorCodigoMunicipio: onlyDigits(compAddrSource?.ibgeCode || compAddrSource?.codigoMunicipio || "3301009") || "3301009"
   } : null;
 
   const agencyDoc = onlyDigits(crmAgency?.cnpj || r?.agencyCnpj || "");
+  if (agencyDoc.length === 14 && crmAgency && (!crmAgency.address || isGenericPelincaCompanyAddress(crmAgency))) {
+    const knownAg = resolveKnownCnpjDirectory(agencyDoc);
+    if (knownAg) {
+      enrichCrmEntityWithCnpjData(crmAgency, knownAg);
+    } else if (process.env.NODE_ENV !== "test") {
+      lookupCnpj(agencyDoc, db).catch(() => {});
+    }
+  }
+  const knownAgFallback = agencyDoc.length === 14 ? resolveKnownCnpjDirectory(agencyDoc) : null;
+  const agAddrSource = (crmAgency && !isGenericPelincaCompanyAddress(crmAgency) && (crmAgency.address || crmAgency.logradouro || crmAgency.endereco))
+    ? crmAgency
+    : (knownAgFallback || crmAgency || {});
   const agencyOption = (crmAgency && agencyDoc.length === 14) ? {
     type: "agency",
     tomadorTipo: "PJ",
     tomadorType: "agency",
     tomadorPadrao: "AGÊNCIA PJ",
     agencyId: crmAgency?.id ? Number(crmAgency.id) : (effectiveAgencyId ? Number(effectiveAgencyId) : null),
-    name: toTitleCaseLocal(crmAgency?.corporateName || crmAgency?.razaoSocial || crmAgency?.tradeName || crmAgency?.name || r?.agencyName || "Agência de Viagens"),
+    name: toTitleCaseLocal(crmAgency?.corporateName || crmAgency?.razaoSocial || crmAgency?.tradeName || crmAgency?.name || r?.agencyName || knownAgFallback?.razaoSocial || "Agência de Viagens"),
     doc: agencyDoc,
-    tomadorNome: toTitleCaseLocal(crmAgency?.corporateName || crmAgency?.razaoSocial || crmAgency?.tradeName || crmAgency?.name || r?.agencyName || "Agência de Viagens"),
+    tomadorNome: toTitleCaseLocal(crmAgency?.corporateName || crmAgency?.razaoSocial || crmAgency?.tradeName || crmAgency?.name || r?.agencyName || knownAgFallback?.razaoSocial || "Agência de Viagens"),
     tomadorCpfCnpj: agencyDoc,
     tomadorEmail: (crmAgency?.financialEmail || crmAgency?.email || r?.agencyAgentEmail || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "").trim().toLowerCase(),
-    tomadorTelefone: onlyDigits(crmAgency?.phone || r?.agencyAgentPhone || guestPhone || ""),
-    tomadorEndereco: String(crmAgency?.address || crmAgency?.logradouro || crmAgency?.endereco || "Av. Paulista").trim(),
-    tomadorNumero: String(crmAgency?.number || crmAgency?.numero || "100").trim(),
-    tomadorComplemento: String(crmAgency?.complement || crmAgency?.complemento || "").trim(),
-    tomadorBairro: String(crmAgency?.neighborhood || crmAgency?.bairro || "Centro").trim(),
-    tomadorCep: onlyDigits(crmAgency?.cep || "01310100") || "01310100",
-    tomadorCidade: String(crmAgency?.city || crmAgency?.cidade || "São Paulo").trim(),
-    tomadorUf: String(crmAgency?.state || crmAgency?.uf || "SP").trim().toUpperCase(),
-    tomadorCodigoMunicipio: onlyDigits(crmAgency?.ibgeCode || crmAgency?.codigoMunicipio || "3550308") || "3550308"
+    tomadorTelefone: onlyDigits(crmAgency?.phone || r?.agencyAgentPhone || knownAgFallback?.telefone || guestPhone || ""),
+    tomadorEndereco: String(agAddrSource?.address || agAddrSource?.logradouro || agAddrSource?.endereco || "Av. Paulista").trim(),
+    tomadorNumero: String(agAddrSource?.number || agAddrSource?.numero || "100").trim(),
+    tomadorComplemento: String(agAddrSource?.complement || agAddrSource?.complemento || "").trim(),
+    tomadorBairro: String(agAddrSource?.neighborhood || agAddrSource?.bairro || "Centro").trim(),
+    tomadorCep: onlyDigits(agAddrSource?.cep || "01310100") || "01310100",
+    tomadorCidade: String(agAddrSource?.city || agAddrSource?.cidade || "São Paulo").trim(),
+    tomadorUf: String(agAddrSource?.state || agAddrSource?.uf || "SP").trim().toUpperCase(),
+    tomadorCodigoMunicipio: onlyDigits(agAddrSource?.ibgeCode || agAddrSource?.codigoMunicipio || "3550308") || "3550308"
   } : null;
 
   // Seleção do Tomador Ativo (idêntica a recipientPref em populateStayFromReservation no /notas)
@@ -500,11 +567,11 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     recipientType = companyOption ? "company" : (agencyOption ? "agency" : "guest");
   } else if (preferType === "agency") {
     recipientType = "agency";
-  } else if (confFiscal?.tomadorCpfCnpj) {
-    const confDoc = onlyDigits(confFiscal.tomadorCpfCnpj);
+  } else if (confFiscal?.tomadorCpfCnpj || confFiscal?.doc) {
+    const confDoc = onlyDigits(confFiscal.tomadorCpfCnpj || confFiscal.doc);
     if (agencyOption && confDoc === agencyOption.tomadorCpfCnpj) recipientType = "agency";
     else if (companyOption && confDoc === companyOption.tomadorCpfCnpj) recipientType = "company";
-    else if (confDoc.length === 14 && confFiscal.tomadorTipo === "PJ") recipientType = "company";
+    else if (confDoc.length === 14 && (confFiscal.tomadorTipo === "PJ" || confFiscal.tomador === "PJ" || confFiscal.type === "COMPANY")) recipientType = "company";
     else recipientType = "guest";
   } else if (!["guest", "company", "agency"].includes(recipientType)) {
     if (agencyOption && r?.channel === "b2b") recipientType = "agency";
@@ -519,7 +586,7 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
 
   // Se houver dados já confirmados/personalizados em confirmedFiscalData ou invoiceDetails compatíveis com o tomador ativo, aplica por cima
   const customOverlay = confFiscal || invDetails || null;
-  const ovDoc = onlyDigits(customOverlay?.tomadorCpfCnpj || "");
+  const ovDoc = onlyDigits(customOverlay?.tomadorCpfCnpj || customOverlay?.doc || "");
   const overlayMatchesActive = Boolean(
     customOverlay &&
     (!preferType || (preferType === "PF" && ovDoc.length === 11) || (preferType === "PJ" && ovDoc.length === 14)) &&
@@ -531,20 +598,41 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
       activeOption.doc = ovDoc;
       activeOption.tomadorTipo = ovDoc.length === 14 ? "PJ" : "PF";
     }
-    if (customOverlay.tomadorNome) {
-      activeOption.tomadorNome = customOverlay.tomadorNome;
-      activeOption.name = customOverlay.tomadorNome;
+    const ovName = customOverlay.tomadorNome || customOverlay.name;
+    if (ovName) {
+      activeOption.tomadorNome = ovName;
+      activeOption.name = ovName;
     }
-    if (customOverlay.tomadorEmail) activeOption.tomadorEmail = customOverlay.tomadorEmail;
-    if (customOverlay.tomadorTelefone) activeOption.tomadorTelefone = onlyDigits(customOverlay.tomadorTelefone);
-    if (customOverlay.tomadorEndereco) activeOption.tomadorEndereco = customOverlay.tomadorEndereco;
-    if (customOverlay.tomadorNumero) activeOption.tomadorNumero = customOverlay.tomadorNumero;
-    if (customOverlay.tomadorComplemento !== undefined) activeOption.tomadorComplemento = customOverlay.tomadorComplemento;
-    if (customOverlay.tomadorBairro) activeOption.tomadorBairro = customOverlay.tomadorBairro;
-    if (customOverlay.tomadorCidade) activeOption.tomadorCidade = customOverlay.tomadorCidade;
-    if (customOverlay.tomadorUf) activeOption.tomadorUf = customOverlay.tomadorUf;
-    if (customOverlay.tomadorCep) activeOption.tomadorCep = onlyDigits(customOverlay.tomadorCep);
-    if (customOverlay.tomadorCodigoMunicipio) activeOption.tomadorCodigoMunicipio = customOverlay.tomadorCodigoMunicipio;
+    const ovEmail = customOverlay.tomadorEmail || customOverlay.email;
+    if (ovEmail) activeOption.tomadorEmail = ovEmail;
+    const ovPhone = customOverlay.tomadorTelefone || customOverlay.phone;
+    if (ovPhone) activeOption.tomadorTelefone = onlyDigits(ovPhone);
+    const ovAddr = customOverlay.tomadorEndereco || customOverlay.street || customOverlay.address;
+    const ovNum = customOverlay.tomadorNumero || customOverlay.number;
+    const ovComp = customOverlay.tomadorComplemento ?? customOverlay.complement;
+    const ovBairro = customOverlay.tomadorBairro || customOverlay.neighborhood;
+    const ovCidade = customOverlay.tomadorCidade || customOverlay.city;
+    const ovUf = customOverlay.tomadorUf || customOverlay.state;
+    const ovCep = customOverlay.tomadorCep || customOverlay.cep;
+    const ovIbge = customOverlay.tomadorCodigoMunicipio || customOverlay.ibgeCode;
+    const isOverlayGenericPelincaForPj =
+      (ovDoc.length === 14 || activeOption.tomadorTipo === "PJ") &&
+      isGenericPelincaCompanyAddress({
+        address: ovAddr,
+        cep: ovCep,
+        neighborhood: ovBairro,
+        city: ovCidade
+      });
+    if (!isOverlayGenericPelincaForPj) {
+      if (ovAddr) activeOption.tomadorEndereco = ovAddr;
+      if (ovNum) activeOption.tomadorNumero = ovNum;
+      if (ovComp !== undefined) activeOption.tomadorComplemento = ovComp;
+      if (ovBairro) activeOption.tomadorBairro = ovBairro;
+      if (ovCidade) activeOption.tomadorCidade = ovCidade;
+      if (ovUf) activeOption.tomadorUf = ovUf;
+      if (ovCep) activeOption.tomadorCep = onlyDigits(ovCep);
+      if (ovIbge) activeOption.tomadorCodigoMunicipio = ovIbge;
+    }
   }
 
   // Discriminação Oficial do Studio /notas:
@@ -632,6 +720,13 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     descricaoServico = buildStandardDescription(guestName, flatNumber, checkIn, checkOut, diarias, extraIds);
   }
 
+  const formattedAddress = [
+    activeOption.tomadorEndereco ? `${activeOption.tomadorEndereco}${activeOption.tomadorNumero ? `, ${activeOption.tomadorNumero}` : ""}` : "",
+    activeOption.tomadorBairro || "",
+    activeOption.tomadorCidade ? `${activeOption.tomadorCidade}${activeOption.tomadorUf ? `/${activeOption.tomadorUf}` : ""}` : "",
+    activeOption.tomadorCep ? `CEP: ${activeOption.tomadorCep}` : ""
+  ].filter(Boolean).join(" - ");
+
   return {
     reservationId: r?.id || null,
     reservationCode: r?.code || null,
@@ -656,17 +751,28 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     tomadorType: activeOption.tomadorType || (activeOption.tomadorCpfCnpj?.length === 14 ? "pj" : "pf"),
     tomadorPadrao: activeOption.tomadorPadrao || (activeOption.tomadorCpfCnpj?.length === 14 ? "PJ" : "PF"),
     tomadorNome: activeOption.tomadorNome,
+    name: activeOption.tomadorNome,
     tomadorCpfCnpj: activeOption.tomadorCpfCnpj,
+    doc: activeOption.tomadorCpfCnpj,
     tomadorEmail: activeOption.tomadorEmail,
     tomadorTelefone: activeOption.tomadorTelefone,
     tomadorEndereco: activeOption.tomadorEndereco,
+    street: activeOption.tomadorEndereco,
     tomadorNumero: activeOption.tomadorNumero,
+    number: activeOption.tomadorNumero,
     tomadorComplemento: activeOption.tomadorComplemento || "",
+    complement: activeOption.tomadorComplemento || "",
     tomadorBairro: activeOption.tomadorBairro,
+    neighborhood: activeOption.tomadorBairro,
     tomadorCep: activeOption.tomadorCep,
+    cep: activeOption.tomadorCep,
     tomadorCidade: activeOption.tomadorCidade,
+    city: activeOption.tomadorCidade,
     tomadorUf: activeOption.tomadorUf,
+    state: activeOption.tomadorUf,
     tomadorCodigoMunicipio: activeOption.tomadorCodigoMunicipio,
+    ibgeCode: activeOption.tomadorCodigoMunicipio,
+    formattedAddress,
     tomadorOptions: {
       guest: guestOption,
       company: companyOption,
@@ -821,8 +927,10 @@ export async function processChatConversation({
           if (cnpjInfo.nomeFantasia) data.tomadorNomeFantasia = cnpjInfo.nomeFantasia;
           if (cnpjInfo.logradouro) data.tomadorEndereco = cnpjInfo.logradouro;
           if (cnpjInfo.numero) data.tomadorNumero = cnpjInfo.numero;
+          if (cnpjInfo.complemento !== undefined) data.tomadorComplemento = cnpjInfo.complemento;
           if (cnpjInfo.bairro) data.tomadorBairro = cnpjInfo.bairro;
           if (cnpjInfo.cep) data.tomadorCep = onlyDigits(cnpjInfo.cep);
+          if (cnpjInfo.cidade || cnpjInfo.municipio) data.tomadorCidade = cnpjInfo.cidade || cnpjInfo.municipio;
           if (cnpjInfo.uf) data.tomadorUf = cnpjInfo.uf;
           if (cnpjInfo.codigoMunicipio) data.tomadorCodigoMunicipio = cnpjInfo.codigoMunicipio;
           if (cnpjInfo.email && !data.tomadorEmail) data.tomadorEmail = cnpjInfo.email;
@@ -850,6 +958,7 @@ export async function processChatConversation({
           data.tomadorCep = candidateCep;
           if (cepInfo.logradouro) data.tomadorEndereco = cepInfo.logradouro;
           if (cepInfo.bairro) data.tomadorBairro = cepInfo.bairro;
+          if (cepInfo.cidade || cepInfo.localidade) data.tomadorCidade = cepInfo.cidade || cepInfo.localidade;
           if (cepInfo.uf) data.tomadorUf = cepInfo.uf;
           if (cepInfo.codigoMunicipio) data.tomadorCodigoMunicipio = cepInfo.codigoMunicipio;
         } catch {}
@@ -900,6 +1009,33 @@ export async function processChatConversation({
   if (typeof onGuestDiscovered === "function") {
     try {
       await onGuestDiscovered(data);
+    } catch {}
+  }
+
+  // Se for PJ (14 dígitos) e o endereço ainda estiver vazio ou no fallback genérico da Av. Pelinca, resolve o CNPJ real
+  if (
+    data.tomadorCpfCnpj &&
+    data.tomadorCpfCnpj.length === 14 &&
+    isGenericPelincaCompanyAddress({
+      address: data.tomadorEndereco,
+      number: data.tomadorNumero,
+      cep: data.tomadorCep
+    })
+  ) {
+    try {
+      const cnpjInfo = resolveKnownCnpjDirectory(data.tomadorCpfCnpj) || (await lookupCnpj(data.tomadorCpfCnpj));
+      if (cnpjInfo && cnpjInfo.logradouro) {
+        if (cnpjInfo.razaoSocial && !data.tomadorNome) data.tomadorNome = cnpjInfo.razaoSocial;
+        if (cnpjInfo.nomeFantasia && !data.tomadorNomeFantasia) data.tomadorNomeFantasia = cnpjInfo.nomeFantasia;
+        data.tomadorEndereco = cnpjInfo.logradouro;
+        if (cnpjInfo.numero) data.tomadorNumero = cnpjInfo.numero;
+        if (cnpjInfo.complemento !== undefined) data.tomadorComplemento = cnpjInfo.complemento;
+        if (cnpjInfo.bairro) data.tomadorBairro = cnpjInfo.bairro;
+        if (cnpjInfo.cep) data.tomadorCep = onlyDigits(cnpjInfo.cep);
+        if (cnpjInfo.cidade || cnpjInfo.municipio) data.tomadorCidade = cnpjInfo.cidade || cnpjInfo.municipio;
+        if (cnpjInfo.uf) data.tomadorUf = cnpjInfo.uf;
+        if (cnpjInfo.codigoMunicipio) data.tomadorCodigoMunicipio = cnpjInfo.codigoMunicipio;
+      }
     } catch {}
   }
 

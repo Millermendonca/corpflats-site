@@ -23,6 +23,12 @@ import {
   matchReservationForCancellation,
   executeAutonomousB2bCancellation
 } from "./b2b-cancellation-service.mjs";
+import {
+  lookupCnpj,
+  resolveKnownCnpjDirectory,
+  isGenericPelincaCompanyAddress,
+  enrichCrmEntityWithCnpjData
+} from "./lookup.mjs";
 
 // ── Cache em memória para Ciclo de Vida OAuth2 Zoho ───────────────────────────
 const zohoTokenCache = {
@@ -1317,6 +1323,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
               autoSendCredentialEmail: false
             });
             if (ingestRes?.ok) {
+              await enrichB2bIngestedEntitiesCnpj(db, { ...ingestRes, saveDatabase });
               addedOrUpdated++;
             }
           }
@@ -1958,7 +1965,10 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
       subject: target.subject || ""
     });
     if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
-      ingestB2bVoucherIntoDb(db, parsedB2b, { saveDatabase, autoSendCredentialEmail: false });
+      const ingestRes = ingestB2bVoucherIntoDb(db, parsedB2b, { saveDatabase, autoSendCredentialEmail: false });
+      if (ingestRes?.ok) {
+        await enrichB2bIngestedEntitiesCnpj(db, { ...ingestRes, saveDatabase });
+      }
       if (!target.matchedReservation) {
         target.matchedReservation = matchEmailWithReservation(db, target);
       }
@@ -3197,7 +3207,7 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     }
   }
 
-  // Enriquecimento determinístico para BOOKING_WS sem PDF anexo (ex: Globalis/Bimbo #25150895, Paytrack/União Química #25111834)
+  // Enriquecimento determinístico para BOOKING_WS sem PDF anexo (ex: Globalis/Bimbo #25150895, Paytrack/União Química #25111834, Copastur/Atacadão #25252964)
   if (agencyName === "Globalis Viagens" && /^ARGO\.GLOBALIS$/i.test(agencyAgentName)) {
     if (!agencyCnpj) agencyCnpj = "19.933.930/0001-75";
     if (!agencyAgentPhone) agencyAgentPhone = "(11) 3136-1600";
@@ -3216,6 +3226,58 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   } else if (agencyName === "Flytour Curitiba (DPR Turismo)" && !companyCnpj && agencyCnpj) {
     companyCnpj = agencyCnpj;
   }
+  if (/Copastur/i.test(agencyName) && !agencyCnpj) {
+    agencyCnpj = "43.637.214/0001-86";
+  }
+  if (/Atacad[aã]o/i.test(companyName) && !companyCnpj) {
+    companyCnpj = "75.315.333/0001-09";
+  } else if (companyCnpj && String(companyCnpj).replace(/\D/g, "") === "75315333000109" && !companyName) {
+    companyName = "ATACADAO DISTR COM E IND MATRIZ";
+  }
+
+  // Extração de endereço do tomador / empresa a partir da seção fiscal do voucher ou diretório CNPJ
+  const nfAddressMatch = (nfSectionText || fullScan).match(/(?:Endere[cç]o(?:\s+da\s+Empresa|\s+do\s+Tomador|\s+para\s+Faturamento)?|Logradouro)\s*[:\-]+\s*([^\n|]+)/i);
+  const nfBairroMatch = (nfSectionText || fullScan).match(/Bairro\s*[:\-]+\s*([^\n|,;]+)/i);
+  const nfCepMatch = (nfSectionText || fullScan).match(/CEP\s*[:\-]*\s*(\d{5}-?\d{3})/i);
+  const nfCityStateMatch = (nfSectionText || fullScan).match(/(?:Cidade|Munic[ií]pio)\s*[:\-]+\s*([A-Za-zÀ-ÿ\s'.-]+?)(?:\s*[\/\-]\s*([A-Z]{2}))?(?=\s*(?:\n|\||CEP|CNPJ|$))/i);
+  const nfUfMatch = (nfSectionText || fullScan).match(/\b(?:UF|Estado)\s*[:\-]+\s*([A-Z]{2})\b/i);
+
+  const knownCompanyDir = resolveKnownCnpjDirectory(companyCnpj);
+  const knownAgencyDir = resolveKnownCnpjDirectory(agencyCnpj);
+
+  let companyAddress = knownCompanyDir?.logradouro || "";
+  let companyNumber = knownCompanyDir?.numero || "";
+  let companyComplement = knownCompanyDir?.complemento || "";
+  let companyNeighborhood = knownCompanyDir?.bairro || "";
+  let companyCity = knownCompanyDir?.cidade || "";
+  let companyState = knownCompanyDir?.uf || "";
+  let companyCep = knownCompanyDir?.cep || "";
+  let companyIbgeCode = knownCompanyDir?.codigoMunicipio || "";
+
+  if (!companyAddress && nfAddressMatch) {
+    const rawAddr = cleanB2bFieldValue(nfAddressMatch[1]);
+    if (rawAddr && !/pelinca|av\.?\s*Rio\s+Branco/i.test(rawAddr)) {
+      const addrParts = rawAddr.match(/^([^,]+?)(?:,\s*(?:n[º°.]?\s*)?(\d+[A-Za-z0-9\/-]*|S\/N))?(?:\s*[-,]\s*(.+))?$/i);
+      companyAddress = (addrParts ? addrParts[1] : rawAddr).trim();
+      if (addrParts?.[2]) companyNumber = addrParts[2].trim();
+      if (addrParts?.[3] && !nfBairroMatch) companyNeighborhood = addrParts[3].trim();
+    }
+  }
+  if (!companyNeighborhood && nfBairroMatch) companyNeighborhood = cleanB2bFieldValue(nfBairroMatch[1]);
+  if (!companyCep && nfCepMatch) companyCep = nfCepMatch[1].replace(/\D/g, "");
+  if (!companyCity && nfCityStateMatch) companyCity = cleanB2bFieldValue(nfCityStateMatch[1]);
+  if (!companyState && (nfCityStateMatch?.[2] || nfUfMatch?.[1])) {
+    companyState = String(nfCityStateMatch?.[2] || nfUfMatch?.[1] || "").trim().toUpperCase();
+  }
+
+  const agencyAddress = knownAgencyDir?.logradouro || "";
+  const agencyNumber = knownAgencyDir?.numero || "";
+  const agencyComplement = knownAgencyDir?.complemento || "";
+  const agencyNeighborhood = knownAgencyDir?.bairro || "";
+  const agencyCity = knownAgencyDir?.cidade || "";
+  const agencyState = knownAgencyDir?.uf || "";
+  const agencyCep = knownAgencyDir?.cep || "";
+  const agencyIbgeCode = knownAgencyDir?.codigoMunicipio || "";
 
   // Comissão em R$ e Valor Líquido
   const explicitCommMatch =
@@ -3276,10 +3338,12 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF|NFS-E)?\s+(?:PARA|CONTRA|EM\s+NOME\s+DO\s+CNPJ)\s*[:\-]?\s*(?:A\s+)?(?:EMPRESA|ABAIXO)?/i.test(fullScan) ||
     /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF)\s+PARA\s*:/i.test(fullScan) ||
     /Tomador(?:\s+da\s+Nota)?\s*[:\-]+\s*(?:Emitir\s+nota\s+para\s+a\s+)?Empresa/i.test(fullScan) ||
-    /(?:EMITIR|FATURAR)\s+(?:NFS-?e|NOTA(?:\s+FISCAL)?|NF)\s+CONTRA\b/i.test(fullScan)
+    /(?:EMITIR|FATURAR|FATURAD[AO])\s+(?:(?:A\s+)?(?:NFS-?e|NOTA(?:\s+FISCAL)?|NF)\s+)?(?:CONTRA|PARA\s+(?:A\s+)?EMPRESA)\b/i.test(fullScan)
   ) {
     invoiceRecipientType = "company";
     _explicitInvoiceRecipient = true;
+  } else if (!_explicitInvoiceRecipient && (String(companyCnpj || "").replace(/\D/g, "").length === 14 || companyName)) {
+    invoiceRecipientType = "company";
   }
 
   return {
@@ -3305,8 +3369,24 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     agencyAgentName,
     agencyAgentPhone,
     agencyAgentEmail,
+    agencyAddress,
+    agencyNumber,
+    agencyComplement,
+    agencyNeighborhood,
+    agencyCity,
+    agencyState,
+    agencyCep,
+    agencyIbgeCode,
     companyName,
     companyCnpj,
+    companyAddress,
+    companyNumber,
+    companyComplement,
+    companyNeighborhood,
+    companyCity,
+    companyState,
+    companyCep,
+    companyIbgeCode,
     costCenter: costCenterMatch ? costCenterMatch[1].trim() : "",
     b2bPaymentType,
     b2bCardBrand,
@@ -3386,6 +3466,49 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
       // Mantém dados extraídos localmente se o portal externo estiver inacessível
     }
   }
+
+  // Enriquecimento automático de endereço fiscal via CNPJ (Receita Federal / BrasilAPI) quando o voucher traz CNPJ mas não traz logradouro
+  const cleanCompCnpj = String(parsed.companyCnpj || "").replace(/\D/g, "");
+  if (cleanCompCnpj.length === 14 && (!parsed.companyAddress || !parsed.companyCep || !parsed.companyCity)) {
+    try {
+      const cnpjInfo = await lookupCnpj(cleanCompCnpj);
+      if (cnpjInfo && !cnpjInfo.error) {
+        if (!parsed.companyName && (cnpjInfo.razaoSocial || cnpjInfo.nomeFantasia)) {
+          parsed.companyName = cnpjInfo.razaoSocial || cnpjInfo.nomeFantasia;
+        }
+        if (cnpjInfo.logradouro) parsed.companyAddress = cnpjInfo.logradouro;
+        if (cnpjInfo.numero) parsed.companyNumber = cnpjInfo.numero;
+        if (cnpjInfo.complemento && !parsed.companyComplement) parsed.companyComplement = cnpjInfo.complemento;
+        if (cnpjInfo.bairro) parsed.companyNeighborhood = cnpjInfo.bairro;
+        if (cnpjInfo.cidade) parsed.companyCity = cnpjInfo.cidade;
+        if (cnpjInfo.uf) parsed.companyState = cnpjInfo.uf;
+        if (cnpjInfo.cep) parsed.companyCep = String(cnpjInfo.cep).replace(/\D/g, "");
+        if (cnpjInfo.codigoMunicipio) parsed.companyIbgeCode = String(cnpjInfo.codigoMunicipio).replace(/\D/g, "");
+      }
+    } catch {
+      // Silencioso: fallback determinístico ou lookup posterior tratará se a API externa oscilar
+    }
+  }
+
+  const cleanAgCnpj = String(parsed.agencyCnpj || "").replace(/\D/g, "");
+  if (cleanAgCnpj.length === 14 && (!parsed.agencyAddress || !parsed.agencyCep || !parsed.agencyCity)) {
+    try {
+      const agCnpjInfo = await lookupCnpj(cleanAgCnpj);
+      if (agCnpjInfo && !agCnpjInfo.error) {
+        if (agCnpjInfo.logradouro) parsed.agencyAddress = agCnpjInfo.logradouro;
+        if (agCnpjInfo.numero) parsed.agencyNumber = agCnpjInfo.numero;
+        if (agCnpjInfo.complemento && !parsed.agencyComplement) parsed.agencyComplement = agCnpjInfo.complemento;
+        if (agCnpjInfo.bairro) parsed.agencyNeighborhood = agCnpjInfo.bairro;
+        if (agCnpjInfo.cidade) parsed.agencyCity = agCnpjInfo.cidade;
+        if (agCnpjInfo.uf) parsed.agencyState = agCnpjInfo.uf;
+        if (agCnpjInfo.cep) parsed.agencyCep = String(agCnpjInfo.cep).replace(/\D/g, "");
+        if (agCnpjInfo.codigoMunicipio) parsed.agencyIbgeCode = String(agCnpjInfo.codigoMunicipio).replace(/\D/g, "");
+      }
+    } catch {
+      // Silencioso
+    }
+  }
+
   return parsed;
 }
 
@@ -3547,6 +3670,17 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
   }
 
   if (parsed.agencyName || agency) {
+    const knownAgDir = resolveKnownCnpjDirectory(parsed.agencyCnpj || agency?.cnpj || "");
+    const agCnpjData = {
+      logradouro: parsed.agencyAddress || knownAgDir?.logradouro || "",
+      numero: parsed.agencyNumber || knownAgDir?.numero || "",
+      complemento: parsed.agencyComplement || knownAgDir?.complemento || "",
+      bairro: parsed.agencyNeighborhood || knownAgDir?.bairro || "",
+      cep: parsed.agencyCep || knownAgDir?.cep || "",
+      cidade: parsed.agencyCity || knownAgDir?.cidade || "",
+      uf: parsed.agencyState || knownAgDir?.uf || "",
+      codigoMunicipio: parsed.agencyIbgeCode || knownAgDir?.codigoMunicipio || ""
+    };
     if (!agency) {
       const nextAgId = db.agencies.reduce((m, a) => Math.max(m, Number(a.id) || 0), 0) + 1;
       agency = {
@@ -3558,8 +3692,22 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
         email: parsed.agencyAgentEmail || parsed.nfDeliveryEmails?.[0] || "",
         financialEmail: parsed.agencyAgentEmail || parsed.nfDeliveryEmails?.[0] || "",
         phone: parsed.agencyAgentPhone || "",
-        city: "São Paulo",
-        state: "SP",
+        address: agCnpjData.logradouro || "",
+        logradouro: agCnpjData.logradouro || "",
+        endereco: agCnpjData.logradouro || "",
+        number: agCnpjData.numero || "",
+        numero: agCnpjData.numero || "",
+        complement: agCnpjData.complemento || "",
+        complemento: agCnpjData.complemento || "",
+        neighborhood: agCnpjData.bairro || "",
+        bairro: agCnpjData.bairro || "",
+        cep: agCnpjData.cep || "",
+        city: agCnpjData.cidade || "São Paulo",
+        cidade: agCnpjData.cidade || "São Paulo",
+        state: agCnpjData.uf || "SP",
+        uf: agCnpjData.uf || "SP",
+        ibgeCode: agCnpjData.codigoMunicipio || "3550308",
+        codigoMunicipio: agCnpjData.codigoMunicipio || "3550308",
         ratePolicy: parsed.b2bRatePolicy || "COMISSIONADA",
         commissionPct: parsed.b2bCommissionPct ?? (parsed.b2bRatePolicy === "NET" ? 0 : 12),
         defaultPaymentType: parsed.b2bPaymentType || "VIRTUAL_CARD",
@@ -3577,6 +3725,9 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     } else {
       if (parsed.agencyCnpj && !agency.cnpj) {
         agency.cnpj = parsed.agencyCnpj;
+      }
+      if (agCnpjData.logradouro || agCnpjData.cep || agCnpjData.cidade) {
+        enrichCrmEntityWithCnpjData(agency, agCnpjData);
       }
       if (parsed.agencyAgentPhone && !agency.phone) {
         agency.phone = parsed.agencyAgentPhone;
@@ -3639,18 +3790,47 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
   }
 
   if (parsed.companyName || company) {
+    const knownCompDir = resolveKnownCnpjDirectory(parsed.companyCnpj || company?.cnpj || "");
+    const compCnpjData = {
+      logradouro: parsed.companyAddress || knownCompDir?.logradouro || "",
+      numero: parsed.companyNumber || knownCompDir?.numero || "",
+      complemento: parsed.companyComplement || knownCompDir?.complemento || "",
+      bairro: parsed.companyNeighborhood || knownCompDir?.bairro || "",
+      cep: parsed.companyCep || knownCompDir?.cep || "",
+      cidade: parsed.companyCity || knownCompDir?.cidade || "",
+      uf: parsed.companyState || knownCompDir?.uf || "",
+      codigoMunicipio: parsed.companyIbgeCode || knownCompDir?.codigoMunicipio || ""
+    };
     if (!company) {
       const nextCompId = db.companies.reduce((m, c) => Math.max(m, Number(c.id) || 0), 0) + 1;
       company = {
         id: nextCompId,
         name: parsed.companyName,
         corporateName: parsed.companyName,
-        tradeName: parsed.companyName,
+        razaoSocial: parsed.companyName,
+        tradeName: knownCompDir?.nomeFantasia || parsed.companyName,
+        nomeFantasia: knownCompDir?.nomeFantasia || parsed.companyName,
         cnpj: parsed.companyCnpj || "",
         email: parsed.nfDeliveryEmails?.[0] || "",
+        financialEmail: parsed.nfDeliveryEmails?.[0] || "",
+        emailFinanceiro: parsed.nfDeliveryEmails?.[0] || "",
         phone: parsed.agencyAgentPhone || "",
-        city: "",
-        state: "",
+        address: compCnpjData.logradouro || "",
+        logradouro: compCnpjData.logradouro || "",
+        endereco: compCnpjData.logradouro || "",
+        number: compCnpjData.numero || "",
+        numero: compCnpjData.numero || "",
+        complement: compCnpjData.complemento || "",
+        complemento: compCnpjData.complemento || "",
+        neighborhood: compCnpjData.bairro || "",
+        bairro: compCnpjData.bairro || "",
+        cep: compCnpjData.cep || "",
+        city: compCnpjData.cidade || "",
+        cidade: compCnpjData.cidade || "",
+        state: compCnpjData.uf || "",
+        uf: compCnpjData.uf || "",
+        ibgeCode: compCnpjData.codigoMunicipio || "",
+        codigoMunicipio: compCnpjData.codigoMunicipio || "",
         billingType: "faturado_b2b",
         billingTerms: parsed.invoicingInstructions || "",
         invoicingInstructions: parsed.invoicingInstructions || "",
@@ -3662,12 +3842,19 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       if (parsed.companyCnpj && !company.cnpj) {
         company.cnpj = parsed.companyCnpj;
       }
+      if (compCnpjData.logradouro || compCnpjData.cep || compCnpjData.cidade) {
+        enrichCrmEntityWithCnpjData(company, compCnpjData);
+      }
       if (parsed.invoicingInstructions) {
         company.billingTerms = parsed.invoicingInstructions;
         company.invoicingInstructions = parsed.invoicingInstructions;
       }
       if (parsed.agencyAgentPhone && !company.phone) {
         company.phone = parsed.agencyAgentPhone;
+      }
+      if (parsed.nfDeliveryEmails?.[0] && !company.financialEmail) {
+        company.financialEmail = parsed.nfDeliveryEmails[0];
+        company.emailFinanceiro = parsed.nfDeliveryEmails[0];
       }
     }
   }
@@ -3873,6 +4060,14 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       companyId: company?.id || null,
       companyName: company?.tradeName || parsed.companyName || "",
       companyCnpj: parsed.companyCnpj || company?.cnpj || "",
+      companyAddress: company?.address || parsed.companyAddress || "",
+      companyNumber: company?.number || parsed.companyNumber || "",
+      companyComplement: company?.complement || parsed.companyComplement || "",
+      companyNeighborhood: company?.neighborhood || parsed.companyNeighborhood || "",
+      companyCep: company?.cep || parsed.companyCep || "",
+      companyCity: company?.city || parsed.companyCity || "",
+      companyState: company?.state || parsed.companyState || "",
+      companyIbgeCode: company?.ibgeCode || parsed.companyIbgeCode || "",
       agencyId: agency?.id || null,
       agencyName: agency?.tradeName || parsed.agencyName || "",
       agencyTradeName: agency?.tradeName || parsed.agencyName || "",
@@ -3999,6 +4194,17 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     if (parsed.companyCnpj) {
       reservation.companyCnpj = parsed.companyCnpj;
     }
+    const resolvedCompAddr = company?.address || parsed.companyAddress || "";
+    if (resolvedCompAddr && (!reservation.companyAddress || isGenericPelincaCompanyAddress({ address: reservation.companyAddress, cep: reservation.companyCep }))) {
+      reservation.companyAddress = resolvedCompAddr;
+      reservation.companyNumber = company?.number || parsed.companyNumber || reservation.companyNumber || "";
+      reservation.companyComplement = company?.complement || parsed.companyComplement || reservation.companyComplement || "";
+      reservation.companyNeighborhood = company?.neighborhood || parsed.companyNeighborhood || reservation.companyNeighborhood || "";
+      reservation.companyCep = company?.cep || parsed.companyCep || reservation.companyCep || "";
+      reservation.companyCity = company?.city || parsed.companyCity || reservation.companyCity || "";
+      reservation.companyState = company?.state || parsed.companyState || reservation.companyState || "";
+      reservation.companyIbgeCode = company?.ibgeCode || parsed.companyIbgeCode || reservation.companyIbgeCode || "";
+    }
     if (parsed.costCenter) {
       reservation.costCenter = parsed.costCenter;
     }
@@ -4072,6 +4278,41 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     reservation.updatedAt = new Date().toISOString();
   }
 
+  // Se a reserva possuir confirmedFiscalData ou invoiceDetails poluídos com o fallback "Av. Pelinca" para um CNPJ real, corrige imediatamente
+  if (company && company.address && !isGenericPelincaCompanyAddress(company)) {
+    for (const overlayKey of ["confirmedFiscalData", "invoiceDetails"]) {
+      const ov = reservation?.[overlayKey];
+      if (!ov) continue;
+      const ovDoc = cleanCnpj(ov.tomadorCpfCnpj || ov.doc || "");
+      const compDoc = cleanCnpj(company.cnpj || "");
+      if (
+        (ovDoc.length === 14 && ovDoc === compDoc) ||
+        (ov.tomadorTipo === "PJ" && isGenericPelincaCompanyAddress({
+          address: ov.tomadorEndereco,
+          cep: ov.tomadorCep,
+          neighborhood: ov.tomadorBairro,
+          city: ov.tomadorCidade
+        }))
+      ) {
+        if (isGenericPelincaCompanyAddress({
+          address: ov.tomadorEndereco,
+          cep: ov.tomadorCep,
+          neighborhood: ov.tomadorBairro,
+          city: ov.tomadorCidade
+        })) {
+          ov.tomadorEndereco = company.address || company.logradouro;
+          ov.tomadorNumero = company.number || company.numero || "S/N";
+          ov.tomadorComplemento = company.complement || company.complemento || "";
+          ov.tomadorBairro = company.neighborhood || company.bairro || "";
+          ov.tomadorCep = String(company.cep || "").replace(/\D/g, "");
+          ov.tomadorCidade = company.city || company.cidade || "";
+          ov.tomadorUf = company.state || company.uf || "";
+          ov.tomadorCodigoMunicipio = String(company.ibgeCode || company.codigoMunicipio || "").replace(/\D/g, "");
+        }
+      }
+    }
+  }
+
   // Disparo cordial automático se a reserva B2B ainda estiver sem telefone ou CPF do hóspede
   if (
     autoSendCredentialEmail &&
@@ -4085,8 +4326,87 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     });
   }
 
+  // Se a empresa ou agência possui CNPJ de 14 dígitos mas ainda está sem endereço real, consulta Receita Federal / BrasilAPI em background
+  const needsCompanyLookup = Boolean(
+    company &&
+    cleanCnpj(company.cnpj).length === 14 &&
+    (!company.address || isGenericPelincaCompanyAddress(company))
+  );
+  const needsAgencyLookup = Boolean(
+    agency &&
+    cleanCnpj(agency.cnpj).length === 14 &&
+    (!agency.address || isGenericPelincaCompanyAddress(agency))
+  );
+  if ((needsCompanyLookup || needsAgencyLookup) && process.env.NODE_ENV !== "test") {
+    enrichB2bIngestedEntitiesCnpj(db, { company, agency, reservation, saveDatabase }).catch(() => {});
+  }
+
   if (typeof saveDatabase === "function") saveDatabase();
   return { ok: true, created, reservation, agency, company, guest };
+}
+
+export async function enrichB2bIngestedEntitiesCnpj(db, { company, agency, reservation, saveDatabase } = {}) {
+  let updated = false;
+  const cleanDigits = v => String(v || "").replace(/\D/g, "");
+  if (company && cleanDigits(company.cnpj).length === 14 && (!company.address || isGenericPelincaCompanyAddress(company))) {
+    try {
+      const info = await lookupCnpj(company.cnpj, db);
+      if (info && !info.error && (info.logradouro || info.cep || info.cidade)) {
+        if (enrichCrmEntityWithCnpjData(company, info)) {
+          updated = true;
+        }
+        if (reservation && company.address && !isGenericPelincaCompanyAddress(company)) {
+          reservation.companyAddress = company.address;
+          reservation.companyNumber = company.number || "S/N";
+          reservation.companyComplement = company.complement || "";
+          reservation.companyNeighborhood = company.neighborhood || "";
+          reservation.companyCep = cleanDigits(company.cep);
+          reservation.companyCity = company.city || "";
+          reservation.companyState = company.state || "";
+          reservation.companyIbgeCode = cleanDigits(company.ibgeCode);
+          updated = true;
+        }
+        for (const overlayKey of ["confirmedFiscalData", "invoiceDetails"]) {
+          const ov = reservation?.[overlayKey];
+          if (!ov) continue;
+          if (isGenericPelincaCompanyAddress({
+            address: ov.tomadorEndereco,
+            cep: ov.tomadorCep,
+            neighborhood: ov.tomadorBairro,
+            city: ov.tomadorCidade
+          })) {
+            ov.tomadorEndereco = company.address || company.logradouro;
+            ov.tomadorNumero = company.number || company.numero || "S/N";
+            ov.tomadorComplemento = company.complement || company.complemento || "";
+            ov.tomadorBairro = company.neighborhood || company.bairro || "";
+            ov.tomadorCep = cleanDigits(company.cep);
+            ov.tomadorCidade = company.city || company.cidade || "";
+            ov.tomadorUf = company.state || company.uf || "";
+            ov.tomadorCodigoMunicipio = cleanDigits(company.ibgeCode || company.codigoMunicipio);
+            updated = true;
+          }
+        }
+      }
+    } catch {
+      // Silencioso
+    }
+  }
+  if (agency && cleanDigits(agency.cnpj).length === 14 && (!agency.address || isGenericPelincaCompanyAddress(agency))) {
+    try {
+      const info = await lookupCnpj(agency.cnpj, db);
+      if (info && !info.error && (info.logradouro || info.cep || info.cidade)) {
+        if (enrichCrmEntityWithCnpjData(agency, info)) {
+          updated = true;
+        }
+      }
+    } catch {
+      // Silencioso
+    }
+  }
+  if (updated && typeof saveDatabase === "function") {
+    saveDatabase();
+  }
+  return updated;
 }
 
 // Trava em memória contra disparos concorrentes de credenciamento B2B para a mesma reserva
@@ -4633,6 +4953,9 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
             saveDatabase,
             autoSendCredentialEmail: false
           });
+          if (directIngest?.ok) {
+            await enrichB2bIngestedEntitiesCnpj(db, { ...directIngest, saveDatabase });
+          }
         }
       } catch (err) {
         console.warn("[Zoho Webhook Direct B2B] Aviso:", err?.message || err);

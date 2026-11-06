@@ -548,9 +548,440 @@ export async function lookupCep(cep, db = null) {
   });
 }
 
+const KNOWN_CNPJ_DIRECTORY = {
+  "75315333000109": {
+    razaoSocial: "ATACADAO DISTR COM E IND MATRIZ",
+    nomeFantasia: "Atacadão S.A.",
+    logradouro: "Avenida Morvan Dias de Figueiredo",
+    numero: "6169",
+    complemento: "",
+    bairro: "Vila Maria",
+    cep: "02170901",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "1129678261",
+    email: "conciliacao@copastur.com.br"
+  },
+  "14049467000130": {
+    razaoSocial: "Lactalis do Brasil",
+    nomeFantasia: "Lactalis do Brasil",
+    logradouro: "Avenida Doutora Ruth Cardoso",
+    numero: "7221",
+    complemento: "",
+    bairro: "Pinheiros",
+    cep: "05425902",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "1139952500",
+    email: "lactalis@opusviagens.com.br"
+  },
+  "34274233000102": {
+    razaoSocial: "Vibra Energia S.A.",
+    nomeFantasia: "Vibra Energia",
+    logradouro: "Rua Correia Vasques",
+    numero: "250",
+    complemento: "",
+    bairro: "Cidade Nova",
+    cep: "20211140",
+    cidade: "Rio de Janeiro",
+    uf: "RJ",
+    codigoMunicipio: "3304557",
+    telefone: "2138121128",
+    email: "vibra@copastur.com.br"
+  },
+  "33054115000622": {
+    razaoSocial: "Cristália Produtos Químicos Farmacêuticos Ltda",
+    nomeFantasia: "Cristália",
+    logradouro: "Avenida Paulista",
+    numero: "2313",
+    complemento: "",
+    bairro: "Bela Vista",
+    cep: "01311300",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "1148904500",
+    email: "cristalia@avipam.com.br"
+  },
+  "45543915000181": {
+    razaoSocial: "Carrefour Comércio e Indústria Ltda",
+    nomeFantasia: "Grupo Carrefour",
+    logradouro: "Rua George Eastman",
+    numero: "213",
+    complemento: "",
+    bairro: "Vila Tramontano",
+    cep: "05690000",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "1123942122",
+    email: "carrefour@copastur.com.br"
+  },
+  "02373229000109": {
+    razaoSocial: "CBO - Companhia Brasileira de Offshore",
+    nomeFantasia: "CBO Holding S.A.",
+    logradouro: "Avenida Rio Branco",
+    numero: "108",
+    complemento: "",
+    bairro: "Centro",
+    cep: "20040001",
+    cidade: "Rio de Janeiro",
+    uf: "RJ",
+    codigoMunicipio: "3304557",
+    telefone: "4721038400",
+    email: "faturamento@tripservice.com.br"
+  },
+  "60665981000118": {
+    razaoSocial: "União Química Farmacêutica Nacional S.A.",
+    nomeFantasia: "União Química",
+    logradouro: "Avenida Magalhães de Castro",
+    numero: "4800",
+    complemento: "Torre 2",
+    bairro: "Cidade Jardim",
+    cep: "05676120",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "4730376800",
+    email: "atendimento@paytrack.com.br"
+  },
+  "35402759000185": {
+    razaoSocial: "Bimbo do Brasil Ltda",
+    nomeFantasia: "Bimbo do Brasil",
+    logradouro: "Rua Engenheiro Luís Carlos Berrini",
+    numero: "105",
+    complemento: "",
+    bairro: "Cidade Monções",
+    cep: "04571010",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "1131361600",
+    email: "atendimento@globalis.com.br"
+  },
+  "34061157000156": {
+    razaoSocial: "Trident Energy do Brasil Ltda",
+    nomeFantasia: "Trident Energy",
+    logradouro: "Praia de Botafogo",
+    numero: "370",
+    complemento: "11º Andar",
+    bairro: "Botafogo",
+    cep: "22250040",
+    cidade: "Rio de Janeiro",
+    uf: "RJ",
+    codigoMunicipio: "3304557",
+    telefone: "2134007810",
+    email: "roque.miguez@flytour.com.br"
+  },
+  "73506453000168": {
+    razaoSocial: "DPR Turismo Ltda",
+    nomeFantasia: "Flytour Curitiba (DPR Turismo)",
+    logradouro: "Rua Comendador Araújo",
+    numero: "143",
+    complemento: "Conjunto 92",
+    bairro: "Centro",
+    cep: "80420000",
+    cidade: "Curitiba",
+    uf: "PR",
+    codigoMunicipio: "4106902",
+    telefone: "4130150009",
+    email: "faturamentodpr@flytour.com.br"
+  },
+  "03600858000123": {
+    razaoSocial: "Opus Viagens e Eventos Ltda",
+    nomeFantasia: "Opus Viagens",
+    logradouro: "Rua Estados Unidos",
+    numero: "1456",
+    complemento: "",
+    bairro: "Jardim América",
+    cep: "01427001",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "1139952500",
+    email: "lactalis@opusviagens.com.br"
+  },
+  "43637214000186": {
+    razaoSocial: "Copastur Viagens e Turismo Ltda",
+    nomeFantasia: "Copastur",
+    logradouro: "Rua da Consolação",
+    numero: "1601",
+    complemento: "15º Andar",
+    bairro: "Consolação",
+    cep: "01415003",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "1123942122",
+    email: "conciliacao@copastur.com.br"
+  },
+  "60422177000159": {
+    razaoSocial: "Avipam Turismo e Tecnologia Ltda",
+    nomeFantasia: "Avipam SP",
+    logradouro: "Rua Líbero Badaró",
+    numero: "377",
+    complemento: "17º Andar",
+    bairro: "Centro",
+    cep: "01009000",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "1148904500",
+    email: "cristalia@avipam.com.br"
+  },
+  "01261714000116": {
+    razaoSocial: "Tripservice Agência de Viagens e Turismo Ltda",
+    nomeFantasia: "Tripservice",
+    logradouro: "Rua Camboriú",
+    numero: "79",
+    complemento: "",
+    bairro: "Fazenda",
+    cep: "88301450",
+    cidade: "Itajaí",
+    uf: "SC",
+    codigoMunicipio: "4208203",
+    telefone: "4721038400",
+    email: "faturamento@tripservice.com.br"
+  },
+  "23098636000142": {
+    razaoSocial: "Paytrack Tecnologia em Viagens e Despesas Corporativas Ltda",
+    nomeFantasia: "Paytrack",
+    logradouro: "Rua Antônio da Veiga",
+    numero: "419",
+    complemento: "Sala 10",
+    bairro: "Victor Konder",
+    cep: "89012500",
+    cidade: "Blumenau",
+    uf: "SC",
+    codigoMunicipio: "4202404",
+    telefone: "4730376800",
+    email: "atendimento@paytrack.com.br"
+  },
+  "19933930000175": {
+    razaoSocial: "Globalis Brasil Viagens Corporativas Ltda",
+    nomeFantasia: "Globalis Viagens",
+    logradouro: "Avenida Paulista",
+    numero: "2073",
+    complemento: "Horsa II",
+    bairro: "Consolação",
+    cep: "01311940",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "1131361600",
+    email: "atendimento@globalis.com.br"
+  },
+  "31370836000101": {
+    razaoSocial: "Turicenter Turismo Ltda - Flytour Serviços de Viagens",
+    nomeFantasia: "Flytour Riocentro",
+    logradouro: "Avenida Salvador Allende",
+    numero: "6555",
+    complemento: "",
+    bairro: "Barra da Tijuca",
+    cep: "22783127",
+    cidade: "Rio de Janeiro",
+    uf: "RJ",
+    codigoMunicipio: "3304557",
+    telefone: "2134007810",
+    email: "roque.miguez@flytour.com.br"
+  },
+  "33000167000101": {
+    razaoSocial: "Petróleo Brasileiro S.A. - Petrobras",
+    nomeFantasia: "Petrobras",
+    logradouro: "Avenida República do Chile",
+    numero: "65",
+    complemento: "",
+    bairro: "Centro",
+    cep: "20031912",
+    cidade: "Rio de Janeiro",
+    uf: "RJ",
+    codigoMunicipio: "3304557",
+    telefone: "",
+    email: ""
+  },
+  "02421421000111": {
+    razaoSocial: "Porto do Açu Operações S.A.",
+    nomeFantasia: "Porto do Açu",
+    logradouro: "Rua da Passagem",
+    numero: "123",
+    complemento: "Andar 10",
+    bairro: "Botafogo",
+    cep: "22290030",
+    cidade: "Rio de Janeiro",
+    uf: "RJ",
+    codigoMunicipio: "3304557",
+    telefone: "",
+    email: ""
+  },
+  "33611500000119": {
+    razaoSocial: "Vale S.A.",
+    nomeFantasia: "Vale",
+    logradouro: "Praia de Botafogo",
+    numero: "186",
+    complemento: "Salas 1101 a 1901",
+    bairro: "Botafogo",
+    cep: "22250145",
+    cidade: "Rio de Janeiro",
+    uf: "RJ",
+    codigoMunicipio: "3304557",
+    telefone: "",
+    email: ""
+  },
+  "60872504000123": {
+    razaoSocial: "Itaú Unibanco S.A.",
+    nomeFantasia: "Itaú Unibanco",
+    logradouro: "Praça Alfredo Egydio de Souza Aranha",
+    numero: "100",
+    complemento: "Torre Olavo Setubal",
+    bairro: "Parque Jabaquara",
+    cep: "04344902",
+    cidade: "São Paulo",
+    uf: "SP",
+    codigoMunicipio: "3550308",
+    telefone: "",
+    email: ""
+  },
+  "02709449000159": {
+    razaoSocial: "Petrobras Transporte S.A. - Transpetro",
+    nomeFantasia: "Transpetro",
+    logradouro: "Avenida Presidente Vargas",
+    numero: "328",
+    complemento: "Mezanino 1 a 11 Andares",
+    bairro: "Centro",
+    cep: "20091060",
+    cidade: "Rio de Janeiro",
+    uf: "RJ",
+    codigoMunicipio: "3304557",
+    telefone: "2132119000",
+    email: "financeiro@transpetro.com.br"
+  },
+  "05476104000192": {
+    razaoSocial: "Modec Serviços de Petróleo do Brasil Ltda",
+    nomeFantasia: "Modec",
+    logradouro: "Praia de Botafogo",
+    numero: "501",
+    complemento: "Bloco II - 3º Andar",
+    bairro: "Botafogo",
+    cep: "22250040",
+    cidade: "Rio de Janeiro",
+    uf: "RJ",
+    codigoMunicipio: "3304557",
+    telefone: "2227728800",
+    email: "contasapagar.br@modec.com"
+  }
+};
+
+export function resolveKnownCnpjDirectory(cnpj = "") {
+  const clean = onlyDigits(cnpj);
+  if (clean.length !== 14) return null;
+  const hit = KNOWN_CNPJ_DIRECTORY[clean];
+  if (!hit) return null;
+  return {
+    ...hit,
+    address: hit.logradouro,
+    endereco: hit.logradouro,
+    number: hit.numero,
+    complement: hit.complemento,
+    neighborhood: hit.bairro,
+    city: hit.cidade,
+    municipio: hit.cidade,
+    state: hit.uf,
+    ibge: hit.codigoMunicipio,
+    ibgeCode: hit.codigoMunicipio
+  };
+}
+
+export function isGenericPelincaCompanyAddress(entity = {}) {
+  if (!entity || typeof entity !== "object") return true;
+  const rawAddr = String(
+    entity.address || entity.logradouro || entity.street || entity.endereco || entity.tomadorEndereco || ""
+  ).trim();
+  if (!rawAddr) return true;
+
+  const explicitNum = String(
+    entity.number || entity.numero || entity.streetNumber || entity.tomadorNumero || ""
+  ).trim();
+  const explicitCep = onlyDigits(entity.cep || entity.zipCode || entity.tomadorCep || "");
+
+  const inlineNumMatch = rawAddr.match(/^(?:av\.?\s*pelinca|avenida\s*pelinca)\s*,\s*(\d+[A-Za-z0-9\/-]*|s\/?n)\b/i);
+  const inlineCepMatch = rawAddr.match(/\b(\d{5})-?(\d{3})\b/);
+  const effectiveNum = explicitNum || (inlineNumMatch ? inlineNumMatch[1].trim() : "");
+  const effectiveCep = explicitCep || (inlineCepMatch ? `${inlineCepMatch[1]}${inlineCepMatch[2]}` : "");
+
+  const isPelincaStreet = /^(av\.?\s*pelinca|avenida\s*pelinca)\b/i.test(rawAddr);
+  if (!isPelincaStreet) return false;
+
+  const hasSpecificNonGenericNum = Boolean(
+    effectiveNum && !/^(100|s\/?n|0)$/i.test(effectiveNum)
+  );
+  const hasSpecificNonGenericCep = Boolean(
+    effectiveCep && effectiveCep.length === 8 && effectiveCep !== "28035000"
+  );
+
+  if (hasSpecificNonGenericNum || hasSpecificNonGenericCep) {
+    return false;
+  }
+  return true;
+}
+
+export function enrichCrmEntityWithCnpjData(entity, cnpjData) {
+  if (!entity || typeof entity !== "object" || !cnpjData || typeof cnpjData !== "object") return false;
+  const logradouro = String(cnpjData.logradouro || cnpjData.address || cnpjData.endereco || "").trim();
+  const numero = String(cnpjData.numero || cnpjData.number || "S/N").trim();
+  const cep = cleanCep(cnpjData.cep || "");
+  if (!logradouro || isGenericPelincaCompanyAddress({ address: logradouro, number: numero, cep })) return false;
+  const complemento = String(cnpjData.complemento ?? cnpjData.complement ?? "").trim();
+  const bairro = String(cnpjData.bairro || cnpjData.neighborhood || "").trim();
+  const cidade = String(cnpjData.cidade || cnpjData.city || cnpjData.municipio || "").trim();
+  const uf = String(cnpjData.uf || cnpjData.state || "").trim().toUpperCase();
+  const ibge = onlyDigits(cnpjData.codigoMunicipio || cnpjData.ibgeCode || cnpjData.ibge || "");
+
+  entity.address = logradouro;
+  entity.logradouro = logradouro;
+  entity.endereco = logradouro;
+  if (numero) {
+    entity.number = numero;
+    entity.numero = numero;
+  }
+  if (complemento || !entity.complement) {
+    entity.complement = complemento;
+    entity.complemento = complemento;
+  }
+  if (bairro) {
+    entity.neighborhood = bairro;
+    entity.bairro = bairro;
+  }
+  if (cep) {
+    entity.cep = cep;
+  }
+  if (cidade) {
+    entity.city = cidade;
+    entity.cidade = cidade;
+  }
+  if (uf) {
+    entity.state = uf;
+    entity.uf = uf;
+  }
+  if (ibge) {
+    entity.ibgeCode = ibge;
+    entity.codigoMunicipio = ibge;
+  }
+  if (cnpjData.email && !entity.financialEmail && !entity.email) {
+    entity.financialEmail = cnpjData.email;
+    entity.email = cnpjData.email;
+  }
+  if (cnpjData.telefone && !entity.phone && !entity.telefone) {
+    entity.phone = cnpjData.telefone;
+    entity.telefone = cnpjData.telefone;
+  }
+  return true;
+}
+
 /**
  * Consulta CNPJ verificando primeiro o CRM local (db.companies e db.agencies),
- * depois BrasilAPI e MinhaReceita, e valida/autocorrige o CEP + IBGE via Correios/ViaCEP.
+ * depois o diretório corporativo conhecido, BrasilAPI e MinhaReceita, e valida/autocorrige o CEP + IBGE via Correios/ViaCEP.
  */
 export async function lookupCnpj(cnpj, db = null) {
   const clean = onlyDigits(cnpj);
@@ -558,7 +989,16 @@ export async function lookupCnpj(cnpj, db = null) {
     throw new Error("CNPJ inválido");
   }
 
-  const finalizeCnpjResult = async (rawResult, localEntity = null) => {
+  let localComp = null;
+  let localAgency = null;
+  let local = null;
+  if (db && (Array.isArray(db.companies) || Array.isArray(db.agencies))) {
+    localComp = (db.companies || []).find(c => onlyDigits(c?.cnpj) === clean) || null;
+    localAgency = (db.agencies || []).find(a => onlyDigits(a?.cnpj) === clean) || null;
+    local = localComp || localAgency;
+  }
+
+  const finalizeCnpjResult = async (rawResult, localEntity = local) => {
     const healed = await resolveValidCepAndIbge({
       cep: rawResult.cep,
       logradouro: rawResult.logradouro,
@@ -576,63 +1016,88 @@ export async function lookupCnpj(cnpj, db = null) {
     const finalBairro = rawResult.bairro || healed.bairro || "";
 
     if (localEntity) {
-      localEntity.cep = finalCep;
-      localEntity.ibgeCode = finalIbge;
-      localEntity.codigoMunicipio = finalIbge;
-      if (finalCidade) {
-        localEntity.city = finalCidade;
-        localEntity.cidade = finalCidade;
-      }
-      if (finalUf) {
-        localEntity.state = finalUf;
-        localEntity.uf = finalUf;
-      }
+      enrichCrmEntityWithCnpjData(localEntity, {
+        logradouro: finalLogradouro,
+        numero: rawResult.numero || localEntity.number || localEntity.numero || "S/N",
+        complemento: rawResult.complemento ?? localEntity.complement ?? localEntity.complemento ?? "",
+        bairro: finalBairro,
+        cep: finalCep,
+        cidade: finalCidade,
+        uf: finalUf,
+        codigoMunicipio: finalIbge,
+        email: rawResult.email || "",
+        telefone: rawResult.telefone || ""
+      });
     }
 
     return {
+      ok: true,
       ...rawResult,
+      address: finalLogradouro,
       logradouro: finalLogradouro,
       endereco: finalLogradouro,
+      number: rawResult.numero || "S/N",
+      neighborhood: finalBairro,
       bairro: finalBairro,
+      city: finalCidade,
       cidade: finalCidade,
       municipio: finalCidade,
+      state: finalUf,
       uf: finalUf,
       cep: finalCep,
       codigoMunicipio: finalIbge,
       ibge: finalIbge,
       ibgeCode: finalIbge,
+      entityType: rawResult.entityType || (localAgency && !localComp ? "agency" : "company"),
+      agencyId: rawResult.agencyId ?? localAgency?.id ?? null,
+      companyId: rawResult.companyId ?? localComp?.id ?? null,
       cepHealed: Boolean(healed.healed)
     };
   };
 
-  // 1. Verifica no CRM local (db.companies ou db.agencies)
-  if (db && (Array.isArray(db.companies) || Array.isArray(db.agencies))) {
-    const localComp = (db.companies || []).find(c => onlyDigits(c.cnpj) === clean);
-    const localAgency = (db.agencies || []).find(a => onlyDigits(a.cnpj) === clean);
-    const local = localComp || localAgency;
-    if (local && (local.logradouro || local.address || local.cep)) {
-      return finalizeCnpjResult({
-        razaoSocial: local.corporateName || local.razaoSocial || local.tradeName || "",
-        nomeFantasia: local.tradeName || local.nomeFantasia || local.corporateName || "",
-        logradouro: local.logradouro || local.address || "",
-        numero: local.numero || local.number || "S/N",
-        complemento: local.complemento || local.complement || "",
-        bairro: local.bairro || local.neighborhood || "",
-        codigoMunicipio: String(local.codigoMunicipio || local.ibgeCode || ""),
-        cidade: local.cidade || local.city || "",
-        uf: local.uf || local.state || "RJ",
-        cep: cleanCep(local.cep || ""),
-        email: local.financialEmail || local.email || "",
-        telefone: local.phone || local.telefone || "",
-        entityType: localAgency && !localComp ? "agency" : "company",
-        agencyId: localAgency?.id || null,
-        companyId: localComp?.id || null,
-        source: "crm_local"
-      }, local);
-    }
+  // 1. Verifica no CRM local (somente se possuir endereço real, não genérico "Av. Pelinca")
+  if (local && (local.logradouro || local.address) && !isGenericPelincaCompanyAddress(local)) {
+    return finalizeCnpjResult({
+      razaoSocial: local.corporateName || local.razaoSocial || local.tradeName || "",
+      nomeFantasia: local.tradeName || local.nomeFantasia || local.corporateName || "",
+      logradouro: local.logradouro || local.address || "",
+      numero: local.numero || local.number || "S/N",
+      complemento: local.complemento || local.complement || "",
+      bairro: local.bairro || local.neighborhood || "",
+      codigoMunicipio: String(local.codigoMunicipio || local.ibgeCode || ""),
+      cidade: local.cidade || local.city || "",
+      uf: local.uf || local.state || "RJ",
+      cep: cleanCep(local.cep || ""),
+      email: local.financialEmail || local.email || "",
+      telefone: local.phone || local.telefone || "",
+      entityType: localAgency && !localComp ? "agency" : "company",
+      agencyId: localAgency?.id || null,
+      companyId: localComp?.id || null,
+      source: "crm_local"
+    }, local);
   }
 
-  // 2. Consulta BrasilAPI com fallback automático para MinhaReceita e ReceitaWS
+  // 2. Diretório determinístico de CNPJs corporativos homologados
+  const knownDir = resolveKnownCnpjDirectory(clean);
+  if (knownDir) {
+    return finalizeCnpjResult({
+      razaoSocial: local?.corporateName || local?.razaoSocial || knownDir.razaoSocial,
+      nomeFantasia: local?.tradeName || local?.nomeFantasia || knownDir.nomeFantasia,
+      logradouro: knownDir.logradouro,
+      numero: knownDir.numero,
+      complemento: knownDir.complemento || "",
+      bairro: knownDir.bairro,
+      codigoMunicipio: knownDir.codigoMunicipio,
+      cidade: knownDir.cidade,
+      uf: knownDir.uf,
+      cep: cleanCep(knownDir.cep),
+      email: local?.financialEmail || local?.email || knownDir.email || "",
+      telefone: local?.phone || local?.telefone || knownDir.telefone || "",
+      source: "crm_known_directory"
+    }, local);
+  }
+
+  // 3. Consulta BrasilAPI com fallback automático para MinhaReceita e ReceitaWS
   const brasilApiJson = await httpsGetJson(`https://brasilapi.com.br/api/cnpj/v1/${clean}`, 3200);
   if (brasilApiJson && !brasilApiJson.message && brasilApiJson.type !== "bad_request" && (brasilApiJson.razao_social || brasilApiJson.nome_fantasia)) {
     return finalizeCnpjResult({
@@ -651,7 +1116,7 @@ export async function lookupCnpj(cnpj, db = null) {
       email: (brasilApiJson.email || "").toLowerCase().trim(),
       telefone: brasilApiJson.ddd_telefone_1 || brasilApiJson.telefone || "",
       source: "brasilapi"
-    });
+    }, local);
   }
 
   const minhaReceitaJson = await httpsGetJson(`https://minhareceita.org/${clean}`, 3200);
@@ -672,7 +1137,7 @@ export async function lookupCnpj(cnpj, db = null) {
       email: (minhaReceitaJson.email || "").toLowerCase().trim(),
       telefone: minhaReceitaJson.ddd_telefone_1 || minhaReceitaJson.telefone || "",
       source: "minhareceita"
-    });
+    }, local);
   }
 
   const cnpjWsJson = await httpsGetJson(`https://publica.cnpj.ws/cnpj/${clean}`, 3200);
@@ -693,7 +1158,7 @@ export async function lookupCnpj(cnpj, db = null) {
       email: (est.email || "").toLowerCase().trim(),
       telefone: est.ddd1 && est.telefone1 ? `${est.ddd1}${est.telefone1}` : "",
       source: "cnpjws"
-    });
+    }, local);
   }
 
   return {
@@ -714,3 +1179,4 @@ export async function lookupCnpj(cnpj, db = null) {
     source: "fallback"
   };
 }
+

@@ -10683,6 +10683,17 @@ export function ensureB2bSeedData(targetDb = db) {
     if (compMatch) {
       if (r.companyId !== compMatch.id) { r.companyId = compMatch.id; rChanged = true; }
       if (!r.companyCnpj && compMatch.cnpj) { r.companyCnpj = compMatch.cnpj; rChanged = true; }
+      if ((!r.companyAddress || isGenericPelincaCompanyAddress({ address: r.companyAddress, cep: r.companyCep })) && compMatch.address && !isGenericPelincaCompanyAddress(compMatch)) {
+        r.companyAddress = compMatch.address;
+        r.companyNumber = compMatch.number || "S/N";
+        r.companyComplement = compMatch.complement || "";
+        r.companyNeighborhood = compMatch.neighborhood || "";
+        r.companyCep = compMatch.cep || "";
+        r.companyCity = compMatch.city || "";
+        r.companyState = compMatch.state || "";
+        r.companyIbgeCode = compMatch.ibgeCode || "";
+        rChanged = true;
+      }
     }
     // Cura qualquer confirmedFiscalData / invoiceDetails de tomador PJ que esteja poluído com o fallback "Av. Pelinca"
     for (const overlayKey of ["confirmedFiscalData", "invoiceDetails"]) {
@@ -51938,6 +51949,11 @@ app.post("/api/invoices/chat", async (req, res) => {
           currentData?.invoiceRecipientType === "agency" ||
           currentData?.tomadorTipo === "agency"
         );
+        const incomingPjIsGeneric = isGenericPelincaCompanyAddress({
+          address: result.data.tomadorEndereco,
+          number: result.data.tomadorNumero,
+          cep: result.data.tomadorCep
+        });
 
         if (isAgencyTarget) {
           let ag = existingAg;
@@ -51948,15 +51964,17 @@ app.post("/api/invoices/chat", async (req, res) => {
             ag.nomeFantasia = ag.tradeName;
             ag.financialEmail = result.data.tomadorEmail || ag.financialEmail || "";
             ag.phone = result.data.tomadorTelefone || ag.phone || "";
-            ag.address = result.data.tomadorEndereco || ag.address || "";
-            ag.logradouro = result.data.tomadorEndereco || ag.logradouro || "";
-            ag.number = result.data.tomadorNumero || ag.number || "";
-            ag.complement = result.data.tomadorComplemento || ag.complement || "";
-            ag.neighborhood = result.data.tomadorBairro || ag.neighborhood || "";
-            ag.cep = result.data.tomadorCep || ag.cep || "";
-            ag.city = result.data.tomadorCidade || ag.city || "São Paulo";
-            ag.state = result.data.tomadorUf || ag.state || "SP";
-            ag.ibgeCode = result.data.tomadorCodigoMunicipio || ag.ibgeCode || "3550308";
+            if (!incomingPjIsGeneric) {
+              ag.address = result.data.tomadorEndereco || ag.address || "";
+              ag.logradouro = result.data.tomadorEndereco || ag.logradouro || "";
+              ag.number = result.data.tomadorNumero || ag.number || "";
+              ag.complement = result.data.tomadorComplemento || ag.complement || "";
+              ag.neighborhood = result.data.tomadorBairro || ag.neighborhood || "";
+              ag.cep = result.data.tomadorCep || ag.cep || "";
+              ag.city = result.data.tomadorCidade || ag.city || "São Paulo";
+              ag.state = result.data.tomadorUf || ag.state || "SP";
+              ag.ibgeCode = result.data.tomadorCodigoMunicipio || ag.ibgeCode || "3550308";
+            }
             ag.updatedAt = new Date().toISOString();
           } else {
             const nextAgId = (db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) : 0) + 1;
@@ -51969,15 +51987,15 @@ app.post("/api/invoices/chat", async (req, res) => {
               cnpj: cleanDoc,
               financialEmail: result.data.tomadorEmail || "",
               phone: result.data.tomadorTelefone || "",
-              address: result.data.tomadorEndereco || "",
-              logradouro: result.data.tomadorEndereco || "",
-              number: result.data.tomadorNumero || "",
+              address: incomingPjIsGeneric ? "" : (result.data.tomadorEndereco || ""),
+              logradouro: incomingPjIsGeneric ? "" : (result.data.tomadorEndereco || ""),
+              number: incomingPjIsGeneric ? "" : (result.data.tomadorNumero || ""),
               complement: result.data.tomadorComplemento || "",
-              neighborhood: result.data.tomadorBairro || "",
-              cep: result.data.tomadorCep || "",
-              city: result.data.tomadorCidade || "São Paulo",
-              state: result.data.tomadorUf || "SP",
-              ibgeCode: result.data.tomadorCodigoMunicipio || "3550308",
+              neighborhood: incomingPjIsGeneric ? "" : (result.data.tomadorBairro || ""),
+              cep: incomingPjIsGeneric ? "" : (result.data.tomadorCep || ""),
+              city: incomingPjIsGeneric ? "São Paulo" : (result.data.tomadorCidade || "São Paulo"),
+              state: incomingPjIsGeneric ? "SP" : (result.data.tomadorUf || "SP"),
+              ibgeCode: incomingPjIsGeneric ? "3550308" : (result.data.tomadorCodigoMunicipio || "3550308"),
               defaultRatePolicy: "COMISSIONADA",
               defaultCommissionPct: 12,
               defaultInvoiceRecipient: "agency",
@@ -51990,6 +52008,20 @@ app.post("/api/invoices/chat", async (req, res) => {
             };
             db.agencies.unshift(ag);
           }
+          if (!ag.address || isGenericPelincaCompanyAddress(ag)) {
+            const knownDir = resolveKnownCnpjDirectory(cleanDoc);
+            if (knownDir) enrichCrmEntityWithCnpjData(ag, knownDir);
+          }
+          if (ag.address && !isGenericPelincaCompanyAddress(ag)) {
+            result.data.tomadorEndereco = ag.address;
+            result.data.tomadorNumero = ag.number || result.data.tomadorNumero;
+            result.data.tomadorComplemento = ag.complement ?? result.data.tomadorComplemento;
+            result.data.tomadorBairro = ag.neighborhood || result.data.tomadorBairro;
+            result.data.tomadorCep = ag.cep || result.data.tomadorCep;
+            result.data.tomadorCidade = ag.city || result.data.tomadorCidade;
+            result.data.tomadorUf = ag.state || result.data.tomadorUf;
+            result.data.tomadorCodigoMunicipio = ag.ibgeCode || result.data.tomadorCodigoMunicipio;
+          }
           result.data.agencyId = ag.id;
           result.data.invoiceRecipientType = "agency";
           saveDatabase();
@@ -52000,15 +52032,17 @@ app.post("/api/invoices/chat", async (req, res) => {
             comp.tradeName = comp.tradeName || result.data.tomadorNomeFantasia || result.data.tomadorNome;
             comp.financialEmail = result.data.tomadorEmail || comp.financialEmail || "";
             comp.phone = result.data.tomadorTelefone || comp.phone || "";
-            comp.address = result.data.tomadorEndereco || comp.address || "";
-            comp.logradouro = result.data.tomadorEndereco || comp.logradouro || "";
-            comp.number = result.data.tomadorNumero || comp.number || "";
-            comp.complement = result.data.tomadorComplemento || comp.complement || "";
-            comp.neighborhood = result.data.tomadorBairro || comp.neighborhood || "";
-            comp.cep = result.data.tomadorCep || comp.cep || "";
-            comp.city = result.data.tomadorCidade || comp.city || "Campos dos Goytacazes";
-            comp.state = result.data.tomadorUf || comp.state || "RJ";
-            comp.ibgeCode = result.data.tomadorCodigoMunicipio || comp.ibgeCode || "3301009";
+            if (!incomingPjIsGeneric) {
+              comp.address = result.data.tomadorEndereco || comp.address || "";
+              comp.logradouro = result.data.tomadorEndereco || comp.logradouro || "";
+              comp.number = result.data.tomadorNumero || comp.number || "";
+              comp.complement = result.data.tomadorComplemento || comp.complement || "";
+              comp.neighborhood = result.data.tomadorBairro || comp.neighborhood || "";
+              comp.cep = result.data.tomadorCep || comp.cep || "";
+              comp.city = result.data.tomadorCidade || comp.city || "São Paulo";
+              comp.state = result.data.tomadorUf || comp.state || "SP";
+              comp.ibgeCode = result.data.tomadorCodigoMunicipio || comp.ibgeCode || "3550308";
+            }
             comp.updatedAt = new Date().toISOString();
           } else {
             const nextCompId = (db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) : 0) + 1;
@@ -52019,20 +52053,34 @@ app.post("/api/invoices/chat", async (req, res) => {
               cnpj: cleanDoc,
               financialEmail: result.data.tomadorEmail || "",
               phone: result.data.tomadorTelefone || "",
-              address: result.data.tomadorEndereco || "",
-              logradouro: result.data.tomadorEndereco || "",
-              number: result.data.tomadorNumero || "",
+              address: incomingPjIsGeneric ? "" : (result.data.tomadorEndereco || ""),
+              logradouro: incomingPjIsGeneric ? "" : (result.data.tomadorEndereco || ""),
+              number: incomingPjIsGeneric ? "" : (result.data.tomadorNumero || ""),
               complement: result.data.tomadorComplemento || "",
-              neighborhood: result.data.tomadorBairro || "",
-              cep: result.data.tomadorCep || "",
-              city: result.data.tomadorCidade || "Campos dos Goytacazes",
-              state: result.data.tomadorUf || "RJ",
-              ibgeCode: result.data.tomadorCodigoMunicipio || "3301009",
+              neighborhood: incomingPjIsGeneric ? "" : (result.data.tomadorBairro || ""),
+              cep: incomingPjIsGeneric ? "" : (result.data.tomadorCep || ""),
+              city: incomingPjIsGeneric ? "São Paulo" : (result.data.tomadorCidade || "São Paulo"),
+              state: incomingPjIsGeneric ? "SP" : (result.data.tomadorUf || "SP"),
+              ibgeCode: incomingPjIsGeneric ? "3550308" : (result.data.tomadorCodigoMunicipio || "3550308"),
               notes: "Cadastrado automaticamente via Chat Assistente Fiscal",
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString()
             };
             db.companies.unshift(comp);
+          }
+          if (!comp.address || isGenericPelincaCompanyAddress(comp)) {
+            const knownDir = resolveKnownCnpjDirectory(cleanDoc);
+            if (knownDir) enrichCrmEntityWithCnpjData(comp, knownDir);
+          }
+          if (comp.address && !isGenericPelincaCompanyAddress(comp)) {
+            result.data.tomadorEndereco = comp.address;
+            result.data.tomadorNumero = comp.number || result.data.tomadorNumero;
+            result.data.tomadorComplemento = comp.complement ?? result.data.tomadorComplemento;
+            result.data.tomadorBairro = comp.neighborhood || result.data.tomadorBairro;
+            result.data.tomadorCep = comp.cep || result.data.tomadorCep;
+            result.data.tomadorCidade = comp.city || result.data.tomadorCidade;
+            result.data.tomadorUf = comp.state || result.data.tomadorUf;
+            result.data.tomadorCodigoMunicipio = comp.ibgeCode || result.data.tomadorCodigoMunicipio;
           }
           result.data.companyId = comp.id;
           saveDatabase();
@@ -52538,7 +52586,7 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
 });
 
 // Helper Interno de Emissão Fiscal Unificada (Single, Batch & Consolidated)
-async function executeNfseEmissionInternal(payload) {
+export async function executeNfseEmissionInternal(payload) {
   if (!payload || typeof payload !== "object") {
     return { success: false, badRequest: true, error: "Payload inválido para emissão de NFS-e." };
   }
@@ -52671,16 +52719,22 @@ async function executeNfseEmissionInternal(payload) {
     reservationCode: payload.reservationCode
   }) : null;
 
-  const rawPayLogradouro = (payload.tomadorStreet || payload.tomadorEndereco || payload.tomadorLogradouro || "").trim();
-  const useCheckinAddr = resolvedCheckin && resolvedCheckin.hasRealAddress && isGenericFallbackAddress(rawPayLogradouro, payload.tomadorCep);
+  const rawPayLogradouro = (payload.tomadorStreet || payload.tomadorEndereco || payload.tomadorLogradouro || payload.endLogradouro || "").trim();
+  const rawPayCep = payload.tomadorCep || payload.endCep || "";
+  const rawPayBairro = payload.tomadorBairro || payload.endBairro || "";
+  const rawPayCidade = payload.tomadorCidade || payload.endCidade || "";
+  const rawPayUf = payload.tomadorUf || payload.endUf || "";
+  const rawPayCodMun = payload.tomadorCodigoMunicipio || payload.endCodigoIbge || payload.endCodigoMunicipio || "";
+  const rawPayNumero = payload.tomadorNumero || payload.tomadorStreetNumber || payload.endNumero || "";
+  const useCheckinAddr = resolvedCheckin && resolvedCheckin.hasRealAddress && isGenericFallbackAddress(rawPayLogradouro, rawPayCep);
 
   let resolvedCnpjAddr = null;
   if (cleanDoc.length === 14) {
-    const incomingAddrIsGeneric = !rawPayLogradouro || isGenericFallbackAddress(rawPayLogradouro, payload.tomadorCep) || isGenericPelincaCompanyAddress({
+    const incomingAddrIsGeneric = !rawPayLogradouro || isGenericFallbackAddress(rawPayLogradouro, rawPayCep) || isGenericPelincaCompanyAddress({
       address: rawPayLogradouro,
-      cep: payload.tomadorCep,
-      neighborhood: payload.tomadorBairro,
-      city: payload.tomadorCidade
+      cep: rawPayCep,
+      neighborhood: rawPayBairro,
+      city: rawPayCidade
     });
     if (incomingAddrIsGeneric) {
       const crmEntity = existingAgencyByCnpj || db.companies.find(c => onlyDigits(c.cnpj) === cleanDoc || (payload.companyId && Number(c.id) === Number(payload.companyId)));
@@ -52715,13 +52769,13 @@ async function executeNfseEmissionInternal(payload) {
   const normPayAddr = normalizeTomadorAddressFields({
     tomadorStreet: resolvedCnpjAddr ? resolvedCnpjAddr.logradouro : (useCheckinAddr ? resolvedCheckin.logradouro : rawPayLogradouro),
     tomadorEndereco: resolvedCnpjAddr ? resolvedCnpjAddr.logradouro : (useCheckinAddr ? resolvedCheckin.logradouro : rawPayLogradouro),
-    tomadorNumero: resolvedCnpjAddr ? (resolvedCnpjAddr.numero || "S/N") : (useCheckinAddr ? resolvedCheckin.numero : (payload.tomadorNumero || payload.tomadorStreetNumber || "")),
-    tomadorComplemento: payload.tomadorComplemento || resolvedCnpjAddr?.complemento || resolvedCheckin?.complemento || "",
-    tomadorBairro: resolvedCnpjAddr ? (resolvedCnpjAddr.bairro || "Centro") : (useCheckinAddr ? resolvedCheckin.bairro : (payload.tomadorBairro || "")),
-    tomadorCep: resolvedCnpjAddr ? (resolvedCnpjAddr.cep || "") : (useCheckinAddr ? resolvedCheckin.cep : (payload.tomadorCep || "28035000")),
-    tomadorCidade: resolvedCnpjAddr ? (resolvedCnpjAddr.cidade || "São Paulo") : (useCheckinAddr ? resolvedCheckin.cidade : (payload.tomadorCidade || "Campos dos Goytacazes")),
-    tomadorUf: resolvedCnpjAddr ? (resolvedCnpjAddr.uf || "SP") : (useCheckinAddr ? resolvedCheckin.uf : (payload.tomadorUf || "RJ")),
-    tomadorCodigoMunicipio: resolvedCnpjAddr ? (resolvedCnpjAddr.codigoMunicipio || "3550308") : (useCheckinAddr ? resolvedCheckin.ibge : (payload.tomadorCodigoMunicipio || "3301009"))
+    tomadorNumero: resolvedCnpjAddr ? (resolvedCnpjAddr.numero || "S/N") : (useCheckinAddr ? resolvedCheckin.numero : rawPayNumero),
+    tomadorComplemento: payload.tomadorComplemento || payload.endComplemento || resolvedCnpjAddr?.complemento || resolvedCheckin?.complemento || "",
+    tomadorBairro: resolvedCnpjAddr ? (resolvedCnpjAddr.bairro || "Centro") : (useCheckinAddr ? resolvedCheckin.bairro : rawPayBairro),
+    tomadorCep: resolvedCnpjAddr ? (resolvedCnpjAddr.cep || "") : (useCheckinAddr ? resolvedCheckin.cep : (rawPayCep || "28035000")),
+    tomadorCidade: resolvedCnpjAddr ? (resolvedCnpjAddr.cidade || "São Paulo") : (useCheckinAddr ? resolvedCheckin.cidade : (rawPayCidade || "Campos dos Goytacazes")),
+    tomadorUf: resolvedCnpjAddr ? (resolvedCnpjAddr.uf || "SP") : (useCheckinAddr ? resolvedCheckin.uf : (rawPayUf || "RJ")),
+    tomadorCodigoMunicipio: resolvedCnpjAddr ? (resolvedCnpjAddr.codigoMunicipio || "3550308") : (useCheckinAddr ? resolvedCheckin.ibge : (rawPayCodMun || "3301009"))
   });
 
   const endLogradouro = normPayAddr.logradouro;

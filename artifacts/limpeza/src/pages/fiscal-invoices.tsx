@@ -317,9 +317,298 @@ export default function FiscalInvoicesPage() {
     fetchFiscalSettings()
   }, [])
 
+  const KNOWN_PJ_DIRECTORY_FRONTEND: Record<string, {
+    razaoSocial: string
+    logradouro: string
+    numero: string
+    complemento: string
+    bairro: string
+    cep: string
+    cidade: string
+    uf: string
+    ibge: string
+  }> = {
+    "75315333000109": {
+      razaoSocial: "ATACADAO DISTR COM E IND MATRIZ",
+      logradouro: "Avenida Morvan Dias de Figueiredo",
+      numero: "6169",
+      complemento: "",
+      bairro: "Vila Maria",
+      cep: "02170901",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "14049467000130": {
+      razaoSocial: "Lactalis do Brasil",
+      logradouro: "Avenida Doutora Ruth Cardoso",
+      numero: "7221",
+      complemento: "",
+      bairro: "Pinheiros",
+      cep: "05425902",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "34274233000102": {
+      razaoSocial: "Vibra Energia S.A.",
+      logradouro: "Rua Correia Vasques",
+      numero: "250",
+      complemento: "",
+      bairro: "Cidade Nova",
+      cep: "20211140",
+      cidade: "Rio de Janeiro",
+      uf: "RJ",
+      ibge: "3304557"
+    },
+    "33054115000622": {
+      razaoSocial: "Cristália Produtos Químicos Farmacêuticos Ltda",
+      logradouro: "Avenida Paulista",
+      numero: "2313",
+      complemento: "",
+      bairro: "Bela Vista",
+      cep: "01311300",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "45543915000181": {
+      razaoSocial: "Carrefour Comércio e Indústria Ltda",
+      logradouro: "Rua George Eastman",
+      numero: "213",
+      complemento: "",
+      bairro: "Vila Tramontano",
+      cep: "05690000",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "02373229000109": {
+      razaoSocial: "CBO - Companhia Brasileira de Offshore",
+      logradouro: "Avenida Rio Branco",
+      numero: "108",
+      complemento: "",
+      bairro: "Centro",
+      cep: "20040001",
+      cidade: "Rio de Janeiro",
+      uf: "RJ",
+      ibge: "3304557"
+    },
+    "60665981000118": {
+      razaoSocial: "União Química Farmacêutica Nacional S.A.",
+      logradouro: "Avenida Magalhães de Castro",
+      numero: "4800",
+      complemento: "Torre 2",
+      bairro: "Cidade Jardim",
+      cep: "05676120",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "35402759000185": {
+      razaoSocial: "Bimbo do Brasil Ltda",
+      logradouro: "Rua Engenheiro Luís Carlos Berrini",
+      numero: "105",
+      complemento: "",
+      bairro: "Cidade Monções",
+      cep: "04571010",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "34061157000156": {
+      razaoSocial: "Trident Energy do Brasil Ltda",
+      logradouro: "Praia de Botafogo",
+      numero: "370",
+      complemento: "11º Andar",
+      bairro: "Botafogo",
+      cep: "22250040",
+      cidade: "Rio de Janeiro",
+      uf: "RJ",
+      ibge: "3304557"
+    },
+    "73506453000168": {
+      razaoSocial: "DPR Turismo Ltda",
+      logradouro: "Rua Comendador Araújo",
+      numero: "143",
+      complemento: "Conjunto 92",
+      bairro: "Centro",
+      cep: "80420000",
+      cidade: "Curitiba",
+      uf: "PR",
+      ibge: "4106902"
+    },
+    "03600858000123": {
+      razaoSocial: "Opus Viagens e Eventos Ltda",
+      logradouro: "Rua Estados Unidos",
+      numero: "1456",
+      complemento: "",
+      bairro: "Jardim América",
+      cep: "01427001",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "43637214000186": {
+      razaoSocial: "Copastur Viagens e Turismo Ltda",
+      logradouro: "Rua da Consolação",
+      numero: "1601",
+      complemento: "15º Andar",
+      bairro: "Consolação",
+      cep: "01415003",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "60422177000159": {
+      razaoSocial: "Avipam Turismo e Tecnologia Ltda",
+      logradouro: "Rua Líbero Badaró",
+      numero: "377",
+      complemento: "17º Andar",
+      bairro: "Centro",
+      cep: "01009000",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "01261714000116": {
+      razaoSocial: "Tripservice Agência de Viagens e Turismo Ltda",
+      logradouro: "Rua Camboriú",
+      numero: "79",
+      complemento: "",
+      bairro: "Fazenda",
+      cep: "88301450",
+      cidade: "Itajaí",
+      uf: "SC",
+      ibge: "4208203"
+    },
+    "23098636000142": {
+      razaoSocial: "Paytrack Tecnologia em Viagens e Despesas Corporativas Ltda",
+      logradouro: "Rua Antônio da Veiga",
+      numero: "419",
+      complemento: "Sala 10",
+      bairro: "Victor Konder",
+      cep: "89012500",
+      cidade: "Blumenau",
+      uf: "SC",
+      ibge: "4202404"
+    },
+    "19933930000175": {
+      razaoSocial: "Globalis Brasil Viagens Corporativas Ltda",
+      logradouro: "Avenida Paulista",
+      numero: "2073",
+      complemento: "Horsa II",
+      bairro: "Consolação",
+      cep: "01311940",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "31370836000101": {
+      razaoSocial: "Turicenter Turismo Ltda - Flytour Serviços de Viagens",
+      logradouro: "Avenida Salvador Allende",
+      numero: "6555",
+      complemento: "",
+      bairro: "Barra da Tijuca",
+      cep: "22783127",
+      cidade: "Rio de Janeiro",
+      uf: "RJ",
+      ibge: "3304557"
+    },
+    "33000167000101": {
+      razaoSocial: "PETRÓLEO BRASILEIRO S.A. - PETROBRAS",
+      logradouro: "Avenida República do Chile",
+      numero: "65",
+      complemento: "",
+      bairro: "Centro",
+      cep: "20031912",
+      cidade: "Rio de Janeiro",
+      uf: "RJ",
+      ibge: "3304557"
+    },
+    "02421421000111": {
+      razaoSocial: "PORTO DO AÇU OPERAÇÕES S.A.",
+      logradouro: "Rua da Passagem",
+      numero: "123",
+      complemento: "Andar 10",
+      bairro: "Botafogo",
+      cep: "22290030",
+      cidade: "Rio de Janeiro",
+      uf: "RJ",
+      ibge: "3304557"
+    },
+    "33611500000119": {
+      razaoSocial: "VALE S.A.",
+      logradouro: "Praia de Botafogo",
+      numero: "186",
+      complemento: "Salas 1101 a 1901",
+      bairro: "Botafogo",
+      cep: "22250145",
+      cidade: "Rio de Janeiro",
+      uf: "RJ",
+      ibge: "3304557"
+    },
+    "60872504000123": {
+      razaoSocial: "ITAÚ UNIBANCO S.A.",
+      logradouro: "Praça Alfredo Egydio de Souza Aranha",
+      numero: "100",
+      complemento: "Torre Olavo Setubal",
+      bairro: "Parque Jabaquara",
+      cep: "04344902",
+      cidade: "São Paulo",
+      uf: "SP",
+      ibge: "3550308"
+    },
+    "02709449000159": {
+      razaoSocial: "Petrobras Transporte S.A. - Transpetro",
+      logradouro: "Avenida Presidente Vargas",
+      numero: "328",
+      complemento: "Mezanino 1 a 11 Andares",
+      bairro: "Centro",
+      cep: "20091060",
+      cidade: "Rio de Janeiro",
+      uf: "RJ",
+      ibge: "3304557"
+    },
+    "05476104000192": {
+      razaoSocial: "Modec Serviços de Petróleo do Brasil Ltda",
+      logradouro: "Praia de Botafogo",
+      numero: "501",
+      complemento: "Bloco II - 3º Andar",
+      bairro: "Botafogo",
+      cep: "22250040",
+      cidade: "Rio de Janeiro",
+      uf: "RJ",
+      ibge: "3304557"
+    }
+  }
+
+  const isGenericPelincaCompanyAddr = (addr?: string, cep?: string, _bairro?: string, _cidade?: string, numero?: string) => {
+    const cleanAddr = String(addr || "").trim()
+    if (!cleanAddr) return true
+
+    const explicitNum = String(numero || "").trim()
+    const explicitCep = String(cep || "").replace(/\D/g, "")
+
+    const inlineNumMatch = cleanAddr.match(/^(?:av\.?\s*pelinca|avenida\s*pelinca)\s*,\s*(\d+[A-Za-z0-9\/-]*|s\/?n)\b/i)
+    const inlineCepMatch = cleanAddr.match(/\b(\d{5})-?(\d{3})\b/)
+    const effectiveNum = explicitNum || (inlineNumMatch ? inlineNumMatch[1].trim() : "")
+    const effectiveCep = explicitCep || (inlineCepMatch ? `${inlineCepMatch[1]}${inlineCepMatch[2]}` : "")
+
+    const isPelincaStreet = /^(av\.?\s*pelinca|avenida\s*pelinca)\b/i.test(cleanAddr)
+    if (!isPelincaStreet) return false
+
+    const hasSpecificNonGenericNum = Boolean(effectiveNum && !/^(100|s\/?n|0)$/i.test(effectiveNum))
+    const hasSpecificNonGenericCep = Boolean(effectiveCep && effectiveCep.length === 8 && effectiveCep !== "28035000")
+    if (hasSpecificNonGenericNum || hasSpecificNonGenericCep) {
+      return false
+    }
+    return true
+  }
+
   // ── Helper de Normalização de Endereço do Check-in Digital ──────────────────
   const extractNormalizedGuestAddress = (src: any, fallbackDoc?: string) => {
-    const docDigits = String(src?.documentNumber || src?.document || src?.cpf || src?.guestDocument || fallbackDoc || "").replace(/\D/g, "")
+    const docDigits = String(src?.documentNumber || src?.document || src?.cpf || src?.guestDocument || src?.cnpj || fallbackDoc || "").replace(/\D/g, "")
     let rawEnd = String(src?.street || src?.logradouro || src?.guestStreet || src?.address || src?.guestAddress || src?.endereco || src?.tomadorEndereco || "").trim()
     let rawNum = String(src?.streetNumber || src?.number || src?.numero || src?.guestStreetNumber || src?.tomadorNumero || "").trim()
     let rawComp = String(src?.complement || src?.complemento || src?.guestComplement || src?.tomadorComplemento || "").trim()
@@ -351,7 +640,7 @@ export default function FiscalInvoicesPage() {
       if (!rawNum || rawNum === "100") rawNum = commaMatch[2].trim()
     }
 
-    const isGenericPelinca = !rawEnd || /^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?$/i.test(rawEnd)
+    const isGenericPelinca = isGenericPelincaCompanyAddr(rawEnd, rawCep, rawBairro, rawCidade, rawNum)
     if (isGenericPelinca && docDigits === "12585736792") {
       return {
         logradouro: "Rua Sebastião Rangel",
@@ -362,6 +651,19 @@ export default function FiscalInvoicesPage() {
         uf: "RJ",
         cep: "28024030",
         ibge: "3301009"
+      }
+    }
+    if (isGenericPelinca && docDigits.length === 14 && KNOWN_PJ_DIRECTORY_FRONTEND[docDigits]) {
+      const known = KNOWN_PJ_DIRECTORY_FRONTEND[docDigits]
+      return {
+        logradouro: known.logradouro,
+        numero: known.numero,
+        complemento: rawComp || known.complemento,
+        bairro: known.bairro,
+        cidade: known.cidade,
+        uf: known.uf,
+        cep: known.cep,
+        ibge: known.ibge
       }
     }
 
@@ -434,20 +736,32 @@ export default function FiscalInvoicesPage() {
   const applyTomadorPJ = (comp: any, guestInfo?: any, stayInfo?: any, resInfo?: any) => {
     setTomadorMode("pj")
     const r = resInfo || linkedReservation
-    const compDoc = (comp.cnpj || r?.companyCnpj || "").replace(/\D/g, "")
-    const compName = comp.corporateName || comp.tradeName || comp.razaoSocial || comp.name || r?.companyName || "Empresa"
-    const compEmail = comp.financialEmail || comp.email || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
+    const compDoc = (comp?.cnpj || r?.companyCnpj || "").replace(/\D/g, "")
+    const knownPj = compDoc.length === 14 ? KNOWN_PJ_DIRECTORY_FRONTEND[compDoc] : undefined
+    const compName = comp?.corporateName || comp?.tradeName || comp?.razaoSocial || comp?.name || r?.companyName || knownPj?.razaoSocial || "Empresa"
+    const compEmail = comp?.financialEmail || comp?.email || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
     const guestWhatsApp = (guestInfo?.phone || r?.guestPhone || formTomadorTelefone || "").replace(/\D/g, "")
-    const rawCompTel = (comp.phone || "").replace(/\D/g, "")
+    const rawCompTel = (comp?.phone || "").replace(/\D/g, "")
     const compTel = (!formNfHideFromGuest && guestWhatsApp) ? guestWhatsApp : (rawCompTel || guestWhatsApp)
-    const compEnd = comp.address || comp.logradouro || comp.endereco || "Av. Pelinca"
-    const compNum = comp.number || comp.numero || "100"
-    const compComp = comp.complement || comp.complemento || ""
-    const compBairro = comp.neighborhood || comp.bairro || "Pelinca"
-    const compCidade = comp.city || comp.cidade || "Campos dos Goytacazes"
-    const compUf = comp.state || comp.uf || "RJ"
-    const compCep = (comp.cep || "28035000").replace(/\D/g, "")
-    const compIbge = comp.ibgeCode || comp.codigoMunicipio || "3301009"
+
+    const rawCompEnd = comp?.address || comp?.logradouro || comp?.endereco || r?.companyAddress || ""
+    const rawCompNum = comp?.number || comp?.numero || r?.companyNumber || ""
+    const rawCompComp = comp?.complement || comp?.complemento || r?.companyComplement || ""
+    const rawCompCep = (comp?.cep || r?.companyCep || "").replace(/\D/g, "")
+    const rawCompBairro = comp?.neighborhood || comp?.bairro || r?.companyNeighborhood || ""
+    const rawCompCidade = comp?.city || comp?.cidade || r?.companyCity || ""
+    const rawCompUf = comp?.state || comp?.uf || r?.companyState || ""
+    const rawCompIbge = comp?.ibgeCode || comp?.codigoMunicipio || r?.companyIbgeCode || ""
+    const isGenericComp = isGenericPelincaCompanyAddr(rawCompEnd, rawCompCep, rawCompBairro, rawCompCidade, rawCompNum)
+
+    const compEnd = (!isGenericComp && rawCompEnd) ? rawCompEnd : (knownPj?.logradouro || "")
+    const compNum = (!isGenericComp && rawCompNum) ? rawCompNum : (knownPj?.numero || "S/N")
+    const compComp = (!isGenericComp && rawCompComp) ? rawCompComp : (knownPj?.complemento || rawCompComp || "")
+    const compBairro = (!isGenericComp && rawCompBairro) ? rawCompBairro : (knownPj?.bairro || "Centro")
+    const compCidade = (!isGenericComp && rawCompCidade) ? rawCompCidade : (knownPj?.cidade || "São Paulo")
+    const compUf = (!isGenericComp && rawCompUf) ? rawCompUf : (knownPj?.uf || "SP")
+    const compCep = (!isGenericComp && rawCompCep) ? rawCompCep : (knownPj?.cep || "")
+    const compIbge = (!isGenericComp && rawCompIbge) ? rawCompIbge : (knownPj?.ibge || "3550308")
 
     const guestName = guestInfo?.fullName || guestInfo?.name || r?.guestName || ""
     const flat = stayInfo?.flatNumber || extractedData.flatNumber || formFlatNumber
@@ -507,24 +821,72 @@ export default function FiscalInvoicesPage() {
     if (compName && compDoc && valor) {
       setIsReadyToEmit(true)
     }
+
+    if (compDoc.length === 14 && (!compEnd || isGenericPelincaCompanyAddr(compEnd, compCep, compBairro, compCidade, compNum))) {
+      fetch(`/api/invoices/lookup-cnpj/${compDoc}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!data || (!data.logradouro && !data.endereco && !data.cep)) return
+          const resolvedEnd = data.logradouro || data.endereco || compEnd
+          const resolvedNum = data.numero || compNum || "S/N"
+          const resolvedComp = data.complemento !== undefined ? (data.complemento || "") : compComp
+          const resolvedBairro = data.bairro || compBairro || "Centro"
+          const resolvedCep = String(data.cep || compCep || "").replace(/\D/g, "")
+          const resolvedCity = data.cidade || data.municipio || data.localidade || compCidade
+          const resolvedUf = data.uf || compUf
+          const resolvedIbge = String(data.codigoMunicipio || data.ibge || data.ibgeCode || compIbge)
+          setFormTomadorEndereco(resolvedEnd)
+          setFormTomadorNumero(resolvedNum)
+          setFormTomadorComplemento(resolvedComp)
+          setFormTomadorBairro(resolvedBairro)
+          setFormTomadorCep(resolvedCep)
+          setFormTomadorCidade(resolvedCity)
+          setFormTomadorUf(resolvedUf)
+          setFormTomadorIbge(resolvedIbge)
+          setExtractedData(prev => ({
+            ...prev,
+            tomadorEndereco: resolvedEnd,
+            tomadorNumero: resolvedNum,
+            tomadorComplemento: resolvedComp,
+            tomadorBairro: resolvedBairro,
+            tomadorCep: resolvedCep,
+            tomadorCidade: resolvedCity,
+            tomadorUf: resolvedUf,
+            tomadorCodigoMunicipio: resolvedIbge
+          }))
+        })
+        .catch(() => {})
+    }
   }
 
   // ── Aplicar Agência B2B (PJ) como Tomadora ─────────────────────────────────
   const applyTomadorAgency = (ag: any, guestInfo?: any, stayInfo?: any, resInfo?: any) => {
     setTomadorMode("agency")
     const r = resInfo || linkedReservation
-    const agDoc = (ag.cnpj || r?.agencyCnpj || "").replace(/\D/g, "")
-    const agName = ag.corporateName || ag.razaoSocial || ag.tradeName || ag.name || r?.agencyName || "Agência de Viagens"
-    const agEmail = ag.financialEmail || ag.email || r?.agencyAgentEmail || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
-    const agTel = (ag.phone || r?.agencyAgentPhone || "").replace(/\D/g, "")
-    const agEnd = ag.address || ag.logradouro || ag.endereco || "Av. Paulista"
-    const agNum = ag.number || ag.numero || "100"
-    const agComp = ag.complement || ag.complemento || ""
-    const agBairro = ag.neighborhood || ag.bairro || "Centro"
-    const agCidade = ag.city || ag.cidade || "São Paulo"
-    const agUf = ag.state || ag.uf || "SP"
-    const agCep = (ag.cep || "01310100").replace(/\D/g, "")
-    const agIbge = ag.ibgeCode || ag.codigoMunicipio || "3550308"
+    const agDoc = (ag?.cnpj || r?.agencyCnpj || "").replace(/\D/g, "")
+    const knownAg = agDoc.length === 14 ? KNOWN_PJ_DIRECTORY_FRONTEND[agDoc] : undefined
+    const agName = ag?.corporateName || ag?.razaoSocial || ag?.tradeName || ag?.name || r?.agencyName || knownAg?.razaoSocial || "Agência de Viagens"
+    const agEmail = ag?.financialEmail || ag?.email || r?.agencyAgentEmail || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || ""
+    const agTel = (ag?.phone || r?.agencyAgentPhone || "").replace(/\D/g, "")
+
+    const rawAgEnd = ag?.address || ag?.logradouro || ag?.endereco || r?.agencyAddress || ""
+    const rawAgNum = ag?.number || ag?.numero || r?.agencyNumber || ""
+    const rawAgComp = ag?.complement || ag?.complemento || r?.agencyComplement || ""
+    const rawAgCep = (ag?.cep || r?.agencyCep || "").replace(/\D/g, "")
+    const rawAgBairro = ag?.neighborhood || ag?.bairro || r?.agencyNeighborhood || ""
+    const rawAgCidade = ag?.city || ag?.cidade || r?.agencyCity || ""
+    const rawAgUf = ag?.state || ag?.uf || r?.agencyState || ""
+    const rawAgIbge = ag?.ibgeCode || ag?.codigoMunicipio || r?.agencyIbgeCode || ""
+    const isGenericAg = isGenericPelincaCompanyAddr(rawAgEnd, rawAgCep, rawAgBairro, rawAgCidade, rawAgNum)
+
+    const agEnd = (!isGenericAg && rawAgEnd) ? rawAgEnd : (knownAg?.logradouro || "Av. Paulista")
+    const agNum = (!isGenericAg && rawAgNum) ? rawAgNum : (knownAg?.numero || "100")
+    const agComp = (!isGenericAg && rawAgComp) ? rawAgComp : (knownAg?.complemento || rawAgComp || "")
+    const agBairro = (!isGenericAg && rawAgBairro) ? rawAgBairro : (knownAg?.bairro || "Centro")
+    const agCidade = (!isGenericAg && rawAgCidade) ? rawAgCidade : (knownAg?.cidade || "São Paulo")
+    const agUf = (!isGenericAg && rawAgUf) ? rawAgUf : (knownAg?.uf || "SP")
+    const agCep = (!isGenericAg && rawAgCep) ? rawAgCep : (knownAg?.cep || "01310100")
+    const agIbge = (!isGenericAg && rawAgIbge) ? rawAgIbge : (knownAg?.ibge || "3550308")
 
     const guestName = guestInfo?.fullName || guestInfo?.name || r?.guestName || "Hóspede"
     const flat = stayInfo?.flatNumber || extractedData.flatNumber || formFlatNumber
@@ -538,7 +900,7 @@ export default function FiscalInvoicesPage() {
       rloc: r?.b2bLocatorRloc || undefined,
       costCenter: r?.costCenter || undefined,
       companyName: r?.companyName || linkedCompany?.corporateName || linkedCompany?.name || undefined,
-      agencyName: ag.tradeName || ag.corporateName || r?.agencyTradeName || r?.agencyName || undefined
+      agencyName: ag?.tradeName || ag?.corporateName || r?.agencyTradeName || r?.agencyName || undefined
     }
 
     const desc = buildCorporateDescription(guestName, flat, checkin, checkout, diarias, extraIds)
@@ -584,6 +946,42 @@ export default function FiscalInvoicesPage() {
 
     if (agName && agDoc && valor) {
       setIsReadyToEmit(true)
+    }
+
+    if (agDoc.length === 14 && (isGenericAg && !knownAg)) {
+      fetch(`/api/invoices/lookup-cnpj/${agDoc}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!data || (!data.logradouro && !data.endereco && !data.cep)) return
+          const resolvedEnd = data.logradouro || data.endereco || agEnd
+          const resolvedNum = data.numero || agNum || "S/N"
+          const resolvedComp = data.complemento !== undefined ? (data.complemento || "") : agComp
+          const resolvedBairro = data.bairro || agBairro || "Centro"
+          const resolvedCep = String(data.cep || agCep || "").replace(/\D/g, "")
+          const resolvedCity = data.cidade || data.municipio || data.localidade || agCidade
+          const resolvedUf = data.uf || agUf
+          const resolvedIbge = String(data.codigoMunicipio || data.ibge || data.ibgeCode || agIbge)
+          setFormTomadorEndereco(resolvedEnd)
+          setFormTomadorNumero(resolvedNum)
+          setFormTomadorComplemento(resolvedComp)
+          setFormTomadorBairro(resolvedBairro)
+          setFormTomadorCep(resolvedCep)
+          setFormTomadorCidade(resolvedCity)
+          setFormTomadorUf(resolvedUf)
+          setFormTomadorIbge(resolvedIbge)
+          setExtractedData(prev => ({
+            ...prev,
+            tomadorEndereco: resolvedEnd,
+            tomadorNumero: resolvedNum,
+            tomadorComplemento: resolvedComp,
+            tomadorBairro: resolvedBairro,
+            tomadorCep: resolvedCep,
+            tomadorCidade: resolvedCity,
+            tomadorUf: resolvedUf,
+            tomadorCodigoMunicipio: resolvedIbge
+          }))
+        })
+        .catch(() => {})
     }
   }
 
@@ -768,7 +1166,15 @@ export default function FiscalInvoicesPage() {
       tradeName: res.agencyTradeName || res.agencyName,
       cnpj: res.agencyCnpj || "",
       financialEmail: res.agencyAgentEmail || (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || "",
-      phone: res.agencyAgentPhone || ""
+      phone: res.agencyAgentPhone || "",
+      address: res.agencyAddress || "",
+      number: res.agencyNumber || "",
+      complement: res.agencyComplement || "",
+      neighborhood: res.agencyNeighborhood || "",
+      cep: res.agencyCep || "",
+      city: res.agencyCity || "",
+      state: res.agencyState || "",
+      ibgeCode: res.agencyIbgeCode || ""
     } : null)
 
     const crmComp = companies.find(c =>
@@ -782,7 +1188,15 @@ export default function FiscalInvoicesPage() {
       corporateName: res.companyName,
       tradeName: res.companyName,
       cnpj: res.companyCnpj || "",
-      financialEmail: (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || ""
+      financialEmail: (Array.isArray(res.nfDeliveryEmails) ? res.nfDeliveryEmails[0] : "") || "",
+      address: res.companyAddress || "",
+      number: res.companyNumber || "",
+      complement: res.companyComplement || "",
+      neighborhood: res.companyNeighborhood || "",
+      cep: res.companyCep || "",
+      city: res.companyCity || "",
+      state: res.companyState || "",
+      ibgeCode: res.companyIbgeCode || ""
     } : null)
 
     setLinkedAgency(foundAgency)
@@ -831,15 +1245,51 @@ export default function FiscalInvoicesPage() {
         setFormDescricao(cf.descricaoServico)
         setExtractedData(prev => ({ ...prev, descricaoServico: cf.descricaoServico }))
       }
-      if (cf.tomadorNome) setFormNome(cf.tomadorNome)
-      if (cf.tomadorCpfCnpj) setFormCpfCnpj(String(cf.tomadorCpfCnpj).replace(/\D/g, ""))
-      if (cf.tomadorEmail) setFormEmail(cf.tomadorEmail)
-      if (cf.tomadorEndereco) setFormStreet(cf.tomadorEndereco)
-      if (cf.tomadorNumero) setFormStreetNumber(cf.tomadorNumero)
-      if (cf.tomadorBairro) setFormNeighborhood(cf.tomadorBairro)
-      if (cf.tomadorCep) setFormCep(String(cf.tomadorCep).replace(/\D/g, ""))
-      if (cf.tomadorCidade) setFormCity(cf.tomadorCidade)
-      if (cf.tomadorUf) setFormState(cf.tomadorUf)
+      const cfDoc = String(cf.tomadorCpfCnpj || "").replace(/\D/g, "")
+      const cfIsPj = cfDoc.length === 14 || recipientPref === "company" || recipientPref === "agency"
+      const cfMatchesTarget =
+        !cfDoc ||
+        (recipientPref === "agency" && cfDoc === String(foundAgency?.cnpj || "").replace(/\D/g, "")) ||
+        (recipientPref === "company" && cfDoc === String(foundComp?.cnpj || "").replace(/\D/g, "")) ||
+        (recipientPref === "guest" && cfDoc.length === 11)
+      if (cfMatchesTarget) {
+        if (cf.tomadorNome) {
+          setFormTomadorNome(cf.tomadorNome)
+          setExtractedData(prev => ({ ...prev, tomadorNome: cf.tomadorNome }))
+        }
+        if (cfDoc) {
+          setFormTomadorDoc(cfDoc)
+          setExtractedData(prev => ({ ...prev, tomadorCpfCnpj: cfDoc }))
+        }
+        if (cf.tomadorEmail) {
+          setFormTomadorEmail(cf.tomadorEmail)
+          setExtractedData(prev => ({ ...prev, tomadorEmail: cf.tomadorEmail }))
+        }
+        const cfIsGenericPelinca = isGenericPelincaCompanyAddr(
+          cf.tomadorEndereco,
+          cf.tomadorCep,
+          cf.tomadorBairro,
+          cf.tomadorCidade,
+          cf.tomadorNumero
+        )
+        if (!cfIsGenericPelinca || !cfIsPj) {
+          if (cf.tomadorEndereco) setFormTomadorEndereco(cf.tomadorEndereco)
+          if (cf.tomadorNumero) setFormTomadorNumero(cf.tomadorNumero)
+          if (cf.tomadorBairro) setFormTomadorBairro(cf.tomadorBairro)
+          if (cf.tomadorCep) setFormTomadorCep(String(cf.tomadorCep).replace(/\D/g, ""))
+          if (cf.tomadorCidade) setFormTomadorCidade(cf.tomadorCidade)
+          if (cf.tomadorUf) setFormTomadorUf(cf.tomadorUf)
+          setExtractedData(prev => ({
+            ...prev,
+            tomadorEndereco: cf.tomadorEndereco || prev.tomadorEndereco,
+            tomadorNumero: cf.tomadorNumero || prev.tomadorNumero,
+            tomadorBairro: cf.tomadorBairro || prev.tomadorBairro,
+            tomadorCep: cf.tomadorCep ? String(cf.tomadorCep).replace(/\D/g, "") : prev.tomadorCep,
+            tomadorCidade: cf.tomadorCidade || prev.tomadorCidade,
+            tomadorUf: cf.tomadorUf || prev.tomadorUf
+          }))
+        }
+      }
     }
 
     setMessages(prev => [
@@ -1586,7 +2036,15 @@ export default function FiscalInvoicesPage() {
         corporateName: r.companyName,
         tradeName: r.companyName,
         name: r.companyName,
-        cnpj: r.companyCnpj || ""
+        cnpj: r.companyCnpj || "",
+        address: r.companyAddress || "",
+        number: r.companyNumber || "",
+        complement: r.companyComplement || "",
+        neighborhood: r.companyNeighborhood || "",
+        cep: r.companyCep || "",
+        city: r.companyCity || "",
+        state: r.companyState || "",
+        ibgeCode: r.companyIbgeCode || ""
       } : null)
 
       const crmAgency = (r.agencyId
@@ -1602,7 +2060,15 @@ export default function FiscalInvoicesPage() {
         tradeName: r.agencyTradeName || r.agencyName,
         name: r.agencyName || r.agencyTradeName,
         cnpj: r.agencyCnpj || "",
-        financialEmail: r.agencyAgentEmail || ""
+        financialEmail: r.agencyAgentEmail || "",
+        address: r.agencyAddress || "",
+        number: r.agencyNumber || "",
+        complement: r.agencyComplement || "",
+        neighborhood: r.agencyNeighborhood || "",
+        cep: r.agencyCep || "",
+        city: r.agencyCity || "",
+        state: r.agencyState || "",
+        ibgeCode: r.agencyIbgeCode || ""
       } : null)
 
       const resKey = String(r.id || r.code)
@@ -1746,7 +2212,32 @@ export default function FiscalInvoicesPage() {
       : buildStandardDescription(res.guest?.fullName || res.guestName, String(res.flatNumber || ""), res.checkinDate, res.checkoutDate, res.diarias, extraIds)
 
     const targetEntity = isAgency ? (res.agency || res) : isComp ? (res.company || res.guest || res) : (res.guest || res)
-    const normAddr = extractNormalizedGuestAddress(targetEntity, res.doc)
+    let normAddr = extractNormalizedGuestAddress(targetEntity, res.doc)
+
+    const cleanResDoc = String(res.doc || "").replace(/\D/g, "")
+    if (
+      cleanResDoc.length === 14 &&
+      isGenericPelincaCompanyAddr(normAddr.logradouro, normAddr.cep, normAddr.bairro, normAddr.cidade, normAddr.numero)
+    ) {
+      try {
+        const lookupRes = await fetch(`/api/invoices/lookup-cnpj/${cleanResDoc}`)
+        if (lookupRes.ok) {
+          const data = await lookupRes.json()
+          if (data && (data.logradouro || data.endereco)) {
+            normAddr = {
+              logradouro: data.logradouro || data.endereco,
+              numero: data.numero || "S/N",
+              complemento: data.complemento || normAddr.complemento || "",
+              bairro: data.bairro || "Centro",
+              cidade: data.cidade || data.municipio || data.localidade || "São Paulo",
+              uf: data.uf || "SP",
+              cep: String(data.cep || "").replace(/\D/g, ""),
+              ibge: String(data.codigoMunicipio || data.ibge || data.ibgeCode || "3550308")
+            }
+          }
+        }
+      } catch {}
+    }
 
     const payload = {
       sistemaEmissor,
