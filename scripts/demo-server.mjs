@@ -27381,30 +27381,242 @@ const SPECIALTY_LABELS = {
   geral: "🔧 Reparo Geral"
 };
 
+const STRICT_DEFECT_RULES = [
+  {
+    specialty: "ar_condicionado",
+    itemRegex: /\b(ar[- ]?condicionado|split|controle do ar)\b/i,
+    defectRegex: /\b(pingando|gotejando|vazando|molhando|n[aã]o gela|gelando pouco|quente|fraco|parou|n[aã]o liga|desligando|barulho|ru[ií]do|defeito|quebrado|estragado|piscando)\b/i,
+    buildSummary: (item, defect) => `Revisar Ar-Condicionado Split — relato de aparelho ${defect.toLowerCase()}`
+  },
+  {
+    specialty: "hidraulica",
+    itemRegex: /\b(chuveiro|ducha|torneira|pia|ralo|vaso|sanit[aá]rio|descarga|sif[aã]o|caixa acoplada|encanamento|registro|box do banheiro|[aá]gua quente|aquecedor)\b/i,
+    defectRegex: /\b(vazando|vazamento|pingando|gotejando|goteira|entupido|entupida|acumulando|n[aã]o esquenta|frio|fria|queimado|queimou|sem press[aã]o|pouca [aá]gua|solto|solta|quebrado|quebrada|infiltra[cç][aã]o|molhando)\b/i,
+    buildSummary: (item, defect) => `Reparo Hidráulico (${item.toLowerCase()}) — relato de ${defect.toLowerCase()}`
+  },
+  {
+    specialty: "eletrica",
+    itemRegex: /\b(l[aâ]mpada|luz|ilumina[cç][aã]o|lustre|plafon|spot|tomada|interruptor|disjuntor|fia[cç][aã]o)\b/i,
+    defectRegex: /\b(queimada|queimado|queimou|piscando|apagada|apagou|n[aã]o funciona|sem energia|caindo|desarmando|solta|solto|curto|fa[ií]sca|quebrada|quebrado|defeito)\b/i,
+    buildSummary: (item, defect) => `Reparo Elétrico (${item.toLowerCase()}) — relato de ${defect.toLowerCase()}`
+  },
+  {
+    specialty: "fechadura",
+    itemRegex: /\b(fechadura|ma[cç]aneta|tranca|porta de entrada|porta do banheiro|dobradi[cç]a)\b/i,
+    defectRegex: /\b(travando|travada|emperrada|n[aã]o abre|n[aã]o fecha|n[aã]o tranca|solta|quebrada|bateria fraca|pilha fraca|apitando|falhando|defeito)\b/i,
+    buildSummary: (item, defect) => `Manutenção de Fechadura / Porta (${item.toLowerCase()}) — relato de ${defect.toLowerCase()}`
+  },
+  {
+    specialty: "eletrodomesticos",
+    itemRegex: /\b(tv|televis[aã]o|smart tv|controle remoto|frigobar|geladeira|micro[- ]?ondas|cafeteira|secador|ferro de passar|sanduicheira|cooktop|fog[aã]o)\b/i,
+    defectRegex: /\b(n[aã]o liga|n[aã]o funciona|parou|queimado|queimou|n[aã]o gela|vazando|sem som|sem imagem|quebrado|quebrada|estragado|defeito|sem pilha)\b/i,
+    buildSummary: (item, defect) => `Verificar Eletrodoméstico / TV (${item.toLowerCase()}) — relato de ${defect.toLowerCase()}`
+  },
+  {
+    specialty: "marcenaria",
+    itemRegex: /\b(arm[aá]rio|guarda[- ]?roupa|gaveta|cama|colch[aã]o|cabeceira|estrado|cadeira|mesa|bancada|prateleira|cortina|blackout|persiana|suporte|toalheiro|porta[- ]?papel|espelho)\b/i,
+    defectRegex: /\b(quebrado|quebrada|solto|solta|caindo|caiu|rasgado|rasgada|afundando|bamba|bambo|emperrada|emperrado|trilho|descolando|estragado|defeito)\b/i,
+    buildSummary: (item, defect) => `Reparo de Marcenaria / Mobiliário (${item.toLowerCase()}) — relato de ${defect.toLowerCase()}`
+  },
+  {
+    specialty: "pintura_alvenaria",
+    itemRegex: /\b(parede|teto|piso|porcelanato|azulejo|rejunte|rodap[eé]|gesso)\b/i,
+    defectRegex: /\b(descascando|infiltra[cç][aã]o|mofo|mofado|rachadura|trincado|solto|oco|quebrado|manchado|umidade)\b/i,
+    buildSummary: (item, defect) => `Reparo de Pintura / Alvenaria (${item.toLowerCase()}) — relato de ${defect.toLowerCase()}`
+  }
+];
+
+function extractStrictMaintenanceDefectFromText(rawText) {
+  if (!rawText || typeof rawText !== "string") return null;
+  // Divide histórico em mensagens individuais para achar a frase exata do defeito
+  const segments = rawText
+    .split(/\s*\|\s*|\n+/)
+    .map(s => s.trim())
+    .filter(s => s.length >= 6);
+
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i];
+    // Ignora mensagens automáticas/instruções do próprio hotel se escaparem
+    if (/senha da porta|check-in|wi-fi|pix|reserva confirmada|bem-vindo/i.test(seg) && seg.length > 180) continue;
+
+    for (const rule of STRICT_DEFECT_RULES) {
+      const itemMatch = seg.match(rule.itemRegex);
+      const defectMatch = seg.match(rule.defectRegex);
+      if (itemMatch && defectMatch) {
+        const cleanQuote = seg.length > 240 ? seg.slice(0, 240) + "..." : seg;
+        return {
+          specialty: rule.specialty,
+          text: rule.buildSummary(itemMatch[1], defectMatch[1]),
+          guestQuote: cleanQuote
+        };
+      }
+    }
+  }
+  return null;
+}
+
 function isRealMaintenanceObservation(o) {
   if (!o || typeof o !== "object") return false;
-  if (
-    o.generatedFromWhatsApp ||
-    o.generatedFromNps ||
-    o.generatedFromReviewId ||
-    o.type === "reclamacao" ||
-    o.description?.includes("[IA Auto-Ticket]") ||
-    o.description?.includes("[WhatsApp Defeito]") ||
-    o.description?.includes("[WhatsApp Crítica]") ||
-    o.description?.includes("[NPS Auto-Ticket]")
-  ) {
-    return false;
-  }
   if (!o.text || typeof o.text !== "string" || !o.text.trim()) return false;
-  return o.status === "aberta" || o.status === "resolvida";
+  return o.status === "aberta" || o.status === "resolvida" || o.status === "sugestao_ia";
 }
 
 function purgeNonMaintenanceObservations(targetDb = db) {
-  if (!Array.isArray(targetDb?.observations)) return;
-  const beforeLen = targetDb.observations.length;
-  targetDb.observations = targetDb.observations.filter(o => isRealMaintenanceObservation(o));
-  if (targetDb.observations.length !== beforeLen) {
-    try { saveDatabase("purge_invalid_observations"); } catch (_) {}
+  if (!Array.isArray(targetDb?.observations)) targetDb.observations = [];
+  if (!Array.isArray(targetDb.dismissedAiSuggestionKeys)) targetDb.dismissedAiSuggestionKeys = [];
+  const dismissedSet = new Set(targetDb.dismissedAiSuggestionKeys);
+  let mutated = false;
+
+  // 1. Higieniza ou converte itens existentes em db.observations
+  const cleaned = [];
+  for (const o of targetDb.observations) {
+    if (!o || typeof o !== "object") {
+      mutated = true;
+      continue;
+    }
+    const isLegacyAuto = Boolean(
+      o.generatedFromWhatsApp ||
+      o.generatedFromNps ||
+      o.generatedFromReviewId ||
+      o.type === "reclamacao" ||
+      o.status === "pendente" ||
+      o.description?.includes("[IA Auto-Ticket]") ||
+      o.description?.includes("[WhatsApp Defeito]") ||
+      o.description?.includes("[WhatsApp Crítica]") ||
+      o.description?.includes("[NPS Auto-Ticket]")
+    );
+
+    if (isLegacyAuto && o.status !== "aberta" && o.status !== "resolvida") {
+      const flatObj = (targetDb.flats || []).find(f => Number(f.id) === Number(o.flatId) || String(f.number) === String(o.flatNumber));
+      if (!flatObj) {
+        mutated = true;
+        continue;
+      }
+      const extracted = extractStrictMaintenanceDefectFromText(o.guestQuote || o.description || o.text || "");
+      if (!extracted) {
+        mutated = true;
+        continue;
+      }
+      const dedupKey = `${flatObj.number}_${extracted.specialty}_${o.guestPhone || o.authorUsername || ""}`;
+      if (dismissedSet.has(dedupKey)) {
+        mutated = true;
+        continue;
+      }
+      o.flatId = Number(flatObj.id);
+      o.flatNumber = String(flatObj.number);
+      o.status = "sugestao_ia";
+      o.workflowStage = "ai_suggestion";
+      o.isAiSuggestion = true;
+      o.specialty = extracted.specialty;
+      o.category = "manutencao";
+      o.text = extracted.text;
+      o.guestQuote = extracted.guestQuote;
+      o.sourceLabel = o.generatedFromNps ? "Pesquisa NPS" : o.generatedFromReviewId ? "Avaliação Pós-Estadia" : "WhatsApp do Hóspede";
+      o.dedupKey = dedupKey;
+      cleaned.push(o);
+      mutated = true;
+      continue;
+    }
+
+    if (isRealMaintenanceObservation(o)) {
+      cleaned.push(o);
+    } else {
+      mutated = true;
+    }
+  }
+
+  // 2. Varre db.guestSentiment, db.reviews e db.npsResponses para gerar sugestões ricas de defeitos físicos reais
+  const existingKeys = new Set(cleaned.map(c => c.dedupKey).filter(Boolean));
+  let nextId = cleaned.length > 0 ? Math.max(...cleaned.map(c => Number(c.id) || 0)) + 1 : 1;
+
+  for (const s of (targetDb.guestSentiment || [])) {
+    if (!s || !s.flatNumber) continue;
+    const flatObj = (targetDb.flats || []).find(f => String(f.number) === String(s.flatNumber));
+    if (!flatObj) continue;
+
+    // Busca mensagens reais da conversa desse telefone para extrair a frase exata
+    const cleanP = String(s.guestPhone || "").replace(/\D/g, "");
+    const conv = (targetDb.whatsappConversations || []).find(c => {
+      const cp = String(c.phone || c.id || "").replace(/\D/g, "");
+      return cp && cleanP && (cp.endsWith(cleanP.slice(-8)) || cleanP.endsWith(cp.slice(-8)));
+    });
+    const inboundTexts = (conv?.messages || [])
+      .filter(m => !m.fromMe && (m.text || m.caption))
+      .map(m => m.text || m.caption)
+      .join(" | ");
+
+    const candidateText = inboundTexts || s.summary || "";
+    const extracted = extractStrictMaintenanceDefectFromText(candidateText);
+    if (!extracted) continue;
+
+    const dedupKey = `${flatObj.number}_${extracted.specialty}_${cleanP}`;
+    if (existingKeys.has(dedupKey) || dismissedSet.has(dedupKey)) continue;
+    existingKeys.add(dedupKey);
+
+    cleaned.push({
+      id: nextId++,
+      flatId: Number(flatObj.id),
+      flatNumber: String(flatObj.number),
+      category: "manutencao",
+      specialty: extracted.specialty,
+      text: extracted.text,
+      guestQuote: extracted.guestQuote,
+      guestName: s.guestName || "Hóspede",
+      guestPhone: s.guestPhone || null,
+      authorUsername: `🤖 IA (${s.guestName || "Hóspede"})`,
+      sourceLabel: "WhatsApp do Hóspede",
+      isAiSuggestion: true,
+      dedupKey,
+      status: "sugestao_ia",
+      workflowStage: "ai_suggestion",
+      isRentalBlocker: false,
+      assignedTo: "unassigned",
+      photos: [],
+      createdAt: s.analyzedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    mutated = true;
+  }
+
+  for (const n of (targetDb.npsResponses || [])) {
+    if (!n || !n.flatNumber || !n.comment) continue;
+    const flatObj = (targetDb.flats || []).find(f => String(f.number) === String(n.flatNumber));
+    if (!flatObj) continue;
+    const extracted = extractStrictMaintenanceDefectFromText(n.comment);
+    if (!extracted) continue;
+
+    const dedupKey = `${flatObj.number}_${extracted.specialty}_nps_${n.id}`;
+    if (existingKeys.has(dedupKey) || dismissedSet.has(dedupKey)) continue;
+    existingKeys.add(dedupKey);
+
+    cleaned.push({
+      id: nextId++,
+      flatId: Number(flatObj.id),
+      flatNumber: String(flatObj.number),
+      category: "manutencao",
+      specialty: extracted.specialty,
+      text: extracted.text,
+      guestQuote: extracted.guestQuote,
+      guestName: n.guestName || "Hóspede",
+      guestPhone: n.guestPhone || null,
+      authorUsername: `🤖 IA NPS (${n.guestName || "Hóspede"})`,
+      sourceLabel: `Pesquisa NPS (Nota ${n.score}/5)`,
+      isAiSuggestion: true,
+      dedupKey,
+      status: "sugestao_ia",
+      workflowStage: "ai_suggestion",
+      isRentalBlocker: false,
+      assignedTo: "unassigned",
+      photos: [],
+      createdAt: n.respondedAt || n.sentAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    mutated = true;
+  }
+
+  targetDb.observations = cleaned;
+  if (mutated) {
+    try { saveDatabase("sync_ai_maintenance_suggestions"); } catch (_) {}
   }
 }
 
@@ -28049,6 +28261,16 @@ app.patch("/api/observations/:id/triage", (req, res) => {
       obs.blockStartDate = todayStr;
     }
   }
+
+  // Se era uma Sugestão da IA ("sugestao_ia"), ao passar pela triagem do gestor ela vira uma demanda real ("aberta")
+  if (obs.status === "sugestao_ia" || obs.isAiSuggestion) {
+    obs.status = "aberta";
+    obs.isAiSuggestion = false;
+    obs.convertedFromAiAt = nowIso;
+    if (obs.workflowStage === "ai_suggestion") {
+      obs.workflowStage = "reported";
+    }
+  }
   if (blockStartDate !== undefined) obs.blockStartDate = blockStartDate || null;
   if (blockEndDate !== undefined) obs.blockEndDate = blockEndDate || null;
   if (specialty !== undefined) obs.specialty = specialty;
@@ -28421,6 +28643,12 @@ app.delete("/api/observations/:id", (req, res) => {
   if (idx === -1) return res.status(404).json({ error: "Demanda não encontrada." });
 
   const [removed] = db.observations.splice(idx, 1);
+  if (removed?.dedupKey) {
+    if (!Array.isArray(db.dismissedAiSuggestionKeys)) db.dismissedAiSuggestionKeys = [];
+    if (!db.dismissedAiSuggestionKeys.includes(removed.dedupKey)) {
+      db.dismissedAiSuggestionKeys.push(removed.dedupKey);
+    }
+  }
   syncMaintenanceObservationBlocks(removed, true);
   saveDatabase("delete_maintenance_observation");
 
@@ -62253,32 +62481,41 @@ app.post("/api/ai/sentiment/analyze-whatsapp", async (req, res) => {
         db.guestSentiment.unshift(sentimentEntry);
       }
 
-      // Detecção de Defeitos e Auto-Ticket em db.observations
-      const isDefectOrCriticism = analysis.tone === "negative" ||
-        /ruim|péssimo|pessimo|terrível|terrivel|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|vazamento|goteira|gotejando|pingando|frio|calor|demora|demorado|não funciona|nao funciona|estragado|estragou/i.test(fullText);
-
-      if (isDefectOrCriticism) {
-        if (!db.observations) db.observations = [];
-        const alreadyHasTicket = db.observations.some(o =>
-          (o.guestPhone === phone || o.description?.includes(phone) || (sentimentEntry.guestName && o.description?.includes(sentimentEntry.guestName))) &&
-          o.status === "pendente" &&
-          o.generatedFromWhatsApp
-        );
-        if (!alreadyHasTicket) {
-          const isMaint = /ar[- ]condicionado|chuveiro|água|agua|aquecedor|fechadura|porta|chave|tranca|lâmpada|lampada|luz|tomada|tv|televisão|televisao|frigobar|geladeira|wi-fi|wifi|internet|vazamento|pia|vaso|dreno/i.test(fullText);
-          const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
-          const ticketTitle = isMaint ? "[WhatsApp Defeito]" : "[WhatsApp Crítica]";
-          db.observations.push({
-            id: obsId,
-            flatNumber: flatNumber || "N/A",
-            guestPhone: phone,
-            type: "reclamacao",
-            description: `${ticketTitle} Hóspede ${sentimentEntry.guestName || phone}${flatNumber ? ` (Flat ${flatNumber})` : ""}: "${fullText.substring(0, 140)}"`,
-            severity: "alta",
-            status: "pendente",
-            createdAt: new Date().toISOString(),
-            generatedFromWhatsApp: true
-          });
+      // Detecção Estrita de Defeito Físico do Flat -> Sugestão de Manutenção da IA em db.observations
+      const extractedDefect = flatNumber ? extractStrictMaintenanceDefectFromText(fullText) : null;
+      if (extractedDefect && flatNumber) {
+        const flatObj = (db.flats || []).find(f => String(f.number) === String(flatNumber));
+        if (flatObj) {
+          if (!db.observations) db.observations = [];
+          const cleanP = String(phone || "").replace(/\D/g, "");
+          const dedupKey = `${flatObj.number}_${extractedDefect.specialty}_${cleanP}`;
+          const dismissed = Array.isArray(db.dismissedAiSuggestionKeys) && db.dismissedAiSuggestionKeys.includes(dedupKey);
+          const alreadyHasTicket = db.observations.some(o => o.dedupKey === dedupKey);
+          if (!alreadyHasTicket && !dismissed) {
+            const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => Number(o.id) || 0)) + 1 : 1;
+            db.observations.push({
+              id: obsId,
+              flatId: Number(flatObj.id),
+              flatNumber: String(flatObj.number),
+              category: "manutencao",
+              specialty: extractedDefect.specialty,
+              text: extractedDefect.text,
+              guestQuote: extractedDefect.guestQuote,
+              guestName: sentimentEntry.guestName || "Hóspede",
+              guestPhone: phone,
+              authorUsername: `🤖 IA (${sentimentEntry.guestName || "Hóspede"})`,
+              sourceLabel: "WhatsApp do Hóspede",
+              isAiSuggestion: true,
+              dedupKey,
+              status: "sugestao_ia",
+              workflowStage: "ai_suggestion",
+              isRentalBlocker: false,
+              assignedTo: "unassigned",
+              photos: [],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          }
         }
       }
 

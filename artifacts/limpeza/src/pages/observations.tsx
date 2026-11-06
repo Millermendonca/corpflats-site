@@ -49,6 +49,7 @@ export const OPERATIONAL_SCENARIOS_META = [
 ]
 
 const WORKFLOW_STAGE_META: Record<string, { label: string; badgeClass: string }> = {
+  ai_suggestion: { label: "🤖 Sugestão da IA (Avaliar)", badgeClass: "bg-purple-600 text-white" },
   reported: { label: "🆕 Aguardando Triagem", badgeClass: "bg-amber-500 text-white" },
   assigned_waiting_quote: { label: "⏳ Aguardando Orçamento (Faz-Tudo)", badgeClass: "bg-sky-600 text-white" },
   inspection_requested: { label: "🔍 Vistoria Solicitada pelo Faz-Tudo", badgeClass: "bg-purple-600 text-white" },
@@ -120,6 +121,7 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
   // Modal Triagem & Gestão (Admin)
   const [triageObs, setTriageObs] = useState<any | null>(null)
+  const [triageText, setTriageText] = useState<string>("")
   const [triageBlocker, setTriageBlocker] = useState<boolean>(false)
   const [triageAssignedTo, setTriageAssignedTo] = useState<"handyman" | "admin">("handyman")
   const [triageSpecialty, setTriageSpecialty] = useState<string>("geral")
@@ -181,6 +183,7 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
   const openTriageModal = (obs: any) => {
     setTriageObs(obs)
+    setTriageText(obs.text || "")
     setTriageBlocker(Boolean(obs.isRentalBlocker))
     setTriageAssignedTo(obs.assignedTo === "admin" ? "admin" : "handyman")
     setTriageSpecialty(obs.specialty || "geral")
@@ -295,6 +298,7 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
+          text: triageText.trim() || triageObs.text,
           isRentalBlocker: triageBlocker,
           assignedTo: triageAssignedTo,
           specialty: triageSpecialty,
@@ -444,6 +448,18 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
     } catch {}
   }
 
+  const handleDismissAiSuggestion = async (obsId: number) => {
+    try {
+      await fetch(`/api/observations/${obsId}`, { method: "DELETE", credentials: "include" })
+      toast({
+        title: "🗑️ Sugestão Descartada",
+        description: "A sugestão da IA foi arquivada e não será exibida novamente.",
+      })
+      if (triageObs?.id === obsId) setTriageObs(null)
+      refreshAll()
+    } catch {}
+  }
+
   const handleSaveHandymanSettings = async (e: React.FormEvent) => {
     e.preventDefault()
     setSavingSettings(true)
@@ -487,8 +503,9 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
   // Contadores Operacionais e Financeiros
   const openList = observations.filter(o => o.status === "aberta")
+  const aiSuggestionsList = observations.filter(o => o.status === "sugestao_ia")
   const triagePendingCount = openList.filter(o => (o.workflowStage || "reported") === "reported").length
-  const waitingQuoteCount = openList.filter(o => o.workflowStage === "assigned_waiting_quote" || o.workflowStage === "inspection_requested").length
+  const waitingQuoteCount = openList.filter(o => o.workflowStage === "assigned_waiting_quote" || o.workflowStage === "inspection_requested" || o.workflowStage === "awaiting_quote" || o.workflowStage === "awaiting_inspection").length
   const quoteToApproveCount = openList.filter(o => o.workflowStage === "quote_submitted").length
   const activeExecutionCount = openList.filter(o => o.workflowStage === "approved_waiting_room" || o.workflowStage === "in_progress").length
   const resolvedCount = observations.filter(o => o.status === "resolvida").length
@@ -498,7 +515,7 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
     .reduce((acc, o) => acc + Number(o.quoteAmount || 0), 0)
 
   const totalApprovedInOpen = openList
-    .filter(o => o.quoteStatus === "approved" && Number(o.quoteAmount) > 0)
+    .filter(o => (o.quoteStatus === "approved" || o.quoteApproved) && Number(o.quoteAmount) > 0)
     .reduce((acc, o) => acc + Number(o.quoteAmount || 0), 0)
 
   const totalPaid = observations
@@ -507,12 +524,13 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
   // Filtragem
   const filteredObservations = observations.filter(obs => {
-    const stage = obs.workflowStage || (obs.status === "resolvida" ? "resolved" : "reported")
-    if (filterStage === "open_all" && obs.status === "resolvida") return false
-    if (filterStage === "triage" && (obs.status === "resolvida" || stage !== "reported")) return false
-    if (filterStage === "waiting_quote" && (obs.status === "resolvida" || (stage !== "assigned_waiting_quote" && stage !== "inspection_requested"))) return false
-    if (filterStage === "approve_quote" && (obs.status === "resolvida" || stage !== "quote_submitted")) return false
-    if (filterStage === "in_execution" && (obs.status === "resolvida" || (stage !== "approved_waiting_room" && stage !== "in_progress"))) return false
+    const stage = obs.workflowStage || (obs.status === "resolvida" ? "resolved" : obs.status === "sugestao_ia" ? "ai_suggestion" : "reported")
+    if (filterStage === "open_all" && obs.status !== "aberta") return false
+    if (filterStage === "ai_suggestions" && obs.status !== "sugestao_ia") return false
+    if (filterStage === "triage" && (obs.status !== "aberta" || stage !== "reported")) return false
+    if (filterStage === "waiting_quote" && (obs.status !== "aberta" || (stage !== "assigned_waiting_quote" && stage !== "inspection_requested" && stage !== "awaiting_quote" && stage !== "awaiting_inspection"))) return false
+    if (filterStage === "approve_quote" && (obs.status !== "aberta" || stage !== "quote_submitted")) return false
+    if (filterStage === "in_execution" && (obs.status !== "aberta" || (stage !== "approved_waiting_room" && stage !== "in_progress"))) return false
     if (filterStage === "resolved" && obs.status !== "resolvida") return false
 
     if (filterFlat !== "all" && String(obs.flatId) !== filterFlat) return false
@@ -724,6 +742,20 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
           >
             <span>✓ Resolvidas ({resolvedCount})</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setFilterStage("ai_suggestions")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              filterStage === "ai_suggestions"
+                ? "bg-purple-600 text-white shadow-xs"
+                : aiSuggestionsList.length > 0
+                  ? "bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30"
+                  : "text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>🤖 Sugestões da IA ({aiSuggestionsList.length})</span>
+          </button>
         </div>
 
         {/* Filtros de Busca, Especialidade e Flat */}
@@ -838,6 +870,23 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
                         <p className="text-xs sm:text-sm text-foreground leading-relaxed bg-muted/40 p-3 rounded-2xl border border-border/60 whitespace-pre-wrap break-words font-medium">
                           {obs.text}
                         </p>
+
+                        {/* Citação Exata do Hóspede (quando gerada pela IA de Sentimento / NPS / Avaliação) */}
+                        {obs.guestQuote && (
+                          <div className="p-3 rounded-2xl bg-purple-500/10 border border-purple-500/30 text-xs space-y-1">
+                            <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] font-bold text-purple-800 dark:text-purple-300">
+                              <span>💬 Relato Exato do Hóspede ({obs.guestName || "Hóspede"}):</span>
+                              {obs.sourceLabel && (
+                                <Badge variant="outline" className="text-[10px] border-purple-500/40 text-purple-700 dark:text-purple-300">
+                                  Fonte: {obs.sourceLabel}
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs italic text-foreground">
+                              "{obs.guestQuote}"
+                            </p>
+                          </div>
+                        )}
 
                         {/* Status ao vivo do Flat e regras do Faz-Tudo */}
                         {obs.status === "aberta" && (
@@ -964,7 +1013,27 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
 
                       {isAdmin && (
                         <div className="flex flex-wrap items-center gap-1.5">
-                          {obs.status === "aberta" ? (
+                          {obs.status === "sugestao_ia" ? (
+                            <>
+                              <Button
+                                size="sm"
+                                onClick={() => openTriageModal(obs)}
+                                className="h-8 px-3 rounded-xl text-xs font-bold gap-1.5 bg-purple-600 hover:bg-purple-700 text-white shadow-2xs"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Converter em Manutenção / Acionar Faz-Tudo</span>
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleDismissAiSuggestion(obs.id)}
+                                className="h-8 px-3 rounded-xl text-xs font-bold gap-1 border-rose-500/40 text-rose-600 hover:bg-rose-500/10"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Descartar</span>
+                              </Button>
+                            </>
+                          ) : obs.status === "aberta" ? (
                             <>
                               <Button
                                 size="sm"
@@ -1206,8 +1275,8 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
                 </DialogHeader>
 
                 <form onSubmit={handleSaveTriage} className="space-y-4 pt-2 text-xs">
-                  {/* Resumo do Problema e Fotos */}
-                  <div className="p-3.5 rounded-2xl bg-muted/40 border border-border space-y-2">
+                  {/* Resumo do Problema, Edição Rápida e Fotos */}
+                  <div className="p-3.5 rounded-2xl bg-muted/40 border border-border space-y-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-bold text-foreground">
                         Relatado por {triageObs.authorUsername || "Camareira"} em {formatDateTimePt(triageObs.createdAt)}
@@ -1216,9 +1285,40 @@ export default function Observations({ embedded = false }: { embedded?: boolean 
                         Situação Atual: {triageObs.operationalScenarioIcon} {triageObs.operationalScenarioLabel}
                       </Badge>
                     </div>
-                    <p className="text-sm font-semibold text-foreground bg-background p-2.5 rounded-xl border border-border/60">
-                      {triageObs.text}
-                    </p>
+
+                    {triageObs.guestQuote && (
+                      <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/30 text-[11px] space-y-0.5">
+                        <span className="font-bold text-purple-800 dark:text-purple-300 block">
+                          💬 Mensagem original do hóspede ({triageObs.guestName || "Hóspede"}):
+                        </span>
+                        <p className="italic text-foreground">"{triageObs.guestQuote}"</p>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="sm:col-span-2 space-y-1">
+                        <Label className="text-[11px] font-bold">Descrição Técnica do Serviço (enviada ao Faz-Tudo)</Label>
+                        <Input
+                          value={triageText}
+                          onChange={e => setTriageText(e.target.value)}
+                          className="h-9 text-xs font-semibold bg-background rounded-xl"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Especialidade</Label>
+                        <Select value={triageSpecialty} onValueChange={setTriageSpecialty}>
+                          <SelectTrigger className="h-9 text-xs bg-background rounded-xl">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(SPECIALTY_META).map(([k, v]) => (
+                              <SelectItem key={k} value={k}>{v.emoji} {v.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
                     {Array.isArray(triageObs.photos) && triageObs.photos.length > 0 && (
                       <div className="flex items-center gap-2 pt-1 overflow-x-auto">
                         {triageObs.photos.map((url: string, i: number) => (
