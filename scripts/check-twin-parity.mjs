@@ -62,21 +62,47 @@ function discoverTwinFiles(dir, baseDir = dir) {
   return entries;
 }
 
-function extractExportedSymbols(fileContent) {
+function stripJsComments(str) {
+  return String(str || "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+}
+
+function extractExportedSymbols(fileContent, filePath = null, visited = new Set()) {
   const exported = new Set();
-  const declRegex = /\bexport\s+(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z0-9_$]+)/g;
+  if (filePath) {
+    if (visited.has(filePath)) return exported;
+    visited.add(filePath);
+  }
+  const declRegex = /\bexport\s+(?:async\s+)?(?:function\s*\*?|const|let|var|class)\s+([A-Za-z0-9_$]+)/g;
   let m;
   while ((m = declRegex.exec(fileContent)) !== null) {
     exported.add(m[1]);
   }
+  if (/\bexport\s+default\b/.test(fileContent)) {
+    exported.add("default");
+  }
   const listRegex = /\bexport\s*\{([^}]+)\}/g;
   while ((m = listRegex.exec(fileContent)) !== null) {
-    const parts = m[1].split(",");
+    const cleanBlock = stripJsComments(m[1]);
+    const parts = cleanBlock.split(",");
     for (const part of parts) {
       const cleaned = part.trim();
       if (!cleaned) continue;
       const asMatch = cleaned.match(/^([A-Za-z0-9_$]+)\s+as\s+([A-Za-z0-9_$]+)$/);
       exported.add(asMatch ? asMatch[2] : cleaned);
+    }
+  }
+  if (filePath) {
+    const starRegex = /\bexport\s+\*\s+from\s+["'](\.[^"']+)["']/g;
+    while ((m = starRegex.exec(fileContent)) !== null) {
+      const targetPath = path.normalize(path.join(path.dirname(filePath), m[1]));
+      if (fs.existsSync(targetPath) && !visited.has(targetPath)) {
+        const subExports = extractExportedSymbols(fs.readFileSync(targetPath, "utf8"), targetPath, visited);
+        for (const sym of subExports) {
+          if (sym !== "default") exported.add(sym);
+        }
+      }
     }
   }
   return exported;
@@ -93,7 +119,7 @@ function validateStaticImports(relFiles = ["demo-server.mjs"]) {
   const getExportsForFile = (fullPath) => {
     if (exportCache.has(fullPath)) return exportCache.get(fullPath);
     if (!fs.existsSync(fullPath)) return null;
-    const set = extractExportedSymbols(fs.readFileSync(fullPath, "utf8"));
+    const set = extractExportedSymbols(fs.readFileSync(fullPath, "utf8"), fullPath);
     exportCache.set(fullPath, set);
     return set;
   };
@@ -107,11 +133,11 @@ function validateStaticImports(relFiles = ["demo-server.mjs"]) {
     if (!fs.existsSync(artFullPath)) continue;
     const content = fs.readFileSync(artFullPath, "utf8");
 
-    const importBlockRegex = /\bimport\s+(?:(\{[^{}]*\})|[A-Za-z0-9_$*,\s]+)\s+from\s+["'](\.[^"']+)["']/g;
+    const importBlockRegex = /\b(?:import|export)\s+(?:([A-Za-z0-9_$]+)\s*,\s*)?(?:(\{[^{}]*\})|\*\s+as\s+[A-Za-z0-9_$]+|\*|[A-Za-z0-9_$]+)\s+from\s+["'](\.[^"']+)["']/g;
     let match;
     while ((match = importBlockRegex.exec(content)) !== null) {
-      const namedBlock = match[1];
-      const importRel = match[2];
+      const namedBlock = match[2];
+      const importRel = match[3];
       const lineNum = content.slice(0, match.index).split(/\r?\n/).length;
       const artTarget = path.normalize(path.join(path.dirname(artFullPath), importRel));
       const scrTarget = path.normalize(path.join(path.dirname(path.join(projectRoot, ep.scr)), importRel));
@@ -128,9 +154,9 @@ function validateStaticImports(relFiles = ["demo-server.mjs"]) {
       if (namedBlock && artTarget.endsWith(".mjs")) {
         const targetExports = getExportsForFile(artTarget);
         if (targetExports) {
-          const inner = namedBlock.slice(1, -1);
+          const inner = stripJsComments(namedBlock.slice(1, -1));
           for (const rawSym of inner.split(",")) {
-            const symClean = rawSym.replace(/\/\/.*$/gm, "").trim();
+            const symClean = rawSym.trim();
             if (!symClean) continue;
             const importedName = symClean.split(/\s+as\s+/)[0].trim();
             if (importedName && !targetExports.has(importedName)) {
