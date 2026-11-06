@@ -2235,10 +2235,11 @@ export function evaluateZapiChannelPolicy(configOrOptions, maybeOptions = {}) {
     }
   }
 
-  // 5. Regra 3: Modo de Teste (exceção: envios de NFS-e liberados da whitelist de teste)
+  // 5. Regra 3: Modo de Teste (exceção: envios de NFS-e e disparos manuais em lote liberados da whitelist de teste)
   const isNfseInvoiceBypass = Boolean(
     bypassTestMode ||
-    /^nfse_(?:pdf_dispatch|dispatch|auto_dispatch|checkout_dispatch|whatsapp)$/i.test(String(triggerEvent || "").trim())
+    /^nfse_(?:pdf_dispatch|dispatch|auto_dispatch|checkout_dispatch|whatsapp)$/i.test(String(triggerEvent || "").trim()) ||
+    /^manual_broadcast(?:_test)?$/i.test(String(triggerEvent || "").trim())
   );
   if (channel.testMode === true && !isNfseInvoiceBypass) {
     const isWhitelisted = isPhoneInList(cleanPhone, channel.whitelist);
@@ -8309,25 +8310,6 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     if (!Array.isArray(db.broadcastCampaigns)) {
       db.broadcastCampaigns = [];
-    } else {
-      for (const camp of db.broadcastCampaigns) {
-        if (!camp) continue;
-        if (Array.isArray(camp.recipients)) {
-          for (const rec of camp.recipients) {
-            if (rec && rec.status === "sending") {
-              rec.status = "pending";
-            }
-          }
-          camp.sentCount = camp.recipients.filter(r => r && r.status === "sent").length;
-          camp.failedCount = camp.recipients.filter(r => r && r.status === "failed").length;
-          camp.pendingCount = camp.recipients.filter(r => r && r.status === "pending").length;
-        }
-        if (camp.status === "running") {
-          camp.status = "paused";
-          camp.interruptedByRestart = true;
-          camp.updatedAt = new Date().toISOString();
-        }
-      }
     }
 
     if (!db.sundayUpsellConfig) {

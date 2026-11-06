@@ -318,6 +318,8 @@ export default function WhatsappBroadcastPage() {
   const [serverPreviewText, setServerPreviewText] = useState<string | null>(null)
   const [minDelaySeconds, setMinDelaySeconds] = useState<number>(3)
   const [maxDelaySeconds, setMaxDelaySeconds] = useState<number>(8)
+  const [minDelayInput, setMinDelayInput] = useState<string>("3")
+  const [maxDelayInput, setMaxDelayInput] = useState<string>("8")
   const [confirmSendOpen, setConfirmSendOpen] = useState<boolean>(false)
   const [isStartingCampaign, setIsStartingCampaign] = useState<boolean>(false)
 
@@ -747,6 +749,18 @@ export default function WhatsappBroadcastPage() {
     }
   }
 
+  const normalizeDelayInputs = () => {
+    const parsedMin = parseInt(minDelayInput.trim(), 10)
+    const safeMin = Number.isFinite(parsedMin) && parsedMin >= 1 ? Math.min(60, parsedMin) : 3
+    const parsedMax = parseInt(maxDelayInput.trim(), 10)
+    const safeMax = Number.isFinite(parsedMax) && parsedMax >= 1 ? Math.max(safeMin, Math.min(120, parsedMax)) : Math.max(safeMin, 8)
+    setMinDelaySeconds(safeMin)
+    setMaxDelaySeconds(safeMax)
+    setMinDelayInput(String(safeMin))
+    setMaxDelayInput(String(safeMax))
+    return { safeMin, safeMax }
+  }
+
   // Iniciar Disparo em Fila Background
   const handleStartBroadcast = async () => {
     if (finalRecipients.length === 0) {
@@ -758,6 +772,7 @@ export default function WhatsappBroadcastPage() {
       return
     }
 
+    const { safeMin, safeMax } = normalizeDelayInputs()
     setIsStartingCampaign(true)
     try {
       const res = await fetch("/api/whatsapp/broadcast/send", {
@@ -766,8 +781,8 @@ export default function WhatsappBroadcastPage() {
         body: JSON.stringify({
           name: campaignName.trim() || undefined,
           messageTemplate,
-          minDelaySeconds,
-          maxDelaySeconds,
+          minDelaySeconds: safeMin,
+          maxDelaySeconds: safeMax,
           recipients: finalRecipients,
           filtersSnapshot: {
             filteredCount: totalFilteredCount,
@@ -783,7 +798,7 @@ export default function WhatsappBroadcastPage() {
         setConfirmSendOpen(false)
         toast({
           title: "Fila de disparo iniciada!",
-          description: `Processando ${data.campaign.totalCount} envios em background com delay de ${minDelaySeconds}s a ${maxDelaySeconds}s.`
+          description: `Processando ${data.campaign.totalCount} envios em background com delay de ${safeMin}s a ${safeMax}s.`
         })
       } else {
         toast({
@@ -1143,11 +1158,23 @@ export default function WhatsappBroadcastPage() {
                                   </button>
                                 ))}
                                 <Input
-                                  type="number"
-                                  min={1}
-                                  max={720}
-                                  value={filters.preCheckinHours}
-                                  onChange={e => setFilters(prev => ({ ...prev, preCheckinHours: Number(e.target.value) || 24 }))}
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  value={filters.preCheckinHours === 0 ? "" : String(filters.preCheckinHours)}
+                                  onChange={e => {
+                                    const raw = e.target.value.replace(/\D/g, "")
+                                    setFilters(prev => ({
+                                      ...prev,
+                                      preCheckinHours: raw === "" ? 0 : Math.min(720, parseInt(raw, 10))
+                                    }))
+                                  }}
+                                  onBlur={() =>
+                                    setFilters(prev => ({
+                                      ...prev,
+                                      preCheckinHours: prev.preCheckinHours >= 1 ? prev.preCheckinHours : 24
+                                    }))
+                                  }
                                   className="h-6 w-16 text-[11px] px-1.5"
                                 />
                                 <span className="text-[10px] text-muted-foreground">horas</span>
@@ -1176,11 +1203,23 @@ export default function WhatsappBroadcastPage() {
                                   </button>
                                 ))}
                                 <Input
-                                  type="number"
-                                  min={1}
-                                  max={365}
-                                  value={filters.preCheckinDays}
-                                  onChange={e => setFilters(prev => ({ ...prev, preCheckinDays: Number(e.target.value) || 7 }))}
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  value={filters.preCheckinDays === 0 ? "" : String(filters.preCheckinDays)}
+                                  onChange={e => {
+                                    const raw = e.target.value.replace(/\D/g, "")
+                                    setFilters(prev => ({
+                                      ...prev,
+                                      preCheckinDays: raw === "" ? 0 : Math.min(365, parseInt(raw, 10))
+                                    }))
+                                  }}
+                                  onBlur={() =>
+                                    setFilters(prev => ({
+                                      ...prev,
+                                      preCheckinDays: prev.preCheckinDays >= 1 ? prev.preCheckinDays : 7
+                                    }))
+                                  }
                                   className="h-6 w-16 text-[11px] px-1.5"
                                 />
                                 <span className="text-[10px] text-muted-foreground">dias</span>
@@ -1273,11 +1312,23 @@ export default function WhatsappBroadcastPage() {
                                 </button>
                               ))}
                               <Input
-                                type="number"
-                                min={1}
-                                max={720}
-                                value={filters.inHouseHours}
-                                onChange={e => setFilters(prev => ({ ...prev, inHouseHours: Number(e.target.value) || 24 }))}
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                value={filters.inHouseHours === 0 ? "" : String(filters.inHouseHours)}
+                                onChange={e => {
+                                  const raw = e.target.value.replace(/\D/g, "")
+                                  setFilters(prev => ({
+                                    ...prev,
+                                    inHouseHours: raw === "" ? 0 : Math.min(720, parseInt(raw, 10))
+                                  }))
+                                }}
+                                onBlur={() =>
+                                  setFilters(prev => ({
+                                    ...prev,
+                                    inHouseHours: prev.inHouseHours >= 1 ? prev.inHouseHours : 24
+                                  }))
+                                }
                                 className="h-6 w-16 text-[11px] px-1.5"
                               />
                               <span className="text-[10px] text-muted-foreground">horas</span>
@@ -1299,11 +1350,23 @@ export default function WhatsappBroadcastPage() {
                                 </button>
                               ))}
                               <Input
-                                type="number"
-                                min={1}
-                                max={180}
-                                value={filters.inHouseDays}
-                                onChange={e => setFilters(prev => ({ ...prev, inHouseDays: Number(e.target.value) || 3 }))}
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                value={filters.inHouseDays === 0 ? "" : String(filters.inHouseDays)}
+                                onChange={e => {
+                                  const raw = e.target.value.replace(/\D/g, "")
+                                  setFilters(prev => ({
+                                    ...prev,
+                                    inHouseDays: raw === "" ? 0 : Math.min(180, parseInt(raw, 10))
+                                  }))
+                                }}
+                                onBlur={() =>
+                                  setFilters(prev => ({
+                                    ...prev,
+                                    inHouseDays: prev.inHouseDays >= 1 ? prev.inHouseDays : 3
+                                  }))
+                                }
                                 className="h-6 w-16 text-[11px] px-1.5"
                               />
                               <span className="text-[10px] text-muted-foreground">dias</span>
@@ -1325,11 +1388,23 @@ export default function WhatsappBroadcastPage() {
                                 </button>
                               ))}
                               <Input
-                                type="number"
-                                min={1}
-                                max={720}
-                                value={filters.inHouseLeavingHours}
-                                onChange={e => setFilters(prev => ({ ...prev, inHouseLeavingHours: Number(e.target.value) || 24 }))}
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                value={filters.inHouseLeavingHours === 0 ? "" : String(filters.inHouseLeavingHours)}
+                                onChange={e => {
+                                  const raw = e.target.value.replace(/\D/g, "")
+                                  setFilters(prev => ({
+                                    ...prev,
+                                    inHouseLeavingHours: raw === "" ? 0 : Math.min(720, parseInt(raw, 10))
+                                  }))
+                                }}
+                                onBlur={() =>
+                                  setFilters(prev => ({
+                                    ...prev,
+                                    inHouseLeavingHours: prev.inHouseLeavingHours >= 1 ? prev.inHouseLeavingHours : 24
+                                  }))
+                                }
                                 className="h-6 w-16 text-[11px] px-1.5"
                               />
                               <span className="text-[10px] text-muted-foreground">horas</span>
@@ -1351,11 +1426,23 @@ export default function WhatsappBroadcastPage() {
                                 </button>
                               ))}
                               <Input
-                                type="number"
-                                min={1}
-                                max={180}
-                                value={filters.inHouseLeavingDays}
-                                onChange={e => setFilters(prev => ({ ...prev, inHouseLeavingDays: Number(e.target.value) || 3 }))}
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                value={filters.inHouseLeavingDays === 0 ? "" : String(filters.inHouseLeavingDays)}
+                                onChange={e => {
+                                  const raw = e.target.value.replace(/\D/g, "")
+                                  setFilters(prev => ({
+                                    ...prev,
+                                    inHouseLeavingDays: raw === "" ? 0 : Math.min(180, parseInt(raw, 10))
+                                  }))
+                                }}
+                                onBlur={() =>
+                                  setFilters(prev => ({
+                                    ...prev,
+                                    inHouseLeavingDays: prev.inHouseLeavingDays >= 1 ? prev.inHouseLeavingDays : 3
+                                  }))
+                                }
                                 className="h-6 w-16 text-[11px] px-1.5"
                               />
                               <span className="text-[10px] text-muted-foreground">dias</span>
@@ -1427,11 +1514,23 @@ export default function WhatsappBroadcastPage() {
                                   </button>
                                 ))}
                                 <Input
-                                  type="number"
-                                  min={1}
-                                  max={720}
-                                  value={filters.postCheckoutHours}
-                                  onChange={e => setFilters(prev => ({ ...prev, postCheckoutHours: Number(e.target.value) || 24 }))}
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  value={filters.postCheckoutHours === 0 ? "" : String(filters.postCheckoutHours)}
+                                  onChange={e => {
+                                    const raw = e.target.value.replace(/\D/g, "")
+                                    setFilters(prev => ({
+                                      ...prev,
+                                      postCheckoutHours: raw === "" ? 0 : Math.min(720, parseInt(raw, 10))
+                                    }))
+                                  }}
+                                  onBlur={() =>
+                                    setFilters(prev => ({
+                                      ...prev,
+                                      postCheckoutHours: prev.postCheckoutHours >= 1 ? prev.postCheckoutHours : 24
+                                    }))
+                                  }
                                   className="h-6 w-16 text-[11px] px-1.5"
                                 />
                                 <span className="text-[10px] text-muted-foreground">horas</span>
@@ -1458,11 +1557,23 @@ export default function WhatsappBroadcastPage() {
                                   </button>
                                 ))}
                                 <Input
-                                  type="number"
-                                  min={1}
-                                  max={1095}
-                                  value={filters.postCheckoutDays}
-                                  onChange={e => setFilters(prev => ({ ...prev, postCheckoutDays: Number(e.target.value) || 30 }))}
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  value={filters.postCheckoutDays === 0 ? "" : String(filters.postCheckoutDays)}
+                                  onChange={e => {
+                                    const raw = e.target.value.replace(/\D/g, "")
+                                    setFilters(prev => ({
+                                      ...prev,
+                                      postCheckoutDays: raw === "" ? 0 : Math.min(1095, parseInt(raw, 10))
+                                    }))
+                                  }}
+                                  onBlur={() =>
+                                    setFilters(prev => ({
+                                      ...prev,
+                                      postCheckoutDays: prev.postCheckoutDays >= 1 ? prev.postCheckoutDays : 30
+                                    }))
+                                  }
                                   className="h-6 w-16 text-[11px] px-1.5"
                                 />
                                 <span className="text-[10px] text-muted-foreground">dias</span>
@@ -2276,14 +2387,28 @@ export default function WhatsappBroadcastPage() {
                   <div>
                     <Label className="text-[10px] text-muted-foreground">Intervalo Mínimo (seg)</Label>
                     <Input
-                      type="number"
-                      min={1}
-                      max={60}
-                      value={minDelaySeconds}
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      placeholder="3"
+                      value={minDelayInput}
                       onChange={e => {
-                        const v = Math.max(1, Number(e.target.value) || 3)
-                        setMinDelaySeconds(v)
-                        if (maxDelaySeconds < v) setMaxDelaySeconds(v)
+                        const raw = e.target.value.replace(/\D/g, "")
+                        setMinDelayInput(raw)
+                        if (raw !== "") {
+                          const num = Math.max(1, Math.min(60, parseInt(raw, 10)))
+                          setMinDelaySeconds(num)
+                        }
+                      }}
+                      onBlur={() => {
+                        const parsed = parseInt(minDelayInput.trim(), 10)
+                        const safeMin = Number.isFinite(parsed) && parsed >= 1 ? Math.min(60, parsed) : 3
+                        setMinDelaySeconds(safeMin)
+                        setMinDelayInput(String(safeMin))
+                        if (maxDelaySeconds < safeMin) {
+                          setMaxDelaySeconds(safeMin)
+                          setMaxDelayInput(String(safeMin))
+                        }
                       }}
                       className="h-7 text-xs mt-0.5"
                     />
@@ -2291,11 +2416,27 @@ export default function WhatsappBroadcastPage() {
                   <div>
                     <Label className="text-[10px] text-muted-foreground">Intervalo Máximo (seg)</Label>
                     <Input
-                      type="number"
-                      min={1}
-                      max={120}
-                      value={maxDelaySeconds}
-                      onChange={e => setMaxDelaySeconds(Math.max(minDelaySeconds, Number(e.target.value) || 8))}
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      placeholder="8"
+                      value={maxDelayInput}
+                      onChange={e => {
+                        const raw = e.target.value.replace(/\D/g, "")
+                        setMaxDelayInput(raw)
+                        if (raw !== "") {
+                          const num = Math.max(1, Math.min(120, parseInt(raw, 10)))
+                          setMaxDelaySeconds(num)
+                        }
+                      }}
+                      onBlur={() => {
+                        const parsed = parseInt(maxDelayInput.trim(), 10)
+                        const safeMax = Number.isFinite(parsed) && parsed >= 1
+                          ? Math.max(minDelaySeconds, Math.min(120, parsed))
+                          : Math.max(minDelaySeconds, 8)
+                        setMaxDelaySeconds(safeMax)
+                        setMaxDelayInput(String(safeMax))
+                      }}
                       className="h-7 text-xs mt-0.5"
                     />
                   </div>
@@ -2306,7 +2447,10 @@ export default function WhatsappBroadcastPage() {
               <Button
                 size="lg"
                 disabled={finalRecipients.length === 0 || !messageTemplate.trim() || activeCampaign?.status === "running"}
-                onClick={() => setConfirmSendOpen(true)}
+                onClick={() => {
+                  normalizeDelayInputs()
+                  setConfirmSendOpen(true)
+                }}
                 className="w-full h-11 rounded-xl font-black text-xs uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white shadow-md gap-2"
               >
                 <Send className="w-4 h-4" />

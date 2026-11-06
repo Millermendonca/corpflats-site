@@ -20080,6 +20080,14 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
     if (updated) {
       saveDatabase("check_available_service_flats");
     }
+    if (typeof checkAndNotifyHandymanAvailableFlats === "function") {
+      try {
+        const hmNotifs = checkAndNotifyHandymanAvailableFlats();
+        if (Array.isArray(hmNotifs) && hmNotifs.length > 0) {
+          notificationsSent.push(...hmNotifs);
+        }
+      } catch (_) {}
+    }
     return notificationsSent;
   } catch (err) {
     console.warn("[ServiceOrder] Erro ao verificar disponibilidade de quartos para prestador:", err?.message || err);
@@ -27073,61 +27081,1590 @@ app.post("/api/service/public/:token/flats/:flatId/photos", async (req, res) => 
   }
 });
 
-// ── Observations / Issues ───────────────────────────────────────────────────
-app.get("/api/observations", (req, res) => {
-  res.json(db.observations);
-});
+// ── Observations / Issues & Central de Manutenções (Faz-Tudo) ───────────────
 
-app.post("/api/observations", (req, res) => {
-  const { flatId, category = "outro", text } = req.body;
-  const userAuth = getAuthUser(req);
-  const flat = db.flats.find(f => f.id === flatId);
-  const newObs = {
-    id: db.observations.length + 1,
-    flatId,
-    flatNumber: flat ? flat.number : String(flatId),
-    authorUserId: userAuth ? userAuth.id : 1,
-    authorUsername: userAuth ? userAuth.username : "admin",
-    category,
-    text,
-    status: "aberta",
-    resolvedAt: null,
-    resolvedByUserId: null,
-    resolvedByUsername: null,
-    resolvedNote: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-  db.observations.unshift(newObs);
-  saveDatabase();
+const SPECIALTY_LABELS = {
+  hidraulica: "🚰 Hidráulica",
+  eletrica: "⚡ Elétrica",
+  marcenaria: "🪚 Marcenaria / Móveis",
+  ar_condicionado: "❄️ Ar-Condicionado",
+  fechadura: "🔑 Fechadura / Porta",
+  eletrodomesticos: "📺 Eletrodomésticos / TV",
+  pintura_alvenaria: "🧱 Pintura / Alvenaria",
+  geral: "🔧 Reparo Geral"
+};
 
-  // Disparo de Alerta / Notificação em tempo real
-  createNotification({
-    category: "defect",
-    title: `⚠️ Nova Avaria/Defeito - Flat ${newObs.flatNumber}`,
-    message: `${newObs.authorUsername} relatou (${newObs.category}): "${newObs.text}"`,
-    severity: "warning",
-    metadata: { flatId: newObs.flatId, flatNumber: newObs.flatNumber, obsId: newObs.id, category: newObs.category },
-    targetUrl: "/observations"
+function getOrInitHandymanSettings(targetDb = db) {
+  if (!targetDb.handymanSettings || typeof targetDb.handymanSettings !== "object") {
+    targetDb.handymanSettings = {
+      name: "Faz-Tudo (Manutenção Geral)",
+      phone: "",
+      cpf: "",
+      vehiclePlate: "",
+      vehicleModelColor: "",
+      needsGarage: false,
+      portalToken: crypto.randomBytes(12).toString("hex"),
+      defaultAllowedRoomStatuses: ["vago_limpo", "vago_sujo"],
+      updatedAt: new Date().toISOString()
+    };
+  }
+  if (!targetDb.handymanSettings.portalToken) {
+    targetDb.handymanSettings.portalToken = crypto.randomBytes(12).toString("hex");
+  }
+  if (!Array.isArray(targetDb.handymanSettings.defaultAllowedRoomStatuses) || targetDb.handymanSettings.defaultAllowedRoomStatuses.length === 0) {
+    targetDb.handymanSettings.defaultAllowedRoomStatuses = ["vago_limpo", "vago_sujo"];
+  }
+  return targetDb.handymanSettings;
+}
+
+function getObservationAllowedStatuses(obs) {
+  if (Array.isArray(obs?.allowedRoomStatuses) && obs.allowedRoomStatuses.length > 0) {
+    return obs.allowedRoomStatuses.filter(s => VALID_ROOM_STATUSES.includes(s));
+  }
+  const hm = getOrInitHandymanSettings(db);
+  return Array.isArray(hm.defaultAllowedRoomStatuses) && hm.defaultAllowedRoomStatuses.length > 0
+    ? [...hm.defaultAllowedRoomStatuses]
+    : ["vago_limpo", "vago_sujo"];
+}
+
+function enrichObservationWithLiveStatus(obs, todayStr = getTodayStr()) {
+  if (!obs) return obs;
+  const flatId = Number(obs.flatId);
+  const flatObj = (db.flats || []).find(f => Number(f.id) === flatId || String(f.number) === String(obs.flatNumber));
+  const flatNumber = obs.flatNumber || (flatObj ? String(flatObj.number) : String(flatId));
+  const realtime = getFlatRealtimeStatus(flatId, flatNumber, todayStr);
+  const scenario = getFlatOperationalScenario(flatId, flatNumber, todayStr);
+  const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
+  const allowedRoomStatuses = getObservationAllowedStatuses(obs);
+  const isScenarioAllowed = allowedRoomStatuses.includes(scenario);
+  const isStatusAllowed = Boolean(obs.forceReleased) || isScenarioAllowed;
+
+  const allowedScenarioLabels = allowedRoomStatuses.map(scId => {
+    const info = OPERATIONAL_SCENARIOS[scId];
+    return info ? `${info.icon || "🏠"} ${info.label}` : scId;
   });
 
-  res.status(201).json(newObs);
+  let statusBlockReason = null;
+  if (!isStatusAllowed) {
+    const baseReason = scenarioInfo.blockReason || `O quarto está atualmente como "${scenarioInfo.label || scenario}".`;
+    statusBlockReason = `${baseReason} Liberado apenas quando o flat estiver em: ${allowedScenarioLabels.join(", ")}.`;
+  }
+
+  const workflowStage = obs.status === "resolvida"
+    ? "resolvida"
+    : (obs.workflowStage || (obs.assignedTo === "handyman" ? "awaiting_quote" : "reported"));
+
+  return {
+    ...obs,
+    flatId,
+    flatNumber,
+    specialty: obs.specialty || "geral",
+    specialtyLabel: SPECIALTY_LABELS[obs.specialty] || SPECIALTY_LABELS.geral,
+    photos: Array.isArray(obs.photos) ? obs.photos : [],
+    completionPhotos: Array.isArray(obs.completionPhotos) ? obs.completionPhotos : [],
+    isRentalBlocker: Boolean(obs.isRentalBlocker),
+    assignedTo: obs.assignedTo || "unassigned",
+    workflowStage,
+    allowedRoomStatuses,
+    allowedScenarioLabels,
+    operationalScenario: scenario,
+    operationalScenarioLabel: scenarioInfo.label || scenario,
+    operationalScenarioIcon: scenarioInfo.icon || "🏠",
+    scenarioWarning: scenarioInfo.warning || null,
+    hasGuestInside: Boolean(scenario === "stayover" || scenario === "checkout_pendente" || realtime?.isOccupied),
+    isStatusAllowed,
+    statusBlockReason,
+    isDirty: Boolean(realtime?.isDirty),
+    isOccupied: Boolean(realtime?.isOccupied),
+    currentGuest: realtime?.currentGuest || null,
+    hasCheckinToday: Boolean(realtime?.hasCheckinToday),
+    hasCheckoutToday: Boolean(realtime?.hasCheckoutToday),
+    expectedArrival: realtime?.expectedArrival || (realtime?.hasCheckinToday ? "14:00" : null),
+    paymentStatus: obs.paymentStatus || "pending"
+  };
+}
+
+function getActiveMaintenanceObservationBlockRange(obs, todayStr = getTodayStr()) {
+  if (!obs || obs.status === "resolvida" || obs.workflowStage === "resolvida") return null;
+
+  const isImpeditive = Boolean(obs.isRentalBlocker);
+  const isInProgress = obs.workflowStage === "in_progress";
+  const hasScheduledWindow = Boolean(
+    obs.workflowStage === "approved_waiting_room" &&
+    obs.plannedStartAt &&
+    obs.estimatedFinishAt &&
+    obs.blockWhenScheduled
+  );
+
+  if (!isImpeditive && !isInProgress && !hasScheduledWindow) {
+    return null;
+  }
+
+  let startDate = todayStr;
+  if (isImpeditive) {
+    const rawStart = obs.blockStartDate || (obs.createdAt ? getExecutionDateStr(obs.createdAt) : todayStr);
+    startDate = rawStart && rawStart <= todayStr ? rawStart : todayStr;
+  } else if (isInProgress) {
+    startDate = obs.startedAt ? getExecutionDateStr(obs.startedAt) : todayStr;
+  } else if (hasScheduledWindow) {
+    startDate = getExecutionDateStr(obs.plannedStartAt) || todayStr;
+  }
+
+  const candidateEnds = [startDate, todayStr];
+  if (isImpeditive) {
+    candidateEnds.push(getOffsetDateStr(1));
+  }
+  if (obs.blockEndDate) candidateEnds.push(String(obs.blockEndDate).slice(0, 10));
+  if (obs.plannedStartAt) candidateEnds.push(getExecutionDateStr(obs.plannedStartAt));
+  if (obs.estimatedFinishAt) candidateEnds.push(getExecutionDateStr(obs.estimatedFinishAt));
+
+  const validEnds = candidateEnds.filter(d => d && /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+  const endDate = validEnds.pop() || todayStr;
+
+  return {
+    startDate,
+    endDate
+  };
+}
+
+function syncMaintenanceObservationBlocks(obs, isDeleted = false, targetDb = db) {
+  if (!obs || !obs.id || !targetDb) return;
+  if (!Array.isArray(targetDb.roomBlocks)) targetDb.roomBlocks = [];
+  targetDb.roomBlocks = targetDb.roomBlocks.filter(
+    b => Number(b.observationId) !== Number(obs.id) && b.id !== `obs_block_${obs.id}`
+  );
+
+  if (isDeleted || obs.status === "resolvida" || obs.workflowStage === "resolvida") {
+    return;
+  }
+
+  const range = getActiveMaintenanceObservationBlockRange(obs, getTodayStr());
+  if (!range) return;
+
+  const nextBlockId = targetDb.roomBlocks.length > 0
+    ? Math.max(...targetDb.roomBlocks.map(b => Number(b.id) || 0)) + 1
+    : 1;
+
+  const specLabel = SPECIALTY_LABELS[obs.specialty] || "🔧 Manutenção";
+  const reasonPrefix = obs.isRentalBlocker ? "🚫 Manutenção Impeditiva" : "🔧 Reparo em Andamento";
+  const workerSuffix = obs.workerName ? ` (${obs.workerName})` : "";
+
+  targetDb.roomBlocks.push({
+    id: nextBlockId,
+    flatId: Number(obs.flatId),
+    flatNumber: String(obs.flatNumber),
+    startDate: range.startDate,
+    endDate: range.endDate,
+    reason: `${reasonPrefix}: ${obs.text}${workerSuffix}`,
+    title: `${specLabel}: ${obs.text}`,
+    notes: `${reasonPrefix} — ${obs.text}${workerSuffix}`,
+    observationId: Number(obs.id),
+    isMaintenanceBlock: true,
+    isRentalBlocker: Boolean(obs.isRentalBlocker),
+    workflowStage: obs.workflowStage || "reported",
+    workerName: obs.workerName || null,
+    estimatedFinishAt: obs.estimatedFinishAt || null,
+    createdAt: obs.createdAt || new Date().toISOString()
+  });
+}
+
+function getServerBaseUrl() {
+  return (
+    process.env.SERVER_BASE_URL ||
+    process.env.APP_BASE_URL ||
+    db.settings?.serverBaseUrl ||
+    db.siteConfig?.branding?.siteUrl ||
+    db.zapiConfig?.publicOrigin ||
+    "https://corpflats.com.br"
+  ).replace(/\/+$/, "");
+}
+
+function sendMaintenanceWhatsApp({ phone, recipientName = "Destinatário", recipientRole = "admin", triggerEvent = "maintenance_alert", message }) {
+  const cleanWp = phone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(phone) : String(phone).replace(/\D/g, "")) : "";
+  if (!cleanWp || cleanWp.length < 10 || typeof sendZapiMessage !== "function") return;
+
+  sendZapiMessage(db.zapiConfig, {
+    phone: cleanWp,
+    message,
+    channelId: recipientRole === "admin" ? "admin_alerts" : "service_providers",
+    recipientRole,
+    triggerEvent,
+    db
+  }).then(waRes => {
+    if (!db.whatsappHistory) db.whatsappHistory = [];
+    db.whatsappHistory.push({
+      id: `maint_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      guestName: recipientName,
+      guestPhone: cleanWp,
+      triggerEvent,
+      message,
+      sentAt: new Date().toISOString(),
+      status: waRes?.success ? "sent" : "failed",
+      method: waRes?.simulated ? "simulated" : "zapi",
+      error: waRes?.error || null
+    });
+  }).catch(err => console.warn(`[Maintenance] WhatsApp (${triggerEvent}) to ${cleanWp} failed:`, err?.message));
+}
+
+function notifyAdminMaintenanceWhatsApp(message, triggerEvent = "maintenance_admin_alert") {
+  const adminPhones = new Set(["5522998505276"]);
+  if (db.settings?.adminWhatsApp) {
+    const cp = cleanWhatsAppPhone ? cleanWhatsAppPhone(db.settings.adminWhatsApp) : String(db.settings.adminWhatsApp).replace(/\D/g, "");
+    if (cp.length >= 10) adminPhones.add(cp);
+  }
+  for (const ph of adminPhones) {
+    sendMaintenanceWhatsApp({
+      phone: ph,
+      recipientName: "Miller (Admin)",
+      recipientRole: "admin",
+      triggerEvent,
+      message
+    });
+  }
+}
+
+function checkAndNotifyHandymanAvailableFlats(targetObsId = null) {
+  try {
+    if (pgPool && !pgHydratedSuccessfully) return [];
+    if (!Array.isArray(db.observations)) return [];
+    const hm = getOrInitHandymanSettings(db);
+    const todayStr = getTodayStr();
+    const nowIso = new Date().toISOString();
+    const serverBaseUrl = getServerBaseUrl();
+    let updated = false;
+    const notificationsSent = [];
+
+    for (const obs of db.observations) {
+      if (!obs || obs.status === "resolvida") continue;
+      if (obs.assignedTo !== "handyman") continue;
+      if (targetObsId && Number(obs.id) !== Number(targetObsId)) continue;
+
+      const stage = obs.workflowStage || "awaiting_quote";
+      if (stage !== "approved_waiting_room" && stage !== "awaiting_inspection") continue;
+
+      const enriched = enrichObservationWithLiveStatus(obs, todayStr);
+      const rawPhone = obs.workerPhone || hm.phone || "";
+      const cleanWp = rawPhone ? (cleanWhatsAppPhone ? cleanWhatsAppPhone(rawPhone) : String(rawPhone).replace(/\D/g, "")) : "";
+      if (!cleanWp || cleanWp.length < 10) continue;
+
+      if (!enriched.isStatusAllowed) {
+        if (obs.workerNotifiedAvailable) {
+          obs.workerNotifiedAvailable = false;
+          updated = true;
+        }
+        continue;
+      }
+
+      if (!obs.workerNotifiedAvailable) {
+        obs.workerNotifiedAvailable = true;
+        obs.workerNotifiedAvailableAt = nowIso;
+        updated = true;
+
+        const workerName = obs.workerName || hm.name || "Faz-Tudo";
+        const portalUrl = `${serverBaseUrl}/manutencao/${hm.portalToken}?ticket=${obs.id}`;
+        const isInspection = stage === "awaiting_inspection";
+
+        const msgText = [
+          `🔔 *Flat ${enriched.flatNumber} Liberado para ${isInspection ? "Vistoria" : "Iniciar Reparo"}!*`,
+          `Olá, *${workerName}*!`,
+          `O *Flat ${enriched.flatNumber}* entrou na condição liberada (${enriched.operationalScenarioIcon} *${enriched.operationalScenarioLabel}*).`,
+          ``,
+          `🛠️ *Serviço:* ${obs.text}`,
+          enriched.hasCheckinToday ? `⏰ *Atenção:* Há check-in previsto hoje às ${enriched.expectedArrival || "14:00"}.` : null,
+          ``,
+          `🔗 Acesse seu painel para ${isInspection ? "solicitar entrada na portaria e enviar o orçamento" : "solicitar entrada e iniciar o serviço"}:`,
+          portalUrl
+        ].filter(Boolean).join("\n");
+
+        sendMaintenanceWhatsApp({
+          phone: cleanWp,
+          recipientName: workerName,
+          recipientRole: "service_worker",
+          triggerEvent: "handyman_flat_available",
+          message: msgText
+        });
+
+        notificationsSent.push({
+          observationId: obs.id,
+          flatNumber: enriched.flatNumber,
+          workerPhone: cleanWp,
+          workerName,
+          message: msgText
+        });
+      }
+    }
+
+    if (updated) {
+      saveDatabase("check_handyman_available_flats");
+    }
+    return notificationsSent;
+  } catch (err) {
+    console.warn("[Maintenance] Erro em checkAndNotifyHandymanAvailableFlats:", err?.message);
+    return [];
+  }
+}
+
+// GET /api/handyman/settings — Retorna perfil padrão e link do Portal do Faz-Tudo
+app.get("/api/handyman/settings", (req, res) => {
+  const hm = getOrInitHandymanSettings(db);
+  const serverBaseUrl = getServerBaseUrl();
+  res.json({
+    ...hm,
+    portalUrl: `${serverBaseUrl}/manutencao/${hm.portalToken}`
+  });
 });
 
+// PUT /api/handyman/settings — Atualiza perfil padrão do Faz-Tudo (Admin)
+app.put("/api/handyman/settings", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem configurar o Faz-Tudo padrão." });
+  }
+  const hm = getOrInitHandymanSettings(db);
+  const { name, phone, cpf, vehiclePlate, vehicleModelColor, needsGarage, defaultAllowedRoomStatuses, regenerateToken } = req.body || {};
+
+  if (name !== undefined) hm.name = String(name).trim() || "Faz-Tudo";
+  if (phone !== undefined) hm.phone = String(phone).replace(/\D/g, "");
+  if (cpf !== undefined) hm.cpf = String(cpf).replace(/\D/g, "");
+  if (vehiclePlate !== undefined) hm.vehiclePlate = String(vehiclePlate).trim().toUpperCase();
+  if (vehicleModelColor !== undefined) hm.vehicleModelColor = String(vehicleModelColor).trim();
+  if (needsGarage !== undefined) hm.needsGarage = Boolean(needsGarage);
+  if (Array.isArray(defaultAllowedRoomStatuses) && defaultAllowedRoomStatuses.length > 0) {
+    hm.defaultAllowedRoomStatuses = defaultAllowedRoomStatuses.filter(s => VALID_ROOM_STATUSES.includes(s));
+  }
+  if (regenerateToken) {
+    hm.portalToken = crypto.randomBytes(12).toString("hex");
+  }
+  hm.updatedAt = new Date().toISOString();
+
+  // Propaga telefone/nome atualizado para chamados em aberto do Faz-Tudo que estavam sem telefone
+  for (const obs of (db.observations || [])) {
+    if (obs && obs.status !== "resolvida" && obs.assignedTo === "handyman") {
+      if (!obs.workerPhone && hm.phone) obs.workerPhone = hm.phone;
+      if (!obs.workerName || obs.workerName === "Faz-Tudo (Manutenção Geral)") obs.workerName = hm.name;
+    }
+  }
+
+  saveDatabase("update_handyman_settings");
+  const serverBaseUrl = getServerBaseUrl();
+  res.json({
+    ...hm,
+    portalUrl: `${serverBaseUrl}/manutencao/${hm.portalToken}`
+  });
+});
+
+// GET /api/observations — Lista todas as ocorrências / manutenções enriquecidas com status ao vivo
+app.get("/api/observations", (req, res) => {
+  const todayStr = getTodayStr();
+  const { category, status, flatId, assignedTo, workflowStage } = req.query || {};
+  let list = (db.observations || []).map(o => enrichObservationWithLiveStatus(o, todayStr));
+
+  if (category && category !== "all") {
+    list = list.filter(o => o.category === category || o.specialty === category);
+  }
+  if (status && status !== "all") {
+    list = list.filter(o => o.status === status);
+  }
+  if (flatId && flatId !== "all") {
+    list = list.filter(o => Number(o.flatId) === Number(flatId) || String(o.flatNumber) === String(flatId));
+  }
+  if (assignedTo && assignedTo !== "all") {
+    list = list.filter(o => o.assignedTo === assignedTo);
+  }
+  if (workflowStage && workflowStage !== "all") {
+    list = list.filter(o => o.workflowStage === workflowStage);
+  }
+
+  res.json(list);
+});
+
+// POST /api/observations — Cria nova demanda de manutenção/avaria (Camareira ou Admin)
+app.post("/api/observations", async (req, res) => {
+  try {
+    const {
+      flatId,
+      category = "manutencao",
+      specialty = "geral",
+      text,
+      photos: rawPhotos = [],
+      isRentalBlocker = false,
+      assignedTo = "unassigned",
+      allowedRoomStatuses = null,
+      requireQuote = true,
+      quoteAmount = null
+    } = req.body || {};
+
+    if (!flatId || !text || !String(text).trim()) {
+      return res.status(400).json({ error: "Apartamento e descrição do problema são obrigatórios." });
+    }
+
+    const userAuth = getAuthUser(req);
+    const flat = (db.flats || []).find(f => Number(f.id) === Number(flatId) || String(f.number) === String(flatId));
+    const resolvedFlatId = flat ? Number(flat.id) : Number(flatId);
+    const resolvedFlatNumber = flat ? String(flat.number) : String(flatId);
+
+    const uploadedPhotos = [];
+    if (Array.isArray(rawPhotos)) {
+      for (let i = 0; i < rawPhotos.length; i++) {
+        const p = rawPhotos[i];
+        if (typeof p === "string" && p.trim()) {
+          if (p.startsWith("http://") || p.startsWith("https://") || p.startsWith("/")) {
+            uploadedPhotos.push(p.trim());
+          } else {
+            const url = await uploadImageToStorage(p, `maint_flat${resolvedFlatNumber}_${Date.now()}_${i}`, db, "maintenance");
+            if (url) uploadedPhotos.push(url);
+          }
+        }
+      }
+    }
+
+    const nextId = (db.observations || []).length > 0
+      ? Math.max(...db.observations.map(o => Number(o.id) || 0)) + 1
+      : 1;
+
+    const hm = getOrInitHandymanSettings(db);
+    const nowIso = new Date().toISOString();
+    const todayStr = getTodayStr();
+    const authorName = userAuth ? (userAuth.name || userAuth.username || "Equipe") : "Camareira";
+    const isAdminAuthor = userAuth && (userAuth.role === "admin" || userAuth.role === "dev");
+
+    const effectiveAllowedStatuses = Array.isArray(allowedRoomStatuses) && allowedRoomStatuses.length > 0
+      ? allowedRoomStatuses.filter(s => VALID_ROOM_STATUSES.includes(s))
+      : [...(hm.defaultAllowedRoomStatuses || ["vago_limpo", "vago_sujo"])];
+
+    let initialStage = "reported";
+    let quoteApproved = false;
+    let parsedQuote = quoteAmount !== null && quoteAmount !== undefined && quoteAmount !== "" ? Number(quoteAmount) : null;
+
+    if (assignedTo === "handyman") {
+      if (requireQuote === false || (parsedQuote !== null && parsedQuote >= 0 && req.body.preApproved)) {
+        initialStage = "approved_waiting_room";
+        quoteApproved = true;
+      } else {
+        initialStage = "awaiting_quote";
+      }
+    } else if (assignedTo === "admin") {
+      initialStage = "in_progress";
+    }
+
+    const newObs = {
+      id: nextId,
+      flatId: resolvedFlatId,
+      flatNumber: resolvedFlatNumber,
+      authorUserId: userAuth ? userAuth.id : 1,
+      authorUsername: authorName,
+      category: category || "manutencao",
+      specialty: specialty || "geral",
+      text: String(text).trim(),
+      photos: uploadedPhotos,
+      status: "aberta",
+      isRentalBlocker: Boolean(isRentalBlocker),
+      blockStartDate: isRentalBlocker ? todayStr : null,
+      blockEndDate: null,
+      assignedTo: assignedTo || "unassigned",
+      workflowStage: initialStage,
+      allowedRoomStatuses: effectiveAllowedStatuses,
+      forceReleased: false,
+      workerName: assignedTo === "handyman" ? (req.body.workerName || hm.name || "Faz-Tudo") : null,
+      workerPhone: assignedTo === "handyman" ? (req.body.workerPhone || hm.phone || "") : null,
+      workerCpf: assignedTo === "handyman" ? (req.body.workerCpf || hm.cpf || "") : null,
+      requireQuote: assignedTo === "handyman" ? Boolean(requireQuote !== false) : true,
+      quoteAmount: parsedQuote,
+      quoteNotes: null,
+      quoteSubmittedAt: null,
+      quoteApproved,
+      quoteApprovedAt: quoteApproved ? nowIso : null,
+      plannedStartAt: null,
+      estimatedFinishAt: null,
+      startedAt: null,
+      finishedAt: null,
+      wasCleanWhenStarted: null,
+      needsCleaningAfter: null,
+      completionPhotos: [],
+      completionNotes: null,
+      paymentStatus: "pending",
+      paidAt: null,
+      resolvedAt: null,
+      resolvedByUserId: null,
+      resolvedByUsername: null,
+      resolvedNote: null,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+
+    if (!Array.isArray(db.observations)) db.observations = [];
+    db.observations.unshift(newObs);
+
+    syncMaintenanceObservationBlocks(newObs);
+    saveDatabase("create_maintenance_observation");
+
+    try {
+      notifyPmsMutation(db, {
+        type: "maintenance_observation_created",
+        minDate: todayStr,
+        maxDate: getOffsetDateStr(2)
+      });
+    } catch (_) {}
+
+    const serverBaseUrl = getServerBaseUrl();
+    const adminManageUrl = `${serverBaseUrl}/observations?ticket=${newObs.id}`;
+    const specLabel = SPECIALTY_LABELS[newObs.specialty] || "🔧 Manutenção";
+
+    // Notificação Interna em tempo real
+    createNotification({
+      category: "defect",
+      title: `⚠️ Nova Demanda de Manutenção — Flat ${newObs.flatNumber}`,
+      message: `${authorName} relatou (${specLabel}): "${newObs.text}"${uploadedPhotos.length > 0 ? ` [${uploadedPhotos.length} foto(s)]` : ""}`,
+      severity: newObs.isRentalBlocker ? "danger" : "warning",
+      metadata: {
+        flatId: newObs.flatId,
+        flatNumber: newObs.flatNumber,
+        obsId: newObs.id,
+        category: newObs.category,
+        specialty: newObs.specialty,
+        photos: uploadedPhotos
+      },
+      targetUrl: `/observations?ticket=${newObs.id}`
+    });
+
+    // Disparo de WhatsApp para o Miller (com link direto para triagem/acionamento do Faz-Tudo)
+    const enriched = enrichObservationWithLiveStatus(newObs, todayStr);
+    const adminWaMsg = [
+      `🛠️ *Nova Demanda de Manutenção — Flat ${newObs.flatNumber}*`,
+      `👤 Relatado por: *${authorName}*`,
+      `🏷️ Tipo: *${specLabel}*`,
+      `🏠 Situação atual do Flat: ${enriched.operationalScenarioIcon} *${enriched.operationalScenarioLabel}*`,
+      `📝 *Problema:* "${newObs.text}"`,
+      uploadedPhotos.length > 0 ? `📷 *Fotos anexadas:* ${uploadedPhotos.length} foto(s)` : null,
+      newObs.isRentalBlocker ? `🚫 *Status:* Marcado como Impeditivo (Flat bloqueado)` : null,
+      ``,
+      `🔗 *Clique no link abaixo para definir se é impeditivo e acionar o Faz-Tudo:*`,
+      adminManageUrl
+    ].filter(Boolean).join("\n");
+
+    notifyAdminMaintenanceWhatsApp(adminWaMsg, "maintenance_reported_admin");
+
+    // Se já nasceu atribuído ao Faz-Tudo, dispara também o WhatsApp para o Faz-Tudo
+    if (newObs.assignedTo === "handyman") {
+      const targetWorkerPhone = newObs.workerPhone || hm.phone;
+      if (targetWorkerPhone) {
+        const portalUrl = `${serverBaseUrl}/manutencao/${hm.portalToken}?ticket=${newObs.id}`;
+        const workerMsg = newObs.quoteApproved
+          ? [
+              `🔧 *Novo Serviço Liberado — Flat ${newObs.flatNumber}*`,
+              `Olá, *${newObs.workerName || hm.name}*!`,
+              `Um reparo foi atribuído a você no *CorpFlats*:`,
+              `🏷️ *Tipo:* ${specLabel}`,
+              `📝 *Descrição:* "${newObs.text}"`,
+              newObs.quoteAmount ? `💰 *Valor aprovado:* R$ ${Number(newObs.quoteAmount).toFixed(2)}` : null,
+              `🏠 *Status atual do Flat:* ${enriched.operationalScenarioIcon} ${enriched.operationalScenarioLabel} (${enriched.isStatusAllowed ? "✅ Liberado para iniciar" : "⏳ Aguardando liberação"})`,
+              ``,
+              `🔗 *Acesse seu painel para informar início/prazo e executar:*`,
+              portalUrl
+            ].filter(Boolean).join("\n")
+          : [
+              `🔧 *Nova Demanda de Manutenção (Orçamento) — Flat ${newObs.flatNumber}*`,
+              `Olá, *${newObs.workerName || hm.name}*!`,
+              `Temos uma nova demanda para você avaliar no *CorpFlats*:`,
+              `🏷️ *Tipo:* ${specLabel}`,
+              `📝 *Problema relatado:* "${newObs.text}"`,
+              uploadedPhotos.length > 0 ? `📷 *Fotos:* ${uploadedPhotos.length} foto(s) disponível(is) no link` : null,
+              ``,
+              `🔗 *Acesse o link abaixo para ver os detalhes/fotos e informar o VALOR e PRAZO (ou solicitar vistoria):*`,
+              portalUrl
+            ].filter(Boolean).join("\n");
+
+        sendMaintenanceWhatsApp({
+          phone: targetWorkerPhone,
+          recipientName: newObs.workerName || hm.name,
+          recipientRole: "service_worker",
+          triggerEvent: "handyman_ticket_assigned",
+          message: workerMsg
+        });
+      }
+    }
+
+    res.status(201).json(enriched);
+  } catch (err) {
+    console.error("[Maintenance] Erro ao criar ocorrência:", err);
+    res.status(500).json({ error: "Erro ao registrar ocorrência: " + err.message });
+  }
+});
+
+// PATCH /api/observations/:id/triage — Triagem do Miller (Impeditivo, Acionar Faz-Tudo, 7 Filtros de Quarto, etc.)
+app.patch("/api/observations/:id/triage", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem gerenciar a triagem de manutenção." });
+  }
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id);
+  if (!obs) return res.status(404).json({ error: "Demanda de manutenção não encontrada." });
+
+  const hm = getOrInitHandymanSettings(db);
+  const nowIso = new Date().toISOString();
+  const todayStr = getTodayStr();
+  const prevAssigned = obs.assignedTo;
+  const prevStage = obs.workflowStage;
+
+  const {
+    isRentalBlocker,
+    blockStartDate,
+    blockEndDate,
+    specialty,
+    text,
+    assignedTo,
+    allowedRoomStatuses,
+    requireQuote,
+    quoteAmount,
+    preApproved,
+    workerName,
+    workerPhone,
+    workerCpf,
+    adminNotes,
+    notifyHandyman = true
+  } = req.body || {};
+
+  if (isRentalBlocker !== undefined) {
+    obs.isRentalBlocker = Boolean(isRentalBlocker);
+    if (obs.isRentalBlocker && !obs.blockStartDate) {
+      obs.blockStartDate = todayStr;
+    }
+  }
+  if (blockStartDate !== undefined) obs.blockStartDate = blockStartDate || null;
+  if (blockEndDate !== undefined) obs.blockEndDate = blockEndDate || null;
+  if (specialty !== undefined) obs.specialty = specialty;
+  if (text !== undefined && String(text).trim()) obs.text = String(text).trim();
+  if (adminNotes !== undefined) obs.adminNotes = String(adminNotes || "").trim();
+
+  if (Array.isArray(allowedRoomStatuses) && allowedRoomStatuses.length > 0) {
+    obs.allowedRoomStatuses = allowedRoomStatuses.filter(s => VALID_ROOM_STATUSES.includes(s));
+  } else if (!Array.isArray(obs.allowedRoomStatuses) || obs.allowedRoomStatuses.length === 0) {
+    obs.allowedRoomStatuses = [...(hm.defaultAllowedRoomStatuses || ["vago_limpo", "vago_sujo"])];
+  }
+
+  if (workerName !== undefined && String(workerName).trim()) {
+    obs.workerName = String(workerName).trim();
+    if (!hm.name || hm.name === "Faz-Tudo (Manutenção Geral)") hm.name = obs.workerName;
+  }
+  if (workerPhone !== undefined) {
+    const cleanP = String(workerPhone).replace(/\D/g, "");
+    obs.workerPhone = cleanP;
+    if (cleanP.length >= 10) hm.phone = cleanP;
+  }
+  if (workerCpf !== undefined) {
+    const cleanC = String(workerCpf).replace(/\D/g, "");
+    obs.workerCpf = cleanC;
+    if (cleanC.length === 11) hm.cpf = cleanC;
+  }
+
+  if (quoteAmount !== undefined && quoteAmount !== null && quoteAmount !== "") {
+    obs.quoteAmount = Number(quoteAmount);
+  }
+
+  if (assignedTo !== undefined) {
+    obs.assignedTo = assignedTo;
+    if (assignedTo === "handyman") {
+      obs.workerName = obs.workerName || hm.name || "Faz-Tudo";
+      obs.workerPhone = obs.workerPhone || hm.phone || "";
+      obs.workerCpf = obs.workerCpf || hm.cpf || "";
+      obs.requireQuote = requireQuote !== undefined ? Boolean(requireQuote) : true;
+
+      if (obs.requireQuote === false || preApproved === true) {
+        obs.quoteApproved = true;
+        obs.quoteApprovedAt = obs.quoteApprovedAt || nowIso;
+        if (obs.workflowStage !== "in_progress" && obs.workflowStage !== "resolvida") {
+          obs.workflowStage = "approved_waiting_room";
+        }
+      } else {
+        if (!obs.quoteApproved && obs.workflowStage !== "quote_submitted" && obs.workflowStage !== "in_progress") {
+          obs.workflowStage = "awaiting_quote";
+        }
+      }
+    } else if (assignedTo === "admin") {
+      if (obs.workflowStage !== "resolvida") {
+        obs.workflowStage = "in_progress";
+      }
+    } else {
+      obs.workflowStage = "reported";
+    }
+  }
+
+  obs.updatedAt = nowIso;
+  syncMaintenanceObservationBlocks(obs);
+  saveDatabase("triage_maintenance_observation");
+
+  try {
+    notifyPmsMutation(db, {
+      type: "maintenance_observation_triaged",
+      minDate: todayStr,
+      maxDate: getOffsetDateStr(3)
+    });
+  } catch (_) {}
+
+  const enriched = enrichObservationWithLiveStatus(obs, todayStr);
+
+  // Dispara WhatsApp ao Faz-Tudo quando acionado
+  const shouldSendWa = Boolean(
+    notifyHandyman &&
+    obs.assignedTo === "handyman" &&
+    (prevAssigned !== "handyman" || prevStage !== obs.workflowStage || req.body.resendWhatsApp)
+  );
+
+  if (shouldSendWa) {
+    const targetPhone = obs.workerPhone || hm.phone;
+    if (targetPhone) {
+      const serverBaseUrl = getServerBaseUrl();
+      const portalUrl = `${serverBaseUrl}/manutencao/${hm.portalToken}?ticket=${obs.id}`;
+      const specLabel = SPECIALTY_LABELS[obs.specialty] || "🔧 Manutenção";
+      const photosCount = Array.isArray(obs.photos) ? obs.photos.length : 0;
+
+      const msg = obs.quoteApproved
+        ? [
+            `🔧 *Serviço Acionado e Aprovado — Flat ${obs.flatNumber}*`,
+            `Olá, *${obs.workerName || hm.name}*!`,
+            `O administrador liberou o seguinte serviço para execução:`,
+            `🏷️ *Tipo:* ${specLabel}`,
+            `📝 *Problema:* "${obs.text}"`,
+            obs.adminNotes ? `📌 *Instrução:* "${obs.adminNotes}"` : null,
+            obs.quoteAmount ? `💰 *Valor aprovado:* R$ ${Number(obs.quoteAmount).toFixed(2)}` : null,
+            `🏠 *Situação agora:* ${enriched.operationalScenarioIcon} ${enriched.operationalScenarioLabel} (${enriched.isStatusAllowed ? "✅ LIBERADO PARA INICIAR" : "⏳ Aguardando liberação do flat"})`,
+            ``,
+            `🔗 *Acesse seu link para ver detalhes, informar prazo e iniciar:*`,
+            portalUrl
+          ].filter(Boolean).join("\n")
+        : [
+            `🔧 *Nova Demanda de Manutenção — Flat ${obs.flatNumber}*`,
+            `Olá, *${obs.workerName || hm.name}*!`,
+            `Você foi acionado para avaliar um reparo no *CorpFlats*:`,
+            `🏷️ *Tipo:* ${specLabel}`,
+            `📝 *Problema:* "${obs.text}"`,
+            obs.adminNotes ? `📌 *Observação:* "${obs.adminNotes}"` : null,
+            photosCount > 0 ? `📷 *Fotos:* ${photosCount} foto(s) no link` : null,
+            `🔓 *Condições permitidas para entrar no flat:* ${enriched.allowedScenarioLabels.join(", ")}`,
+            ``,
+            `🔗 *Acesse o link abaixo para informar o VALOR e PRAZO (ou pedir vistoria):*`,
+            portalUrl
+          ].filter(Boolean).join("\n");
+
+      sendMaintenanceWhatsApp({
+        phone: targetPhone,
+        recipientName: obs.workerName || hm.name,
+        recipientRole: "service_worker",
+        triggerEvent: "handyman_ticket_triaged",
+        message: msg
+      });
+
+      if (obs.quoteApproved && enriched.isStatusAllowed) {
+        obs.workerNotifiedAvailable = true;
+        obs.workerNotifiedAvailableAt = nowIso;
+        saveDatabase("handyman_notified_on_triage");
+      }
+    }
+  }
+
+  res.json(enriched);
+});
+
+// POST /api/observations/:id/approve-quote — Miller aprova o orçamento enviado pelo Faz-Tudo
+app.post("/api/observations/:id/approve-quote", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem aprovar orçamentos." });
+  }
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id);
+  if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  const hm = getOrInitHandymanSettings(db);
+  const nowIso = new Date().toISOString();
+  const todayStr = getTodayStr();
+
+  if (req.body?.quoteAmount !== undefined && req.body.quoteAmount !== null && req.body.quoteAmount !== "") {
+    obs.quoteAmount = Number(req.body.quoteAmount);
+  }
+  if (req.body?.adminNotes !== undefined) {
+    obs.adminNotes = String(req.body.adminNotes).trim();
+  }
+
+  obs.quoteApproved = true;
+  obs.quoteApprovedAt = nowIso;
+  obs.workflowStage = "approved_waiting_room";
+  obs.updatedAt = nowIso;
+
+  syncMaintenanceObservationBlocks(obs);
+  saveDatabase("approve_handyman_quote");
+
+  try {
+    notifyPmsMutation(db, {
+      type: "maintenance_quote_approved",
+      minDate: todayStr,
+      maxDate: getOffsetDateStr(3)
+    });
+  } catch (_) {}
+
+  const enriched = enrichObservationWithLiveStatus(obs, todayStr);
+  const targetPhone = obs.workerPhone || hm.phone;
+  if (targetPhone) {
+    const serverBaseUrl = getServerBaseUrl();
+    const portalUrl = `${serverBaseUrl}/manutencao/${hm.portalToken}?ticket=${obs.id}`;
+    const msg = [
+      `✅ *Orçamento Aprovado! — Flat ${obs.flatNumber}*`,
+      `Olá, *${obs.workerName || hm.name}*!`,
+      `Seu orçamento de *R$ ${Number(obs.quoteAmount || 0).toFixed(2)}* para o *Flat ${obs.flatNumber}* (${obs.text}) foi *APROVADO*!`,
+      ``,
+      `🏠 *Status atual do Flat:* ${enriched.operationalScenarioIcon} *${enriched.operationalScenarioLabel}*`,
+      enriched.isStatusAllowed
+        ? `🟢 *O flat JÁ ESTÁ LIBERADO!* Você já pode solicitar entrada na portaria e iniciar o serviço pelo link.`
+        : `⏳ *Aguardando liberação:* ${enriched.statusBlockReason}\n_(Você receberá um WhatsApp assim que o flat liberar!)_`,
+      ``,
+      `🔗 *Link do seu Painel:*`,
+      portalUrl
+    ].join("\n");
+
+    sendMaintenanceWhatsApp({
+      phone: targetPhone,
+      recipientName: obs.workerName || hm.name,
+      recipientRole: "service_worker",
+      triggerEvent: "handyman_quote_approved",
+      message: msg
+    });
+
+    if (enriched.isStatusAllowed) {
+      obs.workerNotifiedAvailable = true;
+      obs.workerNotifiedAvailableAt = nowIso;
+      saveDatabase("handyman_notified_on_approve");
+    }
+  }
+
+  res.json(enriched);
+});
+
+// POST /api/observations/:id/reject-quote — Miller recusa ou pede revisão do orçamento
+app.post("/api/observations/:id/reject-quote", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem recusar orçamentos." });
+  }
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id);
+  if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  const hm = getOrInitHandymanSettings(db);
+  const nowIso = new Date().toISOString();
+  const reason = String(req.body?.reason || "Solicitada revisão de valor/condições pelo administrador.").trim();
+
+  obs.quoteApproved = false;
+  obs.quoteRejectReason = reason;
+  obs.workflowStage = "awaiting_quote";
+  obs.updatedAt = nowIso;
+
+  saveDatabase("reject_handyman_quote");
+
+  const targetPhone = obs.workerPhone || hm.phone;
+  if (targetPhone) {
+    const serverBaseUrl = getServerBaseUrl();
+    const portalUrl = `${serverBaseUrl}/manutencao/${hm.portalToken}?ticket=${obs.id}`;
+    const msg = [
+      `🔄 *Revisão de Orçamento Solicitada — Flat ${obs.flatNumber}*`,
+      `Olá, *${obs.workerName || hm.name}*!`,
+      `Sobre o reparo no *Flat ${obs.flatNumber}* (${obs.text}):`,
+      `💬 *Observação da Administração:* "${reason}"`,
+      ``,
+      `🔗 Acesse o painel para enviar um novo valor ou ajustar a proposta:`,
+      portalUrl
+    ].join("\n");
+
+    sendMaintenanceWhatsApp({
+      phone: targetPhone,
+      recipientName: obs.workerName || hm.name,
+      recipientRole: "service_worker",
+      triggerEvent: "handyman_quote_rejected",
+      message: msg
+    });
+  }
+
+  res.json(enrichObservationWithLiveStatus(obs, getTodayStr()));
+});
+
+// POST /api/observations/:id/force-release — Libera manualmente o quarto para o Faz-Tudo fora do filtro padrão
+app.post("/api/observations/:id/force-release", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem forçar liberação." });
+  }
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id);
+  if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  obs.forceReleased = req.body?.forceReleased !== undefined ? Boolean(req.body.forceReleased) : !obs.forceReleased;
+  obs.updatedAt = new Date().toISOString();
+  saveDatabase("force_release_observation");
+
+  if (obs.forceReleased) {
+    checkAndNotifyHandymanAvailableFlats(obs.id);
+  }
+
+  res.json(enrichObservationWithLiveStatus(obs, getTodayStr()));
+});
+
+// POST /api/observations/:id/mark-paid — Marca ou desmarca o pagamento do serviço ao Faz-Tudo
+app.post("/api/observations/:id/mark-paid", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem gerenciar pagamentos." });
+  }
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id);
+  if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  const paid = req.body?.paid !== undefined ? Boolean(req.body.paid) : obs.paymentStatus !== "paid";
+  obs.paymentStatus = paid ? "paid" : "pending";
+  obs.paidAt = paid ? new Date().toISOString() : null;
+  obs.updatedAt = new Date().toISOString();
+
+  saveDatabase("mark_paid_observation");
+  res.json(enrichObservationWithLiveStatus(obs, getTodayStr()));
+});
+
+// PATCH /api/observations/:id/resolve — Dá baixa manual/interna na demanda e registra no Diário 360º
 app.patch("/api/observations/:id/resolve", (req, res) => {
   const id = Number(req.params.id);
-  const obs = db.observations.find(o => o.id === id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id);
   if (!obs) return res.status(404).json({ error: "Observação não encontrada" });
 
   const userAuth = getAuthUser(req);
+  const nowIso = new Date().toISOString();
+  const todayStr = getTodayStr();
+  const resolverName = userAuth ? (userAuth.name || userAuth.username || "Admin") : "Admin";
+
   obs.status = "resolvida";
-  obs.resolvedAt = new Date().toISOString();
+  obs.workflowStage = "resolvida";
+  obs.resolvedAt = nowIso;
+  obs.finishedAt = obs.finishedAt || nowIso;
   obs.resolvedByUserId = userAuth ? userAuth.id : 1;
-  obs.resolvedByUsername = userAuth ? userAuth.username : "admin";
-  obs.resolvedNote = req.body.resolvedNote || "Resolvido com sucesso";
+  obs.resolvedByUsername = resolverName;
+  obs.resolvedNote = req.body?.resolvedNote || "Resolvido com sucesso";
+  obs.updatedAt = nowIso;
+
+  // Remove bloqueio de inventário imediatamente
+  syncMaintenanceObservationBlocks(obs);
+
+  // Grava automaticamente no Diário 360º do Flat
+  if (!Array.isArray(db.flatDiaryEntries)) db.flatDiaryEntries = [];
+  const specLabel = SPECIALTY_LABELS[obs.specialty] || "🔧 Manutenção";
+  db.flatDiaryEntries.unshift({
+    id: `diary_obs_${obs.id}_${Date.now()}`,
+    flatId: Number(obs.flatId),
+    flatNumber: String(obs.flatNumber),
+    serviceTypeId: null,
+    serviceTypeName: specLabel,
+    entryType: "service",
+    title: `Reparo Concluído (${specLabel}): ${obs.text}`,
+    description: `${obs.resolvedNote}${obs.quoteAmount ? ` • Valor: R$ ${Number(obs.quoteAmount).toFixed(2)}` : ""}`,
+    itemName: null,
+    status: "done",
+    executedAt: nowIso,
+    expectedReturnDate: null,
+    returnedAt: null,
+    returnedBy: null,
+    returnNotes: null,
+    authorName: obs.assignedTo === "handyman" ? (obs.workerName || "Faz-Tudo") : resolverName,
+    photos: Array.isArray(obs.completionPhotos) && obs.completionPhotos.length > 0 ? obs.completionPhotos : (obs.photos || []),
+    createdAt: nowIso,
+    updatedAt: nowIso
+  });
+
+  saveDatabase("resolve_maintenance_observation");
+
+  try {
+    notifyPmsMutation(db, {
+      type: "maintenance_observation_resolved",
+      minDate: todayStr,
+      maxDate: getOffsetDateStr(3)
+    });
+  } catch (_) {}
+
+  res.json(enrichObservationWithLiveStatus(obs, todayStr));
+});
+
+// DELETE /api/observations/:id — Exclui demanda de manutenção e limpa bloqueio (Admin)
+app.delete("/api/observations/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "dev")) {
+    return res.status(403).json({ error: "Apenas administradores podem excluir demandas." });
+  }
+  const id = Number(req.params.id);
+  const idx = (db.observations || []).findIndex(o => Number(o.id) === id);
+  if (idx === -1) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  const [removed] = db.observations.splice(idx, 1);
+  syncMaintenanceObservationBlocks(removed, true);
+  saveDatabase("delete_maintenance_observation");
+
+  try {
+    notifyPmsMutation(db, {
+      type: "maintenance_observation_deleted",
+      minDate: getTodayStr(),
+      maxDate: getOffsetDateStr(3)
+    });
+  } catch (_) {}
+
+  res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PORTAL PÚBLICO DO FAZ-TUDO (/api/handyman/public/:token/*)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function resolveHandymanByToken(token) {
+  const hm = getOrInitHandymanSettings(db);
+  if (hm.portalToken === token) return hm;
+  return null;
+}
+
+// GET /api/handyman/public/:token — Lista todos os cards atribuídos ao Faz-Tudo
+app.get("/api/handyman/public/:token", (req, res) => {
+  const hm = resolveHandymanByToken(req.params.token);
+  if (!hm) return res.status(404).json({ error: "Link do Portal do Faz-Tudo inválido ou expirado." });
+
+  const todayStr = getTodayStr();
+  const tickets = (db.observations || [])
+    .filter(o => o && o.assignedTo === "handyman")
+    .map(o => enrichObservationWithLiveStatus(o, todayStr));
+
+  const awaitingQuote = tickets.filter(t => t.status !== "resolvida" && (t.workflowStage === "awaiting_quote" || t.workflowStage === "awaiting_inspection")).length;
+  const quoteSubmitted = tickets.filter(t => t.status !== "resolvida" && t.workflowStage === "quote_submitted").length;
+  const readyToStart = tickets.filter(t => t.status !== "resolvida" && t.workflowStage === "approved_waiting_room").length;
+  const inProgress = tickets.filter(t => t.status !== "resolvida" && t.workflowStage === "in_progress").length;
+  const completed = tickets.filter(t => t.status === "resolvida").length;
+
+  const pendingReceivable = tickets
+    .filter(t => t.status === "resolvida" && t.paymentStatus !== "paid" && Number(t.quoteAmount) > 0)
+    .reduce((acc, t) => acc + Number(t.quoteAmount || 0), 0);
+
+  const totalPaid = tickets
+    .filter(t => t.status === "resolvida" && t.paymentStatus === "paid" && Number(t.quoteAmount) > 0)
+    .reduce((acc, t) => acc + Number(t.quoteAmount || 0), 0);
+
+  res.json({
+    success: true,
+    handyman: hm,
+    stats: {
+      awaitingQuote,
+      quoteSubmitted,
+      readyToStart,
+      inProgress,
+      completed,
+      pendingReceivable,
+      totalPaid
+    },
+    tickets
+  });
+});
+
+// POST /api/handyman/public/:token/register — Atualiza identificação / veículo do Faz-Tudo no portal
+app.post("/api/handyman/public/:token/register", (req, res) => {
+  const hm = resolveHandymanByToken(req.params.token);
+  if (!hm) return res.status(404).json({ error: "Link inválido." });
+
+  const { name, phone, cpf, needsGarage, vehiclePlate, vehicleModelColor } = req.body || {};
+  if (name && String(name).trim()) hm.name = String(name).trim();
+  if (phone !== undefined) hm.phone = String(phone).replace(/\D/g, "");
+  if (cpf !== undefined) hm.cpf = String(cpf).replace(/\D/g, "");
+  if (needsGarage !== undefined) hm.needsGarage = Boolean(needsGarage);
+  if (vehiclePlate !== undefined) hm.vehiclePlate = String(vehiclePlate).trim().toUpperCase();
+  if (vehicleModelColor !== undefined) hm.vehicleModelColor = String(vehicleModelColor).trim();
+  hm.updatedAt = new Date().toISOString();
+
+  for (const obs of (db.observations || [])) {
+    if (obs && obs.status !== "resolvida" && obs.assignedTo === "handyman") {
+      obs.workerName = hm.name;
+      if (hm.phone) obs.workerPhone = hm.phone;
+      if (hm.cpf) obs.workerCpf = hm.cpf;
+    }
+  }
+
+  saveDatabase("handyman_public_register");
+  checkAndNotifyHandymanAvailableFlats();
+
+  res.json({ success: true, handyman: hm });
+});
+
+// POST /api/handyman/public/:token/tickets/:id/request-inspection — Solicita vistoriar o flat antes de dar o valor
+app.post("/api/handyman/public/:token/tickets/:id/request-inspection", (req, res) => {
+  const hm = resolveHandymanByToken(req.params.token);
+  if (!hm) return res.status(404).json({ error: "Link inválido." });
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id && o.assignedTo === "handyman");
+  if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  const nowIso = new Date().toISOString();
+  const todayStr = getTodayStr();
+  obs.workflowStage = "awaiting_inspection";
+  obs.inspectionRequestedAt = nowIso;
+  obs. inspectionNotes = req.body?.notes ? String(req.body.notes).trim() : null;
+  obs.updatedAt = nowIso;
+
+  const enriched = enrichObservationWithLiveStatus(obs, todayStr);
+  if (enriched.isStatusAllowed) {
+    obs.workerNotifiedAvailable = true;
+    obs.workerNotifiedAvailableAt = nowIso;
+  }
+
+  saveDatabase("handyman_request_inspection");
+
+  const workerName = obs.workerName || hm.name || "Faz-Tudo";
+  const serverBaseUrl = getServerBaseUrl();
+  const adminUrl = `${serverBaseUrl}/observations?ticket=${obs.id}`;
+
+  notifyAdminMaintenanceWhatsApp([
+    `🔍 *Pedido de Vistoria Prévia — Flat ${obs.flatNumber}*`,
+    `*${workerName}* informou que precisa vistoriar o *Flat ${obs.flatNumber}* presencialmente antes de definir o valor do reparo (${obs.text}).`,
+    `🏠 *Status atual do Flat:* ${enriched.operationalScenarioIcon} ${enriched.operationalScenarioLabel} (${enriched.isStatusAllowed ? "✅ Liberado para ele vistoriar agora" : "⏳ Aguardando o flat entrar em status permitido"})`,
+    ``,
+    `🔗 Ver chamado: ${adminUrl}`
+  ].join("\n"), "handyman_inspection_requested");
+
+  res.json({
+    success: true,
+    ticket: enriched,
+    message: enriched.isStatusAllowed
+      ? "O apartamento está liberado! Você já pode clicar em 'Solicitar Entrada na Portaria' para subir e vistoriar."
+      : "Pedido registrado! Assim que o apartamento entrar na situação permitida, você receberá um aviso no WhatsApp para ir vistoriar."
+  });
+});
+
+// POST /api/handyman/public/:token/tickets/:id/submit-quote — Faz-Tudo informa Valor + Previsão de Início + Prazo
+app.post("/api/handyman/public/:token/tickets/:id/submit-quote", (req, res) => {
+  const hm = resolveHandymanByToken(req.params.token);
+  if (!hm) return res.status(404).json({ error: "Link inválido." });
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id && o.assignedTo === "handyman");
+  if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  const { quoteAmount, quoteNotes, plannedStartAt, estimatedFinishAt } = req.body || {};
+  const parsedAmount = Number(quoteAmount);
+  if (quoteAmount === undefined || quoteAmount === null || quoteAmount === "" || Number.isNaN(parsedAmount) || parsedAmount < 0) {
+    return res.status(400).json({ error: "Por favor, informe um valor válido (R$) para o serviço." });
+  }
+
+  const nowIso = new Date().toISOString();
+  const todayStr = getTodayStr();
+
+  obs.quoteAmount = parsedAmount;
+  obs.quoteNotes = quoteNotes ? String(quoteNotes).trim() : null;
+  obs.quoteSubmittedAt = nowIso;
+  obs.quoteApproved = false;
+  obs.quoteRejectReason = null;
+  if (plannedStartAt) obs.plannedStartAt = new Date(plannedStartAt).toISOString();
+  if (estimatedFinishAt) obs.estimatedFinishAt = new Date(estimatedFinishAt).toISOString();
+  obs.workflowStage = "quote_submitted";
+  obs.updatedAt = nowIso;
+
+  // Se o chamado for impeditivo, o bloqueio já se estende até o prazo informado pelo Faz-Tudo
+  syncMaintenanceObservationBlocks(obs);
+  saveDatabase("handyman_submit_quote");
+
+  try {
+    notifyPmsMutation(db, {
+      type: "maintenance_quote_submitted",
+      minDate: todayStr,
+      maxDate: obs.estimatedFinishAt ? getExecutionDateStr(obs.estimatedFinishAt) : getOffsetDateStr(3)
+    });
+  } catch (_) {}
+
+  const workerName = obs.workerName || hm.name || "Faz-Tudo";
+  const serverBaseUrl = getServerBaseUrl();
+  const adminUrl = `${serverBaseUrl}/observations?ticket=${obs.id}`;
+  const specLabel = SPECIALTY_LABELS[obs.specialty] || "🔧 Manutenção";
+
+  createNotification({
+    category: "defect",
+    title: `💰 Orçamento do Faz-Tudo (R$ ${parsedAmount.toFixed(2)}) — Flat ${obs.flatNumber}`,
+    message: `${workerName} enviou orçamento para "${obs.text}". Clique para aprovar ou revisar.`,
+    severity: "info",
+    metadata: { flatId: obs.flatId, flatNumber: obs.flatNumber, obsId: obs.id, quoteAmount: parsedAmount },
+    targetUrl: `/observations?ticket=${obs.id}`
+  });
+
+  const plannedStr = obs.plannedStartAt ? formatDateTimeShort(obs.plannedStartAt) : "Assim que liberado / Hoje";
+  const finishStr = obs.estimatedFinishAt ? formatDateTimeShort(obs.estimatedFinishAt) : "No mesmo dia";
+
+  notifyAdminMaintenanceWhatsApp([
+    `💰 *Orçamento Recebido do Faz-Tudo — Flat ${obs.flatNumber}*`,
+    `👤 Profissional: *${workerName}*`,
+    `🏷️ Serviço (${specLabel}): "${obs.text}"`,
+    `💵 *Valor cobrado:* *R$ ${parsedAmount.toFixed(2)}*`,
+    obs.quoteNotes ? `📝 *Detalhes/Material:* "${obs.quoteNotes}"` : null,
+    `📅 *Previsão de início:* ${plannedStr}`,
+    `⏱️ *Prazo de conclusão:* ${finishStr}`,
+    ``,
+    `🔗 *Clique no link abaixo para APROVAR ou revisar o serviço:*`,
+    adminUrl
+  ].filter(Boolean).join("\n"), "handyman_quote_submitted_admin");
+
+  res.json({
+    success: true,
+    ticket: enrichObservationWithLiveStatus(obs, todayStr)
+  });
+});
+
+// POST /api/handyman/public/:token/tickets/:id/request-entry — Faz-Tudo avisa a portaria que vai subir ao flat
+app.post("/api/handyman/public/:token/tickets/:id/request-entry", (req, res) => {
+  const hm = resolveHandymanByToken(req.params.token);
+  if (!hm) return res.status(404).json({ error: "Link inválido." });
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id && o.assignedTo === "handyman");
+  if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  const todayStr = getTodayStr();
+  const enriched = enrichObservationWithLiveStatus(obs, todayStr);
+  if (!enriched.isStatusAllowed) {
+    return res.status(400).json({ error: enriched.statusBlockReason || "Apartamento bloqueado para entrada neste momento." });
+  }
+
+  const nowIso = new Date().toISOString();
+  obs.entryRequested = true;
+  obs.entryRequestedAt = nowIso;
+  obs.updatedAt = nowIso;
+  saveDatabase("handyman_request_entry");
+
+  const workerName = obs.workerName || hm.name || "Faz-Tudo";
+  const vehicleStr = hm.needsGarage
+    ? `SIM 🚗 — Placa: ${hm.vehiclePlate || "Não informada"} (${hm.vehicleModelColor || ""})`
+    : "Não necessita de garagem";
+
+  const rawReceptionPhone = db.settings?.receptionPhone || db.settings?.receptionWhatsApp || db.settings?.adminWhatsApp || "5522997124021";
+  const entryMsg = [
+    `🔑 *Liberação de Entrada (Manutenção)* — Flat *${obs.flatNumber}*`,
+    enriched.hasGuestInside ? `⚠️ *ATENÇÃO: Há hóspede no quarto (${enriched.operationalScenarioLabel}). Bater na porta e confirmar autorização.*` : null,
+    `👤 Profissional: *${workerName}*${hm.cpf ? ` · CPF: ${hm.cpf}` : ""}`,
+    `🛠️ Motivo: ${obs.workflowStage === "awaiting_inspection" ? "Vistoria rápida para orçamento" : `Reparo autorizado (${obs.text})`}`,
+    `🚗 Garagem: ${vehicleStr}`,
+    `➡️ *Portaria/Recepção:* Favor liberar o acesso ao Flat ${obs.flatNumber}.`
+  ].filter(Boolean).join("\n");
+
+  sendMaintenanceWhatsApp({
+    phone: rawReceptionPhone,
+    recipientName: "Recepção / Portaria",
+    recipientRole: "reception",
+    triggerEvent: "handyman_entry_request",
+    message: entryMsg
+  });
+
+  createNotification({
+    category: "service_order",
+    title: `🔑 Entrada Solicitada (${workerName}) — Flat ${obs.flatNumber}`,
+    message: `${workerName} solicitou liberação na portaria para o Flat ${obs.flatNumber} (${obs.text}).`,
+    severity: "info",
+    metadata: { flatId: obs.flatId, flatNumber: obs.flatNumber, obsId: obs.id },
+    targetUrl: `/observations?ticket=${obs.id}`
+  });
+
+  res.json({
+    success: true,
+    ticket: enrichObservationWithLiveStatus(obs, todayStr)
+  });
+});
+
+// POST /api/handyman/public/:token/tickets/:id/start — Faz-Tudo inicia o serviço no flat
+app.post("/api/handyman/public/:token/tickets/:id/start", (req, res) => {
+  const hm = resolveHandymanByToken(req.params.token);
+  if (!hm) return res.status(404).json({ error: "Link inválido." });
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id && o.assignedTo === "handyman");
+  if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  if (obs.status === "resolvida") {
+    return res.status(400).json({ error: "Este serviço já foi concluído." });
+  }
+  if (obs.requireQuote !== false && !obs.quoteApproved) {
+    return res.status(400).json({ error: "O orçamento precisa ser aprovado pelo administrador antes de iniciar a execução." });
+  }
+
+  const todayStr = getTodayStr();
+  const enriched = enrichObservationWithLiveStatus(obs, todayStr);
+  if (!enriched.isStatusAllowed) {
+    return res.status(400).json({ error: enriched.statusBlockReason || "O apartamento não está liberado para iniciar agora." });
+  }
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  if (req.body?.estimatedFinishAt) {
+    const est = new Date(req.body.estimatedFinishAt);
+    if (isNaN(est.getTime())) {
+      return res.status(400).json({ error: "Data/hora de prazo prevista inválida." });
+    }
+    obs.estimatedFinishAt = est.toISOString();
+  } else if (!obs.estimatedFinishAt) {
+    obs.estimatedFinishAt = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
+  }
+
+  obs.workflowStage = "in_progress";
+  obs.startedAt = nowIso;
+  obs.entryRequested = true;
+  obs.entryRequestedAt = obs.entryRequestedAt || nowIso;
+  obs.wasCleanWhenStarted = enriched.operationalScenario === "vago_limpo" || enriched.operationalScenario === "checkin_hoje_limpo";
+  obs.updatedAt = nowIso;
+
+  syncMaintenanceObservationBlocks(obs);
+  saveDatabase("handyman_start_ticket");
+
+  try {
+    notifyPmsMutation(db, {
+      type: "maintenance_ticket_started",
+      minDate: todayStr,
+      maxDate: getExecutionDateStr(obs.estimatedFinishAt) || todayStr
+    });
+  } catch (_) {}
+
+  const workerName = obs.workerName || hm.name || "Faz-Tudo";
+  const estStr = formatDateTimeShort(obs.estimatedFinishAt);
+
+  notifyAdminMaintenanceWhatsApp([
+    `▶️ *Reparo Iniciado no Flat ${obs.flatNumber}*`,
+    `👤 Profissional: *${workerName}*`,
+    `🛠️ Serviço: "${obs.text}"`,
+    `⏱️ *Prazo previsto de conclusão:* ${estStr}`,
+    `🔒 O calendário do Flat ${obs.flatNumber} está protegido até a conclusão.`
+  ].join("\n"), "handyman_ticket_started");
+
+  res.json({
+    success: true,
+    ticket: enrichObservationWithLiveStatus(obs, todayStr)
+  });
+});
+
+// POST /api/handyman/public/:token/tickets/:id/update-schedule — Faz-Tudo altera data de início ou prazo de término
+app.post("/api/handyman/public/:token/tickets/:id/update-schedule", (req, res) => {
+  const hm = resolveHandymanByToken(req.params.token);
+  if (!hm) return res.status(404).json({ error: "Link inválido." });
+
+  const id = Number(req.params.id);
+  const obs = (db.observations || []).find(o => Number(o.id) === id && o.assignedTo === "handyman");
+  if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+  const { plannedStartAt, estimatedFinishAt, notes } = req.body || {};
+  if (plannedStartAt !== undefined) {
+    obs.plannedStartAt = plannedStartAt ? new Date(plannedStartAt).toISOString() : null;
+  }
+  if (estimatedFinishAt !== undefined) {
+    obs.estimatedFinishAt = estimatedFinishAt ? new Date(estimatedFinishAt).toISOString() : null;
+  }
+  if (notes) {
+    obs.scheduleNotes = String(notes).trim();
+  }
   obs.updatedAt = new Date().toISOString();
-  saveDatabase();
-  res.json(obs);
+
+  syncMaintenanceObservationBlocks(obs);
+  saveDatabase("handyman_update_schedule");
+
+  const todayStr = getTodayStr();
+  try {
+    notifyPmsMutation(db, {
+      type: "maintenance_schedule_updated",
+      minDate: todayStr,
+      maxDate: obs.estimatedFinishAt ? getExecutionDateStr(obs.estimatedFinishAt) : getOffsetDateStr(5)
+    });
+  } catch (_) {}
+
+  const workerName = obs.workerName || hm.name || "Faz-Tudo";
+  notifyAdminMaintenanceWhatsApp([
+    `🗓️ *Agendamento / Prazo Atualizado — Flat ${obs.flatNumber}*`,
+    `👤 Profissional: *${workerName}*`,
+    `🛠️ Serviço: "${obs.text}"`,
+    obs.plannedStartAt ? `📅 *Início programado:* ${formatDateTimeShort(obs.plannedStartAt)}` : null,
+    obs.estimatedFinishAt ? `⏱️ *Nova previsão de término:* ${formatDateTimeShort(obs.estimatedFinishAt)}` : null,
+    obs.scheduleNotes ? `📝 *Obs:* "${obs.scheduleNotes}"` : null
+  ].filter(Boolean).join("\n"), "handyman_schedule_updated");
+
+  res.json({
+    success: true,
+    ticket: enrichObservationWithLiveStatus(obs, todayStr)
+  });
+});
+
+// POST /api/handyman/public/:token/tickets/:id/finish — Faz-Tudo conclui o serviço no flat
+app.post("/api/handyman/public/:token/tickets/:id/finish", async (req, res) => {
+  try {
+    const hm = resolveHandymanByToken(req.params.token);
+    if (!hm) return res.status(404).json({ error: "Link inválido." });
+
+    const id = Number(req.params.id);
+    const obs = (db.observations || []).find(o => Number(o.id) === id && o.assignedTo === "handyman");
+    if (!obs) return res.status(404).json({ error: "Demanda não encontrada." });
+
+    const { needsCleaning, observations: completionNotes, photos: rawPhotos = [] } = req.body || {};
+
+    if (obs.wasCleanWhenStarted === true && typeof needsCleaning !== "boolean") {
+      return res.status(400).json({
+        error: "Como o apartamento estava limpo quando você entrou, informe obrigatoriamente se ele precisa de limpeza/conferência da camareira."
+      });
+    }
+
+    const uploadedPhotos = [];
+    if (Array.isArray(rawPhotos)) {
+      for (let i = 0; i < rawPhotos.length; i++) {
+        const p = rawPhotos[i];
+        if (typeof p === "string" && p.trim()) {
+          if (p.startsWith("http://") || p.startsWith("https://") || p.startsWith("/")) {
+            uploadedPhotos.push(p.trim());
+          } else {
+            const url = await uploadImageToStorage(p, `maint_done_flat${obs.flatNumber}_${Date.now()}_${i}`, db, "maintenance");
+            if (url) uploadedPhotos.push(url);
+          }
+        }
+      }
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const todayStr = getTodayStr();
+    const workerName = obs.workerName || hm.name || "Faz-Tudo";
+    const resolvedNote = completionNotes ? String(completionNotes).trim() : "Reparo concluído pelo Faz-Tudo";
+
+    obs.status = "resolvida";
+    obs.workflowStage = "resolvida";
+    obs.finishedAt = nowIso;
+    obs.resolvedAt = nowIso;
+    obs.resolvedByUsername = workerName;
+    obs.resolvedNote = resolvedNote;
+    obs.completionNotes = resolvedNote;
+    obs.completionPhotos = uploadedPhotos;
+    obs.needsCleaningAfter = typeof needsCleaning === "boolean" ? needsCleaning : null;
+    obs.paymentStatus = obs.paymentStatus || "pending";
+    obs.updatedAt = nowIso;
+
+    // Se informou que precisa de limpeza da camareira, gera/atualiza card de limpeza pós-reparo
+    if (obs.needsCleaningAfter === true) {
+      if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
+      const maxReqId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+      const realtime = getFlatRealtimeStatus(obs.flatId, obs.flatNumber, todayStr);
+      const cleanNote = `[Manutenção: ${obs.text}] Conferência / limpeza pós-reparo solicitada por ${workerName}.${resolvedNote ? ` Obs: ${resolvedNote}` : ""}`.trim();
+
+      const existingReq = db.cleaningRequests.find(r =>
+        (Number(r.flatId) === Number(obs.flatId) || String(r.flatNumber) === String(obs.flatNumber)) &&
+        r.requestDate === todayStr &&
+        !r.isInstructionOnly &&
+        r.source !== "manual_instruction"
+      );
+
+      if (existingReq) {
+        existingReq.isDeleted = false;
+        existingReq.status = "dirty";
+        existingReq.source = "service_order";
+        existingReq.cleaningType = "service_order";
+        existingReq.type = "service_cleaning";
+        existingReq.serviceTitle = `Reparo: ${obs.text}`;
+        existingReq.serviceWorkerName = workerName;
+        existingReq.adminNote = cleanNote;
+        existingReq.pendingObservation = cleanNote;
+        existingReq.completedAt = null;
+        existingReq.updatedAt = nowIso;
+      } else {
+        db.cleaningRequests.unshift({
+          id: maxReqId + 1,
+          flatId: obs.flatId,
+          flatNumber: obs.flatNumber,
+          requestDate: todayStr,
+          source: "service_order",
+          cleaningType: "service_order",
+          type: "service_cleaning",
+          isPaidCleaning: false,
+          serviceTitle: `Reparo: ${obs.text}`,
+          serviceWorkerName: workerName,
+          status: "dirty",
+          isVacant: !realtime.isOccupied,
+          adminNote: cleanNote,
+          pendingObservation: cleanNote,
+          createdAt: nowIso,
+          updatedAt: nowIso
+        });
+      }
+      if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
+    }
+
+    // Remove bloqueio de inventário imediatamente
+    syncMaintenanceObservationBlocks(obs);
+
+    // Registra automaticamente no Diário 360º do Flat
+    if (!Array.isArray(db.flatDiaryEntries)) db.flatDiaryEntries = [];
+    const specLabel = SPECIALTY_LABELS[obs.specialty] || "🔧 Manutenção";
+    db.flatDiaryEntries.unshift({
+      id: `diary_obs_${obs.id}_${Date.now()}`,
+      flatId: Number(obs.flatId),
+      flatNumber: String(obs.flatNumber),
+      serviceTypeId: null,
+      serviceTypeName: specLabel,
+      entryType: "service",
+      title: `Reparo Concluído (${specLabel}): ${obs.text}`,
+      description: `${resolvedNote}${obs.quoteAmount ? ` • Valor aprovado: R$ ${Number(obs.quoteAmount).toFixed(2)}` : ""}`,
+      itemName: null,
+      status: "done",
+      executedAt: nowIso,
+      expectedReturnDate: null,
+      returnedAt: null,
+      returnedBy: null,
+      returnNotes: null,
+      authorName: workerName,
+      photos: uploadedPhotos.length > 0 ? uploadedPhotos : (obs.photos || []),
+      createdAt: nowIso,
+      updatedAt: nowIso
+    });
+
+    saveDatabase("handyman_finish_ticket");
+
+    try {
+      notifyPmsMutation(db, {
+        type: "maintenance_ticket_finished",
+        minDate: todayStr,
+        maxDate: getOffsetDateStr(3)
+      });
+    } catch (_) {}
+
+    const serverBaseUrl = getServerBaseUrl();
+    const adminUrl = `${serverBaseUrl}/observations?ticket=${obs.id}`;
+
+    createNotification({
+      category: "defect",
+      title: `✅ Reparo Concluído pelo Faz-Tudo — Flat ${obs.flatNumber}`,
+      message: `${workerName} concluiu "${obs.text}" no Flat ${obs.flatNumber}.${obs.needsCleaningAfter ? " (Solicitou limpeza da camareira)" : ""}`,
+      severity: "info",
+      metadata: { flatId: obs.flatId, flatNumber: obs.flatNumber, obsId: obs.id },
+      targetUrl: `/observations?ticket=${obs.id}`
+    });
+
+    notifyAdminMaintenanceWhatsApp([
+      `✅ *Reparo Concluído pelo Faz-Tudo! — Flat ${obs.flatNumber}*`,
+      `👤 Profissional: *${workerName}*`,
+      `🛠️ Serviço: "${obs.text}"`,
+      `📝 Nota de conclusão: "${resolvedNote}"`,
+      obs.quoteAmount ? `💰 Valor a pagar: *R$ ${Number(obs.quoteAmount).toFixed(2)}*` : null,
+      `🧹 Precisa camareira: *${obs.needsCleaningAfter === true ? "SIM (já enviado para fila de limpeza)" : "NÃO"}*`,
+      `🔓 Bloqueio do calendário removido e histórico salvo no Diário 360º do Flat.`,
+      ``,
+      `🔗 Ver detalhes e dar baixa no pagamento: ${adminUrl}`
+    ].filter(Boolean).join("\n"), "handyman_ticket_finished_admin");
+
+    res.json({
+      success: true,
+      ticket: enrichObservationWithLiveStatus(obs, todayStr)
+    });
+  } catch (err) {
+    console.error("[Maintenance] Erro ao finalizar chamado no portal do Faz-Tudo:", err);
+    res.status(500).json({ error: "Falha ao finalizar serviço: " + err.message });
+  }
 });
 
 // ── Analytics & Reports ─────────────────────────────────────────────────────
@@ -29975,10 +31512,17 @@ app.get("/api/pms/calendar", (req, res) => {
         cleaningLabel = "Limpo";
       }
     }
+    const openMaintenanceIssues = (db.observations || [])
+      .filter(o => o && o.status !== "resolvida" && (Number(o.flatId) === Number(f.id) || String(o.flatNumber) === fNum))
+      .map(o => typeof enrichObservationWithLiveStatus === "function" ? enrichObservationWithLiveStatus(o, todayStr) : o);
+    const hasImpeditiveMaintenance = openMaintenanceIssues.some(o => Boolean(o.isRentalBlocker));
+
     return {
       ...f,
       cleaningStatus,
-      cleaningLabel
+      cleaningLabel,
+      openMaintenanceIssues,
+      hasImpeditiveMaintenance
     };
   });
   const flat509Cal = (db.flats || []).find(f => String(f.number) === "509");
