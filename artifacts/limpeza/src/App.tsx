@@ -61,6 +61,7 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
 const Dashboard = lazyWithRetry(() => import('@/pages/dashboard'));
 const PmsCalendar = lazyWithRetry(() => import('@/pages/pms-calendar'));
 const WhatsappAutomation = lazyWithRetry(() => import('@/pages/whatsapp-automation'));
+const WhatsappBroadcast = lazyWithRetry(() => import('@/pages/whatsapp-broadcast'));
 const WhatsappChat = lazyWithRetry(() => import('@/pages/whatsapp-chat'));
 const GuestPreCheckin = lazyWithRetry(() => import('@/pages/guest-pre-checkin'));
 const AgencyGuestCredential = lazyWithRetry(() => import('@/pages/agency-guest-credential'));
@@ -512,6 +513,10 @@ function Router() {
         <AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
         <AdminRoute path="/whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
         <AdminRoute path="/automacao-whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
+        <ReceptionRoute path="/disparo-inteligente" component={WhatsappBroadcast} moduleName="o Disparo Inteligente de Mensagens" />
+        <ReceptionRoute path="/whatsapp-broadcast" component={WhatsappBroadcast} moduleName="o Disparo Inteligente de Mensagens" />
+        <ReceptionRoute path="/broadcast" component={WhatsappBroadcast} moduleName="o Disparo Inteligente de Mensagens" />
+        <ReceptionRoute path="/campanhas-whatsapp" component={WhatsappBroadcast} moduleName="o Disparo Inteligente de Mensagens" />
         <DevRoute path="/zapi-conexao" component={ZapiConnection} moduleName="a Conexão Z-API" />
         <DevRoute path="/conexao-zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
         <DevRoute path="/sistema/zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />

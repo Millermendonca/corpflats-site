@@ -39,6 +39,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     title: "💬 Comunicação & Atendimento",
     items: [
       { href: "/whatsapp-chat", label: "WhatsApp Web (Chat)", description: "Conversas em tempo real, envio e histórico completo" },
+      { href: "/disparo-inteligente", label: "Disparo Inteligente (Broadcast)", description: "Campanhas e avisos via WhatsApp com filtros combináveis e controle de exceções" },
       { href: "/whatsapp", label: "Automação WhatsApp", description: "Réguas de gatilhos, editor, fila e histórico" },
       { href: "/emails", label: "Gerenciador de E-mails", description: "E-mails enviados, agendados, redator e controle do motor" },
       { href: "/notificacoes", label: "Central de Notificações", description: "Alertas de pedidos, chamados e auditoria" }
@@ -290,11 +291,14 @@ export const ROUTE_ALIASES: Record<string, string> = {
   "/whatsapp-web": "/whatsapp-chat",
   "/chat-whatsapp": "/whatsapp-chat",
 
-  // Automações WhatsApp
+  // Automações WhatsApp & Disparo Inteligente
   "/camareiras-whatsapp": "/automacoes-camareiras",
   "/governanca-whatsapp": "/automacoes-camareiras",
   "/whatsapp-automation": "/whatsapp",
   "/automacao-whatsapp": "/whatsapp",
+  "/whatsapp-broadcast": "/disparo-inteligente",
+  "/broadcast": "/disparo-inteligente",
+  "/campanhas-whatsapp": "/disparo-inteligente",
 
   // Notificações
   "/notifications": "/notificacoes",
@@ -433,9 +437,9 @@ export function hasModuleAccess(
     return true;
   }
 
-  // Garante que perfis Admin/Dev sempre enxerguem o módulo de RH mesmo se allowedModules foi salvo antes da criação do módulo
-  const rhModules = ["/rh"];
-  if ((user.role === "dev" || user.role === "admin") && rhModules.includes(canonical)) {
+  // Garante que perfis Admin/Dev sempre enxerguem o módulo de RH e de Disparo Inteligente mesmo se allowedModules foi salvo antes da criação do módulo
+  const rhAndBroadcastModules = ["/rh", "/disparo-inteligente"];
+  if ((user.role === "dev" || user.role === "admin") && rhAndBroadcastModules.includes(canonical)) {
     return true;
   }
 
@@ -453,6 +457,11 @@ export function hasModuleAccess(
 
   if (allowed.some(m => canonicalizeRoute(m) === canonical)) {
     return true;
+  }
+
+  if (canonical === "/disparo-inteligente") {
+    const waEquivalents = ["/whatsapp", "/whatsapp-chat", "/crm", "/reservas"];
+    return allowed.some(m => waEquivalents.includes(canonicalizeRoute(m)));
   }
 
   if (canonical === "/raio-x-flats") {

@@ -87,6 +87,7 @@ import {
   sendOverbookingManagerWhatsAppAlert,
   cancelPendingStayRemindersForCheckout,
   isReservationOrFlatCheckedOut,
+  hasGuestPhysicallyCheckedIn,
   buildTodayCheckoutsSummaryForRestockers,
   sendRestockerWorkWhatsappCheckoutSummary,
   resolveWhatsAppTags,
@@ -1813,6 +1814,7 @@ let db = {
   garageAuthorizations: [],
   reservations: [],
   reservationCommunications: [],
+  broadcastCampaigns: [],
   roomBlocks: [],
   notifications: [],
   fnrhAuditDocuments: [],
@@ -15981,7 +15983,8 @@ function pruneDatabase() {
     abandonedCarts: 80,
     fnrhAuditDocuments: 300,
     wbpInbox: 200,
-    wbpQuarantine: 150
+    wbpQuarantine: 150,
+    broadcastCampaigns: 40
   };
 
   // 1. Blindagem Preventiva: Garante que nenhuma coleção de RH seja incluída em LIMITS
@@ -16022,6 +16025,8 @@ function pruneDatabase() {
           isPriority = Boolean(item?.isDeveloper || item?.pinned || item?.fiscalConferenceState || item?.awaitingFiscalData || String(item?.phone || "").includes("98505276"));
         } else if (key === "whatsappQueue") {
           isPriority = Boolean(item?.status === "scheduled" || item?.status === "pending" || item?.status === "pending_approval");
+        } else if (key === "broadcastCampaigns") {
+          isPriority = Boolean(item?.status === "running" || item?.status === "paused");
         }
         const dateKey = toComparableIso(
           item?.updatedAt ||
@@ -16043,7 +16048,7 @@ function pruneDatabase() {
       });
 
       decorated.sort((a, b) => {
-        if (key === "whatsappConversations" || key === "whatsappQueue") {
+        if (key === "whatsappConversations" || key === "whatsappQueue" || key === "broadcastCampaigns") {
           if (a.isPriority && !b.isPriority) return -1;
           if (!a.isPriority && b.isPriority) return 1;
         }
@@ -55119,6 +55124,1328 @@ app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
     order,
     error: apiResult.error || null,
     whatsappUrl: fallbackUrl
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MÓDULO: DISPARO INTELIGENTE DE MENSAGENS PARA HÓSPEDES (BROADCAST & SEGMENTAÇÃO)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const activeBroadcastWorkers = new Map();
+
+function requireBroadcastAccess(req, res) {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) {
+    res.status(401).json({ error: "Não autenticado." });
+    return null;
+  }
+  const role = String(userAuth.role || "").toLowerCase();
+  if (role !== "admin" && role !== "dev" && role !== "recepcao" && role !== "reception") {
+    res.status(403).json({ error: "Acesso restrito à administração e recepção." });
+    return null;
+  }
+  return userAuth;
+}
+
+const BRAZIL_UF_SET = new Set([
+  "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG",
+  "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO", "EX"
+]);
+
+function toTitleCasePtBr(str) {
+  const clean = String(str || "").trim().replace(/\s+/g, " ");
+  if (!clean) return "";
+  const lowerWords = new Set(["de", "da", "do", "das", "dos", "e", "em", "na", "no", "nas", "nos"]);
+  return clean
+    .split(" ")
+    .map((word, idx) => {
+      const lower = word.toLowerCase();
+      if (idx > 0 && lowerWords.has(lower)) return lower;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+}
+
+function normalizeBroadcastLocality(rawCity, rawState) {
+  let cityStr = String(rawCity || "").trim();
+  let stateStr = String(rawState || "").trim().toUpperCase();
+
+  // Extrai UF caso esteja embutida no final da cidade (ex: "Campos dos Goytacazes/RJ" ou "Campos - RJ")
+  const slashOrDashMatch = cityStr.match(/^(.*?)\s*[\/\-]\s*([A-Za-z]{2})\s*$/);
+  if (slashOrDashMatch) {
+    cityStr = slashOrDashMatch[1].trim();
+    if (!stateStr) stateStr = slashOrDashMatch[2].toUpperCase();
+  }
+
+  cityStr = cityStr
+    .replace(/^cidade\s*:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const invalidCityTokens = new Set([
+    "", "-", "--", "n/a", "na", "null", "undefined", "ni", "n.i.",
+    "nao informado", "não informado", "sem cidade", "desconhecido", "brasil", "brazil"
+  ]);
+  const cityNorm = normalizeName(cityStr);
+  if (invalidCityTokens.has(cityNorm) || /^\d+$/.test(cityNorm) || cityNorm.length < 2) {
+    cityStr = "";
+  } else {
+    cityStr = toTitleCasePtBr(cityStr);
+  }
+
+  stateStr = stateStr.replace(/[^A-Z]/g, "");
+  if (stateStr.length !== 2 || !BRAZIL_UF_SET.has(stateStr)) {
+    stateStr = "";
+  }
+
+  const key = cityStr
+    ? `${normalizeName(cityStr)}|${stateStr}`
+    : "";
+  const label = cityStr && stateStr
+    ? `${cityStr} - ${stateStr}`
+    : (cityStr || stateStr || "");
+
+  return {
+    city: cityStr,
+    state: stateStr,
+    cityNorm: cityStr ? normalizeName(cityStr) : "",
+    key,
+    label
+  };
+}
+
+function classifyBroadcastChannel(r) {
+  const raw = String(r?.channel || r?.source || "").toLowerCase().trim();
+  if (
+    raw.includes("b2b") ||
+    raw.includes("corporat") ||
+    raw.includes("agenc") ||
+    raw.includes("agênc") ||
+    Boolean(r?.isCorporate || r?.isB2B || r?.agencyId || r?.b2bReservationNumber)
+  ) {
+    return { id: "b2b", label: "B2B / Corporativo" };
+  }
+  if (raw.includes("airbnb")) {
+    return { id: "airbnb", label: "Airbnb" };
+  }
+  if (raw.includes("booking")) {
+    return { id: "booking", label: "Booking.com" };
+  }
+  if (raw.includes("whats") || raw.includes("wpp") || raw.includes("direta")) {
+    return { id: "whatsapp", label: "WhatsApp" };
+  }
+  if (raw.includes("balcao") || raw.includes("balcão") || raw.includes("presencial") || raw.includes("decolar") || raw.includes("expedia") || raw.includes("outro")) {
+    return { id: "outros", label: "Balcão / Outros" };
+  }
+  return { id: "site_proprio", label: "Site Próprio" };
+}
+
+function parseBrasiliaDateTimeMs(dateStr, timeStr = "14:00") {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr).trim())) return null;
+  const cleanDate = String(dateStr).trim();
+  const cleanTime = /^\d{2}:\d{2}$/.test(String(timeStr || "").trim())
+    ? String(timeStr).trim()
+    : "14:00";
+  const d = new Date(`${cleanDate}T${cleanTime}:00-03:00`);
+  const ms = d.getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function addDaysToIsoDateStr(baseDateStr, offsetDays) {
+  const d = new Date(`${baseDateStr}T12:00:00-03:00`);
+  if (Number.isNaN(d.getTime())) return baseDateStr;
+  d.setUTCDate(d.getUTCDate() + Number(offsetDays || 0));
+  return d.toISOString().substring(0, 10);
+}
+
+function formatBroadcastPhoneDisplay(cleanPhone, rawFallback = "") {
+  const digits = String(cleanPhone || "").replace(/\D/g, "");
+  if (!digits) return String(rawFallback || "");
+  if (digits.startsWith("55") && (digits.length === 12 || digits.length === 13)) {
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+    if (rest.length === 9) {
+      return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    }
+    return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+  }
+  return `+${digits}`;
+}
+
+function buildBroadcastDataset() {
+  const todayStr = getTodayStr();
+  const nowMs = Date.now();
+  const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+  const guests = Array.isArray(db.guests) ? db.guests : [];
+  const invoices = Array.isArray(db.invoices) ? db.invoices : [];
+  const cleaningRequestsToday = typeof getRequestsForDate === "function" ? getRequestsForDate(todayStr) : [];
+
+  const guestById = new Map();
+  const guestByDoc = new Map();
+  const guestByPhone = new Map();
+  const guestByName = new Map();
+
+  for (const g of guests) {
+    if (!g) continue;
+    if (g.id !== undefined && g.id !== null) guestById.set(String(g.id), g);
+    const doc = String(g.documentNumber || g.document || "").replace(/\D/g, "");
+    if (doc) guestByDoc.set(doc, g);
+    const ph = cleanWhatsAppPhone(g.phone || g.phoneNumber || "");
+    if (ph && ph.length >= 10) guestByPhone.set(ph, g);
+    const nm = normalizeName(g.fullName || g.name || "");
+    if (nm && nm.length >= 4) guestByName.set(nm, g);
+  }
+
+  const invLocalityByDoc = new Map();
+  const invLocalityByName = new Map();
+  for (const inv of invoices) {
+    if (!inv) continue;
+    const loc = normalizeBroadcastLocality(inv.tomadorCidade, inv.tomadorUf);
+    if (!loc.city && !loc.state) continue;
+    const doc = String(inv.tomadorCpfCnpj || "").replace(/\D/g, "");
+    if (doc && !invLocalityByDoc.has(doc)) invLocalityByDoc.set(doc, loc);
+    const nm = normalizeName(inv.tomadorNome || "");
+    if (nm && !invLocalityByName.has(nm)) invLocalityByName.set(nm, loc);
+  }
+
+  // Contagem de estadias válidas por hóspede (CPF, telefone limpo ou guestId)
+  const stayCountByPhone = new Map();
+  const stayCountByDoc = new Map();
+  const stayCountByGuestId = new Map();
+
+  for (const r of reservations) {
+    if (!r) continue;
+    const st = String(r.status || "").toLowerCase().trim();
+    if (["cancelada", "cancelled", "cancelado", "expirada", "no_show"].includes(st)) continue;
+    const ph = cleanWhatsAppPhone(r.guestPhone || r.guests?.[0]?.phone || "");
+    const doc = String(r.guestDocument || r.document || r.guests?.[0]?.cpf || "").replace(/\D/g, "");
+    const gId = r.guestId !== undefined && r.guestId !== null ? String(r.guestId) : "";
+    if (ph && ph.length >= 10) stayCountByPhone.set(ph, (stayCountByPhone.get(ph) || 0) + 1);
+    if (doc && doc.length >= 11) stayCountByDoc.set(doc, (stayCountByDoc.get(doc) || 0) + 1);
+    if (gId) stayCountByGuestId.set(gId, (stayCountByGuestId.get(gId) || 0) + 1);
+  }
+
+  const records = [];
+  const matchedCrmGuestIds = new Set();
+
+  for (const r of reservations) {
+    if (!r) continue;
+    const st = String(r.status || "").toLowerCase().trim();
+    if (["cancelada", "cancelled", "cancelado", "expirada", "no_show"].includes(st)) continue;
+
+    const rDoc = String(r.guestDocument || r.document || r.guests?.[0]?.cpf || "").replace(/\D/g, "");
+    const rawGuestPhone = r.guestPhone || r.guests?.[0]?.phone || r.b2bRequesterPhone || r.requesterPhone || "";
+    const cleanPhone = cleanWhatsAppPhone(rawGuestPhone);
+    const rawName = String(r.guestName || r.guests?.[0]?.name || "").trim();
+    const normRName = normalizeName(rawName);
+
+    const crmGuest =
+      (r.guestId !== undefined && r.guestId !== null ? guestById.get(String(r.guestId)) : null) ||
+      (rDoc ? guestByDoc.get(rDoc) : null) ||
+      (cleanPhone ? guestByPhone.get(cleanPhone) : null) ||
+      (normRName ? guestByName.get(normRName) : null) ||
+      null;
+
+    if (crmGuest?.id !== undefined && crmGuest?.id !== null) {
+      matchedCrmGuestIds.add(String(crmGuest.id));
+    }
+
+    const effectivePhone = cleanPhone || cleanWhatsAppPhone(crmGuest?.phone || crmGuest?.phoneNumber || "");
+    const isValidWhatsapp = Boolean(effectivePhone && effectivePhone.length >= 10);
+
+    // Localidade enriquecida (Reserva -> Hóspede Titular -> CRM -> Nota Fiscal)
+    let loc = normalizeBroadcastLocality(
+      r.city || r.guests?.[0]?.city || crmGuest?.city || crmGuest?.cidade,
+      r.state || r.uf || r.guests?.[0]?.state || r.guests?.[0]?.uf || crmGuest?.state || crmGuest?.uf
+    );
+    if (!loc.city && !loc.state) {
+      const invLoc = (rDoc && invLocalityByDoc.get(rDoc)) || (normRName && invLocalityByName.get(normRName)) || null;
+      if (invLoc) loc = invLoc;
+    }
+
+    // Classificação de Momento da Reserva (Pré-check-in / In-house / Pós-check-out)
+    const checkinTime = String(r.checkinTime || db.settings?.checkinTime || "14:00").trim();
+    const checkoutTime = String(r.checkoutTime || db.settings?.checkoutTime || "12:00").trim();
+    const checkinScheduledMs = parseBrasiliaDateTimeMs(r.checkinDate, checkinTime);
+    const checkoutScheduledMs = parseBrasiliaDateTimeMs(r.checkoutDate, checkoutTime);
+
+    const actualCheckinIso = r.actualCheckinAt || r.guestSelfCheckinAt || r.guests?.[0]?.entryAuthorizedAt || null;
+    const actualCheckinMs = actualCheckinIso ? new Date(actualCheckinIso).getTime() : checkinScheduledMs;
+
+    const actualCheckoutIso = r.actualCheckoutAt || r.earlyCheckoutAt || null;
+    const actualCheckoutMs = actualCheckoutIso ? new Date(actualCheckoutIso).getTime() : checkoutScheduledMs;
+
+    const fNum = String(r.flatNumber || r.flatId || "").trim();
+    const todayCleanReq = cleaningRequestsToday.find(cr =>
+      (String(cr.flatNumber) === fNum || (r.flatId && cr.flatId === r.flatId)) &&
+      !cr.isInstructionOnly &&
+      !cr.cleaningRequest?.isInstructionOnly
+    );
+    const cleanStatus = todayCleanReq ? (todayCleanReq.cleaningRequest?.status || todayCleanReq.status) : null;
+    const isCleanReqCheckedOut = Boolean(
+      todayCleanReq && (
+        Boolean(todayCleanReq.isVacant) ||
+        cleanStatus === "cleaning_now" ||
+        cleanStatus === "in_progress" ||
+        cleanStatus === "clean"
+      )
+    );
+
+    const isArrivingTodayForFuture = r.checkinDate === todayStr && r.checkoutDate > todayStr;
+    const isCheckedOut = Boolean(
+      r.checkoutDate < todayStr ||
+      (!isArrivingTodayForFuture && (
+        r.checkoutDone ||
+        r.earlyCheckout ||
+        Boolean(r.actualCheckoutAt) ||
+        st === "completed" ||
+        st === "checked_out" ||
+        st === "checkout" ||
+        (r.checkoutDate === todayStr && isCleanReqCheckedOut)
+      ))
+    );
+
+    const physicallyIn = hasGuestPhysicallyCheckedIn(db, r);
+    let moment = "pre_checkin";
+    if (isCheckedOut) {
+      moment = "post_checkout";
+    } else if (r.checkinDate < todayStr && r.checkoutDate >= todayStr) {
+      moment = "in_house";
+    } else if (r.checkinDate === todayStr && r.checkoutDate >= todayStr) {
+      if (physicallyIn || st === "hospedado" || st === "in_house" || st === "checked_in") {
+        moment = "in_house";
+      } else {
+        moment = "pre_checkin";
+      }
+    } else {
+      moment = "pre_checkin";
+    }
+
+    const channelInfo = classifyBroadcastChannel(r);
+
+    // Status de Check-in / Cadastro
+    const titularGuest = Array.isArray(r.guests) && r.guests.length > 0 ? r.guests[0] : null;
+    const isRegistrationCompleted = Boolean(
+      r.fnhrCompleted ||
+      r.preCheckinCompleted ||
+      r.checkedInAt ||
+      r.actualCheckinAt ||
+      titularGuest?.hasCompletedCheckin ||
+      titularGuest?.status === "CHECKED_IN" ||
+      (rDoc.length >= 11 && isValidWhatsapp && !isPendingGuestName(rawName))
+    );
+    const checkinStatus = isRegistrationCompleted ? "completed" : "pending";
+
+    // Recorrência
+    const totalStays = Math.max(
+      1,
+      Number(crmGuest?.totalStays) || 0,
+      effectivePhone ? (stayCountByPhone.get(effectivePhone) || 0) : 0,
+      rDoc ? (stayCountByDoc.get(rDoc) || 0) : 0,
+      r.guestId ? (stayCountByGuestId.get(String(r.guestId)) || 0) : 0
+    );
+    const recurrence = totalStays >= 2 ? "recurring" : "first_stay";
+
+    const displayName = !isPendingGuestName(rawName)
+      ? rawName
+      : (!isPendingGuestName(crmGuest?.fullName || crmGuest?.name)
+          ? String(crmGuest.fullName || crmGuest.name).trim()
+          : (r.companyName ? `Hóspede a Definir (${r.companyName})` : "Hóspede a Definir"));
+
+    const safeFullName = isPendingGuestName(displayName) ? "Hóspede" : displayName;
+    const safeFirstName = toTitleCasePtBr(safeFullName.split(/\s+/)[0] || "Hóspede");
+    const resCode = r.code || r.reservationCode || `RES-${fNum || "000"}-${String(r.id).padStart(4, "0")}`;
+    const guestKey = effectivePhone
+      ? `phone_${effectivePhone}`
+      : `res_${r.id || resCode}`;
+
+    records.push({
+      guestKey,
+      guestId: crmGuest?.id || r.guestId || null,
+      reservationId: r.id,
+      reservationCode: resCode,
+      name: displayName,
+      firstName: safeFirstName,
+      fullName: safeFullName,
+      phone: effectivePhone,
+      formattedPhone: formatBroadcastPhoneDisplay(effectivePhone, rawGuestPhone),
+      isValidWhatsapp,
+      document: rDoc || crmGuest?.document || "",
+      email: r.guestEmail || crmGuest?.email || "",
+      city: loc.city,
+      state: loc.state,
+      localityKey: loc.key,
+      localityLabel: loc.label,
+      channel: channelInfo.id,
+      channelLabel: channelInfo.label,
+      flatNumber: fNum,
+      unitsLabel: fNum,
+      checkinDate: r.checkinDate || "",
+      checkinTime,
+      checkoutDate: r.checkoutDate || "",
+      checkoutTime,
+      checkinScheduledMs,
+      checkoutScheduledMs,
+      actualCheckinMs,
+      actualCheckoutMs,
+      moment,
+      physicallyIn,
+      isCheckedOut,
+      checkinStatus,
+      totalStays,
+      recurrence,
+      companyName: r.companyName || crmGuest?.companyName || "",
+      isCompanion: false,
+      originType: "filter"
+    });
+  }
+
+  // Adiciona hóspedes do CRM que não possuem reserva vinculada em db.reservations (ex: histórico de notas fiscais ou cadastro avulso)
+  for (const g of guests) {
+    if (!g || (g.id !== undefined && g.id !== null && matchedCrmGuestIds.has(String(g.id)))) continue;
+    const gDoc = String(g.documentNumber || g.document || "").replace(/\D/g, "");
+    const cleanPhone = cleanWhatsAppPhone(g.phone || g.phoneNumber || "");
+    const rawName = String(g.fullName || g.name || "").trim();
+    if (!rawName && !cleanPhone) continue;
+
+    let loc = normalizeBroadcastLocality(g.city || g.cidade, g.state || g.uf);
+    if (!loc.city && !loc.state) {
+      const normGName = normalizeName(rawName);
+      const invLoc = (gDoc && invLocalityByDoc.get(gDoc)) || (normGName && invLocalityByName.get(normGName)) || null;
+      if (invLoc) loc = invLoc;
+    }
+
+    const isValidWhatsapp = Boolean(cleanPhone && cleanPhone.length >= 10);
+    const totalStays = Math.max(1, Number(g.totalStays) || 1);
+    const recurrence = totalStays >= 2 ? "recurring" : "first_stay";
+    const checkinStatus = (gDoc.length >= 11 && isValidWhatsapp) ? "completed" : "pending";
+    const safeFullName = isPendingGuestName(rawName) ? "Hóspede" : rawName;
+    const safeFirstName = toTitleCasePtBr(safeFullName.split(/\s+/)[0] || "Hóspede");
+    const lastStay = g.lastStayDate || "";
+
+    records.push({
+      guestKey: cleanPhone ? `phone_${cleanPhone}` : `crm_${g.id}`,
+      guestId: g.id,
+      reservationId: null,
+      reservationCode: null,
+      name: rawName || "Hóspede CRM",
+      firstName: safeFirstName,
+      fullName: safeFullName,
+      phone: cleanPhone,
+      formattedPhone: formatBroadcastPhoneDisplay(cleanPhone, g.phone),
+      isValidWhatsapp,
+      document: gDoc,
+      email: g.email || "",
+      city: loc.city,
+      state: loc.state,
+      localityKey: loc.key,
+      localityLabel: loc.label,
+      channel: g.companyId ? "b2b" : "outros",
+      channelLabel: g.companyId ? "B2B / Corporativo" : "Cadastro CRM",
+      flatNumber: g.favoriteFlat || "",
+      unitsLabel: g.favoriteFlat || "",
+      checkinDate: lastStay,
+      checkinTime: "14:00",
+      checkoutDate: lastStay,
+      checkoutTime: "12:00",
+      checkinScheduledMs: lastStay ? parseBrasiliaDateTimeMs(lastStay, "14:00") : null,
+      checkoutScheduledMs: lastStay ? parseBrasiliaDateTimeMs(lastStay, "12:00") : null,
+      actualCheckinMs: lastStay ? parseBrasiliaDateTimeMs(lastStay, "14:00") : null,
+      actualCheckoutMs: lastStay ? parseBrasiliaDateTimeMs(lastStay, "12:00") : null,
+      moment: "post_checkout",
+      physicallyIn: false,
+      isCheckedOut: true,
+      checkinStatus,
+      totalStays,
+      recurrence,
+      companyName: g.companyName || "",
+      isCompanion: false,
+      originType: "filter"
+    });
+  }
+
+  return { records, todayStr, nowMs };
+}
+
+function matchesSingleMomentFilter(rec, momentType, filters, todayStr, nowMs) {
+  if (momentType === "pre_checkin") {
+    if (rec.moment !== "pre_checkin") return false;
+    const mode = String(filters.preCheckinMode || "all");
+    if (mode === "next_hours") {
+      const hours = Math.max(1, Number(filters.preCheckinHours) || 24);
+      if (!rec.checkinScheduledMs) return false;
+      const diffHours = (rec.checkinScheduledMs - nowMs) / 3600000;
+      return diffHours >= -4 && diffHours <= hours;
+    }
+    if (mode === "next_days") {
+      const days = Math.max(1, Number(filters.preCheckinDays) || 7);
+      const maxDate = addDaysToIsoDateStr(todayStr, days);
+      return Boolean(rec.checkinDate && rec.checkinDate >= todayStr && rec.checkinDate <= maxDate);
+    }
+    if (mode === "custom_dates") {
+      const start = String(filters.preCheckinStartDate || "").trim();
+      const end = String(filters.preCheckinEndDate || "").trim();
+      if (start && (!rec.checkinDate || rec.checkinDate < start)) return false;
+      if (end && (!rec.checkinDate || rec.checkinDate > end)) return false;
+      return true;
+    }
+    return true;
+  }
+
+  if (momentType === "in_house") {
+    // Permite considerar hóspedes do dia cujo horário já iniciou ou já deram entrada
+    const isCurrentlyInHouse =
+      rec.moment === "in_house" ||
+      (!rec.isCheckedOut && rec.checkinDate === todayStr && rec.checkoutDate >= todayStr && rec.checkinScheduledMs && nowMs >= rec.checkinScheduledMs);
+    if (!isCurrentlyInHouse) return false;
+
+    const mode = String(filters.inHouseMode || "all");
+    if (mode === "entered_last_hours") {
+      const hours = Math.max(1, Number(filters.inHouseHours) || 24);
+      const refMs = rec.actualCheckinMs || rec.checkinScheduledMs;
+      if (!refMs) return false;
+      const elapsedHours = (nowMs - refMs) / 3600000;
+      return elapsedHours >= -1 && elapsedHours <= hours;
+    }
+    if (mode === "entered_last_days") {
+      const days = Math.max(1, Number(filters.inHouseDays) || 3);
+      const minDate = addDaysToIsoDateStr(todayStr, -days);
+      return Boolean(rec.checkinDate && rec.checkinDate >= minDate && rec.checkinDate <= todayStr);
+    }
+    if (mode === "leaving_next_hours") {
+      const hours = Math.max(1, Number(filters.inHouseLeavingHours || filters.inHouseHours) || 24);
+      if (!rec.checkoutScheduledMs) return false;
+      const remHours = (rec.checkoutScheduledMs - nowMs) / 3600000;
+      return remHours >= -2 && remHours <= hours;
+    }
+    if (mode === "leaving_next_days") {
+      const days = Math.max(1, Number(filters.inHouseLeavingDays || filters.inHouseDays) || 3);
+      const maxDate = addDaysToIsoDateStr(todayStr, days);
+      return Boolean(rec.checkoutDate && rec.checkoutDate >= todayStr && rec.checkoutDate <= maxDate);
+    }
+    return true;
+  }
+
+  if (momentType === "post_checkout") {
+    if (rec.moment !== "post_checkout") return false;
+    const mode = String(filters.postCheckoutMode || "all");
+    if (mode === "last_hours") {
+      const hours = Math.max(1, Number(filters.postCheckoutHours) || 24);
+      const refMs = rec.actualCheckoutMs || rec.checkoutScheduledMs;
+      if (!refMs) return false;
+      const elapsedHours = (nowMs - refMs) / 3600000;
+      return elapsedHours >= -1 && elapsedHours <= hours;
+    }
+    if (mode === "last_days") {
+      const days = Math.max(1, Number(filters.postCheckoutDays) || 30);
+      const minDate = addDaysToIsoDateStr(todayStr, -days);
+      return Boolean(rec.checkoutDate && rec.checkoutDate >= minDate && rec.checkoutDate <= todayStr);
+    }
+    if (mode === "custom_dates") {
+      const start = String(filters.postCheckoutStartDate || "").trim();
+      const end = String(filters.postCheckoutEndDate || "").trim();
+      if (start && (!rec.checkoutDate || rec.checkoutDate < start)) return false;
+      if (end && (!rec.checkoutDate || rec.checkoutDate > end)) return false;
+      return true;
+    }
+    return true;
+  }
+
+  return true;
+}
+
+function deduplicateBroadcastRecords(matchingRecords, nowMs) {
+  const byKey = new Map();
+
+  for (const rec of matchingRecords) {
+    const dedupKey = rec.phone ? `phone_${rec.phone}` : rec.guestKey;
+    let group = byKey.get(dedupKey);
+    if (!group) {
+      group = [];
+      byKey.set(dedupKey, group);
+    }
+    group.push(rec);
+  }
+
+  const momentPriority = (m) => {
+    if (m === "in_house") return 300;
+    if (m === "pre_checkin") return 200;
+    if (m === "post_checkout") return 100;
+    return 10;
+  };
+
+  const deduplicated = [];
+  for (const [dedupKey, group] of byKey.entries()) {
+    group.sort((a, b) => {
+      const pDiff = momentPriority(b.moment) - momentPriority(a.moment);
+      if (pDiff !== 0) return pDiff;
+      if (a.moment === "pre_checkin") {
+        // Para pré-check-in, prioriza a chegada mais próxima
+        const distA = a.checkinScheduledMs ? Math.abs(a.checkinScheduledMs - nowMs) : Number.MAX_SAFE_INTEGER;
+        const distB = b.checkinScheduledMs ? Math.abs(b.checkinScheduledMs - nowMs) : Number.MAX_SAFE_INTEGER;
+        return distA - distB;
+      }
+      // Para in_house e post_checkout, prioriza a estadia mais recente
+      const msA = a.checkoutScheduledMs || a.checkinScheduledMs || 0;
+      const msB = b.checkoutScheduledMs || b.checkinScheduledMs || 0;
+      return msB - msA;
+    });
+
+    const primary = { ...group[0], guestKey: dedupKey };
+    if (group.length > 1) {
+      const activeUnits = Array.from(
+        new Set(
+          group
+            .filter(g => g.moment === primary.moment && g.flatNumber)
+            .map(g => String(g.flatNumber))
+        )
+      );
+      if (activeUnits.length > 1) {
+        primary.unitsLabel = activeUnits.length === 2
+          ? `${activeUnits[0]} e ${activeUnits[1]}`
+          : `${activeUnits.slice(0, -1).join(", ")} e ${activeUnits[activeUnits.length - 1]}`;
+      }
+      primary.deduplicatedCount = group.length;
+      primary.groupedReservationCodes = Array.from(new Set(group.map(g => g.reservationCode).filter(Boolean)));
+    } else {
+      primary.deduplicatedCount = 1;
+      primary.groupedReservationCodes = primary.reservationCode ? [primary.reservationCode] : [];
+    }
+
+    deduplicated.push(primary);
+  }
+
+  // Ordena a listagem final: In-house primeiro, depois Pré-check-in mais próximo, depois Pós-check-out mais recente
+  deduplicated.sort((a, b) => {
+    const pDiff = momentPriority(b.moment) - momentPriority(a.moment);
+    if (pDiff !== 0) return pDiff;
+    if (a.moment === "pre_checkin") {
+      return (a.checkinScheduledMs || 0) - (b.checkinScheduledMs || 0);
+    }
+    return (b.checkoutScheduledMs || 0) - (a.checkoutScheduledMs || 0);
+  });
+
+  return deduplicated;
+}
+
+function renderBroadcastMessageForRecipient(templateText, recipient, dbInstance) {
+  if (!templateText) return "";
+  const activeDb = dbInstance || db;
+
+  // Localiza reserva real se existir para aproveitar todas as 60+ tags de resolveWhatsAppTags
+  let baseReservation = null;
+  if (recipient?.reservationId || recipient?.reservationCode) {
+    baseReservation = (activeDb.reservations || []).find(
+      r => (recipient.reservationId && String(r.id) === String(recipient.reservationId)) ||
+           (recipient.reservationCode && String(r.code) === String(recipient.reservationCode))
+    );
+  }
+
+  const syntheticRes = {
+    ...(baseReservation || {}),
+    id: recipient?.reservationId || baseReservation?.id || "0000",
+    code: recipient?.reservationCode || baseReservation?.code || "AVULSO",
+    guestName: recipient?.fullName || recipient?.name || baseReservation?.guestName || "Hóspede",
+    guestPhone: recipient?.phone || baseReservation?.guestPhone || "",
+    flatNumber: recipient?.flatNumber || baseReservation?.flatNumber || "",
+    unitsLabel: recipient?.unitsLabel !== undefined ? recipient.unitsLabel : (recipient?.flatNumber || baseReservation?.flatNumber || ""),
+    checkinDate: recipient?.checkinDate || baseReservation?.checkinDate || "",
+    checkoutDate: recipient?.checkoutDate || baseReservation?.checkoutDate || "",
+    checkinTime: recipient?.checkinTime || baseReservation?.checkinTime || activeDb.settings?.checkinTime || "14:00",
+    checkoutTime: recipient?.checkoutTime || baseReservation?.checkoutTime || activeDb.settings?.checkoutTime || "12:00",
+    channel: recipient?.channel || baseReservation?.channel || "site_proprio",
+    channelLabel: recipient?.channelLabel || undefined
+  };
+
+  let rendered = resolveWhatsAppTags(templateText, syntheticRes, activeDb);
+
+  // Garantia explícita para variáveis caso o texto ainda contenha alguma das 6 variáveis principais
+  const firstName = toTitleCasePtBr(String(recipient?.firstName || (recipient?.name || "Hóspede").split(/\s+/)[0] || "Hóspede"));
+  const fullName = isPendingGuestName(recipient?.fullName || recipient?.name)
+    ? "Hóspede"
+    : String(recipient?.fullName || recipient?.name || "Hóspede").trim();
+  const unitStr = String(recipient?.unitsLabel ?? recipient?.flatNumber ?? "").trim();
+  const checkinBr = syntheticRes.checkinDate && /^\d{4}-\d{2}-\d{2}$/.test(syntheticRes.checkinDate)
+    ? syntheticRes.checkinDate.split("-").reverse().join("/")
+    : String(syntheticRes.checkinDate || "");
+  const checkoutBr = syntheticRes.checkoutDate && /^\d{4}-\d{2}-\d{2}$/.test(syntheticRes.checkoutDate)
+    ? syntheticRes.checkoutDate.split("-").reverse().join("/")
+    : String(syntheticRes.checkoutDate || "");
+  const channelLabel = String(recipient?.channelLabel || classifyBroadcastChannel(syntheticRes).label);
+
+  const explicitMap = {
+    "{{primeiro_nome}}": firstName,
+    "{{nome_completo}}": fullName,
+    "{{unidade}}": unitStr,
+    "{{data_checkin}}": checkinBr,
+    "{{data_checkout}}": checkoutBr,
+    "{{canal}}": channelLabel
+  };
+  for (const [k, v] of Object.entries(explicitMap)) {
+    if (rendered.includes(k)) {
+      rendered = rendered.split(k).join(v);
+    }
+  }
+  return rendered;
+}
+
+async function runBroadcastCampaignWorker(campaignId) {
+  if (activeBroadcastWorkers.get(campaignId)) return;
+  activeBroadcastWorkers.set(campaignId, true);
+
+  try {
+    while (true) {
+      const campaign = (db.broadcastCampaigns || []).find(c => c && c.id === campaignId);
+      if (!campaign || campaign.status !== "running") {
+        break;
+      }
+
+      const nextRecipient = (campaign.recipients || []).find(r => r && r.status === "pending");
+      if (!nextRecipient) {
+        campaign.status = "completed";
+        campaign.completedAt = new Date().toISOString();
+        campaign.updatedAt = campaign.completedAt;
+        saveDatabase();
+        break;
+      }
+
+      nextRecipient.status = "sending";
+      campaign.updatedAt = new Date().toISOString();
+
+      const cleanPhone = cleanWhatsAppPhone(nextRecipient.phone);
+      const renderedMessage = renderBroadcastMessageForRecipient(campaign.messageTemplate, nextRecipient, db);
+      nextRecipient.renderedMessage = renderedMessage;
+
+      if (!cleanPhone || cleanPhone.length < 10) {
+        nextRecipient.status = "failed";
+        nextRecipient.error = "Telefone WhatsApp inválido ou ausente.";
+        nextRecipient.processedAt = new Date().toISOString();
+      } else {
+        try {
+          const sendRes = await sendZapiMessage(db.zapiConfig, {
+            phone: cleanPhone,
+            message: renderedMessage,
+            channelId: "stay_operations",
+            recipientRole: "guest",
+            triggerEvent: "manual_broadcast",
+            delayTyping: 2,
+            db
+          });
+
+          const nowIso = new Date().toISOString();
+          if (sendRes && sendRes.success) {
+            nextRecipient.status = "sent";
+            nextRecipient.sentAt = nowIso;
+            nextRecipient.processedAt = nowIso;
+            nextRecipient.messageId = sendRes.messageId || null;
+            nextRecipient.simulated = Boolean(sendRes.simulated);
+            nextRecipient.error = null;
+          } else {
+            nextRecipient.status = "failed";
+            nextRecipient.processedAt = nowIso;
+            nextRecipient.error = sendRes?.error || "Falha ao enviar mensagem na Z-API.";
+          }
+
+          if (!db.whatsappHistory) db.whatsappHistory = [];
+          db.whatsappHistory.unshift({
+            id: `bcast_msg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            broadcastCampaignId: campaign.id,
+            broadcastCampaignName: campaign.name,
+            reservationId: nextRecipient.reservationId || null,
+            reservationCode: nextRecipient.reservationCode || null,
+            flatNumber: nextRecipient.flatNumber || "",
+            guestName: nextRecipient.name || "Hóspede",
+            guestPhone: cleanPhone,
+            phone: cleanPhone,
+            triggerEvent: "manual_broadcast",
+            templateTitle: `Disparo Inteligente: ${campaign.name}`,
+            message: renderedMessage,
+            status: nextRecipient.status,
+            simulated: Boolean(sendRes?.simulated),
+            error: nextRecipient.error || null,
+            originType: nextRecipient.originType || "filter",
+            sentAt: nowIso,
+            createdAt: nowIso
+          });
+
+          if (nextRecipient.status === "sent") {
+            appendMessageToConversation(db, {
+              phone: cleanPhone,
+              senderName: nextRecipient.name || "Hóspede",
+              fromMe: true,
+              text: renderedMessage,
+              type: "text",
+              triggerEvent: "manual_broadcast",
+              reservationCode: nextRecipient.reservationCode || null,
+              status: "delivered",
+              timestamp: nowIso,
+              messageId: sendRes?.messageId || `bcast_${Date.now()}`
+            });
+          }
+        } catch (err) {
+          nextRecipient.status = "failed";
+          nextRecipient.processedAt = new Date().toISOString();
+          nextRecipient.error = err?.message || "Exceção inesperada durante o disparo.";
+        }
+      }
+
+      // Recalcula contadores da campanha
+      const recs = campaign.recipients || [];
+      campaign.sentCount = recs.filter(r => r.status === "sent").length;
+      campaign.failedCount = recs.filter(r => r.status === "failed").length;
+      campaign.pendingCount = recs.filter(r => r.status === "pending" || r.status === "sending").length;
+      campaign.updatedAt = new Date().toISOString();
+      saveDatabase();
+
+      // Verifica se ainda há pendentes e se a campanha continua em "running" antes de aguardar o delay
+      const hasMore = recs.some(r => r.status === "pending");
+      if (!hasMore) {
+        campaign.status = "completed";
+        campaign.completedAt = new Date().toISOString();
+        campaign.updatedAt = campaign.completedAt;
+        saveDatabase();
+        break;
+      }
+
+      if (campaign.status !== "running") {
+        break;
+      }
+
+      const minMs = Math.max(1000, (Number(campaign.minDelaySeconds) || 3) * 1000);
+      const maxMs = Math.max(minMs, (Number(campaign.maxDelaySeconds) || 8) * 1000);
+      const waitMs = Math.floor(minMs + Math.random() * (maxMs - minMs + 1));
+
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
+  } finally {
+    activeBroadcastWorkers.delete(campaignId);
+  }
+}
+
+// 1. GET /api/whatsapp/broadcast/metadata — Metadados dinâmicos (SELECT DISTINCT de Cidades, UFs, Flats e Canais)
+app.get("/api/whatsapp/broadcast/metadata", (req, res) => {
+  if (!requireBroadcastAccess(req, res)) return;
+  try {
+    const { records, todayStr } = buildBroadcastDataset();
+
+    const localityMap = new Map();
+    const stateMap = new Map();
+    const channelMap = new Map([
+      ["b2b", { id: "b2b", label: "B2B / Corporativo", count: 0 }],
+      ["airbnb", { id: "airbnb", label: "Airbnb", count: 0 }],
+      ["booking", { id: "booking", label: "Booking.com", count: 0 }],
+      ["whatsapp", { id: "whatsapp", label: "WhatsApp", count: 0 }],
+      ["site_proprio", { id: "site_proprio", label: "Site Próprio (Reserva Direta)", count: 0 }],
+      ["outros", { id: "outros", label: "Balcão / Outros", count: 0 }]
+    ]);
+    const momentCounts = {
+      pre_checkin: 0,
+      in_house: 0,
+      post_checkout: 0
+    };
+
+    // Usa conjunto por telefone/hóspede para contagem fiel de localidades e canais
+    const seenPhonesForMeta = new Set();
+    for (const rec of records) {
+      if (momentCounts[rec.moment] !== undefined) {
+        momentCounts[rec.moment]++;
+      }
+      if (channelMap.has(rec.channel)) {
+        channelMap.get(rec.channel).count++;
+      }
+
+      const metaKey = rec.phone || rec.guestKey;
+      const isFirstForGuest = !seenPhonesForMeta.has(metaKey);
+      if (isFirstForGuest) seenPhonesForMeta.add(metaKey);
+
+      if (rec.city && rec.localityKey) {
+        let entry = localityMap.get(rec.localityKey);
+        if (!entry) {
+          entry = {
+            key: rec.localityKey,
+            city: rec.city,
+            state: rec.state || "",
+            label: rec.localityLabel,
+            count: 0
+          };
+          localityMap.set(rec.localityKey, entry);
+        }
+        if (isFirstForGuest) entry.count++;
+      }
+
+      if (rec.state) {
+        stateMap.set(rec.state, (stateMap.get(rec.state) || 0) + (isFirstForGuest ? 1 : 0));
+      }
+    }
+
+    const localities = Array.from(localityMap.values()).sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.label.localeCompare(b.label, "pt-BR");
+    });
+
+    const states = Array.from(stateMap.entries())
+      .map(([state, count]) => ({ state, count }))
+      .sort((a, b) => b.count - a.count || a.state.localeCompare(b.state));
+
+    const flatsList = (Array.isArray(db.flats) && db.flats.length > 0 ? db.flats : DEFAULT_FLATS)
+      .map(f => ({
+        id: f.id,
+        number: String(f.number),
+        label: `Flat ${f.number}`,
+        colName: f.colName || `Flat ${f.number}`
+      }))
+      .sort((a, b) => Number(a.number) - Number(b.number));
+
+    const activeCampaign = (db.broadcastCampaigns || []).find(
+      c => c && (c.status === "running" || c.status === "paused")
+    ) || null;
+
+    res.json({
+      success: true,
+      todayStr,
+      localities,
+      states,
+      channels: Array.from(channelMap.values()),
+      flats: flatsList,
+      momentCounts,
+      zapiConfigured: Boolean(db.zapiConfig?.instanceId && db.zapiConfig?.token),
+      testModeOnly: Boolean(db.zapiConfig?.testModeOnly !== false),
+      activeCampaign
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. POST /api/whatsapp/broadcast/segment — Motor de Segmentação Combinável (AND entre categorias, OR dentro da categoria)
+app.post("/api/whatsapp/broadcast/segment", (req, res) => {
+  if (!requireBroadcastAccess(req, res)) return;
+  try {
+    const filters = req.body?.filters || req.body || {};
+    const { records, todayStr, nowMs } = buildBroadcastDataset();
+
+    // 1. Momentos selecionados (OR dentro da categoria de Momento)
+    const selectedMoments = Array.isArray(filters.moments)
+      ? filters.moments.filter(Boolean)
+      : (filters.moment && filters.moment !== "all" ? [filters.moment] : []);
+
+    // 2. Canais selecionados (OR dentro da categoria de Canal)
+    const selectedChannels = Array.isArray(filters.channels)
+      ? filters.channels.map(c => String(c).toLowerCase().trim()).filter(Boolean)
+      : [];
+
+    // 3. Localidades selecionadas (OR dentro da categoria de Localidade: Cidades e/ou UFs)
+    const selectedCities = Array.isArray(filters.cities)
+      ? filters.cities.map(c => String(c).toLowerCase().trim()).filter(Boolean)
+      : [];
+    const selectedStates = Array.isArray(filters.states)
+      ? filters.states.map(s => String(s).toUpperCase().trim()).filter(Boolean)
+      : [];
+
+    // 4. Unidades / Flats selecionados (OR dentro da categoria de Unidade)
+    const selectedFlats = Array.isArray(filters.flats)
+      ? filters.flats.map(f => String(f).trim()).filter(Boolean)
+      : [];
+
+    // 5. Status de Check-in / Cadastro, Recorrência e WhatsApp válido
+    const checkinStatusFilter = String(filters.checkinStatus || "all").toLowerCase();
+    const recurrenceFilter = String(filters.recurrence || "all").toLowerCase();
+    const onlyValidWhatsapp = filters.onlyValidWhatsapp !== false;
+
+    const matchingRecords = records.filter(rec => {
+      // Se um filtro de momento ou de flat está ativo, ignora cadastros avulsos sem reserva quando apropriado
+      if (selectedMoments.length > 0) {
+        if (!rec.reservationId && !selectedMoments.includes("post_checkout")) {
+          return false;
+        }
+        const matchesAnyMoment = selectedMoments.some(m => matchesSingleMomentFilter(rec, m, filters, todayStr, nowMs));
+        if (!matchesAnyMoment) return false;
+      }
+
+      // Categoria Canal (AND entre categorias, OR entre canais marcados)
+      if (selectedChannels.length > 0) {
+        const recChan = rec.channel === "site" ? "site_proprio" : rec.channel;
+        const chanMatch = selectedChannels.some(c =>
+          c === recChan ||
+          (c === "site" && recChan === "site_proprio") ||
+          (c === "site_proprio" && recChan === "site")
+        );
+        if (!chanMatch) return false;
+      }
+
+      // Categoria Localidade (AND entre categorias, OR entre cidades/UFs marcadas)
+      if (selectedCities.length > 0 || selectedStates.length > 0) {
+        const cityMatch = selectedCities.length > 0 && Boolean(
+          rec.localityKey && (
+            selectedCities.includes(rec.localityKey.toLowerCase()) ||
+            selectedCities.includes(rec.city.toLowerCase()) ||
+            selectedCities.includes(normalizeName(rec.city))
+          )
+        );
+        // Se uma UF foi marcada e o usuário também marcou cidades específicas daquela UF, refina para as cidades marcadas naquela UF
+        const statesNarrowedByCity = new Set(
+          selectedCities
+            .map(c => (c.includes("|") ? c.split("|")[1]?.toUpperCase() : ""))
+            .filter(Boolean)
+        );
+        const stateMatch = selectedStates.length > 0 && Boolean(
+          rec.state &&
+          selectedStates.includes(rec.state) &&
+          !statesNarrowedByCity.has(rec.state)
+        );
+
+        if (selectedCities.length > 0 && selectedStates.length > 0) {
+          if (!cityMatch && !stateMatch) return false;
+        } else if (selectedCities.length > 0) {
+          if (!cityMatch) return false;
+        } else if (selectedStates.length > 0) {
+          if (!stateMatch) return false;
+        }
+      }
+
+      // Categoria Unidade / Flat (OR dentro de flats selecionados)
+      if (selectedFlats.length > 0) {
+        if (!rec.flatNumber || !selectedFlats.includes(String(rec.flatNumber))) {
+          return false;
+        }
+      }
+
+      // Status de Check-in / Cadastro
+      if (checkinStatusFilter === "completed" && rec.checkinStatus !== "completed") {
+        return false;
+      }
+      if (checkinStatusFilter === "pending" && rec.checkinStatus !== "pending") {
+        return false;
+      }
+
+      // Recorrência
+      if (recurrenceFilter === "first_stay" && rec.recurrence !== "first_stay") {
+        return false;
+      }
+      if (recurrenceFilter === "recurring" && rec.recurrence !== "recurring") {
+        return false;
+      }
+
+      // Apenas com WhatsApp válido
+      if (onlyValidWhatsapp && !rec.isValidWhatsapp) {
+        return false;
+      }
+
+      return true;
+    });
+
+    const deduplicatedGuests = deduplicateBroadcastRecords(matchingRecords, nowMs);
+
+    res.json({
+      success: true,
+      rawMatchesCount: matchingRecords.length,
+      deduplicatedCount: deduplicatedGuests.length,
+      guests: deduplicatedGuests
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. GET /api/whatsapp/broadcast/search-guests — Busca de exceções em toda a base do CRM para inclusão manual
+app.get("/api/whatsapp/broadcast/search-guests", (req, res) => {
+  if (!requireBroadcastAccess(req, res)) return;
+  try {
+    const rawQuery = String(req.query?.q || "").trim();
+    const { records, nowMs } = buildBroadcastDataset();
+    const deduplicatedAll = deduplicateBroadcastRecords(records, nowMs);
+
+    if (!rawQuery) {
+      return res.json({
+        success: true,
+        guests: deduplicatedAll.slice(0, 25).map(g => ({ ...g, originType: "manual" }))
+      });
+    }
+
+    const qNorm = normalizeName(rawQuery);
+    const qDigits = rawQuery.replace(/\D/g, "");
+
+    const matches = deduplicatedAll.filter(g => {
+      const nameMatch = normalizeName(g.name || "").includes(qNorm) || normalizeName(g.fullName || "").includes(qNorm);
+      const phoneMatch = qDigits.length >= 3 && String(g.phone || "").includes(qDigits);
+      const docMatch = qDigits.length >= 3 && String(g.document || "").includes(qDigits);
+      const flatMatch = String(g.flatNumber || "").toLowerCase().includes(rawQuery.toLowerCase());
+      const cityMatch = normalizeName(g.city || "").includes(qNorm);
+      const codeMatch = String(g.reservationCode || "").toLowerCase().includes(rawQuery.toLowerCase());
+      return nameMatch || phoneMatch || docMatch || flatMatch || cityMatch || codeMatch;
+    });
+
+    res.json({
+      success: true,
+      guests: matches.slice(0, 30).map(g => ({ ...g, originType: "manual" }))
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. POST /api/whatsapp/broadcast/preview-message — Renderiza preview real da mensagem para um destinatário
+app.post("/api/whatsapp/broadcast/preview-message", (req, res) => {
+  if (!requireBroadcastAccess(req, res)) return;
+  try {
+    const { messageTemplate = "", recipient = null } = req.body || {};
+    const sampleRecipient = recipient || {
+      name: "Carlos Eduardo Mendes",
+      firstName: "Carlos",
+      fullName: "Carlos Eduardo Mendes",
+      phone: "5522999887766",
+      flatNumber: "509",
+      unitsLabel: "509",
+      checkinDate: getTodayStr(),
+      checkoutDate: addDaysToIsoDateStr(getTodayStr(), 3),
+      channel: "site_proprio",
+      channelLabel: "Site Próprio"
+    };
+    const rendered = renderBroadcastMessageForRecipient(messageTemplate, sampleRecipient, db);
+    res.json({
+      success: true,
+      renderedMessage: rendered,
+      recipient: sampleRecipient
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. POST /api/whatsapp/broadcast/test-send — Envia um disparo de teste individual (ex: para o próprio operador/admin)
+app.post("/api/whatsapp/broadcast/test-send", async (req, res) => {
+  if (!requireBroadcastAccess(req, res)) return;
+  try {
+    const { testPhone, messageTemplate, sampleRecipient } = req.body || {};
+    const targetRaw = testPhone || db.settings?.adminWhatsApp || "5522997124021";
+    const cleanTarget = cleanWhatsAppPhone(targetRaw);
+    if (!cleanTarget || cleanTarget.length < 10) {
+      return res.status(400).json({ error: "Informe um número de WhatsApp válido para o envio de teste." });
+    }
+    if (!messageTemplate || !String(messageTemplate).trim()) {
+      return res.status(400).json({ error: "Digite o conteúdo da mensagem antes de testar." });
+    }
+
+    const rendered = renderBroadcastMessageForRecipient(messageTemplate, sampleRecipient || {}, db);
+    const testMessage = `🧪 *[TESTE DE DISPARO INTELIGENTE]*\n\n${rendered}`;
+
+    const apiRes = await sendZapiMessage(db.zapiConfig, {
+      phone: cleanTarget,
+      message: testMessage,
+      channelId: "stay_operations",
+      recipientRole: "developer",
+      triggerEvent: "manual_broadcast_test",
+      bypassTestMode: true,
+      db
+    });
+
+    res.json({
+      success: Boolean(apiRes?.success),
+      simulated: Boolean(apiRes?.simulated),
+      phone: cleanTarget,
+      renderedMessage: testMessage,
+      error: apiRes?.error || null
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. POST /api/whatsapp/broadcast/send — Inicia campanha em lote com fila assíncrona e delay configurável
+app.post("/api/whatsapp/broadcast/send", (req, res) => {
+  const userAuth = requireBroadcastAccess(req, res);
+  if (!userAuth) return;
+  try {
+    const {
+      name,
+      messageTemplate,
+      recipients = [],
+      minDelaySeconds = 3,
+      maxDelaySeconds = 8,
+      filtersSnapshot = {}
+    } = req.body || {};
+
+    if (!messageTemplate || !String(messageTemplate).trim()) {
+      return res.status(400).json({ error: "A mensagem do disparo não pode estar vazia." });
+    }
+    if (!Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ error: "Selecione pelo menos 1 destinatário para iniciar o disparo." });
+    }
+
+    // Deduplicação final de segurança por telefone limpo
+    const seenPhones = new Set();
+    const sanitizedRecipients = [];
+    for (const r of recipients) {
+      if (!r) continue;
+      const cleanPh = cleanWhatsAppPhone(r.phone || "");
+      if (!cleanPh || cleanPh.length < 10) continue;
+      if (seenPhones.has(cleanPh)) continue;
+      seenPhones.add(cleanPh);
+
+      sanitizedRecipients.push({
+        guestKey: r.guestKey || `phone_${cleanPh}`,
+        guestId: r.guestId || null,
+        reservationId: r.reservationId || null,
+        reservationCode: r.reservationCode || null,
+        name: r.name || "Hóspede",
+        firstName: r.firstName || toTitleCasePtBr(String(r.name || "Hóspede").split(/\s+/)[0]),
+        fullName: r.fullName || r.name || "Hóspede",
+        phone: cleanPh,
+        formattedPhone: r.formattedPhone || formatBroadcastPhoneDisplay(cleanPh),
+        city: r.city || "",
+        state: r.state || "",
+        channel: r.channel || "site_proprio",
+        channelLabel: r.channelLabel || "Site Próprio",
+        flatNumber: r.flatNumber || "",
+        unitsLabel: r.unitsLabel || r.flatNumber || "",
+        checkinDate: r.checkinDate || "",
+        checkinTime: r.checkinTime || "14:00",
+        checkoutDate: r.checkoutDate || "",
+        checkoutTime: r.checkoutTime || "12:00",
+        originType: r.originType === "manual" ? "manual" : "filter",
+        status: "pending",
+        sentAt: null,
+        processedAt: null,
+        error: null,
+        messageId: null
+      });
+    }
+
+    if (sanitizedRecipients.length === 0) {
+      return res.status(400).json({ error: "Nenhum destinatário selecionado possui número de WhatsApp válido." });
+    }
+
+    const safeMinDelay = Math.max(1, Math.min(60, Number(minDelaySeconds) || 3));
+    const safeMaxDelay = Math.max(safeMinDelay, Math.min(120, Number(maxDelaySeconds) || 8));
+    const nowIso = new Date().toISOString();
+    const campaignId = `bcast_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const defaultTitle = `Campanha WhatsApp • ${new Date().toLocaleDateString("pt-BR")} ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+
+    const campaign = {
+      id: campaignId,
+      name: String(name || "").trim() || defaultTitle,
+      messageTemplate: String(messageTemplate),
+      minDelaySeconds: safeMinDelay,
+      maxDelaySeconds: safeMaxDelay,
+      status: "running",
+      createdBy: userAuth.name || userAuth.username || "Administrador",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      completedAt: null,
+      totalCount: sanitizedRecipients.length,
+      sentCount: 0,
+      failedCount: 0,
+      pendingCount: sanitizedRecipients.length,
+      filtersSnapshot: {
+        filteredCount: Number(filtersSnapshot.filteredCount) || 0,
+        excludedCount: Number(filtersSnapshot.excludedCount) || 0,
+        manualCount: Number(filtersSnapshot.manualCount) || 0,
+        finalCount: sanitizedRecipients.length
+      },
+      recipients: sanitizedRecipients
+    };
+
+    if (!Array.isArray(db.broadcastCampaigns)) db.broadcastCampaigns = [];
+    db.broadcastCampaigns.unshift(campaign);
+    saveDatabase();
+
+    // Dispara worker em background sem bloquear a resposta HTTP
+    setImmediate(() => {
+      runBroadcastCampaignWorker(campaign.id).catch(err => {
+        console.error("[Broadcast Worker Error]:", err);
+      });
+    });
+
+    res.status(201).json({
+      success: true,
+      campaign
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. GET /api/whatsapp/broadcast/campaigns — Lista histórico de campanhas de disparo
+app.get("/api/whatsapp/broadcast/campaigns", (req, res) => {
+  if (!requireBroadcastAccess(req, res)) return;
+  const campaigns = (db.broadcastCampaigns || []).slice(0, 30).map(c => ({
+    id: c.id,
+    name: c.name,
+    messageTemplate: c.messageTemplate,
+    minDelaySeconds: c.minDelaySeconds,
+    maxDelaySeconds: c.maxDelaySeconds,
+    status: c.status,
+    createdBy: c.createdBy,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+    completedAt: c.completedAt,
+    totalCount: c.totalCount,
+    sentCount: c.sentCount,
+    failedCount: c.failedCount,
+    pendingCount: c.pendingCount,
+    filtersSnapshot: c.filtersSnapshot || {}
+  }));
+  res.json({
+    success: true,
+    campaigns
+  });
+});
+
+// 8. GET /api/whatsapp/broadcast/campaigns/:id — Progresso em tempo real e log detalhado da campanha
+app.get("/api/whatsapp/broadcast/campaigns/:id", (req, res) => {
+  if (!requireBroadcastAccess(req, res)) return;
+  const campaign = (db.broadcastCampaigns || []).find(c => c && c.id === req.params.id);
+  if (!campaign) {
+    return res.status(404).json({ error: "Campanha de disparo não encontrada." });
+  }
+  res.json({
+    success: true,
+    campaign
+  });
+});
+
+// 9. POST /api/whatsapp/broadcast/campaigns/:id/control — Pausar, Retomar ou Cancelar campanha em andamento
+app.post("/api/whatsapp/broadcast/campaigns/:id/control", (req, res) => {
+  if (!requireBroadcastAccess(req, res)) return;
+  const campaign = (db.broadcastCampaigns || []).find(c => c && c.id === req.params.id);
+  if (!campaign) {
+    return res.status(404).json({ error: "Campanha de disparo não encontrada." });
+  }
+  const action = String(req.body?.action || "").toLowerCase();
+  const nowIso = new Date().toISOString();
+
+  if (action === "pause") {
+    if (campaign.status === "running") {
+      campaign.status = "paused";
+      campaign.updatedAt = nowIso;
+      saveDatabase();
+    }
+  } else if (action === "resume") {
+    if (campaign.status === "paused") {
+      campaign.status = "running";
+      campaign.interruptedByRestart = false;
+      campaign.updatedAt = nowIso;
+      saveDatabase();
+      setImmediate(() => {
+        runBroadcastCampaignWorker(campaign.id).catch(err => {
+          console.error("[Broadcast Worker Resume Error]:", err);
+        });
+      });
+    }
+  } else if (action === "cancel") {
+    if (campaign.status === "running" || campaign.status === "paused") {
+      campaign.status = "cancelled";
+      campaign.completedAt = nowIso;
+      campaign.updatedAt = nowIso;
+      saveDatabase();
+    }
+  } else {
+    return res.status(400).json({ error: "Ação inválida. Use pause, resume ou cancel." });
+  }
+
+  res.json({
+    success: true,
+    campaign
   });
 });
 

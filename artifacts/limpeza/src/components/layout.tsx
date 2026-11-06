@@ -11,7 +11,7 @@ import {
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
   CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare,
   Smartphone, ShoppingCart, Wallet, Mail, Workflow, Wrench, Activity,
-  Inbox, Pin, PinOff, ChevronDown, UserCheck
+  Inbox, Pin, PinOff, ChevronDown, UserCheck, Send
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -297,6 +297,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (href === "/ia-status" && (location === "/ai-status" || location === "/status-ia")) return true
     if (href === "/logs" && (location === "/auditoria" || location === "/system-logs" || location === "/audit")) return true
     if (href === "/raio-x-flats" && (location === "/raio-x-flats" || location === "/diario-flats" || location === "/hub-manutencao" || location === "/servicos" || location === "/tasks" || location === "/observations" || location === "/surveys")) return true
+    if (href === "/disparo-inteligente" && (location === "/disparo-inteligente" || location === "/whatsapp-broadcast" || location === "/broadcast" || location === "/campanhas-whatsapp")) return true
     return false
   }
 
@@ -325,6 +326,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       title: "💬 Comunicação & Atendimento",
       items: [
         { href: "/whatsapp-chat", label: "WhatsApp Web (Chat)", icon: MessageSquare, description: "Conversas em tempo real, envio e histórico completo" },
+        { href: "/disparo-inteligente", label: "Disparo Inteligente (Broadcast)", icon: Send, description: "Campanhas e avisos via WhatsApp com filtros combináveis e fila" },
         { href: "/whatsapp", label: "Automação WhatsApp", icon: Bot, description: "Réguas de gatilhos, editor, fila e histórico" },
         { href: "/emails", label: "Gerenciador de E-mails", icon: Mail, description: "E-mails enviados, agendados, redator e controle do motor" },
         { href: "/notificacoes", label: "Central de Notificações", icon: Bell, badge: unreadNotifications > 0 ? unreadNotifications : null, description: "Alertas de pedidos, chamados e auditoria" },

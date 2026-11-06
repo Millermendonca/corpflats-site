@@ -2725,7 +2725,7 @@ export function isValidBrazilianCpf(rawCpf) {
 export function isPendingGuestName(name) {
   const s = String(name || "").trim();
   if (!s) return true;
-  return /^(h[óo]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(s);
+  return /^(h[óo]spede(\s*\d+|\s+a\s+definir.*|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(s);
 }
 
 export function isMissingGuestDataForCredential(reservation = {}) {
@@ -3804,9 +3804,30 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     : blocoProcedimentoCheckinOnlineObrigatorio;
 
   const displayGuestName = isPendingGuestName(guestName) ? "A Definir (Aguardando Credenciamento)" : guestName;
+  const toTitleCaseWord = (w) => w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : "";
+  const safeFullName = isPendingGuestName(guestName) ? "Hóspede" : String(guestName || "Hóspede").trim();
+  const rawFirstToken = isPendingGuestName(firstName) ? "Hóspede" : String(firstName || "Hóspede").trim().split(/\s+/)[0];
+  const safeFirstName = rawFirstToken ? toTitleCaseWord(rawFirstToken) : "Hóspede";
+  const unitValue = reservation.unitsLabel !== undefined
+    ? String(reservation.unitsLabel || "")
+    : ((reservation.flatNumber && reservation.flatNumber !== "Pendente")
+        ? String(reservation.flatNumber)
+        : ((reservation.flatId && reservation.flatId !== "Pendente") ? String(reservation.flatId) : ""));
+  const normBroadcastChannel = (() => {
+    if (reservation.channelLabel) return String(reservation.channelLabel);
+    const c = String(reservation.channel || reservation.source || "").toLowerCase().trim();
+    if (c.includes("b2b") || c.includes("corporat") || c.includes("agenc") || c.includes("agênc") || reservation.isCorporate || reservation.isB2B || reservation.agencyId) return "B2B / Corporativo";
+    if (c.includes("airbnb")) return "Airbnb";
+    if (c.includes("booking")) return "Booking.com";
+    if (c.includes("whats") || c.includes("wpp") || c.includes("direta")) return "WhatsApp";
+    if (c.includes("site") || c.includes("motor") || c.includes("corpflats")) return "Site Próprio";
+    if (c.includes("balcao") || c.includes("balcão") || c.includes("presencial") || c.includes("decolar") || c.includes("expedia") || c.includes("outro")) return "Outros";
+    return reservation.channel ? String(reservation.channel) : "Site Próprio";
+  })();
   const tagsMap = {
     "{{nome_hospede}}": displayGuestName,
-    "{{primeiro_nome}}": firstName,
+    "{{nome_completo}}": safeFullName,
+    "{{primeiro_nome}}": safeFirstName,
     "{{telefone_hospede}}": guest.phone || "",
     "{{nome_solicitante}}": requester.name,
     "{{primeiro_nome_solicitante}}": requester.firstName,
@@ -3816,8 +3837,10 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{primeiro_nome_destinatario}}": primaryRecipientFirstName,
     "{{numero_reserva}}": resCode,
     "{{quarto}}": flatNumber,
+    "{{unidade}}": unitValue,
     "{{data_checkin}}": checkinBr,
     "{{data_checkout}}": checkoutBr,
+    "{{canal}}": normBroadcastChannel,
     "{{horario_checkin}}": checkinTime,
     "{{horario_checkout}}": checkoutTime,
     "{{num_hospedes}}": String(guestCount),
@@ -8283,6 +8306,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       db.whatsappConversations = [];
     }
     syncWhatsappConversationsStore(db);
+
+    if (!Array.isArray(db.broadcastCampaigns)) {
+      db.broadcastCampaigns = [];
+    } else {
+      for (const camp of db.broadcastCampaigns) {
+        if (camp && camp.status === "running") {
+          camp.status = "paused";
+          camp.interruptedByRestart = true;
+          camp.updatedAt = new Date().toISOString();
+        }
+      }
+    }
 
     if (!db.sundayUpsellConfig) {
       db.sundayUpsellConfig = {
