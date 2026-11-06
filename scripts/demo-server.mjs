@@ -5610,6 +5610,10 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     }
   }
 
+  if (ensureB2bSeedData(db)) {
+    changed = true;
+  }
+
   // 1.99 Auto-cura universal de Ordens de Serviço (so_1791912503911_wzey5: Flat 313 resetado após início de teste em 14/10)
   if (Array.isArray(db.serviceOrders)) {
     const acOrder = db.serviceOrders.find(o => o && o.id === "so_1791912503911_wzey5");
@@ -9510,23 +9514,85 @@ export function ensureB2bSeedData(targetDb = db) {
     }
   }
 
-  // Remove empresa duplicada não desmembrada "TRIPSERVICE - CBO COMPANHIA BRASILEIRA DE OFFSHORE" se CBO oficial existir
-  const cboComp = companyMapByName["CBO - Companhia Brasileira de Offshore"];
-  if (cboComp) {
-    const bogusIdx = targetDb.companies.findIndex(c =>
-      c.id !== cboComp.id &&
-      String(c.corporateName || "").toUpperCase().includes("TRIPSERVICE - CBO")
-    );
-    if (bogusIdx !== -1) {
-      const bogusId = targetDb.companies[bogusIdx].id;
+  // Remove empresas duplicadas ou inválidas criadas por parsing antigo sem desmembramento 4-Pontas
+  const bogusCompanyRemaps = [
+    { matchRe: /TRIPSERVICE\s*-\s*CBO/i, targetName: "CBO - Companhia Brasileira de Offshore" },
+    { matchRe: /^TRIDENT\s*-\s*FLYTOUR/i, targetName: "Trident Energy do Brasil Ltda" },
+    { matchRe: /^BIMBO$/i, targetName: "Bimbo do Brasil Ltda" },
+    { matchRe: /^UNIAO\s+QUIMICA$/i, targetName: "União Química Farmacêutica Nacional S.A." },
+    { matchRe: /^PAYTRACK\s*-\s*UNIAO\s+QUIMICA/i, targetName: "União Química Farmacêutica Nacional S.A." },
+    { matchRe: /^HOTEL\s+CORPFLATS/i, targetName: null }
+  ];
+  for (let i = targetDb.companies.length - 1; i >= 0; i--) {
+    const compItem = targetDb.companies[i];
+    const cName = String(compItem.corporateName || compItem.tradeName || "").trim();
+    const cCnpj = String(compItem.cnpj || "").replace(/\D/g, "");
+    const remapRule = bogusCompanyRemaps.find(rule => rule.matchRe.test(cName));
+    if (!remapRule) continue;
+    const canonicalComp = remapRule.targetName ? companyMapByName[remapRule.targetName] : null;
+    if (canonicalComp && compItem.id === canonicalComp.id) continue;
+    // Se for duplicata sem CNPJ (ou nome de POS/Hotel), remapeia reservas/hóspedes e remove
+    if (!cCnpj || remapRule.targetName === null || /TRIPSERVICE|FLYTOUR|PAYTRACK|CORPFLATS/i.test(cName)) {
+      const bogusId = compItem.id;
       for (const r of targetDb.reservations) {
         if (r.companyId === bogusId) {
-          r.companyId = cboComp.id;
-          r.companyName = cboComp.corporateName;
-          r.companyCnpj = cboComp.cnpj;
+          r.companyId = canonicalComp ? canonicalComp.id : null;
+          if (canonicalComp) {
+            r.companyName = canonicalComp.corporateName;
+            r.companyCnpj = canonicalComp.cnpj;
+          }
         }
       }
-      targetDb.companies.splice(bogusIdx, 1);
+      for (const g of targetDb.guests) {
+        if (g.companyId === bogusId) {
+          g.companyId = canonicalComp ? canonicalComp.id : null;
+          if (canonicalComp) {
+            g.companyName = canonicalComp.corporateName;
+          }
+        }
+      }
+      targetDb.companies.splice(i, 1);
+      changed = true;
+    }
+  }
+
+  // Remove agências espúrias criadas antes do desmembramento 4-Pontas (empresas clientes ou POS salvos como agência sem CNPJ)
+  const bogusAgencyRemaps = [
+    { matchRe: /^TRIDENT\s*-\s*FLYTOUR/i, targetAgency: "Flytour Riocentro" },
+    { matchRe: /^(?:PAYTRACK\s*-\s*)?UNI[AÃ]O\s+QU[IÍ]MICA/i, targetAgency: "Paytrack" },
+    { matchRe: /^BIMBO/i, targetAgency: "Globalis Viagens" },
+    { matchRe: /^LACTALIS/i, targetAgency: "Opus Viagens" },
+    { matchRe: /^COPASTUR\s+(?:VIBRA|GRUPO\s+CARREFOUR|CARREFOUR)/i, targetAgency: "Copastur" },
+    { matchRe: /^CRIST[AÁ]LIA/i, targetAgency: "Avipam SP" },
+    { matchRe: /^TRIPSERVICE\s*-\s*CBO|^CBO\b/i, targetAgency: "Tripservice" },
+    { matchRe: /^HOTEL\s+CORPFLATS/i, targetAgency: null }
+  ];
+  for (let i = targetDb.agencies.length - 1; i >= 0; i--) {
+    const agItem = targetDb.agencies[i];
+    const aName = String(agItem.tradeName || agItem.corporateName || "").trim();
+    const aCnpj = String(agItem.cnpj || "").replace(/\D/g, "");
+    const remapRule = bogusAgencyRemaps.find(rule => rule.matchRe.test(aName));
+    if (!remapRule) continue;
+    const canonicalAg = remapRule.targetAgency ? agencyMapByName[remapRule.targetAgency] : null;
+    if (canonicalAg && agItem.id === canonicalAg.id) continue;
+    if (!aCnpj || remapRule.targetAgency === null || aCnpj !== String(canonicalAg?.cnpj || "").replace(/\D/g, "")) {
+      const bogusAgId = agItem.id;
+      for (const r of targetDb.reservations) {
+        if (r.agencyId === bogusAgId && canonicalAg) {
+          r.agencyId = canonicalAg.id;
+          r.agencyName = canonicalAg.corporateName;
+          r.agencyTradeName = canonicalAg.tradeName;
+          r.agencyCorporateName = canonicalAg.corporateName;
+          r.agencyCnpj = canonicalAg.cnpj;
+        }
+      }
+      for (const g of targetDb.guests) {
+        if (g.agencyId === bogusAgId && canonicalAg) {
+          g.agencyId = canonicalAg.id;
+          g.agencyName = canonicalAg.tradeName;
+        }
+      }
+      targetDb.agencies.splice(i, 1);
       changed = true;
     }
   }
@@ -10029,22 +10095,38 @@ export function ensureB2bSeedData(targetDb = db) {
       }
 
       // Backfill completo das 4-Pontas (Agência + Empresa + Financeiro/VCN + NFS-e)
+      const netRateCalc = +(sr.dailyRate * (1 - (sr.b2bCommissionPct || 0) / 100)).toFixed(2);
       setField("b2bReservationNumber", sr.b2bReservationNumber);
       setField("externalReservationNumber", sr.b2bReservationNumber);
       setField("b2bLocatorRloc", sr.b2bLocatorRloc);
       setField("b2bOriginType", sr.b2bOriginType);
       setField("channel", "b2b");
+      setField("requesterType", "agency_b2b");
       setField("clientType", "corporativo");
       setField("paymentMethod", "vcn_b2b");
 
       setField("agencyId", ag?.id || null);
       setField("agencyName", ag?.corporateName || sr.agencyKey);
       setField("agencyTradeName", ag?.tradeName || sr.agencyKey);
+      setField("agencyCorporateName", ag?.corporateName || sr.agencyKey);
       setField("agencyCnpj", ag?.cnpj || "");
       setField("agencyPosUnit", sr.agencyPosUnit);
       setField("agencyAgentName", sr.agencyAgentName);
       setField("agencyAgentEmail", sr.agencyAgentEmail);
       setField("agencyAgentPhone", sr.agencyAgentPhone);
+      if (
+        !existingRes.requesterInfo ||
+        existingRes.requesterInfo.name !== (sr.agencyAgentName || ag?.tradeName || sr.agencyKey) ||
+        existingRes.requesterInfo.email !== sr.agencyAgentEmail ||
+        existingRes.requesterInfo.phone !== sr.agencyAgentPhone
+      ) {
+        existingRes.requesterInfo = {
+          name: sr.agencyAgentName || ag?.tradeName || sr.agencyKey,
+          phone: sr.agencyAgentPhone || ag?.phone || "",
+          email: sr.agencyAgentEmail || ag?.financialEmail || ag?.email || ""
+        };
+        resUpdated = true;
+      }
 
       setField("companyId", comp?.id || null);
       setField("companyName", comp?.corporateName || sr.companyKey);
@@ -10062,17 +10144,24 @@ export function ensureB2bSeedData(targetDb = db) {
         existingRes.b2bCommissionAmount = sr.b2bCommissionAmount;
         resUpdated = true;
       }
+      if (existingRes.b2bNetRate !== netRateCalc) {
+        existingRes.b2bNetRate = netRateCalc;
+        resUpdated = true;
+      }
       if (existingRes.b2bNetAmount !== sr.b2bNetAmount) {
         existingRes.b2bNetAmount = sr.b2bNetAmount;
         resUpdated = true;
       }
 
+      const resolvedConciliationUrl = sr.b2bConciliationUrl || sr.voucherUrl || existingRes.b2bConciliationUrl || "https://portal.b2breservas.com.br";
+      const resolvedVoucherUrl = sr.voucherUrl || sr.b2bConciliationUrl || existingRes.voucherUrl || existingRes.b2bVoucherUrl || resolvedConciliationUrl;
       setField("b2bPaymentType", sr.b2bPaymentType);
       setField("b2bCardBrand", sr.b2bCardBrand);
       setField("b2bCardMasked", sr.b2bCardMasked);
       setField("b2bVcnToken", sr.b2bVcnToken);
-      setField("b2bConciliationUrl", sr.b2bConciliationUrl);
-      setField("voucherUrl", sr.voucherUrl);
+      setField("b2bConciliationUrl", resolvedConciliationUrl);
+      setField("voucherUrl", resolvedVoucherUrl);
+      setField("b2bVoucherUrl", resolvedVoucherUrl);
       setField("b2bAuthorizedExpenses", sr.b2bAuthorizedExpenses);
 
       setField("invoiceRecipientType", sr.invoiceRecipientType);
@@ -10181,6 +10270,7 @@ export function ensureB2bSeedData(targetDb = db) {
       });
     }
 
+    const netRateNew = +(sr.dailyRate * (1 - (sr.b2bCommissionPct || 0) / 100)).toFixed(2);
     const newReservation = {
       id: nextResId,
       code: sr.code,
@@ -10219,6 +10309,12 @@ export function ensureB2bSeedData(targetDb = db) {
       checkinTime: "14:00",
       checkoutTime: "12:00",
       channel: "b2b",
+      requesterType: "agency_b2b",
+      requesterInfo: {
+        name: sr.agencyAgentName || ag?.tradeName || sr.agencyKey,
+        phone: sr.agencyAgentPhone || ag?.phone || "",
+        email: sr.agencyAgentEmail || ag?.financialEmail || ag?.email || ""
+      },
       status: "confirmada",
       paymentStatus: "pendente",
       paymentMethod: "vcn_b2b",
@@ -10238,6 +10334,7 @@ export function ensureB2bSeedData(targetDb = db) {
       agencyId: ag?.id || null,
       agencyName: ag?.corporateName || sr.agencyKey,
       agencyTradeName: ag?.tradeName || sr.agencyKey,
+      agencyCorporateName: ag?.corporateName || sr.agencyKey,
       agencyCnpj: ag?.cnpj || "",
       agencyPosUnit: sr.agencyPosUnit,
       agencyAgentName: sr.agencyAgentName,
@@ -10251,13 +10348,15 @@ export function ensureB2bSeedData(targetDb = db) {
       b2bRatePolicy: sr.b2bRatePolicy,
       b2bCommissionPct: sr.b2bCommissionPct,
       b2bCommissionAmount: sr.b2bCommissionAmount,
+      b2bNetRate: netRateNew,
       b2bNetAmount: sr.b2bNetAmount,
       b2bPaymentType: sr.b2bPaymentType,
       b2bCardBrand: sr.b2bCardBrand,
       b2bCardMasked: sr.b2bCardMasked,
       b2bVcnToken: sr.b2bVcnToken,
-      b2bConciliationUrl: sr.b2bConciliationUrl,
-      voucherUrl: sr.voucherUrl || "",
+      b2bConciliationUrl: sr.b2bConciliationUrl || sr.voucherUrl || "https://portal.b2breservas.com.br",
+      voucherUrl: sr.voucherUrl || sr.b2bConciliationUrl || "https://portal.b2breservas.com.br",
+      b2bVoucherUrl: sr.voucherUrl || sr.b2bConciliationUrl || "https://portal.b2breservas.com.br",
       b2bConciliationStatus: "pendente",
       b2bAuthorizedExpenses: sr.b2bAuthorizedExpenses,
       // Regras de Emissão e Envio de NFS-e
@@ -10290,6 +10389,63 @@ export function ensureB2bSeedData(targetDb = db) {
 
     targetDb.reservations.push(newReservation);
     changed = true;
+  }
+
+  // Passagem universal de integridade 4-Pontas em todas as reservas B2B do banco
+  for (const r of targetDb.reservations) {
+    if (!r || (r.channel !== "b2b" && !r.b2bReservationNumber && !r.agencyId && !r.agencyName)) continue;
+    let rChanged = false;
+    if (r.requesterType !== "agency_b2b") {
+      r.requesterType = "agency_b2b";
+      rChanged = true;
+    }
+    const cleanAgCnpj = String(r.agencyCnpj || "").replace(/\D/g, "");
+    const agMatch =
+      (r.agencyId && targetDb.agencies.find(a => Number(a.id) === Number(r.agencyId))) ||
+      (cleanAgCnpj && targetDb.agencies.find(a => String(a.cnpj || "").replace(/\D/g, "") === cleanAgCnpj)) ||
+      (r.agencyTradeName && targetDb.agencies.find(a => String(a.tradeName || "").toLowerCase() === String(r.agencyTradeName).toLowerCase())) ||
+      (r.agencyName && targetDb.agencies.find(a =>
+        String(a.corporateName || "").toLowerCase() === String(r.agencyName).toLowerCase() ||
+        String(a.tradeName || "").toLowerCase() === String(r.agencyName).toLowerCase()
+      ));
+    if (agMatch) {
+      if (r.agencyId !== agMatch.id) { r.agencyId = agMatch.id; rChanged = true; }
+      if (!r.agencyCnpj && agMatch.cnpj) { r.agencyCnpj = agMatch.cnpj; rChanged = true; }
+      if (!r.agencyTradeName && agMatch.tradeName) { r.agencyTradeName = agMatch.tradeName; rChanged = true; }
+      if (!r.agencyCorporateName && agMatch.corporateName) { r.agencyCorporateName = agMatch.corporateName; rChanged = true; }
+      if (!r.agencyPosUnit && Array.isArray(agMatch.posUnits) && agMatch.posUnits[0]) {
+        r.agencyPosUnit = typeof agMatch.posUnits[0] === "string" ? agMatch.posUnits[0] : (agMatch.posUnits[0].name || "");
+        rChanged = true;
+      }
+      if (!r.agencyAgentName && Array.isArray(agMatch.agents) && agMatch.agents[0]?.name) {
+        r.agencyAgentName = agMatch.agents[0].name;
+        rChanged = true;
+      }
+      if (!r.agencyAgentEmail && (agMatch.agents?.[0]?.email || agMatch.financialEmail || agMatch.email)) {
+        r.agencyAgentEmail = agMatch.agents?.[0]?.email || agMatch.financialEmail || agMatch.email;
+        rChanged = true;
+      }
+      if (!r.agencyAgentPhone && (agMatch.agents?.[0]?.phone || agMatch.phone)) {
+        r.agencyAgentPhone = agMatch.agents?.[0]?.phone || agMatch.phone;
+        rChanged = true;
+      }
+    }
+    const cleanCompCnpj = String(r.companyCnpj || "").replace(/\D/g, "");
+    const compMatch =
+      (r.companyId && targetDb.companies.find(c => Number(c.id) === Number(r.companyId))) ||
+      (cleanCompCnpj && targetDb.companies.find(c => String(c.cnpj || "").replace(/\D/g, "") === cleanCompCnpj)) ||
+      (r.companyName && targetDb.companies.find(c =>
+        String(c.corporateName || "").toLowerCase() === String(r.companyName).toLowerCase() ||
+        String(c.tradeName || "").toLowerCase() === String(r.companyName).toLowerCase()
+      ));
+    if (compMatch) {
+      if (r.companyId !== compMatch.id) { r.companyId = compMatch.id; rChanged = true; }
+      if (!r.companyCnpj && compMatch.cnpj) { r.companyCnpj = compMatch.cnpj; rChanged = true; }
+    }
+    if (r.voucherUrl && !r.b2bVoucherUrl) { r.b2bVoucherUrl = r.voucherUrl; rChanged = true; }
+    if (r.b2bVoucherUrl && !r.voucherUrl) { r.voucherUrl = r.b2bVoucherUrl; rChanged = true; }
+    if (r.invoiceRecipientType && !r.nfRecipientType) { r.nfRecipientType = r.invoiceRecipientType; rChanged = true; }
+    if (rChanged) changed = true;
   }
 
   return changed;
@@ -10763,11 +10919,14 @@ async function _loadDatabaseImpl() {
               ensureZohoWebhookRegistered(db, saveDatabase, {
                 baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
               })
-                .then(() =>
-                  ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
+                .then(() => {
+                  if (ensureB2bSeedData(db)) {
+                    saveDatabase("b2b_post_zoho_sync");
+                  }
+                  return ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
                     baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
-                  })
-                )
+                  });
+                })
                 .catch(err => {
                   console.warn("[Zoho Post-Hydration Sync] Aviso:", err?.message || err);
                 });
@@ -29474,6 +29633,9 @@ app.get("/api/pms/calendar", (req, res) => {
   if (sanitizeContaminatedSmokingFlags(db)) {
     setImmediate(() => saveDatabase("clean_smoking_false_positives_v1"));
   }
+  if (ensureB2bSeedData(db)) {
+    setImmediate(() => saveDatabase("b2b_calendar_backfill"));
+  }
 
   const now = Date.now();
   if (now - lastCalendarReconcileTime > 15000) {
@@ -30529,12 +30691,13 @@ app.post("/api/pms/reservations", async (req, res) => {
     guestDocument: primaryDoc,
     guestCount: numGuests,
     guests: preparedGuests,
-    requesterType: isB2b ? "agency" : (requesterType === "agency_b2b" ? "agency" : requesterType),
+    requesterType: isB2b ? "agency_b2b" : (requesterType === "agency_b2b" ? "agency_b2b" : requesterType),
     requesterInfo: finalRequesterInfo || null,
     // 4-Pontas: Agência + Empresa + Hóspede + B2B
     agencyId: resolvedAgency?.id || (agencyId ? Number(agencyId) : null),
     agencyName: resolvedAgency?.corporateName || agencyName || "",
     agencyTradeName: resolvedAgency?.tradeName || agencyTradeName || agencyName || "",
+    agencyCorporateName: resolvedAgency?.corporateName || req.body.agencyCorporateName || agencyName || "",
     agencyCnpj: resolvedAgency?.cnpj || agencyCnpj || "",
     agencyPosUnit: String(agencyPosUnit || "").trim(),
     agencyAgentName: String(agencyAgentName || "").trim(),
@@ -30558,10 +30721,14 @@ app.post("/api/pms/reservations", async (req, res) => {
     b2bCardMasked: isB2b ? String(b2bCardMasked || "") : undefined,
     b2bVcnToken: isB2b ? String(b2bVcnToken || "") : undefined,
     b2bConciliationUrl: isB2b ? String(b2bConciliationUrl || "") : undefined,
+    voucherUrl: req.body.voucherUrl || req.body.b2bVoucherUrl || undefined,
+    b2bVoucherUrl: req.body.b2bVoucherUrl || req.body.voucherUrl || undefined,
     b2bConciliationStatus: isB2b ? String(b2bConciliationStatus || "pendente") : undefined,
     b2bAuthorizedExpenses: isB2b ? String(b2bAuthorizedExpenses || "DEBITAR SOMENTE DIARIAS") : undefined,
     // Regras de Tomador e Envio de NFS-e
     invoiceRecipientType: resolvedInvRecipient,
+    nfRecipientType: resolvedInvRecipient,
+    invoicingInstructions: req.body.invoicingInstructions ? String(req.body.invoicingInstructions).trim() : "",
     nfDeliveryEmails: resolvedNfEmails,
     nfHideFromGuest: resolvedNfHideFromGuest,
     invoiceDetails: invoiceDetails || null,
@@ -31985,11 +32152,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
     "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterInfo",
     "companyId", "companyName", "companyCnpj", "costCenter",
-    "agencyId", "agencyName", "agencyTradeName", "agencyCnpj", "agencyPosUnit", "agencyAgentName", "agencyAgentEmail", "agencyAgentPhone",
+    "agencyId", "agencyName", "agencyTradeName", "agencyCorporateName", "agencyCnpj", "agencyPosUnit", "agencyAgentName", "agencyAgentEmail", "agencyAgentPhone",
     "b2bReservationNumber", "externalReservationNumber", "b2bLocatorRloc", "b2bOriginType",
-    "b2bRatePolicy", "b2bCommissionPct", "b2bCommissionAmount", "b2bNetAmount",
-    "b2bPaymentType", "b2bCardBrand", "b2bCardMasked", "b2bVcnToken", "b2bConciliationUrl", "b2bConciliationStatus", "b2bAuthorizedExpenses",
-    "invoiceRecipientType", "nfDeliveryEmails", "nfHideFromGuest",
+    "b2bRatePolicy", "b2bCommissionPct", "b2bCommissionAmount", "b2bNetRate", "b2bNetAmount",
+    "b2bPaymentType", "b2bCardBrand", "b2bCardMasked", "b2bVcnToken", "b2bConciliationUrl", "voucherUrl", "b2bVoucherUrl", "b2bConciliationStatus", "b2bAuthorizedExpenses",
+    "invoiceRecipientType", "nfRecipientType", "invoicingInstructions", "nfDeliveryEmails", "nfHideFromGuest",
     "docPhotoUrl", "hasMinor", "minorAge", "isCamposResident", "riskAttentionAlert", "riskAttentionReason",
     "isFlatLocked", "flatLocked", "flatLockReason",
     "earlyCheckout", "originalCheckoutDate", "earlyCheckoutDate", "earlyCheckoutTime", "earlyCheckoutReportedBy", "earlyCheckoutNote"
@@ -53427,6 +53594,9 @@ app.get("/api/companies", (req, res) => {
       }
     ];
   }
+  if (ensureB2bSeedData(db)) {
+    setImmediate(() => saveDatabase("b2b_companies_backfill"));
+  }
   res.json(db.companies);
 });
 
@@ -53671,7 +53841,9 @@ app.delete("/api/companies/:id", (req, res) => {
 
 // ── Agências de Viagens B2B / Travel Agencies CRM & 360º Endpoints ──────────
 app.get(["/api/agencies", "/api/pms/agencies"], (req, res) => {
-  ensureB2bSeedData(db);
+  if (ensureB2bSeedData(db)) {
+    setImmediate(() => saveDatabase("b2b_agencies_backfill"));
+  }
   if (!db.agencies) db.agencies = [];
   const enriched = db.agencies.map(ag => {
     const agId = Number(ag.id);

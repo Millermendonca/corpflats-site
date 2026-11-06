@@ -1167,6 +1167,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [formInvoiceRecipientType, setFormInvoiceRecipientType] = useState<"company" | "agency" | "guest">("company")
   const [formNfDeliveryEmails, setFormNfDeliveryEmails] = useState("")
   const [formNfHideFromGuest, setFormNfHideFromGuest] = useState(false)
+  const [formInvoicingInstructions, setFormInvoicingInstructions] = useState("")
+  const [formVoucherUrl, setFormVoucherUrl] = useState("")
   const [showVoucherParser, setShowVoucherParser] = useState(false)
   const [voucherTextToParse, setVoucherTextToParse] = useState("")
   const [parsingVoucher, setParsingVoucher] = useState(false)
@@ -2500,6 +2502,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormInvoiceRecipientType("agency")
     setFormNfDeliveryEmails("")
     setFormNfHideFromGuest(true)
+    setFormInvoicingInstructions("")
+    setFormVoucherUrl("")
     setShowVoucherParser(false)
     setVoucherTextToParse("")
     setNewAgencyInlineOpen(false)
@@ -2757,6 +2761,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormInvoiceRecipientType("agency")
     setFormNfDeliveryEmails("")
     setFormNfHideFromGuest(true)
+    setFormInvoicingInstructions("")
+    setFormVoucherUrl("")
     setShowVoucherParser(false)
     setVoucherTextToParse("")
     setNewAgencyInlineOpen(false)
@@ -2958,7 +2964,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormAgencyId(resItem.agencyId ? String(resItem.agencyId) : (matchedAgency ? String(matchedAgency.id) : ""))
     setFormAgencyName(resItem.agencyTradeName || resItem.agencyName || matchedAgency?.tradeName || matchedAgency?.corporateName || "")
     setFormAgencyCnpj(resItem.agencyCnpj || matchedAgency?.cnpj || "")
-    setFormAgencyPosUnit(resItem.agencyPosUnit || matchedAgency?.posUnits?.[0]?.name || "")
+    setFormAgencyPosUnit(resItem.agencyPosUnit || matchedAgency?.posUnits?.[0]?.name || matchedAgency?.posUnits?.[0] || "")
     setFormAgencyAgentName(resItem.agencyAgentName || matchedAgency?.agents?.[0]?.name || "")
     setFormAgencyAgentEmail(resItem.agencyAgentEmail || matchedAgency?.financialEmail || matchedAgency?.email || "")
     setFormAgencyAgentPhone(resItem.agencyAgentPhone || matchedAgency?.phone || "")
@@ -2985,6 +2991,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         : (resItem.nfDeliveryEmails || resItem.agencyAgentEmail || "conciliacao@b2breservas.com.br")
     )
     setFormNfHideFromGuest(resItem.nfHideFromGuest !== undefined ? Boolean(resItem.nfHideFromGuest) : isB2bRes)
+    setFormInvoicingInstructions(resItem.invoicingInstructions || "")
+    setFormVoucherUrl(resItem.voucherUrl || resItem.b2bVoucherUrl || "")
     setShowVoucherParser(false)
     setVoucherTextToParse("")
     setNewAgencyInlineOpen(false)
@@ -3825,7 +3833,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       if (ag.defaultInvoiceRecipient) {
         setFormInvoiceRecipientType(ag.defaultInvoiceRecipient)
       }
-      const firstPos = Array.isArray(ag.posUnits) && ag.posUnits[0] ? ag.posUnits[0] : ""
+      const firstPos = Array.isArray(ag.posUnits) && ag.posUnits[0] ? (ag.posUnits[0]?.name || ag.posUnits[0]) : ""
       if (firstPos && !formAgencyPosUnit) setFormAgencyPosUnit(firstPos)
       const firstAgent = Array.isArray(ag.agents) && ag.agents[0] ? ag.agents[0] : null
       if (firstAgent) {
@@ -3953,6 +3961,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       if (p.b2bVcnToken) setFormB2bVcnToken(p.b2bVcnToken)
       if (p.b2bConciliationUrl) setFormB2bConciliationUrl(p.b2bConciliationUrl)
       if (p.b2bAuthorizedExpenses) setFormB2bAuthorizedExpenses(p.b2bAuthorizedExpenses)
+      if (p.invoicingInstructions) setFormInvoicingInstructions(p.invoicingInstructions)
+      if (p.voucherUrl || p.b2bVoucherUrl) setFormVoucherUrl(p.voucherUrl || p.b2bVoucherUrl)
       if (p.invoiceRecipientType) setFormInvoiceRecipientType(p.invoiceRecipientType)
       if (Array.isArray(p.nfDeliveryEmails) && p.nfDeliveryEmails.length > 0) {
         setFormNfDeliveryEmails(p.nfDeliveryEmails.join(", "))
@@ -4732,6 +4742,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         costCenter: formCostCenter.trim() || undefined,
         agencyId: isB2b && formAgencyId ? Number(formAgencyId) : (selectedRes?.agencyId || null),
         agencyName: isB2b ? (selectedAg?.corporateName || resolvedAgName) : undefined,
+        agencyCorporateName: isB2b ? (selectedAg?.corporateName || resolvedAgName) : undefined,
         agencyTradeName: isB2b ? resolvedAgName : undefined,
         agencyCnpj: isB2b ? resolvedAgCnpj : undefined,
         agencyPosUnit: isB2b ? formAgencyPosUnit.trim() : undefined,
@@ -4746,13 +4757,18 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         b2bCommissionPct: isB2b ? commPct : undefined,
         b2bCommissionAmount: isB2b ? commAmt : undefined,
         b2bNetAmount: isB2b ? netAmt : undefined,
+        b2bNetRate: isB2b ? (formDailyRates.length > 0 ? Number((netAmt / formDailyRates.length).toFixed(2)) : netAmt) : undefined,
         b2bPaymentType: isB2b ? formB2bPaymentType : undefined,
         b2bCardBrand: isB2b ? formB2bCardBrand.trim() : undefined,
         b2bCardMasked: isB2b ? formB2bCardMasked.trim() : undefined,
         b2bVcnToken: isB2b ? formB2bVcnToken.trim() : undefined,
         b2bConciliationUrl: isB2b ? formB2bConciliationUrl.trim() : undefined,
         b2bAuthorizedExpenses: isB2b ? formB2bAuthorizedExpenses.trim() : undefined,
+        invoicingInstructions: isB2b ? formInvoicingInstructions.trim() : undefined,
+        voucherUrl: isB2b ? formVoucherUrl.trim() : undefined,
+        b2bVoucherUrl: isB2b ? formVoucherUrl.trim() : undefined,
         invoiceRecipientType: isB2b ? formInvoiceRecipientType : (resolvedReqType === "company" ? "company" : "guest"),
+        nfRecipientType: isB2b ? formInvoiceRecipientType : (resolvedReqType === "company" ? "company" : "guest"),
         nfDeliveryEmails: isB2b
           ? formNfDeliveryEmails.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean)
           : undefined,
@@ -7881,6 +7897,40 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               <span className="text-[9.5px] text-muted-foreground block">Ocultar diárias no Portal/WhatsApp e não enviar NFS-e ao hóspede</span>
                             </div>
                             <Switch checked={formNfHideFromGuest} onCheckedChange={setFormNfHideFromGuest} />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                          <div className="space-y-1">
+                            <Label className="text-[10px] font-bold">Instruções de Faturamento / Observações do Voucher</Label>
+                            <Input
+                              value={formInvoicingInstructions}
+                              onChange={e => setFormInvoicingInstructions(e.target.value)}
+                              placeholder="Ex: Emitir NFS-e pelo valor bruto com comissão 12%..."
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[10px] font-bold">Link do Voucher Original (e-HTL / B2B Reservas)</Label>
+                            <div className="flex items-center gap-1.5">
+                              <Input
+                                value={formVoucherUrl}
+                                onChange={e => setFormVoucherUrl(e.target.value)}
+                                placeholder="https://www.e-htl.com.br/voucher/..."
+                                className="h-8 text-xs font-mono flex-1"
+                              />
+                              {formVoucherUrl && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => window.open(formVoucherUrl, "_blank", "noopener,noreferrer")}
+                                  className="h-8 px-2 text-[10px] font-bold shrink-0"
+                                >
+                                  Abrir
+                                </Button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>

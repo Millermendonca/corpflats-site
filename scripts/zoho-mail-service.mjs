@@ -1140,7 +1140,8 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
               r.agencyAgentEmail &&
               r.agencyAgentPhone &&
               r.companyName &&
-              String(r.agencyName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase() &&
+              (String(r.agencyName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase() ||
+                String(r.agencyTradeName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase()) &&
               !String(r.companyName || "").includes("HOTEL CORPFLATS") &&
               Number(r.dailyRate) > 0 &&
               Number(r.dailyRate) < 10000
@@ -2898,11 +2899,16 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   // 5. Tarifa, Comissão, Valor Total e Café da Manhã
   const hasBreakfast = !/\bSEM\s+CAF[EÉ\ufffd?]/i.test(fullScan);
   const commPctMatch = fullScan.match(/(?:Comiss[aã\ufffd?]?o|COMISSIONAD[AO])[\s:\-(]*(\d+(?:[.,]\d+)?)\s*%/i);
+  const hasExplicitCommKeyword = /\bCOMISSIONAD[AO]\b/i.test(fullScan);
+  const hasExplicitNetKeyword =
+    /\b(?:TARIFA\s+NET|NET\s+RATE|POL[IÍ]TICA\s*:\s*NET)\b/i.test(fullScan) ||
+    /(?:\bTarifa\b|\bComiss[aã\ufffd?]?o\b)[^\n]{0,30}\bNET\b/i.test(fullScan);
+  const _explicitRatePolicy = Boolean(commPctMatch || hasExplicitCommKeyword || hasExplicitNetKeyword);
   let b2bCommissionPct = commPctMatch ? Number(String(commPctMatch[1]).replace(",", ".")) : 0;
-  if (!commPctMatch && /\bCOMISSIONAD[AO]\b/i.test(fullScan)) {
+  if (!commPctMatch && hasExplicitCommKeyword) {
     b2bCommissionPct = 12;
   }
-  const b2bRatePolicy = b2bCommissionPct > 0 || /\bCOMISSIONAD[AO]\b/i.test(fullScan) ? "COMISSIONADA" : "NET";
+  const b2bRatePolicy = b2bCommissionPct > 0 || hasExplicitCommKeyword ? "COMISSIONADA" : "NET";
 
   const totalMatch =
     fullScan.match(/(?:Valor\s+Total|Total(?:\s+da\s+Reserva|\s+Geral|\s+dos\s+Servi[cç]os)?|Total(?:\s+em\s+(?:R\$|BRL))?)[\s:\-]*(?:R\$|BRL)\s*([\d.,]+)/i) ||
@@ -2934,6 +2940,7 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     }
   }
 
+  const _explicitCheckout = Boolean(dateNights > 0 || explicitNights > 0 || mathNights > 0);
   if (dateNights > 0) {
     nights = dateNights;
   } else if (explicitNights > 0) {
@@ -3202,6 +3209,9 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     if (!agencyAgentEmail) agencyAgentEmail = "atendimento@paytrack.com.br";
     if (/Uni[aã]o\s+Qu[ií]mica/i.test(companyName) && !companyCnpj) companyCnpj = "60.665.981/0001-18";
   } else if (agencyName === "Flytour Riocentro" && /^TRIDENT\s*-\s*FLYTOUR/i.test(agencyPosUnit)) {
+    if (!agencyCnpj) agencyCnpj = "31.370.836/0001-01";
+    if (!agencyAgentPhone) agencyAgentPhone = "(21) 3400-7810";
+    if (!agencyAgentEmail) agencyAgentEmail = "roque.miguez@flytour.com.br";
     if (/Trident/i.test(companyName) && !companyCnpj) companyCnpj = "34.061.157/0001-56";
   } else if (agencyName === "Flytour Curitiba (DPR Turismo)" && !companyCnpj && agencyCnpj) {
     companyCnpj = agencyCnpj;
@@ -3245,13 +3255,22 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const nfHideFromGuest =
     /N[AÃ\ufffd?]?O\s+(?:ENTREGAR|EXIBIR)\s+(?:(?:A\s+)?(?:NOTA\s+FISCAL|NF|VALORES)\s+)?(?:AO|PARA\s+O)\s+(?:H[OÓ\ufffd?]?SPEDE|HOSPEDE)/i.test(fullScan) ||
     /Ocultar\s+(?:valores|nota|nf)\s+do\s+(?:h[oó\ufffd?]?spede|hospede)\s*[:\-]?\s*(?:sim|true|1)/i.test(fullScan);
+  const _explicitNfHide = Boolean(
+    nfHideFromGuest ||
+    /Ocultar\s+(?:valores|nota|nf)\s+do\s+(?:h[oó\ufffd?]?spede|hospede)\s*[:\-]?\s*(?:n[aã]o|false|0)/i.test(fullScan) ||
+    /NF\s+emitida\s+para\s+o\s+H[oó\ufffd?]?spede/i.test(fullScan)
+  );
   let invoiceRecipientType = "guest";
+  let _explicitInvoiceRecipient = Boolean(
+    /NF\s+emitida\s+para\s+o\s+H[oó\ufffd?]?spede|Tomador(?:\s+da\s+Nota)?\s*[:\-]+\s*(?:Emitir\s+nota\s+para\s+o\s+)?H[oó\ufffd?]?spede/i.test(fullScan)
+  );
   if (
     /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF)\s+(?:EM\s+NOME\s+DA|PARA\s+A)\s+(?:AG[EÊ\ufffd?]?NCIA|AGENCIA)/i.test(fullScan) ||
     /Tomador(?:\s+da\s+Nota)?\s*[:\-]+\s*(?:Emitir\s+nota\s+para\s+a\s+)?(?:Ag[eê\ufffd?]?ncia|Agencia)/i.test(fullScan) ||
     agencyName === "Flytour Curitiba (DPR Turismo)"
   ) {
     invoiceRecipientType = "agency";
+    _explicitInvoiceRecipient = true;
   } else if (
     nfHideFromGuest ||
     /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF|NFS-E)?\s+(?:PARA|CONTRA|EM\s+NOME\s+DO\s+CNPJ)\s*[:\-]?\s*(?:A\s+)?(?:EMPRESA|ABAIXO)?/i.test(fullScan) ||
@@ -3260,6 +3279,7 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     /(?:EMITIR|FATURAR)\s+(?:NFS-?e|NOTA(?:\s+FISCAL)?|NF)\s+CONTRA\b/i.test(fullScan)
   ) {
     invoiceRecipientType = "company";
+    _explicitInvoiceRecipient = true;
   }
 
   return {
@@ -3296,7 +3316,11 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     invoiceRecipientType,
     invoicingInstructions,
     nfDeliveryEmails: allEmails,
-    nfHideFromGuest
+    nfHideFromGuest,
+    _explicitCheckout,
+    _explicitRatePolicy,
+    _explicitInvoiceRecipient,
+    _explicitNfHide
   };
 }
 
@@ -3726,17 +3750,17 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
   }
 
   const checkinDate = parsed.checkinDate || reservation?.checkinDate;
-  let checkoutDate = parsed.checkoutDate || "";
+  let checkoutDate = (parsed._explicitCheckout === false && reservation?.checkoutDate) ? "" : (parsed.checkoutDate || "");
   const parsedDailyRate = Number(parsed.dailyRate) || 0;
   const parsedTotalAmount = Number(parsed.totalAmount) || 0;
 
   // Resolução segura de noites (4-tier):
-  // 1. parsed.nights explícito > 0
+  // 1. parsed.nights explícito > 0 (apenas quando _explicitCheckout !== false ou reserva nova)
   // 2. Ou diferença entre checkoutDate e checkinDate se checkoutDate fornecido
   // 3. Ou fallback matemático: parsed.totalAmount / parsed.dailyRate
   // 4. Ou reserva existente / fallback mínimo de 1 diária
   let nights = 0;
-  if (Number(parsed.nights) > 0) {
+  if (parsed._explicitCheckout !== false && Number(parsed.nights) > 0) {
     nights = Math.round(Number(parsed.nights));
   } else if (checkoutDate && checkinDate) {
     const diffDays = Math.round(
@@ -3754,6 +3778,8 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       checkoutDate = reservation.checkoutDate;
       nights = resDiff;
     }
+  } else if (Number(parsed.nights) > 0) {
+    nights = Math.round(Number(parsed.nights));
   }
 
   if (!nights || nights < 1) {
@@ -3778,21 +3804,42 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
   }
 
   const totalAmount = parsedTotalAmount > 0 ? +(parsedTotalAmount.toFixed(2)) : +(dailyRate * nights).toFixed(2);
-  const commPct = Number(
-    parsed.b2bCommissionPct ?? reservation?.b2bCommissionPct ?? (parsed.b2bRatePolicy === "NET" ? 0 : 12)
-  ) || 0;
-  const b2bCommissionAmount = parsed.b2bCommissionAmount !== undefined
-    ? Number(parsed.b2bCommissionAmount)
-    : +((totalAmount * commPct) / 100).toFixed(2);
+  const hasExplicitPolicy =
+    parsed._explicitRatePolicy !== false &&
+    (parsed._explicitRatePolicy === true ||
+      Number(parsed.b2bCommissionPct) > 0 ||
+      parsed.b2bRatePolicy === "COMISSIONADA");
+  const resolvedRatePolicy = hasExplicitPolicy
+    ? (parsed.b2bRatePolicy || "COMISSIONADA")
+    : (reservation?.b2bRatePolicy || agency?.defaultRatePolicy || parsed.b2bRatePolicy || "COMISSIONADA");
+  const commPct = hasExplicitPolicy
+    ? (Number(parsed.b2bCommissionPct) || (resolvedRatePolicy === "NET" ? 0 : 12))
+    : Number(
+        reservation?.b2bCommissionPct ??
+          agency?.defaultCommissionPct ??
+          parsed.b2bCommissionPct ??
+          (resolvedRatePolicy === "NET" ? 0 : 12)
+      ) || 0;
+  const b2bCommissionAmount =
+    hasExplicitPolicy && parsed.b2bCommissionAmount !== undefined && Number(parsed.b2bCommissionAmount) > 0
+      ? Number(parsed.b2bCommissionAmount)
+      : +((totalAmount * commPct) / 100).toFixed(2);
   const b2bNetRate = +(dailyRate * (1 - commPct / 100)).toFixed(2);
-  const b2bNetAmount = parsed.b2bNetAmount !== undefined
-    ? Number(parsed.b2bNetAmount)
-    : +(totalAmount - b2bCommissionAmount).toFixed(2);
-  const resolvedRecipientType =
-    parsed.invoiceRecipientType ||
-    reservation?.invoiceRecipientType ||
-    agency?.defaultRecipientType ||
-    "company";
+  const b2bNetAmount =
+    hasExplicitPolicy && parsed.b2bNetAmount !== undefined && Number(parsed.b2bNetAmount) > 0
+      ? Number(parsed.b2bNetAmount)
+      : +(totalAmount - b2bCommissionAmount).toFixed(2);
+  const hasExplicitRecipient =
+    parsed._explicitInvoiceRecipient !== false &&
+    (parsed._explicitInvoiceRecipient === true ||
+      (parsed.invoiceRecipientType && parsed.invoiceRecipientType !== "guest"));
+  const resolvedRecipientType = hasExplicitRecipient
+    ? parsed.invoiceRecipientType
+    : (reservation?.invoiceRecipientType ||
+       agency?.defaultInvoiceRecipient ||
+       agency?.defaultRecipientType ||
+       parsed.invoiceRecipientType ||
+       "company");
 
   // Geração determinística de dailyRates (F3) para todas as noites da estadia
   const dailyRates = [];
@@ -3853,7 +3900,7 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       externalReservationNumber: resNum,
       b2bLocatorRloc: parsed.b2bLocatorRloc || resNum,
       b2bOriginType: parsed.b2bOriginType || "BOOKING_WS",
-      b2bRatePolicy: parsed.b2bRatePolicy || "COMISSIONADA",
+      b2bRatePolicy: resolvedRatePolicy,
       b2bCommissionPct: commPct,
       b2bCommissionAmount,
       b2bNetRate,
@@ -3864,12 +3911,13 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       b2bVcnToken: parsed.b2bVcnToken || "",
       b2bAuthorizedExpenses: parsed.b2bAuthorizedExpenses || "DEBITAR SOMENTE DIARIAS",
       b2bConciliationUrl: parsed.b2bConciliationUrl || "",
+      voucherUrl: parsed.voucherUrl || "",
       b2bVoucherUrl: parsed.voucherUrl || "",
       costCenter: parsed.costCenter || "",
       invoiceRecipientType: resolvedRecipientType,
       nfRecipientType: resolvedRecipientType,
       nfDeliveryEmails: Array.isArray(parsed.nfDeliveryEmails) ? parsed.nfDeliveryEmails : [],
-      nfHideFromGuest: Boolean(parsed.nfHideFromGuest),
+      nfHideFromGuest: parsed._explicitNfHide ? Boolean(parsed.nfHideFromGuest) : (resolvedRecipientType !== "guest"),
       preCheckinUnlocked: true,
       accessUnlocked: true,
       credentialToken: `B2B-${resNum}`,
@@ -3904,7 +3952,7 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
 
     if (agency?.id) {
       reservation.agencyId = agency.id;
-      reservation.agencyName = agency.tradeName || agency.corporateName || parsed.agencyName || reservation.agencyName || "";
+      reservation.agencyName = agency.corporateName || agency.tradeName || parsed.agencyName || reservation.agencyName || "";
       reservation.agencyTradeName = agency.tradeName || parsed.agencyName || reservation.agencyTradeName || "";
       reservation.agencyCorporateName = agency.corporateName || parsed.agencyName || reservation.agencyCorporateName || "";
       reservation.agencyCnpj = parsed.agencyCnpj || agency.cnpj || reservation.agencyCnpj || "";
@@ -3922,7 +3970,14 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       reservation.agencyPosUnit = parsed.agencyPosUnit;
     }
     if (parsed.agencyAgentName) {
-      reservation.agencyAgentName = parsed.agencyAgentName;
+      const isGenericSystemAgent = /^(?:ARGO\.|WEBSERVICE|PAYTRACK|SISTEMA|B2B)/i.test(String(parsed.agencyAgentName).trim());
+      if (
+        !reservation.agencyAgentName ||
+        !isGenericSystemAgent ||
+        /^(?:ARGO\.|WEBSERVICE|PAYTRACK|SISTEMA|B2B)/i.test(String(reservation.agencyAgentName).trim())
+      ) {
+        reservation.agencyAgentName = parsed.agencyAgentName;
+      }
     }
     if (parsed.agencyAgentPhone) {
       reservation.agencyAgentPhone = parsed.agencyAgentPhone;
@@ -3930,13 +3985,13 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       reservation.agencyAgentPhone = agency.phone;
     }
     const agentEmailCandidate = parsed.agencyAgentEmail || parsed.nfDeliveryEmails?.[0] || agency?.financialEmail || agency?.email || "";
-    if (agentEmailCandidate) {
+    if (agentEmailCandidate && (!reservation.agencyAgentEmail || parsed.agencyAgentEmail)) {
       reservation.agencyAgentEmail = agentEmailCandidate;
     }
 
     if (company?.id) {
       reservation.companyId = company.id;
-      reservation.companyName = company.tradeName || company.corporateName || parsed.companyName || reservation.companyName || "";
+      reservation.companyName = company.corporateName || company.tradeName || parsed.companyName || reservation.companyName || "";
       reservation.companyCnpj = parsed.companyCnpj || company.cnpj || reservation.companyCnpj || "";
     } else if (parsed.companyName) {
       reservation.companyName = parsed.companyName;
@@ -3962,7 +4017,7 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       reservation.includeBreakfast = parsed.hasBreakfast !== false;
     }
 
-    reservation.b2bRatePolicy = parsed.b2bRatePolicy || reservation.b2bRatePolicy || "COMISSIONADA";
+    reservation.b2bRatePolicy = resolvedRatePolicy;
     reservation.b2bCommissionPct = commPct;
     reservation.b2bCommissionAmount = b2bCommissionAmount;
     reservation.b2bNetRate = b2bNetRate;
@@ -3991,6 +4046,7 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       reservation.b2bConciliationUrl = parsed.b2bConciliationUrl;
     }
     if (parsed.voucherUrl) {
+      reservation.voucherUrl = parsed.voucherUrl;
       reservation.b2bVoucherUrl = parsed.voucherUrl;
     }
 
@@ -4003,7 +4059,7 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       ]);
       reservation.nfDeliveryEmails = Array.from(mergedEmails);
     }
-    if (parsed.nfHideFromGuest !== undefined) {
+    if (parsed.nfHideFromGuest === true || parsed._explicitNfHide === true || reservation.nfHideFromGuest === undefined) {
       reservation.nfHideFromGuest = Boolean(parsed.nfHideFromGuest);
     }
     if (!reservation.credentialToken) {
