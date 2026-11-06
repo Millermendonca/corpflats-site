@@ -270,8 +270,14 @@ export function FlatCard({
   const [optimisticSmoked, setOptimisticSmoked] = useState<boolean | null>(null)
 
   useEffect(() => {
+    if (optimisticSmoked !== null && serverHasSmoked === optimisticSmoked) {
+      setOptimisticSmoked(null)
+    }
+  }, [serverHasSmoked, optimisticSmoked])
+
+  useEffect(() => {
     setOptimisticSmoked(null)
-  }, [serverHasSmoked, request?.id, request?.updatedAt])
+  }, [request?.id])
 
   const hasSmoked = optimisticSmoked !== null ? optimisticSmoked : serverHasSmoked
 
@@ -1322,6 +1328,8 @@ export function FlatCard({
           flatId: flat.flatId,
           date: date,
           markedByAdmin: isAdmin ? true : undefined,
+          smokedInRoom: hasSmoked,
+          guestSmoked: hasSmoked,
         }),
         credentials: "include"
       })

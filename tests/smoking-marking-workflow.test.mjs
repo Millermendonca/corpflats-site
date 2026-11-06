@@ -535,6 +535,75 @@ async function runRealBackendTests() {
   assert.equal(Boolean(unrelatedRes.smokerGuestAlert), false, "Reserva de outro hóspede jamais deve receber alerta de fumante");
   console.log("✅ 4.11. Proteção anti-falso-positivo (Hóspede 2 / Telefone corporativo B2B) validada com sucesso.");
 
+  // 4.12. Prevenção de contaminação do próximo hóspede (arrivingGuest / autoReservationId) em card de checkout
+  testDb.guests.push(
+    { id: 1932, name: "Hugo Mello Bento", phone: "21988881111", isSmoker: false, tags: [] },
+    { id: 3561, name: "Thaisa da Silva pinheiro Mata", phone: "21977772222", isSmoker: false, tags: [] }
+  );
+  testDb.reservations.push(
+    {
+      id: 595,
+      code: "RES-511-0595",
+      flatId: 511,
+      flatNumber: "511",
+      guestId: 1932,
+      guestName: "Hugo Mello Bento",
+      checkinDate: "2026-11-04",
+      checkoutDate: "2026-11-05",
+      status: "checked_out"
+    },
+    {
+      id: 696,
+      code: "RES-511-0696",
+      flatId: 511,
+      flatNumber: "511",
+      guestId: 3561,
+      guestName: "Thaisa da Silva pinheiro Mata",
+      checkinDate: "2026-11-05",
+      checkoutDate: "2026-11-06",
+      status: "checked_in"
+    }
+  );
+  const reqFlat511Checkout = {
+    id: 1757,
+    flatId: 511,
+    flatNumber: "511",
+    requestDate: "2026-11-05",
+    status: "clean",
+    leavingGuest: "Hugo Mello Bento",
+    arrivingGuest: "Thaisa da Silva pinheiro Mata",
+    autoReservationId: 696,
+    autoReservationCode: "RES-511-0696",
+    reservationId: 696 // Mesmo se reservationId tivesse sido salvo incorretamente com o ID do arrivingGuest
+  };
+  testDb.cleaningRequests.push(reqFlat511Checkout);
+
+  // Ao marcar "Não fumou" (false) no card de limpeza de saída do Hugo, nem Thaisa nem Hugo podem ficar como fumantes
+  updateSmokingStatusForCleaning(reqFlat511Checkout, false, maidUser, "2026-11-05", testDb);
+  const resThaisa = testDb.reservations.find(r => r.code === "RES-511-0696");
+  const guestThaisa = testDb.guests.find(g => g.id === 3561);
+  assert.equal(Boolean(resThaisa.isSmoker), false, "Hóspede que está entrando (autoReservationId) jamais deve ser marcada como fumante no checkout do anterior");
+  assert.equal(Boolean(guestThaisa.isSmoker), false, "Cadastro de Thaisa no CRM deve permanecer isSmoker = false");
+  assert.equal(Boolean(reqFlat511Checkout.smokedInRoom), false, "Card de limpeza deve permanecer smokedInRoom = false");
+
+  // Mesmo se marcarem "Sim, fumou" (true) no checkout do Hugo e depois desmarcarem (false),
+  // Thaisa jamais deve ser afetada e a desmarcação do Hugo deve limpar tudo sem loop circular
+  updateSmokingStatusForCleaning(reqFlat511Checkout, true, maidUser, "2026-11-05", testDb);
+  assert.equal(Boolean(resThaisa.isSmoker), false, "Thaisa (arrivingGuest) jamais deve ser contaminada quando o hóspede que saiu (Hugo) é marcado como fumante");
+  assert.equal(Boolean(guestThaisa.isSmoker), false, "Cadastro CRM de Thaisa jamais deve ser contaminado");
+  const resHugo = testDb.reservations.find(r => r.code === "RES-511-0595");
+  const guestHugo = testDb.guests.find(g => g.id === 1932);
+  assert.equal(Boolean(resHugo.isSmoker), true, "Hugo (leavingGuest) deve receber a marcação quando isSmoker = true");
+
+  // Agora desmarcando (false): deve limpar completamente Hugo e o card de limpeza!
+  updateSmokingStatusForCleaning(reqFlat511Checkout, false, maidUser, "2026-11-05", testDb);
+  assert.equal(Boolean(reqFlat511Checkout.smokedInRoom), false, "Card de limpeza deve limpar smokedInRoom após desmarcar");
+  assert.equal(Boolean(reqFlat511Checkout.guestSmoked), false, "Card de limpeza deve limpar guestSmoked após desmarcar");
+  assert.equal(Boolean(resHugo.isSmoker), false, "Reserva de Hugo deve limpar isSmoker após desmarcar");
+  assert.equal(Boolean(resHugo.smokedInRoom), false, "Reserva de Hugo deve limpar smokedInRoom após desmarcar");
+  assert.equal(Boolean(guestHugo.isSmoker), false, "CRM de Hugo deve limpar isSmoker após desmarcar");
+  console.log("✅ 4.12. Isolamento entre leavingGuest e arrivingGuest (autoReservationId) e desmarcação limpa validados com sucesso.");
+
   if (httpServer && typeof httpServer.close === "function") {
     httpServer.close();
   }

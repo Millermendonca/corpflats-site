@@ -6924,42 +6924,110 @@ export function repairIncidentSept30(db) {
 function sanitizeContaminatedSmokingFlags(targetDb = db) {
   if (!targetDb) return false;
   if (!targetDb.settings) targetDb.settings = {};
-  if (targetDb.settings.smokingContaminationCleanedV1) return false;
   let cleaned = false;
-  for (const r of (targetDb.reservations || [])) {
-    if (r && (r.isSmoker || r.smokerGuestAlert || r.guestSmoked || r.smokedInRoom || r.smokingAlert)) {
-      delete r.isSmoker;
-      delete r.smokerGuestAlert;
-      delete r.guestSmoked;
-      delete r.smokedInRoom;
-      delete r.smokingAlert;
-      cleaned = true;
-    }
-  }
-  for (const g of (targetDb.guests || [])) {
-    if (g && (g.isSmoker || g.smokedInRoom || g.smokingReportedAt || g.smokingReportedBy || (Array.isArray(g.tags) && g.tags.some(t => String(t).toLowerCase() === "fumante")))) {
-      delete g.isSmoker;
-      delete g.smokedInRoom;
-      delete g.smokingReportedAt;
-      delete g.smokingReportedBy;
-      if (Array.isArray(g.tags)) {
-        g.tags = g.tags.filter(t => String(t).toLowerCase() !== "fumante");
+  if (!targetDb.settings.smokingContaminationCleanedV1) {
+    for (const r of (targetDb.reservations || [])) {
+      if (r && (r.isSmoker || r.smokerGuestAlert || r.guestSmoked || r.smokedInRoom || r.smokingAlert)) {
+        delete r.isSmoker;
+        delete r.smokerGuestAlert;
+        delete r.guestSmoked;
+        delete r.smokedInRoom;
+        delete r.smokingAlert;
+        cleaned = true;
       }
-      cleaned = true;
     }
-  }
-  for (const cr of (targetDb.cleaningRequests || [])) {
-    if (cr && (cr.smokedInRoom || cr.guestSmoked || cr.smokedMarkedAt || cr.smokedMarkedBy)) {
-      cr.smokedInRoom = false;
-      cr.guestSmoked = false;
-      delete cr.smokedMarkedAt;
-      delete cr.smokedMarkedBy;
-      cleaned = true;
+    for (const g of (targetDb.guests || [])) {
+      if (g && (g.isSmoker || g.smokedInRoom || g.smokingReportedAt || g.smokingReportedBy || (Array.isArray(g.tags) && g.tags.some(t => String(t).toLowerCase() === "fumante")))) {
+        delete g.isSmoker;
+        delete g.smokedInRoom;
+        delete g.smokingReportedAt;
+        delete g.smokingReportedBy;
+        if (Array.isArray(g.tags)) {
+          g.tags = g.tags.filter(t => String(t).toLowerCase() !== "fumante");
+        }
+        cleaned = true;
+      }
     }
+    for (const cr of (targetDb.cleaningRequests || [])) {
+      if (cr && (cr.smokedInRoom || cr.guestSmoked || cr.smokedMarkedAt || cr.smokedMarkedBy)) {
+        cr.smokedInRoom = false;
+        cr.guestSmoked = false;
+        delete cr.smokedMarkedAt;
+        delete cr.smokedMarkedBy;
+        cleaned = true;
+      }
+    }
+    targetDb.settings.smokingContaminationCleanedV1 = true;
   }
-  targetDb.settings.smokingContaminationCleanedV1 = true;
-  if (typeof invalidateGuestIndexCache === "function") invalidateGuestIndexCache();
-  if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
+
+  // V2: Limpa contaminação causada por autoReservationId (hóspede entrando) em cards de checkout (ex: Flat 511 RES-511-0696 Thaisa e RES-511-0595 Hugo)
+  if (!targetDb.settings.smokingContaminationCleanedV2) {
+    const isContaminatedName = (name) => {
+      const n = String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+      return n.includes("thaisa da silva pinheiro") || n.includes("hugo mello bento");
+    };
+    for (const r of (targetDb.reservations || [])) {
+      if (!r) continue;
+      if (
+        Number(r.id) === 696 ||
+        Number(r.id) === 595 ||
+        r.code === "RES-511-0696" ||
+        r.code === "RES-511-0595" ||
+        isContaminatedName(r.guestName)
+      ) {
+        if (r.isSmoker || r.smokerGuestAlert || r.guestSmoked || r.smokedInRoom || r.smokingAlert) {
+          r.isSmoker = false;
+          r.smokerGuestAlert = false;
+          r.guestSmoked = false;
+          r.smokedInRoom = false;
+          delete r.smokingAlert;
+          cleaned = true;
+        }
+      }
+    }
+    for (const g of (targetDb.guests || [])) {
+      if (!g) continue;
+      if (
+        Number(g.id) === 3561 ||
+        Number(g.id) === 1932 ||
+        isContaminatedName(g.fullName || g.name)
+      ) {
+        if (g.isSmoker || g.smokedInRoom || g.smokingReportedAt || g.smokingReportedBy || (Array.isArray(g.tags) && g.tags.some(t => String(t).toLowerCase() === "fumante"))) {
+          g.isSmoker = false;
+          g.smokedInRoom = false;
+          delete g.smokingReportedAt;
+          delete g.smokingReportedBy;
+          if (Array.isArray(g.tags)) {
+            g.tags = g.tags.filter(t => String(t).toLowerCase() !== "fumante");
+          }
+          cleaned = true;
+        }
+      }
+    }
+    for (const cr of (targetDb.cleaningRequests || [])) {
+      if (!cr) continue;
+      if (
+        Number(cr.id) === 1757 ||
+        isContaminatedName(cr.leavingGuest) ||
+        isContaminatedName(cr.arrivingGuest) ||
+        (String(cr.flatNumber) === "511" && (cr.requestDate === "2026-11-05" || cr.requestDate === "2026-11-06"))
+      ) {
+        if (cr.smokedInRoom || cr.guestSmoked || cr.smokedMarkedAt || cr.smokedMarkedBy) {
+          cr.smokedInRoom = false;
+          cr.guestSmoked = false;
+          delete cr.smokedMarkedAt;
+          delete cr.smokedMarkedBy;
+          cleaned = true;
+        }
+      }
+    }
+    targetDb.settings.smokingContaminationCleanedV2 = true;
+  }
+
+  if (cleaned) {
+    if (typeof invalidateGuestIndexCache === "function") invalidateGuestIndexCache();
+    if (typeof invalidateRequestsForDateCache === "function") invalidateRequestsForDateCache();
+  }
   return cleaned;
 }
 
@@ -20581,6 +20649,8 @@ function getRequestsForDate(dateStr, isNested = false) {
         doNotDisturb: Boolean(b2bRes.doNotDisturb),
         towelsChanged: false,
         beddingChanged: false,
+        smokedInRoom: false,
+        guestSmoked: false,
         willCleanAt: null,
         cleaningStartedAt: null,
         completedAt: null,
@@ -20676,12 +20746,16 @@ function getRequestsForDate(dateStr, isNested = false) {
           isExtended: false,
           twinBeds: nextResHasTwin,
           extraMattress: nextResHasExtraMattress,
+          checkoutReservationId: pmsRes.id || null,
+          checkoutReservationCode: pmsRes.code || null,
           autoReservationCode: arrivingRes ? arrivingRes.code : null,
           autoReservationId: arrivingRes ? arrivingRes.id : null,
           adminNote: arrivingNote,
           leavingGuest: pmsRes.guestName || pmsRes.title || "Hóspede",
           arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : null,
           pendingObservation: arrivingNote,
+          smokedInRoom: false,
+          guestSmoked: false,
           willCleanAt: null,
           cleaningStartedAt: null,
           completedAt: null,
@@ -20894,7 +20968,7 @@ function getRequestsForDate(dateStr, isNested = false) {
 
     const resolvedSmoked = existingCleaning && (typeof existingCleaning.smokedInRoom === "boolean" || typeof existingCleaning.guestSmoked === "boolean")
       ? Boolean(existingCleaning.smokedInRoom || existingCleaning.guestSmoked)
-      : Boolean(pmsRes?.smokedInRoom || pmsRes?.guestSmoked);
+      : Boolean(resolvedStatus === "clean" && (pmsRes?.smokedInRoom || pmsRes?.guestSmoked));
 
     const card = {
       id: existingCleaning ? existingCleaning.id : (maxId + 1),
@@ -20917,6 +20991,8 @@ function getRequestsForDate(dateStr, isNested = false) {
       manualExtraMattress: Boolean(existingCleaning?.manualExtraMattress),
       manualAdminNote: Boolean(existingCleaning?.manualAdminNote || carriedPriorManualNote),
       isManualInstruction: Boolean(existingCleaning?.isManualInstruction),
+      checkoutReservationId: pmsRes.id || existingCleaning?.checkoutReservationId || null,
+      checkoutReservationCode: pmsRes.code || existingCleaning?.checkoutReservationCode || null,
       autoReservationCode: arrivingRes ? arrivingRes.code : (existingCleaning?.autoReservationCode || null),
       autoReservationId: arrivingRes ? arrivingRes.id : (existingCleaning?.autoReservationId || null),
       adminNote: cleanExistingAdmin,
@@ -20936,6 +21012,14 @@ function getRequestsForDate(dateStr, isNested = false) {
     };
 
     if (existingCleaning) {
+      if (pmsRes.id && existingCleaning.checkoutReservationId !== pmsRes.id) {
+        existingCleaning.checkoutReservationId = pmsRes.id;
+        existingCleaning.checkoutReservationCode = pmsRes.code || null;
+      }
+      if (typeof existingCleaning.smokedInRoom !== "boolean") {
+        existingCleaning.smokedInRoom = resolvedSmoked;
+        existingCleaning.guestSmoked = resolvedSmoked;
+      }
       if (isFutureDate && existingCleaning.status === "clean" && (!existingCleaning.completedAt || existingCleaning.completedAt.substring(0, 10) < dateStr)) {
         existingCleaning.status = "dirty";
         existingCleaning.isPriority = false;
@@ -21524,12 +21608,12 @@ app.get("/api/reservations/checkouts", (req, res) => {
         ? false
         : ((typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
             ? Boolean(req_.smokedInRoom || req_.guestSmoked)
-            : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
+            : Boolean(!isInst && req_.status === "clean" && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
       guestSmoked: isServiceCleaning
         ? false
         : ((typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
             ? Boolean(req_.smokedInRoom || req_.guestSmoked)
-            : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
+            : Boolean(!isInst && req_.status === "clean" && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
       cleaningRequest: {
         id: req_.id,
         flatId: req_.flatId,
@@ -21552,12 +21636,12 @@ app.get("/api/reservations/checkouts", (req, res) => {
           ? false
           : ((typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
               ? Boolean(req_.smokedInRoom || req_.guestSmoked)
-              : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
+              : Boolean(!isInst && req_.status === "clean" && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
         guestSmoked: isServiceCleaning
           ? false
           : ((typeof req_.smokedInRoom === "boolean" || typeof req_.guestSmoked === "boolean")
               ? Boolean(req_.smokedInRoom || req_.guestSmoked)
-              : Boolean(!isInst && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
+              : Boolean(!isInst && req_.status === "clean" && (checkoutRes?.smokedInRoom || checkoutRes?.guestSmoked))),
         twinBeds: hasTwinBeds,
         extraMattress: hasExtraMattress,
         adminNote: resolvedSpecialRequests,
@@ -22284,13 +22368,15 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
         (virtualCard && (Number(f.id) === Number(virtualCard.flatId) || String(f.number) === String(virtualCard.flatNumber)))
       );
 
+      const isVirtualStayover = Boolean(virtualCard?.source === "stayover" || virtualCard?.cleaningType === "stayover");
+
       item = {
         id: newId,
         flatId: targetFlatObj ? targetFlatObj.id : (virtualCard?.flatId || (flatId ? Number(flatId) : 1)),
         flatNumber: targetFlatObj ? targetFlatObj.number : (virtualCard?.flatNumber || String(flatNumber || "113")),
         requestDate: targetDate,
         source: virtualCard?.source || "checkout",
-        cleaningType: virtualCard?.cleaningType || (virtualCard?.source === "stayover" ? "stayover" : "checkout"),
+        cleaningType: virtualCard?.cleaningType || (isVirtualStayover ? "stayover" : "checkout"),
         status: virtualCard?.status || "dirty",
         assignedUserId: virtualCard?.assignedUserId || null,
         assignedUsername: virtualCard?.assignedUsername || null,
@@ -22302,7 +22388,11 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
         isExtended: false,
         twinBeds: Boolean(virtualCard?.twinBeds),
         extraMattress: Boolean(virtualCard?.extraMattress),
-        reservationId: virtualCard?.reservationId || virtualCard?.autoReservationId || null,
+        reservationId: isVirtualStayover
+          ? (virtualCard?.reservationId || virtualCard?.autoReservationId || null)
+          : (virtualCard?.checkoutReservationId || virtualCard?.reservationId || null),
+        checkoutReservationId: !isVirtualStayover ? (virtualCard?.checkoutReservationId || null) : null,
+        checkoutReservationCode: !isVirtualStayover ? (virtualCard?.checkoutReservationCode || null) : null,
         adminNote: virtualCard?.adminNote || null,
         leavingGuest: virtualCard?.leavingGuest || null,
         currentGuest: virtualCard?.currentGuest || null,
@@ -22412,41 +22502,74 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
     return String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
   };
 
-  // 1. Identificar reserva correspondente à estadia
+  const isStayover = Boolean(cleaningItem.source === "stayover" || cleaningItem.cleaningType === "stayover");
+  const cleanGuestCandidate = isStayover
+    ? (cleaningItem.currentGuest || cleaningItem.guestName || cleaningItem.leavingGuest)
+    : (cleaningItem.leavingGuest || cleaningItem.currentGuest || cleaningItem.guestName);
+
+  // 1. Identificar reserva correspondente à estadia (NUNCA usar autoReservationId/autoReservationCode em cards de checkout, pois pertencem ao hóspede que está ENTRANDO)
   let res = null;
-  if (cleaningItem.reservationId) {
-    res = (currentDb.reservations || []).find(r => String(r.id) === String(cleaningItem.reservationId) || r.code === cleaningItem.reservationId);
-  }
-  if (!res && cleaningItem.autoReservationId) {
-    res = (currentDb.reservations || []).find(r => String(r.id) === String(cleaningItem.autoReservationId) || r.code === cleaningItem.autoReservationId);
-  }
-  if (!res && cleaningItem.reservationCode) {
-    res = (currentDb.reservations || []).find(r => r.code === cleaningItem.reservationCode);
-  }
-  if (!res && cleaningItem.autoReservationCode) {
-    res = (currentDb.reservations || []).find(r => r.code === cleaningItem.autoReservationCode);
-  }
-  if (!res) {
-    res = (currentDb.reservations || []).find(r =>
-      r.status !== "cancelada" && r.status !== "cancelled" &&
-      (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
-      (r.checkoutDate === effectiveDate || r.checkoutDate === cleaningItem.requestDate)
-    );
-  }
-  const cleanGuestCandidate = cleaningItem.leavingGuest || cleaningItem.currentGuest || cleaningItem.guestName;
-  if (!res && cleanGuestCandidate) {
-    res = (currentDb.reservations || []).find(r =>
-      r.status !== "cancelada" && r.status !== "cancelled" &&
-      (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
-      r.guestName && isStrictSamePersonForSmoking(r.guestName, cleanGuestCandidate, false)
-    );
-  }
-  if (!res) {
-    res = (currentDb.reservations || []).find(r =>
-      r.status !== "cancelada" && r.status !== "cancelled" &&
-      (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
-      r.checkinDate <= effectiveDate && r.checkoutDate >= effectiveDate
-    );
+  if (isStayover) {
+    if (cleaningItem.reservationId) {
+      res = (currentDb.reservations || []).find(r => String(r.id) === String(cleaningItem.reservationId) || r.code === cleaningItem.reservationId);
+    }
+    if (!res && cleaningItem.autoReservationId) {
+      res = (currentDb.reservations || []).find(r => String(r.id) === String(cleaningItem.autoReservationId) || r.code === cleaningItem.autoReservationId);
+    }
+    if (!res && cleaningItem.reservationCode) {
+      res = (currentDb.reservations || []).find(r => r.code === cleaningItem.reservationCode);
+    }
+    if (!res && cleaningItem.autoReservationCode) {
+      res = (currentDb.reservations || []).find(r => r.code === cleaningItem.autoReservationCode);
+    }
+    if (!res) {
+      res = (currentDb.reservations || []).find(r =>
+        r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
+        (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
+        r.checkinDate <= effectiveDate && r.checkoutDate >= effectiveDate
+      );
+    }
+  } else {
+    if (cleaningItem.checkoutReservationId) {
+      res = (currentDb.reservations || []).find(r => String(r.id) === String(cleaningItem.checkoutReservationId) || r.code === cleaningItem.checkoutReservationId);
+    }
+    if (!res && cleaningItem.checkoutReservationCode) {
+      res = (currentDb.reservations || []).find(r => r.code === cleaningItem.checkoutReservationCode);
+    }
+    if (!res && cleaningItem.reservationId) {
+      const cand = (currentDb.reservations || []).find(r => String(r.id) === String(cleaningItem.reservationId) || r.code === cleaningItem.reservationId);
+      if (cand && (!cleanGuestCandidate || !cand.guestName || isStrictSamePersonForSmoking(cand.guestName, cleanGuestCandidate, true))) {
+        res = cand;
+      }
+    }
+    if (!res && cleaningItem.reservationCode) {
+      const cand = (currentDb.reservations || []).find(r => r.code === cleaningItem.reservationCode);
+      if (cand && (!cleanGuestCandidate || !cand.guestName || isStrictSamePersonForSmoking(cand.guestName, cleanGuestCandidate, true))) {
+        res = cand;
+      }
+    }
+    if (!res) {
+      const sameDayCheckouts = (currentDb.reservations || []).filter(r =>
+        r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
+        (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
+        (r.checkoutDate === effectiveDate || r.checkoutDate === cleaningItem.requestDate || r.earlyCheckoutDate === effectiveDate)
+      );
+      res = (cleanGuestCandidate && sameDayCheckouts.find(r => r.guestName && isStrictSamePersonForSmoking(r.guestName, cleanGuestCandidate, true))) || sameDayCheckouts[0] || null;
+    }
+    if (!res && cleanGuestCandidate) {
+      res = (currentDb.reservations || []).find(r =>
+        r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
+        (Number(r.flatId) === Number(cleaningItem.flatId) || String(r.flatNumber) === String(cleaningItem.flatNumber)) &&
+        (!r.checkinDate || r.checkinDate <= effectiveDate) &&
+        r.guestName && isStrictSamePersonForSmoking(r.guestName, cleanGuestCandidate, false)
+      ) || null;
+    }
+    // Blindagem: em card de checkout, nunca associar a uma reserva de outro hóspede (ex: hóspede fazendo check-in hoje no mesmo flat)
+    if (res && cleanGuestCandidate && !isPlaceholderOrEmptyGuestName(cleanGuestCandidate) && res.guestName && !isPlaceholderOrEmptyGuestName(res.guestName)) {
+      if (!isStrictSamePersonForSmoking(res.guestName, cleanGuestCandidate, true)) {
+        res = null;
+      }
+    }
   }
 
   if (res) {
@@ -22462,7 +22585,9 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
     res.updatedAt = now;
   }
 
-  const primarySmokerName = res?.guestName || cleanGuestCandidate || "";
+  const primarySmokerName = (!isStayover && cleanGuestCandidate && !isPlaceholderOrEmptyGuestName(cleanGuestCandidate))
+    ? cleanGuestCandidate
+    : (res?.guestName || cleanGuestCandidate || "");
 
   // 2. Identificar e atualizar cadastro do hóspede em currentDb.guests (com verificação estrita de identidade)
   if (!currentDb.guests) currentDb.guests = [];
@@ -22564,10 +22689,16 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
   if (cleanEmailStr(res?.email).includes("@")) guestEmails.add(cleanEmailStr(res.email));
 
   const rawGuestNames = [];
-  if (guest?.fullName) rawGuestNames.push(guest.fullName);
-  if (guest?.name) rawGuestNames.push(guest.name);
-  if (res?.guestName) rawGuestNames.push(res.guestName);
-  if (cleanGuestCandidate) rawGuestNames.push(cleanGuestCandidate);
+  const pushValidSmokerName = (candidate) => {
+    if (!candidate) return;
+    if (primarySmokerName && !isStrictSamePersonForSmoking(primarySmokerName, candidate, true)) return;
+    if (!rawGuestNames.includes(candidate)) rawGuestNames.push(candidate);
+  };
+  pushValidSmokerName(primarySmokerName);
+  pushValidSmokerName(guest?.fullName);
+  pushValidSmokerName(guest?.name);
+  pushValidSmokerName(res?.guestName);
+  pushValidSmokerName(cleanGuestCandidate);
 
   const matchesAnyNameStrict = (candidateName, allowInitial = false) => {
     if (!candidateName) return false;
@@ -22610,19 +22741,33 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
   };
 
   // Se a indicação de fumo está sendo desmarcada/revertida neste card, verifica se
-  // existe outro apontamento ativo de fumo em outra limpeza ou reserva deste mesmo hóspede.
+  // existe outro apontamento ativo de fumo em outra limpeza de data distinta deste mesmo hóspede.
   const hasOtherSmokingReport = (currentDb.cleaningRequests || []).some(cr =>
-    cr && String(cr.id) !== String(cleaningItem.id) && (cr.smokedInRoom || cr.guestSmoked) &&
+    cr && String(cr.id) !== String(cleaningItem.id) &&
+    !(
+      (Number(cr.flatId) === Number(cleaningItem.flatId) || String(cr.flatNumber) === String(cleaningItem.flatNumber)) &&
+      cr.requestDate === effectiveDate
+    ) &&
+    (cr.smokedInRoom === true || cr.guestSmoked === true) &&
     (
       (cr.leavingGuest && matchesAnyNameStrict(cr.leavingGuest, false)) ||
+      (cr.checkoutReservationId && (currentDb.reservations || []).some(r => String(r.id) === String(cr.checkoutReservationId) && isMatchingGuest(r))) ||
       (cr.reservationId && (currentDb.reservations || []).some(r => String(r.id) === String(cr.reservationId) && isMatchingGuest(r)))
     )
   ) || (currentDb.reservations || []).some(r =>
-    r && res && String(r.id) !== String(res.id) && (r.checkoutDate < effectiveDate || (r.checkoutDone && r.checkinDate < effectiveDate)) && (r.smokedInRoom || r.guestSmoked) &&
+    r && (!res || String(r.id) !== String(res.id)) &&
+    r.checkoutDate < effectiveDate &&
+    (r.smokedInRoom === true || r.guestSmoked === true) &&
     isMatchingGuest(r)
   );
 
   const targetSmokerState = Boolean(isSmoker || hasOtherSmokingReport);
+
+  if (res && targetSmokerState && !isSmoker) {
+    res.isSmoker = true;
+    res.smokerGuestAlert = true;
+    res.smokingAlert = "Hóspede com histórico de fumo no quarto";
+  }
 
   if (guest) {
     if (!Array.isArray(guest.tags)) guest.tags = [];
@@ -22650,12 +22795,10 @@ function updateSmokingStatusForCleaning(cleaningItem, isSmoker, userAuth, target
 
     const isFuture = otherRes.checkinDate >= effectiveDate || otherRes.checkoutDate >= effectiveDate || (!otherRes.checkoutDone && otherRes.status !== "cancelada" && otherRes.status !== "cancelled" && otherRes.status !== "completed");
 
-    if (isFuture) {
+    if (isFuture || !targetSmokerState) {
       if (targetSmokerState) {
         otherRes.isSmoker = true;
         otherRes.smokerGuestAlert = true;
-        otherRes.guestSmoked = true;
-        otherRes.smokedInRoom = true;
         otherRes.smokingAlert = "Hóspede com histórico de fumo no quarto";
       } else {
         otherRes.isSmoker = false;
