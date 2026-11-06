@@ -1536,9 +1536,9 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             let cleanModeReason = "";
             let prioritySuggested = false;
 
-            const isForceReleased = Boolean(flat.forceReleased);
+            const isForceReleased = false;
 
-            if (isClean && !isForceReleased) {
+            if (isClean) {
               if (cleanFlatMode === "never") {
                 isCleanModeBlocked = true;
                 cleanModeReason = "Bloqueado: serviço não permite flats limpos.";
@@ -1561,9 +1561,9 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               }
             }
 
-            // Allowed Room Statuses Evaluation
-            const isStatusAllowed = isForceReleased || flat.isStatusAllowed !== false;
-            const statusBlockReason = flat.statusBlockReason || "Bloqueado: status do apartamento não autorizado para este serviço.";
+            // Allowed Room Statuses Evaluation (estrito: nunca ignora filtro)
+            const isStatusAllowed = flat.isStatusAllowed !== false && !isCleanModeBlocked;
+            const statusBlockReason = flat.statusBlockReason || cleanModeReason || "Bloqueado: status do apartamento não autorizado para este serviço.";
 
             // Action Button logic for pending
             let canStart = true;

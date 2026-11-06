@@ -5464,31 +5464,10 @@ export function reconcileUniversalIntegrity(incomingState = null) {
                   }
                 }
 
-                // Sincroniza forceReleased pela data de atualização mais recente ou revoga se houve reset posterior
+                // Travas de filtro são estritas: nunca preserva forceReleased
                 const targetF = mergedFlats[eIdx];
                 const latestResetOrReturn = [targetF.resetAt, targetF.returnedAt].filter(Boolean).sort().pop() || "";
-                const curForceTs = curF.forceReleasedUpdatedAt || "";
-                const incForceTs = incF.forceReleasedUpdatedAt || "";
-                if (incForceTs && incForceTs > curForceTs) {
-                  targetF.forceReleased = Boolean(incF.forceReleased);
-                  targetF.forceReleasedUpdatedAt = incForceTs;
-                  targetF.forceReleasedDate = incF.forceReleasedDate || null;
-                  targetF.forceReleasedScenario = incF.forceReleasedScenario || null;
-                  changed = true;
-                } else if (curForceTs && curForceTs > incForceTs) {
-                  targetF.forceReleased = Boolean(curF.forceReleased);
-                  targetF.forceReleasedUpdatedAt = curForceTs;
-                  targetF.forceReleasedDate = curF.forceReleasedDate || null;
-                  targetF.forceReleasedScenario = curF.forceReleasedScenario || null;
-                }
-                if (
-                  targetF.forceReleased &&
-                  (
-                    targetF.status !== "pending" ||
-                    !targetF.forceReleasedUpdatedAt ||
-                    (latestResetOrReturn && targetF.forceReleasedUpdatedAt <= latestResetOrReturn)
-                  )
-                ) {
+                if (targetF.forceReleased) {
                   targetF.forceReleased = false;
                   targetF.forceReleasedDate = null;
                   targetF.forceReleasedScenario = null;
@@ -5677,17 +5656,8 @@ export function reconcileUniversalIntegrity(incomingState = null) {
       if (!ord || !Array.isArray(ord.flats)) continue;
       for (const fl of ord.flats) {
         if (!fl) continue;
-        // Limpa forceReleased residual sem timestamp ou vencido/pós-reset/concluído
-        const latestResetOrRet = [fl.resetAt, fl.returnedAt].filter(Boolean).sort().pop() || "";
-        if (
-          fl.forceReleased &&
-          (
-            fl.status !== "pending" ||
-            !fl.forceReleasedUpdatedAt ||
-            fl.forceReleasedUpdatedAt <= "2026-11-06T16:30:00.000Z" ||
-            (latestResetOrRet && fl.forceReleasedUpdatedAt <= latestResetOrRet)
-          )
-        ) {
+        // Purga integral de forceReleased: filtros da OS nunca podem ser ignorados
+        if (fl.forceReleased) {
           fl.forceReleased = false;
           fl.forceReleasedDate = null;
           fl.forceReleasedScenario = null;
@@ -8535,22 +8505,11 @@ export async function reconcileFromAuditLogs(db, pgPool) {
           }
         }
       } else if (rawAction === "force_release") {
-        const resolvedForceTs = meta.forceReleasedUpdatedAt || tsStr;
-        const latestResetOrRet = [flat.resetAt, flat.returnedAt].filter(Boolean).sort().pop() || null;
-        if (
-          flat.status === "pending" &&
-          typeof meta.forceReleased === "boolean" &&
-          resolvedForceTs > "2026-11-06T16:30:00.000Z" &&
-          (!latestResetOrRet || resolvedForceTs > latestResetOrRet) &&
-          (!flat.forceReleasedUpdatedAt || resolvedForceTs >= flat.forceReleasedUpdatedAt)
-        ) {
-          if (flat.forceReleased !== meta.forceReleased || flat.forceReleasedUpdatedAt !== resolvedForceTs) {
-            flat.forceReleased = meta.forceReleased;
-            flat.forceReleasedUpdatedAt = resolvedForceTs;
-            flat.forceReleasedDate = meta.forceReleased ? (meta.forceReleasedDate || resolvedForceTs.substring(0, 10)) : null;
-            flat.forceReleasedScenario = meta.forceReleased ? (meta.forceReleasedScenario || null) : null;
-            changed = true;
-          }
+        if (flat.forceReleased) {
+          flat.forceReleased = false;
+          flat.forceReleasedDate = null;
+          flat.forceReleasedScenario = null;
+          changed = true;
         }
       } else if (rawAction === "entry_request") {
         if (
@@ -8751,16 +8710,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       if (!ord || !Array.isArray(ord.flats)) continue;
       for (const fl of ord.flats) {
         if (!fl) continue;
-        const latestResetOrRet = [fl.resetAt, fl.returnedAt].filter(Boolean).sort().pop() || "";
-        if (
-          fl.forceReleased &&
-          (
-            fl.status !== "pending" ||
-            !fl.forceReleasedUpdatedAt ||
-            fl.forceReleasedUpdatedAt <= "2026-11-06T16:30:00.000Z" ||
-            (latestResetOrRet && fl.forceReleasedUpdatedAt <= latestResetOrRet)
-          )
-        ) {
+        if (fl.forceReleased) {
           fl.forceReleased = false;
           fl.forceReleasedDate = null;
           fl.forceReleasedScenario = null;
@@ -19105,35 +19055,64 @@ function getFlatServiceInProgress(flatId, flatNumber) {
 
 function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr(), precomputedRequests = null) {
   const fId = Number(flatId);
-  const fNum = String(flatNumber || "");
+  const fNum = String(flatNumber || "").trim();
+  const fNumDigits = fNum.replace(/\D/g, "");
+  const targetDate = String(dateStr || getTodayStr()).substring(0, 10);
+
+  const matchesTargetFlat = (obj) => {
+    if (!obj) return false;
+    if (fId && Number(obj.flatId) === fId) return true;
+    const objFlatNum = String(obj.flatNumber || "").trim();
+    if (fNum && objFlatNum === fNum) return true;
+    if (fNumDigits && objFlatNum.replace(/\D/g, "") === fNumDigits) return true;
+    return false;
+  };
 
   // 1. Ocupação em tempo real (Reservas ativas cobrindo a data de referência)
-  const activeRes = (db.reservations || []).filter(r =>
-    (Number(r.flatId) === fId || (fNum && String(r.flatNumber) === fNum)) &&
-    r.status !== "cancelada" &&
-    r.status !== "cancelado" &&
-    r.status !== "no_show"
-  );
+  const activeRes = (db.reservations || []).filter(r => {
+    if (!matchesTargetFlat(r)) return false;
+    const st = String(r.status || "").toLowerCase().trim();
+    if (st === "cancelada" || st === "cancelado" || st === "cancelled" || st === "no_show" || st === "expirada") return false;
+    if (typeof isPreReservationBlocked === "function" && isPreReservationBlocked(r)) return false;
+    return true;
+  });
 
-  const stayoverRes = activeRes.find(r => r.checkinDate < dateStr && r.checkoutDate > dateStr && !r.checkoutDone && !r.earlyCheckout && r.status !== "completed" && r.status !== "checked_out");
-  const checkinTodayRes = activeRes.find(r => r.checkinDate === dateStr && !r.checkoutDone && !r.earlyCheckout && r.status !== "completed" && r.status !== "checked_out");
+  const isResCheckedOut = (r) => {
+    if (!r) return false;
+    const st = String(r.status || "").toLowerCase().trim();
+    return Boolean(st === "checked_out" || st === "completed" || r.checkoutDone || r.earlyCheckout || r.actualCheckoutAt);
+  };
+
+  const stayoverRes = activeRes.find(r => {
+    const ci = String(r.checkinDate || "").substring(0, 10);
+    const co = String(r.checkoutDate || "").substring(0, 10);
+    return ci && co && ci < targetDate && co > targetDate && !isResCheckedOut(r);
+  });
+
+  const checkinTodayRes = activeRes.find(r => {
+    const ci = String(r.checkinDate || "").substring(0, 10);
+    const co = String(r.checkoutDate || "").substring(0, 10);
+    return ci === targetDate && (!co || co >= targetDate) && !isResCheckedOut(r);
+  });
+
+  const checkinSt = String(checkinTodayRes?.status || "").toLowerCase().trim();
   const isCheckedIn = Boolean(
     checkinTodayRes && (
-      checkinTodayRes.status === "checked_in" ||
-      checkinTodayRes.status === "checkin" ||
-      checkinTodayRes.status === "hospedado" ||
-      checkinTodayRes.status === "in_house" ||
+      checkinSt === "checked_in" ||
+      checkinSt === "checkin" ||
+      checkinSt === "hospedado" ||
+      checkinSt === "in_house" ||
       checkinTodayRes.checkinDone ||
       checkinTodayRes.checkedInAt ||
-      checkinTodayRes.fnhrCompleted ||
       checkinTodayRes.keyDelivered ||
       checkinTodayRes.accessLiberated
     )
   );
+
   const checkoutTodayRes =
-    activeRes.find(r => r.checkoutDate === dateStr && !r.checkoutDone && !r.earlyCheckout && r.status !== "completed" && r.status !== "checked_out" && !r.actualCheckoutAt) ||
-    activeRes.find(r => r.checkoutDate === dateStr);
-  const isCheckedOut = Boolean(checkoutTodayRes && (checkoutTodayRes.status === "checked_out" || checkoutTodayRes.status === "completed" || checkoutTodayRes.checkoutDone || checkoutTodayRes.earlyCheckout || checkoutTodayRes.actualCheckoutAt));
+    activeRes.find(r => String(r.checkoutDate || "").substring(0, 10) === targetDate && !isResCheckedOut(r)) ||
+    activeRes.find(r => String(r.checkoutDate || "").substring(0, 10) === targetDate);
+  const isCheckedOut = isResCheckedOut(checkoutTodayRes);
 
   const isOccupied = Boolean(stayoverRes || isCheckedIn || (checkoutTodayRes && !isCheckedOut));
   const currentGuest = stayoverRes ? (stayoverRes.guestName || stayoverRes.title) :
@@ -19143,29 +19122,40 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr(), prec
   const expectedArrival = checkinTodayRes ? (checkinTodayRes.estimatedArrivalTime || checkinTodayRes.arrivalTime || checkinTodayRes.eta || checkinTodayRes.checkinTime || "14:00") : null;
 
   // 2. Status de Higienização em Tempo Real (Apenas data consultada ou checkout recente)
-  const dailyRequests = Array.isArray(precomputedRequests) ? precomputedRequests : (typeof getRequestsForDate === "function" ? getRequestsForDate(dateStr) : (db.cleaningRequests || []));
-  const todayReq = dailyRequests.find(c =>
-    (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
+  const dailyRequests = Array.isArray(precomputedRequests) ? precomputedRequests : (typeof getRequestsForDate === "function" ? getRequestsForDate(targetDate) : (db.cleaningRequests || []));
+  const isCleaningCandidate = (c) =>
+    matchesTargetFlat(c) &&
     !c.isDeleted &&
     c.status !== "deleted" &&
     !c.isInstructionOnly &&
     c.source !== "manual_instruction" &&
     c.type !== "instruction" &&
-    c.type !== "bed_adjustment_only"
-  );
+    c.type !== "bed_adjustment_only";
 
-  const directTodayReq = (db.cleaningRequests || []).find(c =>
-    (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
-    (c.requestDate === dateStr || c.effectiveDate === dateStr) &&
-    !c.isDeleted &&
-    c.status !== "deleted" &&
-    !c.isInstructionOnly &&
-    c.source !== "manual_instruction" &&
-    c.type !== "instruction" &&
-    c.type !== "bed_adjustment_only"
-  );
+  const todayReq = dailyRequests.find(isCleaningCandidate);
 
-  const reqToEvaluate = todayReq || directTodayReq;
+  const directCandidates = (db.cleaningRequests || []).filter(c =>
+    isCleaningCandidate(c) &&
+    (String(c.requestDate || "").substring(0, 10) === targetDate || String(c.effectiveDate || "").substring(0, 10) === targetDate)
+  );
+  // Prioriza faxina em andamento, depois pendente/suja mais recente, depois concluída
+  directCandidates.sort((a, b) => {
+    const stA = a.cleaningRequest?.status || a.status;
+    const stB = b.cleaningRequest?.status || b.status;
+    const rank = (s) => (s === "in_progress" || s === "cleaning_now") ? 3 : (s === "dirty" || s === "pending" || s === "will_clean" || s === "pending_issue") ? 2 : 1;
+    const rDiff = rank(stB) - rank(stA);
+    if (rDiff !== 0) return rDiff;
+    const tsA = a.updatedAt || a.createdAt || "";
+    const tsB = b.updatedAt || b.createdAt || "";
+    return tsB.localeCompare(tsA);
+  });
+  const directTodayReq = directCandidates[0] || null;
+
+  // Se houver faxina ativamente em andamento no banco direto, prioriza sobre card cacheado
+  const reqToEvaluate =
+    (directTodayReq && (directTodayReq.status === "in_progress" || directTodayReq.status === "cleaning_now"))
+      ? directTodayReq
+      : (todayReq || directTodayReq);
 
   let isDirty = false;
   let cleaningStatus = "clean"; // "clean" | "dirty" | "in_progress"
@@ -19196,11 +19186,11 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr(), prec
   } else {
     // Checkout recente (ontem) que ainda não teve faxina concluída
     const yesterdayStr = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-1) : "";
-    const recentCheckoutRes = yesterdayStr ? activeRes.find(r => r.checkoutDate === yesterdayStr) : null;
+    const recentCheckoutRes = yesterdayStr ? activeRes.find(r => String(r.checkoutDate || "").substring(0, 10) === yesterdayStr) : null;
     if (recentCheckoutRes) {
       const recentClean = (db.cleaningRequests || []).find(c =>
-        (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
-        (c.requestDate >= yesterdayStr || c.effectiveDate >= yesterdayStr) &&
+        matchesTargetFlat(c) &&
+        (String(c.requestDate || "").substring(0, 10) >= yesterdayStr || String(c.effectiveDate || "").substring(0, 10) >= yesterdayStr) &&
         (c.status === "clean" || c.status === "inspected" || c.status === "deleted" || Boolean(c.isDeleted) || Boolean(c.completedAt))
       );
       if (!recentClean) {
@@ -19332,71 +19322,114 @@ function getAllowedRoomStatuses(order) {
 }
 
 function getEffectiveForceReleased(order, flat, scenario, realtime, todayStr = getTodayStr()) {
-  if (!flat || !flat.forceReleased || flat.status !== "pending") return false;
-  const rt = realtime || getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
-  const sc = scenario || getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
-  const allowedStatuses = getAllowedRoomStatuses(order);
-  const hasPendingCheckoutGuest = Boolean(rt && rt.hasCheckoutToday && !rt.isCheckedOut);
-  const hasStayoverGuest = Boolean(rt && (rt.isOccupied || rt.isCheckedIn) && !hasPendingCheckoutGuest);
-
-  // Trava absoluta: se há hóspede em estadia ou aguardando check-out e o filtro da OS não permite esse cenário,
-  // revoga forceReleased automaticamente para nunca permitir início de serviço com hóspede no quarto.
-  if (
-    (hasPendingCheckoutGuest && !allowedStatuses.includes("checkout_pendente")) ||
-    (hasStayoverGuest && !allowedStatuses.includes("stayover")) ||
-    ((sc === "stayover" || sc === "checkout_pendente") && !allowedStatuses.includes(sc))
-  ) {
+  // Os filtros da Ordem de Serviço nunca podem ser ignorados ou contornados manualmente.
+  if (flat && flat.forceReleased) {
     flat.forceReleased = false;
     flat.forceReleasedDate = null;
     flat.forceReleasedScenario = null;
-    return false;
   }
-
-  // Se o forceReleased foi concedido em outro dia ou em outro cenário operacional e o flat mudou de status, expira
-  if (flat.forceReleasedDate && flat.forceReleasedDate !== todayStr) {
-    flat.forceReleased = false;
-    flat.forceReleasedDate = null;
-    flat.forceReleasedScenario = null;
-    return false;
-  }
-  if (flat.forceReleasedScenario && flat.forceReleasedScenario !== sc) {
-    flat.forceReleased = false;
-    flat.forceReleasedDate = null;
-    flat.forceReleasedScenario = null;
-    return false;
-  }
-
-  return true;
+  return false;
 }
 
-function isServiceFlatStatusAllowed(order, flat, scenario, realtime, todayStr = getTodayStr()) {
+function evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr = getTodayStr()) {
+  if (flat && flat.forceReleased) {
+    flat.forceReleased = false;
+    flat.forceReleasedDate = null;
+    flat.forceReleasedScenario = null;
+  }
   const allowedStatuses = getAllowedRoomStatuses(order);
   const rt = realtime || (flat ? getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr) : null);
   const sc = scenario || (flat ? getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr) : "vago_limpo");
+  const scenarioInfo = OPERATIONAL_SCENARIOS[sc] || {};
+
   const hasPendingCheckoutGuest = Boolean(rt && rt.hasCheckoutToday && !rt.isCheckedOut);
   const hasStayoverGuest = Boolean(rt && (rt.isOccupied || rt.isCheckedIn) && !hasPendingCheckoutGuest);
 
-  // Nunca permite entrada/início com hóspede em estadia ou check-out pendente se o filtro da OS bloquear esse status
+  // 1. Trava de Hóspede com Check-out Hoje Pendente
   if (hasPendingCheckoutGuest && !allowedStatuses.includes("checkout_pendente")) {
-    if (flat && flat.forceReleased) {
-      flat.forceReleased = false;
-      flat.forceReleasedDate = null;
-      flat.forceReleasedScenario = null;
-    }
-    return false;
+    return {
+      allowed: false,
+      scenario: sc,
+      blockReason: `Bloqueado: ${OPERATIONAL_SCENARIOS.checkout_pendente.blockReason}`
+    };
   }
+
+  // 2. Trava de Hóspede em Estadia (Stayover ou Check-in já realizado hoje)
   if (hasStayoverGuest && !allowedStatuses.includes("stayover")) {
-    if (flat && flat.forceReleased) {
-      flat.forceReleased = false;
-      flat.forceReleasedDate = null;
-      flat.forceReleasedScenario = null;
+    return {
+      allowed: false,
+      scenario: sc,
+      blockReason: `Bloqueado: ${OPERATIONAL_SCENARIOS.stayover.blockReason}`
+    };
+  }
+
+  // 3. Trava de Camareira em Limpeza no Momento
+  if (rt && rt.cleaningStatus === "in_progress" && !allowedStatuses.includes("em_limpeza")) {
+    return {
+      allowed: false,
+      scenario: sc,
+      blockReason: `Bloqueado: ${OPERATIONAL_SCENARIOS.em_limpeza.blockReason}`
+    };
+  }
+
+  // 4. Trava de Check-in Hoje (quando não há hóspede ainda no quarto)
+  if (rt && rt.hasCheckinToday && !hasPendingCheckoutGuest && !hasStayoverGuest && sc !== "em_limpeza") {
+    const neededCheckinScenario = rt.isDirty ? "checkin_hoje_sujo" : "checkin_hoje_limpo";
+    if (!allowedStatuses.includes(neededCheckinScenario)) {
+      return {
+        allowed: false,
+        scenario: sc,
+        blockReason: `Bloqueado: ${OPERATIONAL_SCENARIOS[neededCheckinScenario].blockReason}`
+      };
     }
-    return false;
   }
-  if (allowedStatuses.includes(sc)) {
-    return true;
+
+  // 5. Trava estrita do cenário operacional atual na lista allowedRoomStatuses
+  if (!allowedStatuses.includes(sc)) {
+    return {
+      allowed: false,
+      scenario: sc,
+      blockReason: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`
+    };
   }
-  return getEffectiveForceReleased(order, flat, sc, rt, todayStr);
+
+  // 6. Trava de cleanFlatMode ("never" ou "priority") para apartamentos limpos
+  const isDirty = rt ? Boolean(rt.isDirty) : (flat ? isFlatDirty(flat.flatId, flat.flatNumber, todayStr) : false);
+  const cleanFlatMode = order?.cleanFlatMode || (Array.isArray(order?.allowedRoomStatuses) ? "always" : "priority");
+  if (!isDirty) {
+    if (cleanFlatMode === "never") {
+      return {
+        allowed: false,
+        scenario: sc,
+        blockReason: "Bloqueado: este serviço não permite intervenção em apartamentos limpos."
+      };
+    }
+    if (cleanFlatMode === "priority" && flat) {
+      const otherDirty = (order?.flats || []).some(otherF => {
+        if (!otherF || Number(otherF.flatId) === Number(flat.flatId) || otherF.status === "done") return false;
+        if (!isFlatDirty(otherF.flatId, otherF.flatNumber, todayStr)) return false;
+        const otherScenario = getFlatOperationalScenario(otherF.flatId, otherF.flatNumber, todayStr);
+        return allowedStatuses.includes(otherScenario);
+      });
+      if (otherDirty) {
+        return {
+          allowed: false,
+          scenario: sc,
+          blockReason: "Bloqueado: existem outros apartamentos deste serviço com check-out ou pendência de limpeza. Priorize os apartamentos sujos primeiro."
+        };
+      }
+    }
+  }
+
+  return {
+    allowed: true,
+    scenario: sc,
+    blockReason: null
+  };
+}
+
+function isServiceFlatStatusAllowed(order, flat, scenario, realtime, todayStr = getTodayStr()) {
+  return evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr).allowed;
 }
 
 function formatServiceDuration(startIso, endIso) {
@@ -19865,21 +19898,8 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
 
         const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
         const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
-        const isScenarioAllowed = allowedStatuses.includes(scenario);
-        const isDirty = isFlatDirty(flat.flatId, flat.flatNumber, todayStr);
-        const effectiveForceReleased = getEffectiveForceReleased(order, flat, scenario, realtime, todayStr);
-
-        let isCleanModeAllowed = true;
-        if (!isDirty) {
-          if (cleanFlatMode === "never") {
-            isCleanModeAllowed = false;
-          } else if (cleanFlatMode === "priority" && hasOtherAllowedDirtyFlat(flat.flatId)) {
-            isCleanModeAllowed = false;
-          }
-        }
-
-        const isStatusAllowedNow = isServiceFlatStatusAllowed(order, flat, scenario, realtime, todayStr);
-        const isRoomCriteriaMet = isStatusAllowedNow && (effectiveForceReleased || (isScenarioAllowed && isCleanModeAllowed));
+        const filterEval = evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr);
+        const isRoomCriteriaMet = filterEval.allowed;
 
         if (!isRoomCriteriaMet) {
           if (flat.workerNotifiedAvailable) {
@@ -25461,11 +25481,11 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
     const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
     const scenario = getFlatOperationalScenario(f.flatId, f.flatNumber, todayStr);
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
-    const effectiveForce = getEffectiveForceReleased(order, f, scenario, realtime, todayStr);
-    const isAllowed = isServiceFlatStatusAllowed(order, f, scenario, realtime, todayStr);
+    const filterEval = evaluateServiceFlatFilter(order, f, scenario, realtime, todayStr);
+    const isAllowed = filterEval.allowed;
     return {
       ...f,
-      forceReleased: effectiveForce,
+      forceReleased: false,
       isDirty: realtime.isDirty,
       isOccupied: realtime.isOccupied,
       cleaningStatus: realtime.cleaningStatus,
@@ -25480,7 +25500,7 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
       operationalScenarioLabel: scenarioInfo.label || scenario,
       operationalScenarioIcon: scenarioInfo.icon || "🏠",
       isStatusAllowed: isAllowed,
-      statusBlockReason: isAllowed ? null : `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`,
+      statusBlockReason: isAllowed ? null : (filterEval.blockReason || `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`),
       hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente" || Boolean(realtime.isOccupied),
       scenarioWarning: scenarioInfo.warning || null
     };
@@ -25606,66 +25626,29 @@ app.post("/api/service-orders/:id/flats/:flatId/force-release", (req, res) => {
   const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
   const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
   const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
-  const allowedStatuses = getAllowedRoomStatuses(order);
-  const targetForce = typeof req.body?.forceReleased === "boolean" ? req.body.forceReleased : !Boolean(flat.forceReleased);
+  const filterEval = evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr);
+  const targetForce = typeof req.body?.forceReleased === "boolean" ? req.body.forceReleased : false;
 
-  const hasPendingCheckoutGuest = Boolean(realtime && realtime.hasCheckoutToday && !realtime.isCheckedOut);
-  const hasStayoverGuest = Boolean(realtime && (realtime.isOccupied || realtime.isCheckedIn) && !hasPendingCheckoutGuest);
-  if (
-    targetForce &&
-    (
-      (hasPendingCheckoutGuest && !allowedStatuses.includes("checkout_pendente")) ||
-      (hasStayoverGuest && !allowedStatuses.includes("stayover")) ||
-      ((scenario === "stayover" || scenario === "checkout_pendente") && !allowedStatuses.includes(scenario))
-    )
-  ) {
+  if (targetForce && !filterEval.allowed) {
     return res.status(400).json({
-      error: `Não é permitido liberar manualmente o Flat ${flat.flatNumber} pois há hospedagem em andamento (${scenarioInfo.label || "Hóspede no quarto"}) e as travas desta Ordem de Serviço bloqueiam quartos ocupados.`
+      error: `As travas de filtro da Ordem de Serviço não permitem liberar manualmente o Flat ${flat.flatNumber} no status atual (${scenarioInfo.label || scenario}). ${filterEval.blockReason || "Altere as Travas de Liberação na configuração da ordem caso deseje autorizar este status."}`
     });
   }
 
   const nowIso = new Date().toISOString();
-  flat.forceReleased = targetForce;
+  flat.forceReleased = false;
   flat.forceReleasedUpdatedAt = nowIso;
-  flat.forceReleasedDate = targetForce ? todayStr : null;
-  flat.forceReleasedScenario = targetForce ? scenario : null;
+  flat.forceReleasedDate = null;
+  flat.forceReleasedScenario = null;
   order.updatedAt = nowIso;
 
-  if (flat.forceReleased) {
-    flat.workerNotifiedAvailable = false;
-    flat.workerNotifiedAvailableAt = null;
-    flat.workerLastNotifiedPhone = null;
-  }
-
   saveDatabase("force_release_service_flat");
-
-  logAuditEvent({
-    level: "info",
-    category: "cleaning",
-    action: "SERVICE_ORDER_FORCE_RELEASE",
-    actor: { id: userAuth.id, name: userAuth.username || userAuth.name || "admin", role: userAuth.role },
-    details: {
-      serviceOrderId: order.id,
-      flatId: flat.flatId,
-      flatNumber: flat.flatNumber,
-      forceReleased: flat.forceReleased,
-      forceReleasedUpdatedAt: nowIso,
-      forceReleasedDate: flat.forceReleasedDate,
-      forceReleasedScenario: flat.forceReleasedScenario,
-      action: "force_release"
-    }
-  });
-
-  // Dispara verificação imediata para notificar o prestador via WhatsApp
-  checkAndNotifyAvailableServiceFlats(order.id);
 
   res.json({
     success: true,
     flat,
-    forceReleased: flat.forceReleased,
-    message: flat.forceReleased
-      ? `Flat ${flat.flatNumber} liberado manualmente para execução.`
-      : `Liberação manual do Flat ${flat.flatNumber} revogada.`
+    forceReleased: false,
+    message: `O Flat ${flat.flatNumber} segue estritamente as travas de filtro da Ordem de Serviço.`
   });
 });
 
@@ -26252,11 +26235,11 @@ app.get("/api/service/public/:token", (req, res) => {
     const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
     const scenario = getFlatOperationalScenario(f.flatId, f.flatNumber, todayStr);
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
-    const effectiveForce = getEffectiveForceReleased(order, f, scenario, realtime, todayStr);
-    const isAllowed = isServiceFlatStatusAllowed(order, f, scenario, realtime, todayStr);
+    const filterEval = evaluateServiceFlatFilter(order, f, scenario, realtime, todayStr);
+    const isAllowed = filterEval.allowed;
     return {
       ...f,
-      forceReleased: effectiveForce,
+      forceReleased: false,
       isDirty: realtime.isDirty,
       isOccupied: realtime.isOccupied,
       cleaningStatus: realtime.cleaningStatus,
@@ -26272,7 +26255,7 @@ app.get("/api/service/public/:token", (req, res) => {
       operationalScenarioLabel: scenarioInfo.label || scenario,
       operationalScenarioIcon: scenarioInfo.icon || "🏠",
       isStatusAllowed: isAllowed,
-      statusBlockReason: isAllowed ? null : `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`,
+      statusBlockReason: isAllowed ? null : (filterEval.blockReason || `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`),
       hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente" || Boolean(realtime.isOccupied),
       scenarioWarning: scenarioInfo.warning || null
     };
@@ -26502,15 +26485,15 @@ app.post("/api/service/public/:token/flats/:flatId/request-entry", async (req, r
     return res.status(400).json({ error: "Serviço já foi finalizado neste apartamento." });
   }
 
-  // Validação da Matriz de Status Permitidos
+  // Validação estrita da Matriz de Status Permitidos e Modo de Limpeza
   const todayStr = getTodayStr();
-  const allowedStatuses = getAllowedRoomStatuses(order);
   const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
   const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
-  if (!isServiceFlatStatusAllowed(order, flat, scenario, realtime, todayStr)) {
+  const filterEval = evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr);
+  if (!filterEval.allowed) {
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
     return res.status(400).json({
-      error: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`
+      error: filterEval.blockReason || `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`
     });
   }
 
@@ -26565,33 +26548,15 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
     return res.status(400).json({ error: `Limite diário de apartamentos atingido para hoje (máximo: ${maxPerDay}).` });
   }
 
-  // 4. Avaliar allowedRoomStatuses e cleanFlatMode
-  const allowedStatuses = getAllowedRoomStatuses(order);
+  // 4. Avaliar estritamente allowedRoomStatuses e cleanFlatMode (sem nenhum bypass)
   const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
   const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
-  const effectiveForce = getEffectiveForceReleased(order, flat, scenario, realtime, todayStr);
-  if (!isServiceFlatStatusAllowed(order, flat, scenario, realtime, todayStr)) {
+  const filterEval = evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr);
+  if (!filterEval.allowed) {
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
-    return res.status(400).json({ error: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}` });
-  }
-
-  const isDirty = isFlatDirty(flat.flatId, flat.flatNumber, todayStr);
-  const cleanFlatMode = order.cleanFlatMode || "priority";
-  if (!effectiveForce && !isDirty) {
-    if (cleanFlatMode === "never") {
-      return res.status(400).json({ error: "Este serviço não permite intervenção em apartamentos limpos." });
-    }
-    if (cleanFlatMode === "priority") {
-      const otherDirty = (order.flats || []).some(otherF => {
-        if (Number(otherF.flatId) === Number(flat.flatId) || otherF.status === "done") return false;
-        if (!isFlatDirty(otherF.flatId, otherF.flatNumber, todayStr)) return false;
-        const otherScenario = getFlatOperationalScenario(otherF.flatId, otherF.flatNumber, todayStr);
-        return allowedStatuses.includes(otherScenario);
-      });
-      if (otherDirty) {
-        return res.status(400).json({ error: "Existem outros apartamentos deste serviço com check-out ou pendência de limpeza. Priorize os apartamentos sujos primeiro." });
-      }
-    }
+    return res.status(400).json({
+      error: filterEval.blockReason || `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`
+    });
   }
 
   const now = new Date();

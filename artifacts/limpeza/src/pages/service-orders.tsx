@@ -2941,51 +2941,19 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                               )}
 
                               {flat.status === "pending" ? (
-                                flat.forceReleased ? (
+                                flat.isStatusAllowed === false ? (
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() =>
-                                      forceReleaseMutation.mutate({
-                                        orderId: effectiveTrackingOrderId,
-                                        flatId: flat.flatId,
-                                        forceReleased: false,
-                                      })
-                                    }
-                                    disabled={forceReleaseMutation.isPending}
-                                    className="h-8 px-2.5 text-xs text-amber-700 border-amber-300 gap-1 font-medium flex-1"
+                                    disabled
+                                    title={flat.statusBlockReason || "Bloqueado pelas travas de filtro da Ordem de Serviço"}
+                                    className="h-8 px-2.5 text-xs text-rose-700 border-rose-200 bg-rose-50/60 gap-1 font-semibold flex-1 opacity-80"
                                   >
-                                    <Lock className="w-3.5 h-3.5" />
-                                    <span>Bloquear</span>
+                                    <Lock className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="truncate">
+                                      Bloqueado ({flat.operationalScenarioLabel || "Filtro"})
+                                    </span>
                                   </Button>
-                                ) : flat.isStatusAllowed === false ? (
-                                  flat.hasGuestInside || (flat as any).isOccupied ? (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      disabled
-                                      className="h-8 px-2.5 text-xs text-rose-700 border-rose-200 bg-rose-50/60 gap-1 font-semibold flex-1 opacity-80"
-                                    >
-                                      <Lock className="w-3.5 h-3.5" />
-                                      <span>Bloqueado (Hóspede)</span>
-                                    </Button>
-                                  ) : (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() =>
-                                        forceReleaseMutation.mutate({
-                                          orderId: effectiveTrackingOrderId,
-                                          flatId: flat.flatId,
-                                          forceReleased: true,
-                                        })
-                                      }
-                                      disabled={forceReleaseMutation.isPending}
-                                      className="h-8 px-2.5 text-xs text-emerald-700 border-emerald-300 font-semibold gap-1 flex-1"
-                                    >
-                                      <span>🔓 Liberar Exceção</span>
-                                    </Button>
-                                  )
                                 ) : null
                               ) : (
                                 <Button
@@ -3269,70 +3237,25 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                       </Tooltip>
                                     )}
                                     {flat.status === "pending" ? (
-                                      flat.forceReleased ? (
+                                      flat.isStatusAllowed === false ? (
                                         <Tooltip>
                                           <TooltipTrigger asChild>
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() =>
-                                                forceReleaseMutation.mutate({
-                                                  orderId: effectiveTrackingOrderId,
-                                                  flatId: flat.flatId,
-                                                  forceReleased: false,
-                                                })
-                                              }
-                                              disabled={forceReleaseMutation.isPending}
-                                              className="h-8 px-2 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 gap-1 font-medium"
-                                            >
-                                              <Lock className="w-3.5 h-3.5" />
-                                              <span className="hidden sm:inline">Bloquear</span>
-                                            </Button>
-                                          </TooltipTrigger>
-                                          <TooltipContent>Revogar liberação manual (restaurar restrições)</TooltipContent>
-                                        </Tooltip>
-                                      ) : flat.isStatusAllowed === false ? (
-                                        flat.hasGuestInside || (flat as any).isOccupied ? (
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <span>
-                                                <Button
-                                                  variant="outline"
-                                                  size="sm"
-                                                  disabled
-                                                  className="h-8 px-2 text-xs text-rose-700 border-rose-200 bg-rose-50/60 gap-1 font-semibold opacity-80"
-                                                >
-                                                  <Lock className="w-3.5 h-3.5" />
-                                                  <span className="hidden sm:inline">Hóspede</span>
-                                                </Button>
-                                              </span>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              Bloqueado pelo filtro da OS: há hóspede em estadia neste flat
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        ) : (
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
+                                            <span>
                                               <Button
                                                 variant="outline"
                                                 size="sm"
-                                                onClick={() =>
-                                                  forceReleaseMutation.mutate({
-                                                    orderId: effectiveTrackingOrderId,
-                                                    flatId: flat.flatId,
-                                                    forceReleased: true,
-                                                  })
-                                                }
-                                                disabled={forceReleaseMutation.isPending}
-                                                className="h-8 px-2 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold gap-1"
+                                                disabled
+                                                className="h-8 px-2 text-xs text-rose-700 border-rose-200 bg-rose-50/60 gap-1 font-semibold opacity-80"
                                               >
-                                                <span>🔓 Liberar Exceção</span>
+                                                <Lock className="w-3.5 h-3.5 shrink-0" />
+                                                <span className="hidden sm:inline">Bloqueado</span>
                                               </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>Liberar este flat vago manualmente hoje</TooltipContent>
-                                          </Tooltip>
-                                        )
+                                            </span>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            {flat.statusBlockReason || `Bloqueado pelo filtro da OS (${flat.operationalScenarioLabel || "status não permitido"})`}
+                                          </TooltipContent>
+                                        </Tooltip>
                                       ) : null
                                     ) : (
                                       <Tooltip>
@@ -3587,26 +3510,14 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                     </Button>
                   )}
 
-                  {detailModalFlat && detailModalFlat.status === "pending" && (detailModalFlat.forceReleased || (detailModalFlat.isStatusAllowed === false && !detailModalFlat.hasGuestInside && !(detailModalFlat as any).isOccupied)) && (
-                    <Button
+                  {detailModalFlat && detailModalFlat.status === "pending" && detailModalFlat.isStatusAllowed === false && (
+                    <Badge
                       variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        forceReleaseMutation.mutate({
-                          orderId: effectiveTrackingOrderId,
-                          flatId: detailModalFlat.flatId,
-                          forceReleased: !detailModalFlat.forceReleased,
-                        });
-                      }}
-                      disabled={forceReleaseMutation.isPending}
-                      className={`text-xs gap-1.5 font-semibold ${
-                        detailModalFlat.forceReleased
-                          ? "text-amber-700 border-amber-300 hover:bg-amber-50"
-                          : "text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                      }`}
+                      className="text-xs px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border-rose-200 font-semibold flex items-center gap-1.5"
                     >
-                      {detailModalFlat.forceReleased ? "🔒 Revogar Liberação Manual" : "🔓 Liberar Exceção (Vago)"}
-                    </Button>
+                      <Lock className="w-3.5 h-3.5 shrink-0" />
+                      <span>{detailModalFlat.statusBlockReason || `Bloqueado pelo filtro (${detailModalFlat.operationalScenarioLabel || "status não permitido"})`}</span>
+                    </Badge>
                   )}
 
                   {detailModalFlat && detailModalFlat.status !== "pending" && (
