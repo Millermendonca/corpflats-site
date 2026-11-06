@@ -33771,11 +33771,17 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       ? "⏳ Pré-reserva aguardando confirmação do pagamento. Apenas após o pagamento a reserva é confirmada, o check-in digital é liberado e os dados são enviados para a recepção/portaria."
       : (isCheckinToday
           ? (isFlatClean
-              ? (canDoEarlyCheckin && !isPastOrExact14h
-                  ? "🎉 Seu Apartamento já está limpo e inspecionado! Seu benefício de check-in antecipado (cortesia mediante disponibilidade) está liberado. Você já pode se dirigir à portaria 24h."
-                  : (isPastOrExact14h
-                      ? "✨ Check-in liberado! Seu apartamento está higienizado e pronto na portaria 24h."
-                      : "✨ Seu apartamento já está preparado e limpo. O horário oficial de check-in inicia às 14:00 na portaria 24h."))
+              ? ((Boolean(r.fnhrCompleted || r.preCheckinCompleted || r.hasPreCheckin || (completedCheckins >= totalGuests && totalGuests > 0) || (Array.isArray(r.guests) && r.guests.length > 0 && r.guests.some(g => g.hasCompletedCheckin))))
+                  ? (canDoEarlyCheckin && !isPastOrExact14h
+                      ? "🎉 Seu Apartamento já está limpo e inspecionado! Seu benefício de check-in antecipado (cortesia mediante disponibilidade) está liberado. Você já pode se dirigir à portaria 24h."
+                      : (isPastOrExact14h
+                          ? "✨ Check-in liberado! Seu apartamento está higienizado e pronto na portaria 24h."
+                          : "✨ Seu apartamento já está preparado e limpo. O horário oficial de check-in inicia às 14:00 na portaria 24h."))
+                  : (canDoEarlyCheckin && !isPastOrExact14h
+                      ? "🎉 Seu Apartamento já está limpo e pronto! Estamos apenas aguardando você fazer o seu Check-in Online abaixo para liberar sua entrada antecipada na portaria 24h."
+                      : (isPastOrExact14h
+                          ? "✨ Seu apartamento já está limpo e pronto! Estamos apenas aguardando você fazer o seu Check-in Online abaixo para liberar sua entrada na portaria 24h."
+                          : "✨ Seu apartamento já está preparado e limpo. Conclua o seu Check-in Online abaixo para deixar sua entrada liberada na portaria 24h a partir das 14:00.")))
               : "🧹 Apartamento em higienização e preparação pela equipe de governança. O horário oficial de check-in é a partir das 14:00 (antecipação concedida estritamente mediante disponibilidade após a conclusão da limpeza).")
           : `Check-in a partir das 14:00 em ${r.checkinDate}.`),
     breakfastOrder: existingBreakfastOrder || null,

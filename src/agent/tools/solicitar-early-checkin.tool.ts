@@ -217,9 +217,25 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
         }
       }
 
-      const msg =
-        `Confirme com entusiasmo que o early check-in para as ${horarioFormatado} no ${reserva.nome_imovel} foi registrado como cortesia na reserva ${reserva.id} ` +
-        `e que a equipe de governança já foi avisada da chegada nesse horário.`;
+      const isPreCheckinAlreadyDone = Boolean(
+        targetRes &&
+        !targetRes.needsReSignature &&
+        (
+          targetRes.fnhrCompleted ||
+          targetRes.preCheckinCompleted ||
+          targetRes.checkedInAt ||
+          (Array.isArray(targetRes.guests) && targetRes.guests.length > 0 && (targetRes.guests[0]?.hasCompletedCheckin || targetRes.guests[0]?.status === 'CHECKED_IN'))
+        )
+      );
+      const appOriginForEarly = db?.settings?.baseUrl || process.env.APP_BASE_URL || 'https://corpflats.com.br';
+      const linkCheckinForEarly = `${appOriginForEarly}/pre-checkin/${encodeURIComponent(String(reserva.id))}`;
+
+      const msg = isPreCheckinAlreadyDone
+        ? `Confirme com entusiasmo que o early check-in para as ${horarioFormatado} no ${reserva.nome_imovel} foi registrado como cortesia na reserva ${reserva.id} ` +
+          `e que, como o Check-in Online já está concluído, ao chegar basta se dirigir à recepção 24h e informar o nome e o número do flat.`
+        : `Confirme com entusiasmo que o early check-in para as ${horarioFormatado} no ${reserva.nome_imovel} foi registrado como cortesia na reserva ${reserva.id} ` +
+          `e que o quarto já está limpo e pronto! Porém, explique claramente que o sistema está apenas aguardando ele concluir o *Check-in Online* (${linkCheckinForEarly}) ` +
+          `para que a entrada fique liberada na recepção 24h (não basta apenas chegar e informar o nome sem antes finalizar o Check-in Online).`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -228,6 +244,7 @@ export const solicitarEarlyCheckinTool: AgentToolDefinition<SolicitarEarlyChecki
           novo_horario_checkin: horarioFormatado,
           cortesia: true,
           valor_taxa: 0,
+          checkin_online_concluido: isPreCheckinAlreadyDone,
         },
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,

@@ -835,6 +835,16 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
   const hideFinancialForGuest = matchedReservation ? isNonRequesterGuestForReservation(matchedReservation, cleanPhone, db) : false;
   const recipientsInfo = matchedReservation ? getReservationRecipients(matchedReservation, db) : null;
   const requesterName = recipientsInfo?.requester?.isDifferentFromGuest ? recipientsInfo.requester.name : null;
+  const isPreCheckinCompleted = Boolean(
+    matchedReservation &&
+    !matchedReservation.needsReSignature &&
+    (
+      matchedReservation.fnhrCompleted ||
+      matchedReservation.preCheckinCompleted ||
+      matchedReservation.checkedInAt ||
+      (Array.isArray(matchedReservation.guests) && matchedReservation.guests.length > 0 && (matchedReservation.guests[0]?.hasCompletedCheckin || matchedReservation.guests[0]?.status === "CHECKED_IN"))
+    )
+  );
 
   const baseGuestContext = {
     todayStr,
@@ -851,6 +861,7 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     minibarUrl,
     minibarInfo: "Frigobar abastecido com autoatendimento Anserve e 1 kit cortesia por estadia (cápsulas Nespresso e doces).",
     isCheckinRelevant,
+    isPreCheckinCompleted,
     isCheckoutDay,
     isCheckoutCompleted,
     isHosted,
@@ -7299,7 +7310,12 @@ export function validateAndRefineResponse({
         const flatStatus = handleGetFlatStatus(db, { flatNumber: flatNum });
         if (flatStatus && flatStatus.success) {
           if (flatStatus.isRoomReady) {
-            replyText = ret(`Ótima notícia${name}! 🎉 O seu *Flat ${flatNum}* já está *100% limpo, higienizado e pronto* para te receber! Ao chegar, basta se identificar na portaria com seu documento para a liberação da chave. Seja muito bem-vindo(a)! 🏨🔑`);
+            if (guestContext?.isPreCheckinCompleted) {
+              replyText = ret(`Ótima notícia${name}! 🎉 O seu *Flat ${flatNum}* já está *100% limpo, higienizado e pronto* para te receber! Como o seu Check-in Online já foi concluído, ao chegar basta se identificar na portaria 24h com seu nome e o número do flat. Seja muito bem-vindo(a)! 🏨🔑`);
+            } else {
+              const chkLink = guestContext?.checkinUrl || guestContext?.rawCheckinUrl || "https://corpflats.com.br";
+              replyText = ret(`Ótima notícia${name}! 🎉 O seu *Flat ${flatNum}* já está *100% limpo, higienizado e pronto*, aguardando apenas você fazer o seu *Check-in Online*! ⚠️ Para que a sua entrada fique liberada na recepção/portaria 24h, é necessário concluir primeiro esse procedimento pelo link: ${chkLink} — assim que finalizar, basta chegar na recepção e informar seu nome! 🏨🔑`);
+            }
           } else {
             const cleanDesc = flatStatus.cleaningStatus === "in_progress" ? "em higienização pela equipe de governança" : "sendo preparado pela nossa governança";
             replyText = ret(`Olá${name}! O seu *Flat ${flatNum}* está ${cleanDesc} ✨. O horário oficial de entrada é a partir das 14:00h. Assim que a limpeza for liberada pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
@@ -8197,7 +8213,11 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   if (/(?:quarto|flat|apartamento|chave|porta).*(?:pront|liberad|limp|entrar|chegand)|(?:pront|liberad).*(?:quarto|flat|apartamento)|posso\s+(?:entrar|ir)|senha\s+da\s+porta|chegando/i.test(text)) {
     if (guestContext.stayStatus === "checkin_hoje") {
       if (guestContext.isRoomReady) {
-        return ret(`Ótima notícia${name}! 🎉 O seu *Flat ${guestContext.flatNumber}* já está *100% limpo, higienizado e pronto* para te receber! Ao chegar, basta se identificar na portaria com seu documento para a liberação da chave. Seja muito bem-vindo(a)! 🏨🔑`);
+        if (guestContext.isPreCheckinCompleted) {
+          return ret(`Ótima notícia${name}! 🎉 O seu *Flat ${guestContext.flatNumber}* já está *100% limpo, higienizado e pronto* para te receber! Como o seu Check-in Online já foi concluído, ao chegar basta se identificar na portaria 24h com seu nome e o número do flat. Seja muito bem-vindo(a)! 🏨🔑`);
+        }
+        const chkLink = guestContext.checkinUrl || guestContext.rawCheckinUrl || "https://corpflats.com.br";
+        return ret(`Ótima notícia${name}! 🎉 O seu *Flat ${guestContext.flatNumber}* já está *100% limpo, higienizado e pronto*, aguardando apenas você fazer o seu *Check-in Online*! ⚠️ Para que a sua entrada fique liberada na recepção/portaria 24h, é necessário concluir primeiro esse procedimento pelo link: ${chkLink} — assim que finalizar, basta chegar na recepção e informar seu nome! 🏨🔑`);
       } else {
         return ret(`${greetingSalutation} O seu *Flat ${guestContext.flatNumber}* está sendo finalizado com todo carinho pela nossa governança para garantir máxima higiene e conforto ✨. O horário oficial de entrada é a partir das *${kb.checkinTime}*. Assim que a limpeza for 100% liberada pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
       }
@@ -9003,6 +9023,7 @@ ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber ||
 - Período da reserva: ${guestContext.reservation?.checkinDate} até ${guestContext.reservation?.checkoutDate}
 - Status da reserva: ${guestContext.isCheckoutCompleted ? "checkout_concluido (Estadia encerrada)" : guestContext.reservation?.status}${guestContext.hideFinancialForGuest ? `\n- PRIVACIDADE FINANCEIRA (SOLICITANTE DISTINTO): Esta reserva foi solicitada por ${guestContext.requesterName || "outro responsável"}. NUNCA informe valores, saldo, status de pagamento nem gere/envie PIX ou cobrança para este hóspede. Caso ele pergunte sobre pagamento da reserva, informe cordialmente que o acerto financeiro é tratado diretamente com o solicitante.` : ""}
 - Link do Pré-Check-in Digital: ${guestContext.checkinUrl ? guestContext.checkinUrl : "NÃO ENVIAR / NÃO APLICÁVEL (Hóspede já em estadia / check-out hoje / check-out concluído / sem relevância)"}
+- Status do Check-in Online: ${guestContext.isPreCheckinCompleted ? "CONCLUÍDO (Entrada já liberada na recepção: basta informar o nome)" : "PENDENTE (Obrigatório concluir o Check-in Online antes de ir à recepção; se o flat já estiver limpo, explique que está limpo e pronto aguardando apenas fazer o Check-in Online)"}
 ${guestContext.isCheckoutDay && !guestContext.isCheckoutCompleted && guestContext.checkoutUrl ? `- Link de Confirmação de Check-out: ${guestContext.checkoutUrl}\n` : ""}${guestContext.minibarUrl ? `- Link do Frigobar / Autoatendimento Anserve: ${guestContext.minibarUrl}\n` : ""}- Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
 ${preAnalysis.promptBlock}
 ${conversationStateSection}

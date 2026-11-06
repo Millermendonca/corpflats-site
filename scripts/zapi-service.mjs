@@ -633,7 +633,7 @@ Para agilizar a liberação da portaria sem burocracia, realize seu *Pré-Check-
     id: "tpl_room_ready_direct",
     triggerEvent: "room_ready",
     title: "Quarto Liberado • Early Check-in Disponível (Site/WhatsApp)",
-    description: "Disparado quando a limpeza do flat é concluída no dia do check-in, para reservas via Site ou WhatsApp. Avisa que o flat está pronto para entrada antecipada.",
+    description: "Disparado quando a limpeza do flat é concluída no dia do check-in, para reservas via Site ou WhatsApp. Condicional: se já fez o check-in online, orienta ir direto à recepção; se ainda não fez, avisa que o quarto está limpo aguardando concluir o check-in online.",
     enabled: true,
     channels: ["site", "whatsapp"],
     recipientTarget: "guest",
@@ -644,9 +644,7 @@ Para agilizar a liberação da portaria sem burocracia, realize seu *Pré-Check-
     message: `*{{primeiro_nome}}*, uma ótima notícia! 🎉🔑
 Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Pronto* para receber você!
 
-Como você reservou diretamente conosco, pode fazer o *Early Check-in agora mesmo*, sem precisar esperar as {{horario_checkin}}! 🚀
-
-📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *{{quarto}}*.
+{{instrucao_acesso_quarto_pronto_direct}}
 
 📶 *Wi-Fi do Flat:*
 • Rede: *{{wifi_rede}}*
@@ -663,20 +661,18 @@ Desejamos uma chegada tranquila e uma estadia incrível! Qualquer dúvida, estam
     id: "tpl_room_ready_ota",
     triggerEvent: "room_ready_ota",
     title: "Quarto Liberado • Informação de Flat (Booking/Airbnb)",
-    description: "Disparado no dia do check-in para reservas Booking/Airbnb: às 12:00 se o flat já estiver limpo, ou às 14:00 (check-in padrão). Revela o número do flat e as instruções de acesso.",
+    description: "Disparado no dia do check-in para reservas Booking/Airbnb: às 12:00 se o flat já estiver limpo, ou às 14:00 (check-in padrão). Condicional: se já fez o check-in online, orienta ir à recepção; se ainda não fez, avisa que o quarto está limpo aguardando concluir o check-in online.",
     enabled: true,
     channels: ["booking", "airbnb", "b2b"],
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
-    message: `*{{primeiro_nome}}*, tudo pronto para sua chegada! 🔑🏡
+    message: `*{{primeiro_nome}}*, uma ótima notícia! 🔑🏡
 Seu apartamento no *{{nome_hotel}}* já foi definido:
 
 🏠 *Flat {{quarto}}*
-⏰ Liberado para entrada a partir de *agora*!
-
-📍 Ao chegar, vá à portaria 24h e informe seu nome e o número *{{quarto}}*.
+{{instrucao_acesso_quarto_pronto_ota}}
 
 📶 *Wi-Fi do Flat:*
 • Rede: *{{wifi_rede}}*
@@ -697,7 +693,7 @@ Desejamos uma estadia maravilhosa! Se precisar de algo, estamos à disposição.
     id: "tpl_room_ready_regular",
     triggerEvent: "room_ready_regular",
     title: "Quarto Liberado • Entrada Regular (A partir das 14:00)",
-    description: "Disparado quando a limpeza do flat é concluída no dia do check-in a partir das 14:00 (horário padrão). Informa que o flat está limpo e liberado, sem menção a early check-in antecipado.",
+    description: "Disparado quando a limpeza do flat é concluída no dia do check-in a partir das 14:00 (horário padrão). Condicional: se já fez o check-in online, orienta ir à recepção; se ainda não fez, avisa que o quarto está limpo aguardando concluir o check-in online.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
     recipientTarget: "guest",
@@ -706,9 +702,7 @@ Desejamos uma estadia maravilhosa! Se precisar de algo, estamos à disposição.
     offsetUnit: "minutes",
     fixedTime: "",
     message: `*{{primeiro_nome}}*, seu flat está pronto! 🔑✨
-Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Liberado* para receber você!
-
-📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *{{quarto}}*.
+{{instrucao_acesso_quarto_pronto_regular}}
 
 📶 *Wi-Fi do Flat:*
 • Rede: *{{wifi_rede}}*
@@ -3714,7 +3708,11 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   const titularGuest = (reservation.guests || []).find(g => Number(g.index) === 1) || reservation.guests?.[0];
   const isTitularDone = titularGuest 
-    ? Boolean(titularGuest.hasCompletedCheckin || titularGuest.status === "CHECKED_IN")
+    ? Boolean(
+        titularGuest.hasCompletedCheckin ||
+        titularGuest.status === "CHECKED_IN" ||
+        (titularGuest.hasCompletedCheckin !== false && (reservation.fnhrCompleted || reservation.preCheckinCompleted || reservation.checkedInAt))
+      )
     : Boolean(reservation.fnhrCompleted || reservation.preCheckinCompleted || reservation.checkedInAt);
 
   const allCheckedIn = Boolean(
@@ -3775,6 +3773,35 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     const linkCheckinDigitalNextPending = getCheckinUrlSync(reservation, nextPendingIdx, appOrigin, db);
     avisoAcompanhantePendentePosCheckin = `👥 *Acompanhante Pendente (${nextPendingIdx}º Hóspede):*\nNotamos que sua reserva possui acompanhante que ainda não preencheu a ficha individual. Para que a entrada dele(a) também já fique liberada na recepção, envie o link abaixo para preenchimento:\n👉 ${linkCheckinDigitalNextPending}\n\n💡 _Caso vá se hospedar sozinho(a), você pode atualizar para 1 hóspede diretamente no Portal do Hóspede._`;
   }
+
+  // Tags condicionais de Quarto Pronto / Liberado ({{instrucao_acesso_quarto_pronto*}}):
+  // - Se o hóspede JÁ concluiu o Check-in Online (isPreCheckinDone === true): informa que basta ir à recepção/portaria 24h e informar o nome e o número do flat.
+  // - Se o hóspede AINDA NÃO fez o Check-in Online (isPreCheckinDone === false): NÃO diz que basta chegar e informar o nome; explica que o quarto já está limpo e pronto, aguardando apenas concluir o Check-in Online para liberar a entrada na recepção.
+  const companionSuffixWhenTitularDone = (isPreCheckinDone && avisoAcompanhantePendentePosCheckin)
+    ? `\n\n${avisoAcompanhantePendentePosCheckin}`
+    : "";
+
+  const blocoProcedimentoCheckinOnlineObrigatorio =
+    `⚠️ *Importante — Faça seu Check-in Online antes de ir à recepção:*\n` +
+    `O seu quarto já está limpo e pronto, *estando apenas no aguardo de você realizar o seu Check-in Online*! A entrada na recepção/portaria 24h *ainda não está liberada apenas informando o nome* — é necessário concluir primeiro esse procedimento online pelo link abaixo:\n` +
+    `👉 ${linkCheckinDigital}\n\n` +
+    `Assim que finalizar o Check-in Online, seus dados serão liberados imediatamente na recepção e aí sim bastará chegar, informar seu nome e entrar no *Flat ${flatNumber}*!`;
+
+  const instrucaoAcessoQuartoProntoDirect = isPreCheckinDone
+    ? `Como você reservou diretamente conosco, pode fazer o *Early Check-in agora mesmo*, sem precisar esperar as ${checkinTime}! 🚀\n\n📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *${flatNumber}*.${companionSuffixWhenTitularDone}`
+    : `Como você reservou diretamente conosco, sua entrada antecipada já está disponível sem precisar esperar as ${checkinTime}! 🚀\n\n${blocoProcedimentoCheckinOnlineObrigatorio}`;
+
+  const instrucaoAcessoQuartoProntoOta = isPreCheckinDone
+    ? `⏰ Liberado para entrada a partir de *agora*!\n\n📍 Ao chegar, vá à portaria 24h e informe seu nome e o número *${flatNumber}*.${companionSuffixWhenTitularDone}`
+    : `✨ *Status:* Seu quarto já está *Limpo e Pronto*, aguardando apenas você concluir o seu *Check-in Online*!\n\n${blocoProcedimentoCheckinOnlineObrigatorio}`;
+
+  const instrucaoAcessoQuartoProntoRegular = isPreCheckinDone
+    ? `Seu *Flat ${flatNumber}* no *${hotelName}* já está *Limpo e Liberado* para receber você!\n\n📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *${flatNumber}*.${companionSuffixWhenTitularDone}`
+    : `Seu *Flat ${flatNumber}* no *${hotelName}* já está *Limpo e Pronto*, aguardando apenas você fazer o seu *Check-in Online* para liberar a sua entrada!\n\n${blocoProcedimentoCheckinOnlineObrigatorio}`;
+
+  const instrucaoAcessoQuartoProntoGenerica = isPreCheckinDone
+    ? `📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *${flatNumber}*.${companionSuffixWhenTitularDone}`
+    : blocoProcedimentoCheckinOnlineObrigatorio;
 
   const displayGuestName = isPendingGuestName(guestName) ? "A Definir (Aguardando Credenciamento)" : guestName;
   const tagsMap = {
@@ -3848,6 +3875,10 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{aviso_checkin_pendente}}": avisoCheckinPendente,
     "{{aviso_pendencia_segundo_hospede}}": avisoPendenciaSegundoHospede,
     "{{aviso_acompanhante_pendente_pos_checkin}}": avisoAcompanhantePendentePosCheckin,
+    "{{instrucao_acesso_quarto_pronto}}": instrucaoAcessoQuartoProntoGenerica,
+    "{{instrucao_acesso_quarto_pronto_direct}}": instrucaoAcessoQuartoProntoDirect,
+    "{{instrucao_acesso_quarto_pronto_ota}}": instrucaoAcessoQuartoProntoOta,
+    "{{instrucao_acesso_quarto_pronto_regular}}": instrucaoAcessoQuartoProntoRegular,
     "{{link_guia_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{link_manual_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{early_checkin_beneficio}}": earlyCheckinBeneficio,
@@ -3945,6 +3976,26 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     } else {
       rendered = rendered.replace(/\n*Por favor,\s*confirme com \*?OK\*? que viu a mudança\.?/gi, "");
     }
+  }
+
+  // Salvaguarda determinística para templates de "Quarto Liberado / Pronto" (mesmo se salvos no banco com texto antigo):
+  // Se o hóspede ainda NÃO fez o Check-in Online (!isPreCheckinDone), NUNCA dizer que basta ir à portaria 24h e informar o nome.
+  const isRoomReadyTplOrEvent =
+    templateId === "tpl_room_ready_direct" ||
+    templateId === "tpl_room_ready_ota" ||
+    templateId === "tpl_room_ready_regular" ||
+    triggerEvent === "room_ready" ||
+    triggerEvent === "room_ready_direct" ||
+    triggerEvent === "room_ready_ota" ||
+    triggerEvent === "room_ready_regular";
+
+  if (!isPreCheckinDone && (isRoomReadyTplOrEvent || /📍\s*Ao chegar,\s*(?:basta se identificar na portaria 24h|vá à portaria 24h e informe seu nome)/i.test(rendered))) {
+    rendered = rendered
+      .replace(/\*([^\n*]+)\*,\s*tudo pronto para sua chegada!\s*🔑🏡/gi, "*$1*, uma ótima notícia! 🔑🏡")
+      .replace(/⏰\s*Liberado para entrada a partir de \*agora\*!\s*\n+/gi, `✨ *Status:* Seu quarto já está *Limpo e Pronto*, aguardando apenas você concluir o seu *Check-in Online*!\n\n`)
+      .replace(/pode fazer o \*Early Check-in agora mesmo\*,/gi, "sua entrada antecipada já está disponível,")
+      .replace(/já está \*Limpo e Liberado\* para receber você!/gi, "já está *Limpo e Pronto*, aguardando apenas você fazer o seu *Check-in Online* para liberar a sua entrada!")
+      .replace(/📍\s*Ao chegar,\s*(?:basta se identificar na portaria 24h com seu nome|vá à portaria 24h e informe seu nome)[^\n]*/gi, blocoProcedimentoCheckinOnlineObrigatorio);
   }
 
   // Remove excesso de quebras de linha decorrentes de tags opcionais vazias
@@ -4285,6 +4336,9 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     const isArrivalOrCheckinTemplate = [
       "tpl_sameday_reservation_instructions",
       "tpl_checkin_day_instructions",
+      "tpl_room_ready_direct",
+      "tpl_room_ready_ota",
+      "tpl_room_ready_regular",
       "tpl_new_reservation",
       "tpl_new_reservation_direct",
       "tpl_pre_checkin_reminder",
@@ -4293,6 +4347,10 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     ].includes(templateId) || [
       "sameday_reservation",
       "checkin_day_instructions",
+      "room_ready",
+      "room_ready_direct",
+      "room_ready_ota",
+      "room_ready_regular",
       "pre_checkin_reminder",
       "pre_checkin_missing_docs",
       "second_guest_reminder"
@@ -8016,10 +8074,29 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.channels = ["site", "whatsapp"];
           tpl.recipientTarget = "both";
         }
+        if (tpl.id === "tpl_room_ready_direct") {
+          const defRoomDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_direct");
+          if (defRoomDir && !tpl.message?.includes("instrucao_acesso_quarto_pronto")) {
+            tpl.message = defRoomDir.message;
+            tpl.description = defRoomDir.description;
+          }
+        }
+        if (tpl.id === "tpl_room_ready_ota") {
+          const defRoomOta = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_ota");
+          if (defRoomOta && !tpl.message?.includes("instrucao_acesso_quarto_pronto")) {
+            tpl.message = defRoomOta.message;
+            tpl.description = defRoomOta.description;
+          }
+        }
         if (tpl.id === "tpl_room_ready_regular") {
           tpl.channels = ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"];
           tpl.triggerEvent = "room_ready_regular";
           tpl.recipientTarget = "guest";
+          const defRoomReg = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_regular");
+          if (defRoomReg && !tpl.message?.includes("instrucao_acesso_quarto_pronto")) {
+            tpl.message = defRoomReg.message;
+            tpl.description = defRoomReg.description;
+          }
         }
         if (tpl.id === "tpl_sameday_reservation_instructions") {
           const defSame = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions");
@@ -12401,7 +12478,7 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
  * Entrega um item da fila: WhatsApp (se houver telefone e não estiver bloqueado) e e-mail espelho (se houver e-mail).
  */
 export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null, bypassTestMode = false, nowOverride = null } = {}) {
-  const sendButtons = buttons || item.renderedButtons || [];
+  let sendButtons = buttons || item.renderedButtons || [];
   const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode) || null;
   if (!item.guestPhone && resv) {
     const recips = getReservationRecipients(resv, db);
@@ -12454,6 +12531,23 @@ export async function deliverQueueItem(db, saveDatabase, item, { method = "autom
       item.updatedAt = new Date().toISOString();
       if (typeof saveDatabase === "function") saveDatabase();
       return { waResult: null, emailLog: null, success: false, cancelled: true };
+    }
+    if (resv) {
+      const liveRoomReadyTpl =
+        (item.templateId && (db.whatsappTemplates || []).find(t => t.id === item.templateId)) ||
+        (db.whatsappTemplates || []).find(t => t.triggerEvent === item.triggerEvent) ||
+        (item.templateId && DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === item.templateId)) ||
+        DEFAULT_WHATSAPP_TEMPLATES.find(t => t.triggerEvent === item.triggerEvent);
+      if (liveRoomReadyTpl) {
+        const targetTypeForRender = item.recipientType || "guest";
+        const tplForRender = { ...liveRoomReadyTpl, triggerEvent: item.triggerEvent || liveRoomReadyTpl.triggerEvent };
+        const appOriginForQueue = process.env.APP_BASE_URL || db?.settings?.baseUrl || "https://corpflats.com.br";
+        item.renderedMessage = resolveWhatsAppTags(tplForRender.message, resv, db, appOriginForQueue, targetTypeForRender, tplForRender);
+        item.renderedButtons = renderTemplateButtons(tplForRender.buttons, resv, db, appOriginForQueue, targetTypeForRender, tplForRender);
+        if (!buttons) {
+          sendButtons = item.renderedButtons || [];
+        }
+      }
     }
   }
 
@@ -13429,12 +13523,28 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       let queueCancelledCount = 0;
       const nowIso = new Date().toISOString();
       for (const qItem of db.whatsappQueue) {
+        const isSameRes = (reservation.code && qItem.reservationCode === reservation.code) ||
+                          (reservation.id && qItem.reservationId === reservation.id);
+        if (!isSameRes) continue;
         if ((qItem.status === "pending" || qItem.status === "scheduled") && qItem.triggerEvent === "pre_checkin_reminder") {
-          const isSameRes = (reservation.code && qItem.reservationCode === reservation.code) ||
-                            (reservation.id && qItem.reservationId === reservation.id);
-          if (isSameRes && (allGuestsDone || (qItem.recipientType || "guest") === completedRecipientType)) {
+          if (allGuestsDone || (qItem.recipientType || "guest") === completedRecipientType) {
             qItem.status = "cancelled";
             qItem.error = "Cancelado: check-in digital já preenchido";
+            qItem.updatedAt = nowIso;
+            queueCancelledCount++;
+          }
+        } else if ((qItem.status === "pending" || qItem.status === "scheduled") && ROOM_READY_GROUP_EVENTS.has(qItem.triggerEvent)) {
+          const liveRoomTpl =
+            (qItem.templateId && (db.whatsappTemplates || []).find(t => t.id === qItem.templateId)) ||
+            (db.whatsappTemplates || []).find(t => t.triggerEvent === qItem.triggerEvent) ||
+            (qItem.templateId && DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === qItem.templateId)) ||
+            DEFAULT_WHATSAPP_TEMPLATES.find(t => t.triggerEvent === qItem.triggerEvent);
+          if (liveRoomTpl) {
+            const targetTypeForRender = qItem.recipientType || "guest";
+            const tplForRender = { ...liveRoomTpl, triggerEvent: qItem.triggerEvent || liveRoomTpl.triggerEvent };
+            const appOriginForQueue = baseUrl || process.env.APP_BASE_URL || db?.settings?.baseUrl || "https://corpflats.com.br";
+            qItem.renderedMessage = resolveWhatsAppTags(tplForRender.message, reservation, db, appOriginForQueue, targetTypeForRender, tplForRender);
+            qItem.renderedButtons = renderTemplateButtons(tplForRender.buttons, reservation, db, appOriginForQueue, targetTypeForRender, tplForRender);
             qItem.updatedAt = nowIso;
             queueCancelledCount++;
           }

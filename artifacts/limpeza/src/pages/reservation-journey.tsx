@@ -539,15 +539,14 @@ Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à dispos
     timingLabel: "A partir das 10:00 assim que higienizado",
     condition: "Reserva Direta (Site/WhatsApp) com quarto limpo pelas camareiras",
     channelsAllowed: ["site", "whatsapp"],
-    description: "Disparado quando a camareira conclui a limpeza do flat. Para reservas diretas, a liberação ocorre a partir das 10:00 (se o flat for finalizado mais cedo, o sistema segura o disparo e envia às 10:00).",
+    description: "Disparado quando a camareira conclui a limpeza do flat (a partir das 10:00 para reservas diretas). É CONDICIONAL: se o hóspede já tiver feito o Check-in Online, informa que basta ir à recepção e informar o nome; se ainda não tiver feito, avisa que o quarto já está limpo e pronto, aguardando apenas concluir o Check-in Online para liberar a entrada.",
     messagePreview: `*{{primeiro_nome}}*, uma ótima notícia! 🎉🔑
 Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Pronto* para receber você!
 
-Como você reservou diretamente conosco, pode fazer o *Early Check-in agora mesmo*, sem precisar esperar as {{horario_checkin}}! 🚀
-
-📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *{{quarto}}*.
+{{instrucao_acesso_quarto_pronto_direct}}
 📶 Wi-Fi: *{{wifi_rede}}* | Senha: *{{wifi_senha}}*`,
     buttons: [
+      { label: "📝 Fazer Check-in Online (se pendente)", type: "URL", url: "{{link_checkin_digital}}" },
       { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" },
       { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
     ],
@@ -559,25 +558,24 @@ Como você reservou diretamente conosco, pode fazer o *Early Check-in agora mesm
     stageNumber: 4,
     stageName: "4. Dia do Check-in (Manhã)",
     title: "Quarto Liberado • Liberação de Flat às 12:00 / 14:00 (OTA)",
-    subtitle: "Disparado às 12:00 se já limpo (ou 14:00 padrão) promovendo reserva direta",
+    subtitle: "Disparado às 12:00 se já limpo (ou 14:00 padrão) — Condicional ao Check-in Online",
     triggerEvent: "room_ready_ota",
     channelType: "whatsapp",
     recipients: ["hospede"],
     timingLabel: "Às 12:00 (se limpo) ou 14:00 (padrão)",
     condition: "Reserva OTA (Booking / Airbnb)",
     channelsAllowed: ["booking", "airbnb"],
-    description: "Disparado às 12:00 se o flat estiver limpo (ou às 14:00 padrão), revelando o número do flat e instruções de acesso, divulgando o benefício de 10:00 para quem reserva direto.",
-    messagePreview: `*{{primeiro_nome}}*, tudo pronto para sua chegada! 🔑🏡
+    description: "Disparado às 12:00 se o flat estiver limpo (ou às 14:00 padrão), revelando o número do flat. É CONDICIONAL: se o hóspede já tiver feito o Check-in Online, orienta ir à recepção; se ainda não tiver feito, explica que o quarto está limpo e pronto, aguardando concluir o Check-in Online.",
+    messagePreview: `*{{primeiro_nome}}*, uma ótima notícia! 🔑🏡
 Seu apartamento no *{{nome_hotel}}* já foi definido:
 
 🏠 *Flat {{quarto}}*
-⏰ Liberado para entrada a partir de *agora*!
-
-📍 Ao chegar, vá à portaria 24h e informe seu nome e o número *{{quarto}}*.
+{{instrucao_acesso_quarto_pronto_ota}}
 📶 Wi-Fi: *{{wifi_rede}}* | Senha: *{{wifi_senha}}*
 
 💡 _Na próxima vez, reserve pelo nosso site ou WhatsApp e ganhe early check-in às 10:00 sem custo adicional!_`,
     buttons: [
+      { label: "📝 Fazer Check-in Online (se pendente)", type: "URL", url: "{{link_checkin_digital}}" },
       { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" },
       { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
     ],
@@ -589,20 +587,19 @@ Seu apartamento no *{{nome_hotel}}* já foi definido:
     stageNumber: 4,
     stageName: "4. Dia do Check-in (Tarde - Regular)",
     title: "Quarto Liberado • Entrada Regular (A partir das 14:00)",
-    subtitle: "Se limpo após as 14:00, envia confirmação de liberação sem falar de early check-in",
+    subtitle: "Se limpo após as 14:00 — Condicional ao Check-in Online",
     triggerEvent: "room_ready_regular",
     channelType: "whatsapp",
     recipients: ["hospede"],
     timingLabel: "A partir das 14:00 assim que higienizado",
     condition: "Reserva Direta ou OTA quando o flat é liberado a partir das 14:00",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Enviado quando o flat fica pronto a partir das 14:00 (horário padrão de check-in). Notifica que a acomodação está limpa e liberada com dados de acesso e Wi-Fi, sem falar em 'early check-in' nem 'sem precisar esperar as 14:00'.",
+    description: "Enviado quando o flat fica pronto a partir das 14:00. É CONDICIONAL: se já fez o Check-in Online, informa que basta se identificar na portaria; se ainda não fez, avisa que o quarto está limpo e pronto, aguardando apenas realizar o Check-in Online.",
     messagePreview: `*{{primeiro_nome}}*, seu flat está pronto! 🔑✨
-Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Liberado* para receber você!
-
-📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *{{quarto}}*.
+{{instrucao_acesso_quarto_pronto_regular}}
 📶 Wi-Fi: *{{wifi_rede}}* | Senha: *{{wifi_senha}}*`,
     buttons: [
+      { label: "📝 Fazer Check-in Online (se pendente)", type: "URL", url: "{{link_checkin_digital}}" },
       { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" },
       { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
     ],
