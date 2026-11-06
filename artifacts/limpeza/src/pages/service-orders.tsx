@@ -50,7 +50,8 @@ import {
   Bell,
   Car,
   Phone,
-  Lock
+  Lock,
+  Unlock
 } from "lucide-react";
 
 export type CleanFlatMode = "never" | "priority" | "always";
@@ -186,6 +187,11 @@ export interface ServiceFlat {
   hasCheckinToday?: boolean;
   hasCheckoutToday?: boolean;
   forceReleased?: boolean;
+  isFilterAllowed?: boolean;
+  filterViolations?: string[];
+  forceReleasedDate?: string | null;
+  forceReleasedScenario?: string | null;
+  forceReleasedBy?: string | null;
   returnedAt?: string | null;
   returnedByWorkerName?: string | null;
   returnedByWorkerCpf?: string | null;
@@ -402,6 +408,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
   const [detailModalFlat, setDetailModalFlat] = useState<ServiceFlat | null>(null);
   const [zoomPhotoUrl, setZoomPhotoUrl] = useState<string | null>(null);
   const [resetConfirmFlat, setResetConfirmFlat] = useState<ServiceFlat | null>(null);
+  const [forceReleaseConfirmFlat, setForceReleaseConfirmFlat] = useState<ServiceFlat | null>(null);
   const [deleteConfirmOrderId, setDeleteConfirmOrderId] = useState<string | null>(null);
 
   // Search & Status filter in List tab
@@ -961,12 +968,22 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
   });
 
   const forceReleaseMutation = useMutation({
-    mutationFn: async ({ orderId, flatId, forceReleased }: { orderId: string; flatId: number; forceReleased: boolean }) => {
+    mutationFn: async ({
+      orderId,
+      flatId,
+      forceReleased,
+      confirmFilterViolation,
+    }: {
+      orderId: string;
+      flatId: number;
+      forceReleased: boolean;
+      confirmFilterViolation?: boolean;
+    }) => {
       const res = await fetch(`/api/service-orders/${orderId}/flats/${flatId}/force-release`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ forceReleased }),
+        body: JSON.stringify({ forceReleased, confirmFilterViolation: Boolean(confirmFilterViolation) }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -975,13 +992,14 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
       return res.json();
     },
     onSuccess: (data, vars) => {
+      setForceReleaseConfirmFlat(null);
       queryClient.invalidateQueries({ queryKey: ["service-orders"] });
       queryClient.invalidateQueries({ queryKey: ["service-order-progress", vars.orderId] });
       toast({
-        title: vars.forceReleased ? "Flat liberado manualmente!" : "Liberação manual revogada!",
+        title: vars.forceReleased ? "Exceção de filtro liberada!" : "Liberação manual revogada!",
         description: vars.forceReleased
-          ? `O Flat ${vars.flatId} foi desbloqueado para execução pelo prestador.`
-          : `O Flat ${vars.flatId} voltou às restrições normais de status.`,
+          ? `O Flat foi desbloqueado manualmente para o prestador solicitar entrada na portaria e iniciar hoje.`
+          : `O Flat voltou às restrições normais das travas de filtro da Ordem de Serviço.`,
       });
       if (detailModalFlat && detailModalFlat.flatId === vars.flatId) {
         setDetailModalFlat((prev) =>
@@ -989,7 +1007,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
             ? {
                 ...prev,
                 forceReleased: vars.forceReleased,
-                isStatusAllowed: vars.forceReleased || prev.isStatusAllowed,
+                isStatusAllowed: vars.forceReleased ? true : prev.isFilterAllowed ?? false,
               }
             : null
         );
@@ -2941,17 +2959,36 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                               )}
 
                               {flat.status === "pending" ? (
-                                flat.isStatusAllowed === false ? (
+                                flat.forceReleased ? (
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    disabled
-                                    title={flat.statusBlockReason || "Bloqueado pelas travas de filtro da Ordem de Serviço"}
-                                    className="h-8 px-2.5 text-xs text-rose-700 border-rose-200 bg-rose-50/60 gap-1 font-semibold flex-1 opacity-80"
+                                    onClick={() =>
+                                      forceReleaseMutation.mutate({
+                                        orderId: effectiveTrackingOrderId,
+                                        flatId: flat.flatId,
+                                        forceReleased: false,
+                                      })
+                                    }
+                                    disabled={forceReleaseMutation.isPending}
+                                    title="Revogar liberação manual e voltar às travas normais do filtro"
+                                    className="h-8 px-2.5 text-xs text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100 gap-1 font-semibold flex-1"
                                   >
                                     <Lock className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="truncate">Bloquear Exceção</span>
+                                  </Button>
+                                ) : flat.isStatusAllowed === false ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setForceReleaseConfirmFlat(flat)}
+                                    disabled={forceReleaseMutation.isPending}
+                                    title={flat.statusBlockReason || "Liberar exceção manual para este apartamento"}
+                                    className="h-8 px-2.5 text-xs text-rose-700 border-rose-300 bg-rose-50 hover:bg-rose-100 gap-1 font-semibold flex-1"
+                                  >
+                                    <Unlock className="w-3.5 h-3.5 shrink-0" />
                                     <span className="truncate">
-                                      Bloqueado ({flat.operationalScenarioLabel || "Filtro"})
+                                      Liberar Exceção ({flat.operationalScenarioLabel || "Filtro"})
                                     </span>
                                   </Button>
                                 ) : null
@@ -3237,23 +3274,46 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                       </Tooltip>
                                     )}
                                     {flat.status === "pending" ? (
-                                      flat.isStatusAllowed === false ? (
+                                      flat.forceReleased ? (
                                         <Tooltip>
                                           <TooltipTrigger asChild>
-                                            <span>
-                                              <Button
-                                                variant="outline"
-                                                size="sm"
-                                                disabled
-                                                className="h-8 px-2 text-xs text-rose-700 border-rose-200 bg-rose-50/60 gap-1 font-semibold opacity-80"
-                                              >
-                                                <Lock className="w-3.5 h-3.5 shrink-0" />
-                                                <span className="hidden sm:inline">Bloqueado</span>
-                                              </Button>
-                                            </span>
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() =>
+                                                forceReleaseMutation.mutate({
+                                                  orderId: effectiveTrackingOrderId,
+                                                  flatId: flat.flatId,
+                                                  forceReleased: false,
+                                                })
+                                              }
+                                              disabled={forceReleaseMutation.isPending}
+                                              className="h-8 px-2 text-xs text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100 gap-1 font-semibold"
+                                            >
+                                              <Lock className="w-3.5 h-3.5 shrink-0" />
+                                              <span className="hidden sm:inline">Bloquear</span>
+                                            </Button>
                                           </TooltipTrigger>
                                           <TooltipContent>
-                                            {flat.statusBlockReason || `Bloqueado pelo filtro da OS (${flat.operationalScenarioLabel || "status não permitido"})`}
+                                            Revogar a liberação manual de exceção e voltar às travas normais do filtro
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      ) : flat.isStatusAllowed === false ? (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() => setForceReleaseConfirmFlat(flat)}
+                                              disabled={forceReleaseMutation.isPending}
+                                              className="h-8 px-2 text-xs text-rose-700 border-rose-300 bg-rose-50 hover:bg-rose-100 gap-1 font-semibold"
+                                            >
+                                              <Unlock className="w-3.5 h-3.5 shrink-0" />
+                                              <span className="hidden sm:inline">Liberar Exceção</span>
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            {flat.statusBlockReason || `Bloqueado pelo filtro (${flat.operationalScenarioLabel || "status não permitido"})`} — Clique para liberar exceção manual com confirmação
                                           </TooltipContent>
                                         </Tooltip>
                                       ) : null
@@ -3510,14 +3570,36 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                     </Button>
                   )}
 
-                  {detailModalFlat && detailModalFlat.status === "pending" && detailModalFlat.isStatusAllowed === false && (
-                    <Badge
-                      variant="outline"
-                      className="text-xs px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border-rose-200 font-semibold flex items-center gap-1.5"
-                    >
-                      <Lock className="w-3.5 h-3.5 shrink-0" />
-                      <span>{detailModalFlat.statusBlockReason || `Bloqueado pelo filtro (${detailModalFlat.operationalScenarioLabel || "status não permitido"})`}</span>
-                    </Badge>
+                  {detailModalFlat && detailModalFlat.status === "pending" && (
+                    detailModalFlat.forceReleased ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          forceReleaseMutation.mutate({
+                            orderId: effectiveTrackingOrderId,
+                            flatId: detailModalFlat.flatId,
+                            forceReleased: false,
+                          })
+                        }
+                        disabled={forceReleaseMutation.isPending}
+                        className="text-xs gap-1.5 font-semibold text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100"
+                      >
+                        <Lock className="w-3.5 h-3.5 shrink-0" />
+                        <span>Revogar Exceção (Bloquear Flat)</span>
+                      </Button>
+                    ) : detailModalFlat.isStatusAllowed === false ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setForceReleaseConfirmFlat(detailModalFlat)}
+                        disabled={forceReleaseMutation.isPending}
+                        className="text-xs gap-1.5 font-semibold text-rose-700 border-rose-300 bg-rose-50 hover:bg-rose-100"
+                      >
+                        <Unlock className="w-3.5 h-3.5 shrink-0" />
+                        <span>Liberar Exceção (Quebrar Filtro)</span>
+                      </Button>
+                    ) : null
                   )}
 
                   {detailModalFlat && detailModalFlat.status !== "pending" && (
@@ -3612,6 +3694,142 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                     <>
                       <RotateCcw className="w-3.5 h-3.5" />
                       Confirmar Reabertura
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* ════════════════════════════════════════════════════════════════
+              MODAL DE CONFIRMAÇÃO DE LIBERAÇÃO POR EXCEÇÃO (QUEBRA DE FILTRO)
+             ════════════════════════════════════════════════════════════════ */}
+          <Dialog
+            open={Boolean(forceReleaseConfirmFlat)}
+            onOpenChange={(open) => !open && setForceReleaseConfirmFlat(null)}
+          >
+            <DialogContent className="w-[calc(100vw-1rem)] max-w-lg rounded-2xl">
+              <DialogHeader className="space-y-2">
+                <DialogTitle className="flex items-center gap-2 text-rose-600">
+                  <ShieldAlert className="w-5 h-5 shrink-0" />
+                  <span>
+                    Liberar Exceção no Flat {forceReleaseConfirmFlat?.flatNumber}?
+                  </span>
+                </DialogTitle>
+                <DialogDescription className="text-sm leading-relaxed text-foreground/90">
+                  Este apartamento está <strong>bloqueado pelas travas de filtro</strong> configuradas nesta Ordem de Serviço.
+                  Confira abaixo as violações de filtro antes de autorizar a liberação manual:
+                </DialogDescription>
+              </DialogHeader>
+
+              {forceReleaseConfirmFlat && (
+                <div className="space-y-3 py-1 text-xs">
+                  {/* Status Operacional Atual do Flat */}
+                  <div
+                    className={`p-3 rounded-xl border space-y-1.5 ${
+                      forceReleaseConfirmFlat.hasGuestInside || forceReleaseConfirmFlat.isOccupied
+                        ? "bg-rose-500/10 border-rose-300 text-rose-900 dark:text-rose-200"
+                        : "bg-amber-500/10 border-amber-300 text-amber-900 dark:text-amber-200"
+                    }`}
+                  >
+                    <div className="font-bold text-sm flex items-center gap-1.5 flex-wrap">
+                      <span>{forceReleaseConfirmFlat.operationalScenarioIcon || "🔒"}</span>
+                      <span>
+                        Situação atual do Flat {forceReleaseConfirmFlat.flatNumber}:{" "}
+                        {forceReleaseConfirmFlat.operationalScenarioLabel || "Bloqueado pelo filtro"}
+                      </span>
+                    </div>
+
+                    {(forceReleaseConfirmFlat.hasGuestInside || forceReleaseConfirmFlat.isOccupied) && (
+                      <div className="font-bold text-rose-700 dark:text-rose-300 flex items-center gap-1.5 pt-0.5">
+                        <span>🚨 ATENÇÃO CRÍTICA: Há hóspede hospedado neste flat no momento!</span>
+                      </div>
+                    )}
+
+                    {forceReleaseConfirmFlat.currentGuest && (
+                      <div className="font-medium">
+                        👤 Hóspede atual: <strong>{forceReleaseConfirmFlat.currentGuest}</strong>
+                      </div>
+                    )}
+
+                    {forceReleaseConfirmFlat.hasCheckinToday && (
+                      <div className="font-medium">
+                        🔵 Previsão de chegada (Check-in hoje):{" "}
+                        <strong>{forceReleaseConfirmFlat.expectedArrival || "14:00"}</strong>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Lista explícita de violações de filtro */}
+                  <div className="p-3 rounded-xl border border-rose-200 bg-rose-50/70 dark:bg-rose-950/30 dark:border-rose-800 space-y-1.5">
+                    <div className="font-bold text-rose-800 dark:text-rose-300 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>Violações de filtro detectadas neste apartamento:</span>
+                    </div>
+                    <ul className="list-disc pl-5 space-y-1 text-rose-900 dark:text-rose-200 font-medium">
+                      {(forceReleaseConfirmFlat.filterViolations && forceReleaseConfirmFlat.filterViolations.length > 0
+                        ? forceReleaseConfirmFlat.filterViolations
+                        : [
+                            forceReleaseConfirmFlat.statusBlockReason ||
+                              `O status atual do apartamento (${forceReleaseConfirmFlat.operationalScenarioLabel || "atual"}) não é permitido pelo filtro desta Ordem de Serviço.`,
+                          ]
+                      ).map((v, idx) => (
+                        <li key={idx}>{v}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Explicação do que a liberação faz */}
+                  <div className="p-3 rounded-xl border border-border bg-muted/40 text-muted-foreground space-y-1 leading-relaxed">
+                    <p className="font-semibold text-foreground">
+                      O que acontece ao confirmar esta liberação manual?
+                    </p>
+                    <p>
+                      • O profissional verá o <strong>Flat {forceReleaseConfirmFlat.flatNumber}</strong> liberado no link dele e conseguirá clicar em{" "}
+                      <strong>"🔑 1. Solicitar Entrada (Liberação Portaria)"</strong> e{" "}
+                      <strong>"▶️ 2. Iniciar Serviço"</strong>.
+                    </p>
+                    <p>
+                      • Por segurança, esta exceção vale <strong>somente hoje</strong> e enquanto o apartamento permanecer neste mesmo cenário operacional.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <DialogFooter className="pt-2 flex items-center justify-end gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setForceReleaseConfirmFlat(null)}
+                  disabled={forceReleaseMutation.isPending}
+                >
+                  Cancelar (Manter Bloqueado)
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    if (forceReleaseConfirmFlat && effectiveTrackingOrderId) {
+                      forceReleaseMutation.mutate({
+                        orderId: effectiveTrackingOrderId,
+                        flatId: forceReleaseConfirmFlat.flatId,
+                        forceReleased: true,
+                        confirmFilterViolation: true,
+                      });
+                    }
+                  }}
+                  disabled={forceReleaseMutation.isPending}
+                  className="bg-rose-600 hover:bg-rose-700 text-white font-semibold gap-1.5"
+                >
+                  {forceReleaseMutation.isPending ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      Liberando Exceção...
+                    </>
+                  ) : (
+                    <>
+                      <Unlock className="w-3.5 h-3.5" />
+                      Sim, tenho certeza — Liberar Flat {forceReleaseConfirmFlat?.flatNumber}
                     </>
                   )}
                 </Button>
