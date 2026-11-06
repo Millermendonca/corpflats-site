@@ -62,35 +62,87 @@ function discoverTwinFiles(dir, baseDir = dir) {
   return entries;
 }
 
-/**
- * Valida a integridade das importações estáticas locais de demo-server.mjs,
- * garantindo que nenhum módulo importado falte em artifacts/ ou scripts/.
- */
-function validateStaticImports() {
-  const issues = [];
-  const entryPoints = [
-    { art: "artifacts/api-server/demo-server.mjs", scr: "scripts/demo-server.mjs" }
-  ];
+function extractExportedSymbols(fileContent) {
+  const exported = new Set();
+  const declRegex = /\bexport\s+(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z0-9_$]+)/g;
+  let m;
+  while ((m = declRegex.exec(fileContent)) !== null) {
+    exported.add(m[1]);
+  }
+  const listRegex = /\bexport\s*\{([^}]+)\}/g;
+  while ((m = listRegex.exec(fileContent)) !== null) {
+    const parts = m[1].split(",");
+    for (const part of parts) {
+      const cleaned = part.trim();
+      if (!cleaned) continue;
+      const asMatch = cleaned.match(/^([A-Za-z0-9_$]+)\s+as\s+([A-Za-z0-9_$]+)$/);
+      exported.add(asMatch ? asMatch[2] : cleaned);
+    }
+  }
+  return exported;
+}
 
-  for (const ep of entryPoints) {
+/**
+ * Valida a integridade das importações estáticas locais de todos os módulos .mjs,
+ * garantindo que nenhum arquivo ou named export importado falte em artifacts/ ou scripts/.
+ */
+function validateStaticImports(relFiles = ["demo-server.mjs"]) {
+  const issues = [];
+  const exportCache = new Map();
+
+  const getExportsForFile = (fullPath) => {
+    if (exportCache.has(fullPath)) return exportCache.get(fullPath);
+    if (!fs.existsSync(fullPath)) return null;
+    const set = extractExportedSymbols(fs.readFileSync(fullPath, "utf8"));
+    exportCache.set(fullPath, set);
+    return set;
+  };
+
+  for (const rel of relFiles) {
+    const ep = {
+      art: `artifacts/api-server/${rel}`,
+      scr: `scripts/${rel}`
+    };
     const artFullPath = path.join(projectRoot, ep.art);
     if (!fs.existsSync(artFullPath)) continue;
     const content = fs.readFileSync(artFullPath, "utf8");
-    const lines = content.split(/\r?\n/);
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const match = line.match(/(?:from|import)\s+["'](\.[^"']+)["']/);
-      if (match) {
-        const importRel = match[1];
-        const artTarget = path.normalize(path.join(path.dirname(artFullPath), importRel));
-        const scrTarget = path.normalize(path.join(path.dirname(path.join(projectRoot, ep.scr)), importRel));
+    const importBlockRegex = /\bimport\s+(?:(\{[^{}]*\})|[A-Za-z0-9_$*,\s]+)\s+from\s+["'](\.[^"']+)["']/g;
+    let match;
+    while ((match = importBlockRegex.exec(content)) !== null) {
+      const namedBlock = match[1];
+      const importRel = match[2];
+      const lineNum = content.slice(0, match.index).split(/\r?\n/).length;
+      const artTarget = path.normalize(path.join(path.dirname(artFullPath), importRel));
+      const scrTarget = path.normalize(path.join(path.dirname(path.join(projectRoot, ep.scr)), importRel));
 
-        if (!fs.existsSync(artTarget)) {
-          issues.push({ entryPoint: ep.art, line: i + 1, importPath: importRel, missingIn: "artifacts", targetPath: artTarget });
-        }
-        if (!fs.existsSync(scrTarget)) {
-          issues.push({ entryPoint: ep.scr, line: i + 1, importPath: importRel, missingIn: "scripts", targetPath: scrTarget });
+      if (!fs.existsSync(artTarget)) {
+        issues.push({ entryPoint: ep.art, line: lineNum, importPath: importRel, missingIn: "artifacts", targetPath: artTarget });
+        continue;
+      }
+      if (!fs.existsSync(scrTarget)) {
+        issues.push({ entryPoint: ep.scr, line: lineNum, importPath: importRel, missingIn: "scripts", targetPath: scrTarget });
+        continue;
+      }
+
+      if (namedBlock && artTarget.endsWith(".mjs")) {
+        const targetExports = getExportsForFile(artTarget);
+        if (targetExports) {
+          const inner = namedBlock.slice(1, -1);
+          for (const rawSym of inner.split(",")) {
+            const symClean = rawSym.replace(/\/\/.*$/gm, "").trim();
+            if (!symClean) continue;
+            const importedName = symClean.split(/\s+as\s+/)[0].trim();
+            if (importedName && !targetExports.has(importedName)) {
+              issues.push({
+                entryPoint: ep.art,
+                line: lineNum,
+                importPath: importRel,
+                missingIn: `named export '${importedName}'`,
+                targetPath: artTarget
+              });
+            }
+          }
         }
       }
     }
@@ -153,7 +205,7 @@ export function checkTwinParity() {
   }
 
   // Checagem de integridade de imports
-  const importIssues = validateStaticImports();
+  const importIssues = validateStaticImports(relFiles);
   if (importIssues.length > 0) {
     allPass = false;
   }
