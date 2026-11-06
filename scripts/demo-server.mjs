@@ -10798,6 +10798,8 @@ async function runPgDdlBootstrap() {
   } catch (_) {}
 }
 
+const activeBroadcastWorkers = new Map();
+
 async function loadDatabase() {
   if (activeLoadDatabasePromise) {
     return activeLoadDatabasePromise;
@@ -10810,6 +10812,9 @@ async function loadDatabase() {
 
 async function _loadDatabaseImpl() {
   try {
+    const activeMemoryBroadcastCampaigns = (activeBroadcastWorkers.size > 0 && Array.isArray(db.broadcastCampaigns))
+      ? [...db.broadcastCampaigns]
+      : null;
     if (!Array.isArray(db.flats) || db.flats.length === 0) {
       db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
     }
@@ -10817,6 +10822,9 @@ async function _loadDatabaseImpl() {
       const content = await fs.promises.readFile(DB_FILE, "utf-8");
       const loaded = JSON.parse(content);
       Object.assign(db, loaded);
+      if (activeMemoryBroadcastCampaigns) {
+        db.broadcastCampaigns = activeMemoryBroadcastCampaigns;
+      }
       if (!Array.isArray(db.flats) || db.flats.length === 0) db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
       if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
       if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
@@ -10953,6 +10961,9 @@ async function _loadDatabaseImpl() {
             : ((localZohoOAuth?.clientId && localZohoOAuth?.refreshToken) ? localZohoOAuth : (pgZohoOAuth || localZohoOAuth || null));
 
           Object.assign(db, pgLoaded);
+          if (activeMemoryBroadcastCampaigns) {
+            db.broadcastCampaigns = activeMemoryBroadcastCampaigns;
+          }
           if (!Array.isArray(db.flats) || db.flats.length === 0) {
             db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
           }
@@ -11443,8 +11454,9 @@ async function _loadDatabaseImpl() {
     const didHealOnBoot = reconcileAndMergeGuests(db);
     seedInitialFaqItems(db);
     sanitizeAndRecoverCleanings();
+    const didReconcileOrphanedCampaigns = reconcileOrphanedBroadcastCampaigns();
     // Persiste no disco local após hidratação e no PostgreSQL apenas se a autocura corrigiu vínculos contaminados
-    if (didHealOnBoot) {
+    if (didHealOnBoot || didReconcileOrphanedCampaigns) {
       saveDatabase();
     } else {
       pendingLocalDirty = true;
@@ -24896,13 +24908,15 @@ app.get("/api/service-orders", (req, res) => {
 // Enquanto o serviço não for finalizado, o bloqueio permanece estendido pelo menos até a data atual (todayStr).
 function getActiveServiceFlatBlockRange(oflat, todayStr = getTodayStr()) {
   if (!oflat || oflat.status !== "in_progress") return null;
-  const startDate = oflat.startedAt ? getExecutionDateStr(oflat.startedAt) : todayStr;
-  const estDate = oflat.estimatedFinishAt ? getExecutionDateStr(oflat.estimatedFinishAt) : startDate;
-  const endDate = [startDate, estDate, todayStr].filter(Boolean).sort().pop() || todayStr;
+  const startDate = oflat.customBlockStartDate || (oflat.startedAt ? getExecutionDateStr(oflat.startedAt) : todayStr);
+  const estDate = oflat.customBlockEndDate || (oflat.estimatedFinishAt ? getExecutionDateStr(oflat.estimatedFinishAt) : startDate);
+  const endDate = oflat.customBlockEndDate
+    ? (oflat.customBlockEndDate >= startDate ? oflat.customBlockEndDate : startDate)
+    : ([startDate, estDate, todayStr].filter(Boolean).sort().pop() || todayStr);
   return {
     startDate,
     endDate,
-    isExtendedPastEstimate: Boolean(estDate && todayStr > estDate)
+    isExtendedPastEstimate: Boolean(estDate && todayStr > estDate && !oflat.customBlockEndDate)
   };
 }
 
@@ -24923,11 +24937,13 @@ function syncServiceOrderRoomBlocks(order, isDeleted = false, targetDb = db) {
   for (const f of (order.flats || [])) {
     if (f.status === "done" || (f.status === "pending" && f.returnedAt)) continue;
     const flatStartDate = f.startedAt ? getExecutionDateStr(f.startedAt) : baseStartDate;
-    const startDate = flatStartDate < baseStartDate ? flatStartDate : baseStartDate;
-    const estEndDate = f.estimatedFinishAt ? getExecutionDateStr(f.estimatedFinishAt) : baseEndDate;
-    const endDate = f.status === "in_progress"
-      ? [startDate, baseEndDate, estEndDate, todayStr].filter(Boolean).sort().pop()
-      : (baseEndDate >= todayStr ? baseEndDate : todayStr);
+    const startDate = f.customBlockStartDate || (flatStartDate < baseStartDate ? flatStartDate : baseStartDate);
+    const estEndDate = f.customBlockEndDate || (f.estimatedFinishAt ? getExecutionDateStr(f.estimatedFinishAt) : baseEndDate);
+    const endDate = f.customBlockEndDate
+      ? (f.customBlockEndDate >= startDate ? f.customBlockEndDate : startDate)
+      : (f.status === "in_progress"
+        ? [startDate, baseEndDate, estEndDate, todayStr].filter(Boolean).sort().pop()
+        : (baseEndDate >= todayStr ? baseEndDate : todayStr));
     const nextBlockId = targetDb.roomBlocks.length > 0 ? Math.max(...targetDb.roomBlocks.map(b => Number(b.id) || 0)) + 1 : 1;
     targetDb.roomBlocks.push({
       id: nextBlockId,
@@ -42256,6 +42272,101 @@ app.post("/api/pms/blocks", (req, res) => {
   res.status(201).json(newBlock);
 });
 
+const handleUpdateRoomBlock = (req, res) => {
+  const rawId = String(req.params.id || "").trim();
+  const numId = Number(rawId);
+  const { flatId, startDate, endDate, reason, notes } = req.body || {};
+
+  if (!startDate || !endDate) {
+    return res.status(400).json({ error: "Preencha as datas de início e fim do bloqueio." });
+  }
+  const normalizedStart = startDate <= endDate ? startDate : endDate;
+  const normalizedEnd = startDate <= endDate ? endDate : startDate;
+
+  // Caso seja um bloqueio dinâmico de Ordem de Serviço em andamento (service_block_<orderId>_<flatId>)
+  if (rawId.startsWith("service_block_")) {
+    const withoutPrefix = rawId.replace(/^service_block_/, "");
+    const lastUnderscore = withoutPrefix.lastIndexOf("_");
+    const orderId = lastUnderscore > 0 ? withoutPrefix.slice(0, lastUnderscore) : withoutPrefix;
+    const sFlatId = lastUnderscore > 0 ? Number(withoutPrefix.slice(lastUnderscore + 1)) : Number(flatId);
+    const order = (db.serviceOrders || []).find(o => String(o.id) === String(orderId));
+    if (!order) return res.status(404).json({ error: "Ordem de serviço do bloqueio não encontrada." });
+
+    const oflat = (order.flats || []).find(f => Number(f.flatId) === Number(sFlatId));
+    const oldStart = oflat?.customBlockStartDate || order.blockStartDate || normalizedStart;
+    const oldEnd = oflat?.customBlockEndDate || order.blockEndDate || normalizedEnd;
+    if (oflat) {
+      oflat.customBlockStartDate = normalizedStart;
+      oflat.customBlockEndDate = normalizedEnd;
+    }
+    syncServiceOrderRoomBlocks(order);
+    saveDatabase("update_service_room_block");
+    try {
+      notifyPmsMutation(db, {
+        type: "block_updated",
+        minDate: oldStart < normalizedStart ? oldStart : normalizedStart,
+        maxDate: oldEnd > normalizedEnd ? oldEnd : normalizedEnd
+      });
+    } catch (_) {}
+    return res.json({
+      id: rawId,
+      flatId: oflat ? oflat.flatId : sFlatId,
+      flatNumber: oflat ? oflat.flatNumber : String(sFlatId),
+      startDate: normalizedStart,
+      endDate: normalizedEnd,
+      reason: "service_order",
+      isServiceBlock: true,
+      serviceOrderId: order.id
+    });
+  }
+
+  if (!db.roomBlocks) db.roomBlocks = [];
+  const block = db.roomBlocks.find(b => b.id === numId || String(b.id) === rawId);
+  if (!block) return res.status(404).json({ error: "Bloqueio não encontrado." });
+
+  const oldStart = block.startDate || normalizedStart;
+  const oldEnd = block.endDate || normalizedEnd;
+
+  if (flatId !== undefined && flatId !== null) {
+    const flat = (db.flats || []).find(f => f.id === Number(flatId));
+    if (!flat) return res.status(404).json({ error: "Quarto não encontrado." });
+    block.flatId = flat.id;
+    block.flatNumber = flat.number;
+  }
+
+  block.startDate = normalizedStart;
+  block.endDate = normalizedEnd;
+  if (reason !== undefined) block.reason = reason;
+  if (notes !== undefined) block.notes = notes;
+  block.updatedAt = new Date().toISOString();
+
+  // Se o bloqueio estiver vinculado a uma Ordem de Serviço, sincroniza as datas customizadas na OS
+  if (block.serviceOrderId) {
+    const linkedOrder = (db.serviceOrders || []).find(o => String(o.id) === String(block.serviceOrderId));
+    if (linkedOrder) {
+      const oflat = (linkedOrder.flats || []).find(f => Number(f.flatId) === Number(block.flatId));
+      if (oflat) {
+        oflat.customBlockStartDate = normalizedStart;
+        oflat.customBlockEndDate = normalizedEnd;
+      }
+    }
+  }
+
+  saveDatabase("update_room_block");
+  try {
+    notifyPmsMutation(db, {
+      type: "block_updated",
+      minDate: oldStart < normalizedStart ? oldStart : normalizedStart,
+      maxDate: oldEnd > normalizedEnd ? oldEnd : normalizedEnd
+    });
+  } catch (_) {}
+
+  res.json(block);
+};
+
+app.put("/api/pms/blocks/:id", handleUpdateRoomBlock);
+app.patch("/api/pms/blocks/:id", handleUpdateRoomBlock);
+
 app.delete("/api/pms/blocks/:id", (req, res) => {
   const id = Number(req.params.id);
   const block = (db.roomBlocks || []).find(b => b.id === id);
@@ -55405,7 +55516,38 @@ app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
 // MÓDULO: DISPARO INTELIGENTE DE MENSAGENS PARA HÓSPEDES (BROADCAST & SEGMENTAÇÃO)
 // ══════════════════════════════════════════════════════════════════════════════
 
-const activeBroadcastWorkers = new Map();
+function reconcileOrphanedBroadcastCampaigns() {
+  if (!Array.isArray(db.broadcastCampaigns)) {
+    db.broadcastCampaigns = [];
+    return false;
+  }
+  let changed = false;
+  for (const camp of db.broadcastCampaigns) {
+    if (!camp || typeof camp !== "object") continue;
+    // Jamais altera campanhas que possuem um worker ativo em execução nesta instância
+    if (activeBroadcastWorkers.has(camp.id)) continue;
+
+    if (Array.isArray(camp.recipients)) {
+      for (const rec of camp.recipients) {
+        if (rec && rec.status === "sending") {
+          rec.status = "pending";
+          changed = true;
+        }
+      }
+    }
+    if (camp.status === "running") {
+      camp.status = "paused";
+      camp.interruptedByRestart = true;
+      if (Array.isArray(camp.recipients)) {
+        camp.sentCount = camp.recipients.filter(r => r && r.status === "sent").length;
+        camp.failedCount = camp.recipients.filter(r => r && r.status === "failed").length;
+        camp.pendingCount = camp.recipients.filter(r => r && r.status === "pending").length;
+      }
+      changed = true;
+    }
+  }
+  return changed;
+}
 
 function requireBroadcastAccess(req, res) {
   const userAuth = getAuthUser(req);
@@ -56325,6 +56467,7 @@ async function runBroadcastCampaignWorker(campaignId) {
             channelId: "stay_operations",
             recipientRole: "guest",
             triggerEvent: "manual_broadcast",
+            bypassTestMode: true,
             delayTyping: 2,
             db
           });
@@ -56434,6 +56577,9 @@ async function runBroadcastCampaignWorker(campaignId) {
 app.get("/api/whatsapp/broadcast/metadata", (req, res) => {
   if (!requireBroadcastAccess(req, res)) return;
   try {
+    if (reconcileOrphanedBroadcastCampaigns()) {
+      saveDatabase();
+    }
     const { records, todayStr, nowMs } = buildBroadcastDataset();
     const deduplicatedGuests = deduplicateBroadcastRecords(records, nowMs);
 
@@ -56794,6 +56940,9 @@ app.post("/api/whatsapp/broadcast/send", (req, res) => {
   const userAuth = requireBroadcastAccess(req, res);
   if (!userAuth) return;
   try {
+    if (reconcileOrphanedBroadcastCampaigns()) {
+      saveDatabase();
+    }
     const runningCampaign = (db.broadcastCampaigns || []).find(c => c && c.status === "running");
     if (runningCampaign) {
       return res.status(409).json({
@@ -56894,11 +57043,9 @@ app.post("/api/whatsapp/broadcast/send", (req, res) => {
     db.broadcastCampaigns.unshift(campaign);
     saveDatabase();
 
-    // Dispara worker em background sem bloquear a resposta HTTP
-    setImmediate(() => {
-      runBroadcastCampaignWorker(campaign.id).catch(err => {
-        console.error("[Broadcast Worker Error]:", err);
-      });
+    // Registra o worker imediatamente em activeBroadcastWorkers e executa em background sem bloquear a resposta HTTP
+    runBroadcastCampaignWorker(campaign.id).catch(err => {
+      console.error("[Broadcast Worker Error]:", err);
     });
 
     res.status(201).json({
@@ -56913,6 +57060,9 @@ app.post("/api/whatsapp/broadcast/send", (req, res) => {
 // 7. GET /api/whatsapp/broadcast/campaigns — Lista histórico de campanhas de disparo
 app.get("/api/whatsapp/broadcast/campaigns", (req, res) => {
   if (!requireBroadcastAccess(req, res)) return;
+  if (reconcileOrphanedBroadcastCampaigns()) {
+    saveDatabase();
+  }
   const campaigns = (db.broadcastCampaigns || []).slice(0, 30).map(c => ({
     id: c.id,
     name: c.name,
@@ -56952,6 +57102,9 @@ app.get("/api/whatsapp/broadcast/campaigns/:id", (req, res) => {
 // 9. POST /api/whatsapp/broadcast/campaigns/:id/control — Pausar, Retomar ou Cancelar campanha em andamento
 app.post("/api/whatsapp/broadcast/campaigns/:id/control", (req, res) => {
   if (!requireBroadcastAccess(req, res)) return;
+  if (reconcileOrphanedBroadcastCampaigns()) {
+    saveDatabase();
+  }
   const campaign = (db.broadcastCampaigns || []).find(c => c && c.id === req.params.id);
   if (!campaign) {
     return res.status(404).json({ error: "Campanha de disparo não encontrada." });
@@ -56993,10 +57146,8 @@ app.post("/api/whatsapp/broadcast/campaigns/:id/control", (req, res) => {
       campaign.interruptedByRestart = false;
       campaign.updatedAt = nowIso;
       saveDatabase();
-      setImmediate(() => {
-        runBroadcastCampaignWorker(campaign.id).catch(err => {
-          console.error("[Broadcast Worker Resume Error]:", err);
-        });
+      runBroadcastCampaignWorker(campaign.id).catch(err => {
+        console.error("[Broadcast Worker Resume Error]:", err);
       });
     }
   } else if (action === "cancel") {

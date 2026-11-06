@@ -1917,14 +1917,559 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     };
   }, [resDragState, data]);
 
-  // Block Details and Removal State
+  // ── MOTOR GANTT PARA BLOQUEIOS: REDIMENSIONAR E MOVER BLOQUEIOS DE FLAT ──
+  interface BlockDragState {
+    block: any;
+    originFlatId: number;
+    originFlatNumber: string;
+    originStartDate: string;
+    originEndDate: string;
+    daysCount: number;
+    mode: "move" | "resize-left" | "resize-right";
+    startPointerX: number;
+    startPointerY: number;
+    pointerType: "mouse" | "touch" | "pen";
+    hasMoved: boolean;
+    isLongPressReady?: boolean;
+    initialGrabDayOffset: number;
+    currentFlatId: number;
+    currentFlatNumber: string;
+    currentStartDate: string;
+    currentEndDate: string;
+  }
+
+  const [blockDragState, setBlockDragState] = useState<BlockDragState | null>(null);
+  const blockDragStateRef = useRef<BlockDragState | null>(null);
+  blockDragStateRef.current = blockDragState;
+  const [longPressActiveBlockId, setLongPressActiveBlockId] = useState<number | string | null>(null);
+  const blockLongPressTimerRef = useRef<any>(null);
+
+  const handleStartBlockDrag = (
+    blockItem: any,
+    flat: any,
+    mode: "move" | "resize-left" | "resize-right",
+    e: React.PointerEvent | React.MouseEvent
+  ) => {
+    if ((e as React.MouseEvent).button !== undefined && (e as React.MouseEvent).button !== 0) return;
+
+    if (blockLongPressTimerRef.current) {
+      clearTimeout(blockLongPressTimerRef.current);
+      blockLongPressTimerRef.current = null;
+    }
+
+    if (e.type === "mousedown" && Date.now() - lastTouchTimeRef.current < 600) {
+      return;
+    }
+
+    const isTouchEvt = (e as any).pointerType === "touch" || (e as any).pointerType === "pen" || e.type.startsWith("touch");
+    if (isTouchEvt) {
+      lastTouchTimeRef.current = Date.now();
+    }
+
+    e.stopPropagation();
+
+    const pointerType = (e as any).pointerType ||
+      ((typeof window !== "undefined" && (window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 1024)) ? "touch" : "mouse");
+
+    const isTouch = pointerType === "touch";
+
+    if (!isTouch) {
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+    }
+
+    const daysCount = Math.max(1, (differenceInDays(parseISO(blockItem.endDate), parseISO(blockItem.startDate)) || 0) + 1);
+    const isResize = mode === "resize-left" || mode === "resize-right";
+
+    let initialGrabDayOffset = 0;
+    if (mode === "move") {
+      const cell = getCellFromPoint(e.clientX, e.clientY);
+      let clickedDayStr: string | null = cell ? cell.getAttribute("data-day-str") : null;
+      if (!clickedDayStr && scrollContainerRef.current) {
+        const container = scrollContainerRef.current;
+        const cRect = container.getBoundingClientRect();
+        const timelineX = e.clientX - cRect.left + container.scrollLeft;
+        for (let i = 0; i < daysInView.length; i++) {
+          const dStr = format(daysInView[i], "yyyy-MM-dd");
+          const layout = dayLayoutMap[dStr];
+          if (layout && timelineX >= layout.left && timelineX < layout.left + layout.width) {
+            clickedDayStr = dStr;
+            break;
+          }
+        }
+      }
+      if (clickedDayStr) {
+        try {
+          const startD = parseISO(blockItem.startDate);
+          const clickedD = parseISO(clickedDayStr);
+          const rawOffset = differenceInCalendarDays(clickedD, startD);
+          initialGrabDayOffset = Math.max(0, Math.min(daysCount - 1, isNaN(rawOffset) ? 0 : rawOffset));
+        } catch (_) {
+          initialGrabDayOffset = 0;
+        }
+      }
+    }
+
+    const initialState: BlockDragState = {
+      block: blockItem,
+      originFlatId: flat.id,
+      originFlatNumber: flat.number,
+      originStartDate: blockItem.startDate,
+      originEndDate: blockItem.endDate,
+      daysCount,
+      mode,
+      startPointerX: e.clientX,
+      startPointerY: e.clientY,
+      pointerType,
+      hasMoved: false,
+      isLongPressReady: !isTouch || isResize,
+      initialGrabDayOffset,
+      currentFlatId: flat.id,
+      currentFlatNumber: flat.number,
+      currentStartDate: blockItem.startDate,
+      currentEndDate: blockItem.endDate
+    };
+
+    setBlockDragState(initialState);
+    blockDragStateRef.current = initialState;
+
+    if (isResize) {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "hidden";
+        scrollContainerRef.current.style.touchAction = "none";
+      }
+      setLongPressActiveBlockId(blockItem.id);
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        try {
+          navigator.vibrate(35);
+        } catch (_) {}
+      }
+    } else if (isTouch) {
+      blockLongPressTimerRef.current = setTimeout(() => {
+        if (blockDragStateRef.current) {
+          blockDragStateRef.current.isLongPressReady = true;
+          blockDragStateRef.current.mode = "move";
+        }
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.style.overflowX = "hidden";
+          scrollContainerRef.current.style.touchAction = "none";
+        }
+        setLongPressActiveBlockId(blockItem.id);
+        setBlockDragState(prev => {
+          if (!prev || prev.block.id !== blockItem.id) return prev;
+          return { ...prev, mode: "move", isLongPressReady: true };
+        });
+        if (typeof navigator !== "undefined" && navigator.vibrate) {
+          try {
+            navigator.vibrate([60, 50, 80]);
+          } catch (_) {}
+        }
+      }, 2000);
+    }
+  };
+
+  useEffect(() => {
+    if (!blockDragState) return;
+
+    const resolveBlockTargetFromCoords = (clientX: number, clientY: number): { flatId: number; flatNum: string; dayStr: string } | null => {
+      const current = blockDragStateRef.current;
+      if (!current) return null;
+
+      let foundFlatId: number | null = null;
+      let foundDayStr: string | null = null;
+
+      const cell = getCellFromPoint(clientX, clientY);
+      if (cell) {
+        const fId = Number(cell.getAttribute("data-flat-id"));
+        const dStr = cell.getAttribute("data-day-str");
+        if (fId && dStr) {
+          foundFlatId = fId;
+          foundDayStr = dStr;
+        }
+      }
+
+      if ((!foundFlatId || !foundDayStr) && scrollContainerRef.current) {
+        const container = scrollContainerRef.current;
+        const cRect = container.getBoundingClientRect();
+
+        if (!foundDayStr) {
+          const scrollLeft = container.scrollLeft;
+          const timelineX = clientX - cRect.left + scrollLeft;
+          for (let i = 0; i < daysInView.length; i++) {
+            const dStr = format(daysInView[i], "yyyy-MM-dd");
+            const layout = dayLayoutMap[dStr];
+            if (layout && timelineX >= layout.left && timelineX < layout.left + layout.width) {
+              foundDayStr = dStr;
+              break;
+            }
+          }
+          if (!foundDayStr) {
+            if (timelineX < FLAT_COL_WIDTH) {
+              foundDayStr = format(daysInView[0], "yyyy-MM-dd");
+            } else {
+              foundDayStr = format(daysInView[daysInView.length - 1], "yyyy-MM-dd");
+            }
+          }
+        }
+
+        if (!foundFlatId) {
+          if (current.mode !== "move") {
+            foundFlatId = current.originFlatId;
+          } else {
+            const rows = container.querySelectorAll<HTMLElement>("[data-flat-row-id]");
+            for (let i = 0; i < rows.length; i++) {
+              const rRect = rows[i].getBoundingClientRect();
+              if (clientY >= rRect.top && clientY <= rRect.bottom) {
+                const rId = Number(rows[i].getAttribute("data-flat-row-id"));
+                if (rId) {
+                  foundFlatId = rId;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const finalFlatId = (current.mode === "move" ? foundFlatId : current.originFlatId) || current.currentFlatId;
+      const finalDayStr = foundDayStr || current.currentStartDate;
+      const targetFlat = data.flats.find(f => f.id === finalFlatId);
+      const targetFlatNum = targetFlat?.number || String(finalFlatId);
+
+      return { flatId: finalFlatId, flatNum: targetFlatNum, dayStr: finalDayStr };
+    };
+
+    const processBlockDragMove = (clientX: number, clientY: number) => {
+      const current = blockDragStateRef.current;
+      if (!current) return;
+
+      const dx = Math.abs(clientX - current.startPointerX);
+      const dy = Math.abs(clientY - current.startPointerY);
+
+      if (current.pointerType === "touch" && !current.isLongPressReady) {
+        if (dx > 25 || dy > 25) {
+          if (blockLongPressTimerRef.current) {
+            clearTimeout(blockLongPressTimerRef.current);
+            blockLongPressTimerRef.current = null;
+          }
+          if (scrollContainerRef.current) {
+            scrollContainerRef.current.style.overflowX = "";
+            scrollContainerRef.current.style.touchAction = "";
+          }
+          setLongPressActiveBlockId(null);
+          setBlockDragState(null);
+        }
+        return;
+      }
+
+      const moveThreshold = current.pointerType === "touch" ? 18 : 10;
+      if (!current.hasMoved) {
+        if (dx > moveThreshold || dy > moveThreshold) {
+          current.hasMoved = true;
+        } else {
+          return;
+        }
+      }
+
+      if (scrollContainerRef.current) {
+        const edgeZone = 60;
+        if (clientX > window.innerWidth - edgeZone) {
+          scrollContainerRef.current.scrollLeft += 12;
+        } else if (clientX < edgeZone + 50) {
+          scrollContainerRef.current.scrollLeft -= 12;
+        }
+      }
+
+      const target = resolveBlockTargetFromCoords(clientX, clientY);
+      if (!target) return;
+
+      setBlockDragState(prev => {
+        if (!prev) return null;
+        let newStartDate = prev.currentStartDate;
+        let newEndDate = prev.currentEndDate;
+
+        if (prev.mode === "move") {
+          const grabOffset = prev.initialGrabDayOffset || 0;
+          newStartDate = format(subDays(parseISO(target.dayStr), grabOffset), "yyyy-MM-dd");
+          newEndDate = format(addDays(parseISO(newStartDate), Math.max(0, prev.daysCount - 1)), "yyyy-MM-dd");
+        } else if (prev.mode === "resize-left") {
+          newStartDate = target.dayStr <= prev.originEndDate ? target.dayStr : prev.originEndDate;
+          newEndDate = prev.originEndDate;
+        } else if (prev.mode === "resize-right") {
+          newStartDate = prev.originStartDate;
+          newEndDate = target.dayStr >= prev.originStartDate ? target.dayStr : prev.originStartDate;
+        }
+
+        const actualFlatId = prev.mode === "move" ? target.flatId : prev.originFlatId;
+        const actualFlatNum = prev.mode === "move" ? target.flatNum : prev.originFlatNumber;
+
+        const updated: BlockDragState = {
+          ...prev,
+          hasMoved: true,
+          currentFlatId: actualFlatId,
+          currentFlatNumber: actualFlatNum,
+          currentStartDate: newStartDate,
+          currentEndDate: newEndDate
+        };
+        blockDragStateRef.current = updated;
+        return updated;
+      });
+    };
+
+    const finishBlockDrag = async () => {
+      if (blockLongPressTimerRef.current) {
+        clearTimeout(blockLongPressTimerRef.current);
+        blockLongPressTimerRef.current = null;
+      }
+      setLongPressActiveBlockId(null);
+
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "";
+        scrollContainerRef.current.style.touchAction = "";
+      }
+
+      const current = blockDragStateRef.current;
+      if (!current) return;
+
+      if (!current.hasMoved) {
+        if (current.isLongPressReady && current.pointerType === "touch" && current.mode === "move") {
+          setBlockDragState(null);
+          return;
+        }
+        const originFlat = data.flats.find(f => f.id === current.originFlatId) || { id: current.originFlatId, number: current.originFlatNumber };
+        handleOpenBlockDetails(current.block, originFlat);
+        setBlockDragState(null);
+        return;
+      }
+
+      if (current.pointerType === "touch" && current.mode === "move" && !current.isLongPressReady) {
+        setBlockDragState(null);
+        return;
+      }
+
+      const changed = (
+        current.currentFlatId !== current.originFlatId ||
+        current.currentStartDate !== current.originStartDate ||
+        current.currentEndDate !== current.originEndDate
+      );
+
+      if (!changed) {
+        setBlockDragState(null);
+        return;
+      }
+
+      // Verifica se há reserva ativa no período para alertar/confirmar
+      const overlappingRes = data.reservations.find(r => {
+        if (r.status === "cancelada") return false;
+        const sameFlat = r.flatId === current.currentFlatId || String(r.flatNumber) === String(current.currentFlatNumber);
+        if (!sameFlat) return false;
+        return r.checkinDate <= current.currentEndDate && r.checkoutDate > current.currentStartDate;
+      });
+
+      if (overlappingRes) {
+        const proceed = window.confirm(
+          `⚠️ Atenção: O Apt ${current.currentFlatNumber} possui a reserva de "${overlappingRes.guestName}" (${format(parseISO(overlappingRes.checkinDate), "dd/MM")} a ${format(parseISO(overlappingRes.checkoutDate), "dd/MM")}) neste período.\n\nDeseja aplicar o bloqueio neste período mesmo assim?`
+        );
+        if (!proceed) {
+          setBlockDragState(null);
+          return;
+        }
+      }
+
+      const targetDays = Math.max(1, (differenceInDays(parseISO(current.currentEndDate), parseISO(current.currentStartDate)) || 0) + 1);
+      const optimisticBlock = {
+        ...current.block,
+        flatId: current.currentFlatId,
+        flatNumber: current.currentFlatNumber,
+        startDate: current.currentStartDate,
+        endDate: current.currentEndDate
+      };
+
+      setBlockDragState(null);
+
+      try {
+        setData(prev => ({
+          ...prev,
+          blocks: prev.blocks.map(b => String(b.id) === String(current.block.id) ? optimisticBlock : b)
+        }));
+
+        const resp = await fetch(`/api/pms/blocks/${encodeURIComponent(String(current.block.id))}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            flatId: current.currentFlatId,
+            startDate: current.currentStartDate,
+            endDate: current.currentEndDate,
+            reason: current.block.reason,
+            notes: current.block.notes
+          }),
+          credentials: "include"
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error || "Falha ao atualizar bloqueio.");
+        }
+
+        toast({
+          title: "Bloqueio atualizado!",
+          description: `Apt ${current.currentFlatNumber}: ${format(parseISO(current.currentStartDate), "dd/MM")} até ${format(parseISO(current.currentEndDate), "dd/MM")} (${targetDays} ${targetDays === 1 ? "dia" : "dias"}).`
+        });
+
+        fetchData(false);
+        notifyCalendarUpdated();
+      } catch (err: any) {
+        console.error("Erro ao atualizar bloqueio:", err);
+        toast({
+          title: "Erro ao atualizar bloqueio",
+          description: err.message || "Não foi possível salvar a alteração do bloqueio.",
+          variant: "destructive"
+        });
+        fetchData(false);
+      }
+    };
+
+    const onPointerMove = (e: MouseEvent | PointerEvent) => {
+      if ((e as any).pointerType === "touch") return;
+      const current = blockDragStateRef.current;
+      if (!current) return;
+      if (e.cancelable) e.preventDefault();
+      processBlockDragMove(e.clientX, e.clientY);
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      const current = blockDragStateRef.current;
+      if (!current) return;
+      const touch = e.touches[0];
+      if (!touch) return;
+      if (current.isLongPressReady || current.hasMoved) {
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+      }
+      processBlockDragMove(touch.clientX, touch.clientY);
+    };
+
+    const onPointerUp = (e: MouseEvent | PointerEvent) => {
+      if ((e as any).pointerType === "touch") return;
+      finishBlockDrag();
+    };
+
+    const onTouchEnd = () => {
+      finishBlockDrag();
+    };
+
+    const onPointerCancel = (e: PointerEvent) => {
+      if ((e as any).pointerType === "touch") return;
+      const current = blockDragStateRef.current;
+      if (current && (current.isLongPressReady || current.hasMoved)) return;
+      if (blockLongPressTimerRef.current) {
+        clearTimeout(blockLongPressTimerRef.current);
+        blockLongPressTimerRef.current = null;
+      }
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "";
+        scrollContainerRef.current.style.touchAction = "";
+      }
+      setLongPressActiveBlockId(null);
+      setBlockDragState(null);
+    };
+
+    const onTouchCancel = () => {
+      const current = blockDragStateRef.current;
+      if (current && (current.isLongPressReady || current.hasMoved)) return;
+      if (blockLongPressTimerRef.current) {
+        clearTimeout(blockLongPressTimerRef.current);
+        blockLongPressTimerRef.current = null;
+      }
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "";
+        scrollContainerRef.current.style.touchAction = "";
+      }
+      setLongPressActiveBlockId(null);
+      setBlockDragState(null);
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("touchend", onTouchEnd);
+    window.addEventListener("touchcancel", onTouchCancel);
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("mouseup", onPointerUp);
+
+    return () => {
+      if (blockLongPressTimerRef.current) {
+        clearTimeout(blockLongPressTimerRef.current);
+      }
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "";
+        scrollContainerRef.current.style.touchAction = "";
+      }
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchCancel);
+      window.removeEventListener("mousemove", onPointerMove);
+      window.removeEventListener("mouseup", onPointerUp);
+    };
+  }, [blockDragState, data]);
+
+  // Block Details, Editing and Removal State
   const [selectedBlockForDetails, setSelectedBlockForDetails] = useState<any>(null)
   const [blockDetailsModalOpen, setBlockDetailsModalOpen] = useState(false)
   const [deletingBlock, setDeletingBlock] = useState(false)
+  const [savingBlockEdit, setSavingBlockEdit] = useState(false)
+  const [editBlockStart, setEditBlockStart] = useState("")
+  const [editBlockEnd, setEditBlockEnd] = useState("")
+  const [editBlockReason, setEditBlockReason] = useState("manutencao")
+  const [editBlockNotes, setEditBlockNotes] = useState("")
 
   const handleOpenBlockDetails = (blockItem: any, flat: any) => {
     setSelectedBlockForDetails({ ...blockItem, flatNumber: flat.number, flatId: flat.id })
+    setEditBlockStart(blockItem.startDate || "")
+    setEditBlockEnd(blockItem.endDate || "")
+    setEditBlockReason(blockItem.reason || "manutencao")
+    setEditBlockNotes(blockItem.notes || "")
     setBlockDetailsModalOpen(true)
+  }
+
+  const handleSaveBlockDetailsEdit = async () => {
+    if (!selectedBlockForDetails || !editBlockStart || !editBlockEnd) return
+    setSavingBlockEdit(true)
+    try {
+      const normalizedStart = editBlockStart <= editBlockEnd ? editBlockStart : editBlockEnd
+      const normalizedEnd = editBlockStart <= editBlockEnd ? editBlockEnd : editBlockStart
+      const res = await fetch(`/api/pms/blocks/${encodeURIComponent(String(selectedBlockForDetails.id))}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatId: selectedBlockForDetails.flatId,
+          startDate: normalizedStart,
+          endDate: normalizedEnd,
+          reason: editBlockReason,
+          notes: editBlockNotes
+        }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        toast({
+          title: "Bloqueio atualizado!",
+          description: `Apt ${selectedBlockForDetails.flatNumber}: ${format(parseISO(normalizedStart), "dd/MM")} até ${format(parseISO(normalizedEnd), "dd/MM")}.`
+        })
+        setBlockDetailsModalOpen(false)
+        setSelectedBlockForDetails(null)
+        fetchData(false)
+        notifyCalendarUpdated()
+      }
+    } catch (e) {
+      console.error("Erro ao atualizar bloqueio:", e)
+    } finally {
+      setSavingBlockEdit(false)
+    }
   }
 
   const handleDeleteBlock = async (blockId: number) => {
@@ -2381,8 +2926,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     const doSilentSync = () => {
       // Se a aba estiver oculta/minimizada, não executa o poll para economizar recursos
       if (typeof document !== "undefined" && document.hidden) return;
-      // Não atualiza se o usuário estiver ativamente arrastando/redimensionando reserva
-      if (resDragStateRef.current) return;
+      // Não atualiza se o usuário estiver ativamente arrastando/redimensionando reserva ou bloqueio
+      if (resDragStateRef.current || blockDragStateRef.current) return;
       // Não atualiza se estiver selecionando período com arrasto
       if (isDraggingRef.current) return;
       // Não atualiza se algum modal de formulário/edição estiver aberto
@@ -5476,7 +6021,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
           <div 
             ref={scrollContainerRef}
             className={`overflow-x-auto select-none ${
-              resDragState && (resDragState.hasMoved || resDragState.isLongPressReady)
+              (resDragState && (resDragState.hasMoved || resDragState.isLongPressReady)) ||
+              (blockDragState && (blockDragState.hasMoved || blockDragState.isLongPressReady))
                 ? 'overflow-x-hidden touch-none'
                 : 'scroll-smooth'
             }`}
@@ -6066,36 +6612,63 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         );
                       })()}
 
-                      {/* Unified Multi-Day Room Block Bars (Clicável com opção de remoção) */}
+                      {/* Unified Multi-Day Room Block Bars (Redimensionável, Arrastável e Clicável) */}
                       {flatBlocks.map(blockItem => {
                         const bPos = getBlockPosition(blockItem.startDate, blockItem.endDate);
                         if (!bPos) return null;
 
                         const isService = Boolean(blockItem.isServiceBlock || blockItem.reason === "service_order");
                         const serviceTitle = blockItem.serviceTitle || blockItem.title?.replace(/^🔧\s*/, "") || "Serviço Externo";
+                        const blockDaysCount = Math.max(1, (differenceInDays(parseISO(blockItem.endDate), parseISO(blockItem.startDate)) || 0) + 1);
+                        const isSingleDayBlock = blockDaysCount <= 1;
+                        const isBlockBeingDragged = String(blockDragState?.block?.id) === String(blockItem.id);
+                        const isBlockLongPressActive = String(longPressActiveBlockId) === String(blockItem.id);
 
                         return (
                           <div
                             key={`block-${blockItem.id}`}
+                            data-block-id={blockItem.id}
                             style={{ 
                               position: "absolute",
                               left: `${bPos.left}px`,
                               width: `${bPos.width}px`,
                               top: "7px",
-                              height: "34px"
+                              height: "34px",
+                              touchAction: isBlockLongPressActive ? "none" : undefined
                             }}
-                            onClick={(e) => { e.stopPropagation(); handleOpenBlockDetails(blockItem, flat); }}
+                            onPointerDown={(e) => handleStartBlockDrag(blockItem, flat, "move", e)}
                             className={cn(
-                              "rounded-xl flex items-center justify-between px-2.5 text-[10.5px] font-bold shadow-xs z-10 cursor-pointer overflow-hidden border transition-all hover:scale-[1.01] active:scale-[0.99] group",
+                              "rounded-xl select-none relative flex items-center justify-between px-3 text-[10.5px] font-bold shadow-xs z-10 cursor-grab active:cursor-grabbing overflow-hidden border transition-all hover:brightness-110 hover:shadow-md group",
                               isService
                                 ? "bg-amber-950/95 hover:bg-amber-900 text-amber-100 border-amber-500/80 shadow-amber-900/30"
-                                : "bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700 hover:border-amber-400/60"
+                                : "bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700 hover:border-amber-400/60",
+                              isBlockBeingDragged && (blockDragState?.hasMoved || blockDragState?.isLongPressReady)
+                                ? "opacity-30 border-dashed scale-95"
+                                : "",
+                              isBlockLongPressActive
+                                ? "ring-4 ring-amber-400 ring-offset-2 scale-[1.04] shadow-2xl z-40 animate-pulse brightness-125"
+                                : ""
                             )}
                             title={isService 
-                              ? `🔧 Serviço: ${serviceTitle}${blockItem.workerName ? ` • Prestador: ${blockItem.workerName}` : ''} • Período: ${blockItem.startDate} a ${blockItem.endDate} • Clique para ver detalhes`
-                              : `Bloqueio: ${blockItem.reason === 'manutencao' ? 'Manutenção' : 'Bloqueio'} • Clique para ver detalhes ou remover bloqueio`}
+                              ? `🔧 Serviço: ${serviceTitle}${blockItem.workerName ? ` • Prestador: ${blockItem.workerName}` : ''} • Período: ${blockItem.startDate} a ${blockItem.endDate} (${blockDaysCount}d) • Arraste as bordas para redimensionar ou clique para detalhes`
+                              : `Bloqueio: ${blockItem.reason === 'manutencao' ? 'Manutenção' : 'Bloqueio'} (${blockItem.startDate} a ${blockItem.endDate} • ${blockDaysCount}d) • Arraste as bordas para aumentar/diminuir ou clique para detalhes`}
                           >
-                            <div className="flex items-center gap-1.5 truncate">
+                            {/* Handle Esquerdo: Redimensionar Início do Bloqueio */}
+                            <div
+                              data-block-resize-handle="left"
+                              style={{ touchAction: "none" }}
+                              className={`absolute left-0 top-0 bottom-0 ${
+                                isSingleDayBlock ? "w-2.5 max-w-[18%]" : "w-3 max-w-[16%]"
+                              } sm:w-2.5 cursor-ew-resize hover:bg-amber-400/35 active:bg-amber-400/55 z-20 flex items-center justify-center transition-colors group/bresize-l touch-none select-none`}
+                              onPointerDown={(e) => handleStartBlockDrag(blockItem, flat, "resize-left", e)}
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerEnter={(e) => e.stopPropagation()}
+                              title="Arraste para alterar a data de início do bloqueio"
+                            >
+                              <div className="w-1 sm:w-0.5 h-4 sm:h-3.5 bg-white/70 rounded-full group-hover/bresize-l:bg-amber-300 pointer-events-none shadow-xs" />
+                            </div>
+
+                            <div className="relative z-10 flex items-center gap-1.5 min-w-0 truncate pointer-events-none select-none">
                               {isService ? (
                                 <>
                                   <Wrench className="w-3.5 h-3.5 shrink-0 text-amber-400 animate-pulse" />
@@ -6110,28 +6683,74 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                 <>
                                   <Lock className="w-3.5 h-3.5 shrink-0 text-amber-400" />
                                   <span className="truncate">
-                                    {blockItem.reason === "manutencao" ? "🛠️ Manutenção" : "🔑 Bloqueio"} {blockItem.notes ? `• ${blockItem.notes}` : ""}
+                                    {blockItem.reason === "manutencao" ? "🛠️ Manutenção" : "🔑 Bloqueio"} {blockItem.notes ? `• ${blockItem.notes}` : ""} ({blockDaysCount}d)
                                   </span>
                                 </>
                               )}
                             </div>
 
-                            {!isService && (
+                            {!isService && bPos.width >= 72 && (
                               <button
                                 type="button"
+                                onPointerDown={(e) => e.stopPropagation()}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleDeleteBlock(blockItem.id);
                                 }}
-                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-rose-600 rounded-lg text-white transition-all shrink-0 ml-1.5"
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-rose-600 rounded-lg text-white transition-all shrink-0 ml-1.5 mr-1.5 relative z-10"
                                 title="Remover Bloqueio"
                               >
                                 <Trash2 className="w-3 h-3" />
                               </button>
                             )}
+
+                            {/* Handle Direito: Redimensionar Fim do Bloqueio */}
+                            <div
+                              data-block-resize-handle="right"
+                              style={{ touchAction: "none" }}
+                              className={`absolute right-0 top-0 bottom-0 ${
+                                isSingleDayBlock ? "w-2.5 max-w-[18%]" : "w-3 max-w-[16%]"
+                              } sm:w-2.5 cursor-ew-resize hover:bg-amber-400/35 active:bg-amber-400/55 z-20 flex items-center justify-center transition-colors group/bresize-r touch-none select-none`}
+                              onPointerDown={(e) => handleStartBlockDrag(blockItem, flat, "resize-right", e)}
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerEnter={(e) => e.stopPropagation()}
+                              title="Arraste para alterar a data de fim do bloqueio"
+                            >
+                              <div className="w-1 sm:w-0.5 h-4 sm:h-3.5 bg-white/70 rounded-full group-hover/bresize-r:bg-amber-300 pointer-events-none shadow-xs" />
+                            </div>
                           </div>
                         );
                       })}
+
+                      {/* Ghost Preview Bar ao Arrastar / Redimensionar Bloqueio */}
+                      {blockDragState && (blockDragState.hasMoved || blockDragState.isLongPressReady) && flat.id === blockDragState.currentFlatId && (() => {
+                        const bGhostPos = getBlockPosition(
+                          blockDragState.currentStartDate,
+                          blockDragState.currentEndDate
+                        );
+                        if (!bGhostPos) return null;
+                        const bGhostDays = Math.max(1, (differenceInDays(parseISO(blockDragState.currentEndDate), parseISO(blockDragState.currentStartDate)) || 0) + 1);
+
+                        return (
+                          <div
+                            style={{
+                              position: "absolute",
+                              left: `${bGhostPos.left}px`,
+                              width: `${bGhostPos.width}px`,
+                              top: "7px",
+                              height: "34px"
+                            }}
+                            className="rounded-xl bg-slate-800/95 text-amber-300 border-2 border-dashed border-amber-400 shadow-2xl flex items-center px-3 text-[11px] font-black z-30 pointer-events-none animate-pulse"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Lock className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                              <span className="truncate">
+                                Apt {blockDragState.currentFlatNumber} • Bloqueio ({format(parseISO(blockDragState.currentStartDate), "dd/MM")} a {format(parseISO(blockDragState.currentEndDate), "dd/MM")} - {bGhostDays} {bGhostDays === 1 ? "dia" : "dias"})
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })
@@ -6141,6 +6760,31 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         </Card>
 
         
+        {/* Banner Flutuante de Ajuda ao Mover / Redimensionar Bloqueio */}
+        {blockDragState && (blockDragState.hasMoved || blockDragState.isLongPressReady) && (() => {
+          const bDays = Math.max(1, (differenceInDays(parseISO(blockDragState.currentEndDate), parseISO(blockDragState.currentStartDate)) || 0) + 1);
+          return (
+            <div className="fixed top-4 inset-x-4 sm:inset-x-auto sm:right-6 z-50 bg-slate-950/95 backdrop-blur-md text-white px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-3 text-xs border border-amber-500 animate-in slide-in-from-top duration-150">
+              <div className="w-7 h-7 rounded-xl bg-amber-600 flex items-center justify-center font-black shrink-0">
+                {blockDragState.mode === "move" ? "↔️" : "↔"}
+              </div>
+              <div>
+                <div className="font-black text-amber-300">
+                  {blockDragState.mode === "move"
+                    ? (blockDragState.hasMoved ? "Movendo Bloqueio:" : "Bloqueio pronto para mover:")
+                    : "Redimensionando Bloqueio:"}
+                </div>
+                <div className="font-semibold text-[11px]">
+                  Apt {blockDragState.currentFlatNumber} • {format(parseISO(blockDragState.currentStartDate), "dd/MM")} até {format(parseISO(blockDragState.currentEndDate), "dd/MM")} ({bDays} {bDays === 1 ? "dia" : "dias"})
+                  {!blockDragState.hasMoved && blockDragState.mode === "move" && (
+                    <span className="block text-[10px] text-amber-200/80 font-normal">👉 Arraste até o apartamento ou período desejado</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Banner Flutuante de Ajuda ao Mover / Redimensionar Reserva */}
         {resDragState && (resDragState.hasMoved || resDragState.isLongPressReady) && (
           <div className="fixed top-4 inset-x-4 sm:inset-x-auto sm:right-6 z-50 bg-slate-950/95 backdrop-blur-md text-white px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-3 text-xs border border-indigo-500 animate-in slide-in-from-top duration-150">
@@ -12619,7 +13263,7 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
 
 
         
-        {/* ── MODAL: DETALHES E REMOÇÃO DE BLOQUEIO DE QUARTO ── */}
+        {/* ── MODAL: DETALHES, EDIÇÃO E REMOÇÃO DE BLOQUEIO DE QUARTO ── */}
         <Dialog open={blockDetailsModalOpen} onOpenChange={setBlockDetailsModalOpen}>
           <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
             <DialogHeader>
@@ -12639,25 +13283,18 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
               <DialogDescription className="text-xs">
                 {selectedBlockForDetails?.isServiceBlock || selectedBlockForDetails?.reason === "service_order"
                   ? "Informações do serviço externo em andamento bloqueando o quarto."
-                  : "Informações do período bloqueado no mapa de reservas."}
+                  : "Edite o período, motivo ou remova o bloqueio do apartamento. Você também pode puxar as bordas do bloqueio diretamente no mapa."}
               </DialogDescription>
             </DialogHeader>
 
             {selectedBlockForDetails && (
               <div className="space-y-4 py-2 text-xs">
-                <div className="p-3.5 bg-muted/40 border border-border rounded-2xl space-y-2">
+                <div className="p-3.5 bg-muted/40 border border-border rounded-2xl space-y-3">
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground font-semibold">Apartamento:</span>
                     <span className="font-black text-foreground text-sm">Apt {selectedBlockForDetails.flatNumber}</span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground font-semibold">Motivo:</span>
-                    <span className="font-bold text-foreground capitalize">
-                      {selectedBlockForDetails.isServiceBlock || selectedBlockForDetails.reason === "service_order"
-                        ? "🔧 Serviço Externo em Andamento"
-                        : selectedBlockForDetails.reason === "manutencao" ? "🛠️ Manutenção / Reparo" : "🔑 Bloqueio Operacional"}
-                    </span>
-                  </div>
+
                   {(selectedBlockForDetails.serviceTitle || selectedBlockForDetails.isServiceBlock) && (
                     <div className="flex justify-between items-center">
                       <span className="text-muted-foreground font-semibold">Serviço:</span>
@@ -12674,12 +13311,6 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                       </span>
                     </div>
                   )}
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground font-semibold">Período Bloqueado:</span>
-                    <span className="font-bold text-foreground">
-                      {selectedBlockForDetails.startDate} até {selectedBlockForDetails.endDate}
-                    </span>
-                  </div>
                   {(selectedBlockForDetails.isServiceBlock || selectedBlockForDetails.reason === "service_order") && (
                     <div className="flex justify-between items-center">
                       <span className="text-muted-foreground font-semibold">Status da Execução:</span>
@@ -12688,13 +13319,54 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                       </span>
                     </div>
                   )}
-                  {selectedBlockForDetails.notes && (
-                    <div className="pt-2 border-t border-border">
-                      <span className="text-muted-foreground font-semibold block mb-0.5">Observações:</span>
-                      <p className="font-medium text-foreground bg-card p-2 rounded-xl border border-border">
-                        {selectedBlockForDetails.notes}
-                      </p>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border/60">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold text-muted-foreground">Início do Bloqueio</Label>
+                      <Input
+                        type="date"
+                        value={editBlockStart}
+                        onChange={(e) => setEditBlockStart(e.target.value)}
+                        className="h-8 text-xs rounded-xl bg-card"
+                      />
                     </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold text-muted-foreground">Fim do Bloqueio</Label>
+                      <Input
+                        type="date"
+                        value={editBlockEnd}
+                        onChange={(e) => setEditBlockEnd(e.target.value)}
+                        className="h-8 text-xs rounded-xl bg-card"
+                      />
+                    </div>
+                  </div>
+
+                  {!(selectedBlockForDetails.isServiceBlock || selectedBlockForDetails.reason === "service_order") && (
+                    <>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground">Motivo</Label>
+                        <Select value={editBlockReason} onValueChange={setEditBlockReason}>
+                          <SelectTrigger className="h-8 text-xs rounded-xl bg-card">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="manutencao">🛠️ Manutenção / Pintura</SelectItem>
+                            <SelectItem value="proprietario">🔑 Uso do Proprietário</SelectItem>
+                            <SelectItem value="outro">Outro Motivo</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold text-muted-foreground">Observações</Label>
+                        <Input
+                          value={editBlockNotes}
+                          onChange={(e) => setEditBlockNotes(e.target.value)}
+                          placeholder="Ex: Ar condicionado em reparo..."
+                          className="h-8 text-xs rounded-xl bg-card"
+                        />
+                      </div>
+                    </>
                   )}
                 </div>
 
@@ -12716,7 +13388,7 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                     <Button
                       type="button"
                       variant="destructive"
-                      disabled={deletingBlock}
+                      disabled={deletingBlock || savingBlockEdit}
                       onClick={() => handleDeleteBlock(selectedBlockForDetails.id)}
                       className="rounded-xl h-9 text-xs font-black gap-1.5"
                     >
@@ -12725,14 +13397,25 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                     </Button>
                   )}
 
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setBlockDetailsModalOpen(false)}
-                    className="rounded-xl h-9 text-xs font-bold"
-                  >
-                    Fechar
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setBlockDetailsModalOpen(false)}
+                      className="rounded-xl h-9 text-xs font-bold"
+                    >
+                      Fechar
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={savingBlockEdit || !editBlockStart || !editBlockEnd}
+                      onClick={handleSaveBlockDetailsEdit}
+                      className="rounded-xl h-9 text-xs font-black gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      {savingBlockEdit ? "Salvando..." : "Salvar Alterações"}
+                    </Button>
+                  </div>
                 </DialogFooter>
               </div>
             )}
