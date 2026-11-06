@@ -209,14 +209,14 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
           <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-2 text-xs">
             <div className="flex items-center justify-between gap-2">
               <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 min-w-0">
-                <Car className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                <Car className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
                 <span>Vai utilizar a Garagem Coberta? (Inclusa Grátis)</span>
               </span>
               <input
                 type="checkbox"
                 checked={hasVehicle}
                 onChange={e => setHasVehicle(e.target.checked)}
-                className="rounded text-sky-600 shrink-0"
+                className="rounded accent-[#0F3D4C] shrink-0"
               />
             </div>
 

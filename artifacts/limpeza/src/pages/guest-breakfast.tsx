@@ -512,25 +512,25 @@ export default function GuestBreakfast() {
   if (loadedFromReservation && reservationData && (reservationData.isCancelled || reservationData.status === "cancelada" || reservationData.status === "cancelado")) {
     return (
       <div className="min-h-screen bg-slate-50/70 text-slate-900 flex items-center justify-center p-4 font-sans">
-        <Card className="w-full max-w-md bg-white border border-rose-200 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-2xl shadow-rose-200/40">
-          <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mx-auto shadow-2xs">
-            <AlertTriangle className="w-8 h-8" />
+        <Card className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-7 h-7" />
           </div>
           <div className="space-y-1.5">
             <h2 className="text-xl font-black text-slate-900 tracking-tight">Reserva Cancelada</h2>
             <p className="text-xs text-slate-500 leading-relaxed pt-1">
-              A reserva do <strong>Apt {reservationData.flatNumber}</strong> em nome de <strong>{reservationData.guestName}</strong> consta como cancelada no calendário do hotel. O serviço de agendamento de café da manhã está indisponível para esta estadia.
+              A reserva do <strong>Apt {reservationData.flatNumber}</strong> em nome de <strong>{reservationData.guestName}</strong> consta como cancelada. O agendamento de café da manhã está indisponível.
             </p>
           </div>
-          <div className="pt-2 space-y-2">
+          <div className="pt-2">
             <a
               href={whatsappUrl}
               target="_blank"
               rel="noreferrer"
-              className="w-full inline-flex items-center justify-center gap-1.5 h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shadow-md shadow-emerald-600/20"
+              className="w-full inline-flex items-center justify-center gap-1.5 h-11 rounded-xl bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-bold text-xs transition-colors shadow-md"
             >
-              <MessageCircle className="w-4 h-4" />
-              <span>Falar com a Administração no WhatsApp</span>
+              <MessageCircle className="w-4 h-4 text-[#E5C98B]" />
+              <span>Falar com a Recepção no WhatsApp</span>
             </a>
           </div>
         </Card>
@@ -555,22 +555,22 @@ export default function GuestBreakfast() {
     const isExpired = reservationData.isExpiredPreReservation || reservationData.status === "expirada"
     return (
       <div className="min-h-screen bg-slate-50/70 text-slate-900 flex items-center justify-center p-4 font-sans">
-        <Card className="w-full max-w-md bg-white border border-amber-200 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-2xl shadow-amber-200/40">
-          <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto shadow-2xs">
-            <Clock className="w-8 h-8" />
+        <Card className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40 flex items-center justify-center mx-auto">
+            <Clock className="w-7 h-7" />
           </div>
           <div className="space-y-1.5">
             <h2 className="text-xl font-black text-slate-900 tracking-tight">
-              {isExpired ? "Pré-Reserva Expirada" : "Pré-Reserva Aguardando Confirmação"}
+              {isExpired ? "Pré-Reserva Expirada" : "Aguardando Confirmação da Reserva"}
             </h2>
             <p className="text-xs text-slate-600 leading-relaxed pt-1">
               {isExpired ? (
                 <>
-                  O prazo de validade da pré-reserva do <strong>Apt {reservationData.flatNumber}</strong> em nome de <strong>{reservationData.guestName}</strong> expirou sem confirmação de pagamento. O agendamento de café da manhã está indisponível.
+                  O prazo de validade da pré-reserva do <strong>Apt {reservationData.flatNumber}</strong> expirou sem confirmação de pagamento.
                 </>
               ) : (
                 <>
-                  A reserva do <strong>Apt {reservationData.flatNumber}</strong> em nome de <strong>{reservationData.guestName}</strong> ainda consta como <strong>pré-reserva (aguardando pagamento)</strong>. O pedido e agendamento do café da manhã só são liberados após a confirmação da reserva.
+                  A reserva do <strong>Apt {reservationData.flatNumber}</strong> ainda aguarda confirmação de pagamento para liberar o agendamento do café da manhã.
                 </>
               )}
             </p>
@@ -579,19 +579,19 @@ export default function GuestBreakfast() {
             {!isExpired && reservationData.code && (
               <Button
                 onClick={() => setLocation(`/minha-reserva/${reservationData.code}`)}
-                className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-11 rounded-xl shadow-md shadow-sky-600/20"
+                className="w-full bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-bold text-xs h-11 rounded-xl shadow-md"
               >
-                Acessar Minha Reserva e Confirmar Pagamento
+                Acessar Minha Reserva
               </Button>
             )}
             <a
               href={whatsappUrl}
               target="_blank"
               rel="noreferrer"
-              className="w-full inline-flex items-center justify-center gap-1.5 h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shadow-md shadow-emerald-600/20"
+              className="w-full inline-flex items-center justify-center gap-1.5 h-11 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold text-xs transition-colors"
             >
-              <MessageCircle className="w-4 h-4" />
-              <span>Falar com a Administração no WhatsApp</span>
+              <MessageCircle className="w-4 h-4 text-[#0F3D4C]" />
+              <span>Falar no WhatsApp</span>
             </a>
           </div>
         </Card>
@@ -603,20 +603,20 @@ export default function GuestBreakfast() {
   if (loadedFromReservation && reservationData && !(reservationData.includeBreakfast || reservationData.hasBreakfast)) {
     return (
       <div className="min-h-screen bg-slate-50/70 text-slate-900 flex items-center justify-center p-4 font-sans">
-        <Card className="w-full max-w-md bg-white border border-slate-200/80 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-2xl shadow-slate-200/60">
-          <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto shadow-2xs">
-            <Coffee className="w-8 h-8" />
+        <Card className="w-full max-w-md bg-white border border-slate-200/80 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40 flex items-center justify-center mx-auto">
+            <Coffee className="w-7 h-7" />
           </div>
           <div className="space-y-1.5">
             <h2 className="text-xl font-black text-slate-900 tracking-tight">Café da Manhã não incluso</h2>
             <p className="text-xs text-slate-500 leading-relaxed pt-1">
-              A reserva do <strong>Apt {reservationData.flatNumber}</strong> em nome de <strong>{reservationData.guestName}</strong> não possui o serviço de café da manhã contratado nesta estadia.
+              A reserva do <strong>Apt {reservationData.flatNumber}</strong> foi contratada na modalidade sem café da manhã.
             </p>
           </div>
           <div className="pt-2">
             <Button
               onClick={() => setLocation(`/minha-reserva/${reservationData.code}`)}
-              className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-11 rounded-xl shadow-md shadow-sky-600/20"
+              className="w-full bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-bold text-xs h-11 rounded-xl shadow-md"
             >
               Voltar aos Detalhes da Reserva
             </Button>
@@ -633,33 +633,29 @@ export default function GuestBreakfast() {
     )
 
     return (
-      <div className="min-h-screen bg-slate-50/70 text-slate-900 flex items-center justify-center p-4 selection:bg-sky-500 selection:text-white font-sans">
-        <Card className="w-full max-w-lg bg-white border border-slate-200/80 rounded-3xl p-6 sm:p-8 text-center space-y-6 shadow-2xl shadow-slate-200/60 relative overflow-hidden">
-          <div className="w-18 h-18 sm:w-20 sm:h-20 rounded-3xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center mx-auto shadow-2xs">
-            <CheckCircle2 className="w-10 h-10" />
+      <div className="min-h-screen bg-slate-50/70 text-slate-900 flex items-center justify-center p-4 selection:bg-[#0F3D4C] selection:text-white font-sans">
+        <Card className="w-full max-w-lg bg-white border border-slate-200/80 rounded-3xl p-6 sm:p-8 text-center space-y-5 shadow-xl relative overflow-hidden">
+          <div className="w-16 h-16 rounded-2xl bg-[#091E26] border border-[#C5A059]/40 text-[#C5A059] flex items-center justify-center mx-auto shadow-xs">
+            <CheckCircle2 className="w-8 h-8" />
           </div>
 
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Pedido Confirmado com Sucesso</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+          <div className="space-y-1.5">
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">
               Café da Manhã Agendado!
             </h1>
             <p className="text-xs sm:text-sm text-slate-500 max-w-sm mx-auto leading-relaxed">
-              Seu café da manhã {orderSuccess.isStandard ? 'Padrão Completo' : 'Personalizado'} será preparado com todo o carinho para {orderSuccess.guestCount} {orderSuccess.guestCount === 1 ? 'pessoa' : 'pessoas'} e entregue pontualmente no horário agendado.
+              Pedido {orderSuccess.isStandard ? 'Padrão CorpFlats' : 'Personalizado'} registrado para {orderSuccess.guestCount} {orderSuccess.guestCount === 1 ? 'hóspede' : 'hóspedes'}.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 p-4 sm:p-5 bg-slate-50/80 rounded-2xl border border-slate-200 text-xs text-left">
+          <div className="grid grid-cols-2 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-left">
             <div>
               <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Apartamento</span>
-              <span className="font-black text-xl text-slate-900">Apt {orderSuccess.roomNumber}</span>
+              <span className="font-black text-lg text-slate-900">Flat {orderSuccess.roomNumber}</span>
             </div>
             <div>
-              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Data(s) e Horário</span>
-              <span className="font-black text-sm text-emerald-600 flex items-center gap-1.5 mt-0.5">
+              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Data e Horário</span>
+              <span className="font-black text-sm text-[#0F3D4C] flex items-center gap-1.5 mt-0.5">
                 <Clock className="w-3.5 h-3.5 shrink-0" />
                 <span>
                   {orderSuccess.deliveryDates && orderSuccess.deliveryDates.length > 1
@@ -667,26 +663,25 @@ export default function GuestBreakfast() {
                     : `${formatDateDisplay(orderSuccess.deliveryDate)} às ${orderSuccess.deliveryTime}`}
                 </span>
               </span>
-              <span className="text-[10px] text-slate-400 block mt-0.5 font-medium">Tolerância de até ±10 min</span>
             </div>
             <div className="pt-2.5 border-t border-slate-200/80">
               <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Hóspede Titular</span>
               <span className="font-bold text-slate-800 truncate block mt-0.5">{orderSuccess.clientName}</span>
             </div>
             <div className="pt-2.5 border-t border-slate-200/80">
-              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Tipo do Pedido</span>
-              <span className="font-bold text-sky-600 block mt-0.5">
-                {orderSuccess.isStandard ? '☕ Café Padrão' : '🎨 Personalizado'}
+              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Modalidade</span>
+              <span className="font-bold text-[#0F3D4C] block mt-0.5">
+                {orderSuccess.isStandard ? 'Café Padrão' : 'Personalizado'}
               </span>
             </div>
           </div>
 
           {orderSuccess.deliveryDates && orderSuccess.deliveryDates.length > 1 && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-left text-xs text-emerald-900">
-              <span className="font-bold block">Entregas programadas para:</span>
+            <div className="p-3 bg-[#0F3D4C]/[0.04] border border-[#C5A059]/30 rounded-2xl text-left text-xs text-slate-800">
+              <span className="font-bold block">Entregas programadas:</span>
               <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {orderSuccess.deliveryDates.map((d: string) => (
-                  <Badge key={d} variant="outline" className="bg-white border-emerald-300 text-emerald-800 font-mono text-[10px]">
+                  <Badge key={d} variant="outline" className="bg-white border-slate-200 text-[#0F3D4C] font-mono text-[10px]">
                     ✓ {formatDateDisplay(d)} às {orderSuccess.deliveryTime}
                   </Badge>
                 ))}
@@ -696,14 +691,11 @@ export default function GuestBreakfast() {
 
           {/* Aviso se ainda há dias pendentes na estadia */}
           {nextPending && (
-            <div className="p-4 bg-sky-50 border border-sky-200 rounded-2xl text-left space-y-2.5 shadow-2xs">
-              <div className="flex items-center gap-2 text-sky-900 font-black text-xs">
-                <Calendar className="w-4 h-4 text-sky-600" />
-                <span>Deseja agendar os outros dias da estadia?</span>
+            <div className="p-4 bg-[#0F3D4C]/[0.05] border border-[#C5A059]/40 rounded-2xl text-left space-y-2.5 shadow-2xs">
+              <div className="flex items-center gap-2 text-[#091E26] font-black text-xs">
+                <Calendar className="w-4 h-4 text-[#0F3D4C]" />
+                <span>Agendar próximo dia ({formatDateDisplay(nextPending.date)})</span>
               </div>
-              <p className="text-[11px] text-sky-800 leading-relaxed font-medium">
-                Você ainda não montou o pedido para o dia <strong>{formatDateDisplay(nextPending.date)}</strong>. Você pode montá-lo agora com escolhas diferentes ou voltar mais tarde neste mesmo link.
-              </p>
               <Button
                 onClick={() => {
                   setDeliveryDate(nextPending.date)
@@ -712,21 +704,21 @@ export default function GuestBreakfast() {
                   setOrderSuccess(null)
                   setActiveGuestTab(1)
                 }}
-                className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-11 rounded-xl shadow-xs"
+                className="w-full bg-[#0F3D4C] hover:bg-[#091E26] text-white font-bold text-xs h-10 rounded-xl shadow-xs"
               >
-                Montar Pedido para {formatDateDisplay(nextPending.date)} Agora →
+                Montar Pedido para {formatDateDisplay(nextPending.date)} →
               </Button>
             </div>
           )}
 
-          {/* Aviso Importante das Louças & Porcelanas */}
-          <div className="p-4 sm:p-5 bg-amber-50/90 border border-amber-200/90 rounded-2xl text-left space-y-1.5 shadow-2xs">
-            <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider">
-              <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>Aviso Importante: Louças & Porcelanas CorpFlats</span>
+          {/* Aviso das Louças & Porcelanas */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-left space-y-1">
+            <div className="flex items-center gap-1.5 text-slate-800 font-bold text-xs">
+              <Sparkles className="w-3.5 h-3.5 text-[#C5A059] shrink-0" />
+              <span>Louças & Porcelanas CorpFlats</span>
             </div>
-            <p className="text-[11px] text-amber-900/80 leading-relaxed font-medium">
-              Por favor, <strong>não entregue as louças, garrafas térmicas, bandejas ou porcelanas às camareiras nem ao restaurante do prédio</strong>, e <strong>não as deixe no corredor</strong>, pois as mesmas pertencem à administração exclusiva da CorpFlats. Ao terminar, <strong>mantenha tudo dentro do apartamento</strong> que nossa equipe fará o recolhimento.
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              Ao finalizar, mantenha as louças, garrafas e bandejas dentro do apartamento para recolhimento da nossa equipe (não entregue no restaurante nem deixe no corredor).
             </p>
           </div>
 
@@ -734,9 +726,9 @@ export default function GuestBreakfast() {
             {loadedFromReservation && reservationData?.code ? (
               <Button 
                 onClick={() => setLocation(`/minha-reserva/${reservationData.code}`)}
-                className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black h-12 rounded-2xl text-xs uppercase tracking-wider shadow-md shadow-sky-600/20 transition-all"
+                className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-bold h-11 rounded-xl text-xs shadow-md transition-all"
               >
-                Voltar ao Portal do Hóspede
+                Voltar à Minha Reserva
               </Button>
             ) : null}
 
@@ -746,9 +738,9 @@ export default function GuestBreakfast() {
                 setOrderSuccess(null)
                 setActiveGuestTab(1)
               }}
-              className="w-full bg-white hover:bg-slate-50 border-slate-200 text-slate-700 font-bold h-11 rounded-2xl text-xs uppercase tracking-wider"
+              className="w-full bg-white hover:bg-slate-50 border-slate-200 text-slate-700 font-bold h-10 rounded-xl text-xs"
             >
-              Ver ou Alterar Pedidos
+              Ver ou Alterar Pedido
             </Button>
           </div>
         </Card>
@@ -761,7 +753,7 @@ export default function GuestBreakfast() {
   const eligibleOtherDays = breakfastDays.filter(d => d.date !== deliveryDate && d.isOpen)
 
   return (
-    <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white w-full max-w-full overflow-x-hidden">
+    <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-[#0F3D4C] selection:text-white w-full max-w-full overflow-x-hidden">
       {/* ── Top Navigation Bar (Header Clean & Sofisticado) ──────────────── */}
       <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
@@ -801,9 +793,9 @@ export default function GuestBreakfast() {
               href={whatsappUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-xl bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-700 font-semibold text-xs border border-emerald-200 transition-colors shrink-0"
+              className="inline-flex items-center gap-1.5 py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-[#0F3D4C] font-semibold text-xs border border-slate-200 transition-colors shrink-0"
             >
-              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <MessageCircle className="w-3.5 h-3.5 text-[#0F3D4C]" />
               <span>WhatsApp</span>
             </a>
           </div>
@@ -811,77 +803,64 @@ export default function GuestBreakfast() {
       </nav>
 
       {/* ── Hero Section (Capa) ────────────────────── */}
-      <header className="relative min-h-[150px] sm:min-h-[180px] flex items-center justify-center px-4 sm:px-8 py-6 sm:py-8 text-center overflow-hidden">
+      <header className="relative min-h-[140px] sm:min-h-[165px] flex items-center justify-center px-4 sm:px-8 py-6 text-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img
             src="https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?auto=format&fit=crop&w=1920&q=80"
             alt="Café da Manhã CorpFlats"
             className="w-full h-full object-cover object-center"
           />
-          {/* Overlay escuro calibrado (rgba(0,0,0,0.45) a rgba(0,0,0,0.60)) para legibilidade impecável */}
-          <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/50 to-black/60" />
+          <div className="absolute inset-0 bg-gradient-to-b from-[#091E26]/60 via-[#091E26]/65 to-[#091E26]/80" />
         </div>
 
         <div className="relative z-10 max-w-xl mx-auto space-y-1 text-white">
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white">
-            Café da Manhã
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight drop-shadow-md text-white">
+            Café da Manhã no Flat
           </h1>
-          <p className="text-xs sm:text-sm font-normal text-white/90 drop-shadow-sm tracking-normal">
+          <p className="text-xs sm:text-sm font-normal text-[#E5C98B] drop-shadow-sm">
             Entregas diárias das 05h às 09h30
           </p>
         </div>
       </header>
 
       {/* ── Main Form Container ─────────────────────────────────────────── */}
-      <main className="max-w-3xl w-full mx-auto px-4 -mt-6 sm:-mt-8 z-20 space-y-4 sm:space-y-5 pb-20">
+      <main className="max-w-3xl w-full mx-auto px-4 -mt-5 sm:-mt-6 z-20 space-y-4 pb-16">
         
-        {/* Quando acessado com link de reserva: Card de Identificação da Estada / Hóspede */}
+        {/* Quando acessado com link de reserva: Card de Identificação + Datas Integrados */}
         {loadingContext && !loadedFromReservation ? (
-          <Card className="bg-white border border-slate-100 rounded-2xl p-6 sm:p-8 shadow-md text-center space-y-3">
-            <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center mx-auto animate-pulse">
+          <Card className="bg-white border border-slate-200/80 rounded-2xl p-6 sm:p-8 shadow-sm text-center space-y-3">
+            <div className="w-10 h-10 rounded-xl bg-[#091E26] text-[#C5A059] flex items-center justify-center mx-auto animate-pulse">
               <Coffee className="w-5 h-5" />
             </div>
-            <p className="text-sm font-bold text-slate-800">Carregando os dados da sua reserva...</p>
-            <p className="text-xs text-slate-500">Preparando o cardápio personalizado da sua estadia.</p>
+            <p className="text-sm font-bold text-slate-800">Carregando dados da reserva...</p>
           </Card>
         ) : loadedFromReservation && reservationData ? (
-          <>
-            {/* Card de Identificação da Estada / Hóspede */}
-            <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-                  Olá, {(guest1Name || reservationData?.guestName || "Hóspede").trim().split(" ")[0]}!
-                </h2>
-              </div>
+          <Card className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+            {/* Cabeçalho enxuto do hóspede */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
+                Olá, {(guest1Name || reservationData?.guestName || "Hóspede").trim().split(" ")[0]}!
+              </h2>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 font-bold text-xs">
                   Flat {roomNumber}
                 </span>
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
-                  {guestCount} {guestCount === 1 ? 'Pessoa' : 'Pessoas'}
+                <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
+                  {guestCount} {guestCount === 1 ? 'Hóspede' : 'Hóspedes'}
                 </span>
-                <Badge className="bg-emerald-50 hover:bg-emerald-50 text-emerald-700 border border-emerald-200/80 font-semibold text-xs px-2.5 py-1 rounded-lg shadow-none">
-                  Café da Manhã Incluso
-                </Badge>
               </div>
+            </div>
 
-              <p className="text-xs sm:text-sm text-slate-500 font-normal leading-relaxed">
-                Selecione os itens desejados para a sua entrega de amanhã.
-              </p>
-            </Card>
-
-            {/* Hub Interativo dos Dias de Café da Estadia */}
-            <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2">
+            {/* Seleção do Dia da Entrega */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold uppercase text-slate-700 tracking-wider flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-[#0F3D4C] shrink-0" />
-                  <span>1. Dias de Café da Manhã da sua Estadia</span>
+                  <span>Data da Entrega</span>
                 </span>
-                <span className="text-[10px] text-slate-500 font-medium">Clique no dia para montar ou visualizar</span>
               </div>
 
-              {/* Grid com cada dia da estadia */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 {breakfastDays.map((d: any) => {
                   const isSelected = deliveryDate === d.date
@@ -901,95 +880,71 @@ export default function GuestBreakfast() {
                         isSelected
                           ? "bg-[#0F3D4C]/[0.06] border-[#0F3D4C] ring-2 ring-[#C5A059]/35 shadow-xs"
                           : isScheduled
-                            ? "bg-emerald-50/40 border-emerald-200 hover:border-emerald-300"
+                            ? "bg-slate-50 border-slate-300 hover:border-[#0F3D4C]"
                             : isClosed
                               ? "bg-slate-50/60 border-slate-200 opacity-60 cursor-not-allowed"
                               : "bg-white border-slate-200 hover:border-[#C5A059]"
                       }`}
                     >
                       <div className="flex flex-wrap items-center justify-between gap-1.5 w-full">
-                        <span className={`font-black text-xs ${isSelected ? 'text-[#091E26] font-black' : 'text-slate-800'}`}>
+                        <span className={`font-black text-xs ${isSelected ? 'text-[#091E26]' : 'text-slate-800'}`}>
                           {formatDateDisplay(d.date)}
                         </span>
                         {isScheduled ? (
-                          <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[9px] font-black px-1.5 py-0.5">
-                            ✓ Agendado ({d.existingOrder?.deliveryTime || '08:00'})
+                          <Badge className="bg-[#0F3D4C] text-white text-[9px] font-bold px-1.5 py-0.5">
+                            ✓ {d.existingOrder?.deliveryTime || '08:00'}
                           </Badge>
                         ) : isCancelled ? (
                           <Badge variant="destructive" className="text-[9px] font-bold px-1.5 py-0.5">
-                            🚫 Cancelado
+                            Cancelado
                           </Badge>
                         ) : isClosed ? (
                           <Badge className="bg-slate-200 text-slate-600 text-[9px] font-bold px-1.5 py-0.5">
-                            🔒 Encerrado
+                            Encerrado
                           </Badge>
                         ) : d.isOpen ? (
-                          <Badge className="bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-black px-1.5 py-0.5">
-                            ⏳ Pendente
+                          <Badge className="bg-[#C5A059]/20 text-[#091E26] border border-[#C5A059]/40 text-[9px] font-bold px-1.5 py-0.5">
+                            Pendente
                           </Badge>
                         ) : null}
                       </div>
 
                       <span className="text-[10px] text-slate-500 font-medium">
                         {d.isToday 
-                          ? (d.isClosedTodayAfter5am ? "Hoje (pedidos encerrados às 05:00)" : "Hoje (pedir até 05:00)")
+                          ? (d.isClosedTodayAfter5am ? "Pedidos encerrados às 05:00" : "Hoje (pedir até 05:00)")
                           : d.isTomorrow
                             ? "Amanhã (pedir até 22:00)"
-                            : d.isPast ? "Dia finalizado" : "Dia de café"}
+                            : d.isPast ? "Finalizado" : "Disponível"}
                       </span>
                     </button>
                   )
                 })}
               </div>
 
-              {/* Aviso se o dia selecionado for hoje após 05:00 */}
               {currentDayInfo?.isClosedTodayAfter5am && (
-                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <strong className="font-black block">Horário Limite Encerrado para Hoje (05:00)</strong>
-                    <span>O serviço de café da manhã inicia pontualmente às 05:00 e não é mais possível realizar novos pedidos para o mesmo dia ({formatDateDisplay(currentDayInfo.date)}). Por favor, selecione acima a data de amanhã ou outro dia disponível para realizar o pedido.</span>
-                  </div>
+                  <span>O horário limite para pedidos de hoje encerrou às 05:00. Selecione o próximo dia disponível acima.</span>
                 </div>
               )}
 
-              {/* Informação se o dia já tem pedido salvo */}
               {currentDayInfo?.status === "scheduled" && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Você já possui um café agendado para <strong>{formatDateDisplay(currentDayInfo.date)}</strong> às <strong>{currentDayInfo.existingOrder?.deliveryTime}</strong>. Ao confirmar abaixo, você atualizará as escolhas deste dia.</span>
+                <div className="p-3 bg-[#0F3D4C]/[0.05] border border-[#C5A059]/40 rounded-xl text-xs text-slate-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-[#0F3D4C] shrink-0" />
+                  <span>Café já agendado para <strong>{formatDateDisplay(currentDayInfo.date)}</strong> às <strong>{currentDayInfo.existingOrder?.deliveryTime}</strong>. Você pode alterar e salvar novamente abaixo.</span>
                 </div>
               )}
 
-              {/* Informação se o dia foi cancelado */}
-              {currentDayInfo?.status === "cancelled" && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-900 flex items-start gap-2.5">
-                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                  <div className="space-y-0.5">
-                    <strong className="font-black block">Café Cancelado para este dia ({formatDateDisplay(currentDayInfo.date)})</strong>
-                    <span className="text-rose-800 leading-relaxed block">{currentDayInfo.cancelReason || "O pedido deste dia foi cancelado devido a alteração na reserva ou estadia."}</span>
-                    {currentDayInfo.isOpen && (
-                      <span className="text-[11px] text-slate-500 block pt-1">Caso deseje agendar novamente, você pode escolher os itens abaixo e confirmar.</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Seção de Repetição em Múltiplos Dias */}
+              {/* Repetição em Múltiplos Dias */}
               {eligibleOtherDays.length > 0 && currentDayInfo?.isOpen && (
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 pt-3.5">
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                        Deseja repetir este pedido nos outros dias?
-                      </span>
-                      <span className="text-[10px] text-slate-500 block mt-0.5">
-                        Replique este mesmo cardápio e horário para os outros dias da sua estadia com 1 clique.
-                      </span>
-                    </div>
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-[#C5A059]" />
+                      Repetir este mesmo pedido nos outros dias?
+                    </span>
 
-                    <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-slate-200 hover:border-sky-400 transition-colors shadow-2xs">
+                    <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-slate-200 hover:border-[#0F3D4C] transition-colors">
                       <input
                         type="checkbox"
                         checked={repeatAllDays}
@@ -1002,21 +957,21 @@ export default function GuestBreakfast() {
                             setSelectedRepeatDates([])
                           }
                         }}
-                        className="rounded text-sky-600 focus:ring-sky-500 w-4 h-4"
+                        className="rounded text-[#0F3D4C] accent-[#0F3D4C] w-4 h-4"
                       />
-                      <span className="text-xs font-black text-slate-800">Repetir em Todos</span>
+                      <span className="text-xs font-bold text-slate-800">Repetir em todos</span>
                     </label>
                   </div>
 
                   {!repeatAllDays && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-200/80">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                       {eligibleOtherDays.map((d: any) => {
                         const isChecked = selectedRepeatDates.includes(d.date)
                         return (
                           <label 
                             key={d.date} 
                             className={`flex items-center justify-between p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
-                              isChecked ? 'bg-sky-50 border-sky-300 text-sky-950' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                              isChecked ? 'bg-[#0F3D4C]/[0.06] border-[#0F3D4C] text-[#091E26]' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
                             }`}
                           >
                             <div className="flex items-center gap-2">
@@ -1030,62 +985,47 @@ export default function GuestBreakfast() {
                                     setSelectedRepeatDates(selectedRepeatDates.filter(x => x !== d.date))
                                   }
                                 }}
-                                className="rounded text-sky-600 focus:ring-sky-500 w-4 h-4"
+                                className="rounded text-[#0F3D4C] accent-[#0F3D4C] w-4 h-4"
                               />
                               <span>{formatDateDisplay(d.date)}</span>
                             </div>
-                            {d.status === "scheduled" && (
-                              <span className="text-[9px] text-emerald-600 font-bold">Substituir existente</span>
-                            )}
                           </label>
                         )
                       })}
                     </div>
                   )}
-
-                  <div className="text-[11px] font-bold text-sky-800 bg-sky-50 border border-sky-100 px-3 py-2 rounded-xl flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-                    <span>
-                      Este pedido será entregue em <strong>{1 + selectedRepeatDates.length} {1 + selectedRepeatDates.length === 1 ? 'dia' : 'dias'}</strong>: {[deliveryDate, ...selectedRepeatDates].sort().map(d => formatDateDisplay(d)).join(", ")} às {deliveryTime}
-                    </span>
-                  </div>
                 </div>
               )}
-            </Card>
-          </>
+            </div>
+          </Card>
         ) : (
           /* Card 1: Identificação Manual (Fallback para pedidos avulsos sem reserva vinculada) */
-          <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
+          <Card className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
               <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
+                <div className="w-8 h-8 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center font-bold shrink-0">
                   <HomeIcon className="w-4 h-4" />
                 </div>
-                <span>1. Apartamento & Identificação</span>
+                <span>Identificação do Apartamento</span>
               </span>
-              <Badge className="bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-bold px-2.5 py-0.5 rounded-full">
-                1 a 3 Pessoas
-              </Badge>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <HomeIcon className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                <Label className="text-xs font-bold text-slate-700">
                   Número do Apartamento *
                 </Label>
                 <Input 
                   value={roomNumber} 
                   onChange={e => setRoomNumber(e.target.value)} 
-                  placeholder="Ex: 1017" 
+                  placeholder="Ex: 1304" 
                   required 
-                  className="bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 text-sm font-bold h-11 rounded-xl focus-visible:ring-sky-500" 
+                  className="bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 text-sm font-bold h-10 rounded-xl" 
                 />
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                <Label className="text-xs font-bold text-slate-700">
                   Quantidade de Pessoas *
                 </Label>
                 <div className="grid grid-cols-3 gap-1.5">
@@ -1097,9 +1037,9 @@ export default function GuestBreakfast() {
                         setGuestCount(n)
                         if (activeGuestTab > n) setActiveGuestTab(1)
                       }}
-                      className={`h-11 rounded-xl font-black text-xs border transition-all flex items-center justify-center gap-1 ${
+                      className={`h-10 rounded-xl font-bold text-xs border transition-all flex items-center justify-center ${
                         guestCount === n 
-                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-2 ring-sky-500/20" 
+                          ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs" 
                           : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                       }`}
                     >
@@ -1112,8 +1052,7 @@ export default function GuestBreakfast() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                <Label className="text-xs font-bold text-slate-700">
                   Nome do Hóspede Titular *
                 </Label>
                 <Input 
@@ -1121,13 +1060,12 @@ export default function GuestBreakfast() {
                   onChange={e => setGuest1Name(e.target.value)} 
                   placeholder="Seu nome completo" 
                   required 
-                  className="bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs font-bold h-11 rounded-xl focus-visible:ring-sky-500" 
+                  className="bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs font-bold h-10 rounded-xl" 
                 />
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                <Label className="text-xs font-bold text-slate-700">
                   Data da Entrega *
                 </Label>
                 <Input 
@@ -1135,65 +1073,49 @@ export default function GuestBreakfast() {
                   value={deliveryDate} 
                   onChange={e => setDeliveryDate(e.target.value)} 
                   required 
-                  className="bg-slate-50 border-slate-200 text-slate-900 text-xs font-bold h-11 rounded-xl focus-visible:ring-sky-500" 
+                  className="bg-slate-50 border-slate-200 text-slate-900 text-xs font-bold h-10 rounded-xl" 
                 />
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                WhatsApp para Notificação (Opcional)
-              </Label>
-              <Input 
-                value={phone} 
-                onChange={e => setPhone(e.target.value)} 
-                placeholder="(21) 99999-9999" 
-                className="bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs font-semibold h-11 rounded-xl focus-visible:ring-sky-500" 
-              />
             </div>
           </Card>
         )}
 
         {/* ── Distribuição do Pedido (Apenas quando a reserva for para mais de 1 pessoa) ── */}
         {guestCount > 1 && (
-          <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
+          <Card className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
               <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
+                <div className="w-8 h-8 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center font-bold shrink-0">
                   <Users className="w-4 h-4" />
                 </div>
-                <span>Como deseja montar o café para os {guestCount} hóspedes?</span>
+                <span>Formato do Pedido</span>
               </span>
-              <Badge className="bg-sky-50 text-sky-700 border-sky-200 text-[10px] font-bold">
-                {guestCount} Hóspedes na Reserva
-              </Badge>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Opção A: O mesmo pedido para os dois */}
+              {/* Opção A: O mesmo pedido para todos */}
               <div
                 onClick={() => {
                   setOrderDistribution("same_for_all")
                   setActiveGuestTab(1)
                 }}
-                className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
+                className={`cursor-pointer p-3.5 sm:p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
                   orderDistribution === "same_for_all"
-                    ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
+                    ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
                     : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
                 }`}
               >
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                  orderDistribution === "same_for_all" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
+                <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+                  orderDistribution === "same_for_all" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-500"
                 }`}>
-                  <Copy className="w-5 h-5" />
+                  <Copy className="w-4 h-4 sm:w-5 sm:h-5" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <span className="font-black text-xs sm:text-sm text-slate-900 block">
                     O mesmo pedido para os {guestCount}
                   </span>
                   <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
-                    Prático e rápido: monte uma única vez e todos receberão o mesmo cardápio.
+                    Monte uma única vez para todos os hóspedes do flat.
                   </p>
                 </div>
               </div>
@@ -1201,23 +1123,23 @@ export default function GuestBreakfast() {
               {/* Opção B: Personalizar por hóspede */}
               <div
                 onClick={() => setOrderDistribution("individual")}
-                className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
+                className={`cursor-pointer p-3.5 sm:p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
                   orderDistribution === "individual"
-                    ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
+                    ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] text-slate-900 ring-2 ring-[#C5A059]/35 shadow-xs"
                     : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
                 }`}
               >
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                  orderDistribution === "individual" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
+                <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+                  orderDistribution === "individual" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-500"
                 }`}>
-                  <User className="w-5 h-5" />
+                  <User className="w-4 h-4 sm:w-5 sm:h-5" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <span className="font-black text-xs sm:text-sm text-slate-900 block">
-                    Personalizar por hóspede
+                    Individual por hóspede
                   </span>
                   <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
-                    Escolha itens sob medida para cada hóspede.
+                    Escolha os itens separadamente para cada pessoa.
                   </p>
                 </div>
               </div>
@@ -1225,34 +1147,20 @@ export default function GuestBreakfast() {
           </Card>
         )}
 
-        {/* ── Opções de Café da Manhã & Cardápio (ANTES DO HORÁRIO!) ───────── */}
-        <Card id="breakfast-options-section" className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
+        {/* ── Opções de Café da Manhã & Cardápio ───────── */}
+        <Card id="breakfast-options-section" className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
+              <div className="w-8 h-8 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center font-bold shrink-0">
                 <Utensils className="w-4 h-4" />
               </div>
-              <span>Opções de Café da Manhã</span>
+              <span>Opções de Cardápio</span>
             </span>
-            {guestCount > 1 && orderDistribution === "individual" ? (
-              <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
-                Configurando: {getCurrentGuestName() ? getCurrentGuestName().split(' ')[0] : `Hóspede ${activeGuestTab}`}
-              </Badge>
-            ) : null}
           </div>
 
           {/* Abas para alternar entre os hóspedes quando modo individual */}
           {guestCount > 1 && orderDistribution === "individual" && (
             <div className="space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-1">
-                <span className="text-xs font-bold text-slate-700">
-                  Selecione para qual hóspede está montando o pedido:
-                </span>
-                <span className="text-[10px] text-slate-500 font-medium">
-                  {activeGuestTab} de {guestCount}
-                </span>
-              </div>
-
               <div className="p-1.5 bg-slate-100 rounded-2xl grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                 {Array.from({ length: guestCount }).map((_, i) => {
                   const idx = (i + 1) as 1 | 2 | 3
@@ -1267,36 +1175,33 @@ export default function GuestBreakfast() {
                       onClick={() => setActiveGuestTab(idx)}
                       className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-between sm:justify-center gap-1.5 min-w-0 ${
                         isActive
-                          ? "bg-white text-sky-900 shadow-xs border border-slate-200 font-black ring-2 ring-sky-500/20"
+                          ? "bg-white text-[#091E26] shadow-xs border border-[#0F3D4C]/30 font-black ring-2 ring-[#C5A059]/30"
                           : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
                       }`}
                     >
                       <div className="flex items-center gap-1.5 min-w-0 text-left">
-                        <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                        <User className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
                         <span className="break-words leading-tight min-w-0">{nameLabel}</span>
                       </div>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${
-                        curType === 'standard' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800'
-                      }`}>
-                        {curType === 'standard' ? '☕ Padrão' : '🎨 Personalizado'}
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 bg-slate-100 text-slate-700">
+                        {curType === 'standard' ? 'Padrão' : 'Personalizado'}
                       </span>
                     </button>
                   )
                 })}
               </div>
 
-              {/* Botão para copiar escolhas do 1º hóspede se estiver no 2º */}
               {activeGuestTab > 1 && (
-                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-sky-50/80 border border-sky-100 rounded-xl text-xs">
-                  <span className="text-sky-900 font-medium text-[11px]">
-                    Deseja copiar o mesmo café escolhido para {g1Label}?
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                  <span className="text-slate-700 font-medium text-[11px]">
+                    Deseja repetir a mesma escolha de {g1Label}?
                   </span>
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={handleCopyGuest1To2}
-                    className="text-sky-700 hover:text-sky-900 hover:bg-sky-100 font-bold text-xs h-7 px-2.5 rounded-lg flex items-center gap-1 shrink-0"
+                    className="text-[#0F3D4C] hover:text-[#091E26] hover:bg-slate-200/60 font-bold text-xs h-7 px-2.5 rounded-lg flex items-center gap-1 shrink-0"
                   >
                     <Copy className="w-3 h-3 shrink-0" />
                     <span>Copiar de {g1Label}</span>
@@ -1306,7 +1211,7 @@ export default function GuestBreakfast() {
             </div>
           )}
 
-            {/* Escolha entre Café Padrão CorpFlats vs Personalizado */}
+          {/* Escolha entre Café Padrão CorpFlats vs Personalizado */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {/* Opção 1: Café Padrão CorpFlats */}
             <div 
@@ -1327,13 +1232,12 @@ export default function GuestBreakfast() {
                   <span className="font-black text-xs sm:text-sm text-slate-900 leading-snug">
                     Café Padrão CorpFlats
                   </span>
-                  <Badge className="shrink-0 whitespace-nowrap bg-[#C5A059] hover:bg-[#b08d47] text-[#091E26] font-extrabold text-[10px] px-2.5 py-0.5 rounded-full shadow-2xs inline-flex items-center justify-center gap-1 leading-none">
-                    <span>Recomendado</span>
-                    <span className="text-[10px]">⭐</span>
+                  <Badge className="shrink-0 whitespace-nowrap bg-[#C5A059] hover:bg-[#b08d47] text-[#091E26] font-extrabold text-[10px] px-2 py-0.5 rounded-full shadow-2xs">
+                    Recomendado
                   </Badge>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
-                  Café completo tradicional pronto com: <strong>{stdConfig?.description || "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Ovos mexidos, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."}</strong>
+                  {stdConfig?.description || "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Ovos mexidos, Manteiga, Bolo do dia e Fruta do dia."}
                 </p>
               </div>
             </div>
@@ -1355,14 +1259,14 @@ export default function GuestBreakfast() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-black text-xs sm:text-sm text-slate-900 leading-snug">
-                    Montar / Personalizar Itens
+                    Montar / Personalizar
                   </span>
-                  <Badge variant="outline" className="shrink-0 whitespace-nowrap text-slate-700 border-slate-300 bg-slate-50 font-extrabold text-[10px] px-2.5 py-0.5 rounded-full shadow-2xs inline-flex items-center justify-center leading-none">
+                  <Badge variant="outline" className="shrink-0 whitespace-nowrap text-slate-600 border-slate-300 bg-slate-50 font-bold text-[10px] px-2 py-0.5 rounded-full">
                     Sob Medida
                   </Badge>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
-                  Escolha individualmente as bebidas, pães, acompanhamentos, frutas e doces de cada hóspede.
+                  Escolha individualmente as bebidas, pães, frios, frutas e acompanhamentos.
                 </p>
               </div>
             </div>
@@ -1371,38 +1275,36 @@ export default function GuestBreakfast() {
 
         {/* Bloco quando selecionado: Café Personalizado */}
         {getCurrentType() === "custom" && (
-          <Card id="menu-section" className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-6">
-            <div className="border-b border-slate-100 pb-3.5 flex flex-wrap items-center justify-between gap-2">
+          <Card id="menu-section" className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-5">
+            <div className="border-b border-slate-100 pb-3 flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
+                <div className="w-8 h-8 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center font-bold shrink-0">
                   <Utensils className="w-4 h-4" />
                 </div>
-                <span>Itens do Cardápio {guestCount > 1 ? `(Hóspede ${activeGuestTab} de ${guestCount})` : ''}</span>
+                <span>Itens do Cardápio {guestCount > 1 && orderDistribution === "individual" ? `(${activeGuestTab}º Hóspede)` : ''}</span>
               </span>
-              <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold uppercase tracking-wider">
-                {guestCount > 1 ? `Etapa ${activeGuestTab} de ${guestCount}` : 'Cardápio'}
-              </Badge>
             </div>
 
-            {/* Campo de Nome do Hóspede da Aba Ativa */}
-            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1.5">
-              <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-                Nome do {activeGuestTab}º Hóspede {activeGuestTab === 1 ? '(Titular)' : '(Acompanhante)'} *
-              </Label>
-              <Input 
-                value={getCurrentGuestName()} 
-                onChange={e => setCurrentGuestName(e.target.value)} 
-                placeholder={activeGuestTab === 1 ? "Nome completo do titular" : `Nome do ${activeGuestTab}º hóspede`} 
-                required 
-                className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs font-bold h-10 rounded-xl focus-visible:ring-sky-500" 
-              />
-            </div>
+            {guestCount > 1 && orderDistribution === "individual" && (
+              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1.5">
+                <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
+                  Nome do {activeGuestTab}º Hóspede *
+                </Label>
+                <Input 
+                  value={getCurrentGuestName()} 
+                  onChange={e => setCurrentGuestName(e.target.value)} 
+                  placeholder={activeGuestTab === 1 ? "Nome do titular" : `Nome do ${activeGuestTab}º hóspede`} 
+                  required 
+                  className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs font-bold h-10 rounded-xl" 
+                />
+              </div>
+            )}
 
             {/* 1. Café (1 opção) */}
             <div className="space-y-2">
               <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Coffee className="w-3.5 h-3.5 text-amber-600 shrink-0" /> Café (Escolha 1 opção)
+                <Coffee className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" /> Café (1 opção)
               </Label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {[
@@ -1416,7 +1318,7 @@ export default function GuestBreakfast() {
                     onClick={() => updateCurrentPref({ coffee: opt })}
                     className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                       currentPref.coffee === opt
-                        ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                        ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs ring-1 ring-[#C5A059]/50"
                         : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                     }`}
                   >
@@ -1429,7 +1331,7 @@ export default function GuestBreakfast() {
             {/* 2. Outras Bebidas (1 opção) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
               <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Milk className="w-3.5 h-3.5 text-sky-600 shrink-0" /> Outras Bebidas (Escolha 1 opção)
+                <Milk className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" /> Outras Bebidas (1 opção)
               </Label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {[
@@ -1445,7 +1347,7 @@ export default function GuestBreakfast() {
                     onClick={() => updateCurrentPref({ otherBeverage: opt })}
                     className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                       currentPref.otherBeverage === opt
-                        ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                        ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs ring-1 ring-[#C5A059]/50"
                         : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                     }`}
                   >
@@ -1458,11 +1360,11 @@ export default function GuestBreakfast() {
             {/* 3. Pães (até 2 opções) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
               <div className="flex flex-wrap items-center justify-between gap-1">
-                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  🍞 Pães (Escolha até 2 opções)
+                <Label className="text-xs font-bold text-slate-800">
+                  Pães (até 2 opções)
                 </Label>
-                <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
-                  {currentPref.breads.length}/2 selecionados
+                <Badge variant="outline" className="text-[10px] text-[#0F3D4C] border-[#C5A059]/40 bg-[#0F3D4C]/5 font-bold">
+                  {currentPref.breads.length}/2
                 </Badge>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -1478,7 +1380,7 @@ export default function GuestBreakfast() {
                       onClick={() => toggleArrayItem("breads", opt, 2)}
                       className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                         isChecked
-                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                          ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs ring-1 ring-[#C5A059]/50"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                       }`}
                     >
@@ -1492,11 +1394,11 @@ export default function GuestBreakfast() {
             {/* 4. Acompanhamentos (até 4 opções) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
               <div className="flex flex-wrap items-center justify-between gap-1">
-                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  🧈 Acompanhamentos (Escolha até 4 opções)
+                <Label className="text-xs font-bold text-slate-800">
+                  Acompanhamentos (até 4 opções)
                 </Label>
-                <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
-                  {currentPref.accompaniments.length}/4 selecionados
+                <Badge variant="outline" className="text-[10px] text-[#0F3D4C] border-[#C5A059]/40 bg-[#0F3D4C]/5 font-bold">
+                  {currentPref.accompaniments.length}/4
                 </Badge>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -1516,7 +1418,7 @@ export default function GuestBreakfast() {
                       onClick={() => toggleArrayItem("accompaniments", opt, 4)}
                       className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                         isChecked
-                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                          ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs ring-1 ring-[#C5A059]/50"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                       }`}
                     >
@@ -1530,11 +1432,11 @@ export default function GuestBreakfast() {
             {/* 5. Complementos (até 2 opções) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
               <div className="flex flex-wrap items-center justify-between gap-1">
-                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  Complementos (Escolha até 2 opções)
+                <Label className="text-xs font-bold text-slate-800">
+                  Complementos (até 2 opções)
                 </Label>
-                <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
-                  {currentPref.complements.length}/2 selecionados
+                <Badge variant="outline" className="text-[10px] text-[#0F3D4C] border-[#C5A059]/40 bg-[#0F3D4C]/5 font-bold">
+                  {currentPref.complements.length}/2
                 </Badge>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -1550,7 +1452,7 @@ export default function GuestBreakfast() {
                       onClick={() => toggleArrayItem("complements", opt, 2)}
                       className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                         isChecked
-                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                          ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs ring-1 ring-[#C5A059]/50"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                       }`}
                     >
@@ -1565,10 +1467,10 @@ export default function GuestBreakfast() {
             <div className="space-y-2 pt-3 border-t border-slate-100">
               <div className="flex flex-wrap items-center justify-between gap-1">
                 <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <Cookie className="w-3.5 h-3.5 text-amber-600 shrink-0" /> Doces e Biscoitos (Escolha até 2 opções)
+                  <Cookie className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" /> Doces e Biscoitos (até 2 opções)
                 </Label>
-                <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
-                  {currentPref.sweets.length}/2 selecionados
+                <Badge variant="outline" className="text-[10px] text-[#0F3D4C] border-[#C5A059]/40 bg-[#0F3D4C]/5 font-bold">
+                  {currentPref.sweets.length}/2
                 </Badge>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1586,7 +1488,7 @@ export default function GuestBreakfast() {
                       onClick={() => toggleArrayItem("sweets", opt, 2)}
                       className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                         isChecked
-                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                          ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs ring-1 ring-[#C5A059]/50"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                       }`}
                     >
@@ -1600,7 +1502,7 @@ export default function GuestBreakfast() {
             {/* 7. Frutas (1 opção + Condicionais) */}
             <div className="space-y-2 pt-3 border-t border-slate-100">
               <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Apple className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> Frutas (Escolha 1 opção)
+                <Apple className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" /> Frutas (1 opção)
               </Label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {[
@@ -1619,7 +1521,7 @@ export default function GuestBreakfast() {
                     })}
                     className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                       currentPref.fruit === opt
-                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-1 ring-emerald-400"
+                        ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs ring-1 ring-[#C5A059]/50"
                         : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                     }`}
                   >
@@ -1630,26 +1532,26 @@ export default function GuestBreakfast() {
 
               {/* Condicional Mamão: Deseja Mel? */}
               {currentPref.fruit === "Mamão" && (
-                <div className="p-3.5 bg-amber-50/80 border border-amber-200/80 rounded-2xl space-y-2 animate-in fade-in">
-                  <span className="text-xs font-bold text-amber-900 block">Deseja mel no seu Mamão?</span>
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 animate-in fade-in">
+                  <span className="text-xs font-bold text-slate-800 block">Deseja mel no Mamão?</span>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => updateCurrentPref({ fruitHoney: true })}
                       className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
                         currentPref.fruitHoney 
-                          ? "bg-amber-500 text-white border-amber-500 shadow-xs" 
+                          ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs" 
                           : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
                       }`}
                     >
-                      🍯 Sim, com mel
+                      Sim, com mel
                     </button>
                     <button
                       type="button"
                       onClick={() => updateCurrentPref({ fruitHoney: false })}
                       className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
                         !currentPref.fruitHoney 
-                          ? "bg-amber-500 text-white border-amber-500 shadow-xs" 
+                          ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs" 
                           : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
                       }`}
                     >
@@ -1661,13 +1563,13 @@ export default function GuestBreakfast() {
 
               {/* Condicional Salada de Frutas: Opções */}
               {currentPref.fruit === "Salada de frutas" && (
-                <div className="p-3.5 bg-sky-50/80 border border-sky-200/80 rounded-2xl space-y-2 animate-in fade-in">
-                  <span className="text-xs font-bold text-sky-900 block">Como prefere sua Salada de Frutas?</span>
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 animate-in fade-in">
+                  <span className="text-xs font-bold text-slate-800 block">Acompanhamento da Salada de Frutas:</span>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     {[
-                      { id: "Salada pura", label: "Salada pura", icon: "🥣" },
-                      { id: "Mel", label: "Mel", icon: "🍯" },
-                      { id: "Leite condensado", label: "Leite condensado", icon: "🥛" }
+                      { id: "Salada pura", label: "Pura" },
+                      { id: "Mel", label: "Com Mel" },
+                      { id: "Leite condensado", label: "Com Leite Condensado" }
                     ].map(item => {
                       const isSelected = (currentPref.fruitSaladOption || "Salada pura") === item.id
                       return (
@@ -1677,11 +1579,10 @@ export default function GuestBreakfast() {
                           onClick={() => updateCurrentPref({ fruitSaladOption: item.id })}
                           className={`p-2.5 rounded-xl text-xs font-bold border whitespace-normal leading-snug transition-all flex items-center justify-center gap-1.5 ${
                             isSelected 
-                              ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400" 
+                              ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs" 
                               : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
                           }`}
                         >
-                          <span className="shrink-0">{item.icon}</span>
                           <span>{isSelected ? "✓ " : ""}{item.label}</span>
                         </button>
                       )
@@ -1707,7 +1608,7 @@ export default function GuestBreakfast() {
                     onClick={() => updateCurrentPref({ sweetener: opt })}
                     className={`p-3 rounded-xl text-xs font-bold border transition-all text-left whitespace-normal leading-snug break-words ${
                       currentPref.sweetener === opt
-                        ? "bg-slate-800 text-white border-slate-800 shadow-xs ring-1 ring-slate-700 font-bold"
+                        ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs ring-1 ring-[#C5A059]/50 font-bold"
                         : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                     }`}
                   >
@@ -1719,25 +1620,25 @@ export default function GuestBreakfast() {
           </Card>
         )}
 
-        {/* Card 2: Horário Único de Entrega */}
-        <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3.5">
+        {/* Card Horário de Entrega */}
+        <Card className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold shrink-0">
+              <div className="w-8 h-8 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center font-bold shrink-0">
                 <Clock className="w-4 h-4" />
               </div>
-              <span>2. Horário de Entrega</span>
+              <span>Horário de Entrega</span>
             </span>
             <span className="text-[11px] text-slate-500 font-medium">05:00 às 09:30</span>
           </div>
 
           {loadingSlots ? (
             <div className="p-8 text-center text-xs text-slate-400 animate-pulse font-medium">
-              Carregando horários disponíveis para {deliveryDate}...
+              Carregando horários disponíveis...
             </div>
           ) : availableSlots.length === 0 ? (
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs text-center font-medium">
-              Sem horários disponíveis para esta data. Por favor, contate a administração pelo WhatsApp.
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-slate-700 text-xs text-center font-medium">
+              Sem horários disponíveis para esta data. Por favor, contate a recepção pelo WhatsApp.
             </div>
           ) : (
             <div className="space-y-2">
@@ -1749,7 +1650,7 @@ export default function GuestBreakfast() {
                     onClick={() => setDeliveryTime(t)}
                     className={`py-2 px-1 rounded-xl text-xs font-bold border transition-all text-center ${
                       deliveryTime === t
-                        ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-2 ring-sky-500/20 font-black"
+                        ? "bg-[#0F3D4C] text-white border-[#0F3D4C] shadow-xs ring-2 ring-[#C5A059]/35 font-black"
                         : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
                     }`}
                   >
@@ -1757,57 +1658,54 @@ export default function GuestBreakfast() {
                   </button>
                 ))}
               </div>
-              <p className="text-[11px] text-slate-400 text-center pt-2 font-medium">
-                * Horários sujeitos a tolerância de até ±10 min conforme a rota de entrega.
+              <p className="text-[11px] text-slate-400 text-center pt-1 font-medium">
+                Tolerância de ±10 min conforme rota de entrega.
               </p>
             </div>
           )}
         </Card>
 
-        {/* Card 4: Observações Gerais */}
-        <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-2.5">
+        {/* Card Observações Gerais */}
+        <Card className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-2.5">
           <Label className="text-xs font-bold text-slate-800 block">
-            Observações
+            Observações (Opcional)
           </Label>
           <Textarea 
             value={notes} 
             onChange={e => setNotes(e.target.value)} 
-            placeholder="" 
-            className="bg-slate-50 border-slate-200 text-xs font-medium text-slate-900 placeholder:text-slate-400 resize-none h-20 rounded-xl focus-visible:ring-sky-500" 
+            placeholder="Alguma restrição alimentar ou observação?" 
+            className="bg-slate-50 border-slate-200 text-xs font-medium text-slate-900 placeholder:text-slate-400 resize-none h-20 rounded-xl focus-visible:ring-[#0F3D4C]" 
           />
         </Card>
 
-        {/* Card 5: Aviso Importante de Louças & Porcelanas */}
-        <Card className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-4 sm:p-5 shadow-xs space-y-2">
-          <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider">
-            <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>Aviso Importante: Louças & Porcelanas CorpFlats</span>
+        {/* Card Aviso de Louças & Porcelanas */}
+        <Card className="bg-[#0F3D4C]/[0.04] border border-[#C5A059]/35 rounded-2xl p-4 shadow-2xs space-y-1.5">
+          <div className="flex items-center gap-2 text-[#091E26] font-bold text-xs uppercase tracking-wider">
+            <Sparkles className="w-4 h-4 text-[#C5A059] shrink-0" />
+            <span>Louças & Porcelanas CorpFlats</span>
           </div>
-          <p className="text-xs text-amber-900/85 leading-relaxed font-medium">
-            Por favor, <strong>não entregue as louças, garrafas, bandejas ou porcelanas às camareiras nem ao restaurante do prédio</strong>, e <strong>não as deixe no corredor</strong>. Todo o material pertence à administração exclusiva da CorpFlats. Ao finalizar seu café, <strong>mantenha tudo dentro do apartamento</strong> que nossa equipe fará o recolhimento.
+          <p className="text-xs text-slate-600 leading-relaxed font-medium">
+            Ao finalizar seu café, mantenha as louças, garrafas e bandejas <strong>dentro do apartamento</strong> para recolhimento da nossa equipe (não entregue no restaurante do prédio nem deixe no corredor).
           </p>
         </Card>
 
         {/* ── Botão de Envio Consolidado ── */}
-        <div className="space-y-2.5 pt-2">
+        <div className="pt-1">
           <Button 
             type="button" 
             onClick={handleSubmitOrder}
             disabled={submitting}
-            className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-black text-xs sm:text-base h-auto min-h-14 py-3 px-4 whitespace-normal leading-snug text-center rounded-2xl shadow-lg shadow-[#091E26]/25 gap-2 tracking-wide uppercase transition-all transform active:scale-98"
+            className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-black text-xs sm:text-sm h-13 px-4 rounded-2xl shadow-lg shadow-[#091E26]/20 gap-2 tracking-wide uppercase transition-all"
           >
             {submitting ? (
-              <span>Agendando com a cozinha...</span>
+              <span>Agendando pedido...</span>
             ) : (
               <>
-                <Coffee className="w-5 h-5 text-[#E5C98B] shrink-0" />
-                <span>Confirmar Pedido de Café da Manhã ({guestCount} {guestCount === 1 ? 'Pessoa' : 'Pessoas'}) 🚀</span>
+                <Coffee className="w-4 h-4 text-[#E5C98B] shrink-0" />
+                <span>Confirmar Pedido de Café da Manhã</span>
               </>
             )}
           </Button>
-          <p className="text-xs text-slate-500 text-center font-medium">
-            Entrega agendada para às {deliveryTime || '...'} no dia {formatDateDisplay(deliveryDate)}.
-          </p>
         </div>
       </main>
 

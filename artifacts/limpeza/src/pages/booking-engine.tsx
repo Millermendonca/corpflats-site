@@ -1472,10 +1472,10 @@ export default function BookingEngine() {
               >
                 <button
                   onClick={() => setFaqOpen(isOpen ? null : idx)}
-                  className="w-full p-4 text-left flex items-center justify-between gap-3 font-semibold text-xs sm:text-sm text-slate-900 hover:text-sky-600 transition-colors"
+                  className="w-full p-4 text-left flex items-center justify-between gap-3 font-semibold text-xs sm:text-sm text-slate-900 hover:text-[#0F3D4C] transition-colors"
                 >
                   <span>{item.q}</span>
-                  <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isOpen ? "rotate-180 text-sky-600" : ""}`} />
+                  <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isOpen ? "rotate-180 text-[#0F3D4C]" : ""}`} />
                 </button>
                 {isOpen && (
                   <div className="px-4 pb-4 text-xs text-slate-600 leading-relaxed font-normal border-t border-slate-50">
@@ -1574,7 +1574,7 @@ export default function BookingEngine() {
         <DialogContent className="sm:max-w-md bg-white border border-slate-200 rounded-3xl p-6 text-center space-y-4">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-slate-900 flex items-center justify-center gap-2">
-              <QrCode className="w-6 h-6 text-emerald-600" />
+              <QrCode className="w-6 h-6 text-[#0F3D4C]" />
               Pagamento PIX Banco Inter
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500">
@@ -1607,9 +1607,9 @@ export default function BookingEngine() {
                       setPixCopied(true)
                       setTimeout(() => setPixCopied(false), 3000)
                     }}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-3 rounded-xl shrink-0"
+                    className="bg-[#0F3D4C] hover:bg-[#091E26] text-white font-bold text-xs h-9 px-3 rounded-xl shrink-0"
                   >
-                    {pixCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {pixCopied ? <Check className="w-4 h-4 text-[#C5A059]" /> : <Copy className="w-4 h-4" />}
                     <span>{pixCopied ? "Copiado!" : "Copiar"}</span>
                   </Button>
                 </div>
@@ -1628,9 +1628,9 @@ export default function BookingEngine() {
                       setPixKeyCopied(true)
                       setTimeout(() => setPixKeyCopied(false), 3000)
                     }}
-                    className="h-8 text-xs font-semibold border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-xl px-3 shrink-0"
+                    className="h-8 text-xs font-semibold border-slate-300 text-[#0F3D4C] hover:bg-slate-100 rounded-xl px-3 shrink-0"
                   >
-                    {pixKeyCopied ? <Check className="w-3.5 h-3.5 mr-1 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                    {pixKeyCopied ? <Check className="w-3.5 h-3.5 mr-1 text-[#0F3D4C]" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
                     <span>{pixKeyCopied ? "Copiado!" : "Copiar CNPJ"}</span>
                   </Button>
                 </div>
@@ -1655,7 +1655,7 @@ export default function BookingEngine() {
 
           <DialogFooter>
             <Button
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl"
+              className="w-full bg-[#091E26] hover:bg-[#0F3D4C] text-white font-bold text-xs rounded-xl"
               onClick={() => setPixModalOpen(false)}
             >
               Já realizei o pagamento
@@ -1669,7 +1669,7 @@ export default function BookingEngine() {
         <DialogContent className="sm:max-w-md bg-white border border-slate-200 rounded-3xl p-6 text-center space-y-4">
           <DialogHeader>
             <DialogTitle className="text-xl font-black text-slate-900 flex items-center justify-center gap-2">
-              <CreditCard className="w-6 h-6 text-sky-600 shrink-0" />
+              <CreditCard className="w-6 h-6 text-[#0F3D4C] shrink-0" />
               <span>Pagamento com Cartão de Crédito</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500">
@@ -1678,10 +1678,10 @@ export default function BookingEngine() {
           </DialogHeader>
 
           <div className="space-y-4 py-2 text-left">
-            <div className="p-4 rounded-2xl bg-sky-50/80 border border-sky-200 space-y-2">
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="flex justify-between items-center gap-2 text-xs">
                 <span className="text-slate-600 font-medium shrink-0">Código da Reserva:</span>
-                <span className="font-mono font-black text-sky-950 text-right">{mpResData?.code || mpResData?.reservationCode || "CORPFLATS"}</span>
+                <span className="font-mono font-black text-[#0F3D4C] text-right">{mpResData?.code || mpResData?.reservationCode || "CORPFLATS"}</span>
               </div>
               <div className="flex justify-between items-center gap-2 text-xs">
                 <span className="text-slate-600 font-medium shrink-0">Hóspede:</span>
@@ -1691,19 +1691,19 @@ export default function BookingEngine() {
                 <span className="text-slate-600 font-medium shrink-0">Período:</span>
                 <span className="font-bold text-slate-900 text-right">{nights} {nights === 1 ? 'noite' : 'noites'}</span>
               </div>
-              <div className="border-t border-sky-200/80 pt-2 flex justify-between items-center gap-2">
+              <div className="border-t border-slate-200 pt-2 flex justify-between items-center gap-2">
                 <span className="text-xs font-black text-slate-900">Valor no Cartão de Crédito:</span>
-                <span className="text-lg font-black text-sky-700 shrink-0">R$ {cardTotalAmount.toLocaleString('pt-BR')}</span>
+                <span className="text-lg font-black text-[#0F3D4C] shrink-0">R$ {cardTotalAmount.toLocaleString('pt-BR')}</span>
               </div>
             </div>
 
             {mpInitPoint && (
               <div className="space-y-3">
                 <Button
-                  className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-2xl shadow-md gap-2 flex items-center justify-center"
+                  className="w-full bg-[#091E26] hover:bg-[#0F3D4C] text-white font-black text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-2xl shadow-md gap-2 flex items-center justify-center"
                   onClick={() => window.open(mpInitPoint, "_blank")}
                 >
-                  <CreditCard className="w-5 h-5 shrink-0" />
+                  <CreditCard className="w-5 h-5 text-[#C5A059] shrink-0" />
                   <span>Ir para Pagamento com Cartão</span>
                   <ExternalLink className="w-4 h-4 opacity-75 shrink-0" />
                 </Button>

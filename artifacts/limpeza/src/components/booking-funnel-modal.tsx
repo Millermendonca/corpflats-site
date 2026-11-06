@@ -19,7 +19,7 @@ import { RoomConfig } from "@/pages/booking-engine"
 import { loginWithGooglePopup, updateAccountProfile, saveSessionLocally } from "@/lib/auth-client"
 import { maskPhone, maskCpf } from "@/components/complete-profile-modal"
 import { compressImage } from "@/lib/image-compression"
-import { CorpFlatsIcon } from "@/components/brand-logo"
+import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 
 export function formatDisplayDate(dateStr: string): string {
   if (!dateStr) return ""
@@ -840,35 +840,23 @@ export function BookingFunnelModal({
     }}>
       <DialogContent className="sm:max-w-2xl max-w-[96vw] w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-7 shadow-2xl max-h-[92vh] overflow-y-auto">
         <DialogHeader className="pb-2 border-b border-slate-100 dark:border-slate-800">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-2 pr-6">
             <div className="flex items-center gap-2.5 min-w-0">
-              <CorpFlatsIcon className="w-9 h-9" />
+              <CorpFlatsIcon className="w-8 h-8" />
               <div className="min-w-0">
-                <DialogTitle className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100">
-                  {currentStep === 4 
-                    ? (paymentMethod === "pix" && !isPixPaid ? "⏳ Aguardando Pagamento PIX" : "🎉 Reserva Confirmada!") 
-                    : "Motor de Reservas Diretas"}
+                <DialogTitle className="text-sm sm:text-base font-bold text-[#0F3D4C] dark:text-slate-100 leading-none">
+                  <CorpFlatsWordmark className="text-sm sm:text-base text-[#0F3D4C] dark:text-slate-100" />
                 </DialogTitle>
-                <DialogDescription className="text-xs text-slate-500">
-                  {currentStep === 4 
-                    ? (paymentMethod === "pix" && !isPixPaid 
-                        ? "Efetue o pagamento PIX para garantir sua vaga e emitir seu voucher." 
-                        : "Sua estadia nos flats CorpFlats está 100% garantida.") 
-                    : "Melhor tarifa garantida sem taxas de intermediação de OTAs."}
+                <DialogDescription className="sr-only">
+                  Reserva de hospedagem CorpFlats Soho Residence
                 </DialogDescription>
               </div>
             </div>
-
-            {currentStep < 4 && (
-              <Badge className="bg-[#0F3D4C]/10 text-[#0F3D4C] border border-[#C5A059]/40 dark:bg-[#0F3D4C]/40 dark:text-[#E5C98B] text-[11px] font-bold shrink-0">
-                Etapa {currentStep} de 3
-              </Badge>
-            )}
           </div>
 
           {/* ── Stepper Visual do Funil de Conversão ───────────────────────── */}
           {currentStep < 4 && (
-            <div className="pt-3">
+            <div className="pt-2.5">
               <div className="grid grid-cols-3 gap-1.5 text-center">
                 {[
                   { step: 1, label: "1. Extras & Camas", icon: Sparkles },
@@ -887,7 +875,7 @@ export function BookingFunnelModal({
                       currentStep === s.step 
                         ? "text-[#0F3D4C] dark:text-[#E5C98B]" 
                         : currentStep > s.step 
-                        ? "text-[#C5A059]" 
+                        ? "text-[#091E26] dark:text-[#C5A059]" 
                         : "text-slate-400"
                     }`}>
                       {s.label}
@@ -904,37 +892,36 @@ export function BookingFunnelModal({
           <div className="space-y-4 py-2 animate-in fade-in">
             {/* Banner de Urgência & Prova Social (Apenas quando restar 5 flats ou menos para uma ou mais datas solicitadas) */}
             {showUrgencyBanner && (
-              <div className="p-3 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl flex items-center justify-between text-xs shadow-2xs">
-                <div className="flex items-center gap-2 text-amber-950 dark:text-amber-200 font-semibold">
-                  <Flame className="w-4 h-4 text-orange-500 animate-pulse shrink-0" />
+              <div className="p-3 bg-[#0F3D4C]/[0.05] border border-[#C5A059]/40 rounded-2xl flex items-center justify-between text-xs shadow-2xs">
+                <div className="flex items-center gap-2 text-[#091E26] dark:text-slate-200 font-semibold">
+                  <Flame className="w-4 h-4 text-[#C5A059] shrink-0" />
                   <span>
                     Alta procura para essas datas! {minAvailable === 1 ? "Resta apenas 1 unidade" : "Restam poucas unidades"} no Soho Residence.
                   </span>
                 </div>
-                <Badge className="bg-orange-500 text-white font-black text-[10px] shrink-0">
+                <Badge className="bg-[#091E26] text-[#E5C98B] border border-[#C5A059]/40 font-bold text-[10px] shrink-0">
                   {discountPercent}% OFF
                 </Badge>
               </div>
             )}
 
-            {/* ── Card Resumo da Hospedagem: Datas & Tarifa (Design Organizado e Harmonioso) ── */}
+            {/* ── Card Resumo da Hospedagem: Datas & Tarifa ── */}
             <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 p-3.5 sm:p-4 space-y-3 shadow-2xs">
               {/* Linha de Título com Duração */}
               <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-700/80">
-                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-sky-600" />
+                <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-[#0F3D4C]" />
                   <span>Resumo da Hospedagem</span>
                 </span>
-                <Badge variant="secondary" className="bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300 font-bold text-[11px] px-2.5 py-0.5 rounded-lg">
+                <Badge variant="secondary" className="bg-[#0F3D4C]/10 text-[#0F3D4C] border border-[#C5A059]/30 font-bold text-[11px] px-2.5 py-0.5 rounded-lg">
                   {nights} {nights === 1 ? "diária" : "diárias"}
                 </Badge>
               </div>
 
-              {/* Grid Check-in e Check-out com Formatação Clara */}
+              {/* Grid Check-in e Check-out */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {/* Card Check-in */}
                 <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/80 flex items-center gap-3 shadow-2xs">
-                  <div className="w-9 h-9 rounded-xl bg-sky-50 dark:bg-sky-950/60 text-sky-600 flex items-center justify-center shrink-0">
+                  <div className="w-9 h-9 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center shrink-0">
                     <Calendar className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
@@ -947,9 +934,8 @@ export function BookingFunnelModal({
                   </div>
                 </div>
 
-                {/* Card Check-out */}
                 <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/80 flex items-center gap-3 shadow-2xs">
-                  <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 flex items-center justify-center shrink-0">
+                  <div className="w-9 h-9 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center shrink-0">
                     <Calendar className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
@@ -966,11 +952,7 @@ export function BookingFunnelModal({
               {/* Card Tarifa Ativa + Ação de Troca */}
               <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                    ratePlan === "with_breakfast"
-                      ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
-                      : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                  }`}>
+                  <div className="w-9 h-9 rounded-xl bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40 flex items-center justify-center shrink-0 font-bold">
                     {ratePlan === "with_breakfast" ? <Coffee className="w-4 h-4" /> : <Building2 className="w-4 h-4" />}
                   </div>
                   <div className="min-w-0">
@@ -993,9 +975,9 @@ export function BookingFunnelModal({
                   variant="outline"
                   size="sm"
                   onClick={() => setRatePlan(ratePlan === "with_breakfast" ? "room_only" : "with_breakfast")}
-                  className="h-8 px-3 text-xs font-bold rounded-xl border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/50 shrink-0 self-start sm:self-auto gap-1.5 transition-all"
+                  className="h-8 px-3 text-xs font-bold rounded-xl border-slate-200 dark:border-slate-700 text-[#0F3D4C] dark:text-[#E5C98B] hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 self-start sm:self-auto gap-1.5 transition-all"
                 >
-                  <RefreshCw className="w-3.5 h-3.5 text-sky-600" />
+                  <RefreshCw className="w-3.5 h-3.5 text-[#0F3D4C]" />
                   <span>Trocar para {ratePlan === "with_breakfast" ? "Sem Café" : "Com Café"}</span>
                 </Button>
               </div>
@@ -1012,7 +994,7 @@ export function BookingFunnelModal({
                   variant="outline"
                   size="sm"
                   onClick={addRoom}
-                  className="text-[11px] font-bold h-6 px-2 rounded-lg text-sky-600 border-sky-300"
+                  className="text-[11px] font-bold h-7 px-2.5 rounded-lg text-[#0F3D4C] border-slate-300 hover:bg-slate-100"
                 >
                   + Adicionar Flat
                 </Button>
@@ -1027,7 +1009,7 @@ export function BookingFunnelModal({
                         <button
                           type="button"
                           onClick={() => removeRoom(r.id)}
-                          className="text-rose-600 hover:underline text-[10px]"
+                          className="text-slate-500 hover:text-rose-600 hover:underline text-[10px]"
                         >
                           Remover
                         </button>
@@ -1042,8 +1024,8 @@ export function BookingFunnelModal({
                           onChange={e => updateRoom(r.id, "bedType", e.target.value as any)}
                           className="w-full h-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-bold text-slate-900 dark:text-slate-100"
                         >
-                          <option value="queen">👑 1 Cama Queen Casal</option>
-                          <option value="twin">🛏️ 2 Camas Solteiro (+R$ {twinFeeUnit})</option>
+                          <option value="queen">1 Cama Queen Casal</option>
+                          <option value="twin">2 Camas Solteiro (+R$ {twinFeeUnit})</option>
                         </select>
                       </div>
 
@@ -1069,8 +1051,8 @@ export function BookingFunnelModal({
             {isSundayCheckout && (
               <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <Label className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Adicional Exclusivo para sua Estadia:</span>
+                  <Sparkles className="w-3.5 h-3.5 text-[#C5A059]" />
+                  <span>Adicional de Domingo:</span>
                 </Label>
 
                 <div className="grid grid-cols-1 gap-2.5">
@@ -1083,8 +1065,8 @@ export function BookingFunnelModal({
                     }}
                     className={`p-3.5 rounded-2xl border-2 transition-all flex flex-col gap-3 ${
                       lateCheckout
-                        ? "border-amber-500 bg-amber-50/70 dark:bg-amber-950/40 text-amber-950 dark:text-amber-100 shadow-xs"
-                        : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 cursor-pointer hover:border-amber-300"
+                        ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.04] text-slate-900 dark:text-slate-100 ring-2 ring-[#C5A059]/30 shadow-xs"
+                        : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 cursor-pointer hover:border-slate-300"
                     }`}
                   >
                     <div className="flex items-start gap-2.5">
@@ -1095,14 +1077,15 @@ export function BookingFunnelModal({
                           e.stopPropagation()
                           setLateCheckout(!lateCheckout)
                         }}
-                        className="mt-1 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                        className="mt-1 rounded text-[#0F3D4C] accent-[#0F3D4C] focus:ring-[#0F3D4C] cursor-pointer"
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-1 flex-wrap">
-                          <span className="font-bold text-xs flex items-center gap-1 text-slate-900 dark:text-slate-100">
-                            <span>🕒 Late Check-out no Domingo</span>
+                          <span className="font-bold text-xs flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
+                            <Clock className="w-3.5 h-3.5 text-[#0F3D4C]" />
+                            <span>Late Check-out no Domingo</span>
                           </span>
-                          <Badge className="bg-amber-600 text-white text-[10px] px-2 py-0.5">
+                          <Badge className="bg-[#091E26] text-[#E5C98B] border border-[#C5A059]/40 text-[10px] px-2 py-0.5">
                             {lateCheckout
                               ? (lateCheckoutTier.isFree
                                   ? "Cortesia (R$ 0)"
@@ -1115,8 +1098,8 @@ export function BookingFunnelModal({
                         </div>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight">
                           {lateCheckout
-                            ? "Aproveite seu domingo sem pressa. Escolha abaixo o horário que deseja desocupar o flat:"
-                            : "Estenda sua saída no domingo além das 12h e aproveite o dia sem pressa."
+                            ? "Escolha abaixo o horário que deseja desocupar o flat:"
+                            : "Estenda sua saída no domingo além das 12h."
                           }
                         </p>
                       </div>
@@ -1126,18 +1109,18 @@ export function BookingFunnelModal({
                     {lateCheckout && (
                       <div
                         onClick={(e) => e.stopPropagation()}
-                        className="pt-2 border-t border-amber-200/70 dark:border-amber-900/50 space-y-2.5 animate-in fade-in-50 duration-200"
+                        className="pt-2 border-t border-slate-200/80 dark:border-slate-700 space-y-2.5 animate-in fade-in-50 duration-200"
                       >
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <Label className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
-                            Preencha até que horas deseja sair:
+                            Horário de saída:
                           </Label>
 
                           <div className="flex items-center gap-2">
                             <select
                               value={lateCheckoutTime}
                               onChange={(e) => setLateCheckoutTime(e.target.value)}
-                              className="h-8 text-xs font-semibold bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 rounded-xl px-2.5 py-0 text-slate-800 dark:text-slate-100 shadow-xs focus:ring-1 focus:ring-amber-500 outline-none"
+                              className="h-8 text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-2.5 py-0 text-slate-800 dark:text-slate-100 shadow-xs focus:ring-1 focus:ring-[#0F3D4C] outline-none"
                             >
                               <optgroup label="Cortesia CorpFlats (Gratuito)">
                                 <option value="12:30">Até 12:30 — Cortesia (R$ 0)</option>
@@ -1159,36 +1142,6 @@ export function BookingFunnelModal({
                             </select>
                           </div>
                         </div>
-
-                        {/* Detalhe da condição com feedback claro */}
-                        <div className={`p-2 rounded-xl text-[11px] leading-relaxed flex items-center gap-2 ${
-                          lateCheckoutTier.isFree
-                            ? "bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-800"
-                            : lateCheckoutTier.isDailyRate
-                              ? "bg-sky-50 text-sky-800 border border-sky-200 dark:bg-sky-950/40 dark:text-sky-200 dark:border-sky-800"
-                              : "bg-amber-100/60 text-amber-900 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800"
-                        }`}>
-                          <span className="shrink-0 font-bold">
-                            {lateCheckoutTier.isFree ? "✓" : (lateCheckoutTier.isDailyRate ? "ℹ️" : "✨")}
-                          </span>
-                          <span>
-                            {lateCheckoutTier.isFree && (
-                              <>
-                                <strong>Cortesia CorpFlats:</strong> Saída até as 13:00 concedida sem custo adicional (R$ 0).
-                              </>
-                            )}
-                            {!lateCheckoutTier.isFree && !lateCheckoutTier.isDailyRate && (
-                              <>
-                                <strong>Saída Estendida de Domingo:</strong> Até as {lateCheckoutTime} por R$ 50{flatsCount > 1 ? ` por flat (R$ ${lateCheckoutFee})` : ""}.
-                              </>
-                            )}
-                            {lateCheckoutTier.isDailyRate && (
-                              <>
-                                <strong>Saída Após as 18h:</strong> Cobrança de 1 diária adicional em vigência (R$ {selectedDailyRate}{flatsCount > 1 ? ` x ${flatsCount} flats = R$ ${lateCheckoutFee}` : ""}).
-                              </>
-                            )}
-                          </span>
-                        </div>
                       </div>
                     )}
                   </div>
@@ -1200,10 +1153,10 @@ export function BookingFunnelModal({
             <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <Heart className="w-4 h-4 text-rose-500 shrink-0" />
+                  <Heart className="w-4 h-4 text-[#0F3D4C] shrink-0" />
                   <div className="min-w-0">
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Vai viajar com animal de estimação?</span>
-                    <span className="text-[10px] text-slate-500">Taxa de higienização: R$ {petFeePerUnit}/pet ({siteConfig?.petPolicy?.feeType === "per_night" ? "por diária" : "taxa única por estadia"})</span>
+                    <span className="text-[10px] text-slate-500">Taxa de higienização: R$ {petFeePerUnit}/pet ({siteConfig?.petPolicy?.feeType === "per_night" ? "por diária" : "por estadia"})</span>
                   </div>
                 </div>
 
@@ -1213,7 +1166,7 @@ export function BookingFunnelModal({
                     size="sm"
                     variant={bringingPet ? "default" : "outline"}
                     onClick={() => setBringingPet(true)}
-                    className="h-7 text-xs font-bold rounded-xl px-3"
+                    className={`h-7 text-xs font-bold rounded-xl px-3 ${bringingPet ? "bg-[#0F3D4C] hover:bg-[#091E26] text-white" : ""}`}
                   >
                     Sim
                   </Button>
@@ -1222,7 +1175,7 @@ export function BookingFunnelModal({
                     size="sm"
                     variant={!bringingPet ? "default" : "outline"}
                     onClick={() => { setBringingPet(false); setPetRulesAccepted(false); }}
-                    className="h-7 text-xs font-bold rounded-xl px-3"
+                    className={`h-7 text-xs font-bold rounded-xl px-3 ${!bringingPet ? "bg-[#0F3D4C] hover:bg-[#091E26] text-white" : ""}`}
                   >
                     Não
                   </Button>
@@ -1237,7 +1190,7 @@ export function BookingFunnelModal({
                         Quantidade de Cães (Pequeno Porte):
                       </span>
                       <span className="text-[10px] text-slate-500">
-                        {siteConfig?.petPolicy?.allowedSpecies || "Cachorros (Cães) de pequeno porte (até 10kg)"}
+                        {siteConfig?.petPolicy?.allowedSpecies || "Cães de pequeno porte (até 10kg)"}
                       </span>
                     </div>
                     <div className="flex gap-1.5">
@@ -1248,7 +1201,7 @@ export function BookingFunnelModal({
                           size="sm"
                           variant={petCount === n ? "default" : "outline"}
                           onClick={() => setPetCount(n)}
-                          className="h-6 w-7 text-xs font-bold rounded-lg"
+                          className={`h-6 w-7 text-xs font-bold rounded-lg ${petCount === n ? "bg-[#0F3D4C] hover:bg-[#091E26] text-white" : ""}`}
                         >
                           {n}
                         </Button>
@@ -1256,22 +1209,17 @@ export function BookingFunnelModal({
                     </div>
                   </div>
 
-                  {/* Regulamento Detalhado e Completo */}
-                  <div className="p-3.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 space-y-2 text-[11px] text-amber-950 dark:text-amber-200 leading-relaxed shadow-2xs">
-                    <div className="font-bold flex items-center gap-1.5 text-xs text-amber-900 dark:text-amber-100">
-                      <span>🐾 Regulamento Oficial de Hospedagem Pet (Edifício Soho)</span>
+                  {/* Regulamento Pet */}
+                  <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2 text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed shadow-2xs">
+                    <div className="font-bold flex items-center gap-1.5 text-xs text-slate-900 dark:text-slate-100">
+                      <span>Regulamento de Hospedagem Pet (Edifício Soho)</span>
                     </div>
-                    <div className="whitespace-pre-line text-[10.5px] leading-relaxed text-amber-900/90 dark:text-amber-200/90 max-h-48 overflow-y-auto pr-1">
-                      {siteConfig?.petPolicy?.rules || `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
-• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).
-• Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.
-• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.
-• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.
-• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.`}
-                    </div>
-                    <div className="pt-2 border-t border-amber-200/70 dark:border-amber-900/50 flex items-center justify-between text-[10px] font-bold text-amber-800 dark:text-amber-300">
-                      <span>Taxa de Higienização Pet:</span>
-                      <span>+ R$ {petFee} ({flatsCount > 1 ? `${petCount} pet(s) • R$ ${petFeePerUnit} unit.` : `${petCount} pet(s)`})</span>
+                    <div className="whitespace-pre-line text-[10.5px] leading-relaxed text-slate-600 dark:text-slate-400 max-h-40 overflow-y-auto pr-1">
+                      {siteConfig?.petPolicy?.rules || `• Exclusivo para cães de pequeno porte (até 10 kg).
+• Nas áreas comuns, transporte obrigatório no colo ou bolsa/caixa.
+• Uso exclusivo do elevador de serviço ao transitar com o pet.
+• Proibido deixar o animal sozinho no flat por longos períodos.
+• O titular responde por eventuais danos ao enxoval ou mobiliário.`}
                     </div>
                   </div>
 
@@ -1280,10 +1228,10 @@ export function BookingFunnelModal({
                       type="checkbox"
                       checked={petRulesAccepted}
                       onChange={e => setPetRulesAccepted(e.target.checked)}
-                      className="rounded text-sky-600 mt-0.5"
+                      className="rounded text-[#0F3D4C] accent-[#0F3D4C] mt-0.5"
                     />
                     <span>
-                      Li e concordo integralmente com as regras de convivência pet, transporte no colo nas áreas comuns, elevador de serviço e a taxa de higienização.
+                      Li e concordo com as regras de convivência pet e taxa de higienização (+ R$ {petFee}).
                     </span>
                   </label>
                 </div>
@@ -1317,31 +1265,31 @@ export function BookingFunnelModal({
           <div className="space-y-4 py-2 animate-in fade-in">
             {/* Banner de Identificação / Login */}
             {guestAccount || guestEmail ? (
-              <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-2xs">
+              <div className="p-3 bg-[#0F3D4C]/[0.05] border border-[#C5A059]/40 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-2xs">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-900/60 flex items-center justify-center text-emerald-700 dark:text-emerald-300 font-bold shrink-0">
+                  <div className="w-8 h-8 rounded-xl bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40 flex items-center justify-center font-bold shrink-0">
                     <CheckCircle2 className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
                     <span className="font-bold text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-1.5">
                       <span>Conectado como {guestAccount?.name || guestName || "Hóspede"}</span>
-                      <Badge className="bg-emerald-600 text-white text-[9px] py-0 px-1.5 font-bold shrink-0">
+                      <Badge className="bg-[#0F3D4C] text-white text-[9px] py-0 px-1.5 font-bold shrink-0">
                         ✓ Verificado
                       </Badge>
                     </span>
                     <span className="text-[11px] text-slate-500 dark:text-slate-400 break-all block">
-                      {guestAccount?.email || guestEmail} — Seus dados foram preenchidos automaticamente.
+                      {guestAccount?.email || guestEmail}
                     </span>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="p-3 bg-gradient-to-r from-sky-50 to-indigo-50 dark:from-sky-950/40 dark:to-indigo-950/40 border border-sky-200 dark:border-sky-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs shadow-2xs">
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs shadow-2xs">
                 <div className="flex items-center gap-2">
-                  <User className="w-4 h-4 text-sky-600 shrink-0" />
+                  <User className="w-4 h-4 text-[#0F3D4C] shrink-0" />
                   <div>
-                    <span className="font-bold text-slate-900 dark:text-slate-100 block">Preenchimento Rápido</span>
-                    <span className="text-[11px] text-slate-500">Conecte sua conta para preencher tudo em 1 clique.</span>
+                    <span className="font-bold text-slate-900 dark:text-slate-100 block">Já possui cadastro?</span>
+                    <span className="text-[11px] text-slate-500">Conecte sua conta para preencher seus dados automaticamente.</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -1364,7 +1312,7 @@ export function BookingFunnelModal({
                     type="button"
                     size="sm"
                     onClick={onOpenAuthModal}
-                    className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-7 px-3 rounded-xl shrink-0"
+                    className="bg-[#0F3D4C] hover:bg-[#091E26] text-white font-bold text-xs h-7 px-3 rounded-xl shrink-0"
                   >
                     Entrar
                   </Button>
@@ -1400,7 +1348,7 @@ export function BookingFunnelModal({
 
               <div className="space-y-1">
                 <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  E-mail para Envio do Voucher *
+                  E-mail *
                 </Label>
                 <Input
                   type="email"
@@ -1426,7 +1374,7 @@ export function BookingFunnelModal({
               <div className="space-y-1">
                 <Label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
                   <span>CEP Residencial (Opcional)</span>
-                  {loadingFunnelCep && <span className="text-[10px] text-sky-600 font-normal">Buscando...</span>}
+                  {loadingFunnelCep && <span className="text-[10px] text-[#0F3D4C] font-normal">Buscando...</span>}
                 </Label>
                 <Input
                   value={guestCep}
@@ -1457,30 +1405,30 @@ export function BookingFunnelModal({
 
               <div className="space-y-1 sm:col-span-2">
                 <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Endereço Residencial (Opcional agora ou após o pagamento)
+                  Endereço Residencial (Opcional)
                 </Label>
                 <Input
                   value={guestAddress}
                   onChange={e => setGuestAddress(e.target.value)}
-                  placeholder="Ex: Av. Pelinca, 250 - Parque Tamandaré, Campos dos Goytacazes/RJ"
+                  placeholder="Rua, número, bairro e cidade"
                   className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
                 />
               </div>
             </div>
 
             {/* Anexo Obrigatório de Documento Oficial com Foto (IA Multimodal) */}
-            <div className="p-3.5 rounded-2xl border-2 border-dashed border-sky-300 dark:border-sky-700 bg-sky-50/50 dark:bg-sky-950/20 space-y-3">
+            <div className="p-3.5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40 space-y-3">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <Label className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
+                    <ShieldCheck className="w-4 h-4 text-[#0F3D4C] shrink-0" />
                     <span>Documento Oficial com Foto (RG, CNH ou Passaporte) *</span>
                   </Label>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    Obrigatório para segurança da estadia. Aceitamos arquivo PDF ou foto legível (PNG, JPG, WEBP).
+                    Aceitamos PDF ou foto legível para liberação de portaria.
                   </p>
                 </div>
-                <Badge variant="outline" className="text-[9px] font-bold border-sky-400 text-sky-700 dark:text-sky-300 shrink-0">
+                <Badge variant="outline" className="text-[9px] font-bold border-[#C5A059]/60 text-[#0F3D4C] dark:text-[#E5C98B] shrink-0">
                   Obrigatório
                 </Badge>
               </div>
@@ -1496,17 +1444,17 @@ export function BookingFunnelModal({
               {!docFileBase64 ? (
                 <div 
                   onClick={() => docFileInputRef.current?.click()}
-                  className="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/80 dark:bg-slate-900/60 hover:bg-sky-50/80 dark:hover:bg-slate-800/80 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all group"
+                  className="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-[#0F3D4C] cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all group"
                 >
-                  <div className="w-10 h-10 rounded-full bg-sky-100 dark:bg-sky-900/50 flex items-center justify-center text-sky-600 dark:text-sky-400 group-hover:scale-110 transition-transform">
+                  <div className="w-10 h-10 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/30 flex items-center justify-center group-hover:scale-105 transition-transform">
                     <Camera className="w-5 h-5" />
                   </div>
                   <div>
                     <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                      Clique para Fotografar ou Selecionar Arquivo
+                      Fotografar ou Selecionar Documento
                     </span>
                     <span className="text-[11px] text-slate-500">
-                      PDF, CNH Digital, RG ou Passaporte
+                      CNH Digital, RG ou Passaporte (PDF ou Imagem)
                     </span>
                   </div>
                 </div>
@@ -1515,7 +1463,7 @@ export function BookingFunnelModal({
                   <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       {docFileType === "pdf" ? (
-                        <div className="w-10 h-10 rounded-lg bg-red-100 dark:bg-red-950/60 flex items-center justify-center text-red-600 font-bold shrink-0">
+                        <div className="w-10 h-10 rounded-lg bg-[#0F3D4C]/10 flex items-center justify-center text-[#0F3D4C] font-bold shrink-0">
                           <FileText className="w-5 h-5" />
                         </div>
                       ) : (
@@ -1528,22 +1476,12 @@ export function BookingFunnelModal({
                           {docFileName || "documento_oficial"}
                         </span>
                         <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                          <Badge className="bg-emerald-600 text-white text-[9px] py-0 px-1 font-bold">
+                          <Badge className="bg-[#0F3D4C] text-white text-[9px] py-0 px-1.5 font-bold">
                             ✓ Anexado ({docFileType.toUpperCase()})
                           </Badge>
                           {aiInspectionResult?.isLegible && (
-                            <Badge className="bg-sky-600 text-white text-[9px] py-0 px-1 font-bold">
-                              ✓ Legível
-                            </Badge>
-                          )}
-                          {aiInspectionResult?.isMinor && (
-                            <Badge className="bg-rose-600 text-white text-[9px] py-0 px-1 font-bold">
-                              👶 Menor ({aiInspectionResult.calculatedAge}a)
-                            </Badge>
-                          )}
-                          {aiInspectionResult?.isCamposResident && (
-                            <Badge className="bg-purple-600 text-white text-[9px] py-0 px-1 font-bold">
-                              📍 Campos/RJ
+                            <Badge variant="outline" className="border-[#C5A059]/50 text-[#0F3D4C] text-[9px] py-0 px-1.5 font-bold">
+                              ✓ Validado
                             </Badge>
                           )}
                         </div>
@@ -1570,7 +1508,7 @@ export function BookingFunnelModal({
                           setAiInspectionResult(null);
                           setDocInspectionError(null);
                         }}
-                        className="text-xs h-8 px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg"
+                        className="text-xs h-8 px-2 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg"
                       >
                         <X className="w-4 h-4" />
                       </Button>
@@ -1579,9 +1517,9 @@ export function BookingFunnelModal({
 
                   {/* Feedback em tempo real da Análise de IA */}
                   {isInspectingDoc && (
-                    <div className="p-2.5 bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-800 rounded-xl flex items-center gap-2 text-xs text-sky-800 dark:text-sky-200 animate-pulse">
-                      <RefreshCw className="w-4 h-4 animate-spin text-sky-600 shrink-0" />
-                      <span>Analisando legibilidade, CPF e titularidade com Inteligência Artificial...</span>
+                    <div className="p-2.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center gap-2 text-xs text-slate-700 dark:text-slate-200 animate-pulse">
+                      <RefreshCw className="w-4 h-4 animate-spin text-[#0F3D4C] shrink-0" />
+                      <span>Verificando legibilidade do documento...</span>
                     </div>
                   )}
 
@@ -1603,18 +1541,6 @@ export function BookingFunnelModal({
                     </div>
                   )}
 
-                  {!isInspectingDoc && !docInspectionError && aiInspectionResult?.isLegible && (
-                    <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-start gap-2 text-xs text-emerald-800 dark:text-emerald-200">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-bold block">Documento Aprovado pela IA</span>
-                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
-                          {aiInspectionResult.summary || "Documento oficial legível e dados validados para o check-in."}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
                   {!isInspectingDoc && !docInspectionError && aiInspectionResult && (aiInspectionResult.nameMatches === false || aiInspectionResult.cpfMatches === false) && (
                     <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200">
                       <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -1622,8 +1548,8 @@ export function BookingFunnelModal({
                         <span className="font-bold block">Atenção: Conferência de Titularidade</span>
                         <p className="text-[11px] text-amber-700 dark:text-amber-300">
                           {aiInspectionResult.nameMatches === false 
-                            ? "O nome extraído do documento parece divergir do titular informado. A equipe da recepção fará a conferência na portaria." 
-                            : "O CPF constante no documento parece divergir do informado. A equipe da portaria realizará a conferência."}
+                            ? "O nome extraído do documento parece divergir do titular informado." 
+                            : "O CPF constante no documento parece divergir do informado."}
                         </p>
                       </div>
                     </div>
@@ -1636,14 +1562,14 @@ export function BookingFunnelModal({
             <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-2 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Car className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-                  <span>Vai utilizar a Garagem Coberta? (Inclusa Grátis)</span>
+                  <Car className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
+                  <span>Vai utilizar a Garagem Coberta? (Inclusa)</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={hasVehicle}
                   onChange={e => setHasVehicle(e.target.checked)}
-                  className="rounded text-sky-600 shrink-0"
+                  className="rounded text-[#0F3D4C] accent-[#0F3D4C] shrink-0"
                 />
               </div>
 
@@ -1669,14 +1595,14 @@ export function BookingFunnelModal({
             <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-2 text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                  <span>Viagem Corporativa / Emissão de Nota Fiscal PJ</span>
+                  <Building2 className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
+                  <span>Viagem Corporativa / Nota Fiscal PJ</span>
                 </span>
                 <input
                   type="checkbox"
                   checked={isWorkTrip}
                   onChange={e => setIsWorkTrip(e.target.checked)}
-                  className="rounded text-indigo-600 shrink-0"
+                  className="rounded text-[#0F3D4C] accent-[#0F3D4C] shrink-0"
                 />
               </div>
 
@@ -1725,41 +1651,37 @@ export function BookingFunnelModal({
           <div className="space-y-4 py-2 animate-in fade-in">
             {/* Comparador de Formas de Pagamento */}
             <div className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-1.5">
-                <Label className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                  Forma de Pagamento:
-                </Label>
-                <span className="text-[11px] text-emerald-600 font-bold flex items-center gap-1">
-                  ⚡ Ganhe {pixDiscountPercent}% OFF no PIX
-                </span>
-              </div>
+              <Label className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                Forma de Pagamento:
+              </Label>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Opção 1: PIX Instantâneo com Desconto Extra */}
+                {/* Opção 1: PIX Instantâneo */}
                 <div
                   onClick={() => setPaymentMethod("pix")}
                   className={`p-3.5 rounded-2xl border-2 text-left relative cursor-pointer transition-all ${
                     paymentMethod === "pix"
-                      ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 ring-2 ring-emerald-500/20 shadow-sm"
-                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                      ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] ring-2 ring-[#C5A059]/35 shadow-xs"
+                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300"
                   }`}
                 >
-                  <div className="absolute -top-2.5 right-3 bg-emerald-600 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase">
-                    ⚡ {pixDiscountPercent}% OFF no PIX
-                  </div>
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shrink-0">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold shrink-0 ${
+                      paymentMethod === "pix"
+                        ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40"
+                        : "bg-slate-100 text-slate-600"
+                    }`}>
                       <QrCode className="w-4 h-4" />
                     </div>
                     <div>
-                      <span className="font-black text-xs block text-slate-900 dark:text-slate-100">PIX Instantâneo</span>
-                      <span className="text-emerald-700 dark:text-emerald-400 font-black text-base">
+                      <span className="font-bold text-xs block text-slate-900 dark:text-slate-100">PIX Instantâneo</span>
+                      <span className="text-[#091E26] dark:text-slate-100 font-black text-base">
                         R$ {pixTotalAmount.toLocaleString("pt-BR")}
                       </span>
                     </div>
                   </div>
-                  <p className="text-[10px] text-emerald-800 dark:text-emerald-300 font-semibold mt-1.5">
-                    Economia de R$ {pixDiscountAmount.toLocaleString("pt-BR")} • Liberação na hora
+                  <p className="text-[10.5px] text-slate-600 dark:text-slate-400 font-medium mt-1.5">
+                    Economia de R$ {pixDiscountAmount.toLocaleString("pt-BR")} ({pixDiscountPercent}% OFF) • Liberação na hora
                   </p>
                 </div>
 
@@ -1768,22 +1690,26 @@ export function BookingFunnelModal({
                   onClick={() => setPaymentMethod("card")}
                   className={`p-3.5 rounded-2xl border-2 text-left cursor-pointer transition-all ${
                     paymentMethod === "card"
-                      ? "border-sky-600 bg-sky-50 dark:bg-sky-950/40 ring-2 ring-sky-500/20 shadow-sm"
-                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                      ? "border-[#0F3D4C] bg-[#0F3D4C]/[0.05] ring-2 ring-[#C5A059]/35 shadow-xs"
+                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300"
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-slate-700 text-white flex items-center justify-center font-bold shrink-0">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold shrink-0 ${
+                      paymentMethod === "card"
+                        ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40"
+                        : "bg-slate-100 text-slate-600"
+                    }`}>
                       <CreditCard className="w-4 h-4" />
                     </div>
                     <div>
-                      <span className="font-black text-xs block text-slate-900 dark:text-slate-100">Cartão de Crédito</span>
-                      <span className="text-slate-800 dark:text-slate-200 font-black text-base">
+                      <span className="font-bold text-xs block text-slate-900 dark:text-slate-100">Cartão de Crédito</span>
+                      <span className="text-[#091E26] dark:text-slate-100 font-black text-base">
                         R$ {baseTotalAmount.toLocaleString("pt-BR")}
                       </span>
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-500 font-medium mt-1.5">
+                  <p className="text-[10.5px] text-slate-500 font-medium mt-1.5">
                     Checkout Seguro Mercado Pago
                   </p>
                 </div>
@@ -1793,39 +1719,29 @@ export function BookingFunnelModal({
             {/* Resumo Financeiro Consolidado */}
             <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2 text-xs">
               <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
-                <span>Diárias ({nights} noites • {flatsCount} {flatsCount === 1 ? "flat" : "flats"} • {ratePlan === "with_breakfast" ? "Com Café" : "Sem Café"}):</span>
+                <span>Diárias ({nights} {nights === 1 ? "noite" : "noites"} • {flatsCount} {flatsCount === 1 ? "flat" : "flats"} • {ratePlan === "with_breakfast" ? "Com Café" : "Sem Café"}):</span>
                 <span className="shrink-0">R$ {subtotal.toLocaleString("pt-BR")}</span>
               </div>
 
-              <div className="flex justify-between gap-2 text-emerald-600 font-bold">
+              <div className="flex justify-between gap-2 text-[#0F3D4C] dark:text-[#E5C98B] font-semibold">
                 <span>Desconto Reserva Direta ({discountPercent}%):</span>
                 <span className="shrink-0">- R$ {discountAmount.toLocaleString("pt-BR")}</span>
               </div>
 
-              {cleaningFee > 0 ? (
+              {cleaningFee > 0 && (
                 <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
-                  <span>Taxa de Higienização Completa:</span>
+                  <span>Taxa de Higienização:</span>
                   <span className="shrink-0">+ R$ {cleaningFee.toLocaleString("pt-BR")}</span>
-                </div>
-              ) : (
-                <div className="flex justify-between gap-2 text-emerald-600 font-bold">
-                  <span>Taxa de Limpeza:</span>
-                  <span className="shrink-0">✓ Isenta (Inclusa no plano)</span>
                 </div>
               )}
 
               {lateCheckout && (
                 <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
-                  <span>Late Check-out no Domingo (saída às {lateCheckoutTime}):</span>
+                  <span>Late Check-out no Domingo (até {lateCheckoutTime}):</span>
                   {lateCheckoutFee === 0 ? (
-                    <span className="text-emerald-600 font-bold shrink-0">✓ Cortesia (R$ 0)</span>
+                    <span className="text-[#0F3D4C] font-semibold shrink-0">Cortesia (R$ 0)</span>
                   ) : (
-                    <span className="shrink-0">
-                      + R$ {lateCheckoutFee.toLocaleString("pt-BR")}
-                      {lateCheckoutTier.isDailyRate && (
-                        <span className="text-[10px] text-slate-400 font-normal ml-1">(+1 diária)</span>
-                      )}
-                    </span>
+                    <span className="shrink-0">+ R$ {lateCheckoutFee.toLocaleString("pt-BR")}</span>
                   )}
                 </div>
               )}
@@ -1845,30 +1761,27 @@ export function BookingFunnelModal({
               )}
 
               {paymentMethod === "pix" && (
-                <div className="flex justify-between gap-2 text-emerald-700 dark:text-emerald-400 font-black pt-1 border-t border-slate-200 dark:border-slate-700">
-                  <span>⚡ Desconto Especial PIX ({pixDiscountPercent}%):</span>
+                <div className="flex justify-between gap-2 text-[#0F3D4C] dark:text-[#E5C98B] font-semibold pt-1 border-t border-slate-200 dark:border-slate-700">
+                  <span>Desconto PIX ({pixDiscountPercent}%):</span>
                   <span className="shrink-0">- R$ {pixDiscountAmount.toLocaleString("pt-BR")}</span>
                 </div>
               )}
 
               <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center gap-2 text-sm font-black text-slate-900 dark:text-white">
                 <span>Valor Final a Pagar:</span>
-                <span className={paymentMethod === "pix" ? "text-emerald-600 text-xl shrink-0" : "text-sky-600 text-xl shrink-0"}>
+                <span className="text-[#091E26] dark:text-[#E5C98B] text-xl shrink-0">
                   R$ {totalAmount.toLocaleString("pt-BR")}
                 </span>
               </div>
             </div>
 
             {/* Política de Cancelamento */}
-            <div className="p-3 rounded-2xl bg-slate-50/70 dark:bg-slate-800/40 border text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
+            <div className="p-3 rounded-2xl bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/80 text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
               <div className="flex flex-wrap items-center justify-between gap-1.5 font-bold text-slate-800 dark:text-slate-200">
                 <span className="flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>Política de Cancelamento: {cancellationPolicy.policyType === "flexivel" ? "Cancelamento Flexível" : "Rigorosa"}</span>
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
+                  <span>Política de Cancelamento: {cancellationPolicy.policyType === "flexivel" ? "Flexível" : "Padrão"}</span>
                 </span>
-                <Badge className={cancellationPolicy.policyType === "flexivel" ? "bg-emerald-600 text-white shrink-0" : "bg-rose-600 text-white shrink-0"}>
-                  {cancellationPolicy.isEligibleForRefund ? "Reembolso Elegível" : "Sem Reembolso"}
-                </Badge>
               </div>
               <p>{cancellationPolicy.explanation}</p>
             </div>
@@ -1887,12 +1800,9 @@ export function BookingFunnelModal({
               <Button
                 onClick={handleConfirmReservation}
                 disabled={isProcessing}
-                className={paymentMethod === "pix"
-                  ? "bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs h-auto min-h-11 py-2.5 px-6 rounded-xl shadow-lg shadow-emerald-600/20 gap-2 w-full sm:w-auto whitespace-normal leading-tight text-center"
-                  : "bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-auto min-h-11 py-2.5 px-6 rounded-xl shadow-lg shadow-sky-600/20 gap-2 w-full sm:w-auto whitespace-normal leading-tight text-center"
-                }
+                className="bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-black text-xs h-auto min-h-11 py-2.5 px-6 rounded-xl shadow-md shadow-[#091E26]/20 gap-2 w-full sm:w-auto whitespace-normal leading-tight text-center"
               >
-                <Lock className="w-4 h-4 shrink-0" />
+                <Lock className="w-4 h-4 shrink-0 text-[#E5C98B]" />
                 <span>
                   {isProcessing ? "Confirmando..." : (paymentMethod === "pix" ? `Pagar com PIX: R$ ${totalAmount.toLocaleString("pt-BR")}` : `Pagar com Cartão: R$ ${totalAmount.toLocaleString("pt-BR")}`)}
                 </span>
@@ -1904,11 +1814,7 @@ export function BookingFunnelModal({
         {/* ── ETAPA 4: VOUCHER DIGITAL & PÓS-VENDA ─────────────────────────── */}
         {currentStep === 4 && confirmedReservation && (
           <div className="space-y-4 py-2 text-center animate-in zoom-in-95">
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto shadow-xs ${
-              paymentMethod === "pix" && !isPixPaid 
-                ? "bg-amber-100 text-amber-700" 
-                : "bg-emerald-100 text-emerald-700"
-            }`}>
+            <div className="w-12 h-12 rounded-2xl bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40 flex items-center justify-center mx-auto shadow-xs">
               {paymentMethod === "pix" && !isPixPaid ? (
                 <Clock className="w-6 h-6" />
               ) : (
@@ -1917,16 +1823,16 @@ export function BookingFunnelModal({
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-xl font-black text-slate-900 dark:text-slate-100">
+              <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100">
                 {paymentMethod === "pix" && !isPixPaid 
-                  ? "Quase lá! Conclua o Pagamento PIX" 
-                  : "Reserva Confirmada com Sucesso!"}
+                  ? "Conclua o Pagamento PIX" 
+                  : "Reserva Confirmada!"}
               </h3>
               <p className="text-xs text-slate-500">
                 {paymentMethod === "pix" && !isPixPaid ? (
-                  <>Sua pré-reserva foi registrada. Realize o pagamento abaixo em até 24h para liberação automática do seu voucher definitivo em <strong className="break-all">{guestEmail}</strong>.</>
+                  <>Escaneie o QR Code ou copie o código abaixo para confirmação imediata.</>
                 ) : (
-                  <>Seu voucher oficial foi emitido e encaminhado para <strong className="break-all">{guestEmail}</strong>.</>
+                  <>Seu voucher foi enviado para <strong className="break-all">{guestEmail}</strong>.</>
                 )}
               </p>
             </div>
@@ -1934,30 +1840,30 @@ export function BookingFunnelModal({
             <div className="bg-slate-50 dark:bg-slate-800/80 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 text-left space-y-2 text-xs">
               <div className="flex justify-between items-center gap-2">
                 <span className="text-slate-500 shrink-0">Código da Reserva:</span>
-                <span className="font-mono font-black text-sky-700 text-sm text-right">
+                <span className="font-mono font-black text-[#0F3D4C] dark:text-[#E5C98B] text-sm text-right">
                   {confirmedReservation.code || confirmedReservation.reservationCode}
                 </span>
               </div>
               <div className="flex justify-between items-center gap-2">
-                <span className="text-slate-500 shrink-0">Hóspede Principal:</span>
+                <span className="text-slate-500 shrink-0">Hóspede:</span>
                 <span className="font-bold text-slate-900 dark:text-slate-100 text-right break-words">{guestName}</span>
               </div>
               <div className="flex justify-between items-center gap-2">
                 <span className="text-slate-500 shrink-0">Período:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100 text-right">{formatDisplayDate(checkin)} até {formatDisplayDate(checkout)} ({nights} noites)</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 text-right">{formatDisplayDate(checkin)} a {formatDisplayDate(checkout)} ({nights} {nights === 1 ? "noite" : "noites"})</span>
               </div>
               <div className="flex justify-between items-center gap-2">
                 <span className="text-slate-500 shrink-0">Acomodação:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100 text-right">Flat Studio ({confirmedReservation.flatNumber})</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 text-right">Flat {confirmedReservation.flatNumber}</span>
               </div>
-              <div className="flex flex-wrap justify-between items-center gap-2 pt-1 border-t border-slate-200 dark:border-slate-700">
-                <span className="text-slate-500">Status da Reserva:</span>
+              <div className="flex flex-wrap justify-between items-center gap-2 pt-1.5 border-t border-slate-200 dark:border-slate-700">
+                <span className="text-slate-500">Status:</span>
                 {!isPixPaid ? (
-                  <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 font-bold text-[10px]">
-                    ⏳ Pré-Reserva • Aguardando Pagamento
+                  <Badge className="bg-[#C5A059]/20 text-[#091E26] dark:text-[#E5C98B] border border-[#C5A059]/50 font-bold text-[10px]">
+                    Aguardando Pagamento
                   </Badge>
                 ) : (
-                  <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 font-bold text-[10px]">
+                  <Badge className="bg-[#0F3D4C] text-white font-bold text-[10px]">
                     ✓ Confirmada & Paga
                   </Badge>
                 )}
@@ -1966,29 +1872,24 @@ export function BookingFunnelModal({
 
             {/* Se Pagamento foi PIX */}
             {paymentMethod === "pix" && (
-              <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl space-y-3">
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl space-y-3">
                 {isPixPaid ? (
-                  <div className="py-4 text-center space-y-2">
-                    <div className="w-10 h-10 bg-emerald-600 text-white rounded-full flex items-center justify-center mx-auto shadow-md">
-                      <Check className="w-6 h-6" />
+                  <div className="py-3 text-center space-y-1.5">
+                    <div className="w-10 h-10 bg-[#0F3D4C] text-[#E5C98B] rounded-full flex items-center justify-center mx-auto shadow-xs">
+                      <Check className="w-5 h-5" />
                     </div>
-                    <h4 className="text-sm font-black text-emerald-900 dark:text-emerald-100">
-                      ✓ Pagamento PIX Confirmado!
+                    <h4 className="text-sm font-black text-slate-900 dark:text-slate-100">
+                      Pagamento PIX Confirmado!
                     </h4>
-                    <p className="text-xs text-emerald-700 dark:text-emerald-300">
-                      Recebemos o seu pagamento via Banco Inter. Sua reserva está 100% quitada e garantida!
+                    <p className="text-xs text-slate-600 dark:text-slate-300">
+                      Sua reserva está 100% quitada e garantida.
                     </p>
                   </div>
                 ) : (
                   <>
-                    <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                      <QrCode className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>Pagamento PIX Banco Inter (5% de Desconto Incluso)</span>
-                    </div>
-
                     {pixData?.pixCopiaECola && (
                       <>
-                        <div className="bg-white p-3 rounded-xl inline-block shadow-inner mx-auto">
+                        <div className="bg-white p-3 rounded-xl border border-slate-200 inline-block shadow-2xs mx-auto">
                           <img
                             src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(pixData.pixCopiaECola)}`}
                             alt="QR Code PIX"
@@ -1996,9 +1897,9 @@ export function BookingFunnelModal({
                           />
                         </div>
 
-                        <div className="space-y-1 text-left">
-                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block text-center">
-                            Código PIX Copia e Cola (Aprovação Automática)
+                        <div className="space-y-1.5 text-left">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                            Código PIX Copia e Cola
                           </span>
                           <div className="flex gap-2">
                             <Input
@@ -2013,9 +1914,9 @@ export function BookingFunnelModal({
                                 setPixCopied(true)
                                 setTimeout(() => setPixCopied(false), 3000)
                               }}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-3 rounded-xl shrink-0"
+                              className="bg-[#0F3D4C] hover:bg-[#091E26] text-white font-bold text-xs h-9 px-3.5 rounded-xl shrink-0"
                             >
-                              {pixCopied ? <Check className="w-3.5 h-3.5 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                              {pixCopied ? <Check className="w-3.5 h-3.5 mr-1 text-[#E5C98B]" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
                               <span>{pixCopied ? "Copiado!" : "Copiar"}</span>
                             </Button>
                           </div>
@@ -2024,9 +1925,9 @@ export function BookingFunnelModal({
                     )}
 
                     {/* Chave Pix Direta CNPJ como alternativa */}
-                    <div className="pt-2 border-t border-emerald-200/80 dark:border-emerald-800/80 flex flex-wrap items-center justify-between gap-2 text-xs bg-white/70 dark:bg-slate-900/60 p-2.5 rounded-xl">
+                    <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200/60">
                       <div className="text-left">
-                        <span className="text-[10px] text-slate-500 font-semibold block">Chave PIX Oficial (CNPJ Banco Inter):</span>
+                        <span className="text-[10px] text-slate-500 font-semibold block">Chave PIX (CNPJ Banco Inter):</span>
                         <span className="font-mono font-bold text-slate-800 dark:text-slate-100 text-xs">47.964.813/0001-65</span>
                       </div>
                       <Button
@@ -2037,9 +1938,9 @@ export function BookingFunnelModal({
                           setPixKeyCopied(true)
                           setTimeout(() => setPixKeyCopied(false), 3000)
                         }}
-                        className="h-8 text-xs font-semibold border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-xl px-3 shrink-0"
+                        className="h-8 text-xs font-semibold border-slate-200 text-[#0F3D4C] hover:bg-slate-100 rounded-xl px-3 shrink-0"
                       >
-                        {pixKeyCopied ? <Check className="w-3.5 h-3.5 mr-1 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                        {pixKeyCopied ? <Check className="w-3.5 h-3.5 mr-1 text-[#0F3D4C]" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
                         <span>{pixKeyCopied ? "Copiado!" : "Copiar CNPJ"}</span>
                       </Button>
                     </div>
@@ -2050,175 +1951,23 @@ export function BookingFunnelModal({
 
             {/* Se Pagamento foi Cartão */}
             {paymentMethod === "card" && mpInitPoint && (
-              <div className="p-4 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 rounded-2xl space-y-2">
-                <p className="text-xs text-sky-950 dark:text-sky-200 font-bold">
-                  Clique abaixo para efetuar o pagamento seguro no Mercado Pago:
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl space-y-2.5">
+                <p className="text-xs text-slate-700 dark:text-slate-200 font-bold">
+                  Prossiga para finalizar o pagamento no ambiente seguro do Mercado Pago:
                 </p>
                 <Button
                   onClick={() => window.open(mpInitPoint, "_blank")}
-                  className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-auto min-h-10 py-2.5 rounded-xl shadow-md gap-2 whitespace-normal leading-tight text-center"
+                  className="w-full bg-[#0F3D4C] hover:bg-[#091E26] text-white border border-[#C5A059]/40 font-black text-xs h-auto min-h-10 py-2.5 rounded-xl shadow-md gap-2 whitespace-normal leading-tight text-center"
                 >
-                  <CreditCard className="w-4 h-4 shrink-0" />
+                  <CreditCard className="w-4 h-4 shrink-0 text-[#E5C98B]" />
                   <span>Pagar com Cartão no Mercado Pago</span>
                   <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                 </Button>
               </div>
             )}
 
-            {/* ── CADASTRO DE HÓSPEDE PÓS-PAGAMENTO & PRÉ-CHECKIN DIGITAL ──── */}
-            {(() => {
-              const hasCompleteRegistration = Boolean(
-                guestName.trim() &&
-                guestDocument.trim() &&
-                guestPhone.trim() &&
-                guestEmail.trim() &&
-                (guestAddress.trim() || confirmedReservation?.guestAddress)
-              );
-
-              if (hasCompleteRegistration || postRegistrationSaved) {
-                return (
-                  <div className="p-3.5 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl text-left space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>Cadastro de Hóspede Completo & Salvo</span>
-                      </span>
-                      <Badge className="bg-emerald-600 text-white font-bold text-[10px] shrink-0">
-                        100% Pronto
-                      </Badge>
-                    </div>
-                    <p className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-relaxed">
-                      Seus 5 dados cadastrais (Nome, CPF, Telefone, E-mail e Endereço) já constam no sistema e foram vinculados à sua reserva. No seu pré check-in digital, você <strong>não precisará preencher tudo de novo</strong>, bastando conferir, fotografar o documento e assinar!
-                    </p>
-                    <div className="pt-1 flex items-center gap-2">
-                      {isPixPaid ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            const resCode = confirmedReservation.code || confirmedReservation.reservationCode || confirmedReservation.id;
-                            window.open(`/pre-checkin/${resCode}`, "_blank");
-                          }}
-                          className="text-xs h-auto min-h-8 py-1.5 bg-white dark:bg-slate-900 border-emerald-300 text-emerald-800 dark:text-emerald-300 font-bold hover:bg-emerald-50 rounded-xl whitespace-normal leading-tight"
-                        >
-                          <FileText className="w-3.5 h-3.5 mr-1 shrink-0" />
-                          <span>Acessar Pré Check-in Digital</span>
-                        </Button>
-                      ) : (
-                        <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300 bg-amber-100/80 dark:bg-amber-950/60 border border-amber-300/80 px-2.5 py-1.5 rounded-xl block w-full">
-                          ⏳ O Pré Check-in Digital e o envio para a recepção/portaria serão liberados automaticamente após a confirmação do pagamento.
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              }
-
-              return (
-                <div className="p-4 bg-gradient-to-br from-sky-50/90 via-indigo-50/30 to-slate-50 dark:from-slate-800 dark:to-slate-900 border-2 border-sky-200 dark:border-slate-700 rounded-2xl text-left space-y-3 shadow-xs">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center font-bold shadow-xs shrink-0">
-                        <FileText className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
-                          Finalize seu Cadastro para Agilizar o Check-in Digital
-                        </h4>
-                        <p className="text-[11px] text-slate-500">
-                          Preencha seu endereço para agilizar a liberação da portaria e emissão da FNRH.
-                        </p>
-                      </div>
-                    </div>
-                    <Badge className="bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 text-[10px] font-bold shrink-0">
-                      Faltam poucos dados
-                    </Badge>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-xs">
-                    {!guestDocument.trim() && (
-                      <div className="space-y-1 sm:col-span-2">
-                        <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">CPF ou Passaporte *</Label>
-                        <Input
-                          value={guestDocument}
-                          onChange={e => setGuestDocument(maskCpf(e.target.value))}
-                          placeholder="000.000.000-00"
-                          className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900 font-mono"
-                        />
-                      </div>
-                    )}
-
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                        <span>CEP Residencial *</span>
-                        {loadingFunnelCep && <span className="text-[10px] text-sky-600 font-normal">Buscando...</span>}
-                      </Label>
-                      <Input
-                        value={guestCep}
-                        onChange={async e => {
-                          const val = e.target.value.replace(/\D/g, "");
-                          setGuestCep(val);
-                          if (val.length === 8) {
-                            setLoadingFunnelCep(true);
-                            try {
-                              const res = await fetch(`/api/lookup-cep/${val}`);
-                              if (res.ok) {
-                                const data = await res.json();
-                                if (data.logradouro) setGuestAddress(`${data.logradouro}, ${data.bairro || ''}`.trim());
-                                if (data.cidade) setGuestCity(data.cidade);
-                                if (data.uf) setGuestState(data.uf);
-                              }
-                            } catch {}
-                            finally {
-                              setLoadingFunnelCep(false);
-                            }
-                          }
-                        }}
-                        placeholder="00000-000"
-                        maxLength={9}
-                        className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900 font-mono"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Cidade / UF *</Label>
-                      <Input
-                        value={guestCity ? `${guestCity} / ${guestState}` : ""}
-                        onChange={e => {
-                          const [c, s] = e.target.value.split("/");
-                          if (c) setGuestCity(c.trim());
-                          if (s) setGuestState(s.trim());
-                        }}
-                        placeholder="Cidade / UF"
-                        className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
-                      />
-                    </div>
-
-                    <div className="space-y-1 sm:col-span-2">
-                      <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Endereço Residencial (Rua, Número, Bairro) *</Label>
-                      <Input
-                        value={guestAddress}
-                        onChange={e => setGuestAddress(e.target.value)}
-                        placeholder="Ex: Av. Pelinca, 250 - Parque Tamandaré"
-                        className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
-                      />
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={handleSavePostPaymentRegistration}
-                    disabled={isSavingPostRegistration}
-                    className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-10 rounded-xl shadow-md gap-2"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>{isSavingPostRegistration ? "Salvando Cadastro..." : "Salvar Dados Cadastrais"}</span>
-                  </Button>
-                </div>
-              );
-            })()}
-
-            {/* Ações Pós-Venda: Calendário & WhatsApp */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            {/* Ações Pós-Venda: Calendário & Portal da Reserva */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <AddToCalendar
                 variant="compact"
                 reservation={{
@@ -2236,22 +1985,14 @@ export function BookingFunnelModal({
                 href={whatsappUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="h-9 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+                className="h-8 px-3 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors"
               >
-                <MessageCircle className="w-4 h-4 text-emerald-600" />
-                <span>Concierge no WhatsApp</span>
+                <MessageCircle className="w-3.5 h-3.5 text-[#0F3D4C]" />
+                <span>WhatsApp</span>
               </a>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-2 pt-1">
-              <Button
-                variant="outline"
-                onClick={handleResetAndNewBooking}
-                className="w-full text-xs font-bold rounded-xl h-9 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
-              >
-                Fazer Outra Reserva
-              </Button>
-
+            <div className="pt-1">
               <Button
                 onClick={() => {
                   const resCode = confirmedReservation?.code || confirmedReservation?.id;
@@ -2260,10 +2001,10 @@ export function BookingFunnelModal({
                     setLocation(`/minha-reserva/${resCode}`);
                   }
                 }}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl h-9 gap-1.5"
+                className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 text-xs font-bold rounded-xl h-11 gap-2 shadow-md"
               >
-                <span>Concluir e Ver Reserva</span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                <span>Concluir e Acessar Minha Reserva</span>
+                <ArrowRight className="w-4 h-4 text-[#E5C98B]" />
               </Button>
             </div>
           </div>

@@ -243,9 +243,9 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
               variant="outline"
               onClick={handlePasskeyLogin}
               disabled={loading}
-              className="w-full h-10 rounded-xl font-bold text-xs border-sky-200 dark:border-sky-800 hover:bg-sky-50 dark:hover:bg-sky-950/40 text-sky-700 dark:text-sky-300 flex items-center justify-center gap-2"
+              className="w-full h-10 rounded-xl font-bold text-xs border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-[#0F3D4C] dark:text-slate-200 flex items-center justify-center gap-2"
             >
-              <Fingerprint className="w-4 h-4 text-sky-600" />
+              <Fingerprint className="w-4 h-4 text-[#0F3D4C]" />
               <span>Entrar com Biometria / Passkey</span>
             </Button>
 
@@ -274,7 +274,7 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
                   <button
                     type="button"
                     onClick={() => { setActiveTab("forgot"); setErrorMsg(""); }}
-                    className="text-[10px] text-sky-600 font-semibold hover:underline"
+                    className="text-[10px] text-[#0F3D4C] font-semibold hover:underline"
                   >
                     Esqueceu a senha?
                   </button>
