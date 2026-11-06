@@ -320,6 +320,7 @@ export default function WhatsappBroadcastPage() {
   const [maxDelaySeconds, setMaxDelaySeconds] = useState<number>(8)
   const [minDelayInput, setMinDelayInput] = useState<string>("3")
   const [maxDelayInput, setMaxDelayInput] = useState<string>("8")
+  const [filterDrafts, setFilterDrafts] = useState<Record<string, string>>({})
   const [confirmSendOpen, setConfirmSendOpen] = useState<boolean>(false)
   const [isStartingCampaign, setIsStartingCampaign] = useState<boolean>(false)
 
@@ -591,11 +592,44 @@ export default function WhatsappBroadcastPage() {
     })
   }
 
+  const setNumericFilterPreset = (field: keyof BroadcastFilters, value: number) => {
+    setFilterDrafts(prev => {
+      if (!(field in prev)) return prev
+      const next = { ...prev }
+      delete next[field]
+      return next
+    })
+    setFilters(prev => ({ ...prev, [field]: value }))
+  }
+
+  const handleNumericFilterChange = (field: keyof BroadcastFilters, rawValue: string, maxVal: number) => {
+    const raw = rawValue.replace(/\D/g, "")
+    setFilterDrafts(prev => ({ ...prev, [field]: raw }))
+    const parsed = parseInt(raw, 10)
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      setFilters(prev => ({ ...prev, [field]: Math.min(maxVal, parsed) }))
+    }
+  }
+
+  const handleNumericFilterBlur = (field: keyof BroadcastFilters, defaultVal: number, maxVal: number) => {
+    const draft = filterDrafts[field]
+    const parsed = draft !== undefined ? parseInt(draft.trim(), 10) : Number(filters[field])
+    const safeVal = Number.isFinite(parsed) && parsed >= 1 ? Math.min(maxVal, parsed) : defaultVal
+    setFilters(prev => ({ ...prev, [field]: safeVal }))
+    setFilterDrafts(prev => {
+      if (!(field in prev)) return prev
+      const next = { ...prev }
+      delete next[field]
+      return next
+    })
+  }
+
   const handleResetFilters = () => {
     setFilters({
       ...DEFAULT_FILTERS,
       moments: []
     })
+    setFilterDrafts({})
     setCitySearchQuery("")
     toast({
       title: "Filtros limpos",
@@ -751,9 +785,11 @@ export default function WhatsappBroadcastPage() {
 
   const normalizeDelayInputs = () => {
     const parsedMin = parseInt(minDelayInput.trim(), 10)
-    const safeMin = Number.isFinite(parsedMin) && parsedMin >= 1 ? Math.min(60, parsedMin) : 3
+    const rawMin = Number.isFinite(parsedMin) && parsedMin >= 1 ? Math.min(3600, parsedMin) : 3
     const parsedMax = parseInt(maxDelayInput.trim(), 10)
-    const safeMax = Number.isFinite(parsedMax) && parsedMax >= 1 ? Math.max(safeMin, Math.min(120, parsedMax)) : Math.max(safeMin, 8)
+    const rawMax = Number.isFinite(parsedMax) && parsedMax >= 1 ? Math.min(3600, parsedMax) : Math.max(rawMin, 8)
+    const safeMin = Math.min(rawMin, rawMax)
+    const safeMax = Math.max(rawMin, rawMax)
     setMinDelaySeconds(safeMin)
     setMaxDelaySeconds(safeMax)
     setMinDelayInput(String(safeMin))
@@ -1147,9 +1183,9 @@ export default function WhatsappBroadcastPage() {
                                   <button
                                     key={h}
                                     type="button"
-                                    onClick={() => setFilters(prev => ({ ...prev, preCheckinHours: h }))}
+                                    onClick={() => setNumericFilterPreset("preCheckinHours", h)}
                                     className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
-                                      filters.preCheckinHours === h
+                                      filters.preCheckinHours === h && filterDrafts.preCheckinHours === undefined
                                         ? "bg-sky-600 text-white border-sky-600"
                                         : "bg-background border-border text-muted-foreground"
                                     }`}
@@ -1161,20 +1197,9 @@ export default function WhatsappBroadcastPage() {
                                   type="text"
                                   inputMode="numeric"
                                   pattern="[0-9]*"
-                                  value={filters.preCheckinHours === 0 ? "" : String(filters.preCheckinHours)}
-                                  onChange={e => {
-                                    const raw = e.target.value.replace(/\D/g, "")
-                                    setFilters(prev => ({
-                                      ...prev,
-                                      preCheckinHours: raw === "" ? 0 : Math.min(720, parseInt(raw, 10))
-                                    }))
-                                  }}
-                                  onBlur={() =>
-                                    setFilters(prev => ({
-                                      ...prev,
-                                      preCheckinHours: prev.preCheckinHours >= 1 ? prev.preCheckinHours : 24
-                                    }))
-                                  }
+                                  value={filterDrafts.preCheckinHours ?? String(filters.preCheckinHours)}
+                                  onChange={e => handleNumericFilterChange("preCheckinHours", e.target.value, 720)}
+                                  onBlur={() => handleNumericFilterBlur("preCheckinHours", 24, 720)}
                                   className="h-6 w-16 text-[11px] px-1.5"
                                 />
                                 <span className="text-[10px] text-muted-foreground">horas</span>
@@ -1192,9 +1217,9 @@ export default function WhatsappBroadcastPage() {
                                   <button
                                     key={d}
                                     type="button"
-                                    onClick={() => setFilters(prev => ({ ...prev, preCheckinDays: d }))}
+                                    onClick={() => setNumericFilterPreset("preCheckinDays", d)}
                                     className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
-                                      filters.preCheckinDays === d
+                                      filters.preCheckinDays === d && filterDrafts.preCheckinDays === undefined
                                         ? "bg-sky-600 text-white border-sky-600"
                                         : "bg-background border-border text-muted-foreground"
                                     }`}
@@ -1206,20 +1231,9 @@ export default function WhatsappBroadcastPage() {
                                   type="text"
                                   inputMode="numeric"
                                   pattern="[0-9]*"
-                                  value={filters.preCheckinDays === 0 ? "" : String(filters.preCheckinDays)}
-                                  onChange={e => {
-                                    const raw = e.target.value.replace(/\D/g, "")
-                                    setFilters(prev => ({
-                                      ...prev,
-                                      preCheckinDays: raw === "" ? 0 : Math.min(365, parseInt(raw, 10))
-                                    }))
-                                  }}
-                                  onBlur={() =>
-                                    setFilters(prev => ({
-                                      ...prev,
-                                      preCheckinDays: prev.preCheckinDays >= 1 ? prev.preCheckinDays : 7
-                                    }))
-                                  }
+                                  value={filterDrafts.preCheckinDays ?? String(filters.preCheckinDays)}
+                                  onChange={e => handleNumericFilterChange("preCheckinDays", e.target.value, 365)}
+                                  onBlur={() => handleNumericFilterBlur("preCheckinDays", 7, 365)}
                                   className="h-6 w-16 text-[11px] px-1.5"
                                 />
                                 <span className="text-[10px] text-muted-foreground">dias</span>
@@ -1303,9 +1317,9 @@ export default function WhatsappBroadcastPage() {
                                 <button
                                   key={h}
                                   type="button"
-                                  onClick={() => setFilters(prev => ({ ...prev, inHouseHours: h }))}
+                                  onClick={() => setNumericFilterPreset("inHouseHours", h)}
                                   className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
-                                    filters.inHouseHours === h ? "bg-emerald-600 text-white border-emerald-600" : "bg-background border-border text-muted-foreground"
+                                    filters.inHouseHours === h && filterDrafts.inHouseHours === undefined ? "bg-emerald-600 text-white border-emerald-600" : "bg-background border-border text-muted-foreground"
                                   }`}
                                 >
                                   {h}h
@@ -1315,20 +1329,9 @@ export default function WhatsappBroadcastPage() {
                                 type="text"
                                 inputMode="numeric"
                                 pattern="[0-9]*"
-                                value={filters.inHouseHours === 0 ? "" : String(filters.inHouseHours)}
-                                onChange={e => {
-                                  const raw = e.target.value.replace(/\D/g, "")
-                                  setFilters(prev => ({
-                                    ...prev,
-                                    inHouseHours: raw === "" ? 0 : Math.min(720, parseInt(raw, 10))
-                                  }))
-                                }}
-                                onBlur={() =>
-                                  setFilters(prev => ({
-                                    ...prev,
-                                    inHouseHours: prev.inHouseHours >= 1 ? prev.inHouseHours : 24
-                                  }))
-                                }
+                                value={filterDrafts.inHouseHours ?? String(filters.inHouseHours)}
+                                onChange={e => handleNumericFilterChange("inHouseHours", e.target.value, 720)}
+                                onBlur={() => handleNumericFilterBlur("inHouseHours", 24, 720)}
                                 className="h-6 w-16 text-[11px] px-1.5"
                               />
                               <span className="text-[10px] text-muted-foreground">horas</span>
@@ -1341,9 +1344,9 @@ export default function WhatsappBroadcastPage() {
                                 <button
                                   key={d}
                                   type="button"
-                                  onClick={() => setFilters(prev => ({ ...prev, inHouseDays: d }))}
+                                  onClick={() => setNumericFilterPreset("inHouseDays", d)}
                                   className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
-                                    filters.inHouseDays === d ? "bg-emerald-600 text-white border-emerald-600" : "bg-background border-border text-muted-foreground"
+                                    filters.inHouseDays === d && filterDrafts.inHouseDays === undefined ? "bg-emerald-600 text-white border-emerald-600" : "bg-background border-border text-muted-foreground"
                                   }`}
                                 >
                                   {d}d
@@ -1353,20 +1356,9 @@ export default function WhatsappBroadcastPage() {
                                 type="text"
                                 inputMode="numeric"
                                 pattern="[0-9]*"
-                                value={filters.inHouseDays === 0 ? "" : String(filters.inHouseDays)}
-                                onChange={e => {
-                                  const raw = e.target.value.replace(/\D/g, "")
-                                  setFilters(prev => ({
-                                    ...prev,
-                                    inHouseDays: raw === "" ? 0 : Math.min(180, parseInt(raw, 10))
-                                  }))
-                                }}
-                                onBlur={() =>
-                                  setFilters(prev => ({
-                                    ...prev,
-                                    inHouseDays: prev.inHouseDays >= 1 ? prev.inHouseDays : 3
-                                  }))
-                                }
+                                value={filterDrafts.inHouseDays ?? String(filters.inHouseDays)}
+                                onChange={e => handleNumericFilterChange("inHouseDays", e.target.value, 180)}
+                                onBlur={() => handleNumericFilterBlur("inHouseDays", 3, 180)}
                                 className="h-6 w-16 text-[11px] px-1.5"
                               />
                               <span className="text-[10px] text-muted-foreground">dias</span>
@@ -1379,9 +1371,9 @@ export default function WhatsappBroadcastPage() {
                                 <button
                                   key={h}
                                   type="button"
-                                  onClick={() => setFilters(prev => ({ ...prev, inHouseLeavingHours: h }))}
+                                  onClick={() => setNumericFilterPreset("inHouseLeavingHours", h)}
                                   className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
-                                    filters.inHouseLeavingHours === h ? "bg-emerald-600 text-white border-emerald-600" : "bg-background border-border text-muted-foreground"
+                                    filters.inHouseLeavingHours === h && filterDrafts.inHouseLeavingHours === undefined ? "bg-emerald-600 text-white border-emerald-600" : "bg-background border-border text-muted-foreground"
                                   }`}
                                 >
                                   {h}h
@@ -1391,20 +1383,9 @@ export default function WhatsappBroadcastPage() {
                                 type="text"
                                 inputMode="numeric"
                                 pattern="[0-9]*"
-                                value={filters.inHouseLeavingHours === 0 ? "" : String(filters.inHouseLeavingHours)}
-                                onChange={e => {
-                                  const raw = e.target.value.replace(/\D/g, "")
-                                  setFilters(prev => ({
-                                    ...prev,
-                                    inHouseLeavingHours: raw === "" ? 0 : Math.min(720, parseInt(raw, 10))
-                                  }))
-                                }}
-                                onBlur={() =>
-                                  setFilters(prev => ({
-                                    ...prev,
-                                    inHouseLeavingHours: prev.inHouseLeavingHours >= 1 ? prev.inHouseLeavingHours : 24
-                                  }))
-                                }
+                                value={filterDrafts.inHouseLeavingHours ?? String(filters.inHouseLeavingHours)}
+                                onChange={e => handleNumericFilterChange("inHouseLeavingHours", e.target.value, 720)}
+                                onBlur={() => handleNumericFilterBlur("inHouseLeavingHours", 24, 720)}
                                 className="h-6 w-16 text-[11px] px-1.5"
                               />
                               <span className="text-[10px] text-muted-foreground">horas</span>
@@ -1417,9 +1398,9 @@ export default function WhatsappBroadcastPage() {
                                 <button
                                   key={d}
                                   type="button"
-                                  onClick={() => setFilters(prev => ({ ...prev, inHouseLeavingDays: d }))}
+                                  onClick={() => setNumericFilterPreset("inHouseLeavingDays", d)}
                                   className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
-                                    filters.inHouseLeavingDays === d ? "bg-emerald-600 text-white border-emerald-600" : "bg-background border-border text-muted-foreground"
+                                    filters.inHouseLeavingDays === d && filterDrafts.inHouseLeavingDays === undefined ? "bg-emerald-600 text-white border-emerald-600" : "bg-background border-border text-muted-foreground"
                                   }`}
                                 >
                                   {d}d
@@ -1429,20 +1410,9 @@ export default function WhatsappBroadcastPage() {
                                 type="text"
                                 inputMode="numeric"
                                 pattern="[0-9]*"
-                                value={filters.inHouseLeavingDays === 0 ? "" : String(filters.inHouseLeavingDays)}
-                                onChange={e => {
-                                  const raw = e.target.value.replace(/\D/g, "")
-                                  setFilters(prev => ({
-                                    ...prev,
-                                    inHouseLeavingDays: raw === "" ? 0 : Math.min(180, parseInt(raw, 10))
-                                  }))
-                                }}
-                                onBlur={() =>
-                                  setFilters(prev => ({
-                                    ...prev,
-                                    inHouseLeavingDays: prev.inHouseLeavingDays >= 1 ? prev.inHouseLeavingDays : 3
-                                  }))
-                                }
+                                value={filterDrafts.inHouseLeavingDays ?? String(filters.inHouseLeavingDays)}
+                                onChange={e => handleNumericFilterChange("inHouseLeavingDays", e.target.value, 180)}
+                                onBlur={() => handleNumericFilterBlur("inHouseLeavingDays", 3, 180)}
                                 className="h-6 w-16 text-[11px] px-1.5"
                               />
                               <span className="text-[10px] text-muted-foreground">dias</span>
@@ -1505,9 +1475,9 @@ export default function WhatsappBroadcastPage() {
                                   <button
                                     key={h}
                                     type="button"
-                                    onClick={() => setFilters(prev => ({ ...prev, postCheckoutHours: h }))}
+                                    onClick={() => setNumericFilterPreset("postCheckoutHours", h)}
                                     className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
-                                      filters.postCheckoutHours === h ? "bg-violet-600 text-white border-violet-600" : "bg-background border-border text-muted-foreground"
+                                      filters.postCheckoutHours === h && filterDrafts.postCheckoutHours === undefined ? "bg-violet-600 text-white border-violet-600" : "bg-background border-border text-muted-foreground"
                                     }`}
                                   >
                                     {h}h
@@ -1517,20 +1487,9 @@ export default function WhatsappBroadcastPage() {
                                   type="text"
                                   inputMode="numeric"
                                   pattern="[0-9]*"
-                                  value={filters.postCheckoutHours === 0 ? "" : String(filters.postCheckoutHours)}
-                                  onChange={e => {
-                                    const raw = e.target.value.replace(/\D/g, "")
-                                    setFilters(prev => ({
-                                      ...prev,
-                                      postCheckoutHours: raw === "" ? 0 : Math.min(720, parseInt(raw, 10))
-                                    }))
-                                  }}
-                                  onBlur={() =>
-                                    setFilters(prev => ({
-                                      ...prev,
-                                      postCheckoutHours: prev.postCheckoutHours >= 1 ? prev.postCheckoutHours : 24
-                                    }))
-                                  }
+                                  value={filterDrafts.postCheckoutHours ?? String(filters.postCheckoutHours)}
+                                  onChange={e => handleNumericFilterChange("postCheckoutHours", e.target.value, 720)}
+                                  onBlur={() => handleNumericFilterBlur("postCheckoutHours", 24, 720)}
                                   className="h-6 w-16 text-[11px] px-1.5"
                                 />
                                 <span className="text-[10px] text-muted-foreground">horas</span>
@@ -1548,9 +1507,9 @@ export default function WhatsappBroadcastPage() {
                                   <button
                                     key={d}
                                     type="button"
-                                    onClick={() => setFilters(prev => ({ ...prev, postCheckoutDays: d }))}
+                                    onClick={() => setNumericFilterPreset("postCheckoutDays", d)}
                                     className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
-                                      filters.postCheckoutDays === d ? "bg-violet-600 text-white border-violet-600" : "bg-background border-border text-muted-foreground"
+                                      filters.postCheckoutDays === d && filterDrafts.postCheckoutDays === undefined ? "bg-violet-600 text-white border-violet-600" : "bg-background border-border text-muted-foreground"
                                     }`}
                                   >
                                     {d}d
@@ -1560,20 +1519,9 @@ export default function WhatsappBroadcastPage() {
                                   type="text"
                                   inputMode="numeric"
                                   pattern="[0-9]*"
-                                  value={filters.postCheckoutDays === 0 ? "" : String(filters.postCheckoutDays)}
-                                  onChange={e => {
-                                    const raw = e.target.value.replace(/\D/g, "")
-                                    setFilters(prev => ({
-                                      ...prev,
-                                      postCheckoutDays: raw === "" ? 0 : Math.min(1095, parseInt(raw, 10))
-                                    }))
-                                  }}
-                                  onBlur={() =>
-                                    setFilters(prev => ({
-                                      ...prev,
-                                      postCheckoutDays: prev.postCheckoutDays >= 1 ? prev.postCheckoutDays : 30
-                                    }))
-                                  }
+                                  value={filterDrafts.postCheckoutDays ?? String(filters.postCheckoutDays)}
+                                  onChange={e => handleNumericFilterChange("postCheckoutDays", e.target.value, 1095)}
+                                  onBlur={() => handleNumericFilterBlur("postCheckoutDays", 30, 1095)}
                                   className="h-6 w-16 text-[11px] px-1.5"
                                 />
                                 <span className="text-[10px] text-muted-foreground">dias</span>
@@ -2395,20 +2343,16 @@ export default function WhatsappBroadcastPage() {
                       onChange={e => {
                         const raw = e.target.value.replace(/\D/g, "")
                         setMinDelayInput(raw)
-                        if (raw !== "") {
-                          const num = Math.max(1, Math.min(60, parseInt(raw, 10)))
-                          setMinDelaySeconds(num)
+                        const parsed = parseInt(raw, 10)
+                        if (Number.isFinite(parsed) && parsed >= 1) {
+                          setMinDelaySeconds(Math.min(3600, parsed))
                         }
                       }}
                       onBlur={() => {
                         const parsed = parseInt(minDelayInput.trim(), 10)
-                        const safeMin = Number.isFinite(parsed) && parsed >= 1 ? Math.min(60, parsed) : 3
+                        const safeMin = Number.isFinite(parsed) && parsed >= 1 ? Math.min(3600, parsed) : 3
                         setMinDelaySeconds(safeMin)
                         setMinDelayInput(String(safeMin))
-                        if (maxDelaySeconds < safeMin) {
-                          setMaxDelaySeconds(safeMin)
-                          setMaxDelayInput(String(safeMin))
-                        }
                       }}
                       className="h-7 text-xs mt-0.5"
                     />
@@ -2424,16 +2368,14 @@ export default function WhatsappBroadcastPage() {
                       onChange={e => {
                         const raw = e.target.value.replace(/\D/g, "")
                         setMaxDelayInput(raw)
-                        if (raw !== "") {
-                          const num = Math.max(1, Math.min(120, parseInt(raw, 10)))
-                          setMaxDelaySeconds(num)
+                        const parsed = parseInt(raw, 10)
+                        if (Number.isFinite(parsed) && parsed >= 1) {
+                          setMaxDelaySeconds(Math.min(3600, parsed))
                         }
                       }}
                       onBlur={() => {
                         const parsed = parseInt(maxDelayInput.trim(), 10)
-                        const safeMax = Number.isFinite(parsed) && parsed >= 1
-                          ? Math.max(minDelaySeconds, Math.min(120, parsed))
-                          : Math.max(minDelaySeconds, 8)
+                        const safeMax = Number.isFinite(parsed) && parsed >= 1 ? Math.min(3600, parsed) : 8
                         setMaxDelaySeconds(safeMax)
                         setMaxDelayInput(String(safeMax))
                       }}

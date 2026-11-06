@@ -2207,8 +2207,11 @@ export function evaluateZapiChannelPolicy(configOrOptions, maybeOptions = {}) {
     ...(activeChannels?.[resolvedChannelId] || {})
   };
 
-  // 3. Regra 1: Canal desativado / pausado
-  if (channel.enabled === false) {
+  // 3. Regra 1: Canal desativado / pausado (exceção: disparos manuais em lote pelo operador)
+  const isManualBroadcastBypass = Boolean(
+    /^manual_broadcast(?:_test)?$/i.test(String(triggerEvent || "").trim())
+  );
+  if (channel.enabled === false && !isManualBroadcastBypass) {
     return {
       allowed: false,
       reason: `Canal ${channel.name || resolvedChannelId} está pausado.`,
@@ -4964,7 +4967,8 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
         const linkRes = await fetch(linkEndpoint, {
           method: "POST",
           headers,
-          body: JSON.stringify(linkPayload)
+          body: JSON.stringify(linkPayload),
+          signal: AbortSignal.timeout(25000)
         });
         const linkData = await linkRes.json().catch(() => ({}));
         if (linkRes.ok && (linkData.zaapId || linkData.id || linkData.messageId)) {
@@ -5000,7 +5004,8 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
         const res = await fetch(textUrl, {
           method: "POST",
           headers,
-          body: JSON.stringify(textPayload)
+          body: JSON.stringify(textPayload),
+          signal: AbortSignal.timeout(25000)
         });
         const data = await res.json().catch(() => ({}));
 
@@ -5091,7 +5096,8 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       const res = await fetch(buttonActionsUrl, {
         method: "POST",
         headers,
-        body: JSON.stringify(buttonActionsPayload)
+        body: JSON.stringify(buttonActionsPayload),
+        signal: AbortSignal.timeout(25000)
       });
       const data = await res.json().catch(() => ({}));
 
@@ -5119,7 +5125,8 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
           const textRes = await fetch(textUrl, {
             method: "POST",
             headers,
-            body: JSON.stringify({ phone: targetPhone, message: textWithLinks })
+            body: JSON.stringify({ phone: targetPhone, message: textWithLinks }),
+            signal: AbortSignal.timeout(25000)
           });
           const textData = await textRes.json().catch(() => ({}));
 

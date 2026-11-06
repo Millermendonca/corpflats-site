@@ -51,7 +51,15 @@ const DEFAULT_FLATS = [
 ];
 
 import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE, buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
-import { lookupCep, lookupCnpj, inferIbgeAndValidCep, resolveValidCepAndIbge } from "./lookup.mjs";
+import {
+  lookupCep,
+  lookupCnpj,
+  inferIbgeAndValidCep,
+  resolveValidCepAndIbge,
+  resolveKnownCnpjDirectory,
+  isGenericPelincaCompanyAddress,
+  enrichCrmEntityWithCnpjData
+} from "./lookup.mjs";
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -8942,7 +8950,7 @@ export function ensureB2bSeedData(targetDb = db) {
           posUnit: "COPASTUR GRUPO CARREFOUR"
         }
       ],
-      clientCompanies: ["Vibra Energia S.A.", "Carrefour Comércio e Indústria Ltda"],
+      clientCompanies: ["Vibra Energia S.A.", "Carrefour Comércio e Indústria Ltda", "ATACADAO DISTR COM E IND MATRIZ"],
       notes: "Agência B2B corporativa • Unidades POS: COPASTUR VIBRA ENERGIA e COPASTUR GRUPO CARREFOUR. E-mail de conciliação: conciliacao@copastur.com.br. Não entregar NF ao hóspede no balcão.",
       createdAt: "2026-10-20T10:05:00.000Z"
     },
@@ -9297,8 +9305,10 @@ export function ensureB2bSeedData(targetDb = db) {
         existing.cnpj = sa.cnpj;
         changed = true;
       }
-      for (const k of ["corporateName", "razaoSocial", "tradeName", "nomeFantasia", "financialEmail", "emailFinanceiro", "email", "phone", "telefone", "contactPerson", "billingTerms", "address", "logradouro", "number", "neighborhood", "cep", "city", "state", "ibgeCode", "defaultRatePolicy", "defaultInvoiceRecipient", "notes"]) {
-        if (!existing[k] && sa[k]) {
+      const existingAgIsGeneric = isGenericPelincaCompanyAddress(existing);
+      const addrKeys = new Set(["address", "logradouro", "endereco", "number", "numero", "complement", "complemento", "neighborhood", "bairro", "cep", "city", "cidade", "state", "uf", "ibgeCode", "codigoMunicipio"]);
+      for (const k of ["corporateName", "razaoSocial", "tradeName", "nomeFantasia", "financialEmail", "emailFinanceiro", "email", "phone", "telefone", "contactPerson", "billingTerms", "address", "logradouro", "endereco", "number", "numero", "complement", "complemento", "neighborhood", "bairro", "cep", "city", "cidade", "state", "uf", "ibgeCode", "codigoMunicipio", "defaultRatePolicy", "defaultInvoiceRecipient", "notes"]) {
+        if (sa[k] && (!existing[k] || (existingAgIsGeneric && addrKeys.has(k)))) {
           existing[k] = sa[k];
           changed = true;
         }
@@ -9595,6 +9605,40 @@ export function ensureB2bSeedData(targetDb = db) {
       codigoMunicipio: "4106902",
       notes: "Empresa corporativa / tomadora de NFS-e atendida pela agência Flytour Curitiba (DPR Turismo) • Cliente Id: 60292.",
       createdAt: "2026-10-30T10:00:00.000Z"
+    },
+    {
+      corporateName: "ATACADAO DISTR COM E IND MATRIZ",
+      razaoSocial: "ATACADAO S.A.",
+      tradeName: "Atacadão S.A.",
+      nomeFantasia: "Atacadão S.A.",
+      aliases: ["Atacadão S.A.", "ATACADAO S.A.", "Atacadão", "ATACADAO", "Atacadão Distr Com e Ind Matriz", "ATACADAO DISTR COM E IND MATRIZ"],
+      cnpj: "75.315.333/0001-09",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "conciliacao@copastur.com.br",
+      emailFinanceiro: "conciliacao@copastur.com.br",
+      phone: "(11) 2394-2122",
+      telefone: "(11) 2394-2122",
+      contactPerson: "Fernanda Leite Ferreira Silva de Oliveira (Copastur)",
+      billingTerms: "B2B via Copastur • Tarifa Comissionada (12%)",
+      address: "Avenida Morvan Dias de Figueiredo",
+      logradouro: "Avenida Morvan Dias de Figueiredo",
+      endereco: "Avenida Morvan Dias de Figueiredo",
+      number: "6169",
+      numero: "6169",
+      complement: "",
+      complemento: "",
+      neighborhood: "Vila Maria",
+      bairro: "Vila Maria",
+      cep: "02170901",
+      city: "São Paulo",
+      cidade: "São Paulo",
+      state: "SP",
+      uf: "SP",
+      ibgeCode: "3550308",
+      codigoMunicipio: "3550308",
+      notes: "Empresa corporativa atendida pela agência Copastur (Unidade POS: COPASTUR GRUPO CARREFOUR). Enviar NF para conciliacao@copastur.com.br e carrefour@copastur.com.br.",
+      createdAt: "2026-11-06T10:00:00.000Z"
     }
   ];
 
@@ -9628,8 +9672,14 @@ export function ensureB2bSeedData(targetDb = db) {
         existing.nomeFantasia = sc.nomeFantasia;
         changed = true;
       }
-      for (const k of ["financialEmail", "emailFinanceiro", "phone", "telefone", "contactPerson", "billingTerms", "defaultCostCenter", "address", "logradouro", "number", "neighborhood", "cep", "city", "cidade", "state", "uf", "ibgeCode", "codigoMunicipio", "notes"]) {
-        if (!existing[k] && sc[k]) {
+      const existingCompIsGeneric = isGenericPelincaCompanyAddress(existing) || (
+        String(existing.city || existing.cidade || "").trim().toLowerCase() === "campos dos goytacazes" &&
+        sc.city &&
+        sc.city.toLowerCase() !== "campos dos goytacazes"
+      );
+      const compAddrKeys = new Set(["address", "logradouro", "endereco", "number", "numero", "complement", "complemento", "neighborhood", "bairro", "cep", "city", "cidade", "state", "uf", "ibgeCode", "codigoMunicipio"]);
+      for (const k of ["financialEmail", "emailFinanceiro", "phone", "telefone", "contactPerson", "billingTerms", "defaultCostCenter", "address", "logradouro", "endereco", "number", "numero", "complement", "complemento", "neighborhood", "bairro", "cep", "city", "cidade", "state", "uf", "ibgeCode", "codigoMunicipio", "notes"]) {
+        if (sc[k] && (!existing[k] || (existingCompIsGeneric && compAddrKeys.has(k)))) {
           existing[k] = sc[k];
           changed = true;
         }
@@ -9649,6 +9699,7 @@ export function ensureB2bSeedData(targetDb = db) {
     { matchRe: /^BIMBO$/i, targetName: "Bimbo do Brasil Ltda" },
     { matchRe: /^UNIAO\s+QUIMICA$/i, targetName: "União Química Farmacêutica Nacional S.A." },
     { matchRe: /^PAYTRACK\s*-\s*UNIAO\s+QUIMICA/i, targetName: "União Química Farmacêutica Nacional S.A." },
+    { matchRe: /^ATACAD[AÃ]O$/i, targetName: "ATACADAO DISTR COM E IND MATRIZ" },
     { matchRe: /^HOTEL\s+CORPFLATS/i, targetName: null }
   ];
   for (let i = targetDb.companies.length - 1; i >= 0; i--) {
@@ -9728,7 +9779,7 @@ export function ensureB2bSeedData(targetDb = db) {
   // Vincula clientCompanyIds nas agências
   const linkPairs = [
     ["Opus Viagens", ["Lactalis do Brasil"]],
-    ["Copastur", ["Vibra Energia S.A.", "Carrefour Comércio e Indústria Ltda"]],
+    ["Copastur", ["Vibra Energia S.A.", "Carrefour Comércio e Indústria Ltda", "ATACADAO DISTR COM E IND MATRIZ"]],
     ["Avipam SP", ["Cristália Produtos Químicos Farmacêuticos Ltda"]],
     ["Tripservice", ["CBO - Companhia Brasileira de Offshore"]],
     ["Paytrack", ["União Química Farmacêutica Nacional S.A."]],
@@ -10159,6 +10210,47 @@ export function ensureB2bSeedData(targetDb = db) {
       nfDeliveryEmails: ["conciliacao@copastur.com.br", "carrefour@copastur.com.br"],
       nfHideFromGuest: true,
       notes: "Reserva B2B #25193040 (RLOC: ZYIG6P) • Origem: OTA_WS • Agência: Copastur (Unidade POS: COPASTUR GRUPO CARREFOUR | Emissor: Fernanda Leite Ferreira Silva de Oliveira) • Empresa: Carrefour Comércio e Indústria Ltda (CNPJ: 45.543.915/0001-81 | Cliente Id: 211505) • Cartão Virtual American Express 374770xxxxx8412 (Token VCN: H4FJSKB) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • Enviar NF para conciliacao@copastur.com.br."
+    },
+    {
+      b2bReservationNumber: "25252964",
+      b2bLocatorRloc: "25252964",
+      b2bOriginType: "BOOKING_WS",
+      code: "B2B-25252964",
+      flatId: 2,
+      flatNumber: "211",
+      guestName: "Anderson Archanjo",
+      guestEmail: "",
+      guestPhone: "",
+      guestDocument: "",
+      checkinDate: "2026-11-17",
+      checkoutDate: "2026-11-18",
+      nights: 1,
+      ratePlan: "with_breakfast",
+      includeBreakfast: true,
+      b2bRatePolicy: "COMISSIONADA",
+      b2bCommissionPct: 12,
+      dailyRate: 313.00,
+      totalAmount: 313.00,
+      b2bCommissionAmount: 37.56,
+      b2bNetAmount: 275.44,
+      agencyKey: "Copastur",
+      agencyPosUnit: "COPASTUR GRUPO CARREFOUR",
+      agencyAgentName: "Fernanda Leite Ferreira Silva de Oliveira",
+      agencyAgentEmail: "carrefour@copastur.com.br",
+      agencyAgentPhone: "(11) 2394-2122",
+      companyKey: "ATACADAO DISTR COM E IND MATRIZ",
+      costCenter: "",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "American Express",
+      b2bCardMasked: "",
+      b2bVcnToken: "",
+      b2bConciliationUrl: "https://portal.b2breservas.com.br",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "company",
+      invoicingInstructions: "NÃO ENTREGAR NF AO HÓSPEDE NO BALCÃO. Emitir NF para ATACADAO DISTR COM E IND MATRIZ (CNPJ: 75.315.333/0001-09) e encaminhar exclusivamente para conciliacao@copastur.com.br e carrefour@copastur.com.br.",
+      nfDeliveryEmails: ["conciliacao@copastur.com.br", "carrefour@copastur.com.br"],
+      nfHideFromGuest: true,
+      notes: "Reserva B2B #25252964 (RLOC: 25252964) • Origem: BOOKING_WS • Agência: Copastur (Unidade POS: COPASTUR GRUPO CARREFOUR) • Empresa: ATACADAO DISTR COM E IND MATRIZ (CNPJ: 75.315.333/0001-09) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • Enviar NF para conciliacao@copastur.com.br."
     }
   ];
 
@@ -10519,11 +10611,33 @@ export function ensureB2bSeedData(targetDb = db) {
     changed = true;
   }
 
+  // Enriquecimento universal de endereços reais por CNPJ em todas as empresas e agências do CRM
+  for (const compItem of targetDb.companies) {
+    if (!compItem) continue;
+    const cDoc = String(compItem.cnpj || "").replace(/\D/g, "");
+    if (cDoc.length === 14 && (!compItem.address || isGenericPelincaCompanyAddress(compItem))) {
+      const known = resolveKnownCnpjDirectory(cDoc);
+      if (known && enrichCrmEntityWithCnpjData(compItem, known)) {
+        changed = true;
+      }
+    }
+  }
+  for (const agItem of targetDb.agencies) {
+    if (!agItem) continue;
+    const aDoc = String(agItem.cnpj || "").replace(/\D/g, "");
+    if (aDoc.length === 14 && (!agItem.address || isGenericPelincaCompanyAddress(agItem))) {
+      const known = resolveKnownCnpjDirectory(aDoc);
+      if (known && enrichCrmEntityWithCnpjData(agItem, known)) {
+        changed = true;
+      }
+    }
+  }
+
   // Passagem universal de integridade 4-Pontas em todas as reservas B2B do banco
   for (const r of targetDb.reservations) {
-    if (!r || (r.channel !== "b2b" && !r.b2bReservationNumber && !r.agencyId && !r.agencyName)) continue;
+    if (!r || (r.channel !== "b2b" && !r.b2bReservationNumber && !r.agencyId && !r.agencyName && !r.companyId && !r.companyCnpj)) continue;
     let rChanged = false;
-    if (r.requesterType !== "agency_b2b") {
+    if ((r.channel === "b2b" || r.b2bReservationNumber || r.agencyId || r.agencyName) && r.requesterType !== "agency_b2b") {
       r.requesterType = "agency_b2b";
       rChanged = true;
     }
@@ -10570,6 +10684,38 @@ export function ensureB2bSeedData(targetDb = db) {
       if (r.companyId !== compMatch.id) { r.companyId = compMatch.id; rChanged = true; }
       if (!r.companyCnpj && compMatch.cnpj) { r.companyCnpj = compMatch.cnpj; rChanged = true; }
     }
+    // Cura qualquer confirmedFiscalData / invoiceDetails de tomador PJ que esteja poluído com o fallback "Av. Pelinca"
+    for (const overlayKey of ["confirmedFiscalData", "invoiceDetails"]) {
+      const ov = r[overlayKey];
+      if (!ov) continue;
+      const ovDoc = String(ov.tomadorCpfCnpj || ov.doc || "").replace(/\D/g, "");
+      if (
+        (ovDoc.length === 14 || ov.tomadorTipo === "PJ") &&
+        isGenericPelincaCompanyAddress({
+          address: ov.tomadorEndereco,
+          cep: ov.tomadorCep,
+          neighborhood: ov.tomadorBairro,
+          city: ov.tomadorCidade
+        })
+      ) {
+        const entityMatch =
+          (compMatch && (!ovDoc || String(compMatch.cnpj || "").replace(/\D/g, "") === ovDoc)) ? compMatch :
+          (agMatch && (!ovDoc || String(agMatch.cnpj || "").replace(/\D/g, "") === ovDoc)) ? agMatch :
+          (ovDoc.length === 14 ? resolveKnownCnpjDirectory(ovDoc) : null);
+        const realAddr = entityMatch?.address || entityMatch?.logradouro || "";
+        if (realAddr && !isGenericPelincaCompanyAddress(entityMatch)) {
+          ov.tomadorEndereco = realAddr;
+          ov.tomadorNumero = entityMatch.number || entityMatch.numero || "S/N";
+          ov.tomadorComplemento = entityMatch.complement || entityMatch.complemento || "";
+          ov.tomadorBairro = entityMatch.neighborhood || entityMatch.bairro || "";
+          ov.tomadorCep = String(entityMatch.cep || "").replace(/\D/g, "");
+          ov.tomadorCidade = entityMatch.city || entityMatch.cidade || "";
+          ov.tomadorUf = entityMatch.state || entityMatch.uf || "";
+          ov.tomadorCodigoMunicipio = String(entityMatch.ibgeCode || entityMatch.codigoMunicipio || "").replace(/\D/g, "");
+          rChanged = true;
+        }
+      }
+    }
     if (r.voucherUrl && !r.b2bVoucherUrl) { r.b2bVoucherUrl = r.voucherUrl; rChanged = true; }
     if (r.b2bVoucherUrl && !r.voucherUrl) { r.voucherUrl = r.b2bVoucherUrl; rChanged = true; }
     if (r.invoiceRecipientType && !r.nfRecipientType) { r.nfRecipientType = r.invoiceRecipientType; rChanged = true; }
@@ -10577,6 +10723,44 @@ export function ensureB2bSeedData(targetDb = db) {
   }
 
   return changed;
+}
+
+export async function reconcileCrmCnpjAddresses(targetDb = db) {
+  let updated = false;
+  const cleanDigits = v => String(v || "").replace(/\D/g, "");
+  for (const comp of (targetDb.companies || [])) {
+    if (!comp) continue;
+    const cDoc = cleanDigits(comp.cnpj);
+    if (cDoc.length === 14 && (!comp.address || isGenericPelincaCompanyAddress(comp))) {
+      try {
+        const info = await lookupCnpj(cDoc, targetDb);
+        if (info && !info.error && (info.logradouro || info.cep || info.cidade)) {
+          if (enrichCrmEntityWithCnpjData(comp, info)) {
+            updated = true;
+          }
+        }
+      } catch {}
+    }
+  }
+  for (const ag of (targetDb.agencies || [])) {
+    if (!ag) continue;
+    const aDoc = cleanDigits(ag.cnpj);
+    if (aDoc.length === 14 && (!ag.address || isGenericPelincaCompanyAddress(ag))) {
+      try {
+        const info = await lookupCnpj(aDoc, targetDb);
+        if (info && !info.error && (info.logradouro || info.cep || info.cidade)) {
+          if (enrichCrmEntityWithCnpjData(ag, info)) {
+            updated = true;
+          }
+        }
+      } catch {}
+    }
+  }
+  if (updated) {
+    ensureB2bSeedData(targetDb);
+    try { saveDatabase("crm_cnpj_address_reconcile"); } catch {}
+  }
+  return updated;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -10800,6 +10984,36 @@ async function runPgDdlBootstrap() {
 
 const activeBroadcastWorkers = new Map();
 
+function mergeBroadcastCampaignsPreservingActive(inMemoryList, incomingList) {
+  const memArr = Array.isArray(inMemoryList) ? inMemoryList.filter(Boolean) : [];
+  const incArr = Array.isArray(incomingList) ? incomingList.filter(Boolean) : [];
+  if (memArr.length === 0) return incArr;
+  if (incArr.length === 0) return memArr;
+  const mergedMap = new Map();
+  for (const mem of memArr) {
+    if (mem && mem.id) mergedMap.set(mem.id, mem);
+  }
+  for (const inc of incArr) {
+    if (!inc || !inc.id) continue;
+    const mem = mergedMap.get(inc.id);
+    if (!mem) {
+      mergedMap.set(inc.id, inc);
+      continue;
+    }
+    const isMemActive =
+      (typeof activeBroadcastWorkers !== "undefined" && activeBroadcastWorkers.has(mem.id)) ||
+      mem.status === "running" ||
+      (Number(mem.processedCount) || 0) >= (Number(inc.processedCount) || 0) ||
+      String(mem.updatedAt || "") >= String(inc.updatedAt || "");
+    if (!isMemActive) {
+      mergedMap.set(inc.id, inc);
+    }
+  }
+  return Array.from(mergedMap.values()).sort((a, b) =>
+    String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
+  );
+}
+
 async function loadDatabase() {
   if (activeLoadDatabasePromise) {
     return activeLoadDatabasePromise;
@@ -10812,19 +11026,15 @@ async function loadDatabase() {
 
 async function _loadDatabaseImpl() {
   try {
-    const activeMemoryBroadcastCampaigns = (activeBroadcastWorkers.size > 0 && Array.isArray(db.broadcastCampaigns))
-      ? [...db.broadcastCampaigns]
-      : null;
     if (!Array.isArray(db.flats) || db.flats.length === 0) {
       db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
     }
     if (fs.existsSync(DB_FILE)) {
       const content = await fs.promises.readFile(DB_FILE, "utf-8");
       const loaded = JSON.parse(content);
+      const memCampaignsBeforeDisk = Array.isArray(db.broadcastCampaigns) ? [...db.broadcastCampaigns] : [];
       Object.assign(db, loaded);
-      if (activeMemoryBroadcastCampaigns) {
-        db.broadcastCampaigns = activeMemoryBroadcastCampaigns;
-      }
+      db.broadcastCampaigns = mergeBroadcastCampaignsPreservingActive(memCampaignsBeforeDisk, loaded.broadcastCampaigns);
       if (!Array.isArray(db.flats) || db.flats.length === 0) db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
       if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
       if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
@@ -10960,10 +11170,9 @@ async function _loadDatabaseImpl() {
             ? pgZohoOAuth
             : ((localZohoOAuth?.clientId && localZohoOAuth?.refreshToken) ? localZohoOAuth : (pgZohoOAuth || localZohoOAuth || null));
 
+          const memCampaignsBeforePg = Array.isArray(db.broadcastCampaigns) ? [...db.broadcastCampaigns] : [];
           Object.assign(db, pgLoaded);
-          if (activeMemoryBroadcastCampaigns) {
-            db.broadcastCampaigns = activeMemoryBroadcastCampaigns;
-          }
+          db.broadcastCampaigns = mergeBroadcastCampaignsPreservingActive(memCampaignsBeforePg, pgLoaded.broadcastCampaigns);
           if (!Array.isArray(db.flats) || db.flats.length === 0) {
             db.flats = DEFAULT_FLATS.map(f => ({ ...f }));
           }
@@ -11062,6 +11271,7 @@ async function _loadDatabaseImpl() {
                   if (ensureB2bSeedData(db)) {
                     saveDatabase("b2b_post_zoho_sync");
                   }
+                  reconcileCrmCnpjAddresses(db).catch(() => {});
                   return ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
                     baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
                   });
@@ -51588,7 +51798,8 @@ app.get("/api/invoices/lookup-cnpj/:cnpj", async (req, res) => {
         guestId: resolved.guestId
       });
     }
-    const data = await lookupCnpj(req.params.cnpj);
+    const data = await lookupCnpj(req.params.cnpj, db);
+    saveDatabase();
     res.json(data);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -52109,6 +52320,26 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       tomadorCodigoMunicipio: (resolvedCheckinAddr?.ibge || guest?.ibgeCode || "3301009").trim()
     };
 
+    if (company && (isGenericPelincaCompanyAddress(company) || !(company.address || company.logradouro))) {
+      const compDocClean = onlyDigits(company.cnpj || r.companyCnpj || "");
+      const knownComp = resolveKnownCnpjDirectory(compDocClean);
+      if (knownComp) {
+        enrichCrmEntityWithCnpjData(company, knownComp);
+      } else if (compDocClean.length === 14) {
+        lookupCnpj(compDocClean, db).catch(() => {});
+      }
+    }
+
+    if (agency && (isGenericPelincaCompanyAddress(agency) || !(agency.address || agency.logradouro))) {
+      const agDocClean = onlyDigits(agency.cnpj || r.agencyCnpj || "");
+      const knownAg = resolveKnownCnpjDirectory(agDocClean);
+      if (knownAg) {
+        enrichCrmEntityWithCnpjData(agency, knownAg);
+      } else if (agDocClean.length === 14) {
+        lookupCnpj(agDocClean, db).catch(() => {});
+      }
+    }
+
     const companyOption = company ? {
       type: "company",
       tomadorType: "pj",
@@ -52120,14 +52351,14 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       tomadorCpfCnpj: onlyDigits(company.cnpj || r.companyCnpj || ""),
       tomadorEmail: (company.financialEmail || r.agencyAgentEmail || guest?.email || "").trim().toLowerCase(),
       tomadorTelefone: cleanPhone(company.phone || r.guestPhone || ""),
-      tomadorEndereco: (company.address || company.logradouro || "Av. Pelinca").trim(),
-      tomadorNumero: (company.number || "100").trim(),
-      tomadorComplemento: (company.complement || "").trim(),
-      tomadorBairro: (company.neighborhood || "Centro").trim(),
-      tomadorCep: cleanCep(company.cep || "28035000"),
-      tomadorCidade: (company.city || "Campos dos Goytacazes").trim(),
-      tomadorUf: (company.state || "RJ").trim().toUpperCase(),
-      tomadorCodigoMunicipio: (company.ibgeCode || "3301009").trim()
+      tomadorEndereco: (company.address || company.logradouro || r.companyAddress || "").trim(),
+      tomadorNumero: (company.number || r.companyNumber || "S/N").trim(),
+      tomadorComplemento: (company.complement || r.companyComplement || "").trim(),
+      tomadorBairro: (company.neighborhood || r.companyNeighborhood || "Centro").trim(),
+      tomadorCep: cleanCep(company.cep || r.companyCep || ""),
+      tomadorCidade: (company.city || r.companyCity || "São Paulo").trim(),
+      tomadorUf: (company.state || r.companyState || "SP").trim().toUpperCase(),
+      tomadorCodigoMunicipio: (company.ibgeCode || r.companyIbgeCode || "3550308").trim()
     } : null;
 
     const agencyOption = agency ? {
@@ -52141,14 +52372,14 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       tomadorCpfCnpj: onlyDigits(agency.cnpj || r.agencyCnpj || ""),
       tomadorEmail: (r.agencyAgentEmail || agency.financialEmail || (Array.isArray(r.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "").trim().toLowerCase(),
       tomadorTelefone: cleanPhone(r.agencyAgentPhone || agency.phone || ""),
-      tomadorEndereco: (agency.address || agency.logradouro || "Av. Paulista").trim(),
-      tomadorNumero: (agency.number || "1000").trim(),
-      tomadorComplemento: (agency.complement || "").trim(),
-      tomadorBairro: (agency.neighborhood || "Centro").trim(),
-      tomadorCep: cleanCep(agency.cep || "01310100"),
-      tomadorCidade: (agency.city || "São Paulo").trim(),
-      tomadorUf: (agency.state || "SP").trim().toUpperCase(),
-      tomadorCodigoMunicipio: (agency.ibgeCode || "3550308").trim()
+      tomadorEndereco: (agency.address || agency.logradouro || r.agencyAddress || "Av. Paulista").trim(),
+      tomadorNumero: (agency.number || r.agencyNumber || "1000").trim(),
+      tomadorComplemento: (agency.complement || r.agencyComplement || "").trim(),
+      tomadorBairro: (agency.neighborhood || r.agencyNeighborhood || "Centro").trim(),
+      tomadorCep: cleanCep(agency.cep || r.agencyCep || "01310100"),
+      tomadorCidade: (agency.city || r.agencyCity || "São Paulo").trim(),
+      tomadorUf: (agency.state || r.agencyState || "SP").trim().toUpperCase(),
+      tomadorCodigoMunicipio: (agency.ibgeCode || r.agencyIbgeCode || "3550308").trim()
     } : null;
 
     const activeOption =
@@ -52442,16 +52673,55 @@ async function executeNfseEmissionInternal(payload) {
 
   const rawPayLogradouro = (payload.tomadorStreet || payload.tomadorEndereco || payload.tomadorLogradouro || "").trim();
   const useCheckinAddr = resolvedCheckin && resolvedCheckin.hasRealAddress && isGenericFallbackAddress(rawPayLogradouro, payload.tomadorCep);
+
+  let resolvedCnpjAddr = null;
+  if (cleanDoc.length === 14) {
+    const incomingAddrIsGeneric = !rawPayLogradouro || isGenericFallbackAddress(rawPayLogradouro, payload.tomadorCep) || isGenericPelincaCompanyAddress({
+      address: rawPayLogradouro,
+      cep: payload.tomadorCep,
+      neighborhood: payload.tomadorBairro,
+      city: payload.tomadorCidade
+    });
+    if (incomingAddrIsGeneric) {
+      const crmEntity = existingAgencyByCnpj || db.companies.find(c => onlyDigits(c.cnpj) === cleanDoc || (payload.companyId && Number(c.id) === Number(payload.companyId)));
+      if (crmEntity && (crmEntity.address || crmEntity.logradouro) && !isGenericPelincaCompanyAddress(crmEntity)) {
+        resolvedCnpjAddr = {
+          logradouro: crmEntity.address || crmEntity.logradouro,
+          numero: crmEntity.number || crmEntity.numero || "S/N",
+          complemento: crmEntity.complement || crmEntity.complemento || "",
+          bairro: crmEntity.neighborhood || crmEntity.bairro || "Centro",
+          cep: cleanCep(crmEntity.cep || ""),
+          cidade: crmEntity.city || crmEntity.cidade || "São Paulo",
+          uf: crmEntity.state || crmEntity.uf || "SP",
+          codigoMunicipio: crmEntity.ibgeCode || crmEntity.codigoMunicipio || "3550308"
+        };
+      } else {
+        const knownDir = resolveKnownCnpjDirectory(cleanDoc);
+        if (knownDir) {
+          resolvedCnpjAddr = knownDir;
+          if (crmEntity) enrichCrmEntityWithCnpjData(crmEntity, knownDir);
+        } else {
+          try {
+            const lookedUp = await lookupCnpj(cleanDoc, db);
+            if (lookedUp && (lookedUp.logradouro || lookedUp.cep)) {
+              resolvedCnpjAddr = lookedUp;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
   const normPayAddr = normalizeTomadorAddressFields({
-    tomadorStreet: useCheckinAddr ? resolvedCheckin.logradouro : rawPayLogradouro,
-    tomadorEndereco: useCheckinAddr ? resolvedCheckin.logradouro : rawPayLogradouro,
-    tomadorNumero: useCheckinAddr ? resolvedCheckin.numero : (payload.tomadorNumero || payload.tomadorStreetNumber || ""),
-    tomadorComplemento: payload.tomadorComplemento || resolvedCheckin?.complemento || "",
-    tomadorBairro: useCheckinAddr ? resolvedCheckin.bairro : (payload.tomadorBairro || ""),
-    tomadorCep: useCheckinAddr ? resolvedCheckin.cep : (payload.tomadorCep || "28035000"),
-    tomadorCidade: useCheckinAddr ? resolvedCheckin.cidade : (payload.tomadorCidade || "Campos dos Goytacazes"),
-    tomadorUf: useCheckinAddr ? resolvedCheckin.uf : (payload.tomadorUf || "RJ"),
-    tomadorCodigoMunicipio: useCheckinAddr ? resolvedCheckin.ibge : (payload.tomadorCodigoMunicipio || "3301009")
+    tomadorStreet: resolvedCnpjAddr ? resolvedCnpjAddr.logradouro : (useCheckinAddr ? resolvedCheckin.logradouro : rawPayLogradouro),
+    tomadorEndereco: resolvedCnpjAddr ? resolvedCnpjAddr.logradouro : (useCheckinAddr ? resolvedCheckin.logradouro : rawPayLogradouro),
+    tomadorNumero: resolvedCnpjAddr ? (resolvedCnpjAddr.numero || "S/N") : (useCheckinAddr ? resolvedCheckin.numero : (payload.tomadorNumero || payload.tomadorStreetNumber || "")),
+    tomadorComplemento: payload.tomadorComplemento || resolvedCnpjAddr?.complemento || resolvedCheckin?.complemento || "",
+    tomadorBairro: resolvedCnpjAddr ? (resolvedCnpjAddr.bairro || "Centro") : (useCheckinAddr ? resolvedCheckin.bairro : (payload.tomadorBairro || "")),
+    tomadorCep: resolvedCnpjAddr ? (resolvedCnpjAddr.cep || "") : (useCheckinAddr ? resolvedCheckin.cep : (payload.tomadorCep || "28035000")),
+    tomadorCidade: resolvedCnpjAddr ? (resolvedCnpjAddr.cidade || "São Paulo") : (useCheckinAddr ? resolvedCheckin.cidade : (payload.tomadorCidade || "Campos dos Goytacazes")),
+    tomadorUf: resolvedCnpjAddr ? (resolvedCnpjAddr.uf || "SP") : (useCheckinAddr ? resolvedCheckin.uf : (payload.tomadorUf || "RJ")),
+    tomadorCodigoMunicipio: resolvedCnpjAddr ? (resolvedCnpjAddr.codigoMunicipio || "3550308") : (useCheckinAddr ? resolvedCheckin.ibge : (payload.tomadorCodigoMunicipio || "3301009"))
   });
 
   const endLogradouro = normPayAddr.logradouro;
@@ -52490,6 +52760,12 @@ async function executeNfseEmissionInternal(payload) {
   let resolvedCompanyId = payload.companyId ? Number(payload.companyId) : (matchedRes?.companyId ? Number(matchedRes.companyId) : null);
 
   if (cleanDoc.length === 14) {
+    const finalAddrIsGenericPelinca = isGenericPelincaCompanyAddress({
+      address: endLogradouro,
+      cep: endCep,
+      neighborhood: endBairro,
+      city: endCidade
+    });
     if (isAgencyTomador) {
       let ag = existingAgencyByCnpj;
       if (!ag) {
@@ -52522,7 +52798,13 @@ async function executeNfseEmissionInternal(payload) {
           updatedAt: new Date().toISOString()
         };
         db.agencies.push(ag);
-      } else {
+      } else if (!finalAddrIsGenericPelinca) {
+        if (endLogradouro) {
+          ag.address = endLogradouro;
+          ag.logradouro = endLogradouro;
+        }
+        if (endNumero) ag.number = endNumero;
+        if (endBairro) ag.neighborhood = endBairro;
         ag.cep = endCep;
         ag.ibgeCode = endCodMun;
         ag.codigoMunicipio = endCodMun;
@@ -52559,7 +52841,20 @@ async function executeNfseEmissionInternal(payload) {
           updatedAt: new Date().toISOString()
         };
         db.companies.push(comp);
-      } else {
+      } else if (!finalAddrIsGenericPelinca) {
+        if (endLogradouro) {
+          comp.address = endLogradouro;
+          comp.logradouro = endLogradouro;
+          comp.street = endLogradouro;
+        }
+        if (endNumero) {
+          comp.number = endNumero;
+          comp.numero = endNumero;
+        }
+        if (endBairro) {
+          comp.neighborhood = endBairro;
+          comp.bairro = endBairro;
+        }
         comp.cep = endCep;
         comp.ibgeCode = endCodMun;
         comp.codigoMunicipio = endCodMun;
@@ -52822,7 +53117,7 @@ globalThis.executeNfseEmissionInternal = (payload, callerDb = null) => {
 globalThis.getOfficialNfseDraftForReservation = (opts) => buildOfficialNfseDraftForReservation(db, opts);
 
 // Endpoint Oficial de Rascunho de NFS-e da Reserva (/notas + Sofia WhatsApp)
-app.get("/api/nfse/reservation-draft/:id", (req, res) => {
+app.get("/api/nfse/reservation-draft/:id", async (req, res) => {
   getFiscalData();
   const rawId = String(req.params.id || "").trim();
   const r = (db.reservations || []).find(item =>
@@ -52830,6 +53125,32 @@ app.get("/api/nfse/reservation-draft/:id", (req, res) => {
   );
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+  const compDoc = onlyDigits(r.companyCnpj || "");
+  if (compDoc.length === 14) {
+    const crmComp = (db.companies || []).find(c => onlyDigits(c.cnpj) === compDoc || (r.companyId && Number(c.id) === Number(r.companyId)));
+    if (!crmComp || !(crmComp.address || crmComp.logradouro) || isGenericPelincaCompanyAddress(crmComp)) {
+      const known = resolveKnownCnpjDirectory(compDoc);
+      if (known && crmComp) {
+        enrichCrmEntityWithCnpjData(crmComp, known);
+      } else {
+        try { await lookupCnpj(compDoc, db); } catch (_) {}
+      }
+      saveDatabase();
+    }
+  }
+  const agDoc = onlyDigits(r.agencyCnpj || "");
+  if (agDoc.length === 14) {
+    const crmAg = (db.agencies || []).find(a => onlyDigits(a.cnpj) === agDoc || (r.agencyId && Number(a.id) === Number(r.agencyId)));
+    if (!crmAg || !(crmAg.address || crmAg.logradouro) || isGenericPelincaCompanyAddress(crmAg)) {
+      const known = resolveKnownCnpjDirectory(agDoc);
+      if (known && crmAg) {
+        enrichCrmEntityWithCnpjData(crmAg, known);
+      } else {
+        try { await lookupCnpj(agDoc, db); } catch (_) {}
+      }
+      saveDatabase();
+    }
   }
   const draft = buildOfficialNfseDraftForReservation(db, {
     reservation: r,
@@ -53161,6 +53482,18 @@ ${staysBreakdown}
 VALOR TOTAL CONSOLIDADO: R$ ${totalValor.toFixed(2)}
 CNAE: 5510-8/01 (Hotéis e hospedagem) • Item LC 116: 09.02 (Hospedagem de qualquer natureza).`;
 
+  if (!(targetEntity.address || targetEntity.logradouro) || isGenericPelincaCompanyAddress(targetEntity)) {
+    const knownDir = resolveKnownCnpjDirectory(cleanCnpj);
+    if (knownDir) {
+      enrichCrmEntityWithCnpjData(targetEntity, knownDir);
+    } else {
+      try {
+        const lookedUp = await lookupCnpj(cleanCnpj, db);
+        if (lookedUp) enrichCrmEntityWithCnpjData(targetEntity, lookedUp);
+      } catch (_) {}
+    }
+  }
+
   const payload = {
     companyId: isAgencyConsolidated ? null : Number(targetEntity.id),
     agencyId: isAgencyConsolidated ? Number(targetEntity.id) : null,
@@ -53174,14 +53507,14 @@ CNAE: 5510-8/01 (Hotéis e hospedagem) • Item LC 116: 09.02 (Hospedagem de qua
     tomadorCpfCnpj: cleanCnpj,
     tomadorEmail: (targetEntity.financialEmail || "").trim().toLowerCase(),
     tomadorTelefone: cleanPhone(targetEntity.phone),
-    tomadorEndereco: targetEntity.address || targetEntity.logradouro || "Av. Pelinca",
-    tomadorNumero: targetEntity.number || "100",
+    tomadorEndereco: targetEntity.address || targetEntity.logradouro || "",
+    tomadorNumero: targetEntity.number || "S/N",
     tomadorComplemento: targetEntity.complement || "",
-    tomadorBairro: targetEntity.neighborhood || "Pelinca",
+    tomadorBairro: targetEntity.neighborhood || "Centro",
     tomadorCep: cleanCep(targetEntity.cep),
-    tomadorCidade: targetEntity.city || (isAgencyConsolidated ? "São Paulo" : "Campos dos Goytacazes"),
-    tomadorUf: targetEntity.state || (isAgencyConsolidated ? "SP" : "RJ"),
-    tomadorCodigoMunicipio: targetEntity.ibgeCode || (isAgencyConsolidated ? "3550308" : "3301009"),
+    tomadorCidade: targetEntity.city || "São Paulo",
+    tomadorUf: targetEntity.state || "SP",
+    tomadorCodigoMunicipio: targetEntity.ibgeCode || "3550308",
     flatNumber: selectedReservations.map(r => r.flatNumber).filter(Boolean).join(", "),
     checkinDate: selectedReservations[0]?.checkinDate || null,
     checkoutDate: selectedReservations[selectedReservations.length - 1]?.checkoutDate || null,
@@ -58553,8 +58886,10 @@ app.post("/api/whatsapp/broadcast/send", (req, res) => {
       return res.status(400).json({ error: "Nenhum destinatário selecionado possui número de WhatsApp válido." });
     }
 
-    const safeMinDelay = Math.max(1, Math.min(60, Number(minDelaySeconds) || 3));
-    const safeMaxDelay = Math.max(safeMinDelay, Math.min(120, Number(maxDelaySeconds) || 8));
+    const rawMinDelay = Math.max(1, Math.min(3600, Number(minDelaySeconds) || 3));
+    const rawMaxDelay = Math.max(1, Math.min(3600, Number(maxDelaySeconds) || Math.max(rawMinDelay, 8)));
+    const safeMinDelay = Math.min(rawMinDelay, rawMaxDelay);
+    const safeMaxDelay = Math.max(rawMinDelay, rawMaxDelay);
     const nowIso = new Date().toISOString();
     const campaignId = `bcast_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const defaultTitle = `Campanha WhatsApp • ${new Date().toLocaleDateString("pt-BR")} ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
