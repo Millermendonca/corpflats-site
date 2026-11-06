@@ -75,6 +75,7 @@ const MyAccount = lazyWithRetry(() => import('@/pages/my-account'));
 // import ServiceOrders from '@/pages/service-orders';
 const ServiceOrders = lazyWithRetry(() => import('@/pages/service-orders'));
 const ServiceWorkerPortal = lazyWithRetry(() => import('@/pages/service-worker-portal'));
+const HandymanPortal = lazyWithRetry(() => import('@/pages/handyman-portal'));
 
 // Páginas Administrativas e Backoffice Secundárias (Code-Splitting com Retry Automático)
 const History = lazyWithRetry(() => import('@/pages/history'));
@@ -439,9 +440,11 @@ function Router() {
         <Route path="/breakfast/:code" component={GuestBreakfast} />
         <Route path="/breakfast" component={GuestBreakfast} />
 
-        {/* Public External Service Worker Portal */}
+        {/* Public External Service Worker Portal & Handyman Portal */}
         <Route path="/servico/:token" component={ServiceWorkerPortal} />
         <Route path="/service/:token" component={ServiceWorkerPortal} />
+        <Route path="/manutencao/:token" component={HandymanPortal} />
+        <Route path="/faz-tudo/:token" component={HandymanPortal} />
 
         {/* Terminal Mobile de Registro de Ponto CLT (Selfie, GPS & Whitelist) */}
         <Route path="/ponto" component={PontoMobile} />

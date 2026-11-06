@@ -142,6 +142,74 @@ export function FlatCard({
   const [offlineQueued, setOfflineQueued] = useState(false)
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null)
 
+  // Quick Maintenance / Defect Report (Camareira & Admin)
+  const [maintModalOpen, setMaintModalOpen] = useState(false)
+  const [maintSpecialty, setMaintSpecialty] = useState("hidraulica")
+  const [maintText, setMaintText] = useState("")
+  const [maintPhotos, setMaintPhotos] = useState<string[]>([])
+  const [compressingMaintPhoto, setCompressingMaintPhoto] = useState(false)
+  const [savingMaint, setSavingMaint] = useState(false)
+
+  const handleMaintPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+    setCompressingMaintPhoto(true)
+    try {
+      for (const file of files.slice(0, 3 - maintPhotos.length)) {
+        const res = await compressImage(file, {
+          maxWidth: 1280,
+          maxHeight: 1280,
+          quality: 0.8,
+          preferredFormat: "image/webp"
+        })
+        setMaintPhotos(prev => [...prev, res.base64])
+      }
+    } catch {
+      toast({ title: "Erro ao processar foto", description: "Tente novamente.", variant: "destructive" })
+    } finally {
+      setCompressingMaintPhoto(false)
+      e.target.value = ""
+    }
+  }
+
+  const handleSaveMaintReport = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!maintText.trim()) return
+    setSavingMaint(true)
+    try {
+      const res = await fetch("/api/observations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          flatId: flat.flatId || flat.id,
+          flatNumber: flat.flatNumber || flat.number,
+          category: "manutencao",
+          specialty: maintSpecialty,
+          text: maintText.trim(),
+          photos: maintPhotos
+        })
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || "Não foi possível salvar a manutenção.")
+      }
+      toast({
+        title: "🔧 Defeito / Manutenção Registrada!",
+        description: `Alerta enviado para o WhatsApp da gerência referente ao Flat ${flat.flatNumber || flat.number}.`
+      })
+      setMaintModalOpen(false)
+      setMaintText("")
+      setMaintPhotos([])
+      setMaintSpecialty("hidraulica")
+      queryClient.invalidateQueries({ queryKey: ["/api/observations"] })
+    } catch (err: any) {
+      toast({ title: "Erro ao registrar", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingMaint(false)
+    }
+  }
+
   // No Show (Admin only)
   const [noShowModalOpen, setNoShowModalOpen] = useState(false)
   const [isSubmittingNoShow, setIsSubmittingNoShow] = useState(false)
@@ -2574,18 +2642,30 @@ export function FlatCard({
                   </div>
                 )}
 
-                {/* Lost Item button for maids & admin */}
+                {/* Lost Item & Maintenance Report buttons for maids & admin */}
                 {!isInstruction && !isServiceCleaning && (
-                  <Button 
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setLostItemModalOpen(true)}
-                    className="w-full text-[11px] font-semibold h-8 gap-1.5 border-dashed border-amber-400/90 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-900 dark:text-amber-200 mt-1 shadow-2xs"
-                  >
-                    <PackageOpen className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Item Encontrado no Quarto</span>
-                  </Button>
+                  <div className="grid grid-cols-1 gap-1.5 pt-0.5">
+                    <Button 
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setLostItemModalOpen(true)}
+                      className="w-full text-[11px] font-semibold h-8 gap-1.5 border-dashed border-amber-400/90 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-900 dark:text-amber-200 shadow-2xs"
+                    >
+                      <PackageOpen className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Item Encontrado no Quarto</span>
+                    </Button>
+                    <Button 
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setMaintModalOpen(true)}
+                      className="w-full text-[11px] font-semibold h-8 gap-1.5 border-dashed border-sky-400/90 dark:border-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/40 text-sky-900 dark:text-sky-200 shadow-2xs"
+                    >
+                      <Wrench className="w-3.5 h-3.5 text-sky-600" />
+                      <span>Relatar Defeito / Manutenção</span>
+                    </Button>
+                  </div>
                 )}
 
                 {/* Extend Stay Button (Admin Only, when not clean) */}
@@ -4000,6 +4080,100 @@ export function FlatCard({
         </DialogContent>
       </Dialog>
       )}
+
+      {/* Modal: Relatar Defeito / Manutenção Rápida (Camareira & Admin) */}
+      <Dialog open={maintModalOpen} onOpenChange={setMaintModalOpen}>
+        <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+          <form onSubmit={handleSaveMaintReport}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-black text-foreground">
+                <Wrench className="w-5 h-5 text-sky-600" />
+                <span>Relatar Defeito / Manutenção — Flat {flat.flatNumber || flat.number}</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Viu algo quebrado, vazando ou precisando de reparo? Descreva abaixo e tire foto se necessário. A gerência receberá aviso imediato no WhatsApp.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="py-3 space-y-3 text-xs">
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Tipo de Reparo *</Label>
+                <Select value={maintSpecialty} onValueChange={setMaintSpecialty}>
+                  <SelectTrigger className="h-9 text-xs rounded-xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hidraulica">💧 Hidráulica / Vazamento / Torneira</SelectItem>
+                    <SelectItem value="eletrica">⚡ Elétrica / Tomada / Lâmpada</SelectItem>
+                    <SelectItem value="marcenaria">🪚 Marcenaria / Armário / Porta</SelectItem>
+                    <SelectItem value="ar_condicionado">❄️ Ar-Condicionado</SelectItem>
+                    <SelectItem value="fechadura">🔐 Fechadura Eletrônica</SelectItem>
+                    <SelectItem value="eletrodomesticos">📺 TV / Frigobar / Micro-ondas</SelectItem>
+                    <SelectItem value="pintura_alvenaria">🧱 Pintura / Parede / Piso</SelectItem>
+                    <SelectItem value="geral">🔧 Outro Reparo Geral</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">O que aconteceu? *</Label>
+                <Textarea
+                  value={maintText}
+                  onChange={e => setMaintText(e.target.value)}
+                  required
+                  rows={3}
+                  placeholder="Ex: Torneira da pia está pingando água, controle da TV sem funcionar..."
+                  className="text-xs rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-bold">Foto do Problema (Opcional)</Label>
+                  {compressingMaintPhoto && (
+                    <span className="text-[10px] text-sky-600 font-bold animate-pulse">Comprimindo foto...</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {maintPhotos.map((p, idx) => (
+                    <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden border border-border">
+                      <img src={p} alt="Foto defeito" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setMaintPhotos(prev => prev.filter((_, i) => i !== idx))}
+                        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {maintPhotos.length < 3 && (
+                    <label className="w-16 h-16 rounded-xl border-2 border-dashed border-sky-400/60 hover:border-sky-500 bg-sky-500/5 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-sky-700 dark:text-sky-300 text-[10px] font-bold">
+                      <Camera className="w-4 h-4" />
+                      <span>Foto</span>
+                      <input type="file" accept="image/*" multiple onChange={handleMaintPhotoUpload} className="hidden" />
+                    </label>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 pt-2 border-t border-border">
+              <Button type="button" variant="outline" size="sm" onClick={() => setMaintModalOpen(false)} className="rounded-xl text-xs font-bold">
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingMaint || compressingMaintPhoto || !maintText.trim()}
+                className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl gap-1.5"
+              >
+                {savingMaint ? "Enviando..." : "Enviar Alerta de Manutenção"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

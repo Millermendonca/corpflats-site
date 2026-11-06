@@ -463,6 +463,69 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [formHoldManuallyChosen, setFormHoldManuallyChosen] = useState(false)
   const [formSendExpirationReminder, setFormSendExpirationReminder] = useState(true)
   const [isReactivatingRes, setIsReactivatingRes] = useState(false)
+  const [maintModalFlat, setMaintModalFlat] = useState<any | null>(null)
+  const [maintActionBusyId, setMaintActionBusyId] = useState<number | null>(null)
+
+  const handleToggleMaintenanceBlocker = async (issue: any) => {
+    setMaintActionBusyId(issue.id)
+    try {
+      const nextBlocker = !issue.isRentalBlocker
+      const res = await fetch(`/api/observations/${issue.id}/triage`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          isRentalBlocker: nextBlocker,
+          sendWhatsAppToHandyman: false,
+        }),
+      })
+      if (res.ok) {
+        toast({
+          title: nextBlocker ? "🚫 Marcado como Impeditivo (Flat Bloqueado)" : "🟢 Marcado como Não Impeditivo (Flat Livre)",
+          description: `O mapa de ocupação foi atualizado para o Apt ${issue.flatNumber}.`,
+        })
+        await fetchData(false)
+        setMaintModalFlat((prev: any) =>
+          prev
+            ? {
+                ...prev,
+                openMaintenanceIssues: (prev.openMaintenanceIssues || []).map((it: any) =>
+                  it.id === issue.id ? { ...it, isRentalBlocker: nextBlocker } : it
+                ),
+              }
+            : null
+        )
+      }
+    } finally {
+      setMaintActionBusyId(null)
+    }
+  }
+
+  const handleQuickResolveMaintenance = async (issue: any) => {
+    setMaintActionBusyId(issue.id)
+    try {
+      const res = await fetch(`/api/observations/${issue.id}/resolve`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ resolvedNote: "Concluído diretamente pelo Mapa de Reservas" }),
+      })
+      if (res.ok) {
+        toast({
+          title: "✅ Manutenção Concluída!",
+          description: `Avaria do Apt ${issue.flatNumber} resolvida e bloqueio removido.`,
+        })
+        await fetchData(false)
+        setMaintModalFlat((prev: any) => {
+          if (!prev) return null
+          const remaining = (prev.openMaintenanceIssues || []).filter((it: any) => it.id !== issue.id)
+          return remaining.length > 0 ? { ...prev, openMaintenanceIssues: remaining } : null
+        })
+      }
+    } finally {
+      setMaintActionBusyId(null)
+    }
+  }
   const [reactivationFlatSwitchedInfo, setReactivationFlatSwitchedInfo] = useState<string | null>(null)
   const [expiredModalOpen, setExpiredModalOpen] = useState(false)
 
@@ -6176,6 +6239,28 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           </div>
 
                           <div className="flex items-center gap-1 shrink-0 ml-1">
+                            {Array.isArray((flat as any).openMaintenanceIssues) && (flat as any).openMaintenanceIssues.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setMaintModalFlat(flat)
+                                }}
+                                title={
+                                  ((flat as any).openMaintenanceIssues as any[])
+                                    .map((m: any) => `${m.isRentalBlocker ? "🚫 IMPEDITIVO" : "🔧 Manutenção"}: ${m.text} (${m.quoteStatus === "submitted" ? `Orçamento R$ ${m.quoteAmount}` : m.workflowStage})`)
+                                    .join("\n") + "\n\nClique para gerenciar ou dar baixa"
+                                }
+                                className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[8.5px] font-black shadow-2xs transition-transform hover:scale-110 cursor-pointer ${
+                                  (flat as any).hasImpeditiveMaintenance
+                                    ? "bg-rose-600 text-white ring-1 ring-rose-300 animate-pulse"
+                                    : "bg-amber-500 text-white"
+                                }`}
+                              >
+                                <span>{(flat as any).hasImpeditiveMaintenance ? "🚫🔧" : "🔧"}</span>
+                                <span>{(flat as any).openMaintenanceIssues.length}</span>
+                              </button>
+                            )}
                             {isDirty ? (
                               <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[8.5px] font-black bg-rose-500 text-white shadow-2xs">
                                 Sujo
@@ -14108,6 +14193,115 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                 Fechar
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL DE MANUTENÇÕES EM ABERTO DO APARTAMENTO (CLIQUE NO ÍCONE 🔧 DO MAPA) ── */}
+        <Dialog open={Boolean(maintModalFlat)} onOpenChange={(open) => { if (!open) setMaintModalFlat(null) }}>
+          <DialogContent className="sm:max-w-xl bg-card border border-border rounded-3xl max-h-[85vh] overflow-y-auto p-5">
+            {maintModalFlat && (
+              <>
+                <DialogHeader className="border-b border-border pb-3">
+                  <DialogTitle className="text-base sm:text-lg font-black flex items-center gap-2 text-foreground">
+                    <Wrench className="w-5 h-5 text-amber-500" />
+                    <span>Manutenções em Aberto — Apt {maintModalFlat.number}</span>
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-muted-foreground">
+                    Problemas relatados neste apartamento. Você pode alternar se o defeito bloqueia o flat, dar baixa rápida ou abrir a triagem completa do Faz-Tudo.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-3 py-2 text-xs">
+                  {((maintModalFlat.openMaintenanceIssues || []) as any[]).map((issue: any) => (
+                    <div
+                      key={issue.id}
+                      className={`p-3.5 rounded-2xl border space-y-2.5 ${
+                        issue.isRentalBlocker
+                          ? "bg-rose-500/5 border-rose-500/40"
+                          : "bg-muted/30 border-border"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Badge className={issue.isRentalBlocker ? "bg-rose-600 text-white text-[10px]" : "bg-emerald-600 text-white text-[10px]"}>
+                            {issue.isRentalBlocker ? "🚫 Impeditivo (Bloqueando Flat)" : "🟢 Não Impeditivo (Flat Livre)"}
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px] font-bold uppercase">
+                            {issue.specialty || "geral"}
+                          </Badge>
+                          {issue.quoteAmount !== null && issue.quoteAmount !== undefined && (
+                            <Badge variant="outline" className="text-[10px] font-black border-amber-500/40 text-amber-700 dark:text-amber-300">
+                              💰 R$ {Number(issue.quoteAmount).toFixed(2)} ({issue.quoteStatus === "approved" ? "Aprovado" : "Aguardando aprovação"})
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="text-[10px] font-mono text-muted-foreground">#{issue.id}</span>
+                      </div>
+
+                      <p className="text-xs sm:text-sm font-semibold text-foreground bg-background p-2.5 rounded-xl border border-border/60">
+                        {issue.text}
+                      </p>
+
+                      {Array.isArray(issue.photos) && issue.photos.length > 0 && (
+                        <div className="flex items-center gap-2 overflow-x-auto">
+                          {issue.photos.map((url: string, idx: number) => (
+                            <a key={idx} href={url} target="_blank" rel="noreferrer">
+                              <img src={url} alt="Foto" className="w-16 h-16 rounded-xl object-cover border" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border/50">
+                        <span className="text-[11px] text-muted-foreground">
+                          Prestador: <strong>{issue.assignedTo === "handyman" ? (issue.handymanName || "Faz-Tudo") : "Interno / A definir"}</strong>
+                        </span>
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={maintActionBusyId === issue.id}
+                            onClick={() => handleToggleMaintenanceBlocker(issue)}
+                            className="h-8 px-2.5 rounded-xl text-[11px] font-bold"
+                          >
+                            {issue.isRentalBlocker ? "🟢 Tornar Não Impeditivo" : "🚫 Tornar Impeditivo (Bloquear)"}
+                          </Button>
+
+                          <a href={`/observations?ticket=${issue.id}`}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 px-2.5 rounded-xl text-[11px] font-bold border-amber-500/40 text-amber-700 dark:text-amber-300"
+                            >
+                              ⚙️ Triagem / Faz-Tudo
+                            </Button>
+                          </a>
+
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={maintActionBusyId === issue.id}
+                            onClick={() => handleQuickResolveMaintenance(issue)}
+                            className="h-8 px-2.5 rounded-xl text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
+                          >
+                            ✓ Dar Baixa
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <DialogFooter className="pt-2 border-t border-border">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setMaintModalFlat(null)} className="rounded-xl text-xs font-bold">
+                    Fechar
+                  </Button>
+                </DialogFooter>
+              </>
+            )}
           </DialogContent>
         </Dialog>
       </div>
