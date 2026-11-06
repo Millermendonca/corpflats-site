@@ -2958,23 +2958,35 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                     <Lock className="w-3.5 h-3.5" />
                                     <span>Bloquear</span>
                                   </Button>
-                                ) : (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() =>
-                                      forceReleaseMutation.mutate({
-                                        orderId: effectiveTrackingOrderId,
-                                        flatId: flat.flatId,
-                                        forceReleased: true,
-                                      })
-                                    }
-                                    disabled={forceReleaseMutation.isPending}
-                                    className="h-8 px-2.5 text-xs text-emerald-700 border-emerald-300 font-semibold gap-1 flex-1"
-                                  >
-                                    <span>🔓 Liberar</span>
-                                  </Button>
-                                )
+                                ) : flat.isStatusAllowed === false ? (
+                                  flat.hasGuestInside || (flat as any).isOccupied ? (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled
+                                      className="h-8 px-2.5 text-xs text-rose-700 border-rose-200 bg-rose-50/60 gap-1 font-semibold flex-1 opacity-80"
+                                    >
+                                      <Lock className="w-3.5 h-3.5" />
+                                      <span>Bloqueado (Hóspede)</span>
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() =>
+                                        forceReleaseMutation.mutate({
+                                          orderId: effectiveTrackingOrderId,
+                                          flatId: flat.flatId,
+                                          forceReleased: true,
+                                        })
+                                      }
+                                      disabled={forceReleaseMutation.isPending}
+                                      className="h-8 px-2.5 text-xs text-emerald-700 border-emerald-300 font-semibold gap-1 flex-1"
+                                    >
+                                      <span>🔓 Liberar Exceção</span>
+                                    </Button>
+                                  )
+                                ) : null
                               ) : (
                                 <Button
                                   variant="outline"
@@ -3279,28 +3291,49 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                                           </TooltipTrigger>
                                           <TooltipContent>Revogar liberação manual (restaurar restrições)</TooltipContent>
                                         </Tooltip>
-                                      ) : (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() =>
-                                                forceReleaseMutation.mutate({
-                                                  orderId: effectiveTrackingOrderId,
-                                                  flatId: flat.flatId,
-                                                  forceReleased: true,
-                                                })
-                                              }
-                                              disabled={forceReleaseMutation.isPending}
-                                              className="h-8 px-2 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold gap-1"
-                                            >
-                                              <span>🔓 Liberar</span>
-                                            </Button>
-                                          </TooltipTrigger>
-                                          <TooltipContent>Liberar flat independente de status ou regras de prioridade</TooltipContent>
-                                        </Tooltip>
-                                      )
+                                      ) : flat.isStatusAllowed === false ? (
+                                        flat.hasGuestInside || (flat as any).isOccupied ? (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <span>
+                                                <Button
+                                                  variant="outline"
+                                                  size="sm"
+                                                  disabled
+                                                  className="h-8 px-2 text-xs text-rose-700 border-rose-200 bg-rose-50/60 gap-1 font-semibold opacity-80"
+                                                >
+                                                  <Lock className="w-3.5 h-3.5" />
+                                                  <span className="hidden sm:inline">Hóspede</span>
+                                                </Button>
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                              Bloqueado pelo filtro da OS: há hóspede em estadia neste flat
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        ) : (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() =>
+                                                  forceReleaseMutation.mutate({
+                                                    orderId: effectiveTrackingOrderId,
+                                                    flatId: flat.flatId,
+                                                    forceReleased: true,
+                                                  })
+                                                }
+                                                disabled={forceReleaseMutation.isPending}
+                                                className="h-8 px-2 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold gap-1"
+                                              >
+                                                <span>🔓 Liberar Exceção</span>
+                                              </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>Liberar este flat vago manualmente hoje</TooltipContent>
+                                          </Tooltip>
+                                        )
+                                      ) : null
                                     ) : (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
@@ -3554,7 +3587,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                     </Button>
                   )}
 
-                  {detailModalFlat && detailModalFlat.status === "pending" && (
+                  {detailModalFlat && detailModalFlat.status === "pending" && (detailModalFlat.forceReleased || (detailModalFlat.isStatusAllowed === false && !detailModalFlat.hasGuestInside && !(detailModalFlat as any).isOccupied)) && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -3572,7 +3605,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                           : "text-emerald-700 border-emerald-300 hover:bg-emerald-50"
                       }`}
                     >
-                      {detailModalFlat.forceReleased ? "🔒 Revogar Liberação Manual" : "🔓 Liberar Flat"}
+                      {detailModalFlat.forceReleased ? "🔒 Revogar Liberação Manual" : "🔓 Liberar Exceção (Vago)"}
                     </Button>
                   )}
 

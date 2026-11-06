@@ -5391,15 +5391,19 @@ export function reconcileUniversalIntegrity(incomingState = null) {
                 const curF = mergedFlats[eIdx];
                 const curRank = flatStatusRank[curF.status] ?? 0;
                 const incRank = flatStatusRank[incF.status] ?? 0;
-                const curActivityAt = [curF.finishedAt, curF.startedAt, curF.resetAt].filter(Boolean).sort().pop() || "";
-                const incActivityAt = [incF.finishedAt, incF.startedAt, incF.resetAt].filter(Boolean).sort().pop() || "";
+                const curActivityAt = [curF.finishedAt, curF.startedAt, curF.resetAt, curF.returnedAt, curF.forceReleasedUpdatedAt].filter(Boolean).sort().pop() || "";
+                const incActivityAt = [incF.finishedAt, incF.startedAt, incF.resetAt, incF.returnedAt, incF.forceReleasedUpdatedAt].filter(Boolean).sort().pop() || "";
+                const curResetOrReturnAt = [curF.resetAt, curF.returnedAt].filter(Boolean).sort().pop() || "";
+                const incResetOrReturnAt = [incF.resetAt, incF.returnedAt].filter(Boolean).sort().pop() || "";
+                const curExecAt = [curF.finishedAt, curF.startedAt].filter(Boolean).sort().pop() || "";
+                const incExecAt = [incF.finishedAt, incF.startedAt].filter(Boolean).sort().pop() || "";
                 const curResetIsNewer = Boolean(
-                  (curF.resetAt && (!incActivityAt || curF.resetAt > incActivityAt)) ||
+                  (curResetOrReturnAt && (!incExecAt || curResetOrReturnAt > incExecAt) && (!incResetOrReturnAt || curResetOrReturnAt >= incResetOrReturnAt)) ||
                   (curF.status === "pending" && incF.status === "in_progress" && !incF.finishedAt && curF.workerNotifiedAvailableAt && incF.startedAt && curF.workerNotifiedAvailableAt > incF.startedAt) ||
                   (curF.status === "in_progress" && curF.startedAt && incF.finishedAt && curF.startedAt > incF.finishedAt)
                 );
                 const incResetIsNewer = Boolean(
-                  (incF.resetAt && (!curActivityAt || incF.resetAt > curActivityAt)) ||
+                  (incResetOrReturnAt && (!curExecAt || incResetOrReturnAt > curExecAt) && (!curResetOrReturnAt || incResetOrReturnAt > curResetOrReturnAt)) ||
                   (incF.status === "pending" && curF.status === "in_progress" && !curF.finishedAt && incF.workerNotifiedAvailableAt && curF.startedAt && incF.workerNotifiedAvailableAt > curF.startedAt) ||
                   (incF.status === "in_progress" && incF.startedAt && curF.finishedAt && incF.startedAt > curF.finishedAt)
                 );
@@ -5416,22 +5420,37 @@ export function reconcileUniversalIntegrity(incomingState = null) {
                     nextF.entryRequested = Boolean(incF.entryRequested);
                     nextF.entryRequestedAt = incF.entryRequested ? (incF.entryRequestedAt || null) : null;
                     nextF.delayNotified = false;
+                    nextF.forceReleased = false;
+                    nextF.forceReleasedDate = null;
+                    nextF.forceReleasedScenario = null;
+                    if (incF.resetAt && (!incF.workerNotifiedAvailableAt || incF.workerNotifiedAvailableAt <= incF.resetAt)) {
+                      nextF.workerNotifiedAvailable = false;
+                      nextF.workerNotifiedAvailableAt = null;
+                    }
                   }
                   mergedFlats[eIdx] = nextF;
                   changed = true;
                 } else if (curResetIsNewer) {
                   if (curF.status === "pending") {
-                    if (!curF.resetAt && curF.workerNotifiedAvailableAt) {
+                    if (!curF.resetAt && curF.workerNotifiedAvailableAt && !curF.returnedAt) {
                       curF.resetAt = curF.workerNotifiedAvailableAt;
                       changed = true;
                     }
-                    if (curF.startedAt || curF.estimatedFinishAt || curF.workerName || curF.workerCpf || curF.delayNotified) {
+                    if (curF.startedAt || curF.estimatedFinishAt || curF.workerName || curF.workerCpf || curF.delayNotified || curF.forceReleased) {
                       curF.startedAt = null;
                       curF.finishedAt = null;
                       curF.estimatedFinishAt = null;
                       curF.workerName = null;
                       curF.workerCpf = null;
                       curF.delayNotified = false;
+                      curF.forceReleased = false;
+                      curF.forceReleasedDate = null;
+                      curF.forceReleasedScenario = null;
+                      changed = true;
+                    }
+                    if (curF.resetAt && curF.workerNotifiedAvailableAt && curF.workerNotifiedAvailableAt <= curF.resetAt) {
+                      curF.workerNotifiedAvailable = false;
+                      curF.workerNotifiedAvailableAt = null;
                       changed = true;
                     }
                   }
@@ -5445,8 +5464,38 @@ export function reconcileUniversalIntegrity(incomingState = null) {
                   }
                 }
 
-                // Preserva fotos, fotos pré-enviadas e observações caso uma das fontes seja mais rica
+                // Sincroniza forceReleased pela data de atualização mais recente ou revoga se houve reset posterior
                 const targetF = mergedFlats[eIdx];
+                const latestResetOrReturn = [targetF.resetAt, targetF.returnedAt].filter(Boolean).sort().pop() || "";
+                const curForceTs = curF.forceReleasedUpdatedAt || "";
+                const incForceTs = incF.forceReleasedUpdatedAt || "";
+                if (incForceTs && incForceTs > curForceTs) {
+                  targetF.forceReleased = Boolean(incF.forceReleased);
+                  targetF.forceReleasedUpdatedAt = incForceTs;
+                  targetF.forceReleasedDate = incF.forceReleasedDate || null;
+                  targetF.forceReleasedScenario = incF.forceReleasedScenario || null;
+                  changed = true;
+                } else if (curForceTs && curForceTs > incForceTs) {
+                  targetF.forceReleased = Boolean(curF.forceReleased);
+                  targetF.forceReleasedUpdatedAt = curForceTs;
+                  targetF.forceReleasedDate = curF.forceReleasedDate || null;
+                  targetF.forceReleasedScenario = curF.forceReleasedScenario || null;
+                }
+                if (
+                  targetF.forceReleased &&
+                  (
+                    targetF.status !== "pending" ||
+                    !targetF.forceReleasedUpdatedAt ||
+                    (latestResetOrReturn && targetF.forceReleasedUpdatedAt <= latestResetOrReturn)
+                  )
+                ) {
+                  targetF.forceReleased = false;
+                  targetF.forceReleasedDate = null;
+                  targetF.forceReleasedScenario = null;
+                  changed = true;
+                }
+
+                // Preserva fotos, fotos pré-enviadas e observações caso uma das fontes seja mais rica
                 if (targetF.status === "done") {
                   const richPhotos = (Array.isArray(targetF.photos) && targetF.photos.length > 0)
                     ? targetF.photos
@@ -5476,7 +5525,13 @@ export function reconcileUniversalIntegrity(incomingState = null) {
                     changed = true;
                   }
                 }
-                if (incF.workerNotifiedAvailable && !targetF.workerNotifiedAvailable && !curResetIsNewer && !incResetIsNewer) {
+                if (
+                  incF.workerNotifiedAvailable &&
+                  !targetF.workerNotifiedAvailable &&
+                  !curResetIsNewer &&
+                  !incResetIsNewer &&
+                  (!latestResetOrReturn || (incF.workerNotifiedAvailableAt && incF.workerNotifiedAvailableAt > latestResetOrReturn))
+                ) {
                   targetF.workerNotifiedAvailable = true;
                   targetF.workerNotifiedAvailableAt = incF.workerNotifiedAvailableAt || targetF.workerNotifiedAvailableAt;
                   targetF.workerLastNotifiedPhone = incF.workerLastNotifiedPhone || targetF.workerLastNotifiedPhone;
@@ -5616,8 +5671,36 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     changed = true;
   }
 
-  // 1.99 Auto-cura universal de Ordens de Serviço (so_1791912503911_wzey5: Flat 313 resetado após início de teste em 14/10)
+  // 1.99 Auto-cura universal de Ordens de Serviço (so_1791912503911_wzey5: Flat 313 resetado após início de teste em 14/10 e purga de forceReleased residual)
   if (Array.isArray(db.serviceOrders)) {
+    for (const ord of db.serviceOrders) {
+      if (!ord || !Array.isArray(ord.flats)) continue;
+      for (const fl of ord.flats) {
+        if (!fl) continue;
+        // Limpa forceReleased residual sem timestamp ou vencido/pós-reset/concluído
+        const latestResetOrRet = [fl.resetAt, fl.returnedAt].filter(Boolean).sort().pop() || "";
+        if (
+          fl.forceReleased &&
+          (
+            fl.status !== "pending" ||
+            !fl.forceReleasedUpdatedAt ||
+            fl.forceReleasedUpdatedAt <= "2026-11-06T16:30:00.000Z" ||
+            (latestResetOrRet && fl.forceReleasedUpdatedAt <= latestResetOrRet)
+          )
+        ) {
+          fl.forceReleased = false;
+          fl.forceReleasedDate = null;
+          fl.forceReleasedScenario = null;
+          changed = true;
+        }
+        // Se resetAt é mais recente que workerNotifiedAvailableAt em flat pendente, limpa notificação anterior ao reset
+        if (fl.status === "pending" && fl.resetAt && fl.workerNotifiedAvailableAt && fl.workerNotifiedAvailableAt <= fl.resetAt) {
+          fl.workerNotifiedAvailable = false;
+          fl.workerNotifiedAvailableAt = null;
+          changed = true;
+        }
+      }
+    }
     const acOrder = db.serviceOrders.find(o => o && o.id === "so_1791912503911_wzey5");
     if (acOrder && Array.isArray(acOrder.flats)) {
       const f313 = acOrder.flats.find(f => Number(f.flatId) === 7 || String(f.flatNumber) === "313");
@@ -5643,6 +5726,7 @@ export function reconcileUniversalIntegrity(incomingState = null) {
         f313.entryRequested = false;
         f313.entryRequestedAt = null;
         f313.delayNotified = false;
+        f313.forceReleased = false;
         try {
           if (typeof syncServiceOrderRoomBlocks === "function") {
             syncServiceOrderRoomBlocks(acOrder, false, db);
@@ -8404,7 +8488,11 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             affectedServiceOrders.add(order);
             changed = true;
           }
-          if (!f.workerNotifiedAvailableAt || tsStr >= f.workerNotifiedAvailableAt) {
+          const fLatestResetOrReturn = [f.resetAt, f.returnedAt].filter(Boolean).sort().pop() || null;
+          if (
+            (!fLatestResetOrReturn || tsStr > fLatestResetOrReturn) &&
+            (!f.workerNotifiedAvailableAt || tsStr >= f.workerNotifiedAvailableAt)
+          ) {
             if (!f.workerNotifiedAvailable || f.workerNotifiedAvailableAt !== tsStr || (notifiedPhone && f.workerLastNotifiedPhone !== notifiedPhone)) {
               f.workerNotifiedAvailable = true;
               f.workerNotifiedAvailableAt = tsStr;
@@ -8428,7 +8516,8 @@ export async function reconcileFromAuditLogs(db, pgPool) {
 
       const effectiveResetAt = [
         flat.resetAt,
-        (flat.status === "pending" && flat.workerNotifiedAvailableAt) ? flat.workerNotifiedAvailableAt : null
+        flat.returnedAt,
+        (flat.status === "pending" && flat.workerNotifiedAvailableAt && (!flat.resetAt || flat.workerNotifiedAvailableAt > flat.resetAt)) ? flat.workerNotifiedAvailableAt : null
       ].filter(Boolean).sort().pop() || null;
 
       if (rawAction === "photos_uploaded") {
@@ -8446,9 +8535,22 @@ export async function reconcileFromAuditLogs(db, pgPool) {
           }
         }
       } else if (rawAction === "force_release") {
-        if (flat.status === "pending" && typeof meta.forceReleased === "boolean" && flat.forceReleased !== meta.forceReleased) {
-          flat.forceReleased = meta.forceReleased;
-          changed = true;
+        const resolvedForceTs = meta.forceReleasedUpdatedAt || tsStr;
+        const latestResetOrRet = [flat.resetAt, flat.returnedAt].filter(Boolean).sort().pop() || null;
+        if (
+          flat.status === "pending" &&
+          typeof meta.forceReleased === "boolean" &&
+          resolvedForceTs > "2026-11-06T16:30:00.000Z" &&
+          (!latestResetOrRet || resolvedForceTs > latestResetOrRet) &&
+          (!flat.forceReleasedUpdatedAt || resolvedForceTs >= flat.forceReleasedUpdatedAt)
+        ) {
+          if (flat.forceReleased !== meta.forceReleased || flat.forceReleasedUpdatedAt !== resolvedForceTs) {
+            flat.forceReleased = meta.forceReleased;
+            flat.forceReleasedUpdatedAt = resolvedForceTs;
+            flat.forceReleasedDate = meta.forceReleased ? (meta.forceReleasedDate || resolvedForceTs.substring(0, 10)) : null;
+            flat.forceReleasedScenario = meta.forceReleased ? (meta.forceReleasedScenario || null) : null;
+            changed = true;
+          }
         }
       } else if (rawAction === "entry_request") {
         if (
@@ -8487,6 +8589,9 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             flat.entryRequested = true;
             if (!flat.entryRequestedAt) flat.entryRequestedAt = flat.startedAt;
             flat.delayNotified = false;
+            flat.forceReleased = false;
+            flat.forceReleasedDate = null;
+            flat.forceReleasedScenario = null;
             order.updatedAt = resolvedStartAt;
             changed = true;
             affectedServiceOrders.add(order);
@@ -8527,6 +8632,9 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             if (!flat.startedAt) flat.startedAt = meta.startedAt || tsStr;
             flat.estimatedFinishAt = null;
             flat.delayNotified = false;
+            flat.forceReleased = false;
+            flat.forceReleasedDate = null;
+            flat.forceReleasedScenario = null;
             flat.workerName = parsedWorkerName || flat.workerName || order.workerName || "Prestador";
             flat.workerCpf = meta.workerCpf || flat.workerCpf || order.workerCpf || null;
             if (meta.observations !== undefined && meta.observations !== null) {
@@ -8546,6 +8654,12 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             affectedServiceOrders.add(order);
           } else {
             // Apartamento já marcado como done: faz backfill de fotos, observações ou flags ausentes
+            if (flat.forceReleased) {
+              flat.forceReleased = false;
+              flat.forceReleasedDate = null;
+              flat.forceReleasedScenario = null;
+              changed = true;
+            }
             if ((!Array.isArray(flat.photos) || flat.photos.length === 0) && Array.isArray(resolvedPhotos) && resolvedPhotos.length > 0) {
               flat.photos = [...resolvedPhotos];
               changed = true;
@@ -8564,11 +8678,45 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             }
           }
         }
+      } else if (rawAction === "return") {
+        const resolvedReturnAt = meta.returnedAt || tsStr;
+        const lastActivityTs = [flat.finishedAt, flat.startedAt, flat.resetAt, flat.returnedAt].filter(Boolean).sort().pop() || "";
+        if (!lastActivityTs || resolvedReturnAt >= lastActivityTs) {
+          if (flat.status !== "pending" || flat.returnedAt !== resolvedReturnAt || flat.forceReleased || flat.entryRequested) {
+            flat.status = "pending";
+            flat.startedAt = null;
+            flat.finishedAt = null;
+            flat.estimatedFinishAt = null;
+            flat.entryRequested = false;
+            flat.entryRequestedAt = null;
+            flat.delayNotified = false;
+            flat.forceReleased = false;
+            flat.forceReleasedDate = null;
+            flat.forceReleasedScenario = null;
+            flat.returnedAt = resolvedReturnAt;
+            if (parsedWorkerName || meta.workerName) flat.returnedByWorkerName = parsedWorkerName || meta.workerName;
+            if (meta.workerCpf) flat.returnedByWorkerCpf = meta.workerCpf;
+            if (meta.previousStatus) flat.returnedFromStatus = meta.previousStatus;
+            if (typeof meta.accessedRoom === "boolean") flat.returnedAccessedRoom = meta.accessedRoom;
+            if (typeof meta.needsCleaning === "boolean") flat.returnedNeedsCleaning = meta.needsCleaning;
+            if (meta.reason !== undefined) flat.returnReason = meta.reason;
+            order.updatedAt = resolvedReturnAt;
+            changed = true;
+            affectedServiceOrders.add(order);
+          }
+        }
       } else if (rawAction === "reset") {
         const resolvedResetAt = meta.resetAt || tsStr;
-        const lastActivityTs = [flat.finishedAt, flat.startedAt, flat.resetAt].filter(Boolean).sort().pop() || "";
+        const lastActivityTs = [flat.finishedAt, flat.startedAt, flat.resetAt, flat.returnedAt].filter(Boolean).sort().pop() || "";
         if (!lastActivityTs || resolvedResetAt >= lastActivityTs) {
-          if (flat.status !== "pending" || flat.resetAt !== resolvedResetAt) {
+          if (
+            flat.status !== "pending" ||
+            flat.resetAt !== resolvedResetAt ||
+            flat.forceReleased ||
+            flat.workerNotifiedAvailable ||
+            flat.entryRequested ||
+            flat.startedAt
+          ) {
             flat.status = "pending";
             flat.startedAt = null;
             flat.finishedAt = null;
@@ -8585,6 +8733,8 @@ export async function reconcileFromAuditLogs(db, pgPool) {
             flat.entryRequestedAt = null;
             flat.delayNotified = false;
             flat.forceReleased = false;
+            flat.forceReleasedDate = null;
+            flat.forceReleasedScenario = null;
             flat.workerNotifiedAvailable = false;
             flat.workerNotifiedAvailableAt = null;
             flat.workerLastNotifiedPhone = null;
@@ -8596,7 +8746,33 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       }
     }
 
-    // Auto-cura das evidências fotográficas históricas no Cloudflare R2 e do Flat 313 resetado após teste em 14/10 para OS so_1791912503911_wzey5
+    // Auto-cura das evidências fotográficas históricas no Cloudflare R2, purga de forceReleased residual e do Flat 313 resetado após teste em 14/10
+    for (const ord of (db.serviceOrders || [])) {
+      if (!ord || !Array.isArray(ord.flats)) continue;
+      for (const fl of ord.flats) {
+        if (!fl) continue;
+        const latestResetOrRet = [fl.resetAt, fl.returnedAt].filter(Boolean).sort().pop() || "";
+        if (
+          fl.forceReleased &&
+          (
+            fl.status !== "pending" ||
+            !fl.forceReleasedUpdatedAt ||
+            fl.forceReleasedUpdatedAt <= "2026-11-06T16:30:00.000Z" ||
+            (latestResetOrRet && fl.forceReleasedUpdatedAt <= latestResetOrRet)
+          )
+        ) {
+          fl.forceReleased = false;
+          fl.forceReleasedDate = null;
+          fl.forceReleasedScenario = null;
+          changed = true;
+        }
+        if (fl.status === "pending" && fl.resetAt && fl.workerNotifiedAvailableAt && fl.workerNotifiedAvailableAt <= fl.resetAt) {
+          fl.workerNotifiedAvailable = false;
+          fl.workerNotifiedAvailableAt = null;
+          changed = true;
+        }
+      }
+    }
     const acOrder = db.serviceOrders.find(o => o && o.id === "so_1791912503911_wzey5");
     if (acOrder && Array.isArray(acOrder.flats)) {
       const f313 = acOrder.flats.find(f => Number(f.flatId) === 7 || String(f.flatNumber) === "313");
@@ -18941,8 +19117,22 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr(), prec
 
   const stayoverRes = activeRes.find(r => r.checkinDate < dateStr && r.checkoutDate > dateStr && !r.checkoutDone && !r.earlyCheckout && r.status !== "completed" && r.status !== "checked_out");
   const checkinTodayRes = activeRes.find(r => r.checkinDate === dateStr && !r.checkoutDone && !r.earlyCheckout && r.status !== "completed" && r.status !== "checked_out");
-  const isCheckedIn = Boolean(checkinTodayRes && (checkinTodayRes.status === "checked_in" || checkinTodayRes.status === "checkin" || checkinTodayRes.checkinDone || checkinTodayRes.fnhrCompleted));
-  const checkoutTodayRes = activeRes.find(r => r.checkoutDate === dateStr);
+  const isCheckedIn = Boolean(
+    checkinTodayRes && (
+      checkinTodayRes.status === "checked_in" ||
+      checkinTodayRes.status === "checkin" ||
+      checkinTodayRes.status === "hospedado" ||
+      checkinTodayRes.status === "in_house" ||
+      checkinTodayRes.checkinDone ||
+      checkinTodayRes.checkedInAt ||
+      checkinTodayRes.fnhrCompleted ||
+      checkinTodayRes.keyDelivered ||
+      checkinTodayRes.accessLiberated
+    )
+  );
+  const checkoutTodayRes =
+    activeRes.find(r => r.checkoutDate === dateStr && !r.checkoutDone && !r.earlyCheckout && r.status !== "completed" && r.status !== "checked_out" && !r.actualCheckoutAt) ||
+    activeRes.find(r => r.checkoutDate === dateStr);
   const isCheckedOut = Boolean(checkoutTodayRes && (checkoutTodayRes.status === "checked_out" || checkoutTodayRes.status === "completed" || checkoutTodayRes.checkoutDone || checkoutTodayRes.earlyCheckout || checkoutTodayRes.actualCheckoutAt));
 
   const isOccupied = Boolean(stayoverRes || isCheckedIn || (checkoutTodayRes && !isCheckedOut));
@@ -19139,6 +19329,74 @@ function getAllowedRoomStatuses(order) {
     return ["vago_sujo"];
   }
   return [...DEFAULT_ALLOWED_ROOM_STATUSES];
+}
+
+function getEffectiveForceReleased(order, flat, scenario, realtime, todayStr = getTodayStr()) {
+  if (!flat || !flat.forceReleased || flat.status !== "pending") return false;
+  const rt = realtime || getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
+  const sc = scenario || getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
+  const allowedStatuses = getAllowedRoomStatuses(order);
+  const hasPendingCheckoutGuest = Boolean(rt && rt.hasCheckoutToday && !rt.isCheckedOut);
+  const hasStayoverGuest = Boolean(rt && (rt.isOccupied || rt.isCheckedIn) && !hasPendingCheckoutGuest);
+
+  // Trava absoluta: se há hóspede em estadia ou aguardando check-out e o filtro da OS não permite esse cenário,
+  // revoga forceReleased automaticamente para nunca permitir início de serviço com hóspede no quarto.
+  if (
+    (hasPendingCheckoutGuest && !allowedStatuses.includes("checkout_pendente")) ||
+    (hasStayoverGuest && !allowedStatuses.includes("stayover")) ||
+    ((sc === "stayover" || sc === "checkout_pendente") && !allowedStatuses.includes(sc))
+  ) {
+    flat.forceReleased = false;
+    flat.forceReleasedDate = null;
+    flat.forceReleasedScenario = null;
+    return false;
+  }
+
+  // Se o forceReleased foi concedido em outro dia ou em outro cenário operacional e o flat mudou de status, expira
+  if (flat.forceReleasedDate && flat.forceReleasedDate !== todayStr) {
+    flat.forceReleased = false;
+    flat.forceReleasedDate = null;
+    flat.forceReleasedScenario = null;
+    return false;
+  }
+  if (flat.forceReleasedScenario && flat.forceReleasedScenario !== sc) {
+    flat.forceReleased = false;
+    flat.forceReleasedDate = null;
+    flat.forceReleasedScenario = null;
+    return false;
+  }
+
+  return true;
+}
+
+function isServiceFlatStatusAllowed(order, flat, scenario, realtime, todayStr = getTodayStr()) {
+  const allowedStatuses = getAllowedRoomStatuses(order);
+  const rt = realtime || (flat ? getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr) : null);
+  const sc = scenario || (flat ? getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr) : "vago_limpo");
+  const hasPendingCheckoutGuest = Boolean(rt && rt.hasCheckoutToday && !rt.isCheckedOut);
+  const hasStayoverGuest = Boolean(rt && (rt.isOccupied || rt.isCheckedIn) && !hasPendingCheckoutGuest);
+
+  // Nunca permite entrada/início com hóspede em estadia ou check-out pendente se o filtro da OS bloquear esse status
+  if (hasPendingCheckoutGuest && !allowedStatuses.includes("checkout_pendente")) {
+    if (flat && flat.forceReleased) {
+      flat.forceReleased = false;
+      flat.forceReleasedDate = null;
+      flat.forceReleasedScenario = null;
+    }
+    return false;
+  }
+  if (hasStayoverGuest && !allowedStatuses.includes("stayover")) {
+    if (flat && flat.forceReleased) {
+      flat.forceReleased = false;
+      flat.forceReleasedDate = null;
+      flat.forceReleasedScenario = null;
+    }
+    return false;
+  }
+  if (allowedStatuses.includes(sc)) {
+    return true;
+  }
+  return getEffectiveForceReleased(order, flat, sc, rt, todayStr);
 }
 
 function formatServiceDuration(startIso, endIso) {
@@ -19605,9 +19863,11 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
       for (const flat of flats) {
         if (flat.status !== "pending") continue;
 
+        const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
         const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
         const isScenarioAllowed = allowedStatuses.includes(scenario);
         const isDirty = isFlatDirty(flat.flatId, flat.flatNumber, todayStr);
+        const effectiveForceReleased = getEffectiveForceReleased(order, flat, scenario, realtime, todayStr);
 
         let isCleanModeAllowed = true;
         if (!isDirty) {
@@ -19618,7 +19878,8 @@ function checkAndNotifyAvailableServiceFlats(targetOrderId = null, options = {})
           }
         }
 
-        const isRoomCriteriaMet = Boolean(flat.forceReleased) || (isScenarioAllowed && isCleanModeAllowed);
+        const isStatusAllowedNow = isServiceFlatStatusAllowed(order, flat, scenario, realtime, todayStr);
+        const isRoomCriteriaMet = isStatusAllowedNow && (effectiveForceReleased || (isScenarioAllowed && isCleanModeAllowed));
 
         if (!isRoomCriteriaMet) {
           if (flat.workerNotifiedAvailable) {
@@ -25200,10 +25461,11 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
     const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
     const scenario = getFlatOperationalScenario(f.flatId, f.flatNumber, todayStr);
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
-    const isAllowed = Boolean(f.forceReleased) || allowedStatuses.includes(scenario);
+    const effectiveForce = getEffectiveForceReleased(order, f, scenario, realtime, todayStr);
+    const isAllowed = isServiceFlatStatusAllowed(order, f, scenario, realtime, todayStr);
     return {
       ...f,
-      forceReleased: Boolean(f.forceReleased),
+      forceReleased: effectiveForce,
       isDirty: realtime.isDirty,
       isOccupied: realtime.isOccupied,
       cleaningStatus: realtime.cleaningStatus,
@@ -25283,6 +25545,9 @@ app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
   flat.returnReason = null;
   flat.delayNotified = false;
   flat.forceReleased = false;
+  flat.forceReleasedUpdatedAt = nowIso;
+  flat.forceReleasedDate = null;
+  flat.forceReleasedScenario = null;
   flat.workerNotifiedAvailable = false;
   flat.workerNotifiedAvailableAt = null;
   flat.workerLastNotifiedPhone = null;
@@ -25337,9 +25602,34 @@ app.post("/api/service-orders/:id/flats/:flatId/force-release", (req, res) => {
     return res.status(400).json({ error: "Apenas apartamentos pendentes podem ter liberação manual alterada." });
   }
 
+  const todayStr = getTodayStr();
+  const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
+  const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
+  const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
+  const allowedStatuses = getAllowedRoomStatuses(order);
   const targetForce = typeof req.body?.forceReleased === "boolean" ? req.body.forceReleased : !Boolean(flat.forceReleased);
+
+  const hasPendingCheckoutGuest = Boolean(realtime && realtime.hasCheckoutToday && !realtime.isCheckedOut);
+  const hasStayoverGuest = Boolean(realtime && (realtime.isOccupied || realtime.isCheckedIn) && !hasPendingCheckoutGuest);
+  if (
+    targetForce &&
+    (
+      (hasPendingCheckoutGuest && !allowedStatuses.includes("checkout_pendente")) ||
+      (hasStayoverGuest && !allowedStatuses.includes("stayover")) ||
+      ((scenario === "stayover" || scenario === "checkout_pendente") && !allowedStatuses.includes(scenario))
+    )
+  ) {
+    return res.status(400).json({
+      error: `Não é permitido liberar manualmente o Flat ${flat.flatNumber} pois há hospedagem em andamento (${scenarioInfo.label || "Hóspede no quarto"}) e as travas desta Ordem de Serviço bloqueiam quartos ocupados.`
+    });
+  }
+
+  const nowIso = new Date().toISOString();
   flat.forceReleased = targetForce;
-  order.updatedAt = new Date().toISOString();
+  flat.forceReleasedUpdatedAt = nowIso;
+  flat.forceReleasedDate = targetForce ? todayStr : null;
+  flat.forceReleasedScenario = targetForce ? scenario : null;
+  order.updatedAt = nowIso;
 
   if (flat.forceReleased) {
     flat.workerNotifiedAvailable = false;
@@ -25359,6 +25649,9 @@ app.post("/api/service-orders/:id/flats/:flatId/force-release", (req, res) => {
       flatId: flat.flatId,
       flatNumber: flat.flatNumber,
       forceReleased: flat.forceReleased,
+      forceReleasedUpdatedAt: nowIso,
+      forceReleasedDate: flat.forceReleasedDate,
+      forceReleasedScenario: flat.forceReleasedScenario,
       action: "force_release"
     }
   });
@@ -25397,6 +25690,9 @@ app.post("/api/service-orders/:id/flats/:flatId/admin-complete", (req, res) => {
   flat.workerName = req.body?.workerName || flat.workerName || order.workerName || userAuth.name || userAuth.username || "Administração";
   flat.observations = req.body?.observations !== undefined ? String(req.body.observations).trim() : (flat.observations || "Concluído via painel administrativo");
   flat.estimatedFinishAt = null;
+  flat.forceReleased = false;
+  flat.forceReleasedDate = null;
+  flat.forceReleasedScenario = null;
   if (typeof req.body?.needsCleaning === "boolean") {
     flat.needsCleaning = req.body.needsCleaning;
   }
@@ -25956,10 +26252,11 @@ app.get("/api/service/public/:token", (req, res) => {
     const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
     const scenario = getFlatOperationalScenario(f.flatId, f.flatNumber, todayStr);
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
-    const isAllowed = Boolean(f.forceReleased) || allowedStatuses.includes(scenario);
+    const effectiveForce = getEffectiveForceReleased(order, f, scenario, realtime, todayStr);
+    const isAllowed = isServiceFlatStatusAllowed(order, f, scenario, realtime, todayStr);
     return {
       ...f,
-      forceReleased: Boolean(f.forceReleased),
+      forceReleased: effectiveForce,
       isDirty: realtime.isDirty,
       isOccupied: realtime.isOccupied,
       cleaningStatus: realtime.cleaningStatus,
@@ -26208,8 +26505,9 @@ app.post("/api/service/public/:token/flats/:flatId/request-entry", async (req, r
   // Validação da Matriz de Status Permitidos
   const todayStr = getTodayStr();
   const allowedStatuses = getAllowedRoomStatuses(order);
+  const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
   const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
-  if (!flat.forceReleased && !allowedStatuses.includes(scenario)) {
+  if (!isServiceFlatStatusAllowed(order, flat, scenario, realtime, todayStr)) {
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
     return res.status(400).json({
       error: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`
@@ -26224,7 +26522,7 @@ app.post("/api/service/public/:token/flats/:flatId/request-entry", async (req, r
   saveDatabase("service_flat_request_entry");
 
   // Dispara notificação da solicitação de entrada (evento entry_request)
-  const isGuestInside = scenario === "stayover" || scenario === "checkout_pendente";
+  const isGuestInside = scenario === "stayover" || scenario === "checkout_pendente" || Boolean(realtime.isOccupied);
   dispatchServiceNotifications("entry_request", order, flat, worker, { vehicle: worker.vehicle, hasGuestInside: isGuestInside });
 
   res.json({
@@ -26269,15 +26567,17 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
 
   // 4. Avaliar allowedRoomStatuses e cleanFlatMode
   const allowedStatuses = getAllowedRoomStatuses(order);
+  const realtime = getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr);
   const scenario = getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr);
-  if (!flat.forceReleased && !allowedStatuses.includes(scenario)) {
+  const effectiveForce = getEffectiveForceReleased(order, flat, scenario, realtime, todayStr);
+  if (!isServiceFlatStatusAllowed(order, flat, scenario, realtime, todayStr)) {
     const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
     return res.status(400).json({ error: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}` });
   }
 
   const isDirty = isFlatDirty(flat.flatId, flat.flatNumber, todayStr);
   const cleanFlatMode = order.cleanFlatMode || "priority";
-  if (!flat.forceReleased && !isDirty) {
+  if (!effectiveForce && !isDirty) {
     if (cleanFlatMode === "never") {
       return res.status(400).json({ error: "Este serviço não permite intervenção em apartamentos limpos." });
     }
@@ -26310,6 +26610,9 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   flat.returnedNeedsCleaning = null;
   flat.returnReason = null;
   flat.delayNotified = false;
+  flat.forceReleased = false;
+  flat.forceReleasedDate = null;
+  flat.forceReleasedScenario = null;
 
   if (req.body?.estimatedFinishAt) {
     const customEst = new Date(req.body.estimatedFinishAt);
@@ -26390,6 +26693,9 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
   flat.needsCleaning = flat.wasCleanWhenStarted === true && typeof req.body.needsCleaning === "boolean" ? req.body.needsCleaning : null;
   flat.estimatedFinishAt = null;
   flat.returnedAt = null;
+  flat.forceReleased = false;
+  flat.forceReleasedDate = null;
+  flat.forceReleasedScenario = null;
 
   // Se precisa de camareira, enfileirar solicitação de limpeza/conferência pós-serviço
   if (flat.needsCleaning === true) {
@@ -26552,6 +26858,9 @@ app.post("/api/service/public/:token/flats/:flatId/return", async (req, res) => 
   flat.estimatedFinishAt = null;
   flat.delayNotified = false;
   flat.wasCleanWhenStarted = null;
+  flat.forceReleased = false;
+  flat.forceReleasedDate = null;
+  flat.forceReleasedScenario = null;
   order.updatedAt = nowIso;
 
   // Se acessou o quarto e informou que precisa de limpeza/conferência da camareira, gera card exclusivo 'service_order'
