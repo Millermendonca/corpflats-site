@@ -5472,10 +5472,34 @@ export function reconcileUniversalIntegrity(incomingState = null) {
                   }
                 }
 
-                // Travas de filtro são estritas: nunca preserva forceReleased
+                // Preserva forceReleased somente se foi liberado explicitamente hoje (> 2026-11-06T18:00:00.000Z) para o cenário atual
                 const targetF = mergedFlats[eIdx];
                 const latestResetOrReturn = [targetF.resetAt, targetF.returnedAt].filter(Boolean).sort().pop() || "";
-                if (targetF.forceReleased) {
+                const curForceAt = curF.forceReleasedUpdatedAt || "";
+                const incForceAt = incF.forceReleasedUpdatedAt || "";
+                if (curForceAt || incForceAt) {
+                  const winForceSource = curForceAt >= incForceAt ? curF : incF;
+                  const winForceAt = winForceSource.forceReleasedUpdatedAt || "";
+                  if (
+                    targetF.status === "pending" &&
+                    winForceSource.forceReleased === true &&
+                    winForceAt > "2026-11-06T18:00:00.000Z" &&
+                    winForceSource.forceReleasedDate === getTodayStr() &&
+                    winForceSource.forceReleasedScenario &&
+                    (!latestResetOrReturn || winForceAt > latestResetOrReturn)
+                  ) {
+                    targetF.forceReleased = true;
+                    targetF.forceReleasedUpdatedAt = winForceAt;
+                    targetF.forceReleasedDate = winForceSource.forceReleasedDate;
+                    targetF.forceReleasedScenario = winForceSource.forceReleasedScenario;
+                    targetF.forceReleasedBy = winForceSource.forceReleasedBy || null;
+                  } else if (targetF.forceReleased) {
+                    targetF.forceReleased = false;
+                    targetF.forceReleasedDate = null;
+                    targetF.forceReleasedScenario = null;
+                    changed = true;
+                  }
+                } else if (targetF.forceReleased) {
                   targetF.forceReleased = false;
                   targetF.forceReleasedDate = null;
                   targetF.forceReleasedScenario = null;
@@ -19555,75 +19579,78 @@ function getAllowedRoomStatuses(order) {
 }
 
 function getEffectiveForceReleased(order, flat, scenario, realtime, todayStr = getTodayStr()) {
-  // Os filtros da Ordem de Serviço nunca podem ser ignorados ou contornados manualmente.
-  if (flat && flat.forceReleased) {
+  if (!flat || flat.status !== "pending" || !flat.forceReleased) return false;
+  const sc = scenario || (flat ? getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr) : "vago_limpo");
+  const updatedAt = flat.forceReleasedUpdatedAt || "";
+  const latestResetOrRet = [flat.resetAt, flat.returnedAt].filter(Boolean).sort().pop() || "";
+
+  // Só é válido se foi liberado explicitamente após 2026-11-06T18:00:00.000Z, na data de hoje, para o exato cenário operacional atual, e não houve reset/devolução posterior
+  const isValid =
+    updatedAt > "2026-11-06T18:00:00.000Z" &&
+    flat.forceReleasedDate === todayStr &&
+    flat.forceReleasedScenario === sc &&
+    (!latestResetOrRet || updatedAt > latestResetOrRet);
+
+  if (!isValid) {
     flat.forceReleased = false;
     flat.forceReleasedDate = null;
     flat.forceReleasedScenario = null;
+    return false;
   }
-  return false;
+  return true;
 }
 
 function evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr = getTodayStr()) {
-  if (flat && flat.forceReleased) {
-    flat.forceReleased = false;
-    flat.forceReleasedDate = null;
-    flat.forceReleasedScenario = null;
-  }
   const allowedStatuses = getAllowedRoomStatuses(order);
   const rt = realtime || (flat ? getFlatRealtimeStatus(flat.flatId, flat.flatNumber, todayStr) : null);
   const sc = scenario || (flat ? getFlatOperationalScenario(flat.flatId, flat.flatNumber, todayStr) : "vago_limpo");
   const scenarioInfo = OPERATIONAL_SCENARIOS[sc] || {};
+  const forceReleased = getEffectiveForceReleased(order, flat, sc, rt, todayStr);
 
   const hasPendingCheckoutGuest = Boolean(rt && rt.hasCheckoutToday && !rt.isCheckedOut);
   const hasStayoverGuest = Boolean(rt && (rt.isOccupied || rt.isCheckedIn) && !hasPendingCheckoutGuest);
 
+  const allowedLabels = allowedStatuses.map(id => OPERATIONAL_SCENARIOS[id]?.label || id).join(", ") || "Nenhum";
+  const violations = [];
+  let blockReason = null;
+
   // 1. Trava de Hóspede com Check-out Hoje Pendente
   if (hasPendingCheckoutGuest && !allowedStatuses.includes("checkout_pendente")) {
-    return {
-      allowed: false,
-      scenario: sc,
-      blockReason: `Bloqueado: ${OPERATIONAL_SCENARIOS.checkout_pendente.blockReason}`
-    };
+    const reason = `Bloqueado: ${OPERATIONAL_SCENARIOS.checkout_pendente.blockReason}`;
+    if (!blockReason) blockReason = reason;
+    violations.push(`Há hóspede no flat com saída (check-out) pendente hoje${rt?.currentGuest ? ` (${rt.currentGuest})` : ""}, e o filtro da OS não permite "Check-out Hoje Pendente".`);
   }
 
   // 2. Trava de Hóspede em Estadia (Stayover ou Check-in já realizado hoje)
   if (hasStayoverGuest && !allowedStatuses.includes("stayover")) {
-    return {
-      allowed: false,
-      scenario: sc,
-      blockReason: `Bloqueado: ${OPERATIONAL_SCENARIOS.stayover.blockReason}`
-    };
+    const reason = `Bloqueado: ${OPERATIONAL_SCENARIOS.stayover.blockReason}`;
+    if (!blockReason) blockReason = reason;
+    violations.push(`Há hóspede em estadia no flat no momento${rt?.currentGuest ? ` (${rt.currentGuest})` : ""}, e o filtro da OS não permite "Hóspede em Estadia".`);
   }
 
   // 3. Trava de Camareira em Limpeza no Momento
   if (rt && rt.cleaningStatus === "in_progress" && !allowedStatuses.includes("em_limpeza")) {
-    return {
-      allowed: false,
-      scenario: sc,
-      blockReason: `Bloqueado: ${OPERATIONAL_SCENARIOS.em_limpeza.blockReason}`
-    };
+    const reason = `Bloqueado: ${OPERATIONAL_SCENARIOS.em_limpeza.blockReason}`;
+    if (!blockReason) blockReason = reason;
+    violations.push(`A camareira está executando limpeza neste flat agora, e o filtro da OS não permite "Em Limpeza no Momento".`);
   }
 
   // 4. Trava de Check-in Hoje (quando não há hóspede ainda no quarto)
   if (rt && rt.hasCheckinToday && !hasPendingCheckoutGuest && !hasStayoverGuest && sc !== "em_limpeza") {
     const neededCheckinScenario = rt.isDirty ? "checkin_hoje_sujo" : "checkin_hoje_limpo";
     if (!allowedStatuses.includes(neededCheckinScenario)) {
-      return {
-        allowed: false,
-        scenario: sc,
-        blockReason: `Bloqueado: ${OPERATIONAL_SCENARIOS[neededCheckinScenario].blockReason}`
-      };
+      const reason = `Bloqueado: ${OPERATIONAL_SCENARIOS[neededCheckinScenario].blockReason}`;
+      if (!blockReason) blockReason = reason;
+      violations.push(`Há previsão de chegada de hóspede hoje (${rt.expectedArrival || "14:00"}), e o filtro da OS não permite "${OPERATIONAL_SCENARIOS[neededCheckinScenario].label}".`);
     }
   }
 
   // 5. Trava estrita do cenário operacional atual na lista allowedRoomStatuses
   if (!allowedStatuses.includes(sc)) {
-    return {
-      allowed: false,
-      scenario: sc,
-      blockReason: `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`
-    };
+    const reason = `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`;
+    if (!blockReason) blockReason = reason;
+    const msg = `O apartamento está no status "${scenarioInfo.label || sc}", mas o filtro da OS só permite: ${allowedLabels}.`;
+    if (!violations.includes(msg)) violations.push(msg);
   }
 
   // 6. Trava de cleanFlatMode ("never" ou "priority") para apartamentos limpos
@@ -19631,13 +19658,10 @@ function evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr = g
   const cleanFlatMode = order?.cleanFlatMode || (Array.isArray(order?.allowedRoomStatuses) ? "always" : "priority");
   if (!isDirty) {
     if (cleanFlatMode === "never") {
-      return {
-        allowed: false,
-        scenario: sc,
-        blockReason: "Bloqueado: este serviço não permite intervenção em apartamentos limpos."
-      };
-    }
-    if (cleanFlatMode === "priority" && flat) {
+      const reason = "Bloqueado: este serviço não permite intervenção em apartamentos limpos.";
+      if (!blockReason) blockReason = reason;
+      violations.push("O apartamento está limpo, e a regra de limpeza desta OS bloqueia intervenção em flats limpos.");
+    } else if (cleanFlatMode === "priority" && flat) {
       const otherDirty = (order?.flats || []).some(otherF => {
         if (!otherF || Number(otherF.flatId) === Number(flat.flatId) || otherF.status === "done") return false;
         if (!isFlatDirty(otherF.flatId, otherF.flatNumber, todayStr)) return false;
@@ -19645,19 +19669,23 @@ function evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr = g
         return allowedStatuses.includes(otherScenario);
       });
       if (otherDirty) {
-        return {
-          allowed: false,
-          scenario: sc,
-          blockReason: "Bloqueado: existem outros apartamentos deste serviço com check-out ou pendência de limpeza. Priorize os apartamentos sujos primeiro."
-        };
+        const reason = "Bloqueado: existem outros apartamentos deste serviço com check-out ou pendência de limpeza. Priorize os apartamentos sujos primeiro.";
+        if (!blockReason) blockReason = reason;
+        violations.push("O apartamento está limpo e existem outros flats sujos disponíveis nesta OS que devem ser priorizados primeiro.");
       }
     }
   }
 
+  const filterAllowed = violations.length === 0 && !blockReason;
+  const allowed = filterAllowed || forceReleased;
+
   return {
-    allowed: true,
+    filterAllowed,
+    forceReleased,
+    allowed,
     scenario: sc,
-    blockReason: null
+    blockReason: filterAllowed ? null : blockReason,
+    violations
   };
 }
 
@@ -25730,7 +25758,9 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
     const isAllowed = filterEval.allowed;
     return {
       ...f,
-      forceReleased: false,
+      forceReleased: filterEval.forceReleased,
+      isFilterAllowed: filterEval.filterAllowed,
+      filterViolations: filterEval.violations || [],
       isDirty: realtime.isDirty,
       isOccupied: realtime.isOccupied,
       cleaningStatus: realtime.cleaningStatus,
@@ -25745,7 +25775,7 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
       operationalScenarioLabel: scenarioInfo.label || scenario,
       operationalScenarioIcon: scenarioInfo.icon || "🏠",
       isStatusAllowed: isAllowed,
-      statusBlockReason: isAllowed ? null : (filterEval.blockReason || `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`),
+      statusBlockReason: filterEval.blockReason || (filterEval.filterAllowed ? null : `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`),
       hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente" || Boolean(realtime.isOccupied),
       scenarioWarning: scenarioInfo.warning || null
     };
@@ -25873,27 +25903,61 @@ app.post("/api/service-orders/:id/flats/:flatId/force-release", (req, res) => {
   const scenarioInfo = OPERATIONAL_SCENARIOS[scenario] || {};
   const filterEval = evaluateServiceFlatFilter(order, flat, scenario, realtime, todayStr);
   const targetForce = typeof req.body?.forceReleased === "boolean" ? req.body.forceReleased : false;
+  const confirmFilterViolation = Boolean(req.body?.confirmFilterViolation);
 
-  if (targetForce && !filterEval.allowed) {
+  if (targetForce && !filterEval.filterAllowed && !confirmFilterViolation) {
     return res.status(400).json({
-      error: `As travas de filtro da Ordem de Serviço não permitem liberar manualmente o Flat ${flat.flatNumber} no status atual (${scenarioInfo.label || scenario}). ${filterEval.blockReason || "Altere as Travas de Liberação na configuração da ordem caso deseje autorizar este status."}`
+      requiresConfirmation: true,
+      filterViolations: filterEval.violations || [],
+      error: `Este apartamento possui violações de filtro (${scenarioInfo.label || scenario}). Confirme explicitamente a liberação por exceção.`
     });
   }
 
   const nowIso = new Date().toISOString();
-  flat.forceReleased = false;
-  flat.forceReleasedUpdatedAt = nowIso;
-  flat.forceReleasedDate = null;
-  flat.forceReleasedScenario = null;
+  if (targetForce) {
+    flat.forceReleased = true;
+    flat.forceReleasedUpdatedAt = nowIso;
+    flat.forceReleasedDate = todayStr;
+    flat.forceReleasedScenario = scenario;
+    flat.forceReleasedBy = userAuth.name || userAuth.username || "Admin";
+  } else {
+    flat.forceReleased = false;
+    flat.forceReleasedUpdatedAt = nowIso;
+    flat.forceReleasedDate = null;
+    flat.forceReleasedScenario = null;
+    flat.forceReleasedBy = null;
+  }
   order.updatedAt = nowIso;
 
   saveDatabase("force_release_service_flat");
 
+  logAuditEvent({
+    level: targetForce ? "warn" : "info",
+    category: "cleaning",
+    action: targetForce ? "SERVICE_ORDER_FORCE_RELEASE_EXCEPTION" : "SERVICE_ORDER_FORCE_RELEASE_REVOKE",
+    actor: { id: userAuth.id, name: userAuth.username || userAuth.name || "admin", role: userAuth.role },
+    details: {
+      serviceOrderId: order.id,
+      flatId: flat.flatId,
+      flatNumber: flat.flatNumber,
+      forceReleased: targetForce,
+      scenario,
+      filterViolations: filterEval.violations || [],
+      updatedAt: nowIso
+    }
+  });
+
+  if (targetForce) {
+    checkAndNotifyAvailableServiceFlats(order.id);
+  }
+
   res.json({
     success: true,
     flat,
-    forceReleased: false,
-    message: `O Flat ${flat.flatNumber} segue estritamente as travas de filtro da Ordem de Serviço.`
+    forceReleased: Boolean(flat.forceReleased),
+    message: targetForce
+      ? `Exceção liberada manualmente para o Flat ${flat.flatNumber} hoje (${scenarioInfo.label || scenario}).`
+      : `Liberação manual revogada. O Flat ${flat.flatNumber} voltou às travas normais do filtro.`
   });
 });
 
@@ -26484,7 +26548,9 @@ app.get("/api/service/public/:token", (req, res) => {
     const isAllowed = filterEval.allowed;
     return {
       ...f,
-      forceReleased: false,
+      forceReleased: filterEval.forceReleased,
+      isFilterAllowed: filterEval.filterAllowed,
+      filterViolations: filterEval.violations || [],
       isDirty: realtime.isDirty,
       isOccupied: realtime.isOccupied,
       cleaningStatus: realtime.cleaningStatus,
@@ -26500,7 +26566,7 @@ app.get("/api/service/public/:token", (req, res) => {
       operationalScenarioLabel: scenarioInfo.label || scenario,
       operationalScenarioIcon: scenarioInfo.icon || "🏠",
       isStatusAllowed: isAllowed,
-      statusBlockReason: isAllowed ? null : (filterEval.blockReason || `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`),
+      statusBlockReason: filterEval.blockReason || (filterEval.filterAllowed ? null : `Bloqueado: ${scenarioInfo.blockReason || "status não autorizado para este serviço."}`),
       hasGuestInside: scenario === "stayover" || scenario === "checkout_pendente" || Boolean(realtime.isOccupied),
       scenarioWarning: scenarioInfo.warning || null
     };
@@ -27315,6 +27381,33 @@ const SPECIALTY_LABELS = {
   geral: "🔧 Reparo Geral"
 };
 
+function isRealMaintenanceObservation(o) {
+  if (!o || typeof o !== "object") return false;
+  if (
+    o.generatedFromWhatsApp ||
+    o.generatedFromNps ||
+    o.generatedFromReviewId ||
+    o.type === "reclamacao" ||
+    o.description?.includes("[IA Auto-Ticket]") ||
+    o.description?.includes("[WhatsApp Defeito]") ||
+    o.description?.includes("[WhatsApp Crítica]") ||
+    o.description?.includes("[NPS Auto-Ticket]")
+  ) {
+    return false;
+  }
+  if (!o.text || typeof o.text !== "string" || !o.text.trim()) return false;
+  return o.status === "aberta" || o.status === "resolvida";
+}
+
+function purgeNonMaintenanceObservations(targetDb = db) {
+  if (!Array.isArray(targetDb?.observations)) return;
+  const beforeLen = targetDb.observations.length;
+  targetDb.observations = targetDb.observations.filter(o => isRealMaintenanceObservation(o));
+  if (targetDb.observations.length !== beforeLen) {
+    try { saveDatabase("purge_invalid_observations"); } catch (_) {}
+  }
+}
+
 function getOrInitHandymanSettings(targetDb = db) {
   if (!targetDb.handymanSettings || typeof targetDb.handymanSettings !== "object") {
     targetDb.handymanSettings = {
@@ -27676,9 +27769,12 @@ app.put("/api/handyman/settings", (req, res) => {
 
 // GET /api/observations — Lista todas as ocorrências / manutenções enriquecidas com status ao vivo
 app.get("/api/observations", (req, res) => {
+  purgeNonMaintenanceObservations(db);
   const todayStr = getTodayStr();
   const { category, status, flatId, assignedTo, workflowStage } = req.query || {};
-  let list = (db.observations || []).map(o => enrichObservationWithLiveStatus(o, todayStr));
+  let list = (db.observations || [])
+    .filter(o => isRealMaintenanceObservation(o))
+    .map(o => enrichObservationWithLiveStatus(o, todayStr));
 
   if (category && category !== "all") {
     list = list.filter(o => o.category === category || o.specialty === category);
@@ -31733,8 +31829,9 @@ app.get("/api/pms/calendar", (req, res) => {
         cleaningLabel = "Limpo";
       }
     }
+    purgeNonMaintenanceObservations(db);
     const openMaintenanceIssues = (db.observations || [])
-      .filter(o => o && o.status !== "resolvida" && (Number(o.flatId) === Number(f.id) || String(o.flatNumber) === fNum))
+      .filter(o => isRealMaintenanceObservation(o) && o.status === "aberta" && (Number(o.flatId) === Number(f.id) || String(o.flatNumber) === fNum))
       .map(o => typeof enrichObservationWithLiveStatus === "function" ? enrichObservationWithLiveStatus(o, todayStr) : o);
     const hasImpeditiveMaintenance = openMaintenanceIssues.some(o => Boolean(o.isRentalBlocker));
 
