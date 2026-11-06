@@ -2931,16 +2931,38 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormRequesterPhone(resItem.requesterInfo?.phone || "")
     setFormRequesterEmail(resItem.requesterInfo?.email || "")
     setFormRequesterCpf(resItem.requesterInfo?.cpf || "")
-    setFormCompanyId(resItem.companyId ? String(resItem.companyId) : "")
-    setFormCompanyName(resItem.companyName || "")
-    setFormAgencyId(resItem.agencyId ? String(resItem.agencyId) : "")
-    setFormAgencyName(resItem.agencyTradeName || resItem.agencyName || "")
-    setFormAgencyCnpj(resItem.agencyCnpj || "")
-    setFormAgencyPosUnit(resItem.agencyPosUnit || "")
-    setFormAgencyAgentName(resItem.agencyAgentName || "")
-    setFormAgencyAgentEmail(resItem.agencyAgentEmail || "")
-    setFormAgencyAgentPhone(resItem.agencyAgentPhone || "")
-    setFormCostCenter(resItem.costCenter || "")
+    const cleanResCompCnpj = String(resItem.companyCnpj || "").replace(/\D/g, "")
+    const matchedCompany = resItem.companyId
+      ? companies.find((c: any) => String(c.id) === String(resItem.companyId))
+      : companies.find((c: any) =>
+          (cleanResCompCnpj && cleanResCompCnpj.length === 14 && String(c.cnpj || "").replace(/\D/g, "") === cleanResCompCnpj) ||
+          (resItem.companyName && (
+            String(c.corporateName || "").trim().toLowerCase() === String(resItem.companyName).trim().toLowerCase() ||
+            String(c.tradeName || "").trim().toLowerCase() === String(resItem.companyName).trim().toLowerCase()
+          ))
+        )
+    setFormCompanyId(resItem.companyId ? String(resItem.companyId) : (matchedCompany ? String(matchedCompany.id) : ""))
+    setFormCompanyName(resItem.companyName || matchedCompany?.tradeName || matchedCompany?.corporateName || "")
+
+    const cleanResAgCnpj = String(resItem.agencyCnpj || "").replace(/\D/g, "")
+    const rawResAgName = String(resItem.agencyTradeName || resItem.agencyName || "").trim().toLowerCase()
+    const matchedAgency = resItem.agencyId
+      ? agencies.find((a: any) => String(a.id) === String(resItem.agencyId))
+      : agencies.find((a: any) =>
+          (cleanResAgCnpj && cleanResAgCnpj.length === 14 && String(a.cnpj || "").replace(/\D/g, "") === cleanResAgCnpj) ||
+          (rawResAgName && (
+            String(a.tradeName || "").trim().toLowerCase() === rawResAgName ||
+            String(a.corporateName || "").trim().toLowerCase() === rawResAgName
+          ))
+        )
+    setFormAgencyId(resItem.agencyId ? String(resItem.agencyId) : (matchedAgency ? String(matchedAgency.id) : ""))
+    setFormAgencyName(resItem.agencyTradeName || resItem.agencyName || matchedAgency?.tradeName || matchedAgency?.corporateName || "")
+    setFormAgencyCnpj(resItem.agencyCnpj || matchedAgency?.cnpj || "")
+    setFormAgencyPosUnit(resItem.agencyPosUnit || matchedAgency?.posUnits?.[0]?.name || "")
+    setFormAgencyAgentName(resItem.agencyAgentName || matchedAgency?.agents?.[0]?.name || "")
+    setFormAgencyAgentEmail(resItem.agencyAgentEmail || matchedAgency?.financialEmail || matchedAgency?.email || "")
+    setFormAgencyAgentPhone(resItem.agencyAgentPhone || matchedAgency?.phone || "")
+    setFormCostCenter(resItem.costCenter || matchedCompany?.defaultCostCenter || "")
     setFormB2bReservationNumber(resItem.b2bReservationNumber || resItem.externalReservationNumber || "")
     setFormB2bLocatorRloc(resItem.b2bLocatorRloc || "")
     setFormB2bOriginType(resItem.b2bOriginType === "OTA_WS" ? "OTA_WS" : "BOOKING_WS")
@@ -7758,7 +7780,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         </div>
 
                         {formB2bPaymentType === "VIRTUAL_CARD" && (
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                             <Input
                               value={formB2bCardBrand}
                               onChange={e => setFormB2bCardBrand(e.target.value)}
@@ -7769,6 +7791,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               value={formB2bCardMasked}
                               onChange={e => setFormB2bCardMasked(e.target.value)}
                               placeholder="Cartão Mascarado (553636******8926)"
+                              className="h-8 text-xs font-mono"
+                            />
+                            <Input
+                              value={formB2bVcnToken}
+                              onChange={e => setFormB2bVcnToken(e.target.value)}
+                              placeholder="Token VCN (Ex: Q3DQSN1)"
                               className="h-8 text-xs font-mono"
                             />
                             <Input

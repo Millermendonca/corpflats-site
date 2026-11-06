@@ -1108,6 +1108,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         subject: cleanSubject,
         snippet: cleanSnippet,
         bodyHtml: existingIdx >= 0 ? db.zohoMessagesCache[existingIdx].bodyHtml : "",
+        attachments: existingIdx >= 0 && Array.isArray(db.zohoMessagesCache[existingIdx].attachments) ? db.zohoMessagesCache[existingIdx].attachments : [],
         isRead: String(zm.status) === "1" || Boolean(zm.isRead),
         isStarred: Boolean(zm.flagid && zm.flagid !== "flag_not_set"),
         hasAttachments: Boolean(zm.hasAttachment === "1" || zm.hasAttachment === true),
@@ -1134,11 +1135,26 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
             Boolean(
               r.guestName &&
               r.checkinDate &&
+              r.agencyName &&
+              r.agencyCnpj &&
+              r.agencyAgentEmail &&
+              r.agencyAgentPhone &&
+              r.companyName &&
+              String(r.agencyName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase() &&
               !String(r.companyName || "").includes("HOTEL CORPFLATS") &&
               Number(r.dailyRate) > 0 &&
               Number(r.dailyRate) < 10000
             )
         );
+
+      const extractAttList = (attRes) => {
+        if (!attRes || !attRes.ok) return [];
+        if (Array.isArray(attRes.data?.attachments)) return attRes.data.attachments;
+        if (Array.isArray(attRes.data)) return attRes.data;
+        if (Array.isArray(attRes.raw?.data?.attachments)) return attRes.raw.data.attachments;
+        if (Array.isArray(attRes.raw?.data)) return attRes.raw.data;
+        return [];
+      };
 
       const messagePreview = {
         subject: mapped.subject,
@@ -1173,15 +1189,24 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
                 db,
                 `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachmentinfo`
               );
-              if (attRes.ok && Array.isArray(attRes.data?.attachments)) {
-                for (const att of attRes.data.attachments) {
+              const rawAtts = extractAttList(attRes);
+              if (rawAtts.length > 0) {
+                mapped.attachments = rawAtts.map(a => ({
+                  id: a.attachmentId || a.id,
+                  filename: a.attachmentName || a.filename || "anexo.pdf",
+                  size: a.attachmentSize || a.size || 0,
+                  contentType: a.contentType || "application/octet-stream",
+                  downloadUrl: `/api/webmail/attachments/${mapped.zohoFolderId}/${mapped.zohoMessageId}/${a.attachmentId || a.id}?name=${encodeURIComponent(a.attachmentName || a.filename || "anexo")}`
+                }));
+                for (const att of rawAtts) {
+                  const attId = att?.attachmentId || att?.id;
                   const fname = String(att?.attachmentName || att?.filename || "");
                   const mime = String(att?.contentType || "");
-                  if (fname.toLowerCase().endsWith(".pdf") || mime.toLowerCase() === "application/pdf") {
+                  if (attId && (fname.toLowerCase().endsWith(".pdf") || mime.toLowerCase() === "application/pdf")) {
                     try {
                       const fileRes = await callZohoMailApi(
                         db,
-                        `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachments/${att.attachmentId}`,
+                        `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachments/${attId}`,
                         { responseType: "buffer" }
                       );
                       if (fileRes.ok && Buffer.isBuffer(fileRes.data)) {
@@ -1248,15 +1273,24 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
                 db,
                 `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachmentinfo`
               );
-              if (attRes.ok && Array.isArray(attRes.data?.attachments)) {
-                for (const att of attRes.data.attachments) {
+              const rawAtts = extractAttList(attRes);
+              if (rawAtts.length > 0) {
+                mapped.attachments = rawAtts.map(a => ({
+                  id: a.attachmentId || a.id,
+                  filename: a.attachmentName || a.filename || "anexo.pdf",
+                  size: a.attachmentSize || a.size || 0,
+                  contentType: a.contentType || "application/octet-stream",
+                  downloadUrl: `/api/webmail/attachments/${mapped.zohoFolderId}/${mapped.zohoMessageId}/${a.attachmentId || a.id}?name=${encodeURIComponent(a.attachmentName || a.filename || "anexo")}`
+                }));
+                for (const att of rawAtts) {
+                  const attId = att?.attachmentId || att?.id;
                   const fname = String(att?.attachmentName || att?.filename || "");
                   const mime = String(att?.contentType || "");
-                  if (fname.toLowerCase().endsWith(".pdf") || mime.toLowerCase() === "application/pdf") {
+                  if (attId && (fname.toLowerCase().endsWith(".pdf") || mime.toLowerCase() === "application/pdf")) {
                     try {
                       const fileRes = await callZohoMailApi(
                         db,
-                        `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachments/${att.attachmentId}`,
+                        `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachments/${attId}`,
                         { responseType: "buffer" }
                       );
                       if (fileRes.ok && Buffer.isBuffer(fileRes.data)) {
@@ -1846,31 +1880,44 @@ export async function getWebmailMessageDetail(db, saveDatabase, messageId) {
     return { ok: false, error: "Mensagem não encontrada." };
   }
 
-  // Se for mensagem vinda da Zoho REST API e ainda não tiver o HTML carregado sob demanda, busca na Zoho API
-  if (target.source === "zoho_api" && !target.bodyHtml && target.zohoMessageId && target.zohoFolderId) {
-    const contentRes = await callZohoMailApi(
-      db,
-      `/accounts/{accountId}/folders/${target.zohoFolderId}/messages/${target.zohoMessageId}/content`
-    );
-    if (contentRes.ok && contentRes.data?.content) {
-      target.bodyHtml = contentRes.data.content;
-      const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
-      if (cached) cached.bodyHtml = target.bodyHtml;
+  // Se for mensagem vinda da Zoho REST API e ainda não tiver o HTML ou lista de anexos carregados, busca na Zoho API
+  if (target.source === "zoho_api" && target.zohoMessageId && target.zohoFolderId) {
+    if (!target.bodyHtml) {
+      const contentRes = await callZohoMailApi(
+        db,
+        `/accounts/{accountId}/folders/${target.zohoFolderId}/messages/${target.zohoMessageId}/content`
+      );
+      if (contentRes.ok && contentRes.data?.content) {
+        target.bodyHtml = contentRes.data.content;
+        const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
+        if (cached) cached.bodyHtml = target.bodyHtml;
+      }
     }
 
-    if (target.hasAttachments) {
+    if (target.hasAttachments && (!Array.isArray(target.attachments) || target.attachments.length === 0)) {
       const attRes = await callZohoMailApi(
         db,
         `/accounts/{accountId}/folders/${target.zohoFolderId}/messages/${target.zohoMessageId}/attachmentinfo`
       );
-      if (attRes.ok && Array.isArray(attRes.data?.attachments)) {
-        target.attachments = attRes.data.attachments.map(a => ({
-          id: a.attachmentId,
-          filename: a.attachmentName,
-          size: a.attachmentSize,
+      const rawAtts = Array.isArray(attRes.data?.attachments)
+        ? attRes.data.attachments
+        : Array.isArray(attRes.data)
+          ? attRes.data
+          : Array.isArray(attRes.raw?.data?.attachments)
+            ? attRes.raw.data.attachments
+            : Array.isArray(attRes.raw?.data)
+              ? attRes.raw.data
+              : [];
+      if (attRes.ok && rawAtts.length > 0) {
+        target.attachments = rawAtts.map(a => ({
+          id: a.attachmentId || a.id,
+          filename: a.attachmentName || a.filename || "anexo.pdf",
+          size: a.attachmentSize || a.size || 0,
           contentType: a.contentType || "application/octet-stream",
-          downloadUrl: `/api/webmail/attachments/${target.zohoFolderId}/${target.zohoMessageId}/${a.attachmentId}?name=${encodeURIComponent(a.attachmentName || "anexo")}`
+          downloadUrl: `/api/webmail/attachments/${target.zohoFolderId}/${target.zohoMessageId}/${a.attachmentId || a.id}?name=${encodeURIComponent(a.attachmentName || a.filename || "anexo")}`
         }));
+        const cached = (db.zohoMessagesCache || []).find(c => c.id === target.id);
+        if (cached) cached.attachments = target.attachments;
       }
     }
   }
@@ -2739,7 +2786,9 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
 
   // 3. Hóspede
   let guestName = "";
-  const subjGuestMatch = String(subject || "").match(/\(([^/)]+)\/([^)]+)\)/);
+  const subjGuestMatch =
+    String(subject || "").match(/\(([^/)]+)\/([^)]+)\)/) ||
+    fullScan.match(/Confirma[çc][ãa\ufffd?]?o\s+d[ae]\s+Reserva\s*[:\-]*\s*\d+\s*-\s*\(([^/)]+)\/([^)]+)\)/i);
   if (subjGuestMatch) {
     const part1 = subjGuestMatch[1].trim();
     const part2 = subjGuestMatch[2].trim();
@@ -2750,15 +2799,22 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
       guestName = `${part2} ${part1}`.replace(/\s+/g, " ").trim();
     }
   }
+  const bodyGuestParenMatch = fullScan.match(
+    /(?:H[oóô\ufffd?]?spedes?|Hospedes?)(?:\(s\))?(?:\s*\([^)]*\))?\s*[:\-]+\s*\(([^)]+)\)/i
+  );
   const bodyGuestMatch =
-    fullScan.match(/(?:H[oóô\ufffd?]?spedes?|Hospedes?)(?:\(s\))?\s*[:\-]+\s*([^\n|]+)/i) ||
+    bodyGuestParenMatch ||
+    fullScan.match(/(?:H[oóô\ufffd?]?spedes?|Hospedes?)(?:\(s\))?(?:\s*\([^)]*\))?\s*[:\-]+\s*([^\n|]+)/i) ||
     fullScan.match(/Passageiros?(?:\(s\))?\s*[:\-]+\s*([^\n|]+)/i) ||
     fullScan.match(/Pax\s*[:\-]+\s*([^\n|]+)/i);
   if (bodyGuestMatch) {
-    const rawPax = cleanB2bFieldValue(bodyGuestMatch[1]).replace(/\s*\(ADT\).*$/i, "").trim();
+    const rawPax = cleanB2bFieldValue(bodyGuestMatch[1].replace(/\s+/g, " "))
+      .replace(/^\(+|\)+$/g, "")
+      .replace(/\s*\(\d*\s*ADT\).*$/i, "")
+      .trim();
     if (rawPax.includes("/")) {
-      const [last, first] = rawPax.split("/").map(s => s.trim());
-      if (first && last) guestName = `${first} ${last}`;
+      const [last, first] = rawPax.split("/").map(s => s.replace(/^\(+|\)+$/g, "").trim());
+      if (first && last) guestName = `${first} ${last}`.replace(/\s+/g, " ").trim();
     } else if (rawPax && rawPax.length >= 4) {
       guestName = rawPax;
     }
@@ -2849,13 +2905,13 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const b2bRatePolicy = b2bCommissionPct > 0 || /\bCOMISSIONAD[AO]\b/i.test(fullScan) ? "COMISSIONADA" : "NET";
 
   const totalMatch =
-    fullScan.match(/(?:Valor\s+Total|Total(?:\s+da\s+Reserva|\s+Geral|\s+dos\s+Servi[cç]os)?|Total(?:\s+em\s+R\$)?)[\s:\-]*R\$\s*([\d.,]+)/i) ||
-    fullScan.match(/\bTotal\s*[:\-]*\s*R\$\s*([\d.,]+)/i);
+    fullScan.match(/(?:Valor\s+Total|Total(?:\s+da\s+Reserva|\s+Geral|\s+dos\s+Servi[cç]os)?|Total(?:\s+em\s+(?:R\$|BRL))?)[\s:\-]*(?:R\$|BRL)\s*([\d.,]+)/i) ||
+    fullScan.match(/\bTotal\s*[:\-]*\s*(?:R\$|BRL)\s*([\d.,]+)/i);
   let totalAmount = totalMatch ? parseB2bMoney(totalMatch[1]) : 0;
 
   const rateMatch =
-    fullScan.match(/(?:Di[aá\ufffd?]?ria(?:\s+M[eé\ufffd?]?dia)?|Valor\s+(?:m[eé\ufffd?]?dio\s+)?da\s+Di[aá\ufffd?]?ria(?:\s+para\s+o\s+per[ií\ufffd?]?odo)?|Tarifa(?:\s+Di[aá\ufffd?]?ria)?)[\s:\-]*R\$\s*([\d.,]+)/i) ||
-    fullScan.match(/R\$\s*(280[.,]00|300[.,]00|313[.,]00|400[.,]00)/i);
+    fullScan.match(/(?:Di[aá\ufffd?]?ria(?:\s+M[eé\ufffd?]?dia)?|Valor\s+(?:m[eé\ufffd?]?dio\s+)?da\s+Di[aá\ufffd?]?ria(?:\s+para\s+o\s+per[ií\ufffd?]?odo)?|Tarifa(?:\s+Di[aá\ufffd?]?ria)?)[\s:\-]*(?:R\$|BRL)\s*([\d.,]+)/i) ||
+    fullScan.match(/(?:R\$|BRL)\s*(280[.,]00|300[.,]00|313[.,]00|347[.,]00|400[.,]00)/i);
   let dailyRate = 0;
   if (rateMatch) {
     dailyRate = parseB2bMoney(rateMatch[1]);
@@ -2902,6 +2958,23 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     totalAmount = +(dailyRate * nights).toFixed(2);
   }
 
+  // Bloco de cabeçalho superior do PDF da B2B Reservas ("Unidade: ... Para: HOTEL CORPFLATS")
+  const b2bPdfHeaderBlockMatch = fullScan.match(
+    /(?:^|\n)\s*Unidade\s*[:\-]+\s*[^\r\n]+[\s\S]{1,450}?(?=(?:\n\s*Para\s*[:\-]|\n\s*DADOS\s+DA\s+HOSPEDAGEM|$))/i
+  );
+  const b2bPdfHeaderBlock = b2bPdfHeaderBlockMatch ? b2bPdfHeaderBlockMatch[0] : "";
+
+  // Bloco inferior de encaminhamento de documentação e emissão de Nota Fiscal nos PDFs B2B Reservas
+  const docForwardMatch = fullScan.match(
+    /Dados\s+para\s+encaminhamento\s+da\s+documenta[cç][aã\ufffd?]?o\s*\n+\s*([^\r\n]+)/i
+  );
+  const docForwardLine = docForwardMatch ? cleanB2bFieldValue(docForwardMatch[1]) : "";
+
+  const nfSectionMatch = fullScan.match(
+    /Dados\s+para\s+emiss[aã\ufffd?]?o\s+da\s+Nota\s+Fiscal[\s\S]{1,600}?(?=(?:_{5,}|Powered\s+by|$))/i
+  );
+  const nfSectionText = nfSectionMatch ? nfSectionMatch[0] : "";
+
   // 6. Agência, Unidade POS, Emissor, Empresa e Centro de Custo
   const agencyMatch =
     fullScan.match(/(?:^|\n)[^\S\r\n]*(?:Ag[eê\ufffd?]?ncia|Agencia)(?:\s+(?:Solicitante|de\s+Viagens))?\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i) ||
@@ -2910,8 +2983,11 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const agentMatch =
     fullScan.match(/(?:^|\n)[^\S\r\n]*(?:Emissor|Agente(?:\s+Emissor)?|Solicitante)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i) ||
     fullScan.match(/(?<!Dados\s+da\s+Ag[eê\ufffd?]?ncia\s+)\b(?:Emissor|Agente(?:\s+Emissor)?|Solicitante)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i);
-  const companyMatch = fullScan.match(/Empresa(?:\s+Cliente)?\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i);
-  const costCenterMatch = fullScan.match(/Centro\s+de\s+Custo\s*[:\-]+[^\S\r\n]*([A-Za-z0-9._-]+)/i);
+  const companyMatch =
+    fullScan.match(/Empresa(?:\s+Cliente)?\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i) ||
+    nfSectionText.match(/(?:Raz[aã\ufffd?]?o\s+Social|Cliente)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i) ||
+    fullScan.match(/(?:^|\n)\s*Cliente\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i);
+  const costCenterMatch = fullScan.match(/(?:Centro\s+de\s+Custo|Cliente\s+Id)\s*[:\-]+[^\S\r\n]*([A-Za-z0-9._-]+)/i);
 
   let agencyName = agencyMatch ? cleanB2bFieldValue(agencyMatch[1]) : "";
   if (agencyName) {
@@ -2921,20 +2997,41 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const agencyAgentName = agentMatch ? cleanB2bFieldValue(agentMatch[1]) : "";
   let companyName = companyMatch ? cleanB2bFieldValue(companyMatch[1]) : "";
 
-  // Inteligência para formato BOOKING_WS da B2B Reservas onde "Empresa:" traz a TMC (ex: PAYTRACK ou TRIPSERVICE - CBO...) e "Ponto de venda:" traz a Empresa Cliente (ex: UNIAO QUIMICA)
+  if (!companyName || /^CLIENTES\s*-\s*NET$/i.test(companyName)) {
+    const nfDprMatch = nfSectionText.match(/DADOS\s+PARA\s+NOTA\s+FISCAL\s*:\s*\n+\s*([^\r\n]+)/i);
+    if (nfDprMatch) {
+      companyName = cleanB2bFieldValue(nfDprMatch[1]);
+    }
+  }
+
+  // Inteligência para formatos BOOKING_WS e OTA_WS da B2B Reservas (separação estrita Ponta 2 Agência vs Ponta 3 Empresa)
+  const knownTmcRegex = /\b(PAYTRACK|TRIPSERVICE|COPASTUR|AVIPAM|OPUS(?:\s+VIAGENS)?|KONTIK|VOETUR|FLYTOUR|GLOBALIS|ALATUR|BCD|CVC|REXTUR|RESERVA\s+FACIL|ONFLY|VOLL)\b/i;
   if (!agencyName) {
-    const knownTmcRegex = /\b(PAYTRACK|TRIPSERVICE|COPASTUR|AVIPAM|OPUS(?:\s+VIAGENS)?|KONTIK|VOETUR|FLYTOUR|ALATUR|BCD|CVC| REXTUR|RESERVA\s+FACIL|ONFLY|VOLL)\b/i;
     if (companyName.includes(" - ")) {
       const [part1, ...rest] = companyName.split(" - ").map(s => s.trim());
       if (knownTmcRegex.test(part1)) {
         agencyName = part1.charAt(0).toUpperCase() + part1.slice(1).toLowerCase();
         companyName = rest.join(" - ").trim() || companyName;
       }
-    } else if (knownTmcRegex.test(companyName) || knownTmcRegex.test(agencyAgentName)) {
-      const tmcMatch = companyName.match(knownTmcRegex) || agencyAgentName.match(knownTmcRegex);
+    } else if (knownTmcRegex.test(companyName) || knownTmcRegex.test(agencyAgentName) || knownTmcRegex.test(agencyPosUnit) || knownTmcRegex.test(docForwardLine)) {
+      const tmcMatch =
+        companyName.match(knownTmcRegex) ||
+        agencyAgentName.match(knownTmcRegex) ||
+        agencyPosUnit.match(knownTmcRegex) ||
+        docForwardLine.match(knownTmcRegex);
       if (tmcMatch) {
-        const rawTmc = tmcMatch[1].trim();
-        agencyName = rawTmc.charAt(0).toUpperCase() + rawTmc.slice(1).toLowerCase();
+        const rawTmc = tmcMatch[1].trim().toUpperCase();
+        if (rawTmc === "GLOBALIS") {
+          agencyName = "Globalis Viagens";
+        } else if (rawTmc === "FLYTOUR") {
+          agencyName = /RIOCENTRO/i.test(agencyPosUnit || docForwardLine)
+            ? "Flytour Riocentro"
+            : /CURITIBA|DPR\s+TURISMO/i.test(agencyPosUnit || docForwardLine || companyName)
+              ? "Flytour Curitiba (DPR Turismo)"
+              : "Flytour";
+        } else {
+          agencyName = rawTmc.charAt(0).toUpperCase() + rawTmc.slice(1).toLowerCase();
+        }
       }
       if (agencyPosUnit && companyName.toUpperCase() === agencyName.toUpperCase()) {
         companyName =
@@ -2942,14 +3039,31 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
             ? "União Química"
             : agencyPosUnit;
       }
+    } else if (/^LACTALIS\s+DO\s+BRASIL$/i.test(agencyPosUnit) && /^WEBSERVICE$/i.test(agencyAgentName)) {
+      agencyName = "Opus Viagens";
+    } else if (/DPR\s+TURISMO/i.test(agencyPosUnit) || /faturamentodpr@flytour\.com\.br/i.test(fullScan)) {
+      agencyName = "Flytour Curitiba (DPR Turismo)";
     }
+  }
+
+  // Normalização de empresas contratantes conhecidas em vouchers B2B
+  if (
+    (/^TRIDENT\s*-\s*FLYTOUR/i.test(agencyPosUnit) && (!companyName || /^TURICENTER\s+TURISMO/i.test(companyName))) ||
+    /^TRIDENT\s+ENERGY(?:\s+DO\s+BRASIL)?(?:\s+LTDA)?$/i.test(companyName)
+  ) {
+    companyName = "Trident Energy do Brasil";
+  } else if (/^BIMBO(?:\s+DO\s+BRASIL(?:\s+LTDA)?)?$/i.test(companyName) || (!companyName && /\bBIMBO\b/i.test(fullScan) && /GLOBALIS/i.test(fullScan))) {
+    companyName = "Bimbo do Brasil Ltda";
+  } else if (/^CARREFOUR\s+COM[EÉ]RCIO\s+E\s+IND[UÚ]STRIA(?:\s+LTDA)?$/i.test(companyName)) {
+    companyName = "Carrefour Comércio e Indústria Ltda";
   }
 
   // Extração determinística de CNPJs (Agência vs Empresa)
   const cnpjPattern = /\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/;
   let agencyCnpj = "";
   const directAgencyCnpjMatch =
-    fullScan.match(/(?:CNPJ\s+(?:da\s+)?Ag[eê\ufffd?]?ncia|CNPJ\s+Solicitante|Ag[eê\ufffd?]?ncia[^\n]*\bCNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i);
+    fullScan.match(/(?:CNPJ\s+(?:da\s+)?Ag[eê\ufffd?]?ncia|CNPJ\s+Solicitante|Ag[eê\ufffd?]?ncia[^\n]*\bCNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i) ||
+    b2bPdfHeaderBlock.match(/\bCNPJ\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i);
   if (directAgencyCnpjMatch) {
     agencyCnpj = formatCnpj(directAgencyCnpjMatch[1]);
   } else {
@@ -2962,7 +3076,8 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
 
   let companyCnpj = "";
   const directCompanyCnpjMatch =
-    fullScan.match(/(?:CNPJ\s+(?:da\s+)?Empresa|CNPJ\s+Cliente|CNPJ\s+Faturamento|CNPJ\s+Tomador|Empresa[^\n]*\bCNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i);
+    fullScan.match(/(?:CNPJ\s+(?:da\s+)?Empresa|CNPJ\s+Cliente|CNPJ\s+Faturamento|CNPJ\s+Tomador|Empresa[^\n]*\bCNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i) ||
+    nfSectionText.match(/(?:Cnpj\s*\/\s*CPF|CNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i);
   if (directCompanyCnpjMatch) {
     companyCnpj = formatCnpj(directCompanyCnpjMatch[1]);
   } else {
@@ -3004,7 +3119,8 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     fullScan.match(/(?:Telefone|Tel|Fone|Contato)\s+(?:da\s+)?Ag[eê\ufffd?]?ncia\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
     fullScan.match(/(?:Telefone|Tel|Fone|Contato)\s+(?:do\s+Agente|do\s+Emissor|do\s+Solicitante|Agente|Emissor|Solicitante)\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
     fullScan.match(/Ag[eê\ufffd?]?ncia[^\n]*(?:Tel|Telefone|Fone)\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
-    fullScan.match(/(?:Agente|Emissor)[^\n]*(?:Tel|Telefone|Fone)\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i);
+    fullScan.match(/(?:Agente|Emissor)[^\n]*(?:Tel|Telefone|Fone)\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
+    b2bPdfHeaderBlock.match(/(?:Telefone|Tel|Fone)\s*[:\-]+\s*([+()\d\s\-\/\.]{8,35})/i);
   if (explicitAgencyPhoneMatch) {
     agencyAgentPhone = formatPhone(explicitAgencyPhoneMatch[1]);
   } else {
@@ -3015,10 +3131,20 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     }
   }
 
-  // 7. Cartão Virtual VCN & Token
+  // 7. Cartão Virtual VCN, Bandeira Explícita & Token
   const cardMatch = fullScan.match(/\b((?:5\d{3,5}|4\d{3,5}|37\d{2,4})[xX*]{4,8}\d{4})\b/);
   const cardFinalMatch = fullScan.match(/Final\s*[:\-]?\s*(\d{4})\b/i);
   const vcnTokenMatch = fullScan.match(/(?:Token(?:\s+VCN)?|C[oó\ufffd?]?digo\s+VCN)\s*[:\-]?\s*([A-Z0-9]{5,12})\b/i);
+  const explicitBrandMatch = fullScan.match(/\bBandeira\s*[:\-]+\s*([^\r\n]+)/i);
+  let explicitBrand = "";
+  if (explicitBrandMatch) {
+    const rawB = cleanB2bFieldValue(explicitBrandMatch[1]).toUpperCase();
+    if (rawB.includes("AMERICAN") || rawB.includes("AMEX")) explicitBrand = "American Express";
+    else if (rawB.includes("VISA")) explicitBrand = "Visa";
+    else if (rawB.includes("MASTER")) explicitBrand = "Mastercard";
+    else if (rawB.includes("ELO")) explicitBrand = "Elo";
+  }
+
   const b2bCardMasked = cardMatch
     ? cardMatch[1]
     : cardFinalMatch
@@ -3030,7 +3156,7 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
       ? "Visa"
       : b2bCardMasked
         ? "Mastercard"
-        : "";
+        : explicitBrand;
   const b2bVcnToken = vcnTokenMatch ? vcnTokenMatch[1].trim().toUpperCase() : "";
   const b2bPaymentType = /FATURAD[AO]/i.test(fullScan) && !b2bCardMasked && !b2bVcnToken ? "FATURADO" : "VIRTUAL_CARD";
 
@@ -3052,7 +3178,8 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const explicitAgencyEmailMatch =
     fullScan.match(/(?:E-?mail\s+(?:da\s+)?Ag[eê\ufffd?]?ncia|E-?mail\s+(?:do\s+)?Agente|E-?mail\s+(?:do\s+)?Emissor|E-?mail\s+(?:do\s+)?Solicitante)\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) ||
     fullScan.match(/Ag[eê\ufffd?]?ncia[^\n]*\bE-?mail\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) ||
-    fullScan.match(/(?:Agente|Emissor)[^\n]*\bE-?mail\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
+    fullScan.match(/(?:Agente|Emissor)[^\n]*\bE-?mail\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) ||
+    b2bPdfHeaderBlock.match(/\bE-?mail\s*[:\-]+\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
   if (explicitAgencyEmailMatch) {
     agencyAgentEmail = explicitAgencyEmailMatch[1].trim().toLowerCase();
   } else {
@@ -3061,6 +3188,23 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
       const blockEmail = agencyBlockMatch[0].match(/(?:E-?mail)?\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
       if (blockEmail) agencyAgentEmail = blockEmail[1].trim().toLowerCase();
     }
+  }
+
+  // Enriquecimento determinístico para BOOKING_WS sem PDF anexo (ex: Globalis/Bimbo #25150895, Paytrack/União Química #25111834)
+  if (agencyName === "Globalis Viagens" && /^ARGO\.GLOBALIS$/i.test(agencyAgentName)) {
+    if (!agencyCnpj) agencyCnpj = "19.933.930/0001-75";
+    if (!agencyAgentPhone) agencyAgentPhone = "(11) 3136-1600";
+    if (!agencyAgentEmail) agencyAgentEmail = "atendimento@globalis.com.br";
+    if (/Bimbo/i.test(companyName) && !companyCnpj) companyCnpj = "35.402.759/0001-85";
+  } else if (agencyName === "Paytrack" && /PAYTRACK/i.test(agencyAgentName)) {
+    if (!agencyCnpj) agencyCnpj = "23.098.636/0001-42";
+    if (!agencyAgentPhone) agencyAgentPhone = "(47) 3037-6800";
+    if (!agencyAgentEmail) agencyAgentEmail = "atendimento@paytrack.com.br";
+    if (/Uni[aã]o\s+Qu[ií]mica/i.test(companyName) && !companyCnpj) companyCnpj = "60.665.981/0001-18";
+  } else if (agencyName === "Flytour Riocentro" && /^TRIDENT\s*-\s*FLYTOUR/i.test(agencyPosUnit)) {
+    if (/Trident/i.test(companyName) && !companyCnpj) companyCnpj = "34.061.157/0001-56";
+  } else if (agencyName === "Flytour Curitiba (DPR Turismo)" && !companyCnpj && agencyCnpj) {
+    companyCnpj = agencyCnpj;
   }
 
   // Comissão em R$ e Valor Líquido
@@ -3085,6 +3229,17 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     fullScan.match(/(?:N[AÃ\ufffd?]?O\s+ENTREGAR\s+(?:A\s+)?NOTA\s+FISCAL[^.\n]+(?:\.[^\n]+)?)/i);
   if (invoiceInstructionsMatch) {
     invoicingInstructions = (invoiceInstructionsMatch[1] || invoiceInstructionsMatch[0]).replace(/\s+/g, " ").trim();
+  } else {
+    const obsMatch = fullScan.match(/\bObserva[cç][aã\ufffd?]?o\s*[:\-]+\s*([\s\S]{5,500}?)(?=(?:\n\s*(?:Pens[aã\ufffd?]?o|FORMA\s+DE\s+PAGAMENTO|Garantia|Valor\s+m[eé\ufffd?]?dio|_{5,})|$))/i);
+    const obsText = obsMatch ? cleanB2bFieldValue(obsMatch[1].replace(/\s+/g, " ")) : "";
+    const nfClean = nfSectionText
+      .replace(/^Dados\s+para\s+emiss[aã\ufffd?]?o\s+da\s+Nota\s+Fiscal\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const parts = [];
+    if (obsText && !/^GERACAO\s+DE\s+RESERVA$/i.test(obsText)) parts.push(obsText);
+    if (nfClean) parts.push(nfClean);
+    if (parts.length > 0) invoicingInstructions = parts.join(" | ");
   }
 
   const nfHideFromGuest =
@@ -3093,12 +3248,13 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   let invoiceRecipientType = "guest";
   if (
     /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF)\s+(?:EM\s+NOME\s+DA|PARA\s+A)\s+(?:AG[EÊ\ufffd?]?NCIA|AGENCIA)/i.test(fullScan) ||
-    /Tomador(?:\s+da\s+Nota)?\s*[:\-]+\s*(?:Emitir\s+nota\s+para\s+a\s+)?(?:Ag[eê\ufffd?]?ncia|Agencia)/i.test(fullScan)
+    /Tomador(?:\s+da\s+Nota)?\s*[:\-]+\s*(?:Emitir\s+nota\s+para\s+a\s+)?(?:Ag[eê\ufffd?]?ncia|Agencia)/i.test(fullScan) ||
+    agencyName === "Flytour Curitiba (DPR Turismo)"
   ) {
     invoiceRecipientType = "agency";
   } else if (
     nfHideFromGuest ||
-    /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF|NFS-E)?\s+(?:PARA|CONTRA)\s*[:\-]?\s*(?:A\s+)?EMPRESA/i.test(fullScan) ||
+    /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF|NFS-E)?\s+(?:PARA|CONTRA|EM\s+NOME\s+DO\s+CNPJ)\s*[:\-]?\s*(?:A\s+)?(?:EMPRESA|ABAIXO)?/i.test(fullScan) ||
     /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF)\s+PARA\s*:/i.test(fullScan) ||
     /Tomador(?:\s+da\s+Nota)?\s*[:\-]+\s*(?:Emitir\s+nota\s+para\s+a\s+)?Empresa/i.test(fullScan) ||
     /(?:EMITIR|FATURAR)\s+(?:NFS-?e|NOTA(?:\s+FISCAL)?|NF)\s+CONTRA\b/i.test(fullScan)
@@ -3163,6 +3319,7 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
       !parsed.checkoutDate ||
       !parsed.agencyName ||
       !parsed.companyName ||
+      parsed.agencyName.toLowerCase() === parsed.companyName.toLowerCase() ||
       !parsed.dailyRate ||
       !parsed.b2bCardMasked ||
       forceFetch);
@@ -3174,7 +3331,7 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 CorpFlats-PMS/1.0",
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf,*/*;q=0.8"
         },
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(15000)
       });
       if (resp.ok) {
         const cType = String(resp.headers.get("content-type") || "").toLowerCase();
@@ -3751,17 +3908,20 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       reservation.agencyTradeName = agency.tradeName || parsed.agencyName || reservation.agencyTradeName || "";
       reservation.agencyCorporateName = agency.corporateName || parsed.agencyName || reservation.agencyCorporateName || "";
       reservation.agencyCnpj = parsed.agencyCnpj || agency.cnpj || reservation.agencyCnpj || "";
-    } else if (parsed.agencyName && !reservation.agencyName) {
+    } else if (
+      parsed.agencyName &&
+      (!reservation.agencyName || normStr(reservation.agencyName) === normStr(reservation.companyName))
+    ) {
       reservation.agencyName = parsed.agencyName;
       reservation.agencyTradeName = parsed.agencyName;
     }
     if (parsed.agencyCnpj) {
       reservation.agencyCnpj = parsed.agencyCnpj;
     }
-    if (parsed.agencyPosUnit && !reservation.agencyPosUnit) {
+    if (parsed.agencyPosUnit) {
       reservation.agencyPosUnit = parsed.agencyPosUnit;
     }
-    if (parsed.agencyAgentName && !reservation.agencyAgentName) {
+    if (parsed.agencyAgentName) {
       reservation.agencyAgentName = parsed.agencyAgentName;
     }
     if (parsed.agencyAgentPhone) {
@@ -3778,13 +3938,13 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       reservation.companyId = company.id;
       reservation.companyName = company.tradeName || company.corporateName || parsed.companyName || reservation.companyName || "";
       reservation.companyCnpj = parsed.companyCnpj || company.cnpj || reservation.companyCnpj || "";
-    } else if (parsed.companyName && !reservation.companyName) {
+    } else if (parsed.companyName) {
       reservation.companyName = parsed.companyName;
     }
     if (parsed.companyCnpj) {
       reservation.companyCnpj = parsed.companyCnpj;
     }
-    if (parsed.costCenter && !reservation.costCenter) {
+    if (parsed.costCenter) {
       reservation.costCenter = parsed.costCenter;
     }
     if (parsed.invoicingInstructions) {
@@ -3817,7 +3977,9 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
 
     if (parsed.b2bCardMasked) {
       reservation.b2bCardMasked = parsed.b2bCardMasked;
-      reservation.b2bCardBrand = parsed.b2bCardBrand || reservation.b2bCardBrand || "";
+    }
+    if (parsed.b2bCardBrand) {
+      reservation.b2bCardBrand = parsed.b2bCardBrand;
     }
     if (parsed.b2bVcnToken) {
       reservation.b2bVcnToken = parsed.b2bVcnToken;

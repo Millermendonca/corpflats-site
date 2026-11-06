@@ -8638,21 +8638,22 @@ export function ensureB2bSeedData(targetDb = db) {
       razaoSocial: "Opus Viagens e Eventos Ltda",
       tradeName: "Opus Viagens",
       nomeFantasia: "Opus Viagens",
-      cnpj: "Isento / Não informado",
-      stateRegistration: "",
+      cnpj: "03.600.858/0001-23",
+      stateRegistration: "Isento",
       municipalRegistration: "",
       financialEmail: "lactalis@opusviagens.com.br",
       emailFinanceiro: "lactalis@opusviagens.com.br",
+      email: "lactalis@opusviagens.com.br",
       phone: "(11) 3995-2500 / (11) 99155-8446",
       telefone: "(11) 3995-2500 / (11) 99155-8446",
       contactPerson: "WEBSERVICE (Unidade POS: LACTALIS DO BRASIL)",
       billingTerms: "Cartão Virtual B2B (VCN) • Tarifa NET (0% comissão)",
-      address: "",
-      logradouro: "",
-      number: "",
+      address: "Rua Estados Unidos",
+      logradouro: "Rua Estados Unidos",
+      number: "1456",
       complement: "",
-      neighborhood: "",
-      cep: "",
+      neighborhood: "Jardim América",
+      cep: "01427001",
       city: "São Paulo",
       state: "SP",
       ibgeCode: "3550308",
@@ -8689,6 +8690,7 @@ export function ensureB2bSeedData(targetDb = db) {
       municipalRegistration: "",
       financialEmail: "conciliacao@copastur.com.br",
       emailFinanceiro: "conciliacao@copastur.com.br",
+      email: "conciliacao@copastur.com.br",
       phone: "(21) 3812-1128 / (11) 2394-2122",
       telefone: "(21) 3812-1128 / (11) 2394-2122",
       contactPerson: "Mateus Mizumoto (Vibra) / Fernanda Oliveira (Carrefour)",
@@ -8749,11 +8751,12 @@ export function ensureB2bSeedData(targetDb = db) {
       razaoSocial: "Avipam Turismo e Tecnologia Ltda",
       tradeName: "Avipam SP",
       nomeFantasia: "Avipam SP",
-      cnpj: "Isento / Não informado",
-      stateRegistration: "",
+      cnpj: "60.422.177/0001-59",
+      stateRegistration: "Isento",
       municipalRegistration: "",
       financialEmail: "cristalia@avipam.com.br",
       emailFinanceiro: "cristalia@avipam.com.br",
+      email: "cristalia@avipam.com.br",
       phone: "(11) 4890-4500",
       telefone: "(11) 4890-4500",
       contactPerson: "Gabriela Soares de Moura Silva (Unidade POS: CRISTALIA)",
@@ -8807,9 +8810,10 @@ export function ensureB2bSeedData(targetDb = db) {
       municipalRegistration: "",
       financialEmail: "faturamento@tripservice.com.br",
       emailFinanceiro: "faturamento@tripservice.com.br",
+      email: "faturamento@tripservice.com.br",
       phone: "(47) 2103-8400",
       telefone: "(47) 2103-8400",
-      contactPerson: "Cristiane (Unidade POS: TRIPSERVICE - CBO HOLDING S.A.)",
+      contactPerson: "Cristiane / Fernanda Vieira (Unidade POS: TRIPSERVICE - CBO HOLDING S.A.)",
       billingTerms: "Cartão Virtual B2B (VCN) • Tarifa Comissionada (12%)",
       address: "Rua Camboriú",
       logradouro: "Rua Camboriú",
@@ -8835,7 +8839,7 @@ export function ensureB2bSeedData(targetDb = db) {
           name: "TRIPSERVICE - CBO HOLDING S.A.",
           email: "cristiane.batista@tripservice.com.br",
           phone: "(47) 2103-8400",
-          agents: ["Cristiane"]
+          agents: ["Cristiane", "Fernanda Vieira"]
         }
       ],
       agents: [
@@ -8844,11 +8848,233 @@ export function ensureB2bSeedData(targetDb = db) {
           email: "cristiane.batista@tripservice.com.br",
           phone: "(47) 2103-8400",
           posUnit: "TRIPSERVICE - CBO HOLDING S.A."
+        },
+        {
+          name: "Fernanda Vieira",
+          email: "fernanda.vieira@tripservice.com.br",
+          phone: "(47) 2103-8400",
+          posUnit: "TRIPSERVICE - CBO COMPANHIA BRASILEIRA DE OFFSHORE"
         }
       ],
       clientCompanies: ["CBO - Companhia Brasileira de Offshore"],
       notes: "Agência B2B corporativa • Atendimento CBO Holding S.A. E-mail Faturamento: faturamento@tripservice.com.br.",
       createdAt: "2026-10-20T10:15:00.000Z"
+    },
+    {
+      corporateName: "Paytrack Tecnologia em Viagens e Despesas Corporativas Ltda",
+      razaoSocial: "Paytrack Tecnologia em Viagens e Despesas Corporativas Ltda",
+      tradeName: "Paytrack",
+      nomeFantasia: "Paytrack",
+      cnpj: "23.098.636/0001-42",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "atendimento@paytrack.com.br",
+      emailFinanceiro: "atendimento@paytrack.com.br",
+      email: "atendimento@paytrack.com.br",
+      phone: "(47) 3037-6800",
+      telefone: "(47) 3037-6800",
+      contactPerson: "Paytrack Webservice (Unidade POS: PAYTRACK - UNIAO QUIMICA)",
+      billingTerms: "Cartão Virtual B2B (VCN) • Tarifa NET (0% comissão)",
+      address: "Rua Antônio da Veiga",
+      logradouro: "Rua Antônio da Veiga",
+      endereco: "Rua Antônio da Veiga",
+      number: "419",
+      numero: "419",
+      complement: "Sala 10",
+      complemento: "Sala 10",
+      neighborhood: "Victor Konder",
+      bairro: "Victor Konder",
+      cep: "89012500",
+      city: "Blumenau",
+      cidade: "Blumenau",
+      state: "SC",
+      uf: "SC",
+      ibgeCode: "4202404",
+      codigoMunicipio: "4202404",
+      defaultRatePolicy: "NET",
+      defaultCommissionPct: 0,
+      defaultInvoiceRecipient: "company",
+      posUnits: [
+        {
+          name: "PAYTRACK - UNIAO QUIMICA",
+          email: "atendimento@paytrack.com.br",
+          phone: "(47) 3037-6800",
+          agents: ["Paytrack Webservice"]
+        }
+      ],
+      agents: [
+        {
+          name: "Paytrack Webservice",
+          email: "atendimento@paytrack.com.br",
+          phone: "(47) 3037-6800",
+          posUnit: "PAYTRACK - UNIAO QUIMICA"
+        }
+      ],
+      clientCompanies: ["União Química Farmacêutica Nacional S.A."],
+      notes: "Agência B2B corporativa • Atendimento União Química Farmacêutica Nacional S.A.",
+      createdAt: "2026-10-25T10:00:00.000Z"
+    },
+    {
+      corporateName: "Globalis Brasil Viagens Corporativas Ltda",
+      razaoSocial: "Globalis Brasil Viagens Corporativas Ltda",
+      tradeName: "Globalis Viagens",
+      nomeFantasia: "Globalis Viagens",
+      cnpj: "19.933.930/0001-75",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "atendimento@globalis.com.br",
+      emailFinanceiro: "atendimento@globalis.com.br",
+      email: "atendimento@globalis.com.br",
+      phone: "(11) 3136-1600",
+      telefone: "(11) 3136-1600",
+      contactPerson: "ARGO.GLOBALIS (Unidade POS: BIMBO)",
+      billingTerms: "Cartão Virtual B2B (VCN) • Tarifa NET (0% comissão)",
+      address: "Avenida Paulista",
+      logradouro: "Avenida Paulista",
+      endereco: "Avenida Paulista",
+      number: "2073",
+      numero: "2073",
+      complement: "Horsa II",
+      complemento: "Horsa II",
+      neighborhood: "Consolação",
+      bairro: "Consolação",
+      cep: "01311940",
+      city: "São Paulo",
+      cidade: "São Paulo",
+      state: "SP",
+      uf: "SP",
+      ibgeCode: "3550308",
+      codigoMunicipio: "3550308",
+      defaultRatePolicy: "NET",
+      defaultCommissionPct: 0,
+      defaultInvoiceRecipient: "company",
+      posUnits: [
+        {
+          name: "BIMBO",
+          email: "atendimento@globalis.com.br",
+          phone: "(11) 3136-1600",
+          agents: ["ARGO.GLOBALIS"]
+        }
+      ],
+      agents: [
+        {
+          name: "ARGO.GLOBALIS",
+          email: "atendimento@globalis.com.br",
+          phone: "(11) 3136-1600",
+          posUnit: "BIMBO"
+        }
+      ],
+      clientCompanies: ["Bimbo do Brasil Ltda"],
+      notes: "Agência B2B corporativa • Unidade POS: BIMBO (Emissor: ARGO.GLOBALIS). Atendimento Bimbo do Brasil Ltda.",
+      createdAt: "2026-10-29T10:00:00.000Z"
+    },
+    {
+      corporateName: "Turicenter Turismo Ltda - Flytour Serviços de Viagens",
+      razaoSocial: "Turicenter Turismo Ltda - Flytour Serviços de Viagens",
+      tradeName: "Flytour Riocentro",
+      nomeFantasia: "Flytour Riocentro",
+      cnpj: "31.370.836/0001-01",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "roque.miguez@flytour.com.br",
+      emailFinanceiro: "roque.miguez@flytour.com.br",
+      email: "roque.miguez@flytour.com.br",
+      phone: "(21) 3400-7810",
+      telefone: "(21) 3400-7810",
+      contactPerson: "ROQUE MIGUEZ (Unidade POS: TRIDENT - FLYTOUR RIOCENTRO)",
+      billingTerms: "Cartão Virtual B2B (VCN) • Tarifa Comissionada (12%)",
+      address: "Avenida Salvador Allende",
+      logradouro: "Avenida Salvador Allende",
+      endereco: "Avenida Salvador Allende",
+      number: "6555",
+      numero: "6555",
+      complement: "",
+      complemento: "",
+      neighborhood: "Barra da Tijuca",
+      bairro: "Barra da Tijuca",
+      cep: "22783127",
+      city: "Rio de Janeiro",
+      cidade: "Rio de Janeiro",
+      state: "RJ",
+      uf: "RJ",
+      ibgeCode: "3304557",
+      codigoMunicipio: "3304557",
+      defaultRatePolicy: "COMISSIONADA",
+      defaultCommissionPct: 12,
+      defaultInvoiceRecipient: "agency",
+      posUnits: [
+        {
+          name: "TRIDENT - FLYTOUR RIOCENTRO",
+          email: "roque.miguez@flytour.com.br",
+          phone: "(21) 3400-7810",
+          agents: ["ROQUE MIGUEZ"]
+        }
+      ],
+      agents: [
+        {
+          name: "ROQUE MIGUEZ",
+          email: "roque.miguez@flytour.com.br",
+          phone: "(21) 3400-7810",
+          posUnit: "TRIDENT - FLYTOUR RIOCENTRO"
+        }
+      ],
+      clientCompanies: ["Trident Energy do Brasil Ltda"],
+      notes: "Agência B2B corporativa • Unidade POS: TRIDENT - FLYTOUR RIOCENTRO (Emissor: ROQUE MIGUEZ). Atendimento Trident Energy do Brasil.",
+      createdAt: "2026-11-05T10:00:00.000Z"
+    },
+    {
+      corporateName: "DPR Turismo Ltda - Flytour Global Business Travel",
+      razaoSocial: "DPR Turismo Ltda - Flytour Global Business Travel",
+      tradeName: "Flytour Curitiba (DPR Turismo)",
+      nomeFantasia: "Flytour Curitiba (DPR Turismo)",
+      cnpj: "73.506.453/0001-68",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "faturamentodpr@flytour.com.br",
+      emailFinanceiro: "faturamentodpr@flytour.com.br",
+      email: "aluisioschievenin@flytour.com.br",
+      phone: "(41) 3015-0009",
+      telefone: "(41) 3015-0009",
+      contactPerson: "ALUISIO SCHIEVENIN (Unidade POS: DPR TURISMO LTDA - NET)",
+      billingTerms: "Cartão Virtual B2B (VCN) • Tarifa NET (0% comissão)",
+      address: "Rua Comendador Araújo",
+      logradouro: "Rua Comendador Araújo",
+      endereco: "Rua Comendador Araújo",
+      number: "143",
+      numero: "143",
+      complement: "Conjunto 92",
+      complemento: "Conjunto 92",
+      neighborhood: "Centro",
+      bairro: "Centro",
+      cep: "80420000",
+      city: "Curitiba",
+      cidade: "Curitiba",
+      state: "PR",
+      uf: "PR",
+      ibgeCode: "4106902",
+      codigoMunicipio: "4106902",
+      defaultRatePolicy: "NET",
+      defaultCommissionPct: 0,
+      defaultInvoiceRecipient: "agency",
+      posUnits: [
+        {
+          name: "DPR TURISMO LTDA - NET",
+          email: "aluisioschievenin@flytour.com.br",
+          phone: "(41) 3015-0009",
+          agents: ["ALUISIO SCHIEVENIN"]
+        }
+      ],
+      agents: [
+        {
+          name: "ALUISIO SCHIEVENIN",
+          email: "aluisioschievenin@flytour.com.br",
+          phone: "(41) 3015-0009",
+          posUnit: "DPR TURISMO LTDA - NET"
+        }
+      ],
+      clientCompanies: ["DPR Turismo Ltda"],
+      notes: "Agência B2B corporativa • Unidade POS: DPR TURISMO LTDA - NET (Emissor: ALUISIO SCHIEVENIN). E-mail Faturamento: faturamentodpr@flytour.com.br.",
+      createdAt: "2026-10-30T10:00:00.000Z"
     }
   ];
 
@@ -8865,6 +9091,26 @@ export function ensureB2bSeedData(targetDb = db) {
       existing = { id: nextId, ...sa };
       targetDb.agencies.push(existing);
       changed = true;
+    } else {
+      const isPlaceholderCnpj = !existing.cnpj || String(existing.cnpj).toLowerCase().includes("isento") || String(existing.cnpj).toLowerCase().includes("informado");
+      if (isPlaceholderCnpj && sa.cnpj && !sa.cnpj.toLowerCase().includes("isento")) {
+        existing.cnpj = sa.cnpj;
+        changed = true;
+      }
+      for (const k of ["corporateName", "razaoSocial", "tradeName", "nomeFantasia", "financialEmail", "emailFinanceiro", "email", "phone", "telefone", "contactPerson", "billingTerms", "address", "logradouro", "number", "neighborhood", "cep", "city", "state", "ibgeCode", "defaultRatePolicy", "defaultInvoiceRecipient", "notes"]) {
+        if (!existing[k] && sa[k]) {
+          existing[k] = sa[k];
+          changed = true;
+        }
+      }
+      if (!Array.isArray(existing.posUnits) || existing.posUnits.length === 0) {
+        existing.posUnits = sa.posUnits;
+        changed = true;
+      }
+      if (!Array.isArray(existing.agents) || existing.agents.length === 0) {
+        existing.agents = sa.agents;
+        changed = true;
+      }
     }
     agencyMapByName[sa.tradeName] = existing;
     agencyMapByName[sa.corporateName] = existing;
@@ -9005,8 +9251,8 @@ export function ensureB2bSeedData(targetDb = db) {
       razaoSocial: "CBO - Companhia Brasileira de Offshore",
       tradeName: "CBO Holding S.A.",
       nomeFantasia: "CBO Holding S.A.",
-      cnpj: "Isento / Não informado",
-      stateRegistration: "",
+      cnpj: "02.373.229/0001-09",
+      stateRegistration: "Isento",
       municipalRegistration: "",
       financialEmail: "faturamento@tripservice.com.br",
       emailFinanceiro: "faturamento@tripservice.com.br",
@@ -9015,12 +9261,12 @@ export function ensureB2bSeedData(targetDb = db) {
       contactPerson: "Cristiane (Tripservice - CBO Holding S.A.)",
       billingTerms: "B2B via Tripservice • Centro de Custo 9009671",
       defaultCostCenter: "9009671",
-      address: "",
-      logradouro: "",
-      number: "",
+      address: "Avenida Rio Branco",
+      logradouro: "Avenida Rio Branco",
+      number: "108",
       complement: "",
-      neighborhood: "",
-      cep: "",
+      neighborhood: "Centro",
+      cep: "20040001",
       city: "Rio de Janeiro",
       cidade: "Rio de Janeiro",
       state: "RJ",
@@ -9029,25 +9275,192 @@ export function ensureB2bSeedData(targetDb = db) {
       codigoMunicipio: "3304557",
       notes: "Empresa corporativa atendida pela agência Tripservice • Centro de Custo: 9009671.",
       createdAt: "2026-10-20T10:15:00.000Z"
+    },
+    {
+      corporateName: "União Química Farmacêutica Nacional S.A.",
+      razaoSocial: "União Química Farmacêutica Nacional S.A.",
+      tradeName: "União Química",
+      nomeFantasia: "União Química",
+      aliases: ["União Química"],
+      cnpj: "60.665.981/0001-18",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "atendimento@paytrack.com.br",
+      emailFinanceiro: "atendimento@paytrack.com.br",
+      phone: "(47) 3037-6800",
+      telefone: "(47) 3037-6800",
+      contactPerson: "Paytrack (Unidade União Química)",
+      billingTerms: "B2B via Paytrack • Emissão de NFS-e para União Química",
+      address: "Avenida Magalhães de Castro",
+      logradouro: "Avenida Magalhães de Castro",
+      number: "4800",
+      complement: "Torre 2",
+      neighborhood: "Cidade Jardim",
+      cep: "05676120",
+      city: "São Paulo",
+      cidade: "São Paulo",
+      state: "SP",
+      uf: "SP",
+      ibgeCode: "3550308",
+      codigoMunicipio: "3550308",
+      notes: "Empresa corporativa atendida pela agência Paytrack.",
+      createdAt: "2026-10-25T10:00:00.000Z"
+    },
+    {
+      corporateName: "Bimbo do Brasil Ltda",
+      razaoSocial: "Bimbo do Brasil Ltda",
+      tradeName: "Bimbo do Brasil",
+      nomeFantasia: "Bimbo do Brasil",
+      aliases: ["BIMBO"],
+      cnpj: "35.402.759/0001-85",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "atendimento@globalis.com.br",
+      emailFinanceiro: "atendimento@globalis.com.br",
+      phone: "(11) 3136-1600",
+      telefone: "(11) 3136-1600",
+      contactPerson: "ARGO.GLOBALIS (Globalis Viagens)",
+      billingTerms: "B2B via Globalis Viagens • Tarifa NET",
+      address: "Rua Engenheiro Luís Carlos Berrini",
+      logradouro: "Rua Engenheiro Luís Carlos Berrini",
+      number: "105",
+      complement: "",
+      neighborhood: "Cidade Monções",
+      cep: "04571010",
+      city: "São Paulo",
+      cidade: "São Paulo",
+      state: "SP",
+      uf: "SP",
+      ibgeCode: "3550308",
+      codigoMunicipio: "3550308",
+      notes: "Empresa corporativa atendida pela agência Globalis Viagens (Unidade POS: BIMBO).",
+      createdAt: "2026-10-29T10:00:00.000Z"
+    },
+    {
+      corporateName: "Trident Energy do Brasil Ltda",
+      razaoSocial: "Trident Energy do Brasil Ltda",
+      tradeName: "Trident Energy",
+      nomeFantasia: "Trident Energy",
+      aliases: ["Trident Energy do Brasil"],
+      cnpj: "34.061.157/0001-56",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "roque.miguez@flytour.com.br",
+      emailFinanceiro: "roque.miguez@flytour.com.br",
+      phone: "(21) 3400-7810",
+      telefone: "(21) 3400-7810",
+      contactPerson: "ROQUE MIGUEZ (Flytour Riocentro)",
+      billingTerms: "B2B via Flytour Riocentro • Tarifa Comissionada (12%)",
+      address: "Praia de Botafogo",
+      logradouro: "Praia de Botafogo",
+      number: "370",
+      complement: "11º Andar",
+      neighborhood: "Botafogo",
+      cep: "22250040",
+      city: "Rio de Janeiro",
+      cidade: "Rio de Janeiro",
+      state: "RJ",
+      uf: "RJ",
+      ibgeCode: "3304557",
+      codigoMunicipio: "3304557",
+      notes: "Empresa corporativa atendida pela agência Flytour Riocentro (Unidade POS: TRIDENT - FLYTOUR RIOCENTRO).",
+      createdAt: "2026-11-05T10:00:00.000Z"
+    },
+    {
+      corporateName: "DPR Turismo Ltda",
+      razaoSocial: "DPR Turismo Ltda",
+      tradeName: "DPR Turismo (Flytour)",
+      nomeFantasia: "DPR Turismo (Flytour)",
+      cnpj: "73.506.453/0001-68",
+      stateRegistration: "Isento",
+      municipalRegistration: "",
+      financialEmail: "faturamentodpr@flytour.com.br",
+      emailFinanceiro: "faturamentodpr@flytour.com.br",
+      phone: "(41) 3015-0009",
+      telefone: "(41) 3015-0009",
+      contactPerson: "ALUISIO SCHIEVENIN (Flytour Curitiba)",
+      billingTerms: "B2B via Flytour Curitiba • Centro de Custo 60292",
+      defaultCostCenter: "60292",
+      address: "Rua Comendador Araújo",
+      logradouro: "Rua Comendador Araújo",
+      number: "143",
+      complement: "Conjunto 92",
+      neighborhood: "Centro",
+      cep: "80420000",
+      city: "Curitiba",
+      cidade: "Curitiba",
+      state: "PR",
+      uf: "PR",
+      ibgeCode: "4106902",
+      codigoMunicipio: "4106902",
+      notes: "Empresa corporativa / tomadora de NFS-e atendida pela agência Flytour Curitiba (DPR Turismo) • Cliente Id: 60292.",
+      createdAt: "2026-10-30T10:00:00.000Z"
     }
   ];
 
   const companyMapByName = {};
   for (const sc of seedCompanies) {
     const cleanScCnpj = (sc.cnpj || "").replace(/\D/g, "");
+    const aliasList = Array.isArray(sc.aliases) ? sc.aliases.map(a => a.toLowerCase()) : [];
     let existing = targetDb.companies.find(c =>
       (cleanScCnpj && cleanScCnpj.length === 14 && (c.cnpj || "").replace(/\D/g, "") === cleanScCnpj) ||
       (c.corporateName && c.corporateName.trim().toLowerCase() === sc.corporateName.toLowerCase()) ||
-      (c.tradeName && c.tradeName.trim().toLowerCase() === sc.tradeName.toLowerCase())
+      (c.tradeName && c.tradeName.trim().toLowerCase() === sc.tradeName.toLowerCase()) ||
+      (c.corporateName && aliasList.includes(c.corporateName.trim().toLowerCase())) ||
+      (c.tradeName && aliasList.includes(c.tradeName.trim().toLowerCase()))
     );
     if (!existing) {
+      const { aliases: _omitAliases, ...companyData } = sc;
       const nextId = targetDb.companies.length > 0 ? Math.max(...targetDb.companies.map(c => Number(c.id) || 0)) + 1 : 1;
-      existing = { id: nextId, ...sc };
+      existing = { id: nextId, ...companyData };
       targetDb.companies.push(existing);
       changed = true;
+    } else {
+      const isPlaceholderCnpj = !existing.cnpj || String(existing.cnpj).toLowerCase().includes("isento") || String(existing.cnpj).toLowerCase().includes("informado");
+      if (isPlaceholderCnpj && sc.cnpj && !sc.cnpj.toLowerCase().includes("isento")) {
+        existing.cnpj = sc.cnpj;
+        changed = true;
+      }
+      if (aliasList.includes(String(existing.corporateName || "").trim().toLowerCase())) {
+        existing.corporateName = sc.corporateName;
+        existing.razaoSocial = sc.razaoSocial;
+        existing.tradeName = sc.tradeName;
+        existing.nomeFantasia = sc.nomeFantasia;
+        changed = true;
+      }
+      for (const k of ["financialEmail", "emailFinanceiro", "phone", "telefone", "contactPerson", "billingTerms", "defaultCostCenter", "address", "logradouro", "number", "neighborhood", "cep", "city", "cidade", "state", "uf", "ibgeCode", "codigoMunicipio", "notes"]) {
+        if (!existing[k] && sc[k]) {
+          existing[k] = sc[k];
+          changed = true;
+        }
+      }
     }
     companyMapByName[sc.corporateName] = existing;
     companyMapByName[sc.tradeName] = existing;
+    for (const al of (sc.aliases || [])) {
+      companyMapByName[al] = existing;
+    }
+  }
+
+  // Remove empresa duplicada não desmembrada "TRIPSERVICE - CBO COMPANHIA BRASILEIRA DE OFFSHORE" se CBO oficial existir
+  const cboComp = companyMapByName["CBO - Companhia Brasileira de Offshore"];
+  if (cboComp) {
+    const bogusIdx = targetDb.companies.findIndex(c =>
+      c.id !== cboComp.id &&
+      String(c.corporateName || "").toUpperCase().includes("TRIPSERVICE - CBO")
+    );
+    if (bogusIdx !== -1) {
+      const bogusId = targetDb.companies[bogusIdx].id;
+      for (const r of targetDb.reservations) {
+        if (r.companyId === bogusId) {
+          r.companyId = cboComp.id;
+          r.companyName = cboComp.corporateName;
+          r.companyCnpj = cboComp.cnpj;
+        }
+      }
+      targetDb.companies.splice(bogusIdx, 1);
+      changed = true;
+    }
   }
 
   // Vincula clientCompanyIds nas agências
@@ -9055,7 +9468,11 @@ export function ensureB2bSeedData(targetDb = db) {
     ["Opus Viagens", ["Lactalis do Brasil"]],
     ["Copastur", ["Vibra Energia S.A.", "Carrefour Comércio e Indústria Ltda"]],
     ["Avipam SP", ["Cristália Produtos Químicos Farmacêuticos Ltda"]],
-    ["Tripservice", ["CBO - Companhia Brasileira de Offshore"]]
+    ["Tripservice", ["CBO - Companhia Brasileira de Offshore"]],
+    ["Paytrack", ["União Química Farmacêutica Nacional S.A."]],
+    ["Globalis Viagens", ["Bimbo do Brasil Ltda"]],
+    ["Flytour Riocentro", ["Trident Energy do Brasil Ltda"]],
+    ["Flytour Curitiba (DPR Turismo)", ["DPR Turismo Ltda"]]
   ];
   for (const [agKey, compNames] of linkPairs) {
     const ag = agencyMapByName[agKey];
@@ -9068,7 +9485,7 @@ export function ensureB2bSeedData(targetDb = db) {
     }
   }
 
-  // 5 Reservas Reais B2B
+  // 10 Reservas Reais B2B (com backfill retroativo para reservas já existentes)
   const seedB2bReservations = [
     {
       b2bReservationNumber: "25055349",
@@ -9106,6 +9523,7 @@ export function ensureB2bSeedData(targetDb = db) {
       b2bConciliationUrl: "",
       b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
       invoiceRecipientType: "guest",
+      invoicingInstructions: "Emitir NF para o Hóspede com envio para arlindo.barcelos@br.lactalis.com e lactalis@opusviagens.com.br (Centro de Custo: 9000700).",
       nfDeliveryEmails: ["arlindo.barcelos@br.lactalis.com", "lactalis@opusviagens.com.br"],
       nfHideFromGuest: false,
       notes: "Reserva B2B #25055349 (RLOC: 25055349) • Origem: BOOKING_WS • Agência: Opus Viagens (Unidade POS: LACTALIS DO BRASIL) • Empresa: Lactalis do Brasil (CC: 9000700) • Cartão Virtual Mastercard 555047xxxxxx4135 (Token VCN: Q3DQSN1) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • NF emitida para o Hóspede com envio para arlindo.barcelos@br.lactalis.com e lactalis@opusviagens.com.br."
@@ -9146,6 +9564,7 @@ export function ensureB2bSeedData(targetDb = db) {
       b2bConciliationUrl: "https://portal.b2breservas.com.br/index.php?ds_destino=reserva/conciliacao/reserva_conciliacao.php;nr_reserva=28127b268f48196a602a6794a50e09d6d4e47318074a91e84c114ffeb2602e93",
       b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
       invoiceRecipientType: "company",
+      invoicingInstructions: "NÃO ENTREGAR NF AO HÓSPEDE NO BALCÃO. Emitir NF para Vibra Energia S.A. (CNPJ: 34.274.233/0001-02) e enviar exclusivamente para vibra@copastur.com.br e conciliacao@copastur.com.br.",
       nfDeliveryEmails: ["vibra@copastur.com.br", "conciliacao@copastur.com.br"],
       nfHideFromGuest: true,
       notes: "Reserva B2B #25057926 (RLOC: ZYIK2X) • Origem: OTA_WS • Agência: Copastur (Unidade POS: COPASTUR VIBRA ENERGIA | Emissor: Mateus Mizumoto) • Empresa: Vibra Energia S.A. (CNPJ: 34.274.233/0001-02) • Cartão Virtual Mastercard 531492xxxxxx1980 (Token VCN: V3GOOX4) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • NÃO ENTREGAR NF AO HÓSPEDE NO BALCÃO (Enviar NF exclusivamente para vibra@copastur.com.br e conciliacao@copastur.com.br)."
@@ -9186,6 +9605,7 @@ export function ensureB2bSeedData(targetDb = db) {
       b2bConciliationUrl: "",
       b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
       invoiceRecipientType: "company",
+      invoicingInstructions: "NÃO ENTREGAR NF AO HÓSPEDE. Emitir NF para Cristália Produtos Químicos Farmacêuticos Ltda (CNPJ: 33.054.115/0006-22) e enviar para cristalia@avipam.com.br e supervisoresSP@avipam.com.br.",
       nfDeliveryEmails: ["cristalia@avipam.com.br", "supervisoresSP@avipam.com.br"],
       nfHideFromGuest: true,
       notes: "Reserva B2B #25065298 (RLOC: KPO3ZX) • Origem: OTA_WS • Agência: Avipam SP (Unidade POS: CRISTALIA | Emissor: Gabriela Soares de Moura Silva) • Empresa: Cristália Produtos Químicos Farmacêuticos Ltda (CNPJ: 33.054.115/0006-22) • Cartão Virtual Mastercard 544165xxxxxx3919 (Token VCN: W3FRPN1) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • NÃO ENTREGAR NF AO HÓSPEDE (Enviar NF para cristalia@avipam.com.br e supervisoresSP@avipam.com.br)."
@@ -9226,6 +9646,7 @@ export function ensureB2bSeedData(targetDb = db) {
       b2bConciliationUrl: "",
       b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
       invoiceRecipientType: "company",
+      invoicingInstructions: "NÃO ENTREGAR NF AO HÓSPEDE NO BALCÃO. Emitir NF para Carrefour Comércio e Indústria Ltda (CNPJ: 45.543.915/0001-81) e enviar exclusivamente para conciliacao@copastur.com.br.",
       nfDeliveryEmails: ["conciliacao@copastur.com.br", "carrefour@copastur.com.br"],
       nfHideFromGuest: true,
       notes: "Reserva B2B #25078591 (RLOC: SUIG3T) • Origem: OTA_WS • Agência: Copastur (Unidade POS: COPASTUR GRUPO CARREFOUR | Emissor: Fernanda Leite Ferreira Silva de Oliveira) • Empresa: Carrefour Comércio e Indústria Ltda (CNPJ: 45.543.915/0001-81) • Cartão Virtual American Express 374770xxxxx6960 (Token VCN: H4FKTXD) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • NÃO ENTREGAR NF AO HÓSPEDE NO BALCÃO (Enviar NF exclusivamente para conciliacao@copastur.com.br)."
@@ -9266,9 +9687,216 @@ export function ensureB2bSeedData(targetDb = db) {
       b2bConciliationUrl: "",
       b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS (Autoriza extras alimentação até R$ 75/refeição + R$ 25 frigobar não alcoólico, teto R$ 100/dia, e estacionamento)",
       invoiceRecipientType: "guest",
+      invoicingInstructions: "Enviar NF com código identificador para faturamento@tripservice.com.br e cristiane.batista@tripservice.com.br (Centro de Custo: 9009671).",
       nfDeliveryEmails: ["faturamento@tripservice.com.br", "cristiane.batista@tripservice.com.br"],
       nfHideFromGuest: false,
       notes: "Reserva B2B #25086142 (RLOC: 25086142) • Origem: BOOKING_WS • Agência: Tripservice (Unidade POS: TRIPSERVICE - CBO HOLDING S.A. | Emissor: Cristiane) • Empresa: CBO - Companhia Brasileira de Offshore (CC: 9009671) • Cartão Virtual Mastercard 544165xxxxxx3610 (Token VCN: M3DNAH4) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS (Obs: autoriza extras de alimentação até R$ 75/refeição + R$ 25 frigobar não alcoólico, teto R$ 100/dia, e estacionamento) • Enviar NF com código identificador para faturamento@tripservice.com.br."
+    },
+    {
+      b2bReservationNumber: "25111834",
+      b2bLocatorRloc: "25111834",
+      b2bOriginType: "BOOKING_WS",
+      code: "RES-512-0530",
+      flatId: 12,
+      flatNumber: "512",
+      guestName: "Valtencir Soares de Oliveira",
+      guestEmail: "",
+      guestPhone: "5511963906651",
+      guestDocument: "25667456898",
+      checkinDate: "2026-10-26",
+      checkoutDate: "2026-10-30",
+      nights: 4,
+      includeBreakfast: true,
+      ratePlan: "with_breakfast",
+      b2bRatePolicy: "NET",
+      b2bCommissionPct: 0,
+      dailyRate: 280.00,
+      totalAmount: 1120.00,
+      b2bCommissionAmount: 0,
+      b2bNetAmount: 1120.00,
+      agencyKey: "Paytrack",
+      agencyPosUnit: "PAYTRACK - UNIAO QUIMICA",
+      agencyAgentName: "Paytrack Webservice",
+      agencyAgentEmail: "atendimento@paytrack.com.br",
+      agencyAgentPhone: "(47) 3037-6800",
+      companyKey: "União Química Farmacêutica Nacional S.A.",
+      costCenter: "",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "Mastercard",
+      b2bCardMasked: "555047xxxxxx8812",
+      b2bVcnToken: "T3JMNQ2",
+      b2bConciliationUrl: "",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "company",
+      invoicingInstructions: "Emitir NF para União Química Farmacêutica Nacional S.A. (CNPJ: 60.665.981/0001-18) e encaminhar para atendimento@paytrack.com.br.",
+      nfDeliveryEmails: ["atendimento@paytrack.com.br"],
+      nfHideFromGuest: true,
+      notes: "Reserva B2B #25111834 (RLOC: 25111834) • Origem: BOOKING_WS • Agência: Paytrack (Unidade POS: PAYTRACK - UNIAO QUIMICA) • Empresa: União Química Farmacêutica Nacional S.A. (CNPJ: 60.665.981/0001-18) • Cartão Virtual Mastercard 555047xxxxxx8812 (Token VCN: T3JMNQ2) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS."
+    },
+    {
+      b2bReservationNumber: "25152172",
+      b2bLocatorRloc: "10275999",
+      b2bOriginType: "BOOKING_WS",
+      code: "RES-113-B2B-25152172",
+      flatId: 1,
+      flatNumber: "113",
+      guestName: "Samuel Avila",
+      guestEmail: "",
+      guestPhone: "5551989677542",
+      guestDocument: "03121426085",
+      checkinDate: "2026-11-03",
+      checkoutDate: "2026-11-05",
+      nights: 2,
+      includeBreakfast: true,
+      ratePlan: "with_breakfast",
+      b2bRatePolicy: "NET",
+      b2bCommissionPct: 0,
+      dailyRate: 280.00,
+      totalAmount: 560.00,
+      b2bCommissionAmount: 0,
+      b2bNetAmount: 560.00,
+      agencyKey: "Flytour Curitiba (DPR Turismo)",
+      agencyPosUnit: "DPR TURISMO LTDA - NET",
+      agencyAgentName: "ALUISIO SCHIEVENIN",
+      agencyAgentEmail: "aluisioschievenin@flytour.com.br",
+      agencyAgentPhone: "(41) 3015-0009",
+      companyKey: "DPR Turismo Ltda",
+      costCenter: "60292",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "Mastercard",
+      b2bCardMasked: "555047xxxxxx7412",
+      b2bVcnToken: "P3JNGV8",
+      b2bConciliationUrl: "https://portal.b2breservas.com.br/index.php?ds_destino=reserva/conciliacao/reserva_conciliacao.php;nr_reserva=6643a2417ba25a4ef45f7510b4c14e9ec0d5b543baeb884f536fd1cf3b62d917",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "agency",
+      invoicingInstructions: "Encaminhar NF e documentação para faturamentodpr@flytour.com.br e aluisioschievenin@flytour.com.br. Emitir NF para DPR Turismo Ltda (CNPJ: 73.506.453/0001-68 • Cliente Id: 60292). Não entregar NF ao hóspede.",
+      nfDeliveryEmails: ["faturamentodpr@flytour.com.br", "aluisioschievenin@flytour.com.br"],
+      nfHideFromGuest: true,
+      notes: "Reserva B2B #25152172 (RLOC: 10275999) • Origem: BOOKING_WS • Agência: Flytour Curitiba (DPR Turismo) (Unidade POS: DPR TURISMO LTDA - NET | Emissor: ALUISIO SCHIEVENIN) • Empresa: DPR Turismo Ltda (CNPJ: 73.506.453/0001-68 | Cliente Id: 60292) • Cartão Virtual Mastercard 555047xxxxxx7412 (Token VCN: P3JNGV8) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • Enviar NF para faturamentodpr@flytour.com.br."
+    },
+    {
+      b2bReservationNumber: "25150895",
+      b2bLocatorRloc: "25150895",
+      b2bOriginType: "BOOKING_WS",
+      code: "RES-113-B2B-25150895",
+      flatId: 1,
+      flatNumber: "113",
+      guestName: "Edson Jose Leite Junior",
+      guestEmail: "",
+      guestPhone: "",
+      guestDocument: "",
+      checkinDate: "2026-11-12",
+      checkoutDate: "2026-11-13",
+      nights: 1,
+      includeBreakfast: true,
+      ratePlan: "with_breakfast",
+      b2bRatePolicy: "NET",
+      b2bCommissionPct: 0,
+      dailyRate: 280.00,
+      totalAmount: 280.00,
+      b2bCommissionAmount: 0,
+      b2bNetAmount: 280.00,
+      agencyKey: "Globalis Viagens",
+      agencyPosUnit: "BIMBO",
+      agencyAgentName: "ARGO.GLOBALIS",
+      agencyAgentEmail: "atendimento@globalis.com.br",
+      agencyAgentPhone: "(11) 3136-1600",
+      companyKey: "Bimbo do Brasil Ltda",
+      costCenter: "",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "Mastercard",
+      b2bCardMasked: "555047xxxxxx9104",
+      b2bVcnToken: "G3KLP91",
+      voucherUrl: "http://portal.b2breservas.com.br/content/conf_reserva.php?cd_reserva=26ef50aa73b3be4c4ef0b60d157d768a3e1330bc1c549dd0385e6a41227fd5a3",
+      b2bConciliationUrl: "http://portal.b2breservas.com.br/content/conf_reserva.php?cd_reserva=26ef50aa73b3be4c4ef0b60d157d768a3e1330bc1c549dd0385e6a41227fd5a3",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "company",
+      invoicingInstructions: "Emitir NF para Bimbo do Brasil Ltda (CNPJ: 35.402.759/0001-85) e enviar para atendimento@globalis.com.br e conciliacao@b2breservas.com.br. Não entregar NF ao hóspede (Tarifa NET).",
+      nfDeliveryEmails: ["atendimento@globalis.com.br", "conciliacao@b2breservas.com.br"],
+      nfHideFromGuest: true,
+      notes: "Reserva B2B #25150895 (RLOC: 25150895) • Origem: BOOKING_WS • Agência: Globalis Viagens (Unidade POS: BIMBO | Emissor: ARGO.GLOBALIS) • Empresa: Bimbo do Brasil Ltda (CNPJ: 35.402.759/0001-85) • Cartão Virtual Mastercard 555047xxxxxx9104 (Token VCN: G3KLP91) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • Enviar NF para atendimento@globalis.com.br."
+    },
+    {
+      b2bReservationNumber: "25201908",
+      b2bLocatorRloc: "10342505",
+      b2bOriginType: "BOOKING_WS",
+      code: "RES-113-B2B-25201908",
+      flatId: 1,
+      flatNumber: "113",
+      guestName: "Gabriel Pires Hage Chahine",
+      guestEmail: "",
+      guestPhone: "",
+      guestDocument: "",
+      checkinDate: "2026-11-05",
+      checkoutDate: "2026-11-06",
+      nights: 1,
+      includeBreakfast: true,
+      ratePlan: "with_breakfast",
+      b2bRatePolicy: "COMISSIONADA",
+      b2bCommissionPct: 12,
+      dailyRate: 347.00,
+      totalAmount: 347.00,
+      b2bCommissionAmount: 41.64,
+      b2bNetAmount: 305.36,
+      agencyKey: "Flytour Riocentro",
+      agencyPosUnit: "TRIDENT - FLYTOUR RIOCENTRO",
+      agencyAgentName: "ROQUE MIGUEZ",
+      agencyAgentEmail: "roque.miguez@flytour.com.br",
+      agencyAgentPhone: "(21) 3400-7810",
+      companyKey: "Trident Energy do Brasil Ltda",
+      costCenter: "",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "Mastercard",
+      b2bCardMasked: "555047xxxxxx6319",
+      b2bVcnToken: "I3JLT13",
+      b2bConciliationUrl: "https://portal.b2breservas.com.br/index.php?ds_destino=reserva/conciliacao/reserva_conciliacao.php;nr_reserva=9eb0d0d137fc0db9d719f7c910715b2eb237039a544a428b308ef756a81cf20f",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "agency",
+      invoicingInstructions: "Encaminhar NF e documentação para roque.miguez@flytour.com.br. Agência: Flytour Riocentro (CNPJ: 31.370.836/0001-01) • Cliente: Trident Energy do Brasil Ltda (CNPJ: 34.061.157/0001-56).",
+      nfDeliveryEmails: ["roque.miguez@flytour.com.br"],
+      nfHideFromGuest: true,
+      notes: "Reserva B2B #25201908 (RLOC: 10342505) • Origem: BOOKING_WS • Agência: Flytour Riocentro (Unidade POS: TRIDENT - FLYTOUR RIOCENTRO | Emissor: ROQUE MIGUEZ) • Empresa: Trident Energy do Brasil Ltda (CNPJ: 34.061.157/0001-56) • Cartão Virtual Mastercard 555047xxxxxx6319 (Token VCN: I3JLT13) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • Enviar NF para roque.miguez@flytour.com.br."
+    },
+    {
+      b2bReservationNumber: "25193040",
+      b2bLocatorRloc: "ZYIG6P",
+      b2bOriginType: "OTA_WS",
+      code: "RES-113-B2B-25193040",
+      flatId: 1,
+      flatNumber: "113",
+      guestName: "Nilton Santos",
+      guestEmail: "",
+      guestPhone: "",
+      guestDocument: "",
+      checkinDate: "2026-11-25",
+      checkoutDate: "2026-11-27",
+      nights: 2,
+      includeBreakfast: true,
+      ratePlan: "with_breakfast",
+      b2bRatePolicy: "COMISSIONADA",
+      b2bCommissionPct: 12,
+      dailyRate: 313.00,
+      totalAmount: 626.00,
+      b2bCommissionAmount: 75.12,
+      b2bNetAmount: 550.88,
+      agencyKey: "Copastur",
+      agencyPosUnit: "COPASTUR GRUPO CARREFOUR",
+      agencyAgentName: "Fernanda Leite Ferreira Silva de Oliveira",
+      agencyAgentEmail: "carrefour@copastur.com.br",
+      agencyAgentPhone: "(11) 2394-2122",
+      companyKey: "Carrefour Comércio e Indústria Ltda",
+      costCenter: "211505",
+      b2bPaymentType: "VIRTUAL_CARD",
+      b2bCardBrand: "American Express",
+      b2bCardMasked: "374770xxxxx8412",
+      b2bVcnToken: "H4FJSKB",
+      b2bConciliationUrl: "https://portal.b2breservas.com.br/index.php?ds_destino=reserva/conciliacao/reserva_conciliacao.php;nr_reserva=60d55e0d4131c641939337cbeb597b6260b9321b389d2f24d47329eb4159c0b5",
+      b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
+      invoiceRecipientType: "company",
+      invoicingInstructions: "NÃO ENTREGAR NF AO HÓSPEDE NO BALCÃO. Emitir NF para Carrefour Comércio e Indústria Ltda (CNPJ: 45.543.915/0001-81 • Cliente Id: 211505) e encaminhar exclusivamente para conciliacao@copastur.com.br e carrefour@copastur.com.br.",
+      nfDeliveryEmails: ["conciliacao@copastur.com.br", "carrefour@copastur.com.br"],
+      nfHideFromGuest: true,
+      notes: "Reserva B2B #25193040 (RLOC: ZYIG6P) • Origem: OTA_WS • Agência: Copastur (Unidade POS: COPASTUR GRUPO CARREFOUR | Emissor: Fernanda Leite Ferreira Silva de Oliveira) • Empresa: Carrefour Comércio e Indústria Ltda (CNPJ: 45.543.915/0001-81 | Cliente Id: 211505) • Cartão Virtual American Express 374770xxxxx8412 (Token VCN: H4FJSKB) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • Enviar NF para conciliacao@copastur.com.br."
     }
   ];
 
@@ -9278,6 +9906,9 @@ export function ensureB2bSeedData(targetDb = db) {
   for (const sr of seedB2bReservations) {
     if (deletedB2bCodes.includes(sr.b2bReservationNumber) || deletedB2bCodes.includes(sr.code)) continue;
 
+    const ag = agencyMapByName[sr.agencyKey];
+    const comp = companyMapByName[sr.companyKey];
+
     const existingRes = targetDb.reservations.find(r =>
       r.code === sr.code ||
       String(r.b2bReservationNumber) === sr.b2bReservationNumber ||
@@ -9285,16 +9916,158 @@ export function ensureB2bSeedData(targetDb = db) {
       (r.b2bLocatorRloc && r.b2bLocatorRloc === sr.b2bLocatorRloc && r.checkinDate === sr.checkinDate)
     );
     if (existingRes) {
+      let resUpdated = false;
+      const setField = (key, val) => {
+        if (val !== undefined && val !== null && val !== "" && existingRes[key] !== val) {
+          existingRes[key] = val;
+          resUpdated = true;
+        }
+      };
+
+      // Corrige nome invertido ou em caixa alta do voucher (ex: "SANTOS NILTON" -> "Nilton Santos")
+      if (sr.guestName && existingRes.guestName !== sr.guestName) {
+        existingRes.guestName = sr.guestName;
+        if (Array.isArray(existingRes.guests) && existingRes.guests[0]) {
+          existingRes.guests[0].name = sr.guestName;
+        }
+        resUpdated = true;
+      }
+
+      // Corrige datas, quantidade de diárias e tarifas se divergentes do voucher oficial
+      if (
+        existingRes.checkinDate !== sr.checkinDate ||
+        existingRes.checkoutDate !== sr.checkoutDate ||
+        Number(existingRes.nights) !== sr.nights ||
+        Number(existingRes.dailyRate) !== sr.dailyRate ||
+        Number(existingRes.totalAmount) !== sr.totalAmount
+      ) {
+        existingRes.checkinDate = sr.checkinDate;
+        existingRes.checkoutDate = sr.checkoutDate;
+        existingRes.nights = sr.nights;
+        existingRes.dailyRate = sr.dailyRate;
+        existingRes.totalAmount = sr.totalAmount;
+        const rebuiltRates = [];
+        const dStart = new Date(sr.checkinDate + "T00:00:00Z");
+        for (let i = 0; i < sr.nights; i++) {
+          const cur = new Date(dStart.getTime() + i * 86400000);
+          rebuiltRates.push({
+            date: cur.toISOString().substring(0, 10),
+            rate: sr.dailyRate,
+            channel: "b2b"
+          });
+        }
+        existingRes.dailyRates = rebuiltRates;
+        resUpdated = true;
+      }
+
+      // Backfill completo das 4-Pontas (Agência + Empresa + Financeiro/VCN + NFS-e)
+      setField("b2bReservationNumber", sr.b2bReservationNumber);
+      setField("externalReservationNumber", sr.b2bReservationNumber);
+      setField("b2bLocatorRloc", sr.b2bLocatorRloc);
+      setField("b2bOriginType", sr.b2bOriginType);
+      setField("channel", "b2b");
+      setField("clientType", "corporativo");
+      setField("paymentMethod", "vcn_b2b");
+
+      setField("agencyId", ag?.id || null);
+      setField("agencyName", ag?.corporateName || sr.agencyKey);
+      setField("agencyTradeName", ag?.tradeName || sr.agencyKey);
+      setField("agencyCnpj", ag?.cnpj || "");
+      setField("agencyPosUnit", sr.agencyPosUnit);
+      setField("agencyAgentName", sr.agencyAgentName);
+      setField("agencyAgentEmail", sr.agencyAgentEmail);
+      setField("agencyAgentPhone", sr.agencyAgentPhone);
+
+      setField("companyId", comp?.id || null);
+      setField("companyName", comp?.corporateName || sr.companyKey);
+      setField("companyCnpj", comp?.cnpj || "");
+      if (sr.costCenter && !existingRes.costCenter) {
+        setField("costCenter", sr.costCenter);
+      }
+
+      setField("b2bRatePolicy", sr.b2bRatePolicy);
+      if (existingRes.b2bCommissionPct !== sr.b2bCommissionPct) {
+        existingRes.b2bCommissionPct = sr.b2bCommissionPct;
+        resUpdated = true;
+      }
+      if (existingRes.b2bCommissionAmount !== sr.b2bCommissionAmount) {
+        existingRes.b2bCommissionAmount = sr.b2bCommissionAmount;
+        resUpdated = true;
+      }
+      if (existingRes.b2bNetAmount !== sr.b2bNetAmount) {
+        existingRes.b2bNetAmount = sr.b2bNetAmount;
+        resUpdated = true;
+      }
+
+      setField("b2bPaymentType", sr.b2bPaymentType);
+      setField("b2bCardBrand", sr.b2bCardBrand);
+      setField("b2bCardMasked", sr.b2bCardMasked);
+      setField("b2bVcnToken", sr.b2bVcnToken);
+      setField("b2bConciliationUrl", sr.b2bConciliationUrl);
+      setField("voucherUrl", sr.voucherUrl);
+      setField("b2bAuthorizedExpenses", sr.b2bAuthorizedExpenses);
+
+      setField("invoiceRecipientType", sr.invoiceRecipientType);
+      setField("nfRecipientType", sr.invoiceRecipientType);
+      setField("invoicingInstructions", sr.invoicingInstructions);
+      if (Array.isArray(sr.nfDeliveryEmails) && sr.nfDeliveryEmails.length > 0) {
+        const curEmails = Array.isArray(existingRes.nfDeliveryEmails) ? existingRes.nfDeliveryEmails : [];
+        if (JSON.stringify(curEmails) !== JSON.stringify(sr.nfDeliveryEmails)) {
+          existingRes.nfDeliveryEmails = sr.nfDeliveryEmails;
+          resUpdated = true;
+        }
+      }
+      if (existingRes.nfHideFromGuest !== sr.nfHideFromGuest) {
+        existingRes.nfHideFromGuest = sr.nfHideFromGuest;
+        resUpdated = true;
+      }
+
+      if (!existingRes.notes || existingRes.notes.includes("Agência:  | Empresa: ") || existingRes.notes.includes("Agência: BIMBO")) {
+        existingRes.notes = sr.notes;
+        resUpdated = true;
+      }
+      if (!existingRes.specialRequests) {
+        existingRes.specialRequests = `Despesas Autorizadas B2B: ${sr.b2bAuthorizedExpenses}`;
+        resUpdated = true;
+      }
+
       if (!existingRes.b2bCredentialEmailSentAt) {
         existingRes.b2bCredentialEmailSentAt = "2026-10-24T13:30:00.000Z";
         existingRes.b2bCredentialEmailRecipient = Array.isArray(sr.nfDeliveryEmails) ? sr.nfDeliveryEmails.join(", ") : (sr.agencyAgentEmail || "");
-        changed = true;
+        resUpdated = true;
       }
+
+      // Sincroniza o hóspede vinculado no CRM
+      const linkedGuest = targetDb.guests.find(g => g.id === existingRes.guestId);
+      if (linkedGuest) {
+        if (linkedGuest.name !== sr.guestName) {
+          linkedGuest.name = sr.guestName;
+          linkedGuest.fullName = sr.guestName;
+          resUpdated = true;
+        }
+        if (ag && linkedGuest.agencyId !== ag.id) {
+          linkedGuest.agencyId = ag.id;
+          linkedGuest.agencyName = ag.tradeName || sr.agencyKey;
+          resUpdated = true;
+        }
+        if (comp && linkedGuest.companyId !== comp.id) {
+          linkedGuest.companyId = comp.id;
+          linkedGuest.companyName = comp.corporateName || sr.companyKey;
+          resUpdated = true;
+        }
+        if (sr.costCenter && !linkedGuest.costCenter) {
+          linkedGuest.costCenter = sr.costCenter;
+          resUpdated = true;
+        }
+        if (linkedGuest.clientType !== "corporativo") {
+          linkedGuest.clientType = "corporativo";
+          resUpdated = true;
+        }
+      }
+
+      if (resUpdated) changed = true;
       continue;
     }
-
-    const ag = agencyMapByName[sr.agencyKey];
-    const comp = companyMapByName[sr.companyKey];
 
     // Upsert do Hóspede no CRM
     let guest = targetDb.guests.find(g =>
@@ -9374,6 +10147,7 @@ export function ensureB2bSeedData(targetDb = db) {
       ],
       checkinDate: sr.checkinDate,
       checkoutDate: sr.checkoutDate,
+      nights: sr.nights,
       checkinTime: "14:00",
       checkoutTime: "12:00",
       channel: "b2b",
@@ -9415,10 +10189,13 @@ export function ensureB2bSeedData(targetDb = db) {
       b2bCardMasked: sr.b2bCardMasked,
       b2bVcnToken: sr.b2bVcnToken,
       b2bConciliationUrl: sr.b2bConciliationUrl,
+      voucherUrl: sr.voucherUrl || "",
       b2bConciliationStatus: "pendente",
       b2bAuthorizedExpenses: sr.b2bAuthorizedExpenses,
       // Regras de Emissão e Envio de NFS-e
       invoiceRecipientType: sr.invoiceRecipientType,
+      nfRecipientType: sr.invoiceRecipientType,
+      invoicingInstructions: sr.invoicingInstructions || "",
       nfDeliveryEmails: sr.nfDeliveryEmails,
       nfHideFromGuest: sr.nfHideFromGuest,
       b2bCredentialEmailSentAt: "2026-10-24T13:30:00.000Z",

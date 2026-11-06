@@ -572,4 +572,109 @@ Emissor: Carlos Eduardo
     });
   });
 
+  describe('9. Extração de Vouchers B2B Reservas Reais (BRL, 1 ADT, Cabeçalho Unidade e Desmembramento Ponta 2 vs Ponta 3)', () => {
+    it('9.1 Reserva #25150895 (Edson Jose Leite Junior) deve separar Globalis Viagens (Ponta 2) de Bimbo do Brasil Ltda (Ponta 3)', () => {
+      const snippet = `
+Confirmação da Reserva: 25150895 - (LEITE JUNIOR/EDSON JOSE)
+De: BIMBO
+Emissor: ARGO.GLOBALIS
+Período: 12/11/2026 a 13/11/2026
+Diária: R$ 280,00
+Política: Tarifa NET
+`;
+      const parsed = parseB2bVoucherText(snippet);
+      assert.strictEqual(parsed.b2bReservationNumber, '25150895');
+      assert.strictEqual(parsed.guestName, 'Edson Jose Leite Junior');
+      assert.strictEqual(parsed.agencyName, 'Globalis Viagens');
+      assert.strictEqual(parsed.agencyCnpj, '19.933.930/0001-75');
+      assert.strictEqual(parsed.companyName, 'Bimbo do Brasil Ltda');
+      assert.strictEqual(parsed.companyCnpj, '35.402.759/0001-85');
+      assert.notStrictEqual(parsed.agencyName, parsed.companyName);
+    });
+
+    it('9.2 Reserva #25201908 (Gabriel Pires Hage Chahine) deve extrair BRL 347,00, 12% comissão, Flytour Riocentro e Trident Energy', () => {
+      const pdfText = `
+CONFIRMAÇÃO DE RESERVA: 25201908 - RLOC: 10342505 BOOKING_WS
+Unidade: TRIDENT - FLYTOUR RIOCENTRO
+Emissor: ROQUE MIGUEZ
+E-mail: roque.miguez@flytour.com.br
+Tel: (21) 3400-7810
+Cnpj: 31.370.836/0001-01
+Para: HOTEL CORPFLATS
+Período de 05/11/2026 a 06/11/2026
+Valor médio da Diária para o período:BRL 347,00 + 0,00% ISS
+Comissão: 12,00 %
+Hóspedes (1 ADT): (PIRES HAGE
+CHAHINE/GABRIEL)
+Garantia de No Show / Forma de Pagamento: CARTÃO VIRTUAL: DEBITAR SOMENTE DIARIAS | Bandeira: MASTER CARD | TOKEN: I3JLT13
+Dados para encaminhamento da documentação:
+Razão Social: TURICENTER TURISMO LTDA - FLYTOUR SERVIÇOS DE VIAGENS
+Cliente: TRIDENT ENERGY DO BRASIL
+Cnpj/CPF: 31.370.836/0001-01
+Email: roque.miguez@flytour.com.br
+`;
+      const parsed = parseB2bVoucherText(pdfText);
+      assert.strictEqual(parsed.b2bReservationNumber, '25201908');
+      assert.strictEqual(parsed.guestName, 'Gabriel Pires Hage Chahine');
+      assert.strictEqual(parsed.checkinDate, '2026-11-05');
+      assert.strictEqual(parsed.checkoutDate, '2026-11-06');
+      assert.strictEqual(parsed.nights, 1);
+      assert.strictEqual(parsed.dailyRate, 347);
+      assert.strictEqual(parsed.totalAmount, 347);
+      assert.strictEqual(parsed.b2bRatePolicy, 'COMISSIONADA');
+      assert.strictEqual(parsed.b2bCommissionPct, 12);
+      assert.strictEqual(parsed.b2bCommissionAmount, 41.64);
+      assert.strictEqual(parsed.b2bNetAmount, 305.36);
+      assert.strictEqual(parsed.agencyName, 'Flytour Riocentro');
+      assert.strictEqual(parsed.agencyCnpj, '31.370.836/0001-01');
+      assert.strictEqual(parsed.companyName, 'Trident Energy do Brasil');
+      assert.strictEqual(parsed.companyCnpj, '34.061.157/0001-56');
+      assert.strictEqual(parsed.b2bCardBrand, 'Mastercard');
+      assert.strictEqual(parsed.b2bVcnToken, 'I3JLT13');
+    });
+
+    it('9.3 Reserva #25193040 (Nilton Santos) deve extrair 2 diárias (25/11 a 27/11), BRL 313,00 (Total 626,00), Copastur e Carrefour', () => {
+      const pdfText = `
+CONFIRMAÇÃO DE RESERVA: 25193040 - RLOC: ZYIG6P OTA_WS
+Unidade: COPASTUR GRUPO CARREFOUR
+Emissor: Fernanda Leite Ferreira Silva de Oliveira
+E-mail: carrefour@copastur.com.br
+Tel: (11) 2394-2122
+Cnpj: 43.637.214/0001-86
+Para: HOTEL CORPFLATS
+Período de 25/11/2026 a 27/11/2026
+Valor médio da Diária para o período:BRL 313,00 + 0,00% ISS
+Comissão: 12,00 %
+Hóspedes (1 ADT): (SANTOS/NILTON)
+Garantia de No Show / Forma de Pagamento: CARTÃO VIRTUAL: DEBITAR SOMENTE DIARIAS | Bandeira: AMERICAN EXPRESS | TOKEN: H4FJSKB
+Dados para encaminhamento da documentação:
+Encaminhar para: COPASTUR VIAGENS E TURISMO LTDA
+Email: conciliacao@copastur.com.br
+Dados para emissao da Nota Fiscal:
+Razão Social: Carrefour Comercio e Industria Ltda
+Cliente Id: 211505
+Cnpj/CPF: 45.543.915/0001-81
+Observação: NÃO ENTREGAR A NOTA FISCAL AO HÓSPEDE NO BALCÃO.
+`;
+      const parsed = parseB2bVoucherText(pdfText);
+      assert.strictEqual(parsed.b2bReservationNumber, '25193040');
+      assert.strictEqual(parsed.guestName, 'Nilton Santos');
+      assert.strictEqual(parsed.checkinDate, '2026-11-25');
+      assert.strictEqual(parsed.checkoutDate, '2026-11-27');
+      assert.strictEqual(parsed.nights, 2);
+      assert.strictEqual(parsed.dailyRate, 313);
+      assert.strictEqual(parsed.totalAmount, 626);
+      assert.strictEqual(parsed.b2bCommissionAmount, 75.12);
+      assert.strictEqual(parsed.b2bNetAmount, 550.88);
+      assert.strictEqual(parsed.agencyName, 'Copastur');
+      assert.strictEqual(parsed.agencyCnpj, '43.637.214/0001-86');
+      assert.strictEqual(parsed.companyName, 'Carrefour Comércio e Indústria Ltda');
+      assert.strictEqual(parsed.companyCnpj, '45.543.915/0001-81');
+      assert.strictEqual(parsed.costCenter, '211505');
+      assert.strictEqual(parsed.b2bCardBrand, 'American Express');
+      assert.strictEqual(parsed.b2bVcnToken, 'H4FJSKB');
+    });
+  });
+
 });
+
