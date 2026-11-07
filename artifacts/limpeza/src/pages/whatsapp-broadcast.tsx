@@ -249,12 +249,12 @@ function renderClientPreview(templateText: string, guest: BroadcastGuest | null)
     checkoutDate: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
     channelLabel: "Site Próprio"
   }
-  const firstName = g.firstName || (g.name || "Hóspede").split(" ")[0] || "Hóspede"
-  const fullName = g.fullName || g.name || "Hóspede"
-  const unit = g.unitsLabel || g.flatNumber || ""
-  const checkin = formatDateBrShort(g.checkinDate)
-  const checkout = formatDateBrShort(g.checkoutDate)
-  const canal = g.channelLabel || "Site Próprio"
+  const firstName = (g.firstName || (g.name || "Hóspede").trim().split(/\s+/)[0] || "Hóspede").trim()
+  const fullName = (g.fullName || g.name || "Hóspede").trim()
+  const unit = (g.unitsLabel || g.flatNumber || "").trim()
+  const checkin = formatDateBrShort(g.checkinDate).trim()
+  const checkout = formatDateBrShort(g.checkoutDate).trim()
+  const canal = (g.channelLabel || "Site Próprio").trim()
 
   return templateText
     .split("{{primeiro_nome}}").join(firstName)
@@ -274,8 +274,53 @@ interface WhatsAppFormatSpan {
   content: string
 }
 
+interface ProtectedRange {
+  start: number
+  end: number
+}
+
+function stripUrlTrailingChars(rawUrl: string): { cleanUrl: string; trailing: string } {
+  const trailingMatch = rawUrl.match(/[.,;:!?)*_~]+$/)
+  if (!trailingMatch) {
+    return { cleanUrl: rawUrl, trailing: "" }
+  }
+  return {
+    cleanUrl: rawUrl.slice(0, -trailingMatch[0].length),
+    trailing: trailingMatch[0]
+  }
+}
+
+function getProtectedRanges(text: string): ProtectedRange[] {
+  const ranges: ProtectedRange[] = []
+  const tokenRegex = /(`[^`\n]+`|https?:\/\/[^\s<]+)/g
+  let match: RegExpExecArray | null
+  while ((match = tokenRegex.exec(text)) !== null) {
+    const token = match[0]
+    if (token.startsWith("`")) {
+      ranges.push({ start: match.index, end: match.index + token.length })
+    } else {
+      const { cleanUrl } = stripUrlTrailingChars(token)
+      if (cleanUrl.length > 0) {
+        ranges.push({ start: match.index, end: match.index + cleanUrl.length })
+      }
+    }
+  }
+  return ranges
+}
+
+function isIndexProtected(idx: number, ranges: ProtectedRange[]): boolean {
+  for (let k = 0; k < ranges.length; k++) {
+    if (idx >= ranges[k].start && idx < ranges[k].end) return true
+  }
+  return false
+}
+
 function findNextWhatsAppFormatSpan(text: string): WhatsAppFormatSpan | null {
+  const protectedRanges = getProtectedRanges(text)
+
   for (let i = 0; i < text.length - 1; i++) {
+    if (isIndexProtected(i, protectedRanges)) continue
+
     const ch = text[i]
     if (ch !== "*" && ch !== "_" && ch !== "~") continue
 
@@ -286,17 +331,19 @@ function findNextWhatsAppFormatSpan(text: string): WhatsAppFormatSpan | null {
     if (!nextChar || /\s/.test(nextChar) || nextChar === ch) continue
 
     for (let j = i + 2; j < text.length; j++) {
-      if (text[j] === "\n") break
+      if (text[j] === "\n" && text[j + 1] === "\n") break
+      if (isIndexProtected(j, protectedRanges)) continue
+
       if (text[j] === ch) {
         const beforeClose = text[j - 1]
         const afterClose = j + 1 < text.length ? text[j + 1] : ""
-        if (ch === "_" && /[\p{L}\p{N}]/u.test(beforeClose) && /[\p{L}\p{N}]/u.test(afterClose)) {
-          continue
-        }
-        if (
+
+        const isValidCloser =
           !/\s/.test(beforeClose) &&
+          beforeClose !== ch &&
           (!afterClose || (afterClose !== ch && !/[\p{L}\p{N}]/u.test(afterClose)))
-        ) {
+
+        if (isValidCloser) {
           return {
             type: ch,
             start: i,
@@ -304,11 +351,74 @@ function findNextWhatsAppFormatSpan(text: string): WhatsAppFormatSpan | null {
             content: text.slice(i + 1, j)
           }
         }
-        break
+
+        const isNewValidOpener =
+          beforeClose !== ch &&
+          !/[\p{L}\p{N}]/u.test(beforeClose) &&
+          Boolean(afterClose) &&
+          !/\s/.test(afterClose) &&
+          afterClose !== ch
+
+        if (isNewValidOpener) {
+          break
+        }
+
+        continue
       }
     }
   }
   return null
+}
+
+function renderLeafTokens(text: string, keyPrefix: string): React.ReactNode[] {
+  if (!text) return []
+  const tokenRegex = /(`[^`\n]+`|https?:\/\/[^\s<]+)/g
+  const result: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let tokenIdx = 0
+
+  while ((match = tokenRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      result.push(text.slice(lastIndex, match.index))
+    }
+
+    const token = match[0]
+    if (token.startsWith("`") && token.endsWith("`") && token.length >= 2) {
+      result.push(
+        <code
+          key={`${keyPrefix}-code-${tokenIdx++}`}
+          className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/15 font-mono text-[11px]"
+        >
+          {token.slice(1, -1)}
+        </code>
+      )
+    } else {
+      const { cleanUrl, trailing } = stripUrlTrailingChars(token)
+      result.push(
+        <a
+          key={`${keyPrefix}-url-${tokenIdx++}`}
+          href={cleanUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sky-700 dark:text-sky-400 underline hover:opacity-80 break-all font-medium"
+        >
+          {cleanUrl}
+        </a>
+      )
+      if (trailing) {
+        result.push(trailing)
+      }
+    }
+
+    lastIndex = match.index + token.length
+  }
+
+  if (lastIndex < text.length) {
+    result.push(text.slice(lastIndex))
+  }
+
+  return result
 }
 
 function renderInlineFormatting(text: string, keyPrefix: string): React.ReactNode[] {
@@ -320,12 +430,12 @@ function renderInlineFormatting(text: string, keyPrefix: string): React.ReactNod
   while (remaining.length > 0) {
     const span = findNextWhatsAppFormatSpan(remaining)
     if (!span) {
-      nodes.push(remaining)
+      nodes.push(...renderLeafTokens(remaining, `${keyPrefix}-leaf-${idx++}`))
       break
     }
 
     if (span.start > 0) {
-      nodes.push(remaining.slice(0, span.start))
+      nodes.push(...renderLeafTokens(remaining.slice(0, span.start), `${keyPrefix}-pre-${idx}`))
     }
 
     const innerKey = `${keyPrefix}-f${idx++}`
@@ -357,60 +467,6 @@ function renderInlineFormatting(text: string, keyPrefix: string): React.ReactNod
   return nodes
 }
 
-function renderLineTokens(line: string, keyPrefix: string): React.ReactNode[] {
-  if (!line) return []
-  const tokenRegex = /(`[^`\n]+`|https?:\/\/[^\s<]+)/g
-  const result: React.ReactNode[] = []
-  let lastIndex = 0
-  let match: RegExpExecArray | null
-  let tokenIdx = 0
-
-  while ((match = tokenRegex.exec(line)) !== null) {
-    if (match.index > lastIndex) {
-      const plainChunk = line.slice(lastIndex, match.index)
-      result.push(...renderInlineFormatting(plainChunk, `${keyPrefix}-t${tokenIdx++}`))
-    }
-
-    const token = match[0]
-    if (token.startsWith("`") && token.endsWith("`") && token.length >= 2) {
-      result.push(
-        <code
-          key={`${keyPrefix}-code-${tokenIdx++}`}
-          className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/15 font-mono text-[11px]"
-        >
-          {token.slice(1, -1)}
-        </code>
-      )
-    } else {
-      const trailingMatch = token.match(/[.,;:!?)]+$/)
-      const cleanUrl = trailingMatch ? token.slice(0, -trailingMatch[0].length) : token
-      const trailingPunct = trailingMatch ? trailingMatch[0] : ""
-      result.push(
-        <a
-          key={`${keyPrefix}-url-${tokenIdx++}`}
-          href={cleanUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sky-700 dark:text-sky-400 underline hover:opacity-80 break-all font-medium"
-        >
-          {cleanUrl}
-        </a>
-      )
-      if (trailingPunct) {
-        result.push(trailingPunct)
-      }
-    }
-
-    lastIndex = match.index + token.length
-  }
-
-  if (lastIndex < line.length) {
-    result.push(...renderInlineFormatting(line.slice(lastIndex), `${keyPrefix}-tail`))
-  }
-
-  return result
-}
-
 export function renderWhatsAppFormattedText(text: string): React.ReactNode {
   if (!text) return null
   const blockRegex = /```([\s\S]+?)```/g
@@ -419,19 +475,9 @@ export function renderWhatsAppFormattedText(text: string): React.ReactNode {
   let match: RegExpExecArray | null
   let blockIdx = 0
 
-  const pushTextSegment = (segment: string, segKey: string) => {
-    const lines = segment.split("\n")
-    lines.forEach((line, lineIdx) => {
-      if (lineIdx > 0) {
-        output.push("\n")
-      }
-      output.push(...renderLineTokens(line, `${segKey}-L${lineIdx}`))
-    })
-  }
-
   while ((match = blockRegex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      pushTextSegment(text.slice(lastIndex, match.index), `seg-${blockIdx}`)
+      output.push(...renderInlineFormatting(text.slice(lastIndex, match.index), `seg-${blockIdx}`))
     }
     output.push(
       <code
@@ -445,7 +491,7 @@ export function renderWhatsAppFormattedText(text: string): React.ReactNode {
   }
 
   if (lastIndex < text.length) {
-    pushTextSegment(text.slice(lastIndex), `seg-end`)
+    output.push(...renderInlineFormatting(text.slice(lastIndex), `seg-end`))
   }
 
   return output
@@ -952,6 +998,42 @@ export default function WhatsappBroadcastPage() {
     }
 
     const rawSelection = messageTemplate.slice(start, end)
+
+    // Seleção com múltiplas linhas: aplica/remove o delimitador linha a linha (compatível com WhatsApp real e preview)
+    if (rawSelection.includes("\n")) {
+      const lines = rawSelection.split("\n")
+      const nonEmptyLines = lines.filter(l => l.trim().length > 0)
+      if (nonEmptyLines.length === 0) return
+
+      const allWrapped = nonEmptyLines.every(l => {
+        const t = l.trim()
+        return t.length > delimiter.length * 2 && t.startsWith(delimiter) && t.endsWith(delimiter)
+      })
+
+      const transformedLines = lines.map(line => {
+        const lLead = line.match(/^\s*/)?.[0] || ""
+        const lTrail = line.match(/\s*$/)?.[0] || ""
+        const lTrim = line.slice(lLead.length, line.length - lTrail.length)
+        if (!lTrim) return line
+        if (allWrapped) {
+          return `${lLead}${lTrim.slice(delimiter.length, -delimiter.length)}${lTrail}`
+        }
+        if (lTrim.length > delimiter.length * 2 && lTrim.startsWith(delimiter) && lTrim.endsWith(delimiter)) {
+          return line
+        }
+        return `${lLead}${delimiter}${lTrim}${delimiter}${lTrail}`
+      })
+
+      const replacement = transformedLines.join("\n")
+      const nextText = messageTemplate.slice(0, start) + replacement + messageTemplate.slice(end)
+      setMessageTemplate(nextText)
+      setTimeout(() => {
+        el.focus()
+        el.setSelectionRange(start, start + replacement.length)
+      }, 10)
+      return
+    }
+
     const leadingSpaces = rawSelection.match(/^\s*/)?.[0] || ""
     const trailingSpaces = rawSelection.match(/\s*$/)?.[0] || ""
     const trimmed = rawSelection.slice(leadingSpaces.length, rawSelection.length - trailingSpaces.length)
@@ -960,7 +1042,30 @@ export default function WhatsappBroadcastPage() {
       return
     }
 
-    // Se já estiver envolvido pelo delimitador, remove (toggle)
+    // Caso 1: A seleção está imediatamente entre delimitadores (ex.: usuário clicou B uma vez e clicou B novamente para remover)
+    const innerStart = start + leadingSpaces.length
+    const innerEnd = end - trailingSpaces.length
+    if (
+      innerStart >= delimiter.length &&
+      messageTemplate.slice(innerStart - delimiter.length, innerStart) === delimiter &&
+      messageTemplate.slice(innerEnd, innerEnd + delimiter.length) === delimiter
+    ) {
+      const nextText =
+        messageTemplate.slice(0, innerStart - delimiter.length) +
+        trimmed +
+        messageTemplate.slice(innerEnd + delimiter.length)
+      setMessageTemplate(nextText)
+      setTimeout(() => {
+        el.focus()
+        el.setSelectionRange(
+          innerStart - delimiter.length,
+          innerStart - delimiter.length + trimmed.length
+        )
+      }, 10)
+      return
+    }
+
+    // Caso 2: A própria seleção já inclui os delimitadores nas pontas (ex.: selecionou *texto*)
     if (
       trimmed.length > delimiter.length * 2 &&
       trimmed.startsWith(delimiter) &&
