@@ -267,6 +267,190 @@ function renderClientPreview(templateText: string, guest: BroadcastGuest | null)
     .split("{{canal_reserva}}").join(canal)
 }
 
+interface WhatsAppFormatSpan {
+  type: "*" | "_" | "~"
+  start: number
+  end: number
+  content: string
+}
+
+function findNextWhatsAppFormatSpan(text: string): WhatsAppFormatSpan | null {
+  for (let i = 0; i < text.length - 1; i++) {
+    const ch = text[i]
+    if (ch !== "*" && ch !== "_" && ch !== "~") continue
+
+    const prevChar = i > 0 ? text[i - 1] : ""
+    if (prevChar && (prevChar === ch || /[\p{L}\p{N}]/u.test(prevChar))) continue
+
+    const nextChar = text[i + 1]
+    if (!nextChar || /\s/.test(nextChar) || nextChar === ch) continue
+
+    for (let j = i + 2; j < text.length; j++) {
+      if (text[j] === "\n") break
+      if (text[j] === ch) {
+        const beforeClose = text[j - 1]
+        const afterClose = j + 1 < text.length ? text[j + 1] : ""
+        if (ch === "_" && /[\p{L}\p{N}]/u.test(beforeClose) && /[\p{L}\p{N}]/u.test(afterClose)) {
+          continue
+        }
+        if (
+          !/\s/.test(beforeClose) &&
+          (!afterClose || (afterClose !== ch && !/[\p{L}\p{N}]/u.test(afterClose)))
+        ) {
+          return {
+            type: ch,
+            start: i,
+            end: j,
+            content: text.slice(i + 1, j)
+          }
+        }
+        break
+      }
+    }
+  }
+  return null
+}
+
+function renderInlineFormatting(text: string, keyPrefix: string): React.ReactNode[] {
+  if (!text) return []
+  const nodes: React.ReactNode[] = []
+  let remaining = text
+  let idx = 0
+
+  while (remaining.length > 0) {
+    const span = findNextWhatsAppFormatSpan(remaining)
+    if (!span) {
+      nodes.push(remaining)
+      break
+    }
+
+    if (span.start > 0) {
+      nodes.push(remaining.slice(0, span.start))
+    }
+
+    const innerKey = `${keyPrefix}-f${idx++}`
+    const innerNodes = renderInlineFormatting(span.content, innerKey)
+
+    if (span.type === "*") {
+      nodes.push(
+        <strong key={innerKey} className="font-bold text-slate-950 dark:text-white">
+          {innerNodes}
+        </strong>
+      )
+    } else if (span.type === "_") {
+      nodes.push(
+        <em key={innerKey} className="italic">
+          {innerNodes}
+        </em>
+      )
+    } else {
+      nodes.push(
+        <del key={innerKey} className="line-through opacity-85">
+          {innerNodes}
+        </del>
+      )
+    }
+
+    remaining = remaining.slice(span.end + 1)
+  }
+
+  return nodes
+}
+
+function renderLineTokens(line: string, keyPrefix: string): React.ReactNode[] {
+  if (!line) return []
+  const tokenRegex = /(`[^`\n]+`|https?:\/\/[^\s<]+)/g
+  const result: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let tokenIdx = 0
+
+  while ((match = tokenRegex.exec(line)) !== null) {
+    if (match.index > lastIndex) {
+      const plainChunk = line.slice(lastIndex, match.index)
+      result.push(...renderInlineFormatting(plainChunk, `${keyPrefix}-t${tokenIdx++}`))
+    }
+
+    const token = match[0]
+    if (token.startsWith("`") && token.endsWith("`") && token.length >= 2) {
+      result.push(
+        <code
+          key={`${keyPrefix}-code-${tokenIdx++}`}
+          className="px-1 py-0.5 rounded bg-black/10 dark:bg-white/15 font-mono text-[11px]"
+        >
+          {token.slice(1, -1)}
+        </code>
+      )
+    } else {
+      const trailingMatch = token.match(/[.,;:!?)]+$/)
+      const cleanUrl = trailingMatch ? token.slice(0, -trailingMatch[0].length) : token
+      const trailingPunct = trailingMatch ? trailingMatch[0] : ""
+      result.push(
+        <a
+          key={`${keyPrefix}-url-${tokenIdx++}`}
+          href={cleanUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sky-700 dark:text-sky-400 underline hover:opacity-80 break-all font-medium"
+        >
+          {cleanUrl}
+        </a>
+      )
+      if (trailingPunct) {
+        result.push(trailingPunct)
+      }
+    }
+
+    lastIndex = match.index + token.length
+  }
+
+  if (lastIndex < line.length) {
+    result.push(...renderInlineFormatting(line.slice(lastIndex), `${keyPrefix}-tail`))
+  }
+
+  return result
+}
+
+export function renderWhatsAppFormattedText(text: string): React.ReactNode {
+  if (!text) return null
+  const blockRegex = /```([\s\S]+?)```/g
+  const output: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let blockIdx = 0
+
+  const pushTextSegment = (segment: string, segKey: string) => {
+    const lines = segment.split("\n")
+    lines.forEach((line, lineIdx) => {
+      if (lineIdx > 0) {
+        output.push("\n")
+      }
+      output.push(...renderLineTokens(line, `${segKey}-L${lineIdx}`))
+    })
+  }
+
+  while ((match = blockRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      pushTextSegment(text.slice(lastIndex, match.index), `seg-${blockIdx}`)
+    }
+    output.push(
+      <code
+        key={`block-${blockIdx++}`}
+        className="px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/15 font-mono text-[11px]"
+      >
+        {match[1]}
+      </code>
+    )
+    lastIndex = match.index + match[0].length
+  }
+
+  if (lastIndex < text.length) {
+    pushTextSegment(text.slice(lastIndex), `seg-end`)
+  }
+
+  return output
+}
+
 export default function WhatsappBroadcastPage() {
   const { toast } = useToast()
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -742,6 +926,69 @@ export default function WhatsappBroadcastPage() {
       el.focus()
       const cursor = start + tag.length
       el.setSelectionRange(cursor, cursor)
+    }, 10)
+  }
+
+  // Aplica formatação do WhatsApp (*negrito*, _itálico_, ~tachado~, `código`) na seleção ou cursor
+  const applyWhatsAppFormatting = (delimiter: "*" | "_" | "~" | "`") => {
+    const el = textareaRef.current
+    const placeholder = delimiter === "`" ? "código" : "texto"
+    if (!el) {
+      setMessageTemplate(prev => `${prev}${delimiter}${placeholder}${delimiter}`)
+      return
+    }
+    const start = el.selectionStart ?? messageTemplate.length
+    const end = el.selectionEnd ?? messageTemplate.length
+
+    if (start === end) {
+      const inserted = `${delimiter}${placeholder}${delimiter}`
+      const nextText = messageTemplate.slice(0, start) + inserted + messageTemplate.slice(end)
+      setMessageTemplate(nextText)
+      setTimeout(() => {
+        el.focus()
+        el.setSelectionRange(start + delimiter.length, start + delimiter.length + placeholder.length)
+      }, 10)
+      return
+    }
+
+    const rawSelection = messageTemplate.slice(start, end)
+    const leadingSpaces = rawSelection.match(/^\s*/)?.[0] || ""
+    const trailingSpaces = rawSelection.match(/\s*$/)?.[0] || ""
+    const trimmed = rawSelection.slice(leadingSpaces.length, rawSelection.length - trailingSpaces.length)
+
+    if (!trimmed) {
+      return
+    }
+
+    // Se já estiver envolvido pelo delimitador, remove (toggle)
+    if (
+      trimmed.length > delimiter.length * 2 &&
+      trimmed.startsWith(delimiter) &&
+      trimmed.endsWith(delimiter)
+    ) {
+      const unwrapped = trimmed.slice(delimiter.length, -delimiter.length)
+      const replacement = `${leadingSpaces}${unwrapped}${trailingSpaces}`
+      const nextText = messageTemplate.slice(0, start) + replacement + messageTemplate.slice(end)
+      setMessageTemplate(nextText)
+      setTimeout(() => {
+        el.focus()
+        el.setSelectionRange(
+          start + leadingSpaces.length,
+          start + leadingSpaces.length + unwrapped.length
+        )
+      }, 10)
+      return
+    }
+
+    const wrapped = `${leadingSpaces}${delimiter}${trimmed}${delimiter}${trailingSpaces}`
+    const nextText = messageTemplate.slice(0, start) + wrapped + messageTemplate.slice(end)
+    setMessageTemplate(nextText)
+    setTimeout(() => {
+      el.focus()
+      el.setSelectionRange(
+        start + leadingSpaces.length + delimiter.length,
+        start + leadingSpaces.length + delimiter.length + trimmed.length
+      )
     }, 10)
   }
 
@@ -2272,14 +2519,48 @@ export default function WhatsappBroadcastPage() {
               </div>
 
               {/* Editor da Mensagem */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <Label className="text-[11px] font-bold text-foreground">
                     Mensagem do WhatsApp
                   </Label>
-                  <span className="text-[10px] text-muted-foreground">
-                    {messageTemplate.length} caracteres
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => applyWhatsAppFormatting("*")}
+                      title="Negrito (*texto*)"
+                      className="h-6 px-2 rounded-md border border-border bg-background hover:bg-muted text-[11px] font-black text-foreground transition-colors"
+                    >
+                      B
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyWhatsAppFormatting("_")}
+                      title="Itálico (_texto_)"
+                      className="h-6 px-2 rounded-md border border-border bg-background hover:bg-muted text-[11px] italic font-serif font-semibold text-foreground transition-colors"
+                    >
+                      I
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyWhatsAppFormatting("~")}
+                      title="Tachado (~texto~)"
+                      className="h-6 px-2 rounded-md border border-border bg-background hover:bg-muted text-[11px] line-through font-semibold text-foreground transition-colors"
+                    >
+                      S
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyWhatsAppFormatting("`")}
+                      title="Monoespaçado (`código`)"
+                      className="h-6 px-2 rounded-md border border-border bg-background hover:bg-muted text-[10px] font-mono font-bold text-foreground transition-colors"
+                    >
+                      {"</>"}
+                    </button>
+                    <span className="text-[10px] text-muted-foreground ml-1">
+                      {messageTemplate.length} caracteres
+                    </span>
+                  </div>
                 </div>
                 <Textarea
                   ref={textareaRef}
@@ -2310,8 +2591,12 @@ export default function WhatsappBroadcastPage() {
                 </div>
 
                 <div className="rounded-2xl bg-[#efeae2] dark:bg-slate-900 border border-border p-3 shadow-inner">
-                  <div className="bg-[#d9fdd3] dark:bg-emerald-950/80 text-slate-900 dark:text-slate-100 rounded-2xl rounded-tr-xs p-3 text-xs whitespace-pre-wrap leading-relaxed shadow-xs border border-emerald-500/20">
-                    {renderedPreviewText || <span className="italic opacity-60">A pré-visualização aparecerá aqui...</span>}
+                  <div className="bg-[#d9fdd3] dark:bg-emerald-950/80 text-slate-900 dark:text-slate-100 rounded-2xl rounded-tr-xs p-3 text-xs whitespace-pre-wrap break-words leading-relaxed shadow-xs border border-emerald-500/20">
+                    {renderedPreviewText ? (
+                      renderWhatsAppFormattedText(renderedPreviewText)
+                    ) : (
+                      <span className="italic opacity-60">A pré-visualização aparecerá aqui...</span>
+                    )}
                     <div className="text-[9px] text-right text-slate-500 dark:text-slate-400 mt-1 font-mono">
                       {new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} ✓✓
                     </div>
@@ -2438,13 +2723,13 @@ export default function WhatsappBroadcastPage() {
               </div>
             </div>
 
-            <div className="p-3 rounded-xl border border-border bg-background space-y-1">
-              <span className="text-[10px] font-bold uppercase text-muted-foreground block">
+            <div className="p-3 rounded-xl border border-border bg-[#efeae2] dark:bg-slate-900 space-y-1.5">
+              <span className="text-[10px] font-bold uppercase text-slate-600 dark:text-slate-400 block">
                 Exemplo renderizado ({previewGuest?.name || "1º Destinatário"}):
               </span>
-              <p className="text-xs whitespace-pre-wrap text-foreground leading-relaxed">
-                {renderedPreviewText}
-              </p>
+              <div className="bg-[#d9fdd3] dark:bg-emerald-950/80 text-slate-900 dark:text-slate-100 rounded-xl rounded-tr-xs p-2.5 text-xs whitespace-pre-wrap break-words leading-relaxed border border-emerald-500/20">
+                {renderWhatsAppFormattedText(renderedPreviewText)}
+              </div>
             </div>
 
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground bg-emerald-500/5 border border-emerald-500/20 p-2.5 rounded-xl">
@@ -2496,8 +2781,10 @@ export default function WhatsappBroadcastPage() {
               />
             </div>
 
-            <div className="p-3 rounded-xl bg-muted/40 border border-border text-xs whitespace-pre-wrap">
-              {renderedPreviewText}
+            <div className="p-3 rounded-xl bg-[#efeae2] dark:bg-slate-900 border border-border">
+              <div className="bg-[#d9fdd3] dark:bg-emerald-950/80 text-slate-900 dark:text-slate-100 rounded-xl rounded-tr-xs p-2.5 text-xs whitespace-pre-wrap break-words leading-relaxed border border-emerald-500/20">
+                {renderWhatsAppFormattedText(renderedPreviewText)}
+              </div>
             </div>
           </div>
 
@@ -2581,9 +2868,9 @@ export default function WhatsappBroadcastPage() {
                     <span className="text-muted-foreground">Total: {camp.totalCount}</span>
                   </div>
 
-                  <p className="text-[11px] text-muted-foreground line-clamp-2 bg-muted/40 p-2 rounded-lg font-mono">
-                    {camp.messageTemplate}
-                  </p>
+                  <div className="text-[11px] text-muted-foreground line-clamp-2 bg-muted/40 p-2 rounded-lg font-sans">
+                    {renderWhatsAppFormattedText(camp.messageTemplate)}
+                  </div>
                 </div>
               ))
             )}
@@ -2704,8 +2991,8 @@ export default function WhatsappBroadcastPage() {
                             <summary className="cursor-pointer hover:text-foreground font-semibold select-none">
                               Ver mensagem personalizada enviada
                             </summary>
-                            <div className="mt-1 p-2 rounded-lg bg-muted/50 border border-border/60 whitespace-pre-wrap text-foreground font-sans">
-                              {rec.renderedMessage}
+                            <div className="mt-1 p-2.5 rounded-xl bg-[#d9fdd3] dark:bg-emerald-950/80 border border-emerald-500/20 whitespace-pre-wrap break-words text-slate-900 dark:text-slate-100 font-sans leading-relaxed">
+                              {renderWhatsAppFormattedText(rec.renderedMessage)}
                             </div>
                           </details>
                         )}
