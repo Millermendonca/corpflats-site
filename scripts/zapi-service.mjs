@@ -12441,6 +12441,7 @@ export function isReservationOrFlatCheckedOut(db, resv, flatIdOverride = null, f
     const cleanReqs = (db.cleaningRequests || []).filter(c => {
       if (!c || c.isDeleted || c.status === "deleted") return false;
       if (c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only") return false;
+      if (c.isStayover || c.type === "stayover" || c.cleaningType === "stayover" || c.source === "service_order" || c.cleaningType === "service_order" || c.type === "service_cleaning") return false;
       const cNumClean = String(c.flatNumber || "").replace(/\D/g, "");
       const sameFlat = (fId && Number(c.flatId) === Number(fId)) || (fNumClean && cNumClean === fNumClean);
       if (!sameFlat) return false;
@@ -12521,6 +12522,7 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
   const targetIdStr = (reservationId ?? reservation?.id) !== undefined && (reservationId ?? reservation?.id) !== null
     ? String(reservationId ?? reservation?.id)
     : "";
+  const hasSpecificReservationTarget = Boolean(reservation || targetCodeUpper || targetIdStr);
 
   for (const r of (db.reservations || [])) {
     if (!r || r.status === "cancelada" || r.status === "cancelled" || r.status === "cancelado") continue;
@@ -12532,7 +12534,11 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
       continue;
     }
 
-    if (fId || fNumClean) {
+    // Só busca reservas do flat com saída hoje quando uma reserva específica NÃO foi informada
+    // (ex: quando apenas o número do flat foi marcado como desocupado/limpo).
+    // Isso evita que uma reserva antiga já concluída (de ontem ou anteontem no mesmo flat, avaliada para NPS)
+    // cancele por engano o checkout_reminder do hóspede atual que faz check-out hoje naquele flat.
+    if (!hasSpecificReservationTarget && (fId || fNumClean)) {
       const rFlatClean = String(r.flatNumber || "").replace(/\D/g, "");
       const sameFlat = (fId && Number(r.flatId) === Number(fId)) || (fNumClean && rFlatClean === fNumClean);
       if (sameFlat && r.checkoutDate === todayStr) {
@@ -12557,10 +12563,12 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
         matchedCodes.add(`RES-${r.flatNumber}-${r.id}`.toUpperCase());
       }
     }
-    const rawPhones = [r.guestPhone, r.phone, ...(Array.isArray(r.guests) ? r.guests.map(g => g?.phone) : [])];
-    for (const p of rawPhones) {
-      const digits = String(p || "").replace(/\D/g, "");
-      if (digits.length >= 8) matchedPhonesLast8.add(digits.slice(-8));
+    if (!r.checkoutDate || r.checkoutDate === todayStr || r.earlyCheckoutDate === todayStr) {
+      const rawPhones = [r.guestPhone, r.phone, ...(Array.isArray(r.guests) ? r.guests.map(g => g?.phone) : [])];
+      for (const p of rawPhones) {
+        const digits = String(p || "").replace(/\D/g, "");
+        if (digits.length >= 8) matchedPhonesLast8.add(digits.slice(-8));
+      }
     }
   }
 
@@ -12580,7 +12588,7 @@ export function cancelPendingStayRemindersForCheckout(dbOrGetter, saveDatabase =
       const qId = qItem.reservationId !== undefined && qItem.reservationId !== null ? String(qItem.reservationId) : "";
       let isMatch = (qCode && matchedCodes.has(qCode)) || (qId && (matchedIds.has(qId) || matchedCodes.has(qId)));
 
-      if (!isMatch && (ev === "checkout_reminder" || tplId === "tpl_checkout_reminder" || ev === "breakfast_reminder")) {
+      if (!isMatch && !qCode && !qId && (ev === "checkout_reminder" || tplId === "tpl_checkout_reminder" || ev === "breakfast_reminder")) {
         const qPhoneDigits = String(qItem.guestPhone || "").replace(/\D/g, "");
         const qSchedDate = String(qItem.scheduledFor || "").substring(0, 10);
         if (qPhoneDigits.length >= 8 && matchedPhonesLast8.has(qPhoneDigits.slice(-8)) && (!qSchedDate || qSchedDate === todayStr)) {
@@ -13193,6 +13201,8 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
     r.status !== "cancelada" && 
     r.status !== "cancelled" && 
     r.status !== "CANCELLED" && 
+    r.status !== "no_show" &&
+    r.status !== "noshow" &&
     r.checkoutDate && 
     r.checkoutDate >= twoDaysAgoStr &&
     reservationHasAnyContact(r, db)
@@ -13204,8 +13214,8 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
     if (isCompletedOrCheckedOut) {
       const cleanupRes = cancelPendingStayRemindersForCheckout(db, null, {
         reservation: resv,
-        flatId: resv.flatId,
-        flatNumber: resv.flatNumber,
+        flatId: resv.checkoutDate === todayStr ? resv.flatId : null,
+        flatNumber: resv.checkoutDate === todayStr ? resv.flatNumber : null,
         reason: "Cancelado: check-out já realizado no flat"
       });
       if (cleanupRes.cancelledWhatsAppCount > 0 || cleanupRes.cancelledEmailCount > 0) {

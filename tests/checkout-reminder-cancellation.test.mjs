@@ -156,3 +156,48 @@ test("Detecta check-out via card de limpeza (Desocupado ou Limpando) e bloqueia 
   const reQueuedReminder = db.whatsappQueue.find(q => q.triggerEvent === "checkout_reminder");
   assert.equal(reQueuedReminder, undefined);
 });
+
+test("Reserva anterior já concluída no mesmo flat (avaliada para NPS) NÃO cancela o checkout_reminder do hóspede que sai hoje", () => {
+  const todayStr = getTodayStr();
+  const db = createMockDb(todayStr);
+
+  const yesterdayDate = new Date(new Date(`${todayStr}T12:00:00Z`).getTime() - 24 * 3600000);
+  const yesterdayStr = yesterdayDate.toISOString().substring(0, 10);
+  const twoDaysAgoDate = new Date(new Date(`${todayStr}T12:00:00Z`).getTime() - 48 * 3600000);
+  const twoDaysAgoStr = twoDaysAgoDate.toISOString().substring(0, 10);
+
+  // Reserva atual saindo hoje (ainda em estadia)
+  db.reservations[0].checkinDate = yesterdayStr;
+  db.reservations[0].checkoutDate = todayStr;
+  db.reservations[0].status = "in_house";
+  db.reservations[0].checkoutDone = false;
+
+  // Reserva anterior no mesmo Flat 512 que já fez check-out ontem/anteontem (vem depois na lista, como no banco real)
+  db.reservations.push({
+    id: 51200,
+    code: "RES-512-0000",
+    flatId: 12,
+    flatNumber: "512",
+    guestName: "Hóspede Anterior",
+    guestPhone: "5522988887777",
+    guestEmail: "anterior@example.com",
+    checkinDate: twoDaysAgoStr,
+    checkoutDate: yesterdayStr,
+    status: "completed",
+    checkoutDone: true
+  });
+
+  // Limpa a fila e simula múltiplos ciclos do agendador às 08:00 da manhã do dia do check-out
+  db.whatsappQueue = [];
+  db.zapiConfig.testModeOnly = false;
+  const morningNow = new Date(`${todayStr}T08:00:00-03:00`);
+
+  scheduleUpcomingReservationTriggers(db, () => {}, { nowOverride: morningNow });
+  scheduleUpcomingReservationTriggers(db, () => {}, { nowOverride: morningNow });
+
+  const todayReminders = db.whatsappQueue.filter(
+    q => q.reservationCode === "RES-512-0001" && q.triggerEvent === "checkout_reminder"
+  );
+  assert.equal(todayReminders.length, 1, "Deve haver exatamente 1 agendamento de checkout_reminder para a reserva de hoje");
+  assert.equal(todayReminders[0].status, "scheduled", "O checkout_reminder de hoje deve permanecer 'scheduled' e não ser cancelado pela reserva anterior do flat");
+});
