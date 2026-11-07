@@ -34298,11 +34298,18 @@ export function hasGuestCompletedOrHadCheckin(g, r = null) {
   return Boolean(
     g.hasCompletedCheckin ||
     g.hadCompletedCheckinBefore ||
+    g.status === "CHECKED_IN" ||
     g.checkinCompletedAt ||
     g.previousCheckinSignedAt ||
     g.fnrhPdfUrl ||
+    g.fnrhDownloadUrl ||
     g.fnrhDocumentUuid ||
     g.fnrhSha256Hash ||
+    g.fnrhVerifyUrl ||
+    g.fnrhFileName ||
+    g.fnrhAuditTrail ||
+    g.r2Url ||
+    g.fnrhR2Url ||
     g.fnrhSignedAt
   );
 }
@@ -34323,8 +34330,14 @@ export function hasReservationCompletedAnyCheckin(r) {
     r.checkinData?.signatureUrl ||
     r.checkinData?.termsSignature ||
     r.fnrhPdfUrl ||
+    r.fnrhDownloadUrl ||
     r.fnrhDocumentUuid ||
     r.fnrhSha256Hash ||
+    r.fnrhVerifyUrl ||
+    r.fnrhFileName ||
+    r.fnrhAuditTrail ||
+    r.r2Url ||
+    r.fnrhR2Url ||
     r.fnrhSignedAt
   ) {
     return true;
@@ -34342,6 +34355,7 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
   const prevResSigAt = r.fnrhSignedAt || r.checkedInAt || r.preCheckinSignedAt || r.previousCheckinSignedAt || r.guests?.[0]?.fnrhSignedAt || r.guests?.[0]?.checkinCompletedAt || new Date().toISOString();
   r.fnhrCompleted = false;
   r.preCheckinCompleted = false;
+  r.hasPreCheckin = false;
   r.signatureUrl = null;
   r.checkedInAt = null;
   if (hadCheckinBefore) {
@@ -34377,6 +34391,7 @@ export function invalidateReservationCheckinSignatures(r, reason = "Alteração 
       const gHadCheckin = Boolean(!stayClosed && (hasGuestCompletedOrHadCheckin(g, r) || hadCheckinBefore) && !isPreReservationBlocked(r));
       const prevGSigAt = g.fnrhSignedAt || g.checkinCompletedAt || g.previousCheckinSignedAt || prevResSigAt;
       g.hasCompletedCheckin = false;
+      if (g.status === "CHECKED_IN") g.status = "PENDING";
       g.checkinCompletedAt = null;
       g.signatureUrl = null;
       g.hadCompletedCheckinBefore = gHadCheckin;
@@ -34925,6 +34940,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
     r.fnhrCompleted = false;
     r.preCheckinCompleted = false;
+    r.hasPreCheckin = false;
     r.signatureUrl = null;
     r.checkedInAt = null;
     delete r.fnrhPdfUrl;
@@ -34940,6 +34956,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           delete g.previousCheckinSignedAt;
         }
         g.hasCompletedCheckin = false;
+        if (g.status === "CHECKED_IN") g.status = "PENDING";
         g.signatureUrl = null;
         g.checkinCompletedAt = null;
         delete g.fnrhPdfUrl;

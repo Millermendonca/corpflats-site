@@ -2905,7 +2905,9 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       phone,
       cleanDigits: phone.replace(/\D/g, ""),
       email,
-      hasCompletedCheckin: Boolean(g.hasCompletedCheckin || g.status === "CHECKED_IN")
+      hasCompletedCheckin: Boolean((g.hasCompletedCheckin || g.status === "CHECKED_IN") && !g.needsReSignature && !reservation.needsReSignature),
+      needsReSignature: Boolean(g.needsReSignature ?? reservation.needsReSignature),
+      hadCompletedCheckinBefore: Boolean(g.hadCompletedCheckinBefore || g.previousCheckinSignedAt || g.fnrhSignedAt || g.fnrhDocumentUuid || g.fnrhPdfUrl)
     });
   });
 
@@ -3980,19 +3982,40 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     !(Array.isArray(reservation?.guests) && reservation.guests.some(g => g?.previousCheckinSignedAt || g?.fnrhSignedAt || (g?.checkinCompletedAt && g?.signatureUrl) || g?.fnrhDocumentUuid))
   );
   const targetGuestForTags = companion || titularGuest;
+  const isDatesOrFlatChangeInTags = hasChanges
+    ? (Array.isArray(changes)
+        ? changes.some(c => c && ["flatNumber", "flatId", "checkinDate", "checkoutDate", "dates"].includes(String(c.field || "")))
+        : Boolean(changes.flatNumber || changes.flatId || changes.checkinDate || changes.checkoutDate || changes.dates))
+    : true;
   const trulyNeedsReSignInTags = Boolean(
     !stayClosedForTags &&
     !isBareB2bCredForTags &&
-    (targetGuestForTags && typeof targetGuestForTags.needsReSignature === "boolean"
+    isDatesOrFlatChangeInTags &&
+    ((targetGuestForTags && typeof targetGuestForTags.needsReSignature === "boolean"
       ? targetGuestForTags.needsReSignature
-      : reservation?.needsReSignature)
+      : reservation?.needsReSignature) ||
+      reservation?.hadCompletedCheckinBefore ||
+      reservation?.previousCheckinSignedAt ||
+      reservation?.fnhrCompleted ||
+      reservation?.fnrhSignedAt ||
+      reservation?.fnrhDocumentUuid ||
+      reservation?.fnrhPdfUrl ||
+      targetGuestForTags?.hadCompletedCheckinBefore ||
+      targetGuestForTags?.previousCheckinSignedAt ||
+      targetGuestForTags?.fnrhSignedAt ||
+      targetGuestForTags?.fnrhDocumentUuid ||
+      targetGuestForTags?.fnrhPdfUrl)
   );
   if (!trulyNeedsReSignInTags && (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated")) {
     rendered = rendered
       .replace(/⚠️[^\n]*(?:assinar|assinatura|ficha atualizada|termo atualizado)[\s\S]*?(?=\n\n|$)/gi, "")
       .replace(/^[ \t]*[^\n]*(?:Assinar Ficha Atualizada|Assinar o Termo Atualizado|re-assinar|assinar novamente)[^\n]*\n?/gim, "");
   }
-  if (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated") {
+  const isFullUpdatedBody = Boolean(
+    typeof text === "string" &&
+    (text.includes("{{resumo_alteracoes}}") || text.includes("foi alterada") || text.includes("\n"))
+  );
+  if (isFullUpdatedBody && (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated")) {
     if (alertaMudancaFlat) {
       if (!rendered.includes("ATENÇÃO: MUDANÇA PARA O FLAT")) {
         rendered = `${alertaMudancaFlat}${rendered.trimStart()}`;
@@ -4151,13 +4174,77 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
 
   const companionTarget = getCompanionForTarget(getReservationRecipients(reservation || {}, db || {}), targetRecipient);
 
-  const isPreCheckinDone = companionTarget
-    ? Boolean(companionTarget.hasCompletedCheckin || companionTarget.status === "CHECKED_IN")
+  const titularGuestForBtn = (reservation?.guests || []).find(g => Number(g.index) === 1) || reservation?.guests?.[0];
+  const targetGuestForBtn = companionTarget || titularGuestForBtn;
+  const stLowerBtn = String(reservation?.status || "").toLowerCase();
+  const stayClosedBtn = Boolean(
+    reservation?.checkoutDone ||
+    reservation?.earlyCheckout ||
+    ["completed", "checked_out", "checkout", "cancelada", "cancelled"].includes(stLowerBtn)
+  );
+  const bareB2bCredBtn = Boolean(
+    (reservation?.b2bCredentialCompletedAt || reservation?.credentialStatus === "completed") &&
+    !reservation?.previousCheckinSignedAt &&
+    !reservation?.fnrhSignedAt &&
+    !reservation?.checkedInAt &&
+    !reservation?.preCheckinSignedAt &&
+    !reservation?.preCheckinData?.signatureUrl &&
+    !reservation?.checkinData?.signatureUrl &&
+    !reservation?.checkinData?.termsSignature &&
+    !reservation?.fnrhDocumentUuid &&
+    !reservation?.fnrhPdfUrl &&
+    !(Array.isArray(reservation?.guests) && reservation.guests.some(g => g?.previousCheckinSignedAt || g?.fnrhSignedAt || (g?.checkinCompletedAt && g?.signatureUrl) || g?.fnrhDocumentUuid))
+  );
+  const hadFnrhOrNeedsReSignBtn = Boolean(
+    !stayClosedBtn &&
+    !bareB2bCredBtn &&
+    (
+      (targetGuestForBtn && typeof targetGuestForBtn.needsReSignature === "boolean"
+        ? targetGuestForBtn.needsReSignature
+        : reservation?.needsReSignature) ||
+      reservation?.hadCompletedCheckinBefore ||
+      reservation?.previousCheckinSignedAt ||
+      reservation?.fnhrCompleted ||
+      reservation?.fnrhSignedAt ||
+      reservation?.fnrhDocumentUuid ||
+      reservation?.fnrhPdfUrl ||
+      reservation?.fnrhDownloadUrl ||
+      reservation?.r2Url ||
+      reservation?.fnrhR2Url ||
+      targetGuestForBtn?.hadCompletedCheckinBefore ||
+      targetGuestForBtn?.previousCheckinSignedAt ||
+      targetGuestForBtn?.fnrhSignedAt ||
+      targetGuestForBtn?.fnrhDocumentUuid ||
+      targetGuestForBtn?.fnrhPdfUrl
+    )
+  );
+  const changesCtxForBtn = reservation?._changesContext;
+  const hasChangesCtxForBtn = (Array.isArray(changesCtxForBtn) && changesCtxForBtn.length > 0) ||
+    (changesCtxForBtn && typeof changesCtxForBtn === "object" && !Array.isArray(changesCtxForBtn) && Object.keys(changesCtxForBtn).length > 0);
+  const isDatesOrFlatChangeInContext = hasChangesCtxForBtn
+    ? (Array.isArray(changesCtxForBtn)
+        ? changesCtxForBtn.some(c => c && ["flatNumber", "flatId", "checkinDate", "checkoutDate", "dates"].includes(String(c.field || "")))
+        : Boolean(changesCtxForBtn.flatNumber || changesCtxForBtn.flatId || changesCtxForBtn.checkinDate || changesCtxForBtn.checkoutDate || changesCtxForBtn.dates))
+    : true;
+  const isReservationUpdatedTpl = templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated";
+  const isAdditionalDailyTpl = templateId === "tpl_additional_daily_pending" || triggerEvent === "additional_daily_pending";
+  const needsReSign = Boolean(
+    !stayClosedBtn &&
+    !bareB2bCredBtn &&
+    (isReservationUpdatedTpl || isAdditionalDailyTpl
+      ? (hadFnrhOrNeedsReSignBtn && isDatesOrFlatChangeInContext)
+      : (targetGuestForBtn && typeof targetGuestForBtn.needsReSignature === "boolean"
+          ? targetGuestForBtn.needsReSignature
+          : reservation?.needsReSignature))
+  );
+
+  const isPreCheckinDone = !needsReSign && !reservation?.needsReSignature && (companionTarget
+    ? Boolean((companionTarget.hasCompletedCheckin || companionTarget.status === "CHECKED_IN") && !companionTarget.needsReSignature)
     : Boolean(
       reservation?.fnhrCompleted ||
-      (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN")) ||
+      (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.every(g => (g.hasCompletedCheckin || g.status === "CHECKED_IN") && !g.needsReSignature)) ||
       (!reservation?.guests?.length && (reservation?.preCheckinCompleted || reservation?.checkedInAt))
-    );
+    ));
 
   const hasEnteredFlat = Boolean(
     reservation?.guestSelfCheckin ||
@@ -4176,7 +4263,10 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     : (targetGuestIdx && Number(targetGuestIdx) > 1 
         ? `${appOrigin}/minha-reserva/${resCode}?guest=${targetGuestIdx}` 
         : `${appOrigin}/minha-reserva/${resCode}`);
-  const linkCheckinDigital = getCheckinUrlSync(reservation, companionTarget ? companionTarget.index : 1, appOrigin, db);
+  const safeGuestIdxForBtn = Number(companionTarget ? companionTarget.index : 1) || 1;
+  const linkCheckinDigital = needsReSign
+    ? `${String(appOrigin).replace(/\/$/, "")}/pre-checkin/${resCode}${safeGuestIdxForBtn > 1 ? `?guest=${safeGuestIdxForBtn}&resign=1` : "?resign=1"}`
+    : getCheckinUrlSync(reservation, safeGuestIdxForBtn, appOrigin, db);
   const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 
   // Predicado para identificar botões de check-in por ID (btn_chk, btn_pre, btn_chk_digital, btn_checkin) ou URLs (pre-checkin, turismo.gov.br)
@@ -4233,11 +4323,25 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     list = list.filter(b => !isCheckinBtn(b) && !isChegueiBtn(b));
   } else if (hasEnteredFlat) {
     // Se o hóspede já entrou no flat:
-    // Remove botões de pré-checkin e de auto-declaração de chegada
-    list = list.filter(b => 
-      !isCheckinBtn(b) && 
-      !isChegueiBtn(b)
-    );
+    // Remove botões de auto-declaração de chegada; mantém ou injeta botão de re-assinatura da FNRH
+    // quando houver mudança de datas de check-in/check-out ou número do flat em reserva com FNRH emitida
+    list = list.filter(b => !isChegueiBtn(b));
+    if ((isReservationUpdatedTpl || isAdditionalDailyTpl) && needsReSign && !(isRequesterBtnTarget && hasSeparateRequester)) {
+      const reSignBtn = {
+        id: "btn_checkin",
+        type: "URL",
+        label: "📝 Assinar Ficha Atualizada",
+        url: linkCheckinDigital
+      };
+      const existingChkIdx = list.findIndex(b => isCheckinBtn(b));
+      if (existingChkIdx >= 0) {
+        list[existingChkIdx] = reSignBtn;
+      } else {
+        list.unshift(reSignBtn);
+      }
+    } else {
+      list = list.filter(b => !isCheckinBtn(b));
+    }
     // Garante que o Portal do Hóspede está presente
     if (!list.some(b => b.id === "btn_portal" || (b.url && String(b.url).includes("/minha-reserva")))) {
       list.push({
@@ -4263,7 +4367,6 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       "tpl_room_ready_direct",
       "tpl_room_ready_ota",
       "tpl_room_ready_regular",
-      "tpl_reservation_updated",
       "qm_summary_checkin",
       "qm_payment_confirmed"
     ]);
@@ -4278,12 +4381,11 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       "room_ready",
       "room_ready_direct",
       "room_ready_ota",
-      "room_ready_regular",
-      "reservation_updated"
+      "room_ready_regular"
     ]);
 
     const isPreCheckinCompletedTpl = templateId === "tpl_pre_checkin_completed" || triggerEvent === "pre_checkin_completed";
-    const shouldInjectCheguei = !isPreCheckinCompletedTpl && (
+    const shouldInjectCheguei = !isPreCheckinCompletedTpl && !isReservationUpdatedTpl && (
       hadCheckinOrChegueiInTemplate ||
       ALLOWED_TEMPLATES_FOR_CHEGUEI.has(templateId) ||
       ALLOWED_EVENTS_FOR_CHEGUEI.has(triggerEvent)
@@ -4306,50 +4408,37 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       list = list.filter(b => !isChegueiBtn(b));
     }
   } else {
-    // Pré-check-in PENDENTE:
+    // Pré-check-in PENDENTE (ou re-assinatura pendente):
     // NUNCA exibe "Já Cheguei no Flat" antes do pré-check-in estar preenchido!
     list = list.filter(b => b.id !== "btn_cheguei" && (!b.url || !String(b.url).includes("/self-checkin")));
 
     // Se o hóspede ainda não tinha assinado a ficha anteriormente (needsReSignature === false),
-    // nunca exibir "Assinar Ficha Atualizada" — rotular como "📝 Fazer Check-in Online".
-    const titularGuestForBtn = (reservation?.guests || []).find(g => Number(g.index) === 1) || reservation?.guests?.[0];
-    const targetGuestForBtn = companionTarget || titularGuestForBtn;
-    const stLowerBtn = String(reservation?.status || "").toLowerCase();
-    const stayClosedBtn = Boolean(
-      reservation?.checkoutDone ||
-      reservation?.earlyCheckout ||
-      ["completed", "checked_out", "checkout", "cancelada", "cancelled"].includes(stLowerBtn)
-    );
-    const bareB2bCredBtn = Boolean(
-      (reservation?.b2bCredentialCompletedAt || reservation?.credentialStatus === "completed") &&
-      !reservation?.previousCheckinSignedAt &&
-      !reservation?.fnrhSignedAt &&
-      !reservation?.checkedInAt &&
-      !reservation?.preCheckinSignedAt &&
-      !reservation?.preCheckinData?.signatureUrl &&
-      !reservation?.checkinData?.signatureUrl &&
-      !reservation?.checkinData?.termsSignature &&
-      !reservation?.fnrhDocumentUuid &&
-      !reservation?.fnrhPdfUrl &&
-      !(Array.isArray(reservation?.guests) && reservation.guests.some(g => g?.previousCheckinSignedAt || g?.fnrhSignedAt || (g?.checkinCompletedAt && g?.signatureUrl) || g?.fnrhDocumentUuid))
-    );
-    const needsReSign = Boolean(
-      !stayClosedBtn &&
-      !bareB2bCredBtn &&
-      (targetGuestForBtn && typeof targetGuestForBtn.needsReSignature === "boolean"
-        ? targetGuestForBtn.needsReSignature
-        : reservation?.needsReSignature)
-    );
+    // ou se a alteração não foi em check-in, check-out ou flat, nunca exibir "Assinar Ficha Atualizada".
     if (needsReSign) {
-      list = list.map(b => {
-        if (b && (b.id === "btn_checkin" || isCheckinBtn(b))) {
-          return { ...b, label: "📝 Assinar Ficha Atualizada" };
+      if ((isReservationUpdatedTpl || isAdditionalDailyTpl) && !(isRequesterBtnTarget && hasSeparateRequester)) {
+        const reSignBtn = {
+          id: "btn_checkin",
+          type: "URL",
+          label: "📝 Assinar Ficha Atualizada",
+          url: linkCheckinDigital
+        };
+        const existingChkIdx = list.findIndex(b => b && (b.id === "btn_checkin" || isCheckinBtn(b)));
+        if (existingChkIdx >= 0) {
+          list[existingChkIdx] = reSignBtn;
+        } else {
+          list.unshift(reSignBtn);
         }
-        return b;
-      });
+      } else {
+        list = list.map(b => {
+          if (b && (b.id === "btn_checkin" || isCheckinBtn(b))) {
+            return { ...b, label: "📝 Assinar Ficha Atualizada", url: linkCheckinDigital };
+          }
+          return b;
+        });
+      }
     } else {
-      if (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated") {
-        list = list.filter(b => !(b && (b.id === "btn_checkin" || /assinar\s+ficha\s+atualizada/i.test(String(b.label || "")))));
+      if (isReservationUpdatedTpl) {
+        list = list.filter(b => !(b && (b.id === "btn_checkin" || isCheckinBtn(b) || /assinar\s+ficha\s+atualizada/i.test(String(b.label || "")))));
       } else {
         list = list.map(b => {
           if (b && (b.id === "btn_checkin" || /assinar\s+ficha\s+atualizada/i.test(String(b.label || "")))) {
