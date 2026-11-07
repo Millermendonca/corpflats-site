@@ -133,7 +133,13 @@ test("NPS 1-5 templates, two-step comment collection, and continuous improvement
     whatsappHistory: []
   };
 
-  // Verify helper functions
+  // Verify helper functions & Etapa 1 text
+  const stage1Tpl = DEFAULT_WHATSAPP_TEMPLATES.find((tpl) => tpl.id === "tpl_nps_satisfaction_check");
+  assert.ok(stage1Tpl, "Stage 1 template tpl_nps_satisfaction_check must exist");
+  assert.match(stage1Tpl.message, /Sua estadia conosco no CorpFlats chegou ao fim e adoraríamos saber como foi! De 1 a 5 \(sendo 5 perfeito\), que nota você daria para a sua experiência\?/);
+  assert.match(stage1Tpl.message, /Basta responder apenas com o número! 💙/);
+  assert.equal(stage1Tpl.footer, "");
+
   assert.equal(getNpsScoreTemplate(db, 5).id, "tpl_post_checkout_review");
   assert.equal(getNpsScoreTemplate(db, 4).id, "tpl_nps_score_4");
   assert.equal(getNpsScoreTemplate(db, 3).id, "tpl_nps_score_3");
@@ -141,7 +147,7 @@ test("NPS 1-5 templates, two-step comment collection, and continuous improvement
   assert.equal(getNpsScoreTemplate(db, 1).id, "tpl_nps_score_1");
   assert.equal(getNpsThanksTemplate(db).id, "tpl_nps_feedback_thanks");
 
-  // 2. Guest 1 replies "5" -> receives Google Review link
+  // 2. Guest 1 replies "5" -> receives Google Review link as plain text with typing indicator
   const resScore5 = await processInboundNpsAndSentiment({
     db,
     phone: "5522999990005",
@@ -154,8 +160,16 @@ test("NPS 1-5 templates, two-step comment collection, and continuous improvement
   assert.equal(db.npsResponses[0].score, 5);
   assert.equal(db.npsResponses[0].googleLinkSent, true);
   assert.equal(db.npsResponses[0].awaitingFeedbackComment, false);
-  assert.equal(sentMessages.at(-1).triggerEvent, "nps_approved");
-  const score5Lines = sentMessages.at(-1).message.trim().split("\n");
+  const score5Payload = sentMessages.at(-1);
+  assert.equal(score5Payload.triggerEvent, "nps_approved");
+  assert.equal(score5Payload.sendMode, "text");
+  assert.equal(score5Payload.delayTyping, 5);
+  assert.equal(score5Payload.title, "");
+  assert.equal(score5Payload.footer, "");
+  assert.deepEqual(score5Payload.buttons, []);
+  assert.match(score5Payload.message, /Que alegria ler isso, Carlos! Muito obrigado pela nota máxima\. 🌟/);
+  assert.match(score5Payload.message, /Posso te pedir um favor de 5 segundos\? É só tocar nas 5 estrelinhas neste link do Google e clicar em postar/);
+  const score5Lines = score5Payload.message.trim().split("\n");
   assert.equal(
     score5Lines.at(-1).trim(),
     "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",

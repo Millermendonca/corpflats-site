@@ -986,20 +986,12 @@ Esperamos recebê-lo(a) novamente em breve! 💙`,
     offsetValue: 24,
     offsetUnit: "hours",
     fixedTime: "",
-    message: `Olá, *{{primeiro_nome}}*! 😊
+    message: `Olá, {{primeiro_nome}}! 😊
 
-Sua estadia no *{{nome_hotel}}* chegou ao fim e adoraríamos saber como foi!
+Sua estadia conosco no CorpFlats chegou ao fim e adoraríamos saber como foi! De 1 a 5 (sendo 5 perfeito), que nota você daria para a sua experiência?
 
-⭐ *De 1 a 5, que nota você daria para a sua experiência conosco?*
-
-• *5* — Perfeito, tudo impecável! 🏆
-• *4* — Muito bom, fiquei satisfeito(a) 😊
-• *3* — Ok, mas poderia melhorar 🤔
-• *2* — Não ficou bom, tive problemas 😕
-• *1* — Péssimo, fiquei muito insatisfeito(a) 😞
-
-Responda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito importante para nós! 💙`,
-    footer: "CorpFlats • Sua opinião importa",
+Basta responder apenas com o número! 💙`,
+    footer: "",
     buttons: []
   },
   {
@@ -1014,13 +1006,11 @@ Responda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito i
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
-    message: `Que alegria, *{{primeiro_nome}}*! 🌟
+    message: `Que alegria ler isso, {{primeiro_nome}}! Muito obrigado pela nota máxima. 🌟
 
-Fico muito feliz que sua estadia no *{{nome_hotel}}* tenha sido nota máxima! 💙
+Posso te pedir um favor de 5 segundos? É só tocar nas 5 estrelinhas neste link do Google e clicar em postar (não precisa nem escrever texto se estiver na correria!):
 
-Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no Google? Isso nos ajuda a receber mais hóspedes incríveis como você e continuar melhorando nossos serviços! 🙏
-
-{{link_avaliacao_google}}`,
+https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA`,
     footer: "",
     buttons: []
   },
@@ -3834,6 +3824,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{nome_hospede}}": displayGuestName,
     "{{nome_completo}}": safeFullName,
     "{{primeiro_nome}}": safeFirstName,
+    "{{nome}}": safeFirstName,
+    "{nome}": safeFirstName,
     "{{telefone_hospede}}": guest.phone || "",
     "{{nome_solicitante}}": requester.name,
     "{{primeiro_nome_solicitante}}": requester.firstName,
@@ -5023,7 +5015,7 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
 
   let primaryResult = null;
 
-  // 1. Envio Direto via Texto Formatado com Links (/send-link para pré-visualização rica ou /send-text)
+  // 1. Envio Direto via Texto Simples (/send-text)
   if (shouldSendText) {
     let textWithLinks = formatMessageWithLinks(
       finalMessage,
@@ -5034,51 +5026,6 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       const btnReviewUrl = validButtons.find(b => b && b.url && reviewUrlRegex.test(String(b.url)))?.url ||
         "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA";
       textWithLinks = `${textWithLinks.trim()}\n\n${btnReviewUrl}`;
-    }
-
-    const reviewUrlMatch = textWithLinks.match(reviewUrlRegex);
-    if (reviewUrlMatch) {
-      const linkEndpoint = `${baseUrl}/instances/${instanceId}/token/${token}/send-link`;
-      const targetLinkUrl = reviewUrlMatch[0].trim();
-      const rawPreviewImg = config.reviewPreviewImage || config.flatPreviewImage || "https://corpflats.com.br/flat-preview.jpg";
-      const absPreviewImg = rawPreviewImg.startsWith("/") ? `https://corpflats.com.br${rawPreviewImg}` : rawPreviewImg;
-      const linkPayload = {
-        phone: targetPhone,
-        message: textWithLinks,
-        image: absPreviewImg,
-        linkUrl: targetLinkUrl,
-        title: config.reviewPreviewTitle || "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)",
-        linkDescription: config.reviewPreviewDescription || "Toque aqui para avaliar no Google",
-        linkType: "LARGE"
-      };
-      try {
-        console.log(`[Z-API] Enviando mensagem com pré-visualização rica (/send-link) para ${targetPhone}...`);
-        const linkRes = await fetch(linkEndpoint, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(linkPayload),
-          signal: AbortSignal.timeout(25000)
-        });
-        const linkData = await linkRes.json().catch(() => ({}));
-        if (linkRes.ok && (linkData.zaapId || linkData.id || linkData.messageId)) {
-          console.log(`[Z-API ✓] Link com pré-visualização entregue para ${targetPhone}. ID: ${linkData.zaapId || linkData.id || linkData.messageId}`);
-          primaryResult = {
-            success: true,
-            method: "link_preview",
-            messageId: linkData.zaapId || linkData.id || linkData.messageId,
-            phone: targetPhone,
-            originalPhone: cleanPhone,
-            redirected: Boolean(policy.redirected),
-            channelId: policy.channelId,
-            data: linkData
-          };
-          recordBotSentMessage({ messageId: primaryResult.messageId, phone: targetPhone, text: finalMessage });
-        } else {
-          console.warn(`[Z-API] /send-link retornou status ${linkRes.status}, usando fallback /send-text:`, linkData);
-        }
-      } catch (linkErr) {
-        console.warn(`[Z-API] Exceção no /send-link, usando fallback /send-text:`, linkErr.message);
-      }
     }
 
     if (!primaryResult) {
@@ -8130,6 +8077,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.offsetValue = 24;
           tpl.offsetUnit = "hours";
           tpl.title = "Pós Check-out (24h) • Pesquisa de Satisfação (Filtro NPS)";
+          const defSat = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_nps_satisfaction_check");
+          if (
+            defSat &&
+            (tpl.message?.includes("Perfeito, tudo impecável") ||
+              tpl.message?.includes("Responda apenas com o número da nota") ||
+              !tpl.message?.includes("Basta responder apenas com o número!") ||
+              tpl.footer)
+          ) {
+            tpl.message = defSat.message;
+            tpl.footer = "";
+            tpl.buttons = [];
+          }
         }
         if (tpl.id === "tpl_new_reservation_direct") {
           const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
@@ -8184,7 +8143,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.triggerTiming = "immediate";
           tpl.title = "Pós Check-out • Link Google Review (apenas nota 5) ⭐";
           const defRev = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_post_checkout_review");
-          if (defRev && (!tpl.message?.trim().endsWith("{{link_avaliacao_google}}") || tpl.footer || (tpl.buttons && tpl.buttons.length > 0))) {
+          if (
+            defRev &&
+            (tpl.message?.includes("dedicar apenas 30 segundos") ||
+              !tpl.message?.includes("favor de 5 segundos") ||
+              tpl.footer ||
+              (tpl.buttons && tpl.buttons.length > 0))
+          ) {
             tpl.message = defRev.message;
             tpl.footer = "";
             tpl.buttons = [];
@@ -16333,12 +16298,33 @@ export async function handleInboundNpsScoreOrComment({
     // Dispara a mensagem configurada para a respectiva nota (1 a 5)
     if (renderedReply) {
       const triggerEv = tpl?.triggerEvent || (score === 5 ? "nps_approved" : `nps_score_${score}`);
+      const SCORE_5_TOTAL_DELAY_MS = 2 * 60 * 1000; // 2 minutos (120.000 ms)
+      const SCORE_5_TYPING_SECONDS = 5; // Simula "digitando..." nos últimos 5 segundos
+
+      if (score === 5) {
+        if (typeof saveDatabase === "function") saveDatabase();
+        const isTestRun =
+          process.env.NODE_ENV === "test" ||
+          Boolean(globalThis.__CORPFLATS_TEST_MODE__) ||
+          (Array.isArray(process.execArgv) && process.execArgv.some(arg => String(arg).includes("test"))) ||
+          sendZapiFn !== sendZapiMessage;
+        const waitBeforeTypingMs = isTestRun
+          ? 0
+          : Math.max(0, SCORE_5_TOTAL_DELAY_MS - (SCORE_5_TYPING_SECONDS * 1000));
+        if (waitBeforeTypingMs > 0) {
+          console.log(`[NPS Nota 5] Aguardando delay humanizado de 2 minutos (${waitBeforeTypingMs / 1000}s + ${SCORE_5_TYPING_SECONDS}s digitando...) antes de responder para ${rawPhone || targetPhone}...`);
+          await new Promise(resolve => setTimeout(resolve, waitBeforeTypingMs));
+        }
+      }
+
       const sendRes = await sendZapiFn(db.zapiConfig, {
         phone: rawPhone || targetPhone,
         message: renderedReply,
-        title: tpl?.title,
-        footer: tpl?.footer,
-        buttons: renderedButtons,
+        title: score === 5 ? "" : tpl?.title,
+        footer: score === 5 ? "" : tpl?.footer,
+        buttons: score === 5 ? [] : renderedButtons,
+        sendMode: score === 5 ? "text" : undefined,
+        delayTyping: score === 5 ? SCORE_5_TYPING_SECONDS : 0,
         channelId: "guest_schedule",
         recipientRole: "guest",
         triggerEvent: triggerEv,

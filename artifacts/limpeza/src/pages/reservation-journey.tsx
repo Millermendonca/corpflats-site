@@ -780,19 +780,11 @@ Notamos que o *Flat {{quarto}}* já está em limpeza há *{{tempo_limpeza}} minu
     condition: "24 horas decorridas a partir das 12:00 da data de saída (independente de baixa manual)",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
     description: "Enviado pontualmente 24 horas após o horário de check-out previsto das 12:00 (dia seguinte às 12:00). Não depende de baixa manual de checkout no sistema, garantindo envio infalível para 100% dos hóspedes. Apenas quem responder nota 5 recebe o convite 5 estrelas do Google!",
-    messagePreview: `Olá, *{{primeiro_nome}}*! 😊
+    messagePreview: `Olá, {{primeiro_nome}}! 😊
 
-Sua estadia no *{{nome_hotel}}* chegou ao fim e adoraríamos saber como foi!
+Sua estadia conosco no CorpFlats chegou ao fim e adoraríamos saber como foi! De 1 a 5 (sendo 5 perfeito), que nota você daria para a sua experiência?
 
-⭐ *De 1 a 5, que nota você daria para a sua experiência conosco?*
-
-• *5* — Perfeito, tudo impecável! 🏆
-• *4* — Muito bom, fiquei satisfeito(a) 😊
-• *3* — Ok, mas poderia melhorar 🤔
-• *2* — Não ficou bom, tive problemas 😕
-• *1* — Péssimo, fiquei muito insatisfeito(a) 😞
-
-Responda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito importante para nós! 💙`,
+Basta responder apenas com o número! 💙`,
     buttons: [],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_nps_satisfaction_check",
     category: "pos_estadia"
@@ -806,17 +798,15 @@ Responda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito i
     triggerEvent: "nps_approved",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "Imediato após resposta com nota 5",
+    timingLabel: "2 minutos após resposta com nota 5 (delay humanizado + digitando...)",
     condition: "Hóspede respondeu nota 5 na pesquisa de satisfação",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
     description: "Filtro de proteção de reputação: direciona com exclusividade hóspedes 100% satisfeitos (nota 5) para o Google Maps, blindando contra notas baixas.",
-    messagePreview: `Que alegria, *{{primeiro_nome}}*! 🌟
+    messagePreview: `Que alegria ler isso, {{primeiro_nome}}! Muito obrigado pela nota máxima. 🌟
 
-Fico muito feliz que sua estadia no *{{nome_hotel}}* tenha sido nota máxima! 💙
+Posso te pedir um favor de 5 segundos? É só tocar nas 5 estrelinhas neste link do Google e clicar em postar (não precisa nem escrever texto se estiver na correria!):
 
-Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no Google? Isso nos ajuda a receber mais hóspedes incríveis como você e continuar melhorando nossos serviços! 🙏
-
-{{link_avaliacao_google}}`,
+https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA`,
     buttons: [],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_post_checkout_review",
     category: "pos_estadia"

@@ -2397,6 +2397,8 @@ export default function WhatsappAutomation() {
     const map: Record<string, string> = {
       "{{nome_hospede}}": targetRes.guestName || "Hóspede",
       "{{primeiro_nome}}": firstName,
+      "{{nome}}": firstName,
+      "{nome}": firstName,
       "{{telefone_hospede}}": targetRes.guestPhone || "(22) 99887-7665",
       "{{valor_normal}}": fmtNormal,
       "{{valor_promocional}}": fmtPromo,
@@ -6027,28 +6029,6 @@ export default function WhatsappAutomation() {
                         {/* Balão de Mensagem Estilo WhatsApp */}
                         <div className="relative self-end max-w-[92%] bg-[#D9FDD3] dark:bg-[#005C4B] rounded-2xl rounded-tr-xs shadow-xs p-2.5 pb-1 text-xs border border-emerald-300/30">
                           
-                          {/* Card de Pré-Visualização de Link (Link Preview WhatsApp) */}
-                          {/writereview\?placeid=|link_avaliacao_google|g\.page\/r\//i.test(editingMessage || "") && (
-                            <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
-                              <img
-                                src={config.reviewPreviewImage || "/flat-preview.jpg"}
-                                alt="CorpFlats Preview"
-                                className="w-full h-28 object-cover"
-                                onError={(e) => { (e.target as HTMLImageElement).src = "/flat-preview.jpg" }}
-                              />
-                              <div className="p-2 space-y-0.5">
-                                <p className="text-[11px] font-bold text-neutral-900 dark:text-neutral-100 leading-snug">
-                                  {config.reviewPreviewTitle || "⭐ Avaliar CorpFlats • Soho Residence (5 Estrelas)"}
-                                </p>
-                                <p className="text-[10px] text-neutral-600 dark:text-neutral-300 leading-tight line-clamp-2">
-                                  {config.reviewPreviewDescription || "Toque aqui para avaliar no Google"}
-                                </p>
-                                <p className="text-[9px] text-neutral-500 dark:text-neutral-400 truncate pt-0.5">
-                                  search.google.com
-                                </p>
-                              </div>
-                            </div>
-                          )}
                           {!/writereview\?placeid=|link_avaliacao_google|g\.page\/r\//i.test(editingMessage || "") && /link_cafe_manha|\/cafe\//i.test(editingMessage || "") && (
                             <div className="mb-2 rounded-xl overflow-hidden bg-black/5 dark:bg-white/10 border border-emerald-500/20">
                               <img
