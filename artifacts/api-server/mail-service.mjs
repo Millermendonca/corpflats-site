@@ -1390,6 +1390,25 @@ export function getBrasiliaTodayStr() {
 }
 
 /**
+ * Converte qualquer data/timestamp ISO para YYYY-MM-DD no fuso horário de Brasília (America/Sao_Paulo).
+ * Evita que eventos ocorridos entre 21:00 e 23:59 BRT (00:00–02:59 UTC do dia seguinte) sejam atribuídos ao dia errado.
+ */
+export function toBrasiliaDateStr(dateInput) {
+  if (!dateInput) return "";
+  if (typeof dateInput === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateInput.trim())) {
+    return dateInput.trim();
+  }
+  const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (isNaN(d.getTime())) return String(dateInput).substring(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(d);
+}
+
+/**
  * Determina se a reserva tem check-in estritamente para o dia de hoje.
  */
 export function isReservationForToday(reservation) {
@@ -1420,6 +1439,89 @@ export function isReservationForTodayOrPast(reservation) {
 }
 
 /**
+ * Verifica no histórico real de comunicações (`db.reservationCommunications`) se um e-mail
+ * destinado efetivamente ao endereço da recepção/portaria já foi enviado para a reserva.
+ * Nunca confunde e-mails enviados ao hóspede (ex: `pre_checkin_completed`) com e-mails da recepção.
+ */
+export function hasReceptionEmailInComms(reservation, db = {}, options = {}) {
+  if (!reservation) return false;
+  const { dateStr = null, requireFnrhIfCompleted = false } = options || {};
+
+  const resCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
+  const resId = String(reservation.id || "").trim();
+
+  const flat = (db?.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber));
+  const receptionEmail = (flat?.receptionEmail || db?.settings?.receptionEmail || db?.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br").toLowerCase().trim();
+
+  const hasGuestFnrhCompleted = Boolean(
+    reservation.fnhrCompleted ||
+    (Array.isArray(reservation.guests) && reservation.guests.some(g => g && g.hasCompletedCheckin))
+  );
+
+  const comms = Array.isArray(db?.reservationCommunications) ? db.reservationCommunications : [];
+  return comms.some(c => {
+    if (!c || c.type !== "email") return false;
+    if (c.status !== "sent" && c.status !== "delivered" && c.status !== "pending") return false;
+
+    const cResId = String(c.reservation_id || "").trim().toUpperCase();
+    const isSameRes = (resCode && cResId === resCode) || (resId && cResId === resId);
+    if (!isSameRes) return false;
+
+    const recipient = String(c.recipient || "").toLowerCase().trim();
+    const cc = String(c.cc || c.metadata?.cc || "").toLowerCase().trim();
+    const isToReception = recipient.includes(receptionEmail) || cc.includes(receptionEmail);
+    if (!isToReception) return false;
+
+    const trigger = String(c.metadata?.trigger || "").trim();
+    // CRÍTICO: "pre_checkin_completed" é o e-mail espelho enviado ao HÓSPEDE, nunca à recepção
+    if (trigger === "pre_checkin_completed") return false;
+
+    const isReceptionDispatch =
+      trigger === "morning_checkin_07h" ||
+      trigger === "pre_checkin" ||
+      trigger === "re_signature_checkin" ||
+      trigger === "checkin_confirmed" ||
+      trigger === "self_checkin_arrival_fallback" ||
+      trigger === "reception_manual_checkin_fallback" ||
+      trigger === "pms_reservation_created" ||
+      trigger === "sameday_pms_created" ||
+      trigger === "sameday_direct_booking" ||
+      trigger === "payment_confirmed" ||
+      trigger === "pms_pre_reservation_confirmed" ||
+      trigger === "bot_commit_reservation" ||
+      trigger === "reservation_created_reception" ||
+      trigger === "reservation_update" ||
+      trigger === "guest_portal_modify" ||
+      trigger === "portal_modify_settled" ||
+      (c.subject && (
+        c.subject.toUpperCase().includes("CHECK-IN") ||
+        c.subject.toUpperCase().includes("ATUALIZAÇÃO DE RESERVA") ||
+        c.subject.toUpperCase().includes("LIBERAÇÃO DE HOSPEDAGEM")
+      ));
+
+    if (!isReceptionDispatch) return false;
+
+    if (dateStr) {
+      const sentBrDate = toBrasiliaDateStr(c.created_at || c.metadata?.sentAt || c.sentAt || c.createdAt);
+      if (sentBrDate !== dateStr) return false;
+    }
+
+    if (requireFnrhIfCompleted && hasGuestFnrhCompleted) {
+      const hasFnrhAttachment =
+        Boolean(c.metadata?.hasPdfAttached) ||
+        trigger === "pre_checkin" ||
+        trigger === "re_signature_checkin" ||
+        trigger === "morning_checkin_07h" ||
+        trigger === "self_checkin_arrival_fallback" ||
+        trigger === "reception_manual_checkin_fallback";
+      if (!hasFnrhAttachment) return false;
+    }
+
+    return true;
+  });
+}
+
+/**
  * Verifica se a recepção/portaria já recebeu os dados desta reserva por e-mail previamente.
  * Alterações e cancelamentos só devem ser informados à recepção se eles já receberam a reserva antes.
  * Se a alteração/cancelamento ocorrer antes do disparo para o e-mail deles (ex: antes da rotina das 07h do check-in),
@@ -1435,53 +1537,32 @@ export function hasReceptionReceivedReservation(reservation, db = {}) {
     return false;
   }
 
-  // 1. Indicadores diretos gravados na própria reserva
-  if (Boolean(reservation.morningEmailSentDate) || 
-      Boolean(reservation.morningEmailSentAt) || 
-      Boolean(reservation.receptionNotifiedAt) || 
-      Boolean(reservation.receptionEmailSentAt)) {
+  // 1. Checa histórico real de comunicações destinadas ao e-mail da recepção
+  if (hasReceptionEmailInComms(reservation, db)) {
     return true;
   }
 
+  // 2. Fallback para indicadores diretos apenas se não houver histórico de comunicações da reserva no banco
+  // (evita que um carimbo morningEmailSentDate gravado indevidamente mascare a ausência real de envio à recepção)
   const resCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
   const resId = String(reservation.id || "").trim();
-
-  // 2. E-mail oficial da recepção para o flat/hotel
-  const flat = (db?.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber));
-  const receptionEmail = (flat?.receptionEmail || db?.settings?.receptionEmail || db?.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br").toLowerCase().trim();
-
-  // 3. Checa histórico de comunicações
-  const comms = db?.reservationCommunications || [];
-  return comms.some(c => {
-    if (!c || c.type !== "email") return false;
+  const comms = Array.isArray(db?.reservationCommunications) ? db.reservationCommunications : [];
+  const hasAnyCommsForReservation = comms.some(c => {
+    if (!c) return false;
     const cResId = String(c.reservation_id || "").trim().toUpperCase();
-    const isSameRes = (resCode && cResId === resCode) || (resId && cResId === resId);
-    if (!isSameRes) return false;
-
-    const recipient = String(c.recipient || "").toLowerCase().trim();
-    const cc = String(c.cc || "").toLowerCase().trim();
-    const isToReception = recipient.includes(receptionEmail) || cc.includes(receptionEmail);
-    if (!isToReception) return false;
-
-    // Disparos que configuram que a portaria recebeu a reserva (rotina 07h, ficha pre-checkin, entrada ou criação no mesmo dia)
-    const trigger = c.metadata?.trigger;
-    const isInitialDispatch = trigger === "morning_checkin_07h" || 
-                              trigger === "pre_checkin" || 
-                              trigger === "checkin_confirmed" || 
-                              trigger === "pms_reservation_created" ||
-                              trigger === "sameday_pms_created" ||
-                              trigger === "sameday_direct_booking" ||
-                              trigger === "payment_confirmed" ||
-                              trigger === "pms_pre_reservation_confirmed" ||
-                              trigger === "bot_commit_reservation" ||
-                              trigger === "re_signature_checkin" ||
-                              trigger === "reservation_update" ||
-                              trigger === "guest_portal_modify" ||
-                              trigger === "portal_modify_settled" ||
-                              (c.subject && c.subject.toUpperCase().includes("CHECK-IN"));
-
-    return isInitialDispatch && (c.status === "sent" || c.status === "delivered" || c.status === "pending");
+    return (resCode && cResId === resCode) || (resId && cResId === resId);
   });
+
+  if (!hasAnyCommsForReservation) {
+    if (Boolean(reservation.morningEmailSentDate) || 
+        Boolean(reservation.morningEmailSentAt) || 
+        Boolean(reservation.receptionNotifiedAt) || 
+        Boolean(reservation.receptionEmailSentAt)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

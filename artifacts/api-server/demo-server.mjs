@@ -147,6 +147,8 @@ import {
   renderReservationUpdateEmail,
   renderGarageAuthorizationEmail,
   hasReceptionReceivedReservation,
+  hasReceptionEmailInComms,
+  toBrasiliaDateStr,
   renderManualEmail,
   renderB2bAgencyCredentialRequestEmail,
   getBrasiliaTodayStr,
@@ -38068,6 +38070,12 @@ app.all(["/api/pms/guest-portal/:code/self-checkin", "/api/pms/reservations/by-c
 
   saveDatabase();
 
+  // Rede de segurança: garante que a recepção e a garagem tenham recebido o e-mail de liberação + FNRH no momento da chegada
+  ensureReceptionAndGarageNotifiedForArrival(r, {
+    trigger: "self_checkin_arrival_fallback",
+    source: "Autodeclaração de Entrada pelo Hóspede (Portal)"
+  }).catch(() => {});
+
   // Dispara boas-vindas do quarto (checkin_completed) se ainda não tiver sido disparado
   triggerImmediateWhatsApp(db, saveDatabase, "checkin_completed", r).catch(() => {});
 
@@ -45040,6 +45048,10 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   });
 
   saveDatabase();
+  ensureReceptionAndGarageNotifiedForArrival(r, {
+    trigger: "reception_manual_checkin_fallback",
+    source: "Check-in Registrado na Portaria"
+  }).catch(() => {});
   triggerImmediateWhatsApp(db, saveDatabase, "checkin_completed", r);
 
   res.json({
@@ -48572,11 +48584,32 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       if (isCheckinTodayOrPast) {
         r.morningEmailSentDate = brToday;
         r.morningEmailSentAt = new Date().toISOString();
+        try {
+          logAuditEvent({
+            level: "info",
+            category: "reservation",
+            action: "EMAIL_MORNING_CHECKIN_SENT",
+            source: wasReSignature ? "re_signature_checkin" : "pre_checkin",
+            details: {
+              reservationId: r.id,
+              reservationCode: r.code,
+              flatNumber: r.flatNumber,
+              guestName: validName,
+              morningEmailSentDate: brToday,
+              morningEmailSentAt: r.morningEmailSentAt
+            }
+          });
+        } catch (_) {}
       }
     } catch (mailErr) {
       console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
     }
   } else {
+    // Reserva com check-in futuro: garante que nenhum carimbo matinal bloqueie a rotina das 07:00 no dia do check-in
+    if (r.morningEmailSentDate && r.morningEmailSentDate >= r.checkinDate) {
+      delete r.morningEmailSentDate;
+      delete r.morningEmailSentAt;
+    }
     console.log(`[MailService ℹ️] Pré-check-in concluído com antecedência para ${r.code}. FNRH gerada e salva. Notificação à recepção agendada para o dia do check-in (${r.checkinDate}) às 07:00.`);
   }
 
@@ -64751,6 +64784,86 @@ async function dispatchConfirmedReservationToReceptionAndGarage(r, triggerSource
   }
 }
 
+async function ensureReceptionAndGarageNotifiedForArrival(r, { trigger = "self_checkin_arrival_fallback", source = "Check-in / Entrada", appOrigin } = {}) {
+  if (!r || isPreReservationBlocked(r) || isReservationForFuture(r)) return false;
+  try {
+    const alreadyReceivedWithFnrh = hasReceptionEmailInComms(r, db, { requireFnrhIfCompleted: true });
+    if (alreadyReceivedWithFnrh) return false;
+
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+    const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
+    const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+    const titularGuest = (db.guests || []).find(g => (r.guestId && g.id === r.guestId) || (r.guestDocument && (g.documentNumber || g.document) === r.guestDocument));
+    await ensureReservationAttachmentsReady({ reservation: r, guest: titularGuest, db, appOrigin });
+    const emailAttachments = resolveReservationAttachments({ reservation: r, guest: titularGuest, db });
+
+    console.log(`[Arrival Safety-Net] Disparando e-mail de check-in/FNRH pendente para Recepção (${receptionEmail}): Flat ${r.flatNumber} - ${r.guestName} (${r.code}) [Anexos: ${emailAttachments.length}]...`);
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      cc: garageEmail !== receptionEmail ? garageEmail : undefined,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      attachments: emailAttachments,
+      metadata: {
+        trigger,
+        source,
+        flatNumber: r.flatNumber,
+        guestName: r.guestName,
+        buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
+        hasPdfAttached: emailAttachments.some(a => a.filename?.includes("FNRH")),
+        hasDocumentAttached: emailAttachments.some(a => a.filename?.includes("Documento")),
+        attachmentsCount: emailAttachments.length,
+        receptionEmail,
+        garageEmail
+      }
+    });
+
+    if (r.vehicle && r.vehicle.plate && (!r.vehicle.garageNotifiedAt || r.vehicle.lastNotifiedPlate !== r.vehicle.plate)) {
+      try {
+        triggerGarageEmailNotification(db, saveDatabase, r, r.vehicle, {
+          trigger,
+          source,
+          recipientEmail: garageEmail
+        });
+      } catch (_) {}
+    }
+
+    const nowIso = new Date().toISOString();
+    const brToday = getBrasiliaTodayStr();
+    r.morningEmailSentDate = brToday;
+    r.morningEmailSentAt = nowIso;
+    r.receptionNotifiedAt = nowIso;
+    try {
+      logAuditEvent({
+        level: "info",
+        category: "reservation",
+        action: "EMAIL_MORNING_CHECKIN_SENT",
+        source: trigger,
+        details: {
+          reservationId: r.id,
+          reservationCode: r.code,
+          flatNumber: r.flatNumber,
+          guestName: r.guestName,
+          morningEmailSentDate: brToday,
+          morningEmailSentAt: nowIso
+        }
+      });
+    } catch (_) {}
+    saveDatabase();
+    return true;
+  } catch (err) {
+    console.warn(`[Arrival Safety-Net] Erro ao garantir envio de e-mail à recepção para ${r.code || r.id}:`, err.message);
+    return false;
+  }
+}
+
 async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } = {}) {
   if (!r) return;
   if (!r.guestPhone) {
@@ -68536,28 +68649,37 @@ setInterval(async () => {
 
     // Executa a partir das 07:00 da manhã
     if (hour >= 7) {
-      const todayCheckins = db.reservations.filter(r =>
-        r.checkinDate === todayStr &&
-        r.status !== "cancelada" &&
-        r.status !== "cancelled" &&
-        r.status !== "expirada" &&
-        !isPreReservationBlocked(r) &&
-        r.morningEmailSentDate !== todayStr
-      );
+      const todayCheckins = db.reservations.filter(r => {
+        if (!r || r.checkinDate !== todayStr) return false;
+        if (r.status === "cancelada" || r.status === "cancelled" || r.status === "expirada") return false;
+        if (isPreReservationBlocked(r)) return false;
+
+        // Se o carimbo morningEmailSentDate já estiver marcado para hoje, valida no histórico real
+        // se o e-mail para o endereço da recepção realmente foi enviado (auto-cura contra carimbos falsos)
+        if (r.morningEmailSentDate === todayStr) {
+          const rCodeUpper = String(r.code || "").trim().toUpperCase();
+          const rIdStr = r.id ? String(r.id) : "";
+          const hasAnyCommsForRes = (db.reservationCommunications || []).some(c => {
+            if (!c) return false;
+            const cResId = String(c.reservation_id || "").trim().toUpperCase();
+            return (rCodeUpper && cResId === rCodeUpper) || (rIdStr && cResId === rIdStr);
+          });
+          if (!hasAnyCommsForRes) return false;
+          const verifiedReceptionEmail = hasReceptionEmailInComms(r, db, {
+            dateStr: todayStr,
+            requireFnrhIfCompleted: true
+          });
+          if (verifiedReceptionEmail) return false;
+          console.warn(`[Rotina 07:00 Self-Heal] Reserva ${r.code} (Flat ${r.flatNumber}) tinha morningEmailSentDate=${todayStr}, mas nenhum e-mail válido à recepção foi encontrado no histórico. Reprocessando disparo...`);
+        }
+        return true;
+      });
 
       for (const r of todayCheckins) {
         try {
-          const rCodeUpper = String(r.code || "").trim().toUpperCase();
-          const rIdStr = r.id ? String(r.id) : "";
-          const alreadySentReceptionToday = (db.reservationCommunications || []).some(c => {
-            if (!c || c.status === "failed") return false;
-            const cResId = String(c.reservation_id || "").trim().toUpperCase();
-            const isSameRes = (rCodeUpper && cResId === rCodeUpper) || (rIdStr && cResId === rIdStr);
-            if (!isSameRes) return false;
-            const trig = c.metadata?.trigger;
-            if (trig !== "morning_checkin_07h" && trig !== "reservation_created_reception" && trig !== "pre_checkin_completed") return false;
-            const sentDate = String(c.created_at || c.sentAt || "").substring(0, 10);
-            return sentDate === todayStr;
+          const alreadySentReceptionToday = hasReceptionEmailInComms(r, db, {
+            dateStr: todayStr,
+            requireFnrhIfCompleted: true
           });
           if (alreadySentReceptionToday) {
             r.morningEmailSentDate = todayStr;
@@ -69109,6 +69231,13 @@ app.post("/api/smart-flat/:target/confirm-entrance", (req, res) => {
 
     evaluateSmartFlatState(smartFlat, reservation);
     saveDatabase();
+
+    if (reservation) {
+      ensureReceptionAndGarageNotifiedForArrival(reservation, {
+        trigger: "self_checkin_arrival_fallback",
+        source: "Confirmação de Entrada (Smart Flat Hub)"
+      }).catch(() => {});
+    }
 
     res.json({
       ok: true,
