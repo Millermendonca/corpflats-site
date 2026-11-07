@@ -9034,7 +9034,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       ];
     }
 
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const reqProto = req.headers["x-forwarded-proto"]
+      ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
+      : (req.protocol || "https");
+    const baseUrl = `${reqProto}://${req.get("host")}`;
 
     // Se vinculou uma reserva para o teste, resolve as tags reais; senão preenche com dados simulados realistas
     const lookupKey = (reservationId && reservationId !== "none") ? reservationId : (req.body?.reservationCode || null);
@@ -9213,7 +9216,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       };
     }
 
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const reqProto = req.headers["x-forwarded-proto"]
+      ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
+      : (req.protocol || "https");
+    const baseUrl = `${reqProto}://${req.get("host")}`;
     const recipients = getReservationRecipients(reservation, db);
     const isPureBilling = isPureBillingTemplateOrEvent(template);
     let targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both" | "all_guests" | "all" | "guest_2" | "guest_3" | "custom"
@@ -9376,6 +9382,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       const renderedMessage = resolveWhatsAppTags(baseMsgText, reservation, db, baseUrl, targetContext, template);
       const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, targetContext, template);
 
+      let sendDocUrl = docUrl;
+      let sendDocName = docName;
+      if (
+        sendDocUrl &&
+        template.id !== "qm_guest_manual" &&
+        !req.body.forceAttachment &&
+        hasPdfAlreadyBeenSentOrInFlight(db, reservation.code || reservation.reservationCode, reservation.id, d.phone)
+      ) {
+        sendDocUrl = undefined;
+        sendDocName = undefined;
+      }
+
       // Disparo de template da régua de comunicação com hóspedes
       const sendRes = await sendZapiMessage(db?.zapiConfig, {
         phone: d.phone,
@@ -9383,8 +9401,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         title: template.title,
         footer: template.footer,
         buttons: renderedButtons,
-        documentUrl: docUrl,
-        documentName: docName,
+        documentUrl: sendDocUrl,
+        documentName: sendDocName,
         channelId: "guest_schedule",
         recipientRole: "guest",
         triggerEvent: "manual_template_dispatch"
@@ -9409,6 +9427,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         triggerEvent: template.triggerEvent || template.id,
         message: renderedMessage,
         buttons: renderedButtons,
+        documentUrl: sendDocUrl || null,
+        documentName: sendDocName || null,
         status: sendRes.success ? "sent" : "failed",
         method: sendRes.method || "manual",
         error: sendRes.error || null,
@@ -9421,9 +9441,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         senderPhone: db?.zapiConfig?.instanceId || "",
         fromMe: true,
         text: renderedMessage,
-        type: (docUrl || hasAttachment) ? "document" : "text",
-        mediaUrl: docUrl || null,
-        fileName: docName || null,
+        type: sendDocUrl ? "document" : "text",
+        mediaUrl: sendDocUrl || null,
+        fileName: sendDocName || null,
         buttons: renderedButtons,
         triggerEvent: template.triggerEvent || template.id,
         reservationCode: reservation.code || reservation.reservationCode || String(reservation.id),
@@ -10362,7 +10382,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       targetRes = findReservationByPhone(db, cleanPhone);
     }
 
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const reqProto = req.headers["x-forwarded-proto"]
+      ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
+      : (req.protocol || "https");
+    const baseUrl = `${reqProto}://${req.get("host")}`;
     let finalMessage = message || text;
     if (targetRes && finalMessage) {
       finalMessage = resolveWhatsAppTags(finalMessage, targetRes, db, baseUrl);
@@ -11097,7 +11120,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       let sentReplyResult = null;
       const replyToSend = String(confirmReplyText || payload.confirmReply || "").trim();
       if (sendConfirmReply && replyToSend && cleanPhone) {
-        const baseUrl = `${req.protocol}://${req.get("host")}`;
+        const reqProto = req.headers["x-forwarded-proto"]
+      ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
+      : (req.protocol || "https");
+    const baseUrl = `${reqProto}://${req.get("host")}`;
         const resolvedReply = targetRes ? resolveWhatsAppTags(replyToSend, targetRes, db, baseUrl) : replyToSend;
         sentReplyResult = await sendZapiMessage(db.zapiConfig, {
           phone: cleanPhone,
@@ -12006,6 +12032,11 @@ function isSameEventGroup(evA, evB) {
   return getEventGroupKey(evA) === getEventGroupKey(evB);
 }
 
+function isWhatsappHistorySuccessStatus(status) {
+  const s = String(status || "").toLowerCase().trim();
+  return s === "sent" || s === "delivered" || s === "read" || s === "received" || s === "played" || s === "viewed";
+}
+
 export function isInitialConfirmationInFlightOrSent(db, reservation) {
   if (!reservation) return false;
   const resKey = getReservationDedupKey(reservation);
@@ -12023,7 +12054,7 @@ export function isInitialConfirmationInFlightOrSent(db, reservation) {
     const hCode = String(h.reservationCode || "").trim().toUpperCase();
     const hId = h.reservationId ? String(h.reservationId) : "";
     const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
-    return isSameRes && MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS.has(h.triggerEvent) && (h.status === "sent" || h.status === "delivered");
+    return isSameRes && MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS.has(h.triggerEvent) && isWhatsappHistorySuccessStatus(h.status);
   });
 }
 
@@ -12039,7 +12070,7 @@ function hasPdfAlreadyBeenSentOrInFlight(db, reservationCode, reservationId, pho
   }
 
   return (db?.whatsappHistory || []).some(h => {
-    if (h.status !== "sent" && h.status !== "delivered") return false;
+    if (!isWhatsappHistorySuccessStatus(h.status)) return false;
     if (!h.documentUrl) return false;
     const hCode = String(h.reservationCode || "").trim().toUpperCase();
     const hId = h.reservationId ? String(h.reservationId) : "";
@@ -12097,7 +12128,7 @@ export function isFrequentOrReturningGuestRecipient(db, reservation, target = nu
   //    - Se já recebeu mensagens da régua de estadia em outra reserva anterior.
   if (hasValidPhone && Array.isArray(db.whatsappHistory)) {
     const receivedBeforeInHistory = db.whatsappHistory.some(h => {
-      if (!h || (h.status !== "sent" && h.status !== "delivered")) return false;
+      if (!h || !isWhatsappHistorySuccessStatus(h.status)) return false;
       if (!h.guestPhone || !matchClientPhone(rawPhone, h.guestPhone)) return false;
 
       if (h.triggerEvent === "corpflats_intro" || h.templateId === "tpl_corpflats_intro") {
@@ -12287,7 +12318,7 @@ export function isReservationOrFlatCheckedOut(db, resv, flatIdOverride = null, f
     // Se a confirmação de check-out já foi enviada no histórico ou na fila
     if (rCode || rId) {
       const sentCheckoutInHistory = (db.whatsappHistory || []).some(h => {
-        if (h.status !== "sent" && h.status !== "delivered") return false;
+        if (!isWhatsappHistorySuccessStatus(h.status)) return false;
         if (h.triggerEvent !== "checkout_completed" && h.triggerEvent !== "on_checkout") return false;
         const hCode = String(h.reservationCode || "").trim().toUpperCase();
         const hId = h.reservationId !== undefined && h.reservationId !== null ? String(h.reservationId) : "";
@@ -12296,7 +12327,7 @@ export function isReservationOrFlatCheckedOut(db, resv, flatIdOverride = null, f
       if (sentCheckoutInHistory) return true;
 
       const sentCheckoutInQueue = (db.whatsappQueue || []).some(q => {
-        if (q.status !== "sent" && q.status !== "delivered") return false;
+        if (!isWhatsappHistorySuccessStatus(q.status)) return false;
         if (q.triggerEvent !== "checkout_completed" && q.triggerEvent !== "on_checkout" && q.templateId !== "tpl_checkout_completed") return false;
         const qCode = String(q.reservationCode || "").trim().toUpperCase();
         const qId = q.reservationId !== undefined && q.reservationId !== null ? String(q.reservationId) : "";
@@ -13204,7 +13235,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
           const isQBreakfast = q.triggerEvent === "breakfast_reminder" || q.templateId === "tpl_breakfast_reminder";
           if (isDailyBreakfastTrigger ? !isQBreakfast : q.triggerEvent !== tpl.triggerEvent) return false;
           if ((q.recipientType || "guest") !== targetItem.type) return false;
-          if (q.status !== "scheduled" && q.status !== "pending" && q.status !== "sent" && q.status !== "delivered") return false;
+          if (q.status !== "scheduled" && q.status !== "pending" && !isWhatsappHistorySuccessStatus(q.status)) return false;
           if (isDailyBreakfastTrigger) {
             const qDay = getBrasiliaDateStrFromIso(q.sentAt || q.scheduledFor || q.createdAt);
             return qDay === todayStr;
@@ -13218,7 +13249,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
           const isHBreakfast = h.triggerEvent === "breakfast_reminder" || h.templateId === "tpl_breakfast_reminder";
           if (isDailyBreakfastTrigger ? !isHBreakfast : h.triggerEvent !== tpl.triggerEvent) return false;
           if ((h.recipientType || "guest") !== targetItem.type) return false;
-          if (h.status !== "sent" && h.status !== "delivered") return false;
+          if (!isWhatsappHistorySuccessStatus(h.status)) return false;
           if (isDailyBreakfastTrigger) {
             const hDay = getBrasiliaDateStrFromIso(h.sentAt || h.timestamp || h.createdAt);
             return hDay === todayStr;
@@ -13714,7 +13745,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
             const isRoomReadyEvent = ROOM_READY_GROUP_EVENTS.has(eventName);
             const alreadySentWa = isPreResUpdate ? false : (
               (db.whatsappHistory || []).some(h => {
-                if (h.status !== "sent" && h.status !== "delivered") return false;
+                if (!isWhatsappHistorySuccessStatus(h.status)) return false;
                 const hCode = String(h.reservationCode || "").trim().toUpperCase();
                 const hId = h.reservationId ? String(h.reservationId) : "";
                 const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
@@ -14442,7 +14473,7 @@ export async function triggerCheckoutWhatsApp(dbOrGetter, saveDatabase, reservat
     const alreadySentInHistory = (db.whatsappHistory || []).some(h => 
       ((resCode && h.reservationCode === resCode) || (resId && h.reservationId === resId)) &&
       (h.triggerEvent === "checkout_completed" || h.triggerEvent === "on_checkout") &&
-      (h.status === "sent" || h.status === "delivered")
+      isWhatsappHistorySuccessStatus(h.status)
     );
 
     // 2. Verifica se já existe agendado na fila
@@ -14727,7 +14758,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
     const hasGuestReceivedEvent = (eventsList) => {
       const evSet = new Set(Array.isArray(eventsList) ? eventsList : [eventsList]);
       return (db.whatsappHistory || []).some(h => {
-        if (!h || (h.status !== "sent" && h.status !== "delivered")) return false;
+        if (!h || !isWhatsappHistorySuccessStatus(h.status)) return false;
         const hCode = String(h.reservationCode || "").trim().toUpperCase();
         const hId = h.reservationId ? String(h.reservationId) : "";
         const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
@@ -14776,7 +14807,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
       const initialEvent = isSameDayAfter0701 ? "sameday_reservation" : "reservation_created";
       const historyBefore = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
       await triggerImmediateWhatsApp(db, saveDatabase, initialEvent, guestOnlyRes, baseUrl);
-      const sentIntroNow = (db.whatsappHistory || []).slice(historyBefore).some(h => h && h.triggerEvent === "corpflats_intro" && (h.status === "sent" || h.status === "delivered"));
+      const sentIntroNow = (db.whatsappHistory || []).slice(historyBefore).some(h => h && h.triggerEvent === "corpflats_intro" && isWhatsappHistorySuccessStatus(h.status));
       if (sentIntroNow) {
         dispatchedStages.push("corpflats_intro");
       }
@@ -14877,7 +14908,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
 
       const alreadyOrderedTomorrow = hasActiveBreakfastOrderForDate(db, reservation, tomorrowStr);
       const alreadySentBreakfastToday = (db.whatsappHistory || []).some(h => {
-        if (!h || (h.status !== "sent" && h.status !== "delivered")) return false;
+        if (!h || !isWhatsappHistorySuccessStatus(h.status)) return false;
         const hCode = String(h.reservationCode || "").trim().toUpperCase();
         const hId = h.reservationId ? String(h.reservationId) : "";
         const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
@@ -14969,7 +15000,7 @@ export function hasGuestPhysicallyCheckedIn(db, resv) {
 
     const sentCheckinCompleted = (db.whatsappHistory || []).some(h =>
       matchesRes(h) &&
-      (h.status === "sent" || h.status === "delivered") &&
+      isWhatsappHistorySuccessStatus(h.status) &&
       h.triggerEvent === "checkin_completed"
     );
     if (sentCheckinCompleted) return true;
@@ -15067,7 +15098,7 @@ export function hasRoomReadyBeenSentOrScheduled(db, resv, todayStr = "", { inclu
 
   const sentRoomReady = (db.whatsappHistory || []).some(h =>
     matchesRes(h) &&
-    (h.status === "sent" || h.status === "delivered") &&
+    isWhatsappHistorySuccessStatus(h.status) &&
     (ROOM_READY_GROUP_EVENTS.has(h.triggerEvent) ||
       (h.triggerEvent === "sameday_reservation" && /limpo e (liberado|pronto)|tudo pronto para sua chegada/i.test(String(h.message || ""))))
   );

@@ -195,6 +195,8 @@ export default function GuestPreCheckin() {
   const [aiDocResult, setAiDocResult] = useState<{
     isOfficialDocument?: boolean
     documentType?: string
+    detectedDocumentType?: string | null
+    invalidDocumentReason?: string | null
     isLegible?: boolean
     legibilityReason?: string
     isCamposResident?: boolean
@@ -936,6 +938,68 @@ export default function GuestPreCheckin() {
       )
     )
 
+    // Restaura rascunho local em andamento (evita perder campos digitados ao trocar de aba Hóspede 1/2 ou clicar em "Preencher na Tela" no WhatsApp)
+    let restoredDraftStep: number | null = null
+    let hasRestoredDoc = Boolean(doc)
+    if (!fnhrDone && !isReadOnlyDocument && typeof window !== "undefined") {
+      try {
+        const activeCode = String(res.code || code || "").trim().toUpperCase()
+        if (activeCode) {
+          const rawDraft = localStorage.getItem(`cf_precheckin_draft_${activeCode}_g${gIdx}`)
+          if (rawDraft) {
+            const draft = JSON.parse(rawDraft)
+            const draftAgeMs = draft?.updatedAt ? (Date.now() - Number(draft.updatedAt)) : 0
+            if (draft && draftAgeMs < 24 * 3600 * 1000) {
+              if (draft.fullName) setFullName(draft.fullName)
+              if (draft.phone) setPhone(draft.phone)
+              if (draft.email) setEmail(draft.email)
+              if (draft.document) setDocument(draft.document)
+              if (draft.birthDate) {
+                setBirthDate(draft.birthDate)
+                setBirthDateInput(draft.birthDateInput || toDisplayDate(draft.birthDate))
+              } else if (draft.birthDateInput) {
+                setBirthDateInput(draft.birthDateInput)
+              }
+              if (draft.gender) setGender(draft.gender)
+              if (draft.cep) setCep(draft.cep)
+              if (draft.street) setStreet(draft.street)
+              if (draft.streetNumber) setStreetNumber(draft.streetNumber)
+              if (draft.complement) setComplement(draft.complement)
+              if (draft.neighborhood) setNeighborhood(draft.neighborhood)
+              if (draft.city) setCity(draft.city)
+              if (draft.state) setState(draft.state)
+              if (draft.address) setAddress(draft.address)
+              if (draft.travelReason) setTravelReason(draft.travelReason)
+              if (draft.transportMethod) setTransportMethod(draft.transportMethod)
+              if (draft.estimatedArrivalTime) setEstimatedArrivalTime(draft.estimatedArrivalTime)
+              if (draft.originCity) setOriginCity(draft.originCity)
+              if (draft.originState) setOriginState(draft.originState)
+              if (draft.destinationCity) setDestinationCity(draft.destinationCity)
+              if (draft.destinationState) setDestinationState(draft.destinationState)
+              if (draft.vehiclePlate) setVehiclePlate(draft.vehiclePlate)
+              if (draft.vehicleModel) setVehicleModel(draft.vehicleModel)
+              if (draft.vehicleBrand) setVehicleBrand(draft.vehicleBrand)
+              if (draft.vehicleColor) setVehicleColor(draft.vehicleColor)
+              if (!doc && draft.docPhoto) {
+                setDocPhoto(draft.docPhoto)
+                hasRestoredDoc = true
+                if (draft.aiDocResult) setAiDocResult(draft.aiDocResult)
+              }
+              if (!sig && draft.signatureData) {
+                setSignatureData(draft.signatureData)
+              }
+              if (draft.acceptedHouseRules) setAcceptedHouseRules(true)
+              if (draft.acceptedContract) setAcceptedContract(true)
+              if (draft.legalDeclarationAccepted) setLegalDeclarationAccepted(true)
+              if (typeof draft.step === "number" && draft.step >= 1 && draft.step <= 3) {
+                restoredDraftStep = draft.step
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
     // Detecção de cadastro prévio / hóspede frequente salvo
     const hasPreviousProfile = Boolean(
       (isTitular && (guest.fnhrCompleted || guest.id)) ||
@@ -950,6 +1014,9 @@ export default function GuestPreCheckin() {
       setCompletedTimestamp(null)
     }
 
+    const urlStepParam = typeof window !== "undefined" ? Number(new URLSearchParams(window.location.search).get("step") || 0) : 0
+    const hasUrlOtpParam = Boolean(urlOtp && urlOtp.length === 6)
+
     if (isReadOnlyDocument) {
       setIsCompleted(true)
       setIsEditing(false)
@@ -959,7 +1026,7 @@ export default function GuestPreCheckin() {
       setIsEditing(true)
       // Fast-track: se já possui os dados cadastrais preservados e não há ?step= na URL, direciona diretamente para o Passo 3 (Assinatura)
       const hasBaseData = Boolean(gName && gDoc && gPhone)
-      if (hasBaseData && !new URLSearchParams(window.location.search).get("step")) {
+      if ((hasBaseData && !urlStepParam) || urlStepParam === 3 || hasUrlOtpParam) {
         setStep(3)
       } else {
         setStep(1)
@@ -967,7 +1034,13 @@ export default function GuestPreCheckin() {
     } else {
       setIsCompleted(fnhrDone)
       setIsEditing(!fnhrDone)
-      setStep(1)
+      if (!fnhrDone && (urlStepParam === 3 || hasUrlOtpParam)) {
+        setStep(3)
+      } else if (!fnhrDone && restoredDraftStep && (restoredDraftStep === 2 || (restoredDraftStep === 3 && hasRestoredDoc))) {
+        setStep(restoredDraftStep)
+      } else {
+        setStep(1)
+      }
       if (fnhrDone && typeof window !== "undefined") {
         try {
           const url = new URL(window.location.href)
@@ -980,6 +1053,59 @@ export default function GuestPreCheckin() {
       }
     }
   }
+
+  // Auto-save do rascunho em andamento no localStorage para não perder preenchimento ao alternar hóspedes ou abrir link do OTP no WhatsApp
+  useEffect(() => {
+    if (loading || isCompleted || !isEditing || typeof window === "undefined") return
+    const activeCode = String(reservation?.code || code || "").trim().toUpperCase()
+    if (!activeCode || !selectedGuestIndex) return
+    try {
+      const draftPayload = {
+        updatedAt: Date.now(),
+        step,
+        fullName,
+        phone,
+        email,
+        document,
+        birthDate,
+        birthDateInput,
+        gender,
+        cep,
+        street,
+        streetNumber,
+        complement,
+        neighborhood,
+        city,
+        state,
+        address,
+        travelReason,
+        transportMethod,
+        estimatedArrivalTime,
+        originCity,
+        originState,
+        destinationCity,
+        destinationState,
+        vehiclePlate,
+        vehicleModel,
+        vehicleBrand,
+        vehicleColor,
+        docPhoto: docPhoto && docPhoto.length < 2_500_000 ? docPhoto : null,
+        aiDocResult,
+        signatureData: signatureData && signatureData.length < 500_000 ? signatureData : null,
+        acceptedHouseRules,
+        acceptedContract,
+        legalDeclarationAccepted
+      }
+      localStorage.setItem(`cf_precheckin_draft_${activeCode}_g${selectedGuestIndex}`, JSON.stringify(draftPayload))
+    } catch {}
+  }, [
+    loading, isCompleted, isEditing, reservation?.code, code, selectedGuestIndex, step,
+    fullName, phone, email, document, birthDate, birthDateInput, gender,
+    cep, street, streetNumber, complement, neighborhood, city, state, address,
+    travelReason, transportMethod, estimatedArrivalTime, originCity, originState,
+    destinationCity, destinationState, vehiclePlate, vehicleModel, vehicleBrand, vehicleColor,
+    docPhoto, aiDocResult, signatureData, acceptedHouseRules, acceptedContract, legalDeclarationAccepted
+  ])
 
   useEffect(() => {
     if (code) {
@@ -1519,6 +1645,7 @@ export default function GuestPreCheckin() {
           if (activeCode && selectedGuestIndex) {
             sessionStorage.setItem(`cf_active_guest_${activeCode}`, String(selectedGuestIndex))
             localStorage.setItem(`cf_active_guest_${activeCode}`, String(selectedGuestIndex))
+            localStorage.removeItem(`cf_precheckin_draft_${String(activeCode).trim().toUpperCase()}_g${selectedGuestIndex}`)
             if (fullName) localStorage.setItem("corpflats_guest_name", fullName)
           }
         } catch {}
@@ -3535,12 +3662,14 @@ export default function GuestPreCheckin() {
                         return
                       }
                     }
-                    setAiDocResult(null)
+                    if (!docPhoto) {
+                      setAiDocResult(null)
+                    }
                     setStep(2)
                   }}
                   className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-auto min-h-12 py-2.5 px-4 whitespace-normal leading-tight text-center rounded-xl mt-4 gap-2 shadow-md"
                 >
-                  <span>Avançar para Foto do Documento</span>
+                  <span>Avançar para Documento Pessoal (RG / CNH)</span>
                   <ArrowRight className="w-4 h-4 shrink-0" />
                 </Button>
               </div>
@@ -3551,9 +3680,9 @@ export default function GuestPreCheckin() {
           {step === 2 && (
             <div className="space-y-4 sm:space-y-5">
               <div className="border-b border-slate-100 pb-3 flex items-center justify-between gap-2 flex-wrap">
-                <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-sky-600 shrink-0" />
-                  <span>2. Foto do Documento (RG / CNH / Passaporte)</span>
+                <h3 className="font-bold text-base sm:text-lg text-slate-900 flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-sky-600 shrink-0" />
+                  <span>2. Documento Pessoal de Identidade ou CNH</span>
                 </h3>
                 {docPhoto && isSavedDocFromProfile && (
                   <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[10px] py-0.5 px-2.5 shadow-none">
@@ -3562,11 +3691,25 @@ export default function GuestPreCheckin() {
                 )}
               </div>
 
-              <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-                {docPhoto && isSavedDocFromProfile
-                  ? "Seu documento enviado anteriormente já foi recuperado automaticamente do seu cadastro. Confira a validação pericial abaixo ou substitua se desejar."
-                  : "Tire uma foto nítida ou anexe o PDF do seu documento oficial de identificação para validação pericial de titularidade e segurança na portaria."}
-              </p>
+              {docPhoto && isSavedDocFromProfile ? (
+                <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                  Seu documento enviado anteriormente já foi recuperado automaticamente do seu cadastro. Confira abaixo ou substitua se desejar.
+                </p>
+              ) : (
+                <div className="p-3.5 sm:p-4 rounded-2xl bg-sky-50/90 border border-sky-200 flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-sky-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-0.5 text-left">
+                    <div className="font-bold text-xs sm:text-sm text-slate-900">
+                      Envie seu documento pessoal: RG, CNH ou Passaporte
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Tire uma foto agora pela câmera ou anexe uma foto/PDF do celular (como CNH Digital). <strong className="text-slate-800">Não envie documento do veículo (CRLV).</strong>
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="border-2 border-dashed border-slate-200 hover:border-sky-400 rounded-2xl p-4 sm:p-8 text-center bg-slate-50/50 relative overflow-hidden transition-colors">
                 {docPhoto ? (
@@ -3630,183 +3773,190 @@ export default function GuestPreCheckin() {
 
                     {aiDocResult && !aiInspectingDoc && (
                       <div className="space-y-2.5 text-left pt-1">
-                        {aiDocResult.isOfficialDocument === false && (
-                          <div className="p-3 bg-rose-50 border-2 border-rose-300 rounded-xl space-y-1 text-xs text-rose-900">
-                            <div className="font-bold flex items-center gap-1.5 text-rose-800">
-                              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                              <span>Documento Oficial Não Identificado</span>
-                            </div>
-                            <p className="text-[11px] leading-relaxed">
-                              O arquivo anexado não foi reconhecido como um documento oficial com foto (RG, CNH ou Passaporte). Por favor, anexe um documento válido.
-                            </p>
-                          </div>
-                        )}
-
-                        {aiDocResult.isLegible === false && (
-                          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1 text-xs text-rose-900">
-                            <div className="font-bold flex items-center gap-1.5 text-rose-800">
-                              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                              <span>Atenção à Legibilidade</span>
-                            </div>
-                            <p className="text-[11px] leading-relaxed">
-                              {aiDocResult.legibilityReason || "Documento com pouca nitidez ou dados cortados. Se preferir, envie outra foto bem iluminada ou o arquivo original em PDF."}
-                            </p>
-                          </div>
-                        )}
-
-                        {(aiDocResult.identityMatches === false ||
-                          aiDocResult.nameMatches === false ||
-                          aiDocResult.reservationNameMatches === false ||
-                          aiDocResult.cpfMatches === false ||
-                          aiDocResult.reservationCpfMatches === false ||
-                          aiDocResult.birthDateMatches === false) && (
-                          <div className="p-3.5 bg-rose-50 border-2 border-rose-300 rounded-xl space-y-2 text-xs text-rose-950 shadow-2xs">
-                            <div className="font-bold flex items-center gap-1.5 text-rose-800">
+                        {aiDocResult.isOfficialDocument === false ? (
+                          <div className="p-3.5 bg-rose-50 border-2 border-rose-300 rounded-xl space-y-1.5 text-xs text-rose-950 shadow-2xs">
+                            <div className="font-bold text-sm flex items-center gap-1.5 text-rose-800">
                               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
                               <span>
-                                {(aiDocResult.nameMatches === false ||
-                                  aiDocResult.reservationNameMatches === false ||
-                                  aiDocResult.cpfMatches === false ||
-                                  aiDocResult.reservationCpfMatches === false)
-                                  ? "⚠️ Alerta Pericial: Divergência de Titularidade (Pessoa Diferente)"
-                                  : "⚠️ Alerta Pericial: Divergência na Data de Nascimento"}
+                                🚫 {aiDocResult.detectedDocumentType
+                                  ? `${aiDocResult.detectedDocumentType} Não Aceito`
+                                  : "Documento Inválido Detectado"}
                               </span>
                             </div>
-                            {Array.isArray(aiDocResult.mismatchReasons) && aiDocResult.mismatchReasons.length > 0 ? (
-                              <ul className="list-disc pl-4 space-y-1 text-[11px] text-rose-900 font-medium">
-                                {aiDocResult.mismatchReasons.map((reason, idx) => (
-                                  <li key={idx}>{reason}</li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p className="text-[11px] text-rose-900 leading-relaxed">
-                                Os dados identificados no documento ({aiDocResult.extractedName || "Nome divergente"}) não correspondem ao hóspede titular desta ficha ({aiDocResult.reservationName || fullName}).
-                              </p>
-                            )}
-                            <p className="text-[11px] text-rose-800 font-semibold pt-0.5">
-                              Por segurança, o documento anexado deve pertencer à mesma pessoa da reserva. Clique em "Trocar Documento" para anexar o documento correto ou volte ao Passo 1 para corrigir os dados digitados.
+                            <p className="text-xs text-rose-900 font-medium leading-relaxed">
+                              {aiDocResult.invalidDocumentReason ||
+                                aiDocResult.mismatchReasons?.[0] ||
+                                "O arquivo anexado não é um documento pessoal de identificação. Por favor, insira um documento seu (RG, CNH ou Passaporte)."}
                             </p>
                           </div>
-                        )}
-
-                        {/* Checklist Completo do Robô Pericial */}
-                        <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 text-xs shadow-2xs">
-                          <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-100 pb-1.5">
-                            <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                              <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
-                              <span>Laudo do Robô Pericial CorpFlats</span>
-                            </span>
-                            {aiDocResult.documentType && aiDocResult.documentType !== "desconhecido" && (
-                              <Badge variant="outline" className="text-[10px] uppercase font-bold border-slate-300 text-slate-700">
-                                {aiDocResult.documentType}
-                              </Badge>
+                        ) : (
+                          <>
+                            {aiDocResult.isLegible === false && (
+                              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1 text-xs text-rose-900">
+                                <div className="font-bold flex items-center gap-1.5 text-rose-800">
+                                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                                  <span>Atenção à Legibilidade</span>
+                                </div>
+                                <p className="text-[11px] leading-relaxed">
+                                  {aiDocResult.legibilityReason || "Documento com pouca nitidez ou dados cortados. Se preferir, envie outra foto bem iluminada ou o arquivo original em PDF."}
+                                </p>
+                              </div>
                             )}
-                          </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
-                            {/* 1. Titularidade / Mesma Pessoa */}
-                            <div className={`p-2 rounded-lg border ${
-                              aiDocResult.nameMatches === false || aiDocResult.reservationNameMatches === false
-                                ? "bg-rose-50/70 border-rose-200 text-rose-900"
-                                : "bg-emerald-50/60 border-emerald-200 text-emerald-900"
-                            }`}>
-                              <div className="text-[10px] uppercase font-bold opacity-75">Titularidade / Mesma Pessoa</div>
-                              <div className="font-bold text-[11px] mt-0.5 flex items-center gap-1">
-                                {aiDocResult.nameMatches === false || aiDocResult.reservationNameMatches === false ? (
-                                  <span>❌ Divergente ({aiDocResult.extractedName || "Outro titular"})</span>
+                            {(aiDocResult.identityMatches === false ||
+                              aiDocResult.nameMatches === false ||
+                              aiDocResult.reservationNameMatches === false ||
+                              aiDocResult.cpfMatches === false ||
+                              aiDocResult.reservationCpfMatches === false ||
+                              aiDocResult.birthDateMatches === false) && (
+                              <div className="p-3.5 bg-rose-50 border-2 border-rose-300 rounded-xl space-y-2 text-xs text-rose-950 shadow-2xs">
+                                <div className="font-bold flex items-center gap-1.5 text-rose-800">
+                                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                                  <span>
+                                    {(aiDocResult.nameMatches === false ||
+                                      aiDocResult.reservationNameMatches === false ||
+                                      aiDocResult.cpfMatches === false ||
+                                      aiDocResult.reservationCpfMatches === false)
+                                      ? "⚠️ Alerta Pericial: Divergência de Titularidade (Pessoa Diferente)"
+                                      : "⚠️ Alerta Pericial: Divergência na Data de Nascimento"}
+                                  </span>
+                                </div>
+                                {Array.isArray(aiDocResult.mismatchReasons) && aiDocResult.mismatchReasons.length > 0 ? (
+                                  <ul className="list-disc pl-4 space-y-1 text-[11px] text-rose-900 font-medium">
+                                    {aiDocResult.mismatchReasons.map((reason, idx) => (
+                                      <li key={idx}>{reason}</li>
+                                    ))}
+                                  </ul>
                                 ) : (
-                                  <span>✓ {aiDocResult.extractedName || fullName || "Confirmada"}</span>
+                                  <p className="text-[11px] text-rose-900 leading-relaxed">
+                                    Os dados identificados no documento ({aiDocResult.extractedName || "Nome divergente"}) não correspondem ao hóspede titular desta ficha ({aiDocResult.reservationName || fullName}).
+                                  </p>
+                                )}
+                                <p className="text-[11px] text-rose-800 font-semibold pt-0.5">
+                                  Por segurança, o documento anexado deve pertencer à mesma pessoa da reserva. Clique em "Trocar Documento" para anexar o documento correto ou volte ao Passo 1 para corrigir os dados digitados.
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Checklist Completo do Robô Pericial */}
+                            <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 text-xs shadow-2xs">
+                              <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-100 pb-1.5">
+                                <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                                  <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
+                                  <span>Laudo do Robô Pericial CorpFlats</span>
+                                </span>
+                                {aiDocResult.documentType && aiDocResult.documentType !== "desconhecido" && (
+                                  <Badge variant="outline" className="text-[10px] uppercase font-bold border-slate-300 text-slate-700">
+                                    {aiDocResult.documentType}
+                                  </Badge>
                                 )}
                               </div>
-                            </div>
 
-                            {/* 2. CPF */}
-                            <div className={`p-2 rounded-lg border ${
-                              aiDocResult.cpfMatches === false || aiDocResult.reservationCpfMatches === false
-                                ? "bg-rose-50/70 border-rose-200 text-rose-900"
-                                : "bg-emerald-50/60 border-emerald-200 text-emerald-900"
-                            }`}>
-                              <div className="text-[10px] uppercase font-bold opacity-75">Conferência de CPF</div>
-                              <div className="font-bold text-[11px] mt-0.5">
-                                {aiDocResult.cpfMatches === false || aiDocResult.reservationCpfMatches === false
-                                  ? `❌ Divergente (${aiDocResult.extractedCpf || "CPF diferente"})`
-                                  : `✓ ${aiDocResult.extractedCpf || document || "Compatível"}`}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
+                                {/* 1. Titularidade / Mesma Pessoa */}
+                                <div className={`p-2 rounded-lg border ${
+                                  aiDocResult.nameMatches === false || aiDocResult.reservationNameMatches === false
+                                    ? "bg-rose-50/70 border-rose-200 text-rose-900"
+                                    : "bg-emerald-50/60 border-emerald-200 text-emerald-900"
+                                }`}>
+                                  <div className="text-[10px] uppercase font-bold opacity-75">Titularidade / Mesma Pessoa</div>
+                                  <div className="font-bold text-[11px] mt-0.5 flex items-center gap-1">
+                                    {aiDocResult.nameMatches === false || aiDocResult.reservationNameMatches === false ? (
+                                      <span>❌ Divergente ({aiDocResult.extractedName || "Outro titular"})</span>
+                                    ) : (
+                                      <span>✓ {aiDocResult.extractedName || fullName || "Confirmada"}</span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* 2. CPF */}
+                                <div className={`p-2 rounded-lg border ${
+                                  aiDocResult.cpfMatches === false || aiDocResult.reservationCpfMatches === false
+                                    ? "bg-rose-50/70 border-rose-200 text-rose-900"
+                                    : "bg-emerald-50/60 border-emerald-200 text-emerald-900"
+                                }`}>
+                                  <div className="text-[10px] uppercase font-bold opacity-75">Conferência de CPF</div>
+                                  <div className="font-bold text-[11px] mt-0.5">
+                                    {aiDocResult.cpfMatches === false || aiDocResult.reservationCpfMatches === false
+                                      ? `❌ Divergente (${aiDocResult.extractedCpf || "CPF diferente"})`
+                                      : `✓ ${aiDocResult.extractedCpf || document || "Compatível"}`}
+                                  </div>
+                                </div>
+
+                                {/* 3. Data de Nascimento / Idade */}
+                                <div className={`p-2 rounded-lg border ${
+                                  aiDocResult.birthDateMatches === false
+                                    ? "bg-amber-50 border-amber-200 text-amber-900"
+                                    : "bg-slate-50 border-slate-200 text-slate-800"
+                                }`}>
+                                  <div className="text-[10px] uppercase font-bold opacity-75">Nascimento / Faixa Etária</div>
+                                  <div className="font-bold text-[11px] mt-0.5">
+                                    {aiDocResult.birthDateMatches === false
+                                      ? `⚠️ Divergente (${aiDocResult.extractedBirthDate || "Verificar"})`
+                                      : (aiDocResult.calculatedAge !== null && aiDocResult.calculatedAge !== undefined
+                                          ? `${aiDocResult.isMinor ? "👶 Menor" : "✓ Maior"} (${aiDocResult.calculatedAge} anos)`
+                                          : `✓ ${birthDateInput || "Validada"}`)}
+                                  </div>
+                                </div>
+
+                                {/* 4. Cidade / Origem */}
+                                <div className={`p-2 rounded-lg border ${
+                                  aiDocResult.isCamposResident
+                                    ? "bg-purple-50 border-purple-200 text-purple-900"
+                                    : "bg-slate-50 border-slate-200 text-slate-800"
+                                }`}>
+                                  <div className="text-[10px] uppercase font-bold opacity-75">Cidade / Naturalidade</div>
+                                  <div className="font-bold text-[11px] mt-0.5">
+                                    {aiDocResult.isCamposResident
+                                      ? "📍 Campos dos Goytacazes/RJ"
+                                      : `✓ ${aiDocResult.extractedCity ? `${aiDocResult.extractedCity}${aiDocResult.extractedState ? `/${aiDocResult.extractedState}` : ""}` : (city ? `${city}/${state}` : "Verificada")}`}
+                                  </div>
+                                </div>
                               </div>
                             </div>
 
-                            {/* 3. Data de Nascimento / Idade */}
-                            <div className={`p-2 rounded-lg border ${
-                              aiDocResult.birthDateMatches === false
-                                ? "bg-amber-50 border-amber-200 text-amber-900"
-                                : "bg-slate-50 border-slate-200 text-slate-800"
-                            }`}>
-                              <div className="text-[10px] uppercase font-bold opacity-75">Nascimento / Faixa Etária</div>
-                              <div className="font-bold text-[11px] mt-0.5">
-                                {aiDocResult.birthDateMatches === false
-                                  ? `⚠️ Divergente (${aiDocResult.extractedBirthDate || "Verificar"})`
-                                  : (aiDocResult.calculatedAge !== null && aiDocResult.calculatedAge !== undefined
-                                      ? `${aiDocResult.isMinor ? "👶 Menor" : "✓ Maior"} (${aiDocResult.calculatedAge} anos)`
-                                      : `✓ ${birthDateInput || "Validada"}`)}
+                            {aiDocResult.isCamposResident && (
+                              <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs text-purple-900 shadow-2xs">
+                                <div className="flex items-center gap-2.5">
+                                  <span className="text-base shrink-0">📍</span>
+                                  <div>
+                                    <div className="font-bold">Residência / Documento de Campos dos Goytacazes/RJ</div>
+                                    <div className="text-[11px] text-purple-700">Origem local confirmada e sincronizada com seu cadastro.</div>
+                                  </div>
+                                </div>
+                                <Badge className="bg-purple-700 text-white font-bold text-[10px] shrink-0">Campos/RJ</Badge>
                               </div>
-                            </div>
+                            )}
 
-                            {/* 4. Cidade / Origem */}
-                            <div className={`p-2 rounded-lg border ${
-                              aiDocResult.isCamposResident
-                                ? "bg-purple-50 border-purple-200 text-purple-900"
-                                : "bg-slate-50 border-slate-200 text-slate-800"
-                            }`}>
-                              <div className="text-[10px] uppercase font-bold opacity-75">Cidade / Naturalidade</div>
-                              <div className="font-bold text-[11px] mt-0.5">
-                                {aiDocResult.isCamposResident
-                                  ? "📍 Campos dos Goytacazes/RJ"
-                                  : `✓ ${aiDocResult.extractedCity ? `${aiDocResult.extractedCity}${aiDocResult.extractedState ? `/${aiDocResult.extractedState}` : ""}` : (city ? `${city}/${state}` : "Verificada")}`}
+                            {aiDocResult.isMinor && (
+                              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2.5 text-xs text-amber-900">
+                                <span className="text-base shrink-0">👶</span>
+                                <div>
+                                  <div className="font-bold">Hóspede Menor de 18 Anos</div>
+                                  <div className="text-[11px] text-amber-700">Lembre-se da autorização em cartório conforme o ECA Art. 82.</div>
+                                </div>
                               </div>
-                            </div>
-                          </div>
-                        </div>
+                            )}
 
-                        {aiDocResult.isCamposResident && (
-                          <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs text-purple-900 shadow-2xs">
-                            <div className="flex items-center gap-2.5">
-                              <span className="text-base shrink-0">📍</span>
-                              <div>
-                                <div className="font-bold">Residência / Documento de Campos dos Goytacazes/RJ</div>
-                                <div className="text-[11px] text-purple-700">Origem local confirmada e sincronizada com seu cadastro.</div>
+                            {aiDocResult.isLegible !== false &&
+                              aiDocResult.identityMatches !== false &&
+                              aiDocResult.nameMatches !== false &&
+                              aiDocResult.reservationNameMatches !== false &&
+                              aiDocResult.cpfMatches !== false && (
+                              <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-xs text-emerald-800">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <span className="font-medium">
+                                  {aiDocResult.summary || "Identidade, titularidade da reserva e documento oficial validados com sucesso pela Inteligência Artificial."}
+                                </span>
                               </div>
-                            </div>
-                            <Badge className="bg-purple-700 text-white font-bold text-[10px] shrink-0">Campos/RJ</Badge>
-                          </div>
-                        )}
-
-                        {aiDocResult.isMinor && (
-                          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2.5 text-xs text-amber-900">
-                            <span className="text-base shrink-0">👶</span>
-                            <div>
-                              <div className="font-bold">Hóspede Menor de 18 Anos</div>
-                              <div className="text-[11px] text-amber-700">Lembre-se da autorização em cartório conforme o ECA Art. 82.</div>
-                            </div>
-                          </div>
-                        )}
-
-                        {aiDocResult.isLegible !== false &&
-                          aiDocResult.isOfficialDocument !== false &&
-                          aiDocResult.identityMatches !== false &&
-                          aiDocResult.nameMatches !== false &&
-                          aiDocResult.reservationNameMatches !== false &&
-                          aiDocResult.cpfMatches !== false && (
-                          <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-xs text-emerald-800">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                            <span className="font-medium">
-                              {aiDocResult.summary || "Identidade, titularidade da reserva e documento oficial validados com sucesso pela Inteligência Artificial."}
-                            </span>
-                          </div>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div className="py-3 space-y-3">
+                  <div className="py-2">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg mx-auto">
                       {/* Opção 1: Galeria ou PDF (Sem capture para liberar seletor de arquivos/PDF e Galeria no celular) */}
                       <label className="cursor-pointer flex flex-col items-center justify-center gap-1.5 p-4 rounded-2xl border-2 border-dashed border-sky-300 bg-sky-50/70 hover:bg-sky-100/70 transition-colors">
@@ -3814,10 +3964,10 @@ export default function GuestPreCheckin() {
                           {compressing ? <RefreshCw className="w-5 h-5 animate-spin text-sky-600" /> : <Upload className="w-5 h-5" />}
                         </div>
                         <span className="font-bold text-xs sm:text-sm text-slate-900">
-                          📁 Escolher da Galeria ou PDF
+                          📁 Anexar Foto ou PDF
                         </span>
                         <span className="text-[11px] text-slate-500">
-                          Anexar foto salva ou arquivo PDF
+                          RG / CNH da galeria ou PDF digital
                         </span>
                         <input
                           type="file"
@@ -3834,10 +3984,10 @@ export default function GuestPreCheckin() {
                           {compressing ? <RefreshCw className="w-5 h-5 animate-spin text-slate-700" /> : <Camera className="w-5 h-5" />}
                         </div>
                         <span className="font-bold text-xs sm:text-sm text-slate-900">
-                          📷 Tirar Foto Agora
+                          📷 Tirar Foto com a Câmera
                         </span>
                         <span className="text-[11px] text-slate-500">
-                          Usar a câmera para fotografar
+                          Fotografar seu RG ou CNH agora
                         </span>
                         <input
                           type="file"
@@ -3849,9 +3999,6 @@ export default function GuestPreCheckin() {
                         />
                       </label>
                     </div>
-                    <span className="text-xs text-slate-400 block">
-                      Formatos aceitos: Fotos da Galeria (JPG, PNG, WEBP), PDF Digital (CNH/RG Digital) ou Câmera
-                    </span>
                   </div>
                 )}
               </div>
@@ -3867,7 +4014,7 @@ export default function GuestPreCheckin() {
                 <Button 
                   onClick={async () => {
                     if (!docPhoto) {
-                      alert("Por favor, anexe a foto ou PDF do seu documento oficial de identificação (RG, CNH ou Passaporte) para continuar.")
+                      alert("Por favor, anexe a foto ou PDF do seu documento pessoal de identificação (RG, CNH ou Passaporte) para continuar.")
                       return
                     }
                     if (aiInspectingDoc) {
@@ -3875,7 +4022,11 @@ export default function GuestPreCheckin() {
                       return
                     }
                     if (aiDocResult?.isOfficialDocument === false) {
-                      alert("O arquivo enviado não foi reconhecido como documento oficial de identificação com foto (RG, CNH ou Passaporte). Por favor, anexe um documento válido.")
+                      alert(
+                        aiDocResult.invalidDocumentReason ||
+                        aiDocResult.mismatchReasons?.[0] ||
+                        "O arquivo enviado não foi reconhecido como documento pessoal de identificação (RG, CNH ou Passaporte). Por favor, insira um documento seu."
+                      )
                       return
                     }
                     if (aiDocResult?.isLegible === false) {
@@ -4080,9 +4231,17 @@ export default function GuestPreCheckin() {
                       <span className="text-[11px] text-slate-600 block mt-0.5">
                         {otpSent
                           ? (otpChannel === "whatsapp" 
-                              ? `Enviado para o WhatsApp ${otpMaskedPhone || phone || ""}` 
-                              : `Enviado para o e-mail ${otpMaskedEmail || email || ""}`)
-                          : `Clique no botão abaixo para enviar o código para ${phone || "seu WhatsApp"}`}
+                              ? `Enviado para o WhatsApp de ${fullName ? fullName.split(" ")[0] : `Hóspede ${selectedGuestIndex}`}: ${otpMaskedPhone || phone || ""}` 
+                              : `Enviado para o e-mail de ${fullName ? fullName.split(" ")[0] : `Hóspede ${selectedGuestIndex}`}: ${otpMaskedEmail || email || ""}`)
+                          : `Será enviado para o WhatsApp de ${fullName ? fullName.split(" ")[0] : `Hóspede ${selectedGuestIndex}`}: ${phone || "não informado"}`}
+                        {" "}
+                        <button
+                          type="button"
+                          onClick={() => setStep(1)}
+                          className="underline font-semibold text-emerald-800 hover:text-emerald-950 ml-1"
+                        >
+                          (alterar celular)
+                        </button>
                       </span>
                     </div>
                   </div>

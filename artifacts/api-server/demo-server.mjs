@@ -15092,6 +15092,7 @@ export async function inspectDocumentWithAI({
     isOfficialDoc,
     isLegibleDoc,
     legibilityReasonStr,
+    invalidDocReasonStr,
     extName,
     extCpf,
     extBirthDate,
@@ -15154,7 +15155,10 @@ export async function inspectDocumentWithAI({
 
     const mismatchReasons = [];
     if (!isOfficialDoc) {
-      mismatchReasons.push("O arquivo enviado não foi reconhecido como um documento oficial de identificação com foto (RG, CNH, CIN ou Passaporte).");
+      mismatchReasons.push(
+        invalidDocReasonStr ||
+          "O arquivo enviado não foi reconhecido como um documento pessoal de identificação (RG, CNH, CIN ou Passaporte). Por favor, insira um documento pessoal seu."
+      );
     } else if (!isLegibleDoc) {
       mismatchReasons.push(legibilityReasonStr || "O documento anexado está ilegível, cortado ou muito escuro. Por favor, envie uma foto nítida ou o PDF original.");
     } else {
@@ -15315,12 +15319,26 @@ export async function inspectDocumentWithAI({
     };
   }
 
-  // Inspeção pericial do stream de texto (decodificação de streams de PDF / FlateDecode / metadados para extração de nome, CPF, nascimento e cidade)
+  // Inspeção pericial do stream de texto (decodificação de streams de PDF / FlateDecode / metadados para extração de nome, CPF, nascimento, cidade e detecção de documentos indevidos como CRLV)
   let textStreamMentionsCampos = false;
   let streamExtractedName = "";
   let streamExtractedCpf = "";
   let streamExtractedBirthDate = "";
   let streamExtractedCity = "";
+  let detectedWrongDocType = "";
+  let detectedWrongDocReason = "";
+
+  const lowFileNameEarly = String(fileName || "").toLowerCase();
+  if (/\b(crlv|crv|licenciamento|ipva|renavam|doc[_-\s]*veiculo|documento[_-\s]*veiculo|doc[_-\s]*carro|documento[_-\s]*carro)\b/i.test(lowFileNameEarly)) {
+    detectedWrongDocType = "Documento de Veículo (CRLV)";
+    detectedWrongDocReason = "Documento de veículo (CRLV) não é aceito. Por favor, insira um documento pessoal seu de identificação (RG, CNH ou Passaporte).";
+  } else if (/\b(comprovante[_-\s]*(pix|pagamento|transferencia)|recibo[_-\s]*pagamento)\b/i.test(lowFileNameEarly)) {
+    detectedWrongDocType = "Comprovante de Pagamento";
+    detectedWrongDocReason = "Comprovante de pagamento ou PIX não é aceito nesta etapa. Por favor, insira um documento pessoal seu de identificação (RG, CNH ou Passaporte).";
+  } else if (/\b(comprovante[_-\s]*residencia|conta[_-\s]*(luz|agua|energia|internet)|fatura[_-\s]*(energia|cartao))\b/i.test(lowFileNameEarly)) {
+    detectedWrongDocType = "Comprovante de Residência";
+    detectedWrongDocReason = "Comprovante de residência ou fatura não é aceito como documento de identidade. Por favor, insira um documento pessoal seu (RG, CNH ou Passaporte).";
+  }
 
   if (rawBase64 && rawBase64.length > 100) {
     try {
@@ -15353,6 +15371,59 @@ export async function inspectDocumentWithAI({
 
       const combinedStreamText = chunks.join("\n");
       const latinText = combinedStreamText.toLowerCase();
+      const normStreamText = latinText.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+      // Detecção determinística de documento errado no conteúdo do PDF/arquivo (ex: CRLV / Documento de Veículo)
+      const isCnhOrRgStream =
+        normStreamText.includes("carteira nacional de habilitacao") ||
+        normStreamText.includes("permissao para dirigir") ||
+        normStreamText.includes("carteira de identidade") ||
+        normStreamText.includes("registro geral") ||
+        normStreamText.includes("cedula de identidade");
+
+      if (!isCnhOrRgStream && !detectedWrongDocReason) {
+        const hasCrlvHeader =
+          normStreamText.includes("certificado de registro e licenciamento") ||
+          /\bcrlv(?:-e|\s+digital)?\b/.test(normStreamText);
+        const vehicleKeywordsCount = [
+          /\brenavam\b/.test(normStreamText),
+          /\bchassi\b/.test(normStreamText),
+          /\bcombustivel\b/.test(normStreamText),
+          /\bano\s+fabricacao\b/.test(normStreamText),
+          /\bano\s+modelo\b/.test(normStreamText),
+          /\bespecie\s*\/\s*tipo\b/.test(normStreamText),
+          /\bpotencia\s*\/\s*cilindrada\b/.test(normStreamText)
+        ].filter(Boolean).length;
+
+        if (hasCrlvHeader || vehicleKeywordsCount >= 2) {
+          detectedWrongDocType = "Documento de Veículo (CRLV)";
+          detectedWrongDocReason = "Documento de veículo (CRLV) não é aceito. Por favor, insira um documento pessoal seu de identificação (RG, CNH ou Passaporte).";
+        } else if (
+          normStreamText.includes("comprovante de pagamento") ||
+          normStreamText.includes("comprovante de transferencia") ||
+          normStreamText.includes("comprovante pix") ||
+          (normStreamText.includes("id da transacao") && normStreamText.includes("instituicao"))
+        ) {
+          detectedWrongDocType = "Comprovante de Pagamento";
+          detectedWrongDocReason = "Comprovante de pagamento ou PIX não é aceito nesta etapa. Por favor, insira um documento pessoal seu de identificação (RG, CNH ou Passaporte).";
+        } else if (
+          normStreamText.includes("comprovante de residencia") ||
+          normStreamText.includes("fatura de energia") ||
+          normStreamText.includes("conta de energia") ||
+          (normStreamText.includes("consumo kwh") && normStreamText.includes("vencimento"))
+        ) {
+          detectedWrongDocType = "Comprovante de Residência";
+          detectedWrongDocReason = "Comprovante de residência ou fatura não é aceito como documento de identidade. Por favor, insira um documento pessoal seu (RG, CNH ou Passaporte).";
+        } else if (
+          normStreamText.includes("cartao de embarque") ||
+          normStreamText.includes("boarding pass") ||
+          normStreamText.includes("bilhete de passagem")
+        ) {
+          detectedWrongDocType = "Cartão de Embarque / Passagem";
+          detectedWrongDocReason = "Passagem ou cartão de embarque não é aceito como documento de identidade. Por favor, insira um documento pessoal seu (RG, CNH ou Passaporte).";
+        }
+      }
+
       if (
         latinText.includes("goytacazes") || 
         latinText.includes("goitacazes") || 
@@ -15423,8 +15494,8 @@ export async function inspectDocumentWithAI({
 
   if (apiKey) {
     try {
-      const prompt = `Você é um perito em verificação e autenticação de documentos oficiais de identificação (RG, CNH, CIN, Passaporte, CTPS, DNI, etc.) para o sistema da CorpFlats.
-Analise com rigor o documento oficial fornecido (${mimeType}) e compare com os dados informados pelo hóspede e pela reserva:
+      const prompt = `Você é um perito em verificação e autenticação de documentos pessoais oficiais de identificação (RG, CNH, CIN, Passaporte, CTPS, DNI, etc.) para o sistema da CorpFlats.
+Analise com rigor o documento fornecido (${mimeType}) e compare com os dados informados pelo hóspede e pela reserva:
 - Nome completo informado no formulário: "${cleanProvidedName || 'Não informado'}"
 - Nome registrado na reserva (titular/hóspede esperado): "${cleanReservationName || cleanProvidedName || 'Não informado'}"
 - CPF informado no formulário: "${cleanProvidedCpf || 'Não informado'}"
@@ -15434,7 +15505,9 @@ Analise com rigor o documento oficial fornecido (${mimeType}) e compare com os d
 - Origem / Procedência informada: "${effectiveOrigin || 'Não informada'}"
 
 Diretrizes Estritas de Análise:
-1. 'isOfficialDocument': Confirme se o arquivo é de fato um documento oficial de identificação com foto (RG, CNH, CIN, Passaporte, Carteira de Trabalho física ou digital, Carteira de Ordem OAB/CRM/etc, DNI). Caso seja uma foto genérica, selfie sem documento, comprovante de residência, foto de paisagem ou objeto, defina 'isOfficialDocument': false e 'isLegible': false.
+1. 'isOfficialDocument', 'detectedDocumentType' e 'invalidDocumentReason': Confirme se o arquivo é de fato um documento PESSOAL oficial de identificação com foto (RG, CNH, CIN, Passaporte, Carteira de Trabalho física ou digital, Carteira de Ordem OAB/CRM/etc, DNI).
+   - ATENÇÃO CRÍTICA: Documento de veículo (CRLV / CRV / Certificado de Registro e Licenciamento de Veículo com placa, chassi ou Renavam) NÃO é documento de identificação pessoal, mesmo que contenha o nome e o CPF do proprietário!
+   - Caso o arquivo seja um documento errado — como Documento de Veículo (CRLV), Comprovante de Pagamento/PIX, Comprovante de Residência (conta de luz/água/internet), Cartão de Embarque/Passagem, Selfie sem documento ou foto aleatória — defina OBRIGATORIAMENTE 'isOfficialDocument': false, informe em 'detectedDocumentType' qual foi o documento detectado (ex: "Documento de Veículo (CRLV)", "Comprovante de Pagamento", "Comprovante de Residência", "Selfie / Foto Pessoal") e escreva em 'invalidDocumentReason' uma mensagem direta e clara dizendo qual documento errado foi anexado e pedindo um documento pessoal seu (ex: "Documento de veículo (CRLV) não é aceito. Por favor, insira um documento pessoal seu de identificação (RG, CNH ou Passaporte).").
 2. 'isLegible': Verifique se as informações textuais do documento estão legíveis. Se a imagem estiver extremamente embaçada, escura, com reflexo que impeça a leitura do nome/CPF, ou cortada faltando os dados principais, defina 'isLegible': false e explique em 'legibilityReason' de maneira clara, educada e amigável em português (ex: "A foto do documento está muito escura ou embaçada, impossibilitando a leitura do nome e CPF. Por favor, anexe uma foto mais nítida e bem iluminada ou o PDF original.").
 3. 'extractedName': Extraia EXATAMENTE o nome completo que consta impresso no documento anexado. NUNCA copie o nome informado se o documento mostrar o nome de outra pessoa.
 4. 'nameMatches': Compare o nome extraído do documento com o nome informado e com o nome da reserva. Seja tolerante a acentos, nomes do meio abreviados/omitidos (ex: "Miller Pessanha" vs "Miller Mendonça Pessanha" = true), apenas sobrenome na reserva, ordem invertida, sufixos como Jr/Filho/Neto/Dr, ou homóglifos de digitação/OCR como "I" maiúsculo vs "l" minúsculo (ex: "Iago" vs "lago" = true) e 1 letra de diferença quando os sobrenomes/CPF conferem. Porém, se o documento pertencer a outra pessoa diferente, retorne false!
@@ -15446,11 +15519,13 @@ Diretrizes Estritas de Análise:
 10. 'isMinor': Se calculatedAge for menor que 18 anos, marque true; caso contrário false.
 11. 'extractedCity' e 'extractedState': Identifique o local de nascimento (naturalidade), cidade do órgão emissor ou endereço impresso no documento.
 12. 'isCamposResident': Se a cidade identificada for "Campos dos Goytacazes", "Campos", "Campos dos Goitacazes", município de Campos dos Goytacazes/RJ ou se a cidade informada for Campos dos Goytacazes, defina true; caso contrário false. ATENÇÃO: NUNCA considere residente de Campos apenas porque o sobrenome da pessoa contém "Campos".
-13. 'summary': Frase síntese do resultado da análise pericial, apontando claramente se a identidade confere ou se há divergência de nome/CPF.
+13. 'summary': Frase síntese do resultado da análise pericial, apontando claramente se a identidade confere, se foi anexado um documento inválido (ex: CRLV de veículo) ou se há divergência de nome/CPF.
 
 Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código com crases):
 {
   "isOfficialDocument": true,
+  "detectedDocumentType": "CNH",
+  "invalidDocumentReason": "",
   "isLegible": true,
   "legibilityReason": "",
   "extractedName": "",
@@ -15493,7 +15568,32 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
             isCamposDosGoytacazes(parsed.extractedCity, parsed.extractedAddress || "", parsed.extractedState || "")
           );
 
-          const isOfficial = Boolean(parsed.isOfficialDocument !== false);
+          const rawDetectedType = String(parsed.detectedDocumentType || parsed.documentType || detectedWrongDocType || "").trim();
+          const isDetectedVehicleDoc = Boolean(
+            detectedWrongDocType === "Documento de Veículo (CRLV)" ||
+            /\b(crlv|crv|ve[ií]culo|licenciamento|ipva|renavam|carro|autom[oó]vel)\b/i.test(rawDetectedType) ||
+            /\b(crlv|crv|documento de ve[ií]culo|licenciamento de ve[ií]culo)\b/i.test(String(parsed.invalidDocumentReason || parsed.summary || ""))
+          );
+
+          const isOfficial = detectedWrongDocReason
+            ? false
+            : (isDetectedVehicleDoc ? false : Boolean(parsed.isOfficialDocument !== false));
+
+          let invalidDocReason = "";
+          if (!isOfficial) {
+            if (isDetectedVehicleDoc) {
+              invalidDocReason = "Documento de veículo (CRLV) não é aceito. Por favor, insira um documento pessoal seu de identificação (RG, CNH ou Passaporte).";
+            } else if (detectedWrongDocReason) {
+              invalidDocReason = detectedWrongDocReason;
+            } else if (parsed.invalidDocumentReason && String(parsed.invalidDocumentReason).trim()) {
+              invalidDocReason = String(parsed.invalidDocumentReason).trim();
+            } else if (rawDetectedType && !/^(rg|cnh|cin|passaporte|ctps|dni|identidade|desconhecido)$/i.test(rawDetectedType)) {
+              invalidDocReason = `${rawDetectedType} não é aceito como documento de identificação. Por favor, insira um documento pessoal seu (RG, CNH ou Passaporte).`;
+            } else {
+              invalidDocReason = "O arquivo anexado não foi reconhecido como um documento pessoal de identificação (RG, CNH ou Passaporte). Por favor, insira um documento pessoal seu.";
+            }
+          }
+
           const isLegible = Boolean(parsed.isLegible !== false);
           const legReason = parsed.legibilityReason || (parsed.isLegible === false ? "Documento ilegível. Por favor, envie uma foto mais nítida ou o PDF original." : "");
 
@@ -15508,6 +15608,7 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
             isOfficialDoc: isOfficial,
             isLegibleDoc: isLegible,
             legibilityReasonStr: legReason,
+            invalidDocReasonStr: invalidDocReason,
             extName: parsed.extractedName || streamExtractedName || cleanProvidedName,
             extCpf: resolvedExtCpf,
             extBirthDate: extBirth,
@@ -15525,6 +15626,9 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
           return {
             success: true,
             isOfficialDocument: isOfficial,
+            documentType: isDetectedVehicleDoc ? "Documento de Veículo (CRLV)" : (rawDetectedType || undefined),
+            detectedDocumentType: isDetectedVehicleDoc ? "Documento de Veículo (CRLV)" : (rawDetectedType || undefined),
+            invalidDocumentReason: invalidDocReason || undefined,
             isLegible,
             legibilityReason: legReason,
             extractedName: verdict.cleanExtName,
@@ -15560,6 +15664,7 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
   const isPdf = mimeType.includes("pdf");
   const isImage = mimeType.includes("image") || mimeType.includes("jpeg") || mimeType.includes("png") || mimeType.includes("webp");
   const isPotentiallyValidDoc = (isPdf || isImage) && rawBase64.length > 200;
+  const isOfficialFallback = isPotentiallyValidDoc && !detectedWrongDocReason;
   const legibilityReasonFallback = isPotentiallyValidDoc ? "" : "Documento ilegível ou formato não suportado. Por favor, envie imagem ou PDF válido.";
 
   const fallbackCandidateName = streamExtractedName || (
@@ -15569,9 +15674,10 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
   );
 
   const fallbackVerdict = buildIdentityVerdict({
-    isOfficialDoc: isPotentiallyValidDoc,
+    isOfficialDoc: isOfficialFallback,
     isLegibleDoc: isPotentiallyValidDoc,
     legibilityReasonStr: legibilityReasonFallback,
+    invalidDocReasonStr: detectedWrongDocReason,
     extName: fallbackCandidateName,
     extCpf: streamExtractedCpf || cleanProvidedCpf,
     extBirthDate: streamExtractedBirthDate || effectiveBirthDate,
@@ -15590,7 +15696,10 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
 
   return {
     success: true,
-    isOfficialDocument: isPotentiallyValidDoc,
+    isOfficialDocument: isOfficialFallback,
+    documentType: detectedWrongDocType || undefined,
+    detectedDocumentType: detectedWrongDocType || undefined,
+    invalidDocumentReason: detectedWrongDocReason || undefined,
     isLegible: isPotentiallyValidDoc,
     legibilityReason: legibilityReasonFallback,
     extractedName: fallbackVerdict.cleanExtName,
@@ -15688,8 +15797,8 @@ app.post("/api/ai/inspect-document", async (req, res) => {
       fileUrl
     });
 
-    // Autocorreção automática do nome na reserva pelo nome oficial do documento quando validado com sucesso
-    if (result && result.identityMatches && result.canonicalGuestName && Array.isArray(db?.reservations)) {
+    // Autocorreção automática do nome na reserva pelo nome oficial do documento APENAS quando for documento oficial válido
+    if (result && result.isOfficialDocument !== false && result.identityMatches && result.canonicalGuestName && Array.isArray(db?.reservations)) {
       const targetCode = String(reservationCode || code || "").trim();
       const targetId = Number(reservationId) || 0;
       const cleanReqCpf = String(reservationCpf || providedCpf || declaredCpf || result.extractedCpf || "").replace(/\D/g, "");
@@ -47475,6 +47584,21 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
   const cleanPhone = cleanWhatsAppPhone(resolvedPhone);
   const targetEmail = (email || (isTitular ? r.guestEmail : targetGuest?.email) || "").trim().toLowerCase();
 
+  // Persiste preventivamente telefone, nome e e-mail do hóspede/acompanhante no slot da reserva ao solicitar OTP
+  // para evitar perda de dados se o hóspede abrir o link 1-toque do WhatsApp ou trocar de aba antes de concluir
+  if (targetGuest) {
+    if (cleanPhone && !targetGuest.phone) {
+      targetGuest.phone = resolvedPhone;
+    }
+    if (targetEmail && !targetGuest.email) {
+      targetGuest.email = targetEmail;
+    }
+    const bodyFullName = String(req.body.fullName || "").trim();
+    if (bodyFullName && (!targetGuest.name || /^h[oó]spede\s*\d*$/i.test(String(targetGuest.name).trim()))) {
+      targetGuest.name = bodyFullName;
+    }
+  }
+
   if (channel === "whatsapp" && !cleanPhone) {
     return res.status(400).json({
       error: isTitular
@@ -47535,13 +47659,16 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
   db.fnrhWhatsappOtps.push(otpRecord);
   saveDatabase("manual_otp");
 
-  const guestName = (req.body.fullName || r.guestName || "Hóspede").trim().split(" ")[0];
+  const guestName = (req.body.fullName || targetGuest?.name || r.guestName || "Hóspede").trim().split(" ")[0];
   const flatNumber = r.flatNumber || r.flatId || "";
 
   let sendResult = { success: true };
 
   if (channel === "whatsapp") {
-    const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.com.br");
+    const reqProto = req.headers["x-forwarded-proto"]
+      ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
+      : (req.protocol || "https");
+    const originHeader = req.headers.origin || (req.headers.host ? `${reqProto}://${req.headers.host}` : "https://corpflats.com.br");
     const confirmTapUrl = `${originHeader}/api/pms/pre-checkin/${encodeURIComponent(r.code || code)}/confirm-otp-tap?otp=${encodeURIComponent(otpCode)}&guest=${encodeURIComponent(guestIndex)}`;
     const otpMessage = `🏢 *CorpFlats • Confirmação de Check-in*\n\nOlá, *${guestName}*! 👋\nSeu código de segurança para confirmar o check-in digital no *Flat ${flatNumber}* é:\n\n🔑 *${otpCode}*\n\n⏳ _Este código expira em 10 minutos._\n✨ _Toque em *Preencher na Tela* abaixo (ou responda esta mensagem com o código) para preenchimento automático!_`;
 
@@ -64672,6 +64799,11 @@ async function checkInterBankingExtratoPixForPending(r, pending) {
   }
 }
 
+function isWaHistoryStatusDispatched(status) {
+  const s = String(status || "").toLowerCase().trim();
+  return s === "sent" || s === "delivered" || s === "read" || s === "received" || s === "played" || s === "viewed";
+}
+
 function isConfirmationAlreadyDispatched(r) {
   if (!r) return true;
   const history = db.whatsappHistory || [];
@@ -64679,12 +64811,13 @@ function isConfirmationAlreadyDispatched(r) {
   const rId = String(r.id || "");
   return history.some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
-    const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
+    const hId = h.reservationId ? String(h.reservationId) : "";
+    const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
     return isSameRes && (
       h.triggerEvent === "payment_confirmed" ||
       h.triggerEvent === "reservation_created" ||
       h.triggerEvent === "sameday_reservation"
-    ) && (h.status === "sent" || h.status === "delivered");
+    ) && isWaHistoryStatusDispatched(h.status);
   });
 }
 
@@ -64943,7 +65076,7 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
         const rCode = String(r.code || "").toUpperCase();
         const rId = String(r.id || "");
         const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
-        return isSameRes && h.triggerEvent === "payment_confirmed" && h.recipientRole === "solicitante" && (h.status === "sent" || h.status === "delivered");
+        return isSameRes && h.triggerEvent === "payment_confirmed" && h.recipientRole === "solicitante" && isWaHistoryStatusDispatched(h.status);
       });
       if (!hasRequesterReceipt) {
         try {
@@ -64960,10 +65093,15 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
 
     const hasSameDayDispatched = (db.whatsappHistory || []).some(h => {
       const hCode = String(h.reservationCode || "").toUpperCase();
+      const hId = h.reservationId ? String(h.reservationId) : "";
       const rCode = String(r.code || "").toUpperCase();
       const rId = String(r.id || "");
-      const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
-      return isSameRes && h.triggerEvent === "sameday_reservation" && (h.status === "sent" || h.status === "delivered");
+      const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+      return isSameRes && (
+        h.triggerEvent === "sameday_reservation" ||
+        h.triggerEvent === "payment_confirmed" ||
+        h.triggerEvent === "reservation_created"
+      ) && isWaHistoryStatusDispatched(h.status);
     });
 
     if (!hasSameDayDispatched) {
@@ -65008,7 +65146,7 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
       const hCode = String(h.reservationCode || "").toUpperCase();
       const hId = h.reservationId ? String(h.reservationId) : "";
       const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
-      return isSameRes && (h.triggerEvent === "checkin_day_instructions" || h.triggerEvent === "sameday_reservation") && (h.status === "sent" || h.status === "delivered");
+      return isSameRes && (h.triggerEvent === "checkin_day_instructions" || h.triggerEvent === "sameday_reservation") && isWaHistoryStatusDispatched(h.status);
     });
     if (!hasCheckinDayWa) {
       try {
