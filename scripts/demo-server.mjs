@@ -47371,6 +47371,8 @@ app.get("/api/pms/pre-checkin/:code", async (req, res) => {
         if (guest.minorAuthDocUrl && !r.guests[0].minorAuthDocUrl) r.guests[0].minorAuthDocUrl = guest.minorAuthDocUrl;
         if (guest.originCity && !r.guests[0].originCity) r.guests[0].originCity = guest.originCity;
         if (guest.originState && !r.guests[0].originState) r.guests[0].originState = guest.originState;
+        if (guest.transportMethod && !r.guests[0].transportMethod) r.guests[0].transportMethod = guest.transportMethod;
+        if (guest.travelReason && !r.guests[0].travelReason) r.guests[0].travelReason = guest.travelReason;
         if (guest.aiVerification && !r.guests[0].aiVerification) r.guests[0].aiVerification = guest.aiVerification;
       }
     }
@@ -48231,6 +48233,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   if (originState || req.body.originState) guest.originState = originState || req.body.originState;
   if (destinationCity || req.body.destinationCity) guest.destinationCity = destinationCity || req.body.destinationCity;
   if (destinationState || req.body.destinationState) guest.destinationState = destinationState || req.body.destinationState;
+  if (req.body.transportMethod || transportMethod) guest.transportMethod = req.body.transportMethod || transportMethod;
+  if (req.body.travelReason || travelReason) guest.travelReason = req.body.travelReason || travelReason;
   if (selfieUrl) guest.photoUrl = selfieUrl;
   if (docPhotoUrl) guest.docPhotoUrl = docPhotoUrl;
   if (signatureUrl) guest.signatureUrl = signatureUrl;
@@ -48392,6 +48396,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     if (cep || req.body.cep) r.guestCep = cep || req.body.cep;
     if (originCity || req.body.originCity) r.originCity = originCity || req.body.originCity;
     if (originState || req.body.originState) r.originState = originState || req.body.originState;
+    if (req.body.transportMethod || transportMethod) r.transportMethod = req.body.transportMethod || transportMethod;
+    if (req.body.travelReason || travelReason) r.travelReason = req.body.travelReason || travelReason;
     if (req.body.estimatedArrivalTime) {
       const etaVal = String(req.body.estimatedArrivalTime).trim();
       r.estimatedArrivalTime = etaVal;

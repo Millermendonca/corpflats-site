@@ -171,8 +171,9 @@ export default function GuestPreCheckin() {
   const [city, setCity] = useState("")
   const [state, setState] = useState("RJ")
   const [transportMethod, setTransportMethod] = useState("")
-  // Qualquer opção de carro (inclui o valor legado "carro") habilita o cadastro completo do veículo
-  const isCarTransport = ["carro", "Carro próprio", "Carro alugado"].includes(transportMethod)
+  // Qualquer opção de carro ou moto (inclui os valores legados "carro" / "moto") habilita o cadastro completo do veículo
+  const isMotoTransport = ["moto", "Moto", "Moto própria", "Moto alugada"].includes(transportMethod)
+  const isCarTransport = ["carro", "Carro próprio", "Carro alugado", "moto", "Moto", "Moto própria", "Moto alugada"].includes(transportMethod)
   const [travelReason, setTravelReason] = useState("")
   const [originCity, setOriginCity] = useState("")
   const [originState, setOriginState] = useState("RJ")
@@ -793,7 +794,7 @@ export default function GuestPreCheckin() {
       setVehicleBrand(v.brand || "")
       setVehicleColor(v.color || "")
       if (!transportVal) {
-        setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
+        setTransportMethod(prev => ["Carro próprio", "Carro alugado", "Moto", "moto", "Moto própria", "Moto alugada"].includes(prev) ? prev : "Carro próprio")
       }
     } else {
       setVehiclePlate("")
@@ -889,7 +890,7 @@ export default function GuestPreCheckin() {
           setVehicleModel(sessionUser.vehicle.model || "")
           setVehicleBrand(sessionUser.vehicle.brand || "")
           setVehicleColor(sessionUser.vehicle.color || "")
-          setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
+          setTransportMethod(prev => ["Carro próprio", "Carro alugado", "Moto", "moto", "Moto própria", "Moto alugada"].includes(prev) ? prev : "Carro próprio")
         }
         if (!doc && sessionUser.docPhotoUrl) {
           setDocPhoto(sessionUser.docPhotoUrl)
@@ -3454,6 +3455,7 @@ export default function GuestPreCheckin() {
                         <SelectContent className="bg-white border-slate-200 text-slate-900 rounded-xl">
                           <SelectItem value="Carro próprio">🚗 Carro próprio</SelectItem>
                           <SelectItem value="Carro alugado">🚙 Carro alugado</SelectItem>
+                          <SelectItem value="Moto">🏍️ Moto</SelectItem>
                           <SelectItem value="Avião">✈️ Avião</SelectItem>
                           <SelectItem value="Ônibus">🚌 Ônibus</SelectItem>
                           <SelectItem value="Aplicativo / Táxi">🚕 Aplicativo / Táxi</SelectItem>
@@ -3558,11 +3560,11 @@ export default function GuestPreCheckin() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-[11px] text-slate-700">Modelo do Carro</Label>
+                        <Label className="text-[11px] text-slate-700">{isMotoTransport ? "Modelo da Moto" : "Modelo do Carro"}</Label>
                         <Input 
                           value={vehicleModel} 
                           onChange={e => setVehicleModel(e.target.value)} 
-                          placeholder="Ex: Corolla, Civic, T-Cross" 
+                          placeholder={isMotoTransport ? "Ex: CG 160, PCX, Fazer 250" : "Ex: Corolla, Civic, T-Cross"} 
                           className="bg-white border-sky-200 text-slate-900 text-xs sm:text-sm rounded-xl h-10" 
                         />
                       </div>
@@ -3574,7 +3576,7 @@ export default function GuestPreCheckin() {
                         <Input 
                           value={vehicleBrand} 
                           onChange={e => setVehicleBrand(e.target.value)} 
-                          placeholder="Ex: Toyota, Honda, VW" 
+                          placeholder={isMotoTransport ? "Ex: Honda, Yamaha, BMW" : "Ex: Toyota, Honda, VW"} 
                           className="bg-white border-sky-200 text-slate-900 text-xs sm:text-sm rounded-xl h-10" 
                         />
                       </div>
