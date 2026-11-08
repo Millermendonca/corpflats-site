@@ -8521,6 +8521,61 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
   });
 
+  app.get("/api/whatsapp/sunday-upsell/offers", (req, res) => {
+    try {
+      const db = getDb();
+      ensureDbDefaults();
+      const { forceDate } = req.query || {};
+      const result = listSundayUpsellOffers(db, forceDate || null);
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      console.error("[Sunday Upsell Offers List Error]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/sunday-upsell/reactivate", async (req, res) => {
+    try {
+      const db = getDb();
+      ensureDbDefaults();
+      const {
+        reservationCodes,
+        reservationCode,
+        allExpired,
+        durationOption,
+        sendWhatsApp,
+        discountPercent,
+        forceDate,
+        testMode
+      } = req.body || {};
+
+      const codesList = Array.isArray(reservationCodes)
+        ? reservationCodes
+        : (reservationCode ? [reservationCode] : []);
+
+      const result = await reactivateSundayUpsellOffers(db, saveDatabase, {
+        reservationCodes: codesList,
+        allExpired: Boolean(allExpired),
+        durationOption: String(durationOption || "30"),
+        sendWhatsApp: sendWhatsApp !== undefined ? Boolean(sendWhatsApp) : true,
+        discountPercentOverride: discountPercent !== undefined ? Number(discountPercent) : null,
+        forceDate: forceDate || null,
+        testMode: Boolean(testMode)
+      });
+
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (err) {
+      console.error("[Sunday Upsell Reactivate Route Error]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // 1.1 Listar os 7 Canais Independentes Z-API
   app.get("/api/whatsapp/channels", (req, res) => {
     const db = getDb();
@@ -17364,6 +17419,591 @@ export function previewSundayUpsellEligibility(db, forceDate = null) {
       flatNumber: ie.reservation.flatNumber,
       reason: ie.reason
     }))
+  };
+}
+
+export function resolveSundayUpsellDuration(durationOption = "30", targetSundayDate = null, refNow = new Date()) {
+  const nowMs = refNow instanceof Date ? refNow.getTime() : Date.now();
+  const opt = String(durationOption || "30").trim().toLowerCase();
+
+  let durationMinutes = 30;
+  let label = "por mais 30 minutos";
+
+  if (opt === "60" || opt === "1h") {
+    durationMinutes = 60;
+    label = "por mais 1 hora";
+  } else if (opt === "120" || opt === "2h") {
+    durationMinutes = 120;
+    label = "por mais 2 horas";
+  } else if (opt === "until_sunday_11h" || opt === "sunday_11h") {
+    const sunDate = targetSundayDate || resolveTargetSundayDate(null, new Date(nowMs));
+    const sunday11hUtcMs = new Date(`${sunDate}T14:00:00.000Z`).getTime(); // 11:00 BRT = 14:00 UTC
+    const diffMinutes = Math.round((sunday11hUtcMs - nowMs) / 60000);
+    if (Number.isFinite(diffMinutes) && diffMinutes > 35) {
+      durationMinutes = Math.min(24 * 60, diffMinutes);
+      label = "até domingo às 11h00";
+    } else {
+      durationMinutes = 60;
+      label = "por mais 1 hora";
+    }
+  } else {
+    const parsed = parseInt(opt, 10);
+    if (Number.isFinite(parsed) && parsed >= 5 && parsed <= 1440) {
+      durationMinutes = parsed;
+      label = parsed === 60 ? "por mais 1 hora" : (parsed === 120 ? "por mais 2 horas" : `por mais ${parsed} minutos`);
+    }
+  }
+
+  const expiresAtDate = new Date(nowMs + durationMinutes * 60 * 1000);
+  const expiresAt = expiresAtDate.toISOString();
+  const expirationSeconds = Math.max(300, durationMinutes * 60);
+
+  let formattedExpiry = "";
+  try {
+    formattedExpiry = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(expiresAtDate);
+  } catch (_) {
+    formattedExpiry = expiresAt.slice(11, 16);
+  }
+
+  return {
+    durationOption: opt,
+    durationMinutes,
+    expirationSeconds,
+    expiresAt,
+    formattedExpiry,
+    label: formattedExpiry ? `${label} (até ${formattedExpiry})` : label
+  };
+}
+
+export function listSundayUpsellOffers(db, forceDate = null) {
+  const targetSundayDate = resolveTargetSundayDate(forceDate);
+  const dtSunday = new Date(`${targetSundayDate}T12:00:00Z`);
+  const mondayDate = !isNaN(dtSunday.getTime())
+    ? new Date(dtSunday.getTime() + 24 * 3600 * 1000).toISOString().slice(0, 10)
+    : "";
+
+  const discountPercent = Number(db?.sundayUpsellConfig?.sundayUpsellDiscountPercent ?? 35) || 35;
+  const allReservations = Array.isArray(db?.reservations) ? db.reservations : [];
+  const nonActiveStatuses = [
+    "cancelada", "cancelled", "expirada", "no_show", "pre_reserva", "pendente"
+  ];
+  const hostBase = (typeof process !== "undefined" && process.env?.SERVER_BASE_URL ? process.env.SERVER_BASE_URL : "https://corpflats.com.br").replace(/\/+$/, "");
+  const nowMs = Date.now();
+
+  const offers = [];
+  let paidCount = 0;
+  let activeCount = 0;
+  let expiredCount = 0;
+  let eligibleNotSentCount = 0;
+  let conflictCount = 0;
+
+  for (const r of allReservations) {
+    if (!r) continue;
+    const statusNorm = String(r.status || "").toLowerCase();
+    if (nonActiveStatuses.includes(statusNorm)) continue;
+
+    const rCheckout = String(r.checkoutDate || "").slice(0, 10);
+    const rCheckin = String(r.checkinDate || "").slice(0, 10);
+    const upsellMeta = r.pendingSundayUpsell || null;
+
+    const isPaidForTargetSunday = Boolean(
+      (r.hasSundayUpsell || upsellMeta?.status === "paid") &&
+      (upsellMeta?.originalCheckoutDate === targetSundayDate || rCheckout === mondayDate || r.sundayUpsellOfferSentDate === targetSundayDate)
+    );
+
+    const hadOfferForTargetSunday = Boolean(
+      upsellMeta?.originalCheckoutDate === targetSundayDate ||
+      r.sundayUpsellOfferSentDate === targetSundayDate ||
+      (upsellMeta && rCheckout === targetSundayDate)
+    );
+
+    const isSundayCheckoutCandidate = rCheckout === targetSundayDate && (!rCheckin || rCheckin < targetSundayDate);
+
+    if (!isPaidForTargetSunday && !hadOfferForTargetSunday && !isSundayCheckoutCandidate) {
+      continue;
+    }
+
+    // Se já fez check-out definitivo e não pagou upsell, ignora
+    if (!isPaidForTargetSunday && (r.checkoutDone || r.checkoutCompleted || r.actualCheckoutAt || ["completed", "checked_out", "concluida", "finalizada"].includes(statusNorm))) {
+      continue;
+    }
+
+    const currentPricing = calculateSundayUpsellOfferPrices(r, discountPercent);
+    const guestPhone = r.guestPhone || r.phone || "";
+    const flatNum = String(r.flatNumber || "");
+    const flatId = r.flatId;
+
+    // Verifica disponibilidade física de domingo para segunda
+    let scenario = "VACANT_FLAT";
+    let alternateFlatNumber = upsellMeta?.alternateFlatNumber || null;
+    let incomingResCode = upsellMeta?.incomingReservationId || null;
+
+    if (!isPaidForTargetSunday && mondayDate) {
+      const incomingRes = allReservations.find(other => {
+        if (!other || other.id === r.id || other.code === r.code) return false;
+        const oStatus = String(other.status || "").toLowerCase();
+        if ([...nonActiveStatuses, "completed", "checked_out", "concluida", "finalizada"].includes(oStatus)) return false;
+        if (other.checkoutDone || other.checkoutCompleted || other.actualCheckoutAt) return false;
+        const sameFlat = (flatId != null && other.flatId != null && String(other.flatId) === String(flatId)) ||
+                         (flatNum && other.flatNumber && String(other.flatNumber) === flatNum);
+        if (!sameFlat) return false;
+        const oCheckin = String(other.checkinDate || "").slice(0, 10);
+        const oCheckout = String(other.checkoutDate || "").slice(0, 10);
+        return oCheckin < mondayDate && oCheckout > targetSundayDate;
+      });
+
+      if (incomingRes) {
+        incomingResCode = incomingRes.code || String(incomingRes.id);
+        const inCheckin = String(incomingRes.checkinDate || targetSundayDate).slice(0, 10);
+        const inCheckout = String(incomingRes.checkoutDate || mondayDate).slice(0, 10);
+        let altFlat = null;
+        if (typeof selectFairShareFlat === "function") {
+          const fsResult = selectFairShareFlat(db, inCheckin, inCheckout, incomingRes.id);
+          if (fsResult?.recommendedFlat && String(fsResult.recommendedFlat.number) !== flatNum) {
+            altFlat = fsResult.recommendedFlat;
+          } else if (Array.isArray(fsResult?.availableFlats)) {
+            altFlat = fsResult.availableFlats.find(f => String(f.number) !== flatNum);
+          }
+        }
+        if (altFlat) {
+          scenario = "REALLOCATION_AVAILABLE";
+          alternateFlatNumber = String(altFlat.number);
+        } else {
+          scenario = "CONDOMINIO_100_PORCENTO_OCUPADO";
+          alternateFlatNumber = null;
+        }
+      }
+    }
+
+    let offerStatus = "eligible_not_sent";
+    const expMs = upsellMeta?.expiresAt ? new Date(upsellMeta.expiresAt).getTime() : 0;
+    const isCurrentlyActive = !isPaidForTargetSunday && Boolean(
+      upsellMeta &&
+      ["pending_payment", "awaiting_payment", "pending"].includes(String(upsellMeta.status || "")) &&
+      expMs > nowMs
+    );
+
+    if (isPaidForTargetSunday) {
+      offerStatus = "paid";
+      paidCount++;
+    } else if (isCurrentlyActive) {
+      offerStatus = "active";
+      activeCount++;
+    } else if (hadOfferForTargetSunday) {
+      offerStatus = "expired";
+      expiredCount++;
+    } else if (scenario === "CONDOMINIO_100_PORCENTO_OCUPADO" || !guestPhone || !currentPricing.valid) {
+      offerStatus = "conflict";
+      conflictCount++;
+    } else {
+      offerStatus = "eligible_not_sent";
+      eligibleNotSentCount++;
+    }
+
+    const resCode = String(r.code || r.id || "").trim();
+    const effectivePromoPrice = isPaidForTargetSunday
+      ? (Number(upsellMeta?.promotionalPrice) || currentPricing.promotionalPrice)
+      : (isCurrentlyActive ? (Number(upsellMeta?.promotionalPrice) || currentPricing.promotionalPrice) : currentPricing.promotionalPrice);
+    const effectiveNormalRate = Number(upsellMeta?.normalDailyRate) || currentPricing.normalDailyRate;
+    const effectiveDiscountPct = isPaidForTargetSunday || isCurrentlyActive
+      ? (Number(upsellMeta?.discountPercent) || discountPercent)
+      : discountPercent;
+
+    const cleanFirstName = r.guestName ? String(r.guestName).trim().split(" ")[0].replace(/\*/g, "") : "Hospede";
+    const pixCode = String(upsellMeta?.pixCopiaECola || "").trim();
+    const copyPixUrl = `${hostBase}/copiar-pix/${encodeURIComponent(resCode)}?upsell=1${pixCode ? `&pix=${encodeURIComponent(pixCode)}` : ""}&amount=${(effectivePromoPrice || 0).toFixed(2)}&normal=${(effectiveNormalRate || 0).toFixed(2)}&discount=${Math.round(effectiveDiscountPct)}&flat=${encodeURIComponent(flatNum)}&guest=${encodeURIComponent(cleanFirstName)}`;
+
+    const canReactivate = Boolean(
+      offerStatus !== "paid" &&
+      scenario !== "CONDOMINIO_100_PORCENTO_OCUPADO" &&
+      Boolean(guestPhone) &&
+      currentPricing.valid
+    );
+
+    offers.push({
+      id: r.id,
+      code: resCode,
+      guestName: r.guestName || "Hóspede",
+      guestPhone,
+      flatNumber: flatNum,
+      checkinDate: rCheckin,
+      checkoutDate: rCheckout,
+      offerStatus,
+      hadOfferSent: hadOfferForTargetSunday,
+      sentAt: upsellMeta?.createdAt || null,
+      reactivatedAt: upsellMeta?.reactivatedAt || null,
+      reactivationCount: Number(upsellMeta?.reactivationCount || 0),
+      expiresAt: upsellMeta?.expiresAt || null,
+      paidAt: r.sundayUpsellPaidAt || upsellMeta?.paidAt || null,
+      normalDailyRate: currentPricing.normalDailyRate || effectiveNormalRate,
+      promotionalPrice: currentPricing.promotionalPrice || effectivePromoPrice,
+      discountPercent,
+      offeredPromotionalPrice: upsellMeta?.promotionalPrice ? Number(upsellMeta.promotionalPrice) : null,
+      offeredDiscountPercent: upsellMeta?.discountPercent ? Number(upsellMeta.discountPercent) : null,
+      scenario,
+      alternateFlatNumber,
+      incomingResCode,
+      canReactivate,
+      copyPixUrl
+    });
+  }
+
+  // Ordena: Ativas e Expiradas primeiro, depois Elegíveis não enviadas, depois Pagas, e por número do Flat
+  const statusWeight = {
+    expired: 1,
+    active: 2,
+    eligible_not_sent: 3,
+    paid: 4,
+    conflict: 5
+  };
+  offers.sort((a, b) => {
+    const wA = statusWeight[a.offerStatus] || 99;
+    const wB = statusWeight[b.offerStatus] || 99;
+    if (wA !== wB) return wA - wB;
+    return Number(a.flatNumber || 0) - Number(b.flatNumber || 0);
+  });
+
+  return {
+    targetSundayDate,
+    mondayDate,
+    discountPercent,
+    summary: {
+      total: offers.length,
+      paidCount,
+      activeCount,
+      expiredCount,
+      eligibleNotSentCount,
+      conflictCount
+    },
+    offers
+  };
+}
+
+export async function dispatchSundayUpsellReactivationBalloon(db, {
+  reservation,
+  guestPhone,
+  guestFirstName,
+  flatNumber,
+  sundayUpsellPrice,
+  normalDailyRate,
+  sundayUpsellDiscountPercent = 35,
+  pixCopiaECola,
+  txid,
+  holdExpiresAt,
+  validityLabel = "por mais 30 minutos",
+  testMode = false
+}) {
+  const isTestEnv = process.env.NODE_ENV === "test" || Boolean(globalThis.__CORPFLATS_TEST_MODE__);
+  const promoNum = Number(sundayUpsellPrice);
+  const normalNum = Number(normalDailyRate);
+  const pctNum = Number(sundayUpsellDiscountPercent ?? 35);
+  const cleanName = String(guestFirstName || "").replace(/\*/g, "").trim();
+  const cleanFlat = String(flatNumber || "").replace(/\*/g, "").trim();
+  const cleanPix = String(pixCopiaECola || "").trim();
+  const cleanValidity = String(validityLabel || "por mais 30 minutos").replace(/\*/g, "").trim();
+
+  if (
+    !Number.isFinite(pctNum) || pctNum < 1 || pctNum > 99 ||
+    !Number.isFinite(promoNum) || promoNum <= 0 ||
+    !Number.isFinite(normalNum) || normalNum <= 0 ||
+    !cleanName || cleanName === "undefined" || cleanName === "NaN" ||
+    !cleanFlat || cleanFlat === "undefined" || cleanFlat === "NaN" ||
+    !cleanPix || cleanPix === "undefined" || cleanPix === "NaN"
+  ) {
+    return {
+      success: false,
+      aborted: true,
+      error: "Envio de reativação abortado: variáveis ou valores inválidos."
+    };
+  }
+
+  const isGuestScheduleInTestMode = Boolean(db?.zapiConfig?.channels?.guest_schedule?.testMode);
+  const effectivePhone = (Boolean(testMode) && !isTestEnv)
+    ? "5522998505276"
+    : ((isGuestScheduleInTestMode && !isTestEnv) ? "5522998505276" : guestPhone);
+
+  const pctFormatted = String(Math.round(pctNum));
+  const promoFormatted = promoNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const normalFormatted = normalNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const balloonText = `Olá, ${cleanName}! 😊
+Reativei a sua Oferta de Domingo Sem Pressa no Flat ${cleanFlat} com ${pctFormatted}% de desconto: de R$ ${normalFormatted} por apenas R$ ${promoFormatted} (com check-out livre no domingo + bônus até segunda-feira às 12h!).
+
+⏳ O seu link e código PIX já estão válidos novamente ${cleanValidity}.
+
+Para garantir, basta tocar no botão abaixo para copiar o código PIX. Assim que você pagar, o nosso sistema já dá baixa e confirma sua estadia automaticamente! 👇`.replace(/\*/g, "");
+
+  const resCode = String(reservation?.code || reservation?.id || "TEST-SUN-UPSELL").trim();
+  const hostBase = (typeof process !== "undefined" && process.env?.SERVER_BASE_URL ? process.env.SERVER_BASE_URL : "https://corpflats.com.br").replace(/\/+$/, "");
+  const copyPixUrl = `${hostBase}/copiar-pix/${encodeURIComponent(resCode)}?upsell=1&pix=${encodeURIComponent(cleanPix)}&amount=${promoNum.toFixed(2)}&normal=${normalNum.toFixed(2)}&discount=${pctFormatted}&flat=${encodeURIComponent(cleanFlat)}&guest=${encodeURIComponent(cleanName)}`;
+
+  const balloonButtons = [
+    {
+      id: "btn_pix_reactivated",
+      type: "URL",
+      label: "📋 Copiar Código PIX",
+      url: copyPixUrl
+    }
+  ];
+
+  const balloonRes = await sendZapiMessage(db?.zapiConfig, {
+    phone: effectivePhone,
+    message: balloonText,
+    buttons: balloonButtons,
+    channelId: "guest_schedule",
+    recipientRole: "guest",
+    triggerEvent: "sunday_upsell_reactivated_pix",
+    sendMode: "buttons",
+    skipPixCompanion: true,
+    delayTyping: isTestEnv ? 0 : 2,
+    bypassTestMode: Boolean(testMode) && effectivePhone === "5522998505276",
+    db
+  });
+
+  if (typeof appendMessageToConversation === "function") {
+    appendMessageToConversation(db, {
+      phone: effectivePhone,
+      senderName: "CorpFlats (Automação)",
+      fromMe: true,
+      text: `${balloonText}\n[Botão Interativo: 📋 Copiar Código PIX]`,
+      type: "text",
+      status: "delivered",
+      triggerEvent: "sunday_upsell_reactivated_pix",
+      reservationCode: reservation?.code || reservation?.id
+    });
+  }
+
+  return {
+    success: Boolean(balloonRes?.success),
+    effectivePhone,
+    balloon: balloonRes,
+    copyPixUrl
+  };
+}
+
+export async function reactivateSundayUpsellOffers(db, saveDatabase, {
+  reservationCodes = [],
+  allExpired = false,
+  durationOption = "30",
+  sendWhatsApp = true,
+  discountPercentOverride = null,
+  forceDate = null,
+  testMode = false
+} = {}) {
+  const isTestEnv = process.env.NODE_ENV === "test" || Boolean(globalThis.__CORPFLATS_TEST_MODE__);
+  const currentList = listSundayUpsellOffers(db, forceDate);
+  const { targetSundayDate, mondayDate } = currentList;
+
+  const discountPercent = Number(
+    discountPercentOverride !== null && discountPercentOverride !== undefined
+      ? discountPercentOverride
+      : (db?.sundayUpsellConfig?.sundayUpsellDiscountPercent ?? 35)
+  );
+  if (!Number.isFinite(discountPercent) || discountPercent < 1 || discountPercent > 99) {
+    throw new Error("Percentual de desconto inválido (deve estar entre 1% e 99%).");
+  }
+
+  const nowDate = new Date();
+  const nowIso = nowDate.toISOString();
+  const durationMeta = resolveSundayUpsellDuration(durationOption, targetSundayDate, nowDate);
+  const { expiresAt, expirationSeconds, durationMinutes, label: validityLabel } = durationMeta;
+
+  const normalizedCodes = new Set(
+    (Array.isArray(reservationCodes) ? reservationCodes : [])
+      .map(c => String(c || "").trim().toUpperCase())
+      .filter(Boolean)
+  );
+
+  const targetOfferItems = currentList.offers.filter(item => {
+    if (item.offerStatus === "paid") return false;
+    if (allExpired) {
+      return item.offerStatus === "expired" && item.canReactivate;
+    }
+    const codeUpper = String(item.code || "").trim().toUpperCase();
+    const idUpper = String(item.id || "").trim().toUpperCase();
+    return normalizedCodes.has(codeUpper) || normalizedCodes.has(idUpper);
+  });
+
+  const reactivatedItems = [];
+  const skippedItems = [];
+  const allReservations = Array.isArray(db?.reservations) ? db.reservations : [];
+
+  for (const offerItem of targetOfferItems) {
+    if (!offerItem.canReactivate) {
+      skippedItems.push({
+        code: offerItem.code,
+        flatNumber: offerItem.flatNumber,
+        guestName: offerItem.guestName,
+        reason: offerItem.scenario === "CONDOMINIO_100_PORCENTO_OCUPADO"
+          ? "CONDOMINIO_100_PORCENTO_OCUPADO"
+          : "RESERVA_NAO_ELEGIVEL"
+      });
+      continue;
+    }
+
+    const r = allReservations.find(resItem =>
+      resItem && (String(resItem.id) === String(offerItem.id) || String(resItem.code) === String(offerItem.code))
+    );
+    if (!r) continue;
+
+    const pricing = calculateSundayUpsellOfferPrices(r, discountPercent);
+    if (!pricing.valid || !pricing.normalDailyRate || pricing.promotionalPrice <= 0) {
+      skippedItems.push({
+        code: offerItem.code,
+        flatNumber: offerItem.flatNumber,
+        guestName: offerItem.guestName,
+        reason: "TARIFA_INVALIDA"
+      });
+      continue;
+    }
+
+    let txid = `UPSELL_SUN_${r.code || r.id}_${Date.now()}`.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 35);
+    let pixPayload = "";
+    if (typeof globalThis.createInterPixCob === "function" && !isTestEnv) {
+      try {
+        const interCharge = await globalThis.createInterPixCob({
+          amount: pricing.promotionalPrice,
+          description: `Oferta Domingo Sem Pressa - Flat ${r.flatNumber || ""} (${r.code || r.id})`,
+          debtorName: r.guestName || "Hospede CorpFlats",
+          debtorDocument: r.guestDoc || r.guestCpf || r.cpf || "",
+          reservationCode: r.code || String(r.id || ""),
+          expirationSeconds
+        });
+        if (interCharge?.pixCopiaECola) {
+          pixPayload = interCharge.pixCopiaECola;
+          txid = interCharge.txid || txid;
+        }
+      } catch (interErr) {
+        console.warn(`[Sunday Upsell Reactivate] Falha ao criar cobrança dinâmica no Banco Inter para ${r.code || r.id}, usando fallback:`, interErr.message);
+      }
+    }
+    if (!pixPayload) {
+      pixPayload = generateStaticPixPayload({
+        amount: pricing.promotionalPrice,
+        txid
+      });
+    }
+
+    const hadPreviousOffer = Boolean(r.pendingSundayUpsell || r.sundayUpsellOfferSentDate === targetSundayDate);
+    const prevCount = Number(r.pendingSundayUpsell?.reactivationCount || 0);
+    const originalCreatedAt = r.pendingSundayUpsell?.createdAt || nowIso;
+
+    r.pendingSundayUpsell = {
+      txid,
+      pixCopiaECola: pixPayload,
+      discountPercent,
+      promotionalPrice: pricing.promotionalPrice,
+      normalDailyRate: pricing.normalDailyRate,
+      originalCheckoutDate: targetSundayDate,
+      targetCheckoutDate: mondayDate,
+      originalCheckoutTime: "12:00",
+      targetCheckoutTime: "12:00",
+      expiresAt,
+      createdAt: originalCreatedAt,
+      reactivatedAt: nowIso,
+      reactivationCount: hadPreviousOffer ? prevCount + 1 : 0,
+      holdDurationMinutes: durationMinutes,
+      status: "pending_payment",
+      isSilentUpsellHold: true,
+      incomingReservationId: offerItem.incomingResCode || null,
+      alternateFlatNumber: offerItem.alternateFlatNumber || null,
+      alternateFlatId: r.pendingSundayUpsell?.alternateFlatId || null
+    };
+
+    r.pendingModification = {
+      status: "awaiting_payment",
+      type: "sunday_upsell",
+      newCheckoutDate: mondayDate,
+      newCheckoutTime: "12:00",
+      expiresAt,
+      isSilentUpsellHold: true
+    };
+
+    r.sundayUpsellOfferSentDate = targetSundayDate;
+    r.updatedAt = nowIso;
+
+    let deliveryRes = null;
+    if (sendWhatsApp) {
+      const guestFirstName = r.guestName ? String(r.guestName).trim().split(" ")[0] : "Hospede";
+      const flatNumStr = String(r.flatNumber || r.flatId || "").trim();
+
+      if (hadPreviousOffer) {
+        deliveryRes = await dispatchSundayUpsellReactivationBalloon(db, {
+          reservation: r,
+          guestPhone: r.guestPhone || r.phone,
+          guestFirstName,
+          flatNumber: flatNumStr,
+          sundayUpsellPrice: pricing.promotionalPrice,
+          normalDailyRate: pricing.normalDailyRate,
+          sundayUpsellDiscountPercent: discountPercent,
+          pixCopiaECola: pixPayload,
+          txid,
+          holdExpiresAt: expiresAt,
+          validityLabel,
+          testMode
+        });
+      } else {
+        deliveryRes = await dispatchSundayUpsellTwoBalloons(db, {
+          reservation: r,
+          guestPhone: r.guestPhone || r.phone,
+          guestFirstName,
+          flatNumber: flatNumStr,
+          sundayUpsellPrice: pricing.promotionalPrice,
+          normalDailyRate: pricing.normalDailyRate,
+          sundayUpsellDiscountPercent: discountPercent,
+          pixCopiaECola: pixPayload,
+          txid,
+          holdExpiresAt: expiresAt,
+          testMode
+        });
+      }
+    }
+
+    reactivatedItems.push({
+      id: r.id,
+      code: r.code || String(r.id),
+      guestName: r.guestName,
+      flatNumber: r.flatNumber,
+      txid,
+      discountPercent,
+      normalDailyRate: pricing.normalDailyRate,
+      promotionalPrice: pricing.promotionalPrice,
+      expiresAt,
+      durationMinutes,
+      validityLabel,
+      hadPreviousOffer,
+      sentWhatsApp: Boolean(sendWhatsApp),
+      deliverySuccess: sendWhatsApp ? Boolean(deliveryRes?.success) : true
+    });
+  }
+
+  if (typeof saveDatabase === "function" && reactivatedItems.length > 0) {
+    saveDatabase();
+  }
+
+  const updatedList = listSundayUpsellOffers(db, forceDate);
+
+  return {
+    targetSundayDate,
+    mondayDate,
+    discountPercent,
+    durationMinutes,
+    expiresAt,
+    validityLabel,
+    sendWhatsApp: Boolean(sendWhatsApp),
+    reactivatedCount: reactivatedItems.length,
+    reactivatedItems,
+    skippedCount: skippedItems.length,
+    skippedItems,
+    summary: updatedList.summary,
+    offers: updatedList.offers
   };
 }
 

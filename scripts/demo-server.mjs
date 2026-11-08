@@ -67106,18 +67106,31 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     String(x.id) === rawCode
   );
 
+  const isTestSundayUpsell = rawCode.toUpperCase() === "TEST-SUN-UPSELL";
   const isSundayUpsell = Boolean(
     req.query.upsell === "1" ||
-    rawCode.toUpperCase() === "TEST-SUN-UPSELL" ||
-    (r?.pendingSundayUpsell && r.pendingSundayUpsell.status !== "paid")
+    isTestSundayUpsell ||
+    r?.hasSundayUpsell ||
+    r?.pendingSundayUpsell
+  );
+
+  const isSundayUpsellPaid = Boolean(
+    isSundayUpsell && !isTestSundayUpsell && r && (r.hasSundayUpsell || r.pendingSundayUpsell?.status === "paid")
+  );
+  const isSundayUpsellExpired = Boolean(
+    isSundayUpsell && !isTestSundayUpsell && !isSundayUpsellPaid && r && (
+      r.pendingSundayUpsell?.status === "expired" ||
+      (r.pendingSundayUpsell?.expiresAt && new Date(r.pendingSundayUpsell.expiresAt).getTime() <= Date.now()) ||
+      (!r.pendingSundayUpsell && r.sundayUpsellOfferSentDate)
+    )
   );
 
   const guestName = String(r?.guestName || req.query.guest || "Hóspede").trim();
   const flatNumber = String(r?.flatNumber || r?.flatId || req.query.flat || "").trim();
   const totalAmount = Number(r?.totalAmount) || 0;
   const paidAmount = Number(r?.paidAmount) || 0;
-  const isExpiredPreRes = !isSundayUpsell && Boolean(r && r.status === "pre_reserva" && r.status === "expirada");
-  const isAlreadyPaid = !isSundayUpsell && Boolean(r && !isExpiredPreRes && !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (paidAmount >= totalAmount && totalAmount > 0)));
+  const isExpiredPreRes = (!isSundayUpsell && Boolean(r && r.status === "expirada")) || isSundayUpsellExpired;
+  const isAlreadyPaid = isSundayUpsellPaid || (!isSundayUpsell && Boolean(r && !isExpiredPreRes && !isUnverifiedPreReservation(r) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (paidAmount >= totalAmount && totalAmount > 0))));
   const pendingAmount = isSundayUpsell
     ? (Number(r?.pendingSundayUpsell?.promotionalPrice || req.query.amount || 100) || 100)
     : ((isAlreadyPaid || isExpiredPreRes) ? 0 : (Math.max(0, totalAmount - paidAmount) || totalAmount));
@@ -67128,7 +67141,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     ? (Number(r?.pendingSundayUpsell?.discountPercent || req.query.discount || 50) || 50)
     : 0;
   let pixCode = isSundayUpsell
-    ? String(r?.pendingSundayUpsell?.pixCopiaECola || req.query.pix || "").trim()
+    ? ((isSundayUpsellPaid || isSundayUpsellExpired) ? "" : String(r?.pendingSundayUpsell?.pixCopiaECola || req.query.pix || "").trim())
     : ((isAlreadyPaid || isExpiredPreRes) ? "" : (r?.pixCopiaECola || ""));
 
   let formattedHoldExpiry = "";
@@ -67147,7 +67160,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     }
   }
 
-  if (pendingAmount > 0 && (!pixCode || (!isSundayUpsell && r && isPixPayloadStaleForAmount(r, pendingAmount)))) {
+  if (pendingAmount > 0 && !isExpiredPreRes && !isAlreadyPaid && (!pixCode || (!isSundayUpsell && r && isPixPayloadStaleForAmount(r, pendingAmount)))) {
     const cleanTxId = (rawCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
     pixCode = generateStaticPixPayload({
       pixKey: db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47964813000165",
@@ -67171,7 +67184,9 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
   const qrCodeUrl = pixCode ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(pixCode)}` : "";
   const portalUrl = rawCode ? `/minha-reserva/${encodeURIComponent(rawCode)}` : "/minha-reserva";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
-  const whatsappUrl = isExpiredPreRes
+  const whatsappUrl = isSundayUpsellExpired
+    ? `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou no Flat ${flatNumber || ""} (${rawCode}) e gostaria de reativar o link da Oferta de Domingo Sem Pressa!`)}`
+    : isExpiredPreRes
     ? `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Minha pré-reserva ${rawCode} expirou e eu ainda tenho interesse. Poderia consultar a disponibilidade e valores novamente?`)}`
     : `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou com uma dúvida sobre o pagamento PIX da reserva ${rawCode}.`)}`;
 
@@ -67212,13 +67227,13 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     <div class="title">${isSundayUpsell ? "Oferta de Domingo Sem Pressa" : "Código PIX da Reserva"}</div>
     <div class="subtitle">Abra o app do seu banco e selecione <strong>PIX Copia e Cola</strong> para efetuar o pagamento.</div>
 
-    <div id="status-badge" class="badge-copied" style="${isExpiredPreRes ? 'display:none;' : ''}">
+    <div id="status-badge" class="badge-copied" style="${(isExpiredPreRes || isAlreadyPaid) ? 'display:none;' : ''}">
       <span>✅ Código PIX Copiado com Sucesso!</span>
     </div>
 
-    ${formattedHoldExpiry && !isExpiredPreRes ? `
+    ${formattedHoldExpiry && !isExpiredPreRes && !isAlreadyPaid ? `
     <div style="background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fbbf24; font-size: 12.5px; font-weight: 700; padding: 10px 14px; border-radius: 12px; margin-bottom: 16px;">
-      ⏳ Pré-Reserva válida até <strong>${formattedHoldExpiry}</strong>
+      ⏳ ${isSundayUpsell ? "Oferta" : "Pré-Reserva"} válida até <strong>${formattedHoldExpiry}</strong>
     </div>` : ""}
 
     <div class="details">
@@ -67268,6 +67283,17 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     <div class="qr-container">
       <img src="${qrCodeUrl}" alt="QR Code PIX" class="qr-img">
     </div>` : ""}
+    ` : isSundayUpsellPaid ? `
+    <div style="background: rgba(16, 185, 129, 0.14); border: 1px solid #10b981; border-radius: 14px; padding: 18px; margin-bottom: 18px; color: #a7f3d0; font-size: 13.5px; line-height: 1.5;">
+      <div style="font-size: 16px; font-weight: 800; color: #34d399; margin-bottom: 6px;">✅ Oferta Confirmada!</div>
+      Recebemos o seu pagamento PIX! Seu check-out livre no domingo (com bônus garantido até segunda-feira às 12h) já está ativo no sistema. Bom descanso!
+    </div>
+    ` : isSundayUpsellExpired ? `
+    <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid #f59e0b; border-radius: 14px; padding: 18px; margin-bottom: 18px; color: #fde68a; font-size: 13.5px; line-height: 1.5;">
+      <div style="font-size: 16px; font-weight: 800; color: #fbbf24; margin-bottom: 6px;">⏳ Oferta de Domingo Expirada</div>
+      O prazo de validade inicial desta oferta encerrou.<br><br>
+      Caso ainda tenha interesse em garantir sua saída livre no domingo + bônus até segunda às 12h, toque no botão abaixo para pedir a reativação do link pelo WhatsApp!
+    </div>
     ` : isExpiredPreRes ? `
     <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid #f59e0b; border-radius: 14px; padding: 18px; margin-bottom: 18px; color: #fde68a; font-size: 13.5px; line-height: 1.5;">
       <div style="font-size: 16px; font-weight: 800; color: #fbbf24; margin-bottom: 6px;">⏳ Pré-Reserva Expirada</div>
@@ -67286,7 +67312,7 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
     </a>` : ""}
 
     <a href="${whatsappUrl}" class="btn-sec" style="background: #1e3a2b; border: 1px solid #065f46; color: #6ee7b7;">
-      💬 Voltar para o WhatsApp
+      💬 ${isSundayUpsellExpired ? "Pedir Reativação no WhatsApp" : "Voltar para o WhatsApp"}
     </a>
   </div>
 

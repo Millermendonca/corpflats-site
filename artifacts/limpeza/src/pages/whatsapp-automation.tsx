@@ -754,6 +754,51 @@ export default function WhatsappAutomation() {
   } | null>(null)
   const [showSundayUpsellPreview, setShowSundayUpsellPreview] = useState<boolean>(false)
   const [showLastRunDetails, setShowLastRunDetails] = useState<boolean>(true)
+  const [sundayUpsellOffers, setSundayUpsellOffers] = useState<Array<{
+    id: number | string
+    code: string
+    guestName: string
+    guestPhone: string
+    flatNumber: string
+    checkinDate: string
+    checkoutDate: string
+    offerStatus: "paid" | "active" | "expired" | "eligible_not_sent" | "conflict"
+    hadOfferSent: boolean
+    sentAt: string | null
+    reactivatedAt: string | null
+    reactivationCount: number
+    expiresAt: string | null
+    paidAt: string | null
+    normalDailyRate: number
+    promotionalPrice: number
+    discountPercent: number
+    offeredPromotionalPrice: number | null
+    offeredDiscountPercent: number | null
+    scenario: string
+    alternateFlatNumber: string | null
+    canReactivate: boolean
+    copyPixUrl: string
+  }>>([])
+  const [sundayUpsellSummary, setSundayUpsellSummary] = useState<{
+    total: number
+    paidCount: number
+    activeCount: number
+    expiredCount: number
+    eligibleNotSentCount: number
+    conflictCount: number
+  }>({
+    total: 0,
+    paidCount: 0,
+    activeCount: 0,
+    expiredCount: 0,
+    eligibleNotSentCount: 0,
+    conflictCount: 0
+  })
+  const [sundayUpsellTargetDate, setSundayUpsellTargetDate] = useState<string>("")
+  const [loadingSundayUpsellOffers, setLoadingSundayUpsellOffers] = useState<boolean>(false)
+  const [reactivatingSundayUpsellKey, setReactivatingSundayUpsellKey] = useState<string | null>(null)
+  const [sundayUpsellDurationOption, setSundayUpsellDurationOption] = useState<"30" | "60" | "120" | "until_sunday_11h">("30")
+  const [showSundayUpsellOffersList, setShowSundayUpsellOffersList] = useState<boolean>(true)
 
   // Mensagens Rápidas (Manuais) State
   const {
@@ -1670,6 +1715,29 @@ export default function WhatsappAutomation() {
     }
   }
 
+  const fetchSundayUpsellOffers = async () => {
+    try {
+      setLoadingSundayUpsellOffers(true)
+      const res = await fetch("/api/whatsapp/sunday-upsell/offers")
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data.offers)) {
+          setSundayUpsellOffers(data.offers)
+        }
+        if (data.summary) {
+          setSundayUpsellSummary(data.summary)
+        }
+        if (data.targetSundayDate) {
+          setSundayUpsellTargetDate(data.targetSundayDate)
+        }
+      }
+    } catch (err: any) {
+      console.warn("Erro ao buscar lista de ofertas sunday-upsell:", err?.message)
+    } finally {
+      setLoadingSundayUpsellOffers(false)
+    }
+  }
+
   const fetchSundayUpsellConfig = async () => {
     try {
       setLoadingSundayUpsell(true)
@@ -1690,10 +1758,81 @@ export default function WhatsappAutomation() {
           })
         }
       }
+      await fetchSundayUpsellOffers()
     } catch (err: any) {
       console.warn("Erro ao buscar configurações de sunday-upsell:", err?.message)
     } finally {
       setLoadingSundayUpsell(false)
+    }
+  }
+
+  const handleReactivateSundayUpsell = async ({
+    reservationCode,
+    allExpired = false,
+    sendWhatsApp = true
+  }: {
+    reservationCode?: string
+    allExpired?: boolean
+    sendWhatsApp?: boolean
+  }) => {
+    const actionKey = allExpired ? "ALL_EXPIRED" : `${reservationCode}_${sendWhatsApp ? "wa" : "silent"}`
+    setReactivatingSundayUpsellKey(actionKey)
+    try {
+      const res = await fetch("/api/whatsapp/sunday-upsell/reactivate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reservationCodes: reservationCode ? [reservationCode] : [],
+          allExpired,
+          durationOption: sundayUpsellDurationOption,
+          sendWhatsApp,
+          discountPercent: Number(sundayUpsellDiscountPercent) || 35
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        if (Array.isArray(data.offers)) {
+          setSundayUpsellOffers(data.offers)
+        }
+        if (data.summary) {
+          setSundayUpsellSummary(data.summary)
+        }
+        const count = Number(data.reactivatedCount || 0)
+        if (!sendWhatsApp && reservationCode) {
+          const updatedOffer = (data.offers || []).find((o: any) => String(o.code) === String(reservationCode))
+          if (updatedOffer?.copyPixUrl && navigator?.clipboard) {
+            try {
+              await navigator.clipboard.writeText(updatedOffer.copyPixUrl)
+            } catch (_) {}
+          }
+          toast({
+            title: "🔗 Link & PIX Revalidados!",
+            description: `Oferta da reserva ${reservationCode} revalidada ${data.validityLabel || ""} (link copiado para a área de transferência).`
+          })
+        } else {
+          toast({
+            title: count > 1 ? `⚡ ${count} Ofertas Reativadas!` : "⚡ Oferta Reativada e Enviada!",
+            description: count > 0
+              ? `${count} reserva(s) com PIX e link renovados ${data.validityLabel || ""} e disparo enviado no WhatsApp.`
+              : "Nenhuma reserva elegível encontrada para reativar."
+          })
+        }
+        fetchQueue()
+      } else {
+        toast({
+          title: "Falha ao reativar oferta",
+          description: data.error || "Não foi possível reativar a oferta.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de comunicação",
+        description: err.message,
+        variant: "destructive"
+      })
+    } finally {
+      setReactivatingSundayUpsellKey(null)
     }
   }
 
@@ -1728,6 +1867,7 @@ export default function WhatsappAutomation() {
           title: "✓ Configuração Salva!",
           description: `Oferta de Domingo Sem Pressa: ${newEnabled ? "Ativa" : "Pausada"} com ${newDiscountPercent}% de desconto sobre a diária pura.`
         })
+        fetchSundayUpsellOffers()
       } else {
         toast({
           title: "Erro ao salvar",
@@ -4937,6 +5077,278 @@ export default function WhatsappAutomation() {
                         </div>
                       </div>
                     )}
+
+                    {/* Lista de Reservas do Domingo & Central de Reativação de Ofertas */}
+                    <div className="p-4 rounded-xl border border-emerald-200/80 dark:border-emerald-900/50 bg-card/90 space-y-3 shadow-2xs">
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-2 border-b">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-black text-foreground flex items-center gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                              Reservas do Domingo {sundayUpsellTargetDate ? `(${sundayUpsellTargetDate.split("-").reverse().join("/")})` : ""} • Reativar Ofertas & Links PIX
+                            </span>
+                            <Badge variant="outline" className="text-[10px] font-bold border-amber-300 text-amber-700 bg-amber-50/60 dark:bg-amber-950/30 dark:text-amber-300">
+                              ⏳ {sundayUpsellSummary.expiredCount} Expiradas
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px] font-bold border-sky-300 text-sky-700 bg-sky-50/60 dark:bg-sky-950/30 dark:text-sky-300">
+                              🟢 {sundayUpsellSummary.activeCount} Ativas
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px] font-bold border-emerald-300 text-emerald-700 bg-emerald-50/60 dark:bg-emerald-950/30 dark:text-emerald-300">
+                              ✅ {sundayUpsellSummary.paidCount} Pagas
+                            </Badge>
+                            {sundayUpsellSummary.eligibleNotSentCount > 0 && (
+                              <Badge variant="outline" className="text-[10px] font-bold border-purple-300 text-purple-700 bg-purple-50/60 dark:bg-purple-950/30 dark:text-purple-300">
+                                🆕 {sundayUpsellSummary.eligibleNotSentCount} Não enviadas
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            Ao clicar em <strong>Reativar</strong>, o sistema gera novo PIX com <strong>{activeDiscountPct}% OFF</strong> sobre a diária pura, renova a validade do link e dispara 1 balão com botão PIX para o hóspede.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          {/* Seletor Rápido de Prazo de Validade */}
+                          <div className="flex items-center bg-muted/70 p-1 rounded-lg border text-[11px]">
+                            <span className="px-2 font-semibold text-muted-foreground hidden sm:inline">Validade:</span>
+                            {(
+                              [
+                                { id: "30", label: "30 min" },
+                                { id: "60", label: "1h" },
+                                { id: "120", label: "2h" },
+                                { id: "until_sunday_11h", label: "Até Dom 11h" }
+                              ] as const
+                            ).map((opt) => (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => setSundayUpsellDurationOption(opt.id)}
+                                className={`px-2 py-1 rounded-md font-bold transition-colors ${
+                                  sundayUpsellDurationOption === opt.id
+                                    ? "bg-emerald-600 text-white shadow-2xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Botão em Lote: Reativar Todas as Expiradas */}
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={
+                              sundayUpsellSummary.expiredCount === 0 ||
+                              reactivatingSundayUpsellKey !== null ||
+                              loadingSundayUpsellOffers
+                            }
+                            onClick={() => handleReactivateSundayUpsell({ allExpired: true, sendWhatsApp: true })}
+                            className="h-8 text-xs font-black bg-amber-600 hover:bg-amber-700 text-white gap-1.5 shadow-2xs"
+                          >
+                            {reactivatingSundayUpsellKey === "ALL_EXPIRED" ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                Reativando...
+                              </>
+                            ) : (
+                              <>
+                                <Zap className="w-3.5 h-3.5" />
+                                Reativar Todas Expiradas ({sundayUpsellSummary.expiredCount})
+                              </>
+                            )}
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={loadingSundayUpsellOffers}
+                            onClick={fetchSundayUpsellOffers}
+                            className="h-8 px-2.5 text-xs gap-1"
+                            title="Atualizar lista de reservas"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${loadingSundayUpsellOffers ? "animate-spin" : ""}`} />
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setShowSundayUpsellOffersList(!showSundayUpsellOffersList)}
+                            className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            {showSundayUpsellOffersList ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {showSundayUpsellOffersList && (
+                        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                          {loadingSundayUpsellOffers && sundayUpsellOffers.length === 0 ? (
+                            <div className="py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+                              <RefreshCw className="w-4 h-4 animate-spin text-emerald-600" />
+                              Carregando reservas com check-out no domingo...
+                            </div>
+                          ) : sundayUpsellOffers.length === 0 ? (
+                            <div className="py-6 text-center text-xs text-muted-foreground">
+                              Nenhuma reserva encontrada com check-out programado para este domingo.
+                            </div>
+                          ) : (
+                            sundayUpsellOffers.map((item) => {
+                              const isReactivatingWa = reactivatingSundayUpsellKey === `${item.code}_wa`
+                              const isReactivatingSilent = reactivatingSundayUpsellKey === `${item.code}_silent`
+                              const isBusy = reactivatingSundayUpsellKey !== null
+                              const recPromoPrice = Number((item.normalDailyRate * (1 - activeDiscountPct / 100)).toFixed(2))
+                              const expFormatted = item.expiresAt
+                                ? new Date(item.expiresAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+                                : null
+
+                              return (
+                                <div
+                                  key={item.code || item.id}
+                                  className={`p-2.5 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-2.5 text-xs transition-colors ${
+                                    item.offerStatus === "paid"
+                                      ? "bg-emerald-50/40 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-900/50"
+                                      : item.offerStatus === "active"
+                                      ? "bg-sky-50/30 border-sky-200 dark:bg-sky-950/20 dark:border-sky-900/50"
+                                      : item.offerStatus === "expired"
+                                      ? "bg-amber-50/25 border-amber-200/80 dark:bg-amber-950/15 dark:border-amber-900/40"
+                                      : "bg-background border-border"
+                                  }`}
+                                >
+                                  <div className="space-y-1">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <Badge variant="outline" className="font-mono font-black text-[11px] bg-background">
+                                        Flat {item.flatNumber}
+                                      </Badge>
+                                      <span className="font-bold text-foreground">{item.guestName}</span>
+                                      <span className="text-[10px] font-mono text-muted-foreground">({item.code})</span>
+
+                                      {item.offerStatus === "paid" && (
+                                        <Badge className="bg-emerald-600 text-white text-[10px] font-bold">
+                                          ✅ PAGO • Check-out Seg 12h
+                                        </Badge>
+                                      )}
+                                      {item.offerStatus === "active" && (
+                                        <Badge className="bg-sky-600 text-white text-[10px] font-bold">
+                                          🟢 ATIVA {expFormatted ? `• Válida até ${expFormatted}` : ""}
+                                        </Badge>
+                                      )}
+                                      {item.offerStatus === "expired" && (
+                                        <Badge variant="outline" className="border-amber-400 text-amber-700 dark:text-amber-300 bg-amber-100/60 dark:bg-amber-950/50 text-[10px] font-bold">
+                                          ⏳ EXPIRADA {expFormatted ? `(às ${expFormatted})` : ""}
+                                        </Badge>
+                                      )}
+                                      {item.offerStatus === "eligible_not_sent" && (
+                                        <Badge variant="outline" className="border-purple-300 text-purple-700 dark:text-purple-300 text-[10px] font-bold">
+                                          🆕 Elegível (Não enviada)
+                                        </Badge>
+                                      )}
+                                      {item.offerStatus === "conflict" && (
+                                        <Badge variant="destructive" className="text-[10px] font-bold">
+                                          ⚠️ Sem vaga Dom→Seg
+                                        </Badge>
+                                      )}
+                                      {item.reactivationCount > 0 && (
+                                        <Badge variant="secondary" className="text-[10px] font-semibold">
+                                          🔄 Reativada {item.reactivationCount}x
+                                        </Badge>
+                                      )}
+                                      {item.scenario === "REALLOCATION_AVAILABLE" && item.alternateFlatNumber && (
+                                        <Badge variant="outline" className="text-[10px] font-semibold border-indigo-300 text-indigo-700 dark:text-indigo-300">
+                                          🔄 FairShare → Flat {item.alternateFlatNumber}
+                                        </Badge>
+                                      )}
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                                      <span>
+                                        Diária Pura:{" "}
+                                        <span className="line-through font-mono">
+                                          {(item.normalDailyRate || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                                        </span>
+                                      </span>
+                                      <span>
+                                        PIX Oferta ({activeDiscountPct}% OFF):{" "}
+                                        <strong className="font-mono text-emerald-600 dark:text-emerald-400">
+                                          {(recPromoPrice || item.promotionalPrice || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                                        </strong>
+                                      </span>
+                                      {item.guestPhone && (
+                                        <span className="font-mono text-[10px]">📱 {item.guestPhone}</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Ações Individuais de Reativação */}
+                                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                                    {item.offerStatus === "paid" ? (
+                                      <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1 px-2">
+                                        <CheckCheck className="w-3.5 h-3.5" />
+                                        Extensão Confirmada
+                                      </span>
+                                    ) : (
+                                      <>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          disabled={!item.canReactivate || isBusy}
+                                          onClick={() => handleReactivateSundayUpsell({ reservationCode: item.code, sendWhatsApp: true })}
+                                          className={`h-7 px-2.5 text-[11px] font-bold gap-1 text-white shadow-2xs ${
+                                            item.offerStatus === "expired"
+                                              ? "bg-emerald-600 hover:bg-emerald-700"
+                                              : item.offerStatus === "active"
+                                              ? "bg-sky-600 hover:bg-sky-700"
+                                              : "bg-indigo-600 hover:bg-indigo-700"
+                                          }`}
+                                        >
+                                          {isReactivatingWa ? (
+                                            <>
+                                              <RefreshCw className="w-3 h-3 animate-spin" />
+                                              Enviando...
+                                            </>
+                                          ) : item.offerStatus === "eligible_not_sent" ? (
+                                            <>
+                                              <Send className="w-3 h-3" />
+                                              Enviar Oferta
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Zap className="w-3 h-3" />
+                                              Reativar + Disparar
+                                            </>
+                                          )}
+                                        </Button>
+
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          disabled={!item.canReactivate || isBusy}
+                                          onClick={() => handleReactivateSundayUpsell({ reservationCode: item.code, sendWhatsApp: false })}
+                                          className="h-7 px-2 text-[11px] font-semibold gap-1"
+                                          title="Apenas revalida o link /copiar-pix e copia para a área de transferência sem enviar mensagem no WhatsApp"
+                                        >
+                                          {isReactivatingSilent ? (
+                                            <RefreshCw className="w-3 h-3 animate-spin" />
+                                          ) : (
+                                            <>
+                                              <Check className="w-3 h-3 text-emerald-600" />
+                                              Só Revalidar Link
+                                            </>
+                                          )}
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                      )}
+                    </div>
 
                     {/* Caixa Expansível de Resultados do Último Disparo Manual */}
                     {sundayUpsellLastRun && (
