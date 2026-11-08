@@ -25,7 +25,8 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
     return null
   }
   try {
-    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" })
+    const reg = await navigator.serviceWorker.register("/sw.js?v=3", { scope: "/" })
+    reg.update().catch(() => {})
     return reg
   } catch (err) {
     console.warn("[Push Service Worker Registration Failed]", err)
@@ -195,8 +196,8 @@ export async function showWhatsAppChatNotification(options: WhatsAppChatNotifica
       if (reg && reg.showNotification) {
         await reg.showNotification(title, {
           body,
-          icon: "/api/pwa/chat-icon.png?size=192",
-          badge: "/api/pwa/chat-icon.png?size=192",
+          icon: "/api/pwa/chat-icon.png?size=192&v=3",
+          badge: "/api/pwa/notification-badge.png?v=3",
           vibrate: [180, 80, 180, 80, 240],
           tag: `wa-chat-${phone}`,
           renotify: true,
@@ -213,9 +214,10 @@ export async function showWhatsAppChatNotification(options: WhatsAppChatNotifica
 
     const notif = new Notification(title, {
       body,
-      icon: "/api/pwa/chat-icon.png?size=192",
+      icon: "/api/pwa/chat-icon.png?size=192&v=3",
+      badge: "/api/pwa/notification-badge.png?v=3",
       tag: `wa-chat-${phone}`
-    })
+    } as any)
     notif.onclick = () => {
       window.focus()
       window.location.href = targetUrl
@@ -264,8 +266,8 @@ export async function showNativeNotification(options: SmartNotificationOptions):
       if (reg && reg.showNotification) {
         await reg.showNotification(cleanTitle, {
           body: cleanBody,
-          icon: isWhatsApp ? "/api/pwa/chat-icon.png?size=192" : "/favicon.svg",
-          badge: isWhatsApp ? "/api/pwa/chat-icon.png?size=192" : "/favicon.svg",
+          icon: "/api/pwa/chat-icon.png?size=192&v=3",
+          badge: "/api/pwa/notification-badge.png?v=3",
           vibrate: isWhatsApp ? [180, 80, 180, 80, 240] : [200, 100, 200],
           tag: phone ? `wa-chat-${phone}` : (id ? `gfm-notif-${id}` : `gfm-${Date.now()}`),
           renotify: true,
@@ -283,9 +285,10 @@ export async function showNativeNotification(options: SmartNotificationOptions):
 
     const notif = new Notification(cleanTitle, {
       body: cleanBody,
-      icon: isWhatsApp ? "/api/pwa/chat-icon.png?size=192" : "/favicon.svg",
+      icon: "/api/pwa/chat-icon.png?size=192&v=3",
+      badge: "/api/pwa/notification-badge.png?v=3",
       tag: phone ? `wa-chat-${phone}` : (id ? `gfm-notif-${id}` : `gfm-${Date.now()}`)
-    })
+    } as any)
     notif.onclick = () => {
       window.focus()
       window.location.href = url

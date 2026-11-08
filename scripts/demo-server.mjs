@@ -5959,7 +5959,16 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     }
 
     // Sincronização geral de preferências de quarto (camas/colchão/recado) da reserva com a solicitação de limpeza do dia do check-in
-    if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkinDate) {
+    if (
+      r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      r.status !== "cancelado" &&
+      r.status !== "expirada" &&
+      r.status !== "pre_reserva" &&
+      r.status !== "pendente" &&
+      r.status !== "no_show" &&
+      r.checkinDate
+    ) {
       const isTwin = Boolean(r.twinBeds || r.bedType === "2 Solteiro" || r.bedType === "twin");
       const isMattress = Boolean(r.extraMattress);
       const note = (r.specialRequests || r.notes || "").trim();
@@ -6004,7 +6013,17 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     }
 
     // 4. Garantir que para TODO checkout de QUALQUER flat, exista a solicitação de limpeza correspondente
-    if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkoutDate && r.flatNumber) {
+    if (
+      r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      r.status !== "cancelado" &&
+      r.status !== "expirada" &&
+      r.status !== "pre_reserva" &&
+      r.status !== "pendente" &&
+      r.status !== "no_show" &&
+      r.checkoutDate &&
+      r.flatNumber
+    ) {
       const checkoutDate = r.checkoutDate;
       const hasCleaning = db.cleaningRequests.some(c =>
         (String(c.flatNumber) === String(r.flatNumber) || c.flatId === r.flatId) &&
@@ -6017,7 +6036,8 @@ export function reconcileUniversalIntegrity(incomingState = null) {
           const nextReservation = (db.reservations || [])
             .filter(otherR =>
               (String(otherR.flatNumber) === String(r.flatNumber) || (r.flatId && otherR.flatId === r.flatId)) &&
-              otherR.status !== "cancelada" && otherR.status !== "cancelled" &&
+              otherR.status !== "cancelada" && otherR.status !== "cancelled" && otherR.status !== "cancelado" &&
+              otherR.status !== "expirada" && otherR.status !== "pre_reserva" && otherR.status !== "pendente" && otherR.status !== "no_show" &&
               otherR.checkinDate && otherR.checkinDate >= checkoutDate &&
               otherR.id !== r.id && (otherR.code ? otherR.code !== r.code : true)
             )
@@ -6105,7 +6125,8 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     if (!c || c.isInstructionOnly || c.source === "manual_instruction" || c.source === "manual") continue;
     const fNum = String(c.flatNumber || (db.flats.find(f => f.id === c.flatId)?.number || ""));
     const activeArrivingRes = (db.reservations || []).find(r =>
-      r.status !== "cancelada" && r.status !== "cancelled" &&
+      r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
+      r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
       String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === fNum &&
       r.checkinDate === c.requestDate
     );
@@ -6155,7 +6176,7 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     }
   }
 
-  // Descarte automático de cards de limpeza de check-out órfãos (quando a reserva de saída foi cancelada, no_show ou remarcada):
+  // Descarte automático de cards de limpeza de check-out órfãos (quando a reserva de saída foi cancelada, expirada, no_show ou remarcada):
   for (const c of (db.cleaningRequests || [])) {
     if (!c || c.isDeleted || c.status === "deleted" || c.status === "clean") continue;
     const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
@@ -6168,6 +6189,9 @@ export function reconcileUniversalIntegrity(incomingState = null) {
       r.status !== "cancelada" &&
       r.status !== "cancelado" &&
       r.status !== "cancelled" &&
+      r.status !== "expirada" &&
+      r.status !== "pre_reserva" &&
+      r.status !== "pendente" &&
       r.status !== "no_show" &&
       String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === fNum &&
       (r.checkoutDate === c.requestDate || r.earlyCheckoutDate === c.requestDate)
@@ -6175,7 +6199,7 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     if (!hasActiveCheckout) {
       const hasCancelledOrMovedCheckout = (db.reservations || []).some(r => {
         const rFlat = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
-        const isCanc = r.status === "cancelada" || r.status === "cancelado" || r.status === "cancelled" || r.status === "no_show";
+        const isCanc = r.status === "cancelada" || r.status === "cancelado" || r.status === "cancelled" || r.status === "no_show" || r.status === "expirada" || r.status === "pre_reserva";
         if (isCanc && rFlat === fNum && (r.checkoutDate === c.requestDate || r.earlyCheckoutDate === c.requestDate)) return true;
         if (c.leavingGuest && r.guestName && r.guestName.trim().toLowerCase() === c.leavingGuest.trim().toLowerCase()) {
           if (isCanc || rFlat !== fNum || (r.checkoutDate !== c.requestDate && r.earlyCheckoutDate !== c.requestDate)) return true;
@@ -20846,7 +20870,8 @@ app.patch("/api/flats/:id", (req, res) => {
 
     const authUser = getAuthUser(req);
     const checkoutRes = (db.reservations || []).find(r =>
-      r.status !== "cancelada" && r.status !== "cancelled" &&
+      r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
+      r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
       (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
       r.checkoutDate === todayStr
     );
@@ -21638,6 +21663,9 @@ function getRequestsForDate(dateStr, isNested = false) {
         r.status !== "cancelada" &&
         r.status !== "cancelado" &&
         r.status !== "cancelled" &&
+        r.status !== "expirada" &&
+        r.status !== "pre_reserva" &&
+        r.status !== "pendente" &&
         r.status !== "no_show" &&
         r.status !== "completed" &&
         r.status !== "checked_out" &&
@@ -21656,6 +21684,9 @@ function getRequestsForDate(dateStr, isNested = false) {
     r.status !== "cancelada" &&
     r.status !== "cancelado" &&
     r.status !== "cancelled" &&
+    r.status !== "expirada" &&
+    r.status !== "pre_reserva" &&
+    r.status !== "pendente" &&
     r.status !== "no_show" &&
     r.status !== "completed" &&
     r.status !== "checked_out" &&
@@ -21772,6 +21803,11 @@ function getRequestsForDate(dateStr, isNested = false) {
   const minRecentCheckoutDate = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-01";
   const recentPmsCheckouts = (db.reservations || []).filter(r =>
     r.status !== "cancelada" &&
+    r.status !== "cancelado" &&
+    r.status !== "cancelled" &&
+    r.status !== "expirada" &&
+    r.status !== "pre_reserva" &&
+    r.status !== "pendente" &&
     r.status !== "no_show" &&
     r.checkoutDate &&
     r.checkoutDate >= minRecentCheckoutDate &&
@@ -21806,6 +21842,11 @@ function getRequestsForDate(dateStr, isNested = false) {
         const arrivingRes = (db.reservations || []).find(r =>
           r.status !== "cancelada" &&
           r.status !== "cancelado" &&
+          r.status !== "cancelled" &&
+          r.status !== "expirada" &&
+          r.status !== "pre_reserva" &&
+          r.status !== "pendente" &&
+          r.status !== "no_show" &&
           String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === fNumber &&
           r.checkinDate === resDate
         );
@@ -21864,6 +21905,11 @@ function getRequestsForDate(dateStr, isNested = false) {
   // 2. Busca todas as reservas ativas que possuem CHECKOUT na data consultada (checkoutDate === dateStr)
   const pmsCheckouts = (db.reservations || []).filter(r =>
     r.status !== "cancelada" &&
+    r.status !== "cancelado" &&
+    r.status !== "cancelled" &&
+    r.status !== "expirada" &&
+    r.status !== "pre_reserva" &&
+    r.status !== "pendente" &&
     r.status !== "no_show" &&
     r.checkoutDate === dateStr
   );
@@ -21883,6 +21929,11 @@ function getRequestsForDate(dateStr, isNested = false) {
     const arrivingRes = (db.reservations || []).find(r =>
       r.status !== "cancelada" &&
       r.status !== "cancelado" &&
+      r.status !== "cancelled" &&
+      r.status !== "expirada" &&
+      r.status !== "pre_reserva" &&
+      r.status !== "pendente" &&
+      r.status !== "no_show" &&
       String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === flatNumber &&
       r.checkinDate === dateStr
     );
@@ -22153,7 +22204,18 @@ function getRequestsForDate(dateStr, isNested = false) {
       shouldSaveDb = true;
     }
 
-    if (!isFutureDate && isExplicitlyVacantCheckout && !pmsRes.checkoutDone) {
+    if (
+      !isFutureDate &&
+      isExplicitlyVacantCheckout &&
+      !pmsRes.checkoutDone &&
+      pmsRes.status !== "expirada" &&
+      pmsRes.status !== "pre_reserva" &&
+      pmsRes.status !== "pendente" &&
+      pmsRes.status !== "cancelada" &&
+      pmsRes.status !== "cancelled" &&
+      pmsRes.status !== "cancelado" &&
+      pmsRes.status !== "no_show"
+    ) {
       pmsRes.checkoutDone = true;
       if (pmsRes.status !== "completed" && pmsRes.status !== "checked_out") {
         pmsRes.previousStatus = pmsRes.status;
@@ -22173,7 +22235,7 @@ function getRequestsForDate(dateStr, isNested = false) {
     existingFlatNumbersForDate.add(flatNumber);
   }
 
-  // Helper: Descarta automaticamente cards de checkout órfãos (reserva cancelada, no_show, excluída ou remarcada)
+  // Helper: Descarta automaticamente cards de checkout órfãos (reserva cancelada, expirada, no_show, excluída ou remarcada)
   const isOrphanCheckoutRequest = (r, fNumber) => {
     if (!r || r.source !== "checkout" || r.status === "clean" || r.isVacantExplicitlySet || r.markedByAdmin || r.revertedToDirtyAt) return false;
     if (String(fNumber) === "509" && r.requestDate === "2026-10-28") return false;
@@ -22181,6 +22243,9 @@ function getRequestsForDate(dateStr, isNested = false) {
       res.status !== "cancelada" &&
       res.status !== "cancelado" &&
       res.status !== "cancelled" &&
+      res.status !== "expirada" &&
+      res.status !== "pre_reserva" &&
+      res.status !== "pendente" &&
       res.status !== "no_show" &&
       String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber &&
       (res.checkoutDate === r.requestDate || res.earlyCheckoutDate === r.requestDate)
@@ -22189,7 +22254,7 @@ function getRequestsForDate(dateStr, isNested = false) {
 
     const hasCancelledOrMovedCheckout = (db.reservations || []).some(res => {
       const resFlat = String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || ""));
-      const isCancelledOrNoShow = res.status === "cancelada" || res.status === "cancelado" || res.status === "cancelled" || res.status === "no_show";
+      const isCancelledOrNoShow = res.status === "cancelada" || res.status === "cancelado" || res.status === "cancelled" || res.status === "no_show" || res.status === "expirada" || res.status === "pre_reserva";
       if (isCancelledOrNoShow && resFlat === fNumber && (res.checkoutDate === r.requestDate || res.earlyCheckoutDate === r.requestDate)) {
         return true;
       }
@@ -23992,7 +24057,8 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
 
       const todayRefVacant = getTodayStr();
       const checkoutRes = targetDate <= todayRefVacant ? (db.reservations || []).find(r =>
-        r.status !== "cancelada" && r.status !== "cancelled" &&
+        r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
+        r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
         (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
         r.checkoutDate <= todayRefVacant &&
         (r.checkoutDate === targetDate || r.checkoutDate === (date || todayRefVacant))
@@ -24077,7 +24143,8 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
 
     const todayRefClean = getTodayStr();
     const checkoutRes = targetDate <= todayRefClean ? (db.reservations || []).find(r =>
-      r.status !== "cancelada" && r.status !== "cancelled" &&
+      r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
+      r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
       (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
       r.checkoutDate <= todayRefClean &&
       (r.checkoutDate === targetDate || r.checkoutDate === (date || todayRefClean))
@@ -67352,11 +67419,14 @@ function serveSpaWithMetadata(distFolder, req, res) {
   }
 }
 
-// ── Ícone PNG Nativo para Instalação do PWA CorpFlats (/api/pwa/chat-icon.png) ──
+// ── Ícone PNG Nativo para Instalação do PWA CorpFlats (/api/pwa/chat-icon.png & /api/pwa/notification-badge.png) ──
 const pwaIconCache = new Map();
-function buildPwaChatPngBuffer(size = 192) {
-  const dim = size === 512 ? 512 : 192;
-  if (pwaIconCache.has(dim)) return pwaIconCache.get(dim);
+function buildPwaChatPngBuffer(size = 192, options = {}) {
+  const maskable = Boolean(options.maskable);
+  const monochrome = Boolean(options.monochrome);
+  const dim = size === 512 ? 512 : size === 96 ? 96 : 192;
+  const cacheKey = `${dim}-${maskable ? "mask" : "any"}-${monochrome ? "mono" : "color"}`;
+  if (pwaIconCache.has(cacheKey)) return pwaIconCache.get(cacheKey);
 
   const rawData = Buffer.alloc((dim * 4 + 1) * dim);
   const scale = 180 / dim;
@@ -67393,29 +67463,7 @@ function buildPwaChatPngBuffer(size = 192) {
       const px = rowStart + 1 + x * 4;
       const u = (x + 0.5) * scale;
 
-      // 1. Fundo Petróleo Noite (#091E26) com leve iluminação central (#0F3D4C)
-      const cdx = (u - 90) / 90;
-      const cdy = (v - 90) / 90;
-      const radial = Math.max(0, 1 - Math.sqrt(cdx * cdx + cdy * cdy));
-      let r = Math.round(9 + 6 * radial * 0.45);
-      let g = Math.round(30 + 31 * radial * 0.45);
-      let b = Math.round(38 + 38 * radial * 0.45);
-
-      // 2. Moldura interna arredondada Bronze Champagne (#C5A059)
-      const qx = Math.abs(u - 90) - 49;
-      const qy = Math.abs(v - 90) - 49;
-      const dBox =
-        Math.sqrt(Math.max(qx, 0) ** 2 + Math.max(qy, 0) ** 2) +
-        Math.min(Math.max(qx, qy), 0) -
-        35;
-      const aFrame = smoothAlpha(Math.abs(dBox), 1.6) * 0.5;
-      if (aFrame > 0) {
-        r = Math.round(r * (1 - aFrame) + 197 * aFrame);
-        g = Math.round(g * (1 - aFrame) + 160 * aFrame);
-        b = Math.round(b * (1 - aFrame) + 89 * aFrame);
-      }
-
-      // 3. Letra "C" em Branco Executivo (#F8FAFC)
+      // Distância para a letra "C"
       const dxC = u - cxC;
       const dyC = v - cyC;
       const lenC = Math.sqrt(dxC * dxC + dyC * dyC) || 0.0001;
@@ -67427,6 +67475,52 @@ function buildPwaChatPngBuffer(size = 192) {
         const dBot = Math.sqrt((u - 84) ** 2 + (v - 128) ** 2);
         distC = Math.min(dTop, dBot);
       }
+
+      // Distância para a letra "F"
+      const distF = Math.min(
+        distToSeg(u, v, 104, 128, 104, 52),
+        distToSeg(u, v, 104, 52, 142, 52),
+        distToSeg(u, v, 104, 88, 134, 88)
+      );
+
+      // Moldura interna arredondada
+      const qx = Math.abs(u - 90) - 49;
+      const qy = Math.abs(v - 90) - 49;
+      const dBox =
+        Math.sqrt(Math.max(qx, 0) ** 2 + Math.max(qy, 0) ** 2) +
+        Math.min(Math.max(qx, qy), 0) -
+        35;
+
+      if (monochrome) {
+        // Modo Badge Android Status Bar: 100% fundo transparente, apenas silhueta branca ("CF" + moldura fina)
+        const aRing = smoothAlpha(Math.abs(dBox), 4.2);
+        const aLetterC = smoothAlpha(distC, 7.8);
+        const aLetterF = smoothAlpha(distF, 7.8);
+        const aMono = Math.max(aRing, aLetterC, aLetterF);
+        rawData[px] = 255;
+        rawData[px + 1] = 255;
+        rawData[px + 2] = 255;
+        rawData[px + 3] = Math.round(aMono * 255);
+        continue;
+      }
+
+      // 1. Fundo Petróleo Noite (#091E26) com leve iluminação central (#0F3D4C)
+      const cdx = (u - 90) / 90;
+      const cdy = (v - 90) / 90;
+      const radial = Math.max(0, 1 - Math.sqrt(cdx * cdx + cdy * cdy));
+      let r = Math.round(9 + 6 * radial * 0.45);
+      let g = Math.round(30 + 31 * radial * 0.45);
+      let b = Math.round(38 + 38 * radial * 0.45);
+
+      // 2. Moldura interna arredondada Bronze Champagne (#C5A059)
+      const aFrame = smoothAlpha(Math.abs(dBox), 1.6) * 0.5;
+      if (aFrame > 0) {
+        r = Math.round(r * (1 - aFrame) + 197 * aFrame);
+        g = Math.round(g * (1 - aFrame) + 160 * aFrame);
+        b = Math.round(b * (1 - aFrame) + 89 * aFrame);
+      }
+
+      // 3. Letra "C" em Branco Executivo (#F8FAFC)
       const aC = smoothAlpha(distC, 6.5);
       if (aC > 0) {
         r = Math.round(r * (1 - aC) + 248 * aC);
@@ -67435,11 +67529,6 @@ function buildPwaChatPngBuffer(size = 192) {
       }
 
       // 4. Letra "F" em Bronze Champagne (#C5A059)
-      const distF = Math.min(
-        distToSeg(u, v, 104, 128, 104, 52),
-        distToSeg(u, v, 104, 52, 142, 52),
-        distToSeg(u, v, 104, 88, 134, 88)
-      );
       const aF = smoothAlpha(distF, 6.5);
       if (aF > 0) {
         r = Math.round(r * (1 - aF) + 197 * aF);
@@ -67447,10 +67536,26 @@ function buildPwaChatPngBuffer(size = 192) {
         b = Math.round(b * (1 - aF) + 89 * aF);
       }
 
+      // Recorte arredondado externo (rx=40) quando não for maskable, evitando quadrado chapado
+      let outAlpha = 1;
+      if (!maskable) {
+        const ox = Math.abs(u - 90) - 50;
+        const oy = Math.abs(v - 90) - 50;
+        const dOuter =
+          Math.sqrt(Math.max(ox, 0) ** 2 + Math.max(oy, 0) ** 2) +
+          Math.min(Math.max(ox, oy), 0) -
+          40;
+        if (dOuter >= aa) {
+          outAlpha = 0;
+        } else if (dOuter > -aa) {
+          outAlpha = (aa - dOuter) / (2 * aa);
+        }
+      }
+
       rawData[px] = r;
       rawData[px + 1] = g;
       rawData[px + 2] = b;
-      rawData[px + 3] = 255;
+      rawData[px + 3] = Math.round(outAlpha * 255);
     }
   }
 
@@ -67489,13 +67594,25 @@ function buildPwaChatPngBuffer(size = 192) {
     makeChunk("IDAT", compressed),
     makeChunk("IEND", Buffer.alloc(0))
   ]);
-  pwaIconCache.set(dim, pngBuffer);
+  pwaIconCache.set(cacheKey, pngBuffer);
   return pngBuffer;
 }
 
 app.get("/api/pwa/chat-icon.png", (req, res) => {
-  const size = Number(req.query.size) === 512 ? 512 : 192;
-  const buf = buildPwaChatPngBuffer(size);
+  const rawSize = Number(req.query.size);
+  const size = rawSize === 512 ? 512 : rawSize === 96 ? 96 : 192;
+  const maskable = req.query.maskable === "1" || req.query.maskable === "true";
+  const monochrome = req.query.monochrome === "1" || req.query.monochrome === "true" || req.query.badge === "1";
+  const buf = buildPwaChatPngBuffer(size, { maskable, monochrome });
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "public, max-age=300, must-revalidate");
+  res.send(buf);
+});
+
+app.get(["/api/pwa/notification-badge.png", "/notification-badge.png"], (req, res) => {
+  const rawSize = Number(req.query.size);
+  const size = rawSize === 192 ? 192 : 96;
+  const buf = buildPwaChatPngBuffer(size, { monochrome: true });
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", "public, max-age=300, must-revalidate");
   res.send(buf);

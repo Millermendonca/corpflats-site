@@ -24,8 +24,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: data.message || data.body || 'Nova mensagem recebida.',
-    icon: isWhatsApp ? '/api/pwa/chat-icon.png?size=192' : '/favicon.svg',
-    badge: isWhatsApp ? '/api/pwa/chat-icon.png?size=192' : '/favicon.svg',
+    icon: '/api/pwa/chat-icon.png?size=192&v=3',
+    badge: '/api/pwa/notification-badge.png?v=3',
     vibrate: isWhatsApp ? [180, 80, 180, 80, 240] : [300, 100, 300],
     tag: phone ? `wa-chat-${phone}` : (data.id ? `notif-${data.id}` : 'gfm-notif'),
     renotify: true,
