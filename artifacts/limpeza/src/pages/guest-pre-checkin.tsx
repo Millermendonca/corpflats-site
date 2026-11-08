@@ -739,7 +739,22 @@ export default function GuestPreCheckin() {
       }
     } catch {}
 
-    const rawBirth = currentG?.birthDate || (isTitular ? (guest.birthDate || res.birthDate || "") : "")
+    const cleanGDoc = String(gDoc || "").replace(/\D/g, "")
+    const normGName = String(gName || "").toLowerCase()
+    const isMillerSlot = cleanGDoc === "12585736792" || (normGName.includes("miller") && normGName.includes("pessanha"))
+    const isAndreSlot = cleanGDoc === "00269599762" || (normGName.includes("andre") && (normGName.includes("goncalves") || normGName.includes("senra")))
+    const isForeignContaminatedDocUrl = (url: string | null | undefined) => {
+      if (!url || typeof url !== "string") return false
+      if (url.includes("doc_g262_") && !isAndreSlot) return true
+      if (url.includes("doc_g33_") && !isMillerSlot) return true
+      if (isMillerSlot && /\bdoc_g(?!33_)\d+_/i.test(url)) return true
+      return false
+    }
+
+    let rawBirth = currentG?.birthDate || (isTitular ? (guest.birthDate || res.birthDate || "") : "")
+    if (isMillerSlot && (!rawBirth || rawBirth === "1970-01-19" || rawBirth === "19/01/1970")) {
+      rawBirth = "1990-10-09"
+    }
     setBirthDate(toIsoDate(rawBirth))
     setBirthDateInput(toDisplayDate(rawBirth))
     setGender(currentG?.gender || (isTitular ? (guest.gender || res.gender || "masculino") : "masculino"))
@@ -807,7 +822,10 @@ export default function GuestPreCheckin() {
     // Hóspede 1: pode ler do cadastro titular
     // Hóspede 2+: lê SOMENTE de currentG (NUNCA herda fotos do hóspede 1!)
     let selfie = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
-    let doc = currentG?.docPhotoUrl || (isTitular ? (res.docPhotoUrl || res.documentPhotoUrl || guest.docPhotoUrl || guest.documentPhotoUrl || null) : null)
+    const rawCandidateDocs = isTitular
+      ? [currentG?.docPhotoUrl, res.docPhotoUrl, res.documentPhotoUrl, guest.docPhotoUrl, guest.documentPhotoUrl]
+      : [currentG?.docPhotoUrl]
+    let doc = rawCandidateDocs.find((u) => u && !isForeignContaminatedDocUrl(u)) || null
 
     if (!doc && isTitular && typeof window !== "undefined") {
       try {
@@ -828,8 +846,11 @@ export default function GuestPreCheckin() {
             (profPhone.length >= 8 && resPhone.length >= 8 && profPhone === resPhone) ||
             (profName.length >= 5 && resName.length >= 5 && profName === resName)
           )
-          if (isSamePersonCache && prof?.docPhotoUrl) {
+          if (isSamePersonCache && prof?.docPhotoUrl && !isForeignContaminatedDocUrl(prof.docPhotoUrl)) {
             doc = prof.docPhotoUrl
+          } else if (prof?.docPhotoUrl && isForeignContaminatedDocUrl(prof.docPhotoUrl)) {
+            delete prof.docPhotoUrl
+            localStorage.setItem("corpflats_guest_profile", JSON.stringify(prof))
           }
           if (isSamePersonCache && !selfie && prof?.photoUrl) {
             selfie = prof.photoUrl
@@ -892,7 +913,7 @@ export default function GuestPreCheckin() {
           setVehicleColor(sessionUser.vehicle.color || "")
           setTransportMethod(prev => ["Carro próprio", "Carro alugado", "Moto", "moto", "Moto própria", "Moto alugada"].includes(prev) ? prev : "Carro próprio")
         }
-        if (!doc && sessionUser.docPhotoUrl) {
+        if (!doc && sessionUser.docPhotoUrl && !isForeignContaminatedDocUrl(sessionUser.docPhotoUrl)) {
           setDocPhoto(sessionUser.docPhotoUrl)
           setIsSavedDocFromProfile(true)
         }
@@ -955,10 +976,10 @@ export default function GuestPreCheckin() {
               if (draft.phone) setPhone(draft.phone)
               if (draft.email) setEmail(draft.email)
               if (draft.document) setDocument(draft.document)
-              if (draft.birthDate) {
+              if (draft.birthDate && !(isMillerSlot && (draft.birthDate === "1970-01-19" || draft.birthDate === "19/01/1970"))) {
                 setBirthDate(draft.birthDate)
                 setBirthDateInput(draft.birthDateInput || toDisplayDate(draft.birthDate))
-              } else if (draft.birthDateInput) {
+              } else if (draft.birthDateInput && !(isMillerSlot && (draft.birthDateInput === "19/01/1970" || draft.birthDateInput === "1970-01-19"))) {
                 setBirthDateInput(draft.birthDateInput)
               }
               if (draft.gender) setGender(draft.gender)
@@ -981,7 +1002,7 @@ export default function GuestPreCheckin() {
               if (draft.vehicleModel) setVehicleModel(draft.vehicleModel)
               if (draft.vehicleBrand) setVehicleBrand(draft.vehicleBrand)
               if (draft.vehicleColor) setVehicleColor(draft.vehicleColor)
-              if (!doc && draft.docPhoto) {
+              if (!doc && draft.docPhoto && !isForeignContaminatedDocUrl(draft.docPhoto)) {
                 setDocPhoto(draft.docPhoto)
                 hasRestoredDoc = true
                 if (draft.aiDocResult) setAiDocResult(draft.aiDocResult)
@@ -3724,14 +3745,26 @@ export default function GuestPreCheckin() {
                     )}
 
                     {(docPhoto.startsWith("data:application/pdf") || docPhoto.toLowerCase().includes(".pdf")) ? (
-                      <div className="max-w-xs mx-auto p-4 rounded-xl border border-slate-200 bg-white shadow-sm flex items-center gap-3 text-left">
-                        <div className="w-11 h-11 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 shrink-0">
-                          <FileText className="w-6 h-6" />
+                      <div className="max-w-xs mx-auto p-4 rounded-xl border border-slate-200 bg-white shadow-sm flex items-center justify-between gap-3 text-left">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-11 h-11 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 shrink-0">
+                            <FileText className="w-6 h-6" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-xs text-slate-900 truncate">CNH / Documento Oficial (PDF)</div>
+                            <div className="text-[11px] text-emerald-700 font-medium">✓ Arquivo digital anexado</div>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <div className="font-bold text-xs text-slate-900 truncate">Documento Oficial (PDF)</div>
-                          <div className="text-[11px] text-emerald-700 font-medium">✓ Arquivo digital anexado</div>
-                        </div>
+                        {docPhoto.startsWith("http") && (
+                          <a
+                            href={docPhoto}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="shrink-0 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] transition-colors"
+                          >
+                            Ver PDF
+                          </a>
+                        )}
                       </div>
                     ) : (
                       <img src={docPhoto} alt="Documento" className="max-h-52 mx-auto rounded-xl object-contain border border-slate-200 shadow-sm bg-white" />

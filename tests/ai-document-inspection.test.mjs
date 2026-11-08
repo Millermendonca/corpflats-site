@@ -551,7 +551,44 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.strictEqual(mockDb.reservations[0].guests[0].name, 'Iago Fernandes Zioto de Freitas', 'Deve atualizar slot 1 da reserva');
   });
 
-  it('23. Limpeza de processo pós-testes', () => {
+  it('23. Bloqueio de documento trocado (doc_g262 de André Gonçalves enviado na reserva de Miller Mendonça Pessanha)', async () => {
+    const fakeImgBase64 = Buffer.alloc(400, 0xBB).toString('base64');
+    const resForeign = await inspectDocumentWithAI({
+      fileBase64: `data:image/jpeg;base64,${fakeImgBase64}`,
+      fileName: 'doc_g262_1792947915698_1792947915699_fhuep.jpg',
+      providedName: 'Miller Mendonça Pessanha',
+      providedCpf: '125.857.367-92',
+      reservationName: 'Miller Mendonça Pessanha',
+      reservationCpf: '12585736792',
+      providedBirthDate: '1990-10-09',
+      providedCity: 'Campos dos Goytacazes'
+    });
+
+    assert.strictEqual(resForeign.identityMatches, false, 'Documento de André Gonçalves (doc_g262) jamais deve ser aprovado para Miller');
+    assert.strictEqual(resForeign.nameMatches, false, 'Nome extraído não deve bater com Miller');
+    assert.strictEqual(resForeign.cpfMatches, false, 'CPF extraído não deve bater com Miller');
+    assert.strictEqual(resForeign.extractedName, 'ANDRE FELIPE SENRA GONCALVES');
+    assert.strictEqual(resForeign.extractedCpf, '00269599762');
+    assert.strictEqual(resForeign.isCamposResident, false, 'Documento do Rio de Janeiro de outra pessoa não deve marcar Campos');
+
+    const resMiller = await inspectDocumentWithAI({
+      fileBase64: `data:application/pdf;base64,${fakeImgBase64}`,
+      fileName: 'doc_g33_1792454132243_1792454132244_oo8y8.pdf',
+      providedName: 'Miller Mendonça Pessanha',
+      providedCpf: '125.857.367-92',
+      reservationName: 'Miller Mendonça Pessanha',
+      reservationCpf: '12585736792',
+      providedBirthDate: '1990-10-09',
+      providedCity: 'Campos dos Goytacazes'
+    });
+
+    assert.strictEqual(resMiller.identityMatches, true, 'Documento oficial de Miller (doc_g33) deve ser aprovado para Miller');
+    assert.strictEqual(resMiller.cpfMatches, true);
+    assert.strictEqual(resMiller.calculatedAge, 36, 'Idade de Miller (nascido em 09/10/1990) em 2026 deve ser 36 anos');
+    assert.strictEqual(resMiller.isCamposResident, true);
+  });
+
+  it('24. Limpeza de processo pós-testes', () => {
     setTimeout(() => { process.exit(0); }, 50);
   });
 });
