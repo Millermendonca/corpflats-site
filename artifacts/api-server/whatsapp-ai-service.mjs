@@ -2955,13 +2955,17 @@ function createPreReservationSync(db, args = {}) {
       });
 
   const botSettings = getBotActionsSettings(db);
-  const holdMinutes = botSettings.preReservationHoldMinutes || 30;
-  const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+  const holdMinutes = Math.max(5, Number(args.holdMinutes || botSettings.preReservationHoldMinutes || 30));
+  const nowMsHold = Date.now();
+  const nowIso = new Date(nowMsHold).toISOString();
+  const expiresAt = new Date(nowMsHold + holdMinutes * 60 * 1000).toISOString();
+  const reminderLeadMinutes = holdMinutes <= 15 ? 5 : (holdMinutes <= 30 ? 10 : 15);
+  const reminderAt = new Date(nowMsHold + Math.max(1, holdMinutes - reminderLeadMinutes) * 60 * 1000).toISOString();
 
   const nextId = db?.reservations && db.reservations.length > 0
     ? Math.max(...db.reservations.map(r => r.id || 0)) + 1
     : 1;
-  const code = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
+  const code = args.code || `CF-${Math.floor(100000 + Math.random() * 900000)}`;
   const cleanTxId = code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
 
   const pixPayload = generateStaticPixPayload({
@@ -2972,22 +2976,103 @@ function createPreReservationSync(db, args = {}) {
     txid: cleanTxId
   });
 
+  const cleanResPhone = cleanWhatsAppPhone(guestPhone || "");
+  const cleanGuestCpf = onlyDigits(args.guestCpf || args.guestDocument || "");
+  const cleanGuestEmail = String(args.guestEmail || "").trim().toLowerCase();
+  const cleanGuestName = String(guestName).trim();
+
+  if (!Array.isArray(db.guests)) db.guests = [];
+  let guestRecord = db.guests.find(g =>
+    (cleanGuestCpf && onlyDigits(g.cpf || g.document || "") === cleanGuestCpf) ||
+    (cleanResPhone && matchClientPhone(g.phone || "", cleanResPhone))
+  );
+  if (!guestRecord) {
+    const nextGuestId = db.guests.length > 0
+      ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1
+      : 1;
+    guestRecord = {
+      id: nextGuestId,
+      name: cleanGuestName,
+      phone: cleanResPhone,
+      email: cleanGuestEmail,
+      document: cleanGuestCpf,
+      cpf: cleanGuestCpf,
+      notes: "",
+      totalStays: 1,
+      lastStay: inDate,
+      createdAt: nowIso
+    };
+    db.guests.push(guestRecord);
+  } else {
+    if (cleanGuestName && cleanGuestName !== "Hóspede WhatsApp") guestRecord.name = cleanGuestName;
+    if (cleanResPhone) guestRecord.phone = cleanResPhone;
+    if (cleanGuestEmail) guestRecord.email = cleanGuestEmail;
+    if (cleanGuestCpf) {
+      guestRecord.document = cleanGuestCpf;
+      guestRecord.cpf = cleanGuestCpf;
+    }
+    guestRecord.lastStay = inDate;
+  }
+
+  const preparedGuests = [];
+  for (let i = 1; i <= guests; i++) {
+    if (i === 1) {
+      preparedGuests.push({
+        index: 1,
+        guestId: guestRecord.id,
+        name: cleanGuestName,
+        cpf: cleanGuestCpf,
+        phone: cleanResPhone,
+        email: cleanGuestEmail,
+        hasCompletedCheckin: false,
+        checkinCompletedAt: null
+      });
+    } else {
+      preparedGuests.push({
+        index: i,
+        guestId: null,
+        name: `Hóspede ${i}`,
+        cpf: "",
+        phone: "",
+        email: "",
+        hasCompletedCheckin: false,
+        checkinCompletedAt: null
+      });
+    }
+  }
+
+  const includeBreakfast = ratePlan === "with_breakfast";
   const newReservation = {
     id: nextId,
     code,
+    reservationCode: code,
     flatId: flat.id,
     flatNumber: String(flat.number),
-    guestName: String(guestName).trim(),
-    guestPhone: cleanWhatsAppPhone(guestPhone || ""),
-    phone: cleanWhatsAppPhone(guestPhone || ""),
+    guestId: guestRecord.id,
+    guestName: cleanGuestName,
+    guestPhone: cleanResPhone,
+    phone: cleanResPhone,
+    guestEmail: cleanGuestEmail,
+    guestDocument: cleanGuestCpf,
+    guestCpf: cleanGuestCpf,
     guestsCount: guests,
+    guestCount: guests,
+    numGuests: guests,
+    adults: guests,
+    children: 0,
+    guests: preparedGuests,
     checkinDate: inDate,
     checkoutDate: outDate,
+    checkinTime: "14:00",
+    checkoutTime: "12:00",
     channel,
+    source: channel,
     ratePlan,
-    includeBreakfast: ratePlan === "with_breakfast",
+    includeBreakfast,
+    breakfastIncluded: includeBreakfast,
     status: "pre_reserva",
     paymentStatus: "pendente",
+    paymentMethod: "pix",
     totalAmount: total,
     cardTotalAmount: Number((total * 1.05).toFixed(2)),
     dailyRate,
@@ -2995,17 +3080,26 @@ function createPreReservationSync(db, args = {}) {
     cleaningFee: resolvedCleaningFee,
     charges,
     paidAmount: 0,
+    payments: [],
     expiresAt,
+    holdPreset: `${holdMinutes}m`,
+    holdDurationMinutes: holdMinutes,
+    holdDurationLabel: `${holdMinutes} minutos`,
+    sendExpirationReminder: true,
+    reminderLeadMinutes,
+    reminderLeadLabel: `${reminderLeadMinutes} minutos antes`,
+    reminderAt,
     pixCopiaECola: pixPayload,
     pixTxId: cleanTxId,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    pixChargedAmount: total,
+    _needsOfficialPreResDispatch: true,
+    createdAt: nowIso,
+    updatedAt: nowIso
   };
 
   if (!Array.isArray(db.reservations)) db.reservations = [];
 
   // Anexa veículo pendente capturado no WhatsApp antes da criação da reserva (se houver)
-  const cleanResPhone = cleanWhatsAppPhone(guestPhone || "");
   if (cleanResPhone) {
     if (typeof globalThis.consumePendingVehicleForPhone === "function") {
       const pendingVeh = globalThis.consumePendingVehicleForPhone(db, cleanResPhone);
@@ -3033,6 +3127,7 @@ function createPreReservationSync(db, args = {}) {
 
   db.reservations.unshift(newReservation);
 
+  const appOrigin = db?.settings?.baseUrl || process.env.APP_BASE_URL || "https://corpflats.com.br";
   return {
     success: true,
     reservationId: newReservation.id,
@@ -3043,11 +3138,15 @@ function createPreReservationSync(db, args = {}) {
     checkOut: newReservation.checkoutDate,
     guestName: newReservation.guestName,
     total: newReservation.totalAmount,
+    cardTotalAmount: newReservation.cardTotalAmount,
     status: "pre_reserva",
     expiresAt: newReservation.expiresAt,
+    reminderAt: newReservation.reminderAt,
     pixCopiaECola: pixPayload,
+    portalLink: `${appOrigin}/minha-reserva/${encodeURIComponent(newReservation.code)}`,
     qrCodeBase64: "",
-    holdMinutes
+    holdMinutes,
+    reservation: newReservation
   };
 }
 
@@ -3055,6 +3154,29 @@ async function handleCreatePreReservation(db, args = {}) {
   const syncResult = createPreReservationSync(db, args);
   if (!syncResult.success) {
     return syncResult;
+  }
+
+  const createdRes = syncResult.reservation || (db?.reservations || []).find(r => r.id === syncResult.reservationId || r.code === syncResult.code);
+  if (createdRes && typeof globalThis.createInterPixCob === "function") {
+    try {
+      const cleanTxId = String(createdRes.pixTxId || createdRes.code || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+      const interCob = await globalThis.createInterPixCob(
+        db?.settings?.interConfig,
+        cleanTxId,
+        createdRes.totalAmount,
+        createdRes.guestName,
+        createdRes.guestCpf || createdRes.guestDocument || "",
+        `Reserva ${createdRes.code} - Flat ${createdRes.flatNumber}`
+      );
+      if (interCob && interCob.pixCopiaECola) {
+        createdRes.pixCopiaECola = interCob.pixCopiaECola;
+        createdRes.pixTxId = interCob.txid || cleanTxId;
+        createdRes.pixChargedAmount = createdRes.totalAmount;
+        syncResult.pixCopiaECola = createdRes.pixCopiaECola;
+      }
+    } catch (interErr) {
+      console.warn(`[handleCreatePreReservation] Fallback para PIX estático (${createdRes.code}):`, interErr.message);
+    }
   }
 
   let qrCodeBase64 = "";
@@ -3067,6 +3189,17 @@ async function handleCreatePreReservation(db, args = {}) {
   } catch (_) {}
 
   syncResult.qrCodeBase64 = qrCodeBase64;
+
+  if (createdRes && args.skipImmediateTrigger !== true && typeof triggerImmediateWhatsApp === "function") {
+    try {
+      createdRes._needsOfficialPreResDispatch = false;
+      createdRes._preReservationRulerSentAt = new Date().toISOString();
+      await triggerImmediateWhatsApp(db, args.saveDatabase || null, "pre_reservation_created", createdRes);
+    } catch (trigErr) {
+      console.warn("[handleCreatePreReservation] Aviso ao acionar régua pre_reservation_created:", trigErr.message);
+    }
+  }
+
   return syncResult;
 }
 
@@ -6246,8 +6379,21 @@ export function executeConversationalBookingStep({
             existing.flatNumber = String(selectedFlat.number);
           }
           existing.guestsCount = convState.guests;
+          existing.guestCount = convState.guests;
+          existing.numGuests = convState.guests;
+          existing.adults = convState.guests;
           existing.ratePlan = convState.ratePlan;
+          existing.includeBreakfast = convState.ratePlan === "with_breakfast";
+          existing.breakfastIncluded = convState.ratePlan === "with_breakfast";
           existing.totalAmount = effectiveTotal;
+          existing.cardTotalAmount = Number((effectiveTotal * 1.05).toFixed(2));
+          if (quoteChosen) {
+            existing.cleaningFee = Number(quoteChosen.cleaningFee || 0);
+            if (Array.isArray(quoteChosen.dailyRates) && quoteChosen.dailyRates.length > 0) {
+              existing.dailyRates = quoteChosen.dailyRates;
+              existing.dailyRate = quoteChosen.dailyRates[0]?.rate || existing.dailyRate;
+            }
+          }
           const cleanTxId = String(existing.code || "CF000").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
           existing.pixCopiaECola = generateStaticPixPayload({
             pixKey: db?.settings?.interConfig?.pixKey || "47964813000165",
@@ -6256,6 +6402,12 @@ export function executeConversationalBookingStep({
             merchantCity: "CAMPOS DOS GOYTACAZES",
             txid: cleanTxId
           });
+          existing.pixTxId = cleanTxId;
+          existing.pixChargedAmount = effectiveTotal;
+          existing._isPreReservationUpdate = true;
+          existing._needsOfficialPreResDispatch = true;
+          existing.updatedAt = new Date().toISOString();
+          const appOrigin = db?.settings?.baseUrl || process.env.APP_BASE_URL || "https://corpflats.com.br";
           preRes = {
             success: true,
             reservationId: existing.id,
@@ -6266,10 +6418,13 @@ export function executeConversationalBookingStep({
             checkOut: existing.checkoutDate,
             guestName: existing.guestName,
             total: existing.totalAmount,
+            cardTotalAmount: existing.cardTotalAmount,
             status: existing.status,
             expiresAt: existing.expiresAt,
             pixCopiaECola: existing.pixCopiaECola,
-            holdMinutes: botSettings.preReservationHoldMinutes || 30
+            portalLink: `${appOrigin}/minha-reserva/${encodeURIComponent(existing.code)}`,
+            holdMinutes: botSettings.preReservationHoldMinutes || 30,
+            reservation: existing
           };
         } else {
           preRes = createPreReservationSync(db, {
@@ -6290,6 +6445,9 @@ export function executeConversationalBookingStep({
             ? "Com café da manhã no quarto (isenção de taxa de limpeza)"
             : `Sem café${quoteChosen?.cleaningFee ? ` (inclui R$ ${quoteChosen.cleaningFee},00 de taxa única de limpeza)` : ""}`;
           const totalFormatted = Number(preRes.total || effectiveTotal).toFixed(2).replace(".", ",");
+          const cardFormatted = Number(preRes.cardTotalAmount || (effectiveTotal * 1.05)).toFixed(2).replace(".", ",");
+          const appOrigin = db?.settings?.baseUrl || process.env.APP_BASE_URL || "https://corpflats.com.br";
+          const portalLink = preRes.portalLink || `${appOrigin}/minha-reserva/${encodeURIComponent(preRes.code)}`;
 
           return {
             handled: true,
@@ -6307,8 +6465,10 @@ export function executeConversationalBookingStep({
               `• *Período:* ${convState.displayCheckIn} a ${convState.displayCheckOut} (${convState.nights} ${convState.nights === 1 ? "noite" : "noites"})\n` +
               `• *Hóspedes:* ${convState.guests} ${convState.guests === 1 ? "pessoa" : "pessoas"}\n` +
               `• *Plano:* ${planLabel}\n` +
-              `• *Valor Total:* *R$ ${totalFormatted}*\n\n` +
-              `⏳ A unidade fica reservada para você por *${preRes.holdMinutes || 30} minutos*. Para confirmar definitivamente, basta realizar o pagamento via *PIX Copia e Cola* abaixo:\n\n` +
+              `• *Valor no PIX:* *R$ ${totalFormatted}*\n` +
+              `• *Valor no Cartão de Crédito (+5%):* R$ ${cardFormatted}\n\n` +
+              `⏳ A unidade fica reservada para você por *${preRes.holdMinutes || 30} minutos*. Para confirmar definitivamente, pague pelo link da sua reserva (PIX ou Cartão) ou use o *PIX Copia e Cola* abaixo:\n\n` +
+              `🔗 ${portalLink}\n\n` +
               `\`${preRes.pixCopiaECola}\`\n\n` +
               `Caso prefira alterar entre a opção com ou sem café da manhã no quarto, é só me avisar por aqui! 🥐☕`
             )
@@ -13534,6 +13694,89 @@ export async function processAiInboundMessage({
     };
   }
 
+  // 7.5. Se uma Pré-Reserva foi criada ou atualizada neste turno, gera PIX Dinâmico Banco Inter (com fallback estático)
+  // e aciona imediatamente a Régua Oficial de Pré-Reserva (tpl_pre_reserva com botões interativos, PIX e link de Cartão):
+  const targetPreRes = (db?.reservations || []).find(r => {
+    if (r.status !== "pre_reserva") return false;
+    if (r._needsOfficialPreResDispatch === true) {
+      const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
+      if (rPhone && cleanTarget && matchClientPhone(rPhone, cleanTarget)) return true;
+      if (aiResult?.functionResult?.code && r.code === aiResult.functionResult.code) return true;
+    }
+    if (r._preReservationRulerSentAt && (Date.now() - new Date(r._preReservationRulerSentAt).getTime()) < 25000) {
+      const rPhone = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
+      if (rPhone && cleanTarget && matchClientPhone(rPhone, cleanTarget)) return true;
+    }
+    return false;
+  });
+
+  if (targetPreRes && targetPreRes._needsOfficialPreResDispatch === true) {
+    const oldPix = targetPreRes.pixCopiaECola;
+    if (typeof globalThis.createInterPixCob === "function") {
+      try {
+        const cleanTxId = String(targetPreRes.pixTxId || targetPreRes.code || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+        const interCob = await globalThis.createInterPixCob(
+          db?.settings?.interConfig,
+          cleanTxId,
+          targetPreRes.totalAmount,
+          targetPreRes.guestName,
+          targetPreRes.guestCpf || targetPreRes.guestDocument || "",
+          `Reserva ${targetPreRes.code} - Flat ${targetPreRes.flatNumber}`
+        );
+        if (interCob && interCob.pixCopiaECola) {
+          targetPreRes.pixCopiaECola = interCob.pixCopiaECola;
+          targetPreRes.pixTxId = interCob.txid || cleanTxId;
+          targetPreRes.pixChargedAmount = targetPreRes.totalAmount;
+          if (oldPix && aiResult.replyText && aiResult.replyText.includes(oldPix)) {
+            aiResult.replyText = aiResult.replyText.replace(oldPix, targetPreRes.pixCopiaECola);
+          }
+        }
+      } catch (interErr) {
+        console.warn(`[WhatsApp AI Pre-Reserva] Fallback para PIX estático (${targetPreRes.code}):`, interErr.message);
+      }
+    }
+
+    targetPreRes._needsOfficialPreResDispatch = false;
+    targetPreRes._preReservationRulerSentAt = new Date().toISOString();
+    if (typeof saveDatabase === "function") saveDatabase();
+
+    if (typeof triggerImmediateWhatsApp === "function") {
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", targetPreRes);
+      } catch (trigErr) {
+        console.warn(`[WhatsApp AI Pre-Reserva] Aviso ao acionar régua pre_reservation_created (${targetPreRes.code}):`, trigErr.message);
+      }
+    }
+  }
+
+  const rulerDispatchedLive = Boolean(
+    targetPreRes &&
+    (db?.whatsappHistory || []).some(h =>
+      h.triggerEvent === "pre_reservation_created" &&
+      h.status === "sent" &&
+      String(h.reservationCode || "").toUpperCase() === String(targetPreRes.code || "").toUpperCase() &&
+      h.sentAt &&
+      (Date.now() - new Date(h.sentAt).getTime()) < 30000
+    )
+  );
+
+  if (rulerDispatchedLive) {
+    if (typeof saveDatabase === "function") saveDatabase();
+    return {
+      handled: true,
+      handover: false,
+      preReservationRulerDispatched: true,
+      reservationCode: targetPreRes.code,
+      replyText: aiResult.replyText,
+      modelUsed: aiResult.modelUsed,
+      source: aiResult.source,
+      unmappedFaqCreated: Boolean(unmappedFaq),
+      unmappedFaq,
+      unmetDemandCreated: Boolean(unmetDemand),
+      unmetDemand
+    };
+  }
+
   // 8. Resposta Autônoma Normal (com Quebra em até 3 Balões Separados e Indicador de Digitação Humanizado):
   const delaySec = typeof aiConfig.responseDelaySeconds === "number" ? aiConfig.responseDelaySeconds : 3;
   const isTestEnv = process.env.NODE_ENV === "test" || delaySec === 0;
@@ -15683,19 +15926,20 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
   const saveDatabase = options.saveDatabase || null;
   const triggerImmediateFn = options.triggerImmediateFn || triggerImmediateWhatsApp;
 
+  const fairCheck = selectFairShareFlat(db, proposal.checkIn, proposal.checkOut);
+  const targetFlatRef = proposal.flatId || proposal.flatNumber || fairCheck?.recommendedFlat?.id || fairCheck?.recommendedFlat?.number;
   const flat = (db?.flats || []).find(f =>
-    String(f.id) === String(proposal.flatId) || String(f.number) === String(proposal.flatNumber)
+    String(f.id) === String(targetFlatRef) || String(f.number) === String(targetFlatRef)
   );
   if (!flat) {
     return {
       success: false,
       error: "FLAT_NOT_FOUND",
-      message: `O Flat ${proposal.flatNumber || proposal.flatId} não foi encontrado no cadastro do sistema.`
+      message: `O Flat ${proposal.flatNumber || proposal.flatId || ""} não foi encontrado ou não há unidade disponível no cadastro do sistema.`
     };
   }
 
   // Revalida disponibilidade do flat no período
-  const fairCheck = selectFairShareFlat(db, proposal.checkIn, proposal.checkOut);
   const isSelectedFlatAvailable = fairCheck.availableFlats.some(f =>
     String(f.id) === String(flat.id) || String(f.number) === String(flat.number)
   );
@@ -15755,11 +15999,30 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
   const inD = new Date(`${proposal.checkIn}T12:00:00Z`);
   const outD = new Date(`${proposal.checkOut}T12:00:00Z`);
   const nights = Math.max(1, Math.round((outD - inD) / (1000 * 60 * 60 * 24)));
-  const rawTotalAmount = Math.round(Number(proposal.totalAmount || 0) * 100) / 100;
-  const rawPropDaily = proposal.dailyRate != null && proposal.dailyRate > 0
+  const guestsCount = Math.min(Math.max(1, Number(proposal.guests || 1)), 4);
+  const includeBreakfast = Boolean(proposal.includeBreakfast);
+
+  let rawTotalAmount = Math.round(Number(proposal.totalAmount || 0) * 100) / 100;
+  let rawPropDaily = proposal.dailyRate != null && proposal.dailyRate > 0
     ? Math.round(Number(proposal.dailyRate) * 100) / 100
     : 0;
-  const includeBreakfast = Boolean(proposal.includeBreakfast);
+  if (!(rawTotalAmount > 0) && !(rawPropDaily > 0)) {
+    const autoQuote = handleCalculateQuote(db, {
+      checkIn: proposal.checkIn,
+      checkOut: proposal.checkOut,
+      guests: guestsCount,
+      flatId: flat.id,
+      channel: "direct",
+      ratePlan: includeBreakfast ? "with_breakfast" : "room_only"
+    });
+    if (autoQuote && autoQuote.success && autoQuote.total > 0) {
+      rawTotalAmount = autoQuote.total;
+      if (proposal.cleaningFee == null && autoQuote.cleaningFee != null) {
+        proposal.cleaningFee = autoQuote.cleaningFee;
+      }
+    }
+  }
+
   const resolvedCleaningFee = includeBreakfast
     ? 0
     : (proposal.cleaningFee != null && Number(proposal.cleaningFee) > 0
@@ -15788,7 +16051,7 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
   const nextResId = db.reservations.length > 0
     ? Math.max(...db.reservations.map(r => Number(r.id) || 0)) + 1
     : 1;
-  const code = `RES-${String(flat.number)}-${String(nextResId).padStart(4, "0")}`;
+  const code = proposal.code || `RES-${String(flat.number)}-${String(nextResId).padStart(4, "0")}`;
   const cleanTxId = code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
 
   const charges = resolvedCleaningFee > 0
@@ -15800,16 +16063,41 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
       }]
     : [];
 
-  const pixPayload = generateStaticPixPayload({
+  let pixPayload = generateStaticPixPayload({
     pixKey: db?.settings?.interConfig?.pixKey || "47964813000165",
     amount: totalAmount,
     merchantName: "CORPFLATS LTDA",
     merchantCity: "CAMPOS DOS GOYTACAZES",
     txid: cleanTxId
   });
+  let resolvedPixTxId = cleanTxId;
 
-  const nowIso = new Date().toISOString();
-  const guestsCount = Math.min(Math.max(1, Number(proposal.guests || 1)), 4);
+  if (typeof globalThis.createInterPixCob === "function") {
+    try {
+      const interCob = await globalThis.createInterPixCob(
+        db?.settings?.interConfig,
+        cleanTxId,
+        totalAmount,
+        cleanGuestName,
+        cleanGuestCpf,
+        `Reserva ${code} - Flat ${flat.number}`
+      );
+      if (interCob && interCob.pixCopiaECola) {
+        pixPayload = interCob.pixCopiaECola;
+        resolvedPixTxId = interCob.txid || cleanTxId;
+      }
+    } catch (interErr) {
+      console.warn(`[createStandardPmsPreReservation] Fallback para PIX estático (${code}):`, interErr.message);
+    }
+  }
+
+  const botSettings = getBotActionsSettings(db);
+  const holdMinutes = Math.max(5, Number(proposal.holdMinutes || botSettings?.preReservationHoldMinutes || 30));
+  const nowMsHold = Date.now();
+  const nowIso = new Date(nowMsHold).toISOString();
+  const expiresAt = proposal.expiresAt || new Date(nowMsHold + holdMinutes * 60 * 1000).toISOString();
+  const reminderLeadMinutes = holdMinutes <= 15 ? 5 : (holdMinutes <= 30 ? 10 : 15);
+  const reminderAt = proposal.reminderAt || new Date(nowMsHold + Math.max(1, holdMinutes - reminderLeadMinutes) * 60 * 1000).toISOString();
 
   const preparedGuests = [];
   for (let i = 1; i <= guestsCount; i++) {
@@ -15841,6 +16129,7 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
   const newReservation = {
     id: nextResId,
     code,
+    reservationCode: code,
     flatId: flat.id,
     flatNumber: String(flat.number),
     guestId: guestRecord.id,
@@ -15876,8 +16165,19 @@ export async function createStandardPmsPreReservation(db, proposal, options = {}
     adults: guestsCount,
     children: 0,
     guests: preparedGuests,
+    expiresAt,
+    holdPreset: `${holdMinutes}m`,
+    holdDurationMinutes: holdMinutes,
+    holdDurationLabel: `${holdMinutes} minutos`,
+    sendExpirationReminder: true,
+    reminderLeadMinutes,
+    reminderLeadLabel: `${reminderLeadMinutes} minutos antes`,
+    reminderAt,
     pixCopiaECola: pixPayload,
-    pixTxId: cleanTxId,
+    pixTxId: resolvedPixTxId,
+    pixChargedAmount: totalAmount,
+    _needsOfficialPreResDispatch: false,
+    _preReservationRulerSentAt: nowIso,
     notes: proposal.notes || "Pré-reserva criada pela Assistente Ativa Sofia mediante confirmação do gestor via WhatsApp.",
     createdBy: {
       userId: null,

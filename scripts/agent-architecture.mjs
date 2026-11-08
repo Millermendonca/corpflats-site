@@ -21,6 +21,8 @@
  *  13. `notificar_administrador`
  */
 
+import { triggerImmediateWhatsApp, generateStaticPixPayload } from './zapi-service.mjs';
+
 function normalizePhoneDigits(phone) {
   return String(phone || '').replace(/\D+/g, '');
 }
@@ -1066,13 +1068,10 @@ export const gerarLinkReservaTool = {
       }
 
       const db = context.runtime?.db;
-      const codigoPreReserva = `CF-${Date.now().toString(36).slice(-6).toUpperCase()}`;
       const baseUrl =
         db?.settings?.baseUrl ||
-        (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
+        (typeof process !== 'undefined' && (process.env?.APP_BASE_URL || process.env?.SERVER_BASE_URL)) ||
         'https://corpflats.com.br';
-      const linkPagamento = `${baseUrl}/reservar/${codigoPreReserva}`;
-      const chavePix = db?.settings?.pixKey || '47.964.813/0001-65 (CNPJ - Rental Millers / CorpFlats)';
 
       // Se o cliente enviou dados de veículo no WhatsApp antes da criação da reserva, vincula automaticamente agora
       let veiculoVinculado = null;
@@ -1084,10 +1083,201 @@ export const gerarLinkReservaTool = {
         delete context.runtime.conversation.pendingVehicle;
       }
 
+      const nowMsHold = Date.now();
+      const nowIso = new Date(nowMsHold).toISOString();
+      const holdMinutes = 30;
+      const expiresAt = new Date(nowMsHold + holdMinutes * 60 * 1000).toISOString();
+      const reminderLeadMinutes = 10;
+      const reminderAt = new Date(nowMsHold + (holdMinutes - reminderLeadMinutes) * 60 * 1000).toISOString();
+
+      let codigoPreReserva = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
+      let selectedFlat = { id: 1, number: '101' };
+
       if (db) {
+        const allFlats = Array.isArray(db.flats) && db.flats.length > 0
+          ? db.flats.filter((f) => f && f.isActive !== false && f.status !== 'maintenance')
+          : [{ id: 1, number: '101' }];
+        const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+        const availableFlats = allFlats.filter((flat) => {
+          const flatNum = String(flat.number || flat.id || '');
+          const hasConflict = reservations.some((r) => {
+            if (!r) return false;
+            const st = String(r.status || '').toLowerCase();
+            if (['cancelada', 'cancelled', 'expirada', 'completed', 'checked_out', 'finalizada', 'concluida', 'checkout', 'no_show'].includes(st)) return false;
+            if ((st === 'pre_reserva' || st === 'pendente') && r.expiresAt && new Date(r.expiresAt).getTime() < nowMsHold && r.paymentStatus !== 'pago_total') return false;
+            if (String(r.flatNumber || r.flatId || '') !== flatNum && String(r.flatId || '') !== String(flat.id || '')) return false;
+            const rIn = String(r.checkinDate || '').slice(0, 10);
+            const rOut = String(r.checkoutDate || '').slice(0, 10);
+            return checkin < rOut && checkout > rIn;
+          });
+          return !hasConflict;
+        });
+        if (availableFlats.length > 0) {
+          selectedFlat = availableFlats[0];
+        } else if (allFlats.length > 0) {
+          selectedFlat = allFlats[0];
+        }
+      }
+
+      const cleanTxId = codigoPreReserva.replace(/[^a-zA-Z0-9]/g, '').substring(0, 25);
+      let chavePix = generateStaticPixPayload({
+        pixKey: db?.settings?.interConfig?.pixKey || '47964813000165',
+        amount: valorTotal,
+        merchantName: 'CORPFLATS LTDA',
+        merchantCity: 'CAMPOS DOS GOYTACAZES',
+        txid: cleanTxId,
+      });
+      let resolvedPixTxId = cleanTxId;
+
+      if (typeof globalThis.createInterPixCob === 'function') {
+        try {
+          const interCob = await globalThis.createInterPixCob(
+            db?.settings?.interConfig,
+            cleanTxId,
+            valorTotal,
+            nomeTitular,
+            '',
+            `Reserva ${codigoPreReserva} - Flat ${selectedFlat.number || selectedFlat.id}`
+          );
+          if (interCob && interCob.pixCopiaECola) {
+            chavePix = interCob.pixCopiaECola;
+            resolvedPixTxId = interCob.txid || cleanTxId;
+          }
+        } catch (interErr) {
+          console.warn(`[gerar_link_reserva] Fallback para PIX estático (${codigoPreReserva}):`, interErr.message);
+        }
+      }
+
+      const linkPagamento = `${baseUrl}/minha-reserva/${encodeURIComponent(codigoPreReserva)}`;
+      const cardTotalAmount = Number((valorTotal * 1.05).toFixed(2));
+      const cleaningFee = comCafe ? 0 : 70.0;
+      const netRoomTotal = Math.max(0, valorTotal - cleaningFee);
+      const dailyRate = Math.round((netRoomTotal / diarias) * 100) / 100;
+      const inD = new Date(`${checkin}T12:00:00Z`);
+      const dailyRates = Array.from({ length: diarias }, (_, i) => {
+        const dStr = new Date(inD.getTime() + i * 86400000).toISOString().slice(0, 10);
+        return { date: dStr, rate: dailyRate, channel: 'whatsapp' };
+      });
+
+      if (db) {
+        if (!Array.isArray(db.reservations)) db.reservations = [];
+        if (!Array.isArray(db.guests)) db.guests = [];
         if (!Array.isArray(db.preReservations)) db.preReservations = [];
-        db.preReservations.push({
+
+        const cleanPhone = normalizePhoneDigits(context.telefone_remetente);
+        let guestRecord = db.guests.find((g) => cleanPhone && phonesMatch(g.phone || '', cleanPhone));
+        if (!guestRecord) {
+          const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
+          guestRecord = {
+            id: nextGuestId,
+            name: nomeTitular,
+            phone: cleanPhone,
+            email: '',
+            document: '',
+            cpf: '',
+            notes: '',
+            totalStays: 1,
+            lastStay: checkin,
+            createdAt: nowIso,
+          };
+          db.guests.push(guestRecord);
+        } else if (nomeTitular) {
+          guestRecord.name = nomeTitular;
+          guestRecord.lastStay = checkin;
+        }
+
+        const nextResId = db.reservations.length > 0
+          ? Math.max(...db.reservations.map((r) => Number(r.id) || 0)) + 1
+          : 1;
+        const charges = cleaningFee > 0
+          ? [{
+              id: `charge_cleaning_${nextResId}`,
+              type: 'cleaning',
+              title: 'Taxa de Limpeza',
+              amount: cleaningFee,
+            }]
+          : [];
+
+        const preparedGuests = Array.from({ length: hospedes }, (_, idx) => ({
+          index: idx + 1,
+          guestId: idx === 0 ? guestRecord.id : null,
+          name: idx === 0 ? nomeTitular : `Hóspede ${idx + 1}`,
+          cpf: '',
+          phone: idx === 0 ? cleanPhone : '',
+          email: '',
+          hasCompletedCheckin: false,
+          checkinCompletedAt: null,
+        }));
+
+        const newReservation = {
+          id: nextResId,
           code: codigoPreReserva,
+          reservationCode: codigoPreReserva,
+          flatId: selectedFlat.id || selectedFlat.number,
+          flatNumber: String(selectedFlat.number || selectedFlat.id),
+          guestId: guestRecord.id,
+          guestName: nomeTitular,
+          guestPhone: cleanPhone,
+          phone: cleanPhone,
+          guestEmail: '',
+          guestDocument: '',
+          guestCpf: '',
+          checkinDate: checkin,
+          checkoutDate: checkout,
+          checkinTime: '14:00',
+          checkoutTime: '12:00',
+          status: 'pre_reserva',
+          paymentStatus: 'pendente',
+          paymentMethod: 'pix',
+          channel: 'whatsapp',
+          source: 'whatsapp',
+          ratePlan: comCafe ? 'with_breakfast' : 'room_only',
+          includeBreakfast: comCafe,
+          breakfastIncluded: comCafe,
+          guestsCount: hospedes,
+          guestCount: hospedes,
+          numGuests: hospedes,
+          adults: hospedes,
+          children: 0,
+          guests: preparedGuests,
+          totalAmount: valorTotal,
+          cardTotalAmount,
+          dailyRate,
+          dailyRates,
+          cleaningFee,
+          charges,
+          paidAmount: 0,
+          payments: [],
+          expiresAt,
+          holdPreset: `${holdMinutes}m`,
+          holdDurationMinutes: holdMinutes,
+          holdDurationLabel: `${holdMinutes} minutos`,
+          sendExpirationReminder: true,
+          reminderLeadMinutes,
+          reminderLeadLabel: `${reminderLeadMinutes} minutos antes`,
+          reminderAt,
+          pixCopiaECola: chavePix,
+          pixTxId: resolvedPixTxId,
+          pixChargedAmount: valorTotal,
+          _needsOfficialPreResDispatch: false,
+          _preReservationRulerSentAt: nowIso,
+          ...(veiculoVinculado?.plate ? {
+            vehicle: { ...veiculoVinculado, updatedAt: nowIso },
+            vehiclePlate: veiculoVinculado.plate,
+            vehicleModel: veiculoVinculado.model || '',
+            vehicleColor: veiculoVinculado.color || '',
+          } : {}),
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+
+        db.reservations.unshift(newReservation);
+
+        db.preReservations.push({
+          id: nextResId,
+          code: codigoPreReserva,
+          flatId: newReservation.flatId,
+          flatNumber: newReservation.flatNumber,
           guestName: nomeTitular,
           guestPhone: context.telefone_remetente,
           checkinDate: checkin,
@@ -1095,13 +1285,32 @@ export const gerarLinkReservaTool = {
           guests: hospedes,
           withBreakfast: comCafe,
           totalAmount: valorTotal,
+          cardTotalAmount,
+          pixCopiaECola: chavePix,
+          pixTxId: resolvedPixTxId,
           vehicle: veiculoVinculado || null,
           status: 'pending_payment',
-          expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-          createdAt: new Date().toISOString(),
+          expiresAt,
+          reminderAt,
+          createdAt: nowIso,
         });
+
         if (typeof context.runtime?.saveDatabase === 'function') {
           await context.runtime.saveDatabase();
+        }
+
+        if (typeof triggerImmediateWhatsApp === 'function') {
+          try {
+            await triggerImmediateWhatsApp(
+              db,
+              context.runtime?.saveDatabase || null,
+              'pre_reservation_created',
+              newReservation,
+              baseUrl
+            );
+          } catch (trigErr) {
+            console.warn(`[gerar_link_reserva] Aviso ao acionar régua pre_reservation_created (${codigoPreReserva}):`, trigErr.message);
+          }
         }
       }
 
@@ -1109,17 +1318,20 @@ export const gerarLinkReservaTool = {
         ? ` Informe também que o veículo placa *${veiculoVinculado.plate}* informado anteriormente já foi vinculado automaticamente à reserva.`
         : '';
       const msg =
-        `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* foi bloqueada por 30 minutos para *${nomeTitular}* (${checkin} a ${checkout}) ` +
-        `no valor de *R$ ${valorTotal.toFixed(2)}*. Envie o link (${linkPagamento}) e a chave PIX oficial (${chavePix}) e peça o comprovante por aqui para confirmação imediata.${infoVeiculo}`;
+        `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* (Flat ${selectedFlat.number || selectedFlat.id}) foi bloqueada por 30 minutos para *${nomeTitular}* (${checkin} a ${checkout}) ` +
+        `no valor de *R$ ${valorTotal.toFixed(2)}* no PIX (ou *R$ ${cardTotalAmount.toFixed(2)}* no Cartão de Crédito). ` +
+        `A mensagem oficial da reserva com botões interativos, código PIX Copia e Cola (\`${chavePix}\`) e link de pagamento por Cartão (${linkPagamento}) já foi enviada.${infoVeiculo}`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
         dados: {
           codigo_pre_reserva: codigoPreReserva,
+          flat_number: String(selectedFlat.number || selectedFlat.id),
           nome_hospede: nomeTitular,
           data_checkin: checkin,
           data_checkout: checkout,
           valor_total: valorTotal,
+          valor_cartao: cardTotalAmount,
           link_reserva: linkPagamento,
           chave_pix: chavePix,
           veiculo_vinculado: veiculoVinculado || null,

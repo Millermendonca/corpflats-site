@@ -50655,7 +50655,11 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
     const holdMinutes = (typeof botSettings?.preReservationHoldMinutes === "number" && botSettings.preReservationHoldMinutes > 0)
       ? botSettings.preReservationHoldMinutes
       : (Number(botSettings?.preReservationHoldMinutes) || 30);
-    const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+    const nowMsHold = Date.now();
+    const nowIso = new Date(nowMsHold).toISOString();
+    const expiresAt = new Date(nowMsHold + holdMinutes * 60 * 1000).toISOString();
+    const reminderLeadMinutes = holdMinutes <= 15 ? 5 : (holdMinutes <= 30 ? 10 : 15);
+    const reminderAt = new Date(nowMsHold + Math.max(1, holdMinutes - reminderLeadMinutes) * 60 * 1000).toISOString();
 
     const nextId = db.reservations && db.reservations.length > 0
       ? Math.max(...db.reservations.map(r => r.id || 0)) + 1
@@ -50663,56 +50667,128 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
     const code = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
 
     const cleanTxId = code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
-    const pixPayload = generateStaticPixPayload({
+    let pixPayload = generateStaticPixPayload({
       pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
       amount: total,
       merchantName: "CORPFLATS LTDA",
       merchantCity: "CAMPOS DOS GOYTACAZES",
       txid: cleanTxId
     });
+    let resolvedPixTxId = cleanTxId;
+
+    const ratePlan = req.body.ratePlan || (req.body.includeBreakfast ? "with_breakfast" : "room_only");
+    const includeBreakfast = ratePlan === "with_breakfast" || Boolean(req.body.includeBreakfast);
+    const nights = Math.max(1, Math.round((new Date(outDate + "T12:00:00Z").getTime() - new Date(inDate + "T12:00:00Z").getTime()) / 86400000));
+    const cleaningFee = req.body.cleaningFee != null
+      ? Number(req.body.cleaningFee) || 0
+      : (includeBreakfast ? 0 : (total >= 237 * nights + 70 ? 70 : 0));
+    const netRoomTotal = Math.max(0, total - cleaningFee);
+    const dailyRate = Math.round((netRoomTotal / nights) * 100) / 100;
+    const dailyRates = Array.from({ length: nights }, (_, i) => {
+      const dStr = new Date(new Date(inDate + "T12:00:00Z").getTime() + i * 86400000).toISOString().substring(0, 10);
+      return { date: dStr, rate: dailyRate, channel };
+    });
+    const charges = cleaningFee > 0
+      ? [{
+          id: `charge_cleaning_${nextId}`,
+          type: "cleaning",
+          title: "Taxa de Limpeza",
+          amount: cleaningFee
+        }]
+      : [];
+
+    const cleanPhone = cleanWhatsAppPhone(guestPhone || "");
+    const cleanGuestName = String(guestName).trim();
 
     const newReservation = {
       id: nextId,
       code,
+      reservationCode: code,
       flatId: flat.id,
       flatNumber: String(flat.number),
-      guestName: String(guestName).trim(),
-      guestPhone: cleanWhatsAppPhone(guestPhone || ""),
-      phone: cleanWhatsAppPhone(guestPhone || ""),
+      guestName: cleanGuestName,
+      guestPhone: cleanPhone,
+      phone: cleanPhone,
       guestsCount: guests,
+      guestCount: guests,
+      numGuests: guests,
+      adults: guests,
+      children: 0,
       checkinDate: inDate,
       checkoutDate: outDate,
+      checkinTime: "14:00",
+      checkoutTime: "12:00",
       channel,
+      source: channel,
+      ratePlan,
+      includeBreakfast,
+      breakfastIncluded: includeBreakfast,
       status: "pre_reserva",
       paymentStatus: "pendente",
+      paymentMethod: "pix",
       totalAmount: total,
+      cardTotalAmount: Number((total * 1.05).toFixed(2)),
+      dailyRate,
+      dailyRates,
+      cleaningFee,
+      charges,
       paidAmount: 0,
+      payments: [],
       expiresAt,
+      holdPreset: `${holdMinutes}m`,
+      holdDurationMinutes: holdMinutes,
+      holdDurationLabel: `${holdMinutes} minutos`,
+      sendExpirationReminder: true,
+      reminderLeadMinutes,
+      reminderLeadLabel: `${reminderLeadMinutes} minutos antes`,
+      reminderAt,
       pixCopiaECola: pixPayload,
-      pixTxId: cleanTxId,
+      pixTxId: resolvedPixTxId,
+      pixChargedAmount: total,
       createdBy: {
         userName: "Bot Actions API",
         role: "bot",
         source: "bot-actions",
-        createdAt: new Date().toISOString()
+        createdAt: nowIso
       },
       auditLogs: [
         {
           id: `audit_${Date.now()}`,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso,
           action: "pre_reserva_bot",
           actor: { name: "Bot Actions API", role: "system" },
           description: `Pré-reserva criada via API com hold de ${holdMinutes} minutos (expira em ${expiresAt})`
         }
       ],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: nowIso,
+      updatedAt: nowIso
     };
 
     // 3. PERSISTÊNCIA ATÔMICA IMEDIATA: Registra na coleção de reservas antes de ceder o Event Loop
     if (!Array.isArray(db.reservations)) db.reservations = [];
     db.reservations.unshift(newReservation);
     saveDatabase("bot_pre_reserve");
+
+    // 3.5. Tenta upgrade para PIX Dinâmico Banco Inter (sem bloquear reserva atômica já salva)
+    try {
+      const interCob = await createInterPixCob(
+        db.settings?.interConfig,
+        cleanTxId,
+        total,
+        cleanGuestName,
+        req.body.guestCpf || req.body.guestDocument || "",
+        `Reserva ${code} - Flat ${flat.number}`
+      );
+      if (interCob && interCob.pixCopiaECola) {
+        pixPayload = interCob.pixCopiaECola;
+        resolvedPixTxId = interCob.txid || cleanTxId;
+        newReservation.pixCopiaECola = pixPayload;
+        newReservation.pixTxId = resolvedPixTxId;
+        saveDatabase("bot_pre_reserve_inter_pix");
+      }
+    } catch (interErr) {
+      console.warn(`[pre-reserve] Fallback para PIX estático (${code}):`, interErr.message);
+    }
 
     // 4. Geração assíncrona do QRCode com proteção de Rollback
     let qrCodeBase64 = "";
@@ -50728,6 +50804,14 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
       throw qrErr;
     }
 
+    // 5. Dispara a régua oficial de Pré-Reserva (tpl_pre_reserva com botões, PIX e link de cartão)
+    const baseUrl = `${req.headers["x-forwarded-proto"] || req.protocol}://${req.get("host")}`;
+    if (req.body.skipImmediateTrigger !== true && cleanPhone) {
+      triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", newReservation, baseUrl).catch(err => {
+        console.warn("[pre-reserve] Aviso ao acionar régua pre_reservation_created:", err.message);
+      });
+    }
+
     res.json({
       success: true,
       reservationId: newReservation.id,
@@ -50738,9 +50822,12 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
       checkOut: newReservation.checkoutDate,
       guestName: newReservation.guestName,
       total: newReservation.totalAmount,
+      cardTotalAmount: newReservation.cardTotalAmount,
       status: "pre_reserva",
       expiresAt: newReservation.expiresAt,
+      reminderAt: newReservation.reminderAt,
       pixCopiaECola: pixPayload,
+      portalLink: `${baseUrl}/minha-reserva/${encodeURIComponent(newReservation.code)}`,
       qrCodeBase64,
       holdMinutes
     });

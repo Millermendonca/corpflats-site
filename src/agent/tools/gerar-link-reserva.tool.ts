@@ -114,17 +114,118 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
       }
 
       const db = context.runtime?.db;
-      const codigoPreReserva = `CF-${Date.now().toString(36).slice(-6).toUpperCase()}`;
+      const codigoPreReserva = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
       const baseUrl =
         db?.settings?.baseUrl ||
-        (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
+        (typeof process !== 'undefined' && (process.env?.APP_BASE_URL || process.env?.SERVER_BASE_URL)) ||
         'https://corpflats.com.br';
-      const linkPagamento = `${baseUrl}/reservar/${codigoPreReserva}`;
-      const chavePix = db?.settings?.pixKey || '47.964.813/0001-65 (CNPJ - Rental Millers / CorpFlats)';
+      const linkPagamento = `${baseUrl}/minha-reserva/${encodeURIComponent(codigoPreReserva)}`;
+      const cardTotalAmount = Number((valorTotal * 1.05).toFixed(2));
+      const cleanTxId = codigoPreReserva.replace(/[^a-zA-Z0-9]/g, '').substring(0, 25);
+
+      let chavePix =
+        typeof (globalThis as any).generateStaticPixPayload === 'function'
+          ? (globalThis as any).generateStaticPixPayload({
+              pixKey: db?.settings?.interConfig?.pixKey || '47964813000165',
+              amount: valorTotal,
+              merchantName: 'CORPFLATS LTDA',
+              merchantCity: 'CAMPOS DOS GOYTACAZES',
+              txid: cleanTxId,
+            })
+          : db?.settings?.pixKey || '47964813000165';
+      let resolvedPixTxId = cleanTxId;
+
+      if (typeof (globalThis as any).createInterPixCob === 'function') {
+        try {
+          const interCob = await (globalThis as any).createInterPixCob(
+            db?.settings?.interConfig,
+            cleanTxId,
+            valorTotal,
+            nomeTitular,
+            '',
+            `Reserva ${codigoPreReserva}`
+          );
+          if (interCob && interCob.pixCopiaECola) {
+            chavePix = interCob.pixCopiaECola;
+            resolvedPixTxId = interCob.txid || cleanTxId;
+          }
+        } catch (_) {}
+      }
+
+      const nowMsHold = Date.now();
+      const nowIso = new Date(nowMsHold).toISOString();
+      const holdMinutes = 30;
+      const expiresAt = new Date(nowMsHold + holdMinutes * 60 * 1000).toISOString();
+      const reminderLeadMinutes = 10;
+      const reminderAt = new Date(nowMsHold + (holdMinutes - reminderLeadMinutes) * 60 * 1000).toISOString();
 
       if (db) {
+        if (!Array.isArray(db.reservations)) db.reservations = [];
         if (!Array.isArray(db.preReservations)) db.preReservations = [];
+
+        const allFlats = Array.isArray(db.flats) && db.flats.length > 0
+          ? db.flats.filter((f: any) => f && f.isActive !== false && f.status !== 'maintenance')
+          : [{ id: 1, number: '101' }];
+        const selectedFlat = allFlats[0] || { id: 1, number: '101' };
+        const nextResId = db.reservations.length > 0
+          ? Math.max(...db.reservations.map((r: any) => Number(r.id) || 0)) + 1
+          : 1;
+        const cleaningFee = comCafe ? 0 : 70.0;
+        const netRoomTotal = Math.max(0, valorTotal - cleaningFee);
+        const dailyRate = Math.round((netRoomTotal / diarias) * 100) / 100;
+
+        const newReservation = {
+          id: nextResId,
+          code: codigoPreReserva,
+          reservationCode: codigoPreReserva,
+          flatId: selectedFlat.id || selectedFlat.number,
+          flatNumber: String(selectedFlat.number || selectedFlat.id),
+          guestName: nomeTitular,
+          guestPhone: context.telefone_remetente,
+          phone: context.telefone_remetente,
+          checkinDate: checkin,
+          checkoutDate: checkout,
+          checkinTime: '14:00',
+          checkoutTime: '12:00',
+          status: 'pre_reserva',
+          paymentStatus: 'pendente',
+          paymentMethod: 'pix',
+          channel: 'whatsapp',
+          source: 'whatsapp',
+          ratePlan: comCafe ? 'with_breakfast' : 'room_only',
+          includeBreakfast: comCafe,
+          breakfastIncluded: comCafe,
+          guestsCount: hospedes,
+          guestCount: hospedes,
+          numGuests: hospedes,
+          adults: hospedes,
+          children: 0,
+          totalAmount: valorTotal,
+          cardTotalAmount,
+          dailyRate,
+          cleaningFee,
+          paidAmount: 0,
+          expiresAt,
+          holdPreset: `${holdMinutes}m`,
+          holdDurationMinutes: holdMinutes,
+          holdDurationLabel: `${holdMinutes} minutos`,
+          sendExpirationReminder: true,
+          reminderLeadMinutes,
+          reminderLeadLabel: `${reminderLeadMinutes} minutos antes`,
+          reminderAt,
+          pixCopiaECola: chavePix,
+          pixTxId: resolvedPixTxId,
+          pixChargedAmount: valorTotal,
+          _needsOfficialPreResDispatch: false,
+          _preReservationRulerSentAt: nowIso,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+
+        db.reservations.unshift(newReservation);
+
         db.preReservations.push({
+          id: nextResId,
           code: codigoPreReserva,
           guestName: nomeTitular,
           guestPhone: context.telefone_remetente,
@@ -133,18 +234,32 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
           guests: hospedes,
           withBreakfast: comCafe,
           totalAmount: valorTotal,
+          cardTotalAmount,
+          pixCopiaECola: chavePix,
+          pixTxId: resolvedPixTxId,
           status: 'pending_payment',
-          expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-          createdAt: new Date().toISOString(),
+          expiresAt,
+          reminderAt,
+          createdAt: nowIso,
         });
         if (typeof context.runtime?.saveDatabase === 'function') {
           await context.runtime.saveDatabase();
+        }
+        if (typeof context.runtime?.triggerImmediateWhatsApp === 'function') {
+          await context.runtime.triggerImmediateWhatsApp(
+            db,
+            context.runtime?.saveDatabase || null,
+            'pre_reservation_created',
+            newReservation,
+            baseUrl
+          );
         }
       }
 
       const msg =
         `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* foi bloqueada por 30 minutos para *${nomeTitular}* (${checkin} a ${checkout}) ` +
-        `no valor de *R$ ${valorTotal.toFixed(2)}*. Envie o link (${linkPagamento}) e a chave PIX oficial (${chavePix}) e peça o comprovante por aqui para confirmação imediata.`;
+        `no valor de *R$ ${valorTotal.toFixed(2)}* no PIX (ou *R$ ${cardTotalAmount.toFixed(2)}* no Cartão de Crédito). ` +
+        `A mensagem oficial da reserva com botões interativos, código PIX Copia e Cola (\`${chavePix}\`) e link de pagamento por Cartão (${linkPagamento}) já foi enviada.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -154,6 +269,7 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
           data_checkin: checkin,
           data_checkout: checkout,
           valor_total: valorTotal,
+          valor_cartao: cardTotalAmount,
           link_reserva: linkPagamento,
           chave_pix: chavePix,
           validade_bloqueio_minutos: 30,
