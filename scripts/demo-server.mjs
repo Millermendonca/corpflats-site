@@ -5772,6 +5772,11 @@ export function reconcileUniversalIntegrity(incomingState = null) {
     changed = true;
   }
 
+  // 2.6. Autocorreção de pré-reservas expiradas que possam ter sido marcadas como completed/checkoutDone
+  if (typeof sweepExpiredPreReservations === "function" && sweepExpiredPreReservations(db, null) > 0) {
+    changed = true;
+  }
+
   // 3. Auditoria Universal de Integridade de Reservas em TODOS os Flats
   const todayStr = getTodayStr ? getTodayStr() : new Date().toISOString().substring(0, 10);
   const activeFlatsMap = new Map();
@@ -22457,6 +22462,7 @@ app.post("/api/reservations/clear-all", requireDevAuth, (req, res) => {
 
 app.get("/api/reservations/checkouts", (req, res) => {
   triggerBackgroundSync();
+  sweepExpiredPreReservations(db, saveDatabase);
   if (isUniversalIntegrityDirty && reconcileUniversalIntegrity()) {
     setImmediate(() => saveDatabase("integrity_reconciled"));
   }
@@ -22476,7 +22482,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
   }
   const reservationsByFlat = new Map();
   for (const r of (db.reservations || [])) {
-    if (!r || r.status === 'cancelada' || r.status === 'cancelado' || r.status === 'cancelled') continue;
+    if (!r || r.status === 'cancelada' || r.status === 'cancelado' || r.status === 'cancelled' || r.status === 'expirada' || r.status === 'pre_reserva' || r.status === 'pendente' || r.status === 'no_show') continue;
     const fId = Number(r.flatId);
     const fNum = String(r.flatNumber || "");
     if (fId) {
@@ -22498,7 +22504,12 @@ app.get("/api/reservations/checkouts", (req, res) => {
       (r.flatId === flat.id || String(r.flatNumber || "") === String(flat.number)) &&
       r.checkinDate === dateStr &&
       r.status !== "cancelada" &&
-      r.status !== "cancelado"
+      r.status !== "cancelado" &&
+      r.status !== "cancelled" &&
+      r.status !== "expirada" &&
+      r.status !== "pre_reserva" &&
+      r.status !== "pendente" &&
+      r.status !== "no_show"
     );
     const hasCheckinToday = Boolean(checkinResToday) || (!req_.isPendingFromPreviousDay && Boolean(req_.arrivingGuest));
     const resolvedArrivingGuest = checkinResToday
@@ -22587,7 +22598,8 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const arrivingTodayRes = checkinResToday || (db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.checkinDate === dateStr &&
-      r.status !== "cancelada" && r.status !== "cancelado"
+      r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "cancelled" &&
+      r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show"
     );
 
     const hasTwinBeds = isManualTwin
@@ -22663,7 +22675,8 @@ app.get("/api/reservations/checkouts", (req, res) => {
     // Check if flat is currently occupied with a checkout on the next day or future
     const activeResToday = isInst ? null : (db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
-      r.status !== "cancelada" && r.status !== "cancelado" &&
+      r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "cancelled" &&
+      r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
       r.checkinDate < dateStr && r.checkoutDate > dateStr
     );
     const hasFutureCheckoutOnly = !isInst && !isStayover && !isServiceCleaning && Boolean(activeResToday && activeResToday.checkoutDate > dateStr && !req_.leavingGuest && req_.source !== "guest_checkout" && !req_.isVacant);
@@ -22675,6 +22688,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
       (req_.autoReservationCode && r.code === req_.autoReservationCode) ||
       (
         r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "cancelled" &&
+        r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" &&
         r.status !== "no_show" && r.status !== "completed" && r.status !== "checked_out" &&
         !r.checkoutDone && !r.earlyCheckout &&
         (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
@@ -22686,11 +22700,13 @@ app.get("/api/reservations/checkouts", (req, res) => {
     // Identifica a reserva do hóspede saindo hoje ou ativa no flat
     const checkoutRes = (isInst || isServiceCleaning) ? null : (stayoverRes || ((db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
-      r.status !== "cancelada" && r.status !== "cancelado" &&
+      r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "cancelled" &&
+      r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
       r.checkoutDate === (req_.originalRequestDate || req_.requestDate || dateStr)
     ) || (req_.leavingGuest ? (db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
-      r.status !== "cancelada" && r.status !== "cancelado" &&
+      r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "cancelled" &&
+      r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
       (r.guestName?.toLowerCase() === req_.leavingGuest?.toLowerCase() || (r.guestName && req_.leavingGuest && req_.leavingGuest.toLowerCase().includes(r.guestName.toLowerCase())))
     ) : null) || activeResToday));
 
@@ -32278,6 +32294,98 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
   let expiredCount = 0;
   let remindedCount = 0;
 
+  const discardOrphanCheckoutCleaningsForExpiredRes = (r) => {
+    if (!r || !Array.isArray(targetDb.cleaningRequests)) return;
+    const fNum = String(r.flatNumber || (targetDb.flats || []).find(f => f && f.id === r.flatId)?.number || "");
+    const chkDate = r.checkoutDate;
+    if (!fNum || !chkDate) return;
+    const hasOtherActiveCheckout = (targetDb.reservations || []).some(other =>
+      other &&
+      other.id !== r.id &&
+      other.status !== "cancelada" &&
+      other.status !== "cancelado" &&
+      other.status !== "cancelled" &&
+      other.status !== "expirada" &&
+      other.status !== "pre_reserva" &&
+      other.status !== "pendente" &&
+      other.status !== "no_show" &&
+      String(other.flatNumber || (targetDb.flats || []).find(f => f && f.id === other.flatId)?.number || "") === fNum &&
+      (other.checkoutDate === chkDate || other.earlyCheckoutDate === chkDate)
+    );
+    if (!hasOtherActiveCheckout) {
+      for (const c of targetDb.cleaningRequests) {
+        if (!c || c.isDeleted || c.status === "deleted" || c.status === "clean") continue;
+        const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+        if (isInst || c.source !== "checkout" || c.markedByAdmin) continue;
+        if (String(c.flatNumber) === fNum && c.requestDate === chkDate) {
+          c.isDeleted = true;
+          c.status = "deleted";
+          c.deletedAt = nowIso;
+          c.deletedBy = "pre_reservation_expired";
+          c.deletedReservationId = r.id;
+          c.updatedAt = nowIso;
+        }
+      }
+    }
+  };
+
+  // 0a. Auto-cura de pré-reservas já expiradas que foram contaminadas por sincronização de check-out da governança
+  // (ex: RES-509-0716 que teve status sobrescrito de "expirada" para "completed" / checkoutDone = true no dia do check-out)
+  for (const r of targetDb.reservations) {
+    if (!r) continue;
+    const isKnownExpiredBruno509 = (
+      r.code === "RES-509-0716" ||
+      (String(r.flatNumber) === "509" && r.checkinDate === "2026-11-07" && /bruno\s+mainetti/i.test(String(r.guestName || "")))
+    );
+    const hadExpiredEvidence = Boolean(
+      isKnownExpiredBruno509 ||
+      r.expiredAt ||
+      r.expiredWhatsappSentAt ||
+      r.previousStatus === "expirada" ||
+      r.previousStatus === "pre_reserva" ||
+      (r.expiresAt && !isNaN(new Date(r.expiresAt).getTime()) && new Date(r.expiresAt).getTime() <= nowMs) ||
+      (Array.isArray(r.auditLogs) && r.auditLogs.some(l => l && l.action === "expired"))
+    );
+    if (!hadExpiredEvidence) continue;
+    const wasReactivatedAfterExpire = Boolean(
+      r.reactivatedAt && (!r.expiredAt || String(r.reactivatedAt) > String(r.expiredAt)) && r.status === "pre_reserva"
+    );
+    if (wasReactivatedAfterExpire) continue;
+    const rChan = String(r.channel || "").toLowerCase();
+    const isOtaOrB2b = rChan.includes("booking") || rChan.includes("airbnb") || rChan.includes("b2b") || Boolean(r.b2bReservationNumber);
+    if (isOtaOrB2b) continue;
+    const isPaid = r.paymentStatus === "pago_total" ||
+      r.paymentStatus === "pago" ||
+      Number(r.paidAmount) > 0 ||
+      (typeof hasRealPaymentEvidence === "function" && hasRealPaymentEvidence(r));
+    if (isPaid) continue;
+
+    if (r.status !== "expirada" && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "pre_reserva") {
+      r.status = "expirada";
+      if (!r.expiredAt) r.expiredAt = r.expiresAt || nowIso;
+      r.checkoutDone = false;
+      delete r.actualCheckoutAt;
+      delete r.actualCheckoutTime;
+      delete r.checkoutMethod;
+      delete r.checkoutReportedBy;
+      delete r.checkoutReportedAt;
+      if (r.previousStatus === "expirada" || r.previousStatus === "pre_reserva") delete r.previousStatus;
+      r.updatedAt = nowIso;
+      expiredCount++;
+      discardOrphanCheckoutCleaningsForExpiredRes(r);
+    } else if (r.status === "expirada" && r.checkoutDone) {
+      r.checkoutDone = false;
+      delete r.actualCheckoutAt;
+      delete r.actualCheckoutTime;
+      delete r.checkoutMethod;
+      delete r.checkoutReportedBy;
+      delete r.checkoutReportedAt;
+      r.updatedAt = nowIso;
+      expiredCount++;
+      discardOrphanCheckoutCleaningsForExpiredRes(r);
+    }
+  }
+
   // 0. Varredura Silenciosa de Ofertas de Domingo Sem Pressa (pendingSundayUpsell)
   for (const r of targetDb.reservations) {
     if (!r) continue;
@@ -32395,9 +32503,11 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
     // 2. Expiração definitiva quando expMs <= nowMs
     const prevStatusLabel = r.status === "pre_reserva" ? "Pré-Reserva" : "Pendente";
     r.status = "expirada";
+    r.checkoutDone = false;
     r.expiredAt = nowIso;
     r.updatedAt = nowIso;
     expiredCount++;
+    discardOrphanCheckoutCleaningsForExpiredRes(r);
 
     if (Array.isArray(targetDb.whatsappQueue)) {
       for (const qItem of targetDb.whatsappQueue) {
@@ -32471,6 +32581,8 @@ app.get("/api/pms/calendar", (req, res) => {
   const end = endDate || getOffsetDateStr(30);
 
   const todayStr = getTodayStr();
+  // Expira e sanea pré-reservas ANTES de gerar os cards de governança do dia (evitando contaminação de check-out em pré-reservas expiradas)
+  sweepExpiredPreReservations(db, saveDatabase);
   const cleaningRequestsToday = getRequestsForDate(todayStr);
 
   const flats = (db.flats || []).filter(f => f.isActive !== false).sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true })).map(f => {
@@ -32651,7 +32763,8 @@ app.get("/api/pms/calendar", (req, res) => {
 
     const isCheckingOutToday = r.checkoutDate === todayStr;
     const isArrivingTodayForFuture = r.checkinDate === todayStr && r.checkoutDate > todayStr;
-    const isCheckoutDone = !isArrivingTodayForFuture && (
+    const isPreOrExpiredRes = r.status === "pre_reserva" || r.status === "pendente" || r.status === "expirada";
+    const isCheckoutDone = !isPreOrExpiredRes && !isArrivingTodayForFuture && (
       isResMarkedCheckedOut || (isCheckingOutToday && isCleanReqCheckedOut)
     );
     const isCheckedOutToday = isCheckoutDone && (
@@ -33671,8 +33784,8 @@ app.post("/api/pms/reservations", async (req, res) => {
     ]
   });
 
-  // Sincroniza governança e card de camareira para o check-in desta reserva
-  if (checkinDate) {
+  // Sincroniza governança e card de camareira para o check-in desta reserva (apenas se confirmada)
+  if (checkinDate && resolvedStatus !== "cancelada" && resolvedStatus !== "pre_reserva" && resolvedStatus !== "expirada") {
     try {
       const targetDate = checkinDate;
       const fNum = String(flat.number);
@@ -33700,7 +33813,7 @@ app.post("/api/pms/reservations", async (req, res) => {
   }
 
   // Se uma nova reserva ativa foi criada com data de check-out onde havia um card excluído anteriormente, reativa a limpeza para o novo check-out
-  if (checkoutDate && resolvedStatus !== "cancelada") {
+  if (checkoutDate && resolvedStatus !== "cancelada" && resolvedStatus !== "pre_reserva" && resolvedStatus !== "expirada") {
     const deletedOnCheckout = (db.cleaningRequests || []).find(c =>
       (String(c.flatNumber) === String(flat.number) || c.flatId === flat.id) &&
       c.requestDate === checkoutDate &&
@@ -36143,7 +36256,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         c.type !== "bed_adjustment_only" &&
         c.type !== "instruction"
       );
-      if (existingTargetReq && (existingTargetReq.isDeleted || existingTargetReq.status === "deleted") && r.status !== "cancelada") {
+      if (existingTargetReq && (existingTargetReq.isDeleted || existingTargetReq.status === "deleted") && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "expirada" && r.status !== "pre_reserva") {
         existingTargetReq.isDeleted = false;
         existingTargetReq.status = "dirty";
         existingTargetReq.leavingGuest = r.guestName;
@@ -36154,7 +36267,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         delete existingTargetReq.deletedBy;
         delete existingTargetReq.deletedReservationId;
         existingTargetReq.updatedAt = new Date().toISOString();
-      } else if (!existingTargetReq && r.status !== "cancelada") {
+      } else if (!existingTargetReq && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "expirada" && r.status !== "pre_reserva") {
         const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(x => Number(x.id) || 0)) : 0;
         db.cleaningRequests.unshift({
           id: maxId + 1,
@@ -36181,8 +36294,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldFlatNum = String(oldFlatId ? (db.flats.find(f => f.id === oldFlatId)?.number || "") : "");
   const newFlatNum = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
 
-  // Se o check-in mudou de data ou mudou de flat, ou a reserva foi cancelada, limpa instruções automáticas da data/flat anterior
-  if ((oldCheckin && oldCheckin !== r.checkinDate) || (oldFlatNum && oldFlatNum !== newFlatNum) || r.status === "cancelada" || r.status === "cancelled" || r.status === "no_show") {
+  // Se o check-in mudou de data ou mudou de flat, ou a reserva foi cancelada/expirada, limpa instruções automáticas da data/flat anterior
+  if ((oldCheckin && oldCheckin !== r.checkinDate) || (oldFlatNum && oldFlatNum !== newFlatNum) || r.status === "cancelada" || r.status === "cancelled" || r.status === "expirada" || r.status === "no_show") {
     const clearDate = (oldCheckin && oldCheckin !== r.checkinDate) ? oldCheckin : r.checkinDate;
     const clearFlatNum = (oldFlatNum && oldFlatNum !== newFlatNum) ? oldFlatNum : newFlatNum;
     const oldCleanReq = (db.cleaningRequests || []).find(c =>
@@ -36206,8 +36319,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  // Se a reserva foi cancelada ou marcada como no_show, descarta automaticamente cards de check-out não realizados vinculados a ela
-  if (r.status === "cancelada" || r.status === "cancelled" || r.status === "no_show") {
+  // Se a reserva foi cancelada, expirada ou marcada como no_show, descarta automaticamente cards de check-out não realizados vinculados a ela
+  if (r.status === "cancelada" || r.status === "cancelled" || r.status === "expirada" || r.status === "no_show") {
     if (r.b2bReservationNumber || (r.code && String(r.code).startsWith("B2B-"))) {
       if (!Array.isArray(db.deletedB2bSeeds)) db.deletedB2bSeeds = [];
       if (r.b2bReservationNumber && !db.deletedB2bSeeds.includes(String(r.b2bReservationNumber))) {
@@ -36227,6 +36340,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           other.status !== "cancelada" &&
           other.status !== "cancelado" &&
           other.status !== "cancelled" &&
+          other.status !== "expirada" &&
+          other.status !== "pre_reserva" &&
+          other.status !== "pendente" &&
           other.status !== "no_show" &&
           String(other.flatNumber || (db.flats.find(f => f.id === other.flatId)?.number || "")) === chkFlat &&
           (other.checkoutDate === chkDate || other.earlyCheckoutDate === chkDate)
@@ -36258,7 +36374,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
-  if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkinDate) {
+  if (r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "expirada" && r.status !== "pre_reserva" && r.checkinDate) {
     const targetCheckin = r.checkinDate;
     const targetFlatNum = newFlatNum;
     const isTwin = Boolean(r.twinBeds || r.bedType === "2 Solteiro" || r.bedType === "twin");
@@ -61674,7 +61790,7 @@ app.get("/api/live-ops/metrics", (req, res) => {
       );
     };
 
-    const allValidReservations = (db.reservations || []).filter(r => r && r.status !== "cancelada" && r.status !== "cancelled");
+    const allValidReservations = (db.reservations || []).filter(r => r && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" && r.status !== "expirada" && r.status !== "no_show");
 
     // 1. Ocupação Hoje
     const occupiedReservationsToday = allValidReservations.filter(r =>
@@ -63660,9 +63776,9 @@ export async function generateAdminCopilotLocalResponse(db, message = "", contex
   if (/reserva|check-?in|entrada|sa[ií]da|h[oó]spede|pr[oó]xim/i.test(text)) {
     const res = await querySystemData(db, { module: "reservations", requesterRole: "admin" });
     const reservations = res.reservations || [];
-    const checkinsToday = reservations.filter(r => r.checkinDate === todayStr && r.status !== "cancelada");
-    const checkoutsToday = reservations.filter(r => r.checkoutDate === todayStr && r.status !== "cancelada");
-    const upcoming = reservations.filter(r => r.checkinDate > todayStr && r.status !== "cancelada")
+    const checkinsToday = reservations.filter(r => r.checkinDate === todayStr && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" && r.status !== "expirada" && r.status !== "no_show");
+    const checkoutsToday = reservations.filter(r => r.checkoutDate === todayStr && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" && r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "no_show");
+    const upcoming = reservations.filter(r => r.checkinDate > todayStr && r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" && r.status !== "expirada" && r.status !== "no_show")
       .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate))
       .slice(0, 6);
 

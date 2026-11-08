@@ -14178,6 +14178,10 @@ export async function sendOverbookingManagerWhatsAppAlert(db, saveDatabase, rese
  */
 export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, reservation, options = {}) {
   if (!db || !reservation) return { isEarlyCheckout: false, cancelledBreakfastCount: 0 };
+  const stLower = String(reservation.status || "").toLowerCase();
+  if (["cancelada", "cancelado", "cancelled", "expirada", "no_show", "pre_reserva", "pendente"].includes(stLower)) {
+    return { isEarlyCheckout: false, cancelledBreakfastCount: 0, skippedInactive: true };
+  }
 
   const nowIso = options.nowIso || new Date().toISOString();
   const nowBrl = getBrasiliaNow();
