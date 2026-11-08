@@ -32671,9 +32671,8 @@ app.get("/api/pms/calendar", (req, res) => {
   ];
   const isLiteMode = req.query.lite === "1";
 
-  const minRecentDateStr = getOffsetDateStr(-15);
   const expiredPreReservations = (db.reservations || [])
-    .filter(r => r && r.status === "expirada" && (r.checkoutDate >= todayStr || (r.expiredAt && r.expiredAt >= minRecentDateStr) || (r.updatedAt && r.updatedAt >= minRecentDateStr)))
+    .filter(r => r && r.status === "expirada" && r.checkinDate && r.checkinDate >= todayStr)
     .sort((a, b) => {
       const tA = new Date(a.expiredAt || a.updatedAt || a.createdAt || 0).getTime();
       const tB = new Date(b.expiredAt || b.updatedAt || b.createdAt || 0).getTime();
