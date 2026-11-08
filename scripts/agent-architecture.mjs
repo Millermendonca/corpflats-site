@@ -76,8 +76,19 @@ export function injectSessionContext(params = {}) {
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
   const guests = Array.isArray(db?.guests) ? db.guests : [];
 
+  const isDevSender = cleanPhone && cleanPhone.endsWith('998505276');
+  const nowMs = now instanceof Date ? now.getTime() : Date.now();
+
   const matchingReservations = reservations.filter((r) => {
-    if (!r || r.status === 'cancelada' || r.status === 'cancelled') return false;
+    if (!r) return false;
+    const st = String(r.status || '').toLowerCase();
+    if (['cancelada', 'cancelled', 'expirada', 'expired', 'no_show'].includes(st)) return false;
+    const paySt = String(r.paymentStatus || '').toLowerCase();
+    const isPaid = ['paid', 'pago', 'pago_total', 'pago_integralmente', 'confirmado'].includes(paySt);
+    if ((st === 'pre_reserva' || r.isPreReservation) && !isPaid && r.holdExpiresAt) {
+      const expMs = new Date(r.holdExpiresAt).getTime();
+      if (Number.isFinite(expMs) && expMs <= nowMs) return false;
+    }
     return (
       phonesMatch(r.guestPhone || r.phone, cleanPhone) ||
       phonesMatch(r.requesterInfo?.phone || r.requesterInfo?.whatsapp || r.requesterPhone, cleanPhone)
@@ -107,7 +118,7 @@ export function injectSessionContext(params = {}) {
   }
 
   let pastRes = null;
-  if (!activeRes && !futureRes) {
+  if (!activeRes && !futureRes && !isDevSender) {
     const pastCandidates = matchingReservations
       .filter((r) => {
         const co = String(r.checkoutDate || '').slice(0, 10);
@@ -561,34 +572,60 @@ function formatGuestListPtBr(names) {
 
 async function generatePixChargeForService({ amount, description, debtorName, debtorDocument, reservationCode, context }) {
   const valor = Number(Number(amount || 0).toFixed(2));
+  const db = context?.runtime?.db || null;
+  const cleanCode = String(reservationCode || 'EXT').replace(/[^a-zA-Z0-9]/g, '').slice(0, 14);
+  const defaultTxId = `${cleanCode}${Date.now().toString(36).toUpperCase()}`.replace(/[^a-zA-Z0-9]/g, '').slice(0, 25);
+  const baseUrl = String(db?.settings?.baseUrl || (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) || 'https://reservas.corpflats.com.br').replace(/\/$/, '');
+  const paymentUrl = reservationCode ? `${baseUrl}/minha-reserva/${encodeURIComponent(reservationCode)}` : `${baseUrl}/reservar`;
+
   const createCobFn = context?.runtime?.createInterPixCob || globalThis.createInterPixCob;
   if (typeof createCobFn === 'function') {
     try {
-      const res = await createCobFn({
-        amount: valor,
-        description,
-        debtorName: debtorName || 'Hospede CorpFlats',
-        debtorDocument: debtorDocument || '',
-        reservationCode: reservationCode || '',
-      });
+      let res = null;
+      if (createCobFn.length >= 3) {
+        res = await createCobFn(
+          db?.settings?.interConfig,
+          defaultTxId,
+          valor,
+          debtorName || 'Hospede CorpFlats',
+          debtorDocument || '',
+          description || `Cobranca ${reservationCode || 'CorpFlats'}`
+        );
+      } else {
+        res = await createCobFn({
+          amount: valor,
+          description,
+          debtorName: debtorName || 'Hospede CorpFlats',
+          debtorDocument: debtorDocument || '',
+          reservationCode: reservationCode || '',
+          txid: defaultTxId,
+        });
+      }
       if (res && res.pixCopiaECola) {
         return {
-          txid: res.txid,
+          txid: res.txid || defaultTxId,
           pixCopiaECola: res.pixCopiaECola,
-          chavePix: '47.964.813/0001-65 (CNPJ - Rental Millers / CorpFlats)',
+          chavePix: res.pixCopiaECola,
+          paymentUrl,
           valor,
         };
       }
     } catch (err) {
-      console.warn('[Sofia PIX Service] Fallback para chave PIX estática:', err?.message || err);
+      console.warn('[Sofia PIX Service] Fallback para PIX EMV integrado:', err?.message || err);
     }
   }
-  const fallbackTxId = `PIX_SOFIA_${Date.now()}_${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-  const chavePix = context?.runtime?.db?.settings?.pixKey || '47.964.813/0001-65 (CNPJ - Rental Millers / CorpFlats)';
+  const emvPayload = generateStaticPixPayload({
+    pixKey: db?.settings?.interConfig?.pixKey || '47964813000165',
+    amount: valor,
+    merchantName: 'CORPFLATS LTDA',
+    merchantCity: 'CAMPOS DOS GOYTACAZES',
+    txid: defaultTxId,
+  });
   return {
-    txid: fallbackTxId,
-    pixCopiaECola: chavePix,
-    chavePix,
+    txid: defaultTxId,
+    pixCopiaECola: emvPayload,
+    chavePix: emvPayload,
+    paymentUrl,
     valor,
   };
 }
@@ -2684,9 +2721,17 @@ export const estenderEstadiaTool = {
         targetRes.checkoutDate = novaSaida;
         targetRes.nights = novasDiariasTotais;
         targetRes.totalAmount = Number(((Number(targetRes.totalAmount) || 0) + valorAdicional).toFixed(2));
+        targetRes.cardTotalAmount = Number((targetRes.totalAmount / 0.95).toFixed(2));
+        targetRes.pixCopiaECola = pixCharge.pixCopiaECola;
+        targetRes.pixTxId = pixCharge.txid;
+        targetRes.pixChargedAmount = valorAdicional;
+        if (Number(targetRes.paidAmount || 0) > 0 && Number(targetRes.paidAmount || 0) < targetRes.totalAmount) {
+          targetRes.paymentStatus = 'parcial';
+        }
         targetRes.pendingStayExtension = {
           txid: pixCharge.txid,
           pixCopiaECola: pixCharge.pixCopiaECola,
+          paymentUrl: pixCharge.paymentUrl,
           amount: valorAdicional,
           oldCheckoutDate: dataCheckoutAtual,
           newCheckoutDate: novaSaida,
@@ -2716,11 +2761,20 @@ export const estenderEstadiaTool = {
         if (typeof context.runtime?.saveDatabase === 'function') {
           await context.runtime.saveDatabase();
         }
+
+        const triggerFn = context.runtime?.triggerImmediateWhatsApp || globalThis.triggerImmediateWhatsApp;
+        if (typeof triggerFn === 'function') {
+          try {
+            await triggerFn(db, context.runtime?.saveDatabase, 'additional_daily_pending', targetRes);
+          } catch (trigErr) {
+            console.warn('[estender_estadia] Erro ao disparar additional_daily_pending:', trigErr?.message || trigErr);
+          }
+        }
       }
 
       const msgExec =
         `Confirme com entusiasmo que a prorrogação da estadia no *${reserva.nome_imovel}* até *${novaSaida}* (+${diariasExtras} diária(s)) já foi registrada e bloqueada no mapa! ` +
-        `Envie o código PIX Copia e Cola (${pixCharge.pixCopiaECola}) no valor de *R$ ${valorAdicional.toFixed(2)}* para quitação das diárias adicionais.`;
+        `Envie o código PIX Copia e Cola (${pixCharge.pixCopiaECola}) no valor de *R$ ${valorAdicional.toFixed(2)}* e o link do portal seguro (${pixCharge.paymentUrl}) onde o hóspede pode pagar via PIX ou Cartão de Crédito com baixa automática no sistema.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -2733,6 +2787,7 @@ export const estenderEstadiaTool = {
           valor_adicional: valorAdicional,
           txid: pixCharge.txid,
           pix_copia_e_cola: pixCharge.pixCopiaECola,
+          link_pagamento: pixCharge.paymentUrl,
         },
         instrucao_para_ia: msgExec,
         instrucao_resposta_ia: msgExec,

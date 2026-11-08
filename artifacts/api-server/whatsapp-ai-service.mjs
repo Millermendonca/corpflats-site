@@ -724,7 +724,20 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
                  (reqPhone && (cleanPhone.endsWith(reqPhone.slice(-8)) || reqPhone.endsWith(cleanPhone.slice(-8))));
         });
 
-    const nonCancelled = allMatching.filter(r => r && r.status !== "cancelada" && r.status !== "cancelled");
+    const nowMs = now instanceof Date ? now.getTime() : Date.now();
+    const isDevPhone = isDeveloperPhone(cleanPhone, db);
+    const nonCancelled = allMatching.filter(r => {
+      if (!r) return false;
+      const st = String(r.status || "").toLowerCase();
+      if (["cancelada", "cancelled", "expirada", "expired", "no_show"].includes(st)) return false;
+      const paySt = String(r.paymentStatus || "").toLowerCase();
+      const isPaid = ["paid", "pago", "pago_total", "pago_integralmente", "confirmado"].includes(paySt);
+      if ((st === "pre_reserva" || r.isPreReservation) && !isPaid && r.holdExpiresAt) {
+        const expMs = new Date(r.holdExpiresAt).getTime();
+        if (Number.isFinite(expMs) && expMs <= nowMs) return false;
+      }
+      return true;
+    });
 
     const todayMatches = nonCancelled.filter(r =>
       (r.checkinDate === todayStr || r.checkoutDate === todayStr || (r.checkinDate <= todayStr && r.checkoutDate >= todayStr))
@@ -744,12 +757,12 @@ export function buildGuestContext(dbOrOptions, phoneArg, nowArg) {
     }
 
     // 1.25 Se não há futura nem ativa pendente, verifica reserva de hoje que já teve check-out concluído
-    if (!matchedReservation && todayMatches.length > 0) {
+    if (!matchedReservation && todayMatches.length > 0 && !isDevPhone) {
       matchedReservation = todayMatches[0];
     }
 
-    // 1.3 Se não há futura nem de hoje, pega a passada mais recente
-    if (!matchedReservation && nonCancelled.length > 0) {
+    // 1.3 Se não há futura nem de hoje, pega a passada mais recente (exceto para o telefone de teste do desenvolvedor sem reserva ativa)
+    if (!matchedReservation && nonCancelled.length > 0 && !isDevPhone) {
       const pastCandidates = nonCancelled
         .sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""));
       matchedReservation = pastCandidates[0];
@@ -6012,7 +6025,12 @@ export function parseNaturalDatesFromText(text = "", referenceDateStr = null) {
       startOffsetDays = 1;
     } else if (hasDepoisDeAmanha) {
       startOffsetDays = 2;
-    } else if (hasHoje && /\b(?:para\s+hoje|reservar\s+hoje|reserva\s+hoje|vaga\s+(?:para\s+)?hoje|entrada\s+hoje|check-?in\s+hoje|\d+\s*(?:diarias?|noites?))\b/i.test(norm)) {
+    } else if (
+      hasHoje && (
+        /\b(?:para\s+hoje|reservar\s+hoje|reserva\s+hoje|vaga\s+(?:para\s+)?hoje|entrada\s+hoje|entrando\s+hoje|entrar\s+hoje|chegando\s+hoje|chego\s+hoje|chegada\s+hoje|check-?in\s+hoje|ficar\s+hoje|dormir\s+hoje|hospedar\s+hoje|a\s+partir\s+de\s+hoje|hoje\s+mesmo|de\s+hoje|\d+\s*(?:diarias?|noites?|pessoas?|hospedes?|adultos?)|(?:um|uma|dois|duas|tres)\s*(?:pessoas?|hospedes?|adultos?)|casal|solteir[ao]|individual)\b/i.test(norm) ||
+        /^(?:para\s+|a\s+partir\s+de\s+|entrando\s+|entrar\s+|check-?in\s+)?hoje[.!?\s]*$/i.test(norm)
+      )
+    ) {
       startOffsetDays = 0;
     }
 
@@ -6723,6 +6741,18 @@ export function isOperationalNonPricingFaq(faq) {
  * - GENERIC_FAQ: Perguntas institucionais da base/FAQ (VIA 1 - FAQ e Conhecimento)
  * - UNKNOWN_INQUIRY: Dúvida não mapeada (Gera Demanda e FAQ pendente)
  */
+export function isFlatAmenitiesOrStructureQuestion(text = "") {
+  if (!text || typeof text !== "string") return false;
+  if (/micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade|secador|ferro\s+de\s+passar|voltagem|110v?|220v?|127v?|tomada|bancada|mesa\s+de\s+trabalho|chuveiro|ducha/i.test(text)) {
+    return true;
+  }
+  const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return (
+    /(?:o\s+que\s+(?:tem|vem|possui|inclui|contem|ha)|tem\s+o\s+que|quais?\s+(?:os\s+|as\s+)?(?:itens|comodidades|equipamentos|moveis|eletrodomesticos|coisas)|qual\s+(?:e\s+)?a\s+estrutura|como\s+(?:e|sao)\s+(?:o|os|a|as)|(?:e|sao)\s+(?:mobiliad[ao]s?|equipad[ao]s?|complet[ao]s?)).*?\b(?:flat|flats|quarto|quartos|apartamento|apartamentos|apto|acomodacao|suite|unidade)\b/i.test(norm) ||
+    /\b(?:flat|flats|quarto|quartos|apartamento|apartamentos|apto|acomodacao|suite|unidade)\b.*?(?:o\s+que\s+(?:tem|vem|possui|inclui|contem|ha)|tem\s+o\s+que|como\s+(?:e|sao)|estrutura|itens|comodidades|equipamentos|mobiliad[ao]|equipad[ao])/i.test(norm)
+  );
+}
+
 export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) {
   const text = String(rawText || "").trim();
   const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -6814,8 +6844,14 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
   const mentionsFlatPreference = (!guestContext?.reservation || guestContext.reservation.status === "pre_reserva") &&
                                  /\b(?:quero|prefiro|pode\s+ser|escolho|reservar?)\s+(?:o\s+)?(?:flat|quarto|apto|apartamento|uh)\s*\d{3,4}\b/i.test(lower);
 
-  if (botAskedDates || quoteRecentlySent || convState.wantsToBook || convState.activePreReservation) {
-    if (hasDateIndicator && (convState.currentMessageHasDates || mentionsGuests || /\b(?:dia|dias|de|a|at[eé]|chegada|sa[ií]da|check[- ]?in|check[- ]?out)\b/i.test(lower))) {
+  if (
+    botAskedDates ||
+    quoteRecentlySent ||
+    convState.wantsToBook ||
+    convState.activePreReservation ||
+    (convState.currentMessageHasDates && (mentionsGuests || /\b(?:entrando|entrar|entrada|chegando|chegar|chegada|check[- ]?in|ficar|hospedar)\b/i.test(lower)))
+  ) {
+    if (hasDateIndicator && (convState.currentMessageHasDates || mentionsGuests || /\b(?:dia|dias|de|a|at[eé]|chegada|sa[ií]da|entrando|entrar|entrada|check[- ]?in|check[- ]?out)\b/i.test(lower))) {
       return {
         type: "RESERVATION_REQUEST",
         primaryTopic: "solicitacao_reserva",
@@ -6923,7 +6959,7 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     /pet|cachorro|animal/i.test(text) ||
     /piscina|jacuzzi|academia|cobertura|lazer/i.test(text) ||
     /fumo|fumar|cigarro/i.test(text) ||
-    /micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)
+    isFlatAmenitiesOrStructureQuestion(text)
   );
 
   if (isGenericFaqMatch) {
@@ -8436,7 +8472,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   }
 
   // 7.9 Comodidades e Estrutura Geral dos Flats
-  if (queryAnalysis.type !== "OPERATIONAL_DEMAND" && /micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)) {
+  if (queryAnalysis.type !== "OPERATIONAL_DEMAND" && isFlatAmenitiesOrStructureQuestion(text)) {
     return ret(`${greetingSalutation} ✨ Todos os nossos flats dispõem de: ${kb.amenities}`);
   }
 
@@ -8687,8 +8723,9 @@ export async function executeMultiTurnAgenticToolFallback({
     } else if (toolRes.status === "SUCESSO_EXECUTADO" && dados.aguardando_autorizacao_gestor) {
       replyText = `O valor para estender até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} diária(s)) fica em *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*. Acabei de acionar a gerência no WhatsApp para remanejar a programação do mapa e manter você no mesmo *${reserva.nome_imovel}* sem precisar trocar de quarto! Em instantes já te envio a confirmação e o PIX por aqui.`;
     } else if (toolRes.status === "SUCESSO_EXECUTADO") {
-      const pixStr = dados.pix_copia_e_cola || dados.chave_pix || "47.964.813/0001-65 (CNPJ - CorpFlats)";
-      replyText = `Prorrogação confirmada! Já atualizei a sua estadia no *${reserva.nome_imovel}* até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} diária(s), total de *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*).\n\nSegue o PIX para pagamento das diárias adicionais:\n\`${pixStr}\``;
+      const pixStr = dados.pix_copia_e_cola || dados.chave_pix || "";
+      const linkStr = dados.link_pagamento ? `\n\n💳 *Pagamento via PIX ou Cartão de Crédito (baixa automática):*\n👉 ${dados.link_pagamento}` : "";
+      replyText = `Prorrogação confirmada! Já atualizei a sua estadia no *${reserva.nome_imovel}* até *${fmtDate(dados.nova_data_checkout || targetDate)}* (+${dados.diarias_extras || 1} diária(s), total de *R$ ${Number(dados.valor_adicional || 237).toFixed(2).replace(".", ",")}*).${pixStr ? `\n\n📋 *PIX Copia e Cola:*\n\`${pixStr}\`` : ""}${linkStr}`;
     } else {
       replyText = String(toolRes.instrucao_para_ia || "").replace(/^Explique ao hóspede que\s*/i, "");
     }
@@ -9464,7 +9501,9 @@ export function extractFaqKeywords(text) {
 }
 
 export function isQuestionMappedInFaq(text, db, clientPhone) {
-  if (!db || !Array.isArray(db.faqItems) || !text) return false;
+  if (!text) return false;
+  if (isFlatAmenitiesOrStructureQuestion(text)) return true;
+  if (!db || !Array.isArray(db.faqItems)) return false;
   const lower = text.toLowerCase().trim();
   const cleanTokens = lower
     .normalize("NFD")
@@ -13199,14 +13238,18 @@ export async function processAiInboundMessage({
 
   // 3.0. Assistente Ativa de Pré-Reservas: Intercepta resposta do gestor/desenvolvedor (22998505276)
   if (isDev) {
+    cleanupStaleManagerProposals(db, saveDatabase);
+
     const isAwaitingFiscalConfForDev = Boolean(
       conv?.fiscalConferenceState &&
       (conv.fiscalConferenceState.status === "awaiting_confirmation" || conv.fiscalConferenceState.pendingFieldEdit)
     );
     const hasExplicitPreResCmd = /\b(?:preres|pre-res|pr[eé]-?reserva)\b/i.test(incomingInfo.text);
+    const hasExplicitManagerProposalId = /#?(?:maint|ext|canc|preres)-[a-z0-9\-]+/i.test(incomingInfo.text);
     const hasExplicitFiscalApprovalCmd = /\b(?:aprovar|aprovo|aprovado|reprovar|recusar|nfse-app|nfse-pre|aprovar\s+fiscal)\b/i.test(incomingInfo.text);
+    const devSimulatingGuestBooking = !hasExplicitManagerProposalId && isDevInActiveGuestBookingFlow(conv, incomingInfo.text);
 
-    if (!isAwaitingFiscalConfForDev || hasExplicitPreResCmd) {
+    if ((!isAwaitingFiscalConfForDev || hasExplicitPreResCmd) && !devSimulatingGuestBooking) {
       const maintReply = await handleManagerMaintenanceReply({
         db,
         cleanTarget,
@@ -16774,6 +16817,119 @@ export async function handleManagerPreReservationReply({
   };
 }
 
+export function cleanupStaleManagerProposals(db, saveDatabase = null) {
+  if (!db || typeof db !== "object") return false;
+  const { todayStr } = getBrasiliaDateParts(new Date());
+  const nowMs = Date.now();
+  const maxAgeMs = 12 * 3600 * 1000;
+  const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+  let changed = false;
+
+  const isResInactiveOrMissing = (resId, resCode) => {
+    if (!resId && !resCode) return false;
+    const r = reservations.find(item =>
+      (resId && String(item.id) === String(resId)) ||
+      (resCode && String(item.code) === String(resCode))
+    );
+    if (!r) return true;
+    const st = String(r.status || "").toLowerCase();
+    if (["cancelada", "cancelled", "expirada", "expired", "no_show", "concluida", "completed", "checked_out"].includes(st)) return true;
+    if (r.checkoutCompleted || r.checkoutDone) return true;
+    if (r.checkoutDate && String(r.checkoutDate).slice(0, 10) < todayStr) return true;
+    return false;
+  };
+
+  if (Array.isArray(db.pendingExtensionProposals)) {
+    for (const p of db.pendingExtensionProposals) {
+      if (!p || p.status !== "pending_manager") continue;
+      const createdMs = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+      const reqCheckout = String(p.newCheckoutDate || p.requestedCheckoutDate || "").slice(0, 10);
+      const curId = p.currentReservationId || p.reservationId;
+      const curCode = p.currentReservationCode || p.reservationCode;
+      if (
+        (createdMs > 0 && nowMs - createdMs > maxAgeMs) ||
+        (reqCheckout && reqCheckout < todayStr) ||
+        isResInactiveOrMissing(curId, curCode)
+      ) {
+        p.status = "expired";
+        p.expiredAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+  }
+
+  if (Array.isArray(db.pendingMaintenanceProposals)) {
+    for (const p of db.pendingMaintenanceProposals) {
+      if (!p || p.status !== "pending_manager") continue;
+      const createdMs = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+      if (
+        (createdMs > 0 && nowMs - createdMs > maxAgeMs) ||
+        isResInactiveOrMissing(p.reservationId, p.reservationCode)
+      ) {
+        p.status = "expired";
+        p.expiredAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+  }
+
+  if (Array.isArray(db.pendingCancellationProposals)) {
+    for (const p of db.pendingCancellationProposals) {
+      if (!p || p.status !== "pending_manager") continue;
+      const createdMs = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+      if (
+        (createdMs > 0 && nowMs - createdMs > maxAgeMs) ||
+        isResInactiveOrMissing(p.reservationId, p.reservationCode)
+      ) {
+        p.status = "expired";
+        p.expiredAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+  }
+
+  if (Array.isArray(db.pendingPreReservationProposals)) {
+    for (const p of db.pendingPreReservationProposals) {
+      if (!p || p.status !== "pending_manager") continue;
+      const createdMs = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+      const ci = String(p.checkIn || "").slice(0, 10);
+      if ((createdMs > 0 && nowMs - createdMs > maxAgeMs) || (ci && ci < todayStr)) {
+        p.status = "expired";
+        p.expiredAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+  }
+
+  if (changed && typeof saveDatabase === "function") {
+    try { saveDatabase("cleanup_stale_manager_proposals"); } catch (_) {}
+  }
+  return changed;
+}
+
+function isDevInActiveGuestBookingFlow(conv, messageText = "") {
+  const text = String(messageText || "").trim();
+  const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  if (isReservationBookingRequest(text)) return true;
+  if (/\b(?:\d+|um|uma|dois|duas|tres)\s*(?:pessoas?|hospedes?|adultos?)\b/i.test(norm)) return true;
+  if (/\b(?:entrando|entrar|chegando|chego|check-?in)\s+(?:hoje|amanha|dia)\b/i.test(norm)) return true;
+  const msgs = Array.isArray(conv?.messages) ? conv.messages : [];
+  const lastBot = getLastBotMessage(msgs);
+  if (lastBot && lastBot.text) {
+    const bt = String(lastBot.text);
+    const botAskedBookingStep = (
+      /datas?\s+(?:de\s+)?entrada/i.test(bt) ||
+      /prosseguir\s+com\s+a\s+sua\s+reserva/i.test(bt) ||
+      /quantas\s+pessoas\s+ser[aá]\s+a\s+estadia/i.test(bt) ||
+      /posso\s+gerar\s+a\s+sua\s+pr[eé]-reserva/i.test(bt)
+    );
+    if (botAskedBookingStep && !/\b(?:plano\s*[123]|op[cç][aã]o\s*[123]|remaneja|abrir\s+os|eu\s+assumo)\b/i.test(norm)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Processa a resposta do gestor (no WhatsApp 5522998505276) para planos de contingência de manutenção:
  * - Plano 1 ("1", "plano 1", "remanejar", "trocar", "remaneja pro flat X"): Remaneja o hóspede para o Flat da Vez (ou flat informado) + abre Ordem de Serviço no flat antigo.
@@ -16794,6 +16950,7 @@ export async function handleManagerMaintenanceReply({
     return { handled: false };
   }
 
+  cleanupStaleManagerProposals(db, saveDatabase);
   const pendingList = (db.pendingMaintenanceProposals || []).filter(p => p && p.status === "pending_manager");
   if (pendingList.length === 0) {
     return { handled: false };
@@ -16832,17 +16989,17 @@ export async function handleManagerMaintenanceReply({
   }
 
   if (
-    /^(?:1|plano\s*1|op[cç][aã]o\s*1)\b/.test(cleanCmd) ||
+    /^(?:1|plano\s*1|op[cç][aã]o\s*1)(?:\s*$|[.!?,;:]|\s+(?:no|pro|para\s+o)\s+(?:flat|apto)?\s*\d+)/i.test(cleanCmd) ||
     /\b(?:remaneja|remanejar|troca\s+de\s+flat|trocar\s+de\s+flat|troca\s+pro|muda\s+pro\s+flat|plano\s*1)\b/.test(cleanCmd)
   ) {
     chosenPlan = 1;
   } else if (
-    /^(?:2|plano\s*2|op[cç][aã]o\s*2)\b/.test(cleanCmd) ||
+    /^(?:2|plano\s*2|op[cç][aã]o\s*2)(?:\s*$|[.!?,;:])/i.test(cleanCmd) ||
     /\b(?:abrir\s+os|abre\s+os|abrir\s+ordem|solicitar\s+os|solicitar\s+ordem|ordem\s+de\s+servi[cç]o|plano\s*2)\b/.test(cleanCmd)
   ) {
     chosenPlan = 2;
   } else if (
-    /^(?:3|plano\s*3|op[cç][aã]o\s*3)\b/.test(cleanCmd) ||
+    /^(?:3|plano\s*3|op[cç][aã]o\s*3)(?:\s*$|[.!?,;:])/i.test(cleanCmd) ||
     /\b(?:eu\s+assumo|deixa\s+que\s+eu\s+assumo|deixa\s+comigo|nao\s+fazer\s+nada|nao\s+faz\s+nada|plano\s*3)\b/.test(cleanCmd)
   ) {
     chosenPlan = 3;
@@ -17108,6 +17265,7 @@ export async function handleManagerExtensionReply({
     return { handled: false };
   }
 
+  cleanupStaleManagerProposals(db, saveDatabase);
   const pendingList = (db.pendingExtensionProposals || []).filter(p => p && p.status === "pending_manager");
   if (pendingList.length === 0) {
     return { handled: false };
@@ -17135,11 +17293,11 @@ export async function handleManagerExtensionReply({
 
   const cleanCmd = norm.replace(/^#?ext-[a-z0-9\-]+\s*[,:\-]?\s*/i, "").trim();
   let chosenOption = null;
-  if (/^(?:1|op[cç][aã]o\s*1|plano\s*1)\b/.test(cleanCmd) || /\b(?:remanejar\s+reserva\s+futura|manter\s+h[oó]spede)\b/.test(cleanCmd)) {
+  if (/^(?:1|op[cç][aã]o\s*1|plano\s*1)(?:\s*$|[.!?,;:])/i.test(cleanCmd) || /\b(?:remanejar\s+reserva\s+futura|manter\s+h[oó]spede)\b/.test(cleanCmd)) {
     chosenOption = 1;
-  } else if (/^(?:2|op[cç][aã]o\s*2|plano\s*2)\b/.test(cleanCmd) || /\b(?:mudar\s+h[oó]spede\s+atual|trocar\s+h[oó]spede)\b/.test(cleanCmd)) {
+  } else if (/^(?:2|op[cç][aã]o\s*2|plano\s*2)(?:\s*$|[.!?,;:])/i.test(cleanCmd) || /\b(?:mudar\s+h[oó]spede\s+atual|trocar\s+h[oó]spede)\b/.test(cleanCmd)) {
     chosenOption = 2;
-  } else if (/^(?:3|op[cç][aã]o\s*3|plano\s*3)\b/.test(cleanCmd) || /\b(?:recusar|negar\s+prorroga)\b/.test(cleanCmd)) {
+  } else if (/^(?:3|op[cç][aã]o\s*3|plano\s*3)(?:\s*$|[.!?,;:])/i.test(cleanCmd) || /\b(?:recusar|negar\s+prorroga)\b/.test(cleanCmd)) {
     chosenOption = 3;
   }
 
@@ -17190,41 +17348,104 @@ export async function handleManagerExtensionReply({
   const incomingRes = (db.reservations || []).find(r => String(r.id) === String(incResId) || String(r.code) === String(incResCode));
   const altFlatObj = (db.flats || []).find(f => String(f.number) === String(swapFlatNum));
 
+  const buildIntegratedExtensionCharge = async (resObj, txPrefix = "EXT") => {
+    const codeStr = String(resObj?.code || curResCode || resObj?.id || "EXT").replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
+    const cleanTxId = `${txPrefix}${codeStr}${Date.now().toString(36).toUpperCase()}`.replace(/[^a-zA-Z0-9]/g, "").slice(0, 25);
+    const baseUrl = String(db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://reservas.corpflats.com.br").replace(/\/$/, "");
+    const portalCode = resObj?.code || curResCode || resObj?.id || "";
+    const paymentUrl = portalCode ? `${baseUrl}/minha-reserva/${encodeURIComponent(portalCode)}` : `${baseUrl}/reservar`;
+
+    let pixCopiaECola = generateStaticPixPayload({
+      pixKey: db?.settings?.interConfig?.pixKey || "47964813000165",
+      amount: extraAmt,
+      merchantName: "CORPFLATS LTDA",
+      merchantCity: "CAMPOS DOS GOYTACAZES",
+      txid: cleanTxId
+    });
+    let resolvedTxId = cleanTxId;
+
+    if (typeof globalThis.createInterPixCob === "function" && extraAmt > 0) {
+      try {
+        const interCob = await globalThis.createInterPixCob(
+          db?.settings?.interConfig,
+          cleanTxId,
+          extraAmt,
+          resObj?.guestName || targetProposal.guestName || "Hospede CorpFlats",
+          resObj?.guestCpf || resObj?.guestDocument || "",
+          `Prorrogacao Reserva ${portalCode} - Flat ${targetProposal.flatNumber}`
+        );
+        if (interCob && interCob.pixCopiaECola) {
+          pixCopiaECola = interCob.pixCopiaECola;
+          resolvedTxId = interCob.txid || cleanTxId;
+        }
+      } catch (err) {
+        console.warn("[handleManagerExtensionReply] Fallback para PIX EMV integrado:", err?.message || err);
+      }
+    }
+    return { txid: resolvedTxId, pixCopiaECola, paymentUrl };
+  };
+
   if (chosenOption === 1) {
     if (incomingRes && altFlatObj) {
       incomingRes.flatId = altFlatObj.id;
       incomingRes.flatNumber = String(altFlatObj.number);
       incomingRes.updatedAt = now;
     }
+    const chargeInfo = await buildIntegratedExtensionCharge(currentRes, "EXT");
     if (currentRes) {
-      const txid = `EXT_${currentRes.code || currentRes.id}_${Date.now()}`;
+      currentRes.oldCheckoutDateBeforeExtension = currentRes.checkoutDate;
+      if (reqCheckout) currentRes.checkoutDate = reqCheckout;
+      currentRes.totalAmount = Number(((Number(currentRes.totalAmount) || 0) + extraAmt).toFixed(2));
+      currentRes.cardTotalAmount = Number((currentRes.totalAmount / 0.95).toFixed(2));
+      currentRes.pixCopiaECola = chargeInfo.pixCopiaECola;
+      currentRes.pixTxId = chargeInfo.txid;
+      currentRes.pixChargedAmount = extraAmt;
+      if (Number(currentRes.paidAmount || 0) > 0 && Number(currentRes.paidAmount || 0) < currentRes.totalAmount) {
+        currentRes.paymentStatus = "parcial";
+      }
       currentRes.pendingStayExtension = {
-        txid,
+        txid: chargeInfo.txid,
+        pixCopiaECola: chargeInfo.pixCopiaECola,
+        paymentUrl: chargeInfo.paymentUrl,
         status: "pending_payment",
         amount: extraAmt,
         extraNights: targetProposal.extraNights,
         newCheckoutDate: reqCheckout,
         createdAt: now
       };
+      currentRes.updatedAt = now;
     }
     targetProposal.status = "approved_option_1";
     targetProposal.resolvedAt = now;
     if (typeof saveDatabase === "function") saveDatabase("extension_option_1");
 
-    const pixKey = db?.settings?.pixKey || "47.964.813/0001-65";
-    const guestMsg = `Ótima notícia, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Nossa gerência aprovou a prorrogação da sua estadia no mesmo *Flat ${targetProposal.flatNumber}* até *${String(reqCheckout).split("-").reverse().join("/")}* (+${targetProposal.extraNights} diária(s)).\n\nO valor adicional é de *R$ ${extraAmt.toFixed(2).replace(".", ",")}*. Para confirmar imediatamente no sistema, basta realizar o PIX para a chave CNPJ *${pixKey}* (CorpFlats) e nos enviar o comprovante por aqui!`;
+    const triggerFn = globalThis.triggerImmediateWhatsApp;
+    if (currentRes && typeof triggerFn === "function") {
+      try {
+        await triggerFn(db, saveDatabase, "additional_daily_pending", currentRes);
+      } catch (trigErr) {
+        console.warn("[handleManagerExtensionReply] Erro ao disparar additional_daily_pending:", trigErr?.message || trigErr);
+      }
+    }
+
+    const guestMsg = `Ótima notícia, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Nossa gerência aprovou a prorrogação da sua estadia no mesmo *Flat ${targetProposal.flatNumber}* até *${String(reqCheckout).split("-").reverse().join("/")}* (+${targetProposal.extraNights} diária(s)).\n\nO valor adicional é de *R$ ${extraAmt.toFixed(2).replace(".", ",")}*.\n\n📋 *PIX Copia e Cola (reconhecimento e baixa automática):*\n\`${chargeInfo.pixCopiaECola}\`\n\n💳 *Ou pague com Cartão de Crédito / PIX pelo Portal da Reserva:*\n👉 ${chargeInfo.paymentUrl}`;
     await sendMsg(cleanWhatsAppPhone(targetProposal.guestPhone), guestMsg, "guest", "sofia_ext_guest_opt1");
 
-    const mgrMsg = `✅ *Opção 1 Executada (#${targetProposal.id})*\n• Reserva futura (${incGuestName}) remanejada para o *Flat ${swapFlatNum || "da Vez"}*.\n• Hóspede atual (*${targetProposal.guestName}*) mantido no *Flat ${targetProposal.flatNumber}* e cobrança PIX de R$ ${extraAmt.toFixed(2)} enviada!`;
+    const mgrMsg = `✅ *Opção 1 Executada (#${targetProposal.id})*\n• Reserva futura (${incGuestName}) remanejada para o *Flat ${swapFlatNum || "da Vez"}*.\n• Hóspede atual (*${targetProposal.guestName}*) mantido no *Flat ${targetProposal.flatNumber}* e cobrança integrada (PIX Copia e Cola + Link Cartão) de R$ ${extraAmt.toFixed(2)} enviada!`;
     await sendMsg(managerPhone, mgrMsg, "developer", "sofia_ext_mgr_opt1");
     return { handled: true, processed: true, option: 1, proposal: targetProposal, replyText: mgrMsg };
   }
 
   if (chosenOption === 2) {
+    const chargeInfo = await buildIntegratedExtensionCharge(currentRes, "EXTSWP");
     if (currentRes) {
-      const txid = `EXT_SWAP_${currentRes.code || currentRes.id}_${Date.now()}`;
+      currentRes.pixCopiaECola = chargeInfo.pixCopiaECola;
+      currentRes.pixTxId = chargeInfo.txid;
+      currentRes.pixChargedAmount = extraAmt;
       currentRes.pendingStayExtension = {
-        txid,
+        txid: chargeInfo.txid,
+        pixCopiaECola: chargeInfo.pixCopiaECola,
+        paymentUrl: chargeInfo.paymentUrl,
         status: "pending_payment",
         amount: extraAmt,
         extraNights: targetProposal.extraNights,
@@ -17232,16 +17453,16 @@ export async function handleManagerExtensionReply({
         newFlatNumber: swapFlatNum,
         createdAt: now
       };
+      currentRes.updatedAt = now;
     }
     targetProposal.status = "approved_option_2";
     targetProposal.resolvedAt = now;
     if (typeof saveDatabase === "function") saveDatabase("extension_option_2");
 
-    const pixKey = db?.settings?.pixKey || "47.964.813/0001-65";
-    const guestMsg = `Olá, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Para prorrogarmos sua estadia até *${String(reqCheckout).split("-").reverse().join("/")}*, nossa gerência disponibilizou o *Flat ${swapFlatNum}* (já que o Flat ${targetProposal.flatNumber} possui reserva fixa entrando hoje).\n\nO valor das +${targetProposal.extraNights} diária(s) é *R$ ${extraAmt.toFixed(2).replace(".", ",")}* (Chave PIX CNPJ: *${pixKey}*). Confirma a prorrogação com mudança para o Flat ${swapFlatNum}?`;
+    const guestMsg = `Olá, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Para prorrogarmos sua estadia até *${String(reqCheckout).split("-").reverse().join("/")}*, nossa gerência disponibilizou o *Flat ${swapFlatNum}* (já que o Flat ${targetProposal.flatNumber} possui reserva fixa entrando hoje).\n\nO valor das +${targetProposal.extraNights} diária(s) é *R$ ${extraAmt.toFixed(2).replace(".", ",")}*.\n\n📋 *PIX Copia e Cola (baixa automática):*\n\`${chargeInfo.pixCopiaECola}\`\n\n💳 *Ou pague com Cartão de Crédito / PIX pelo Portal da Reserva:*\n👉 ${chargeInfo.paymentUrl}\n\nConfirma a prorrogação com mudança para o Flat ${swapFlatNum}?`;
     await sendMsg(cleanWhatsAppPhone(targetProposal.guestPhone), guestMsg, "guest", "sofia_ext_guest_opt2");
 
-    const mgrMsg = `✅ *Opção 2 Executada (#${targetProposal.id})*\n• Oferta de prorrogação com mudança para o *Flat ${swapFlatNum}* (+ PIX R$ ${extraAmt.toFixed(2)}) enviada para *${targetProposal.guestName}*.`;
+    const mgrMsg = `✅ *Opção 2 Executada (#${targetProposal.id})*\n• Oferta de prorrogação com mudança para o *Flat ${swapFlatNum}* (+ cobrança integrada PIX/Cartão R$ ${extraAmt.toFixed(2)}) enviada para *${targetProposal.guestName}*.`;
     await sendMsg(managerPhone, mgrMsg, "developer", "sofia_ext_mgr_opt2");
     return { handled: true, processed: true, option: 2, proposal: targetProposal, replyText: mgrMsg };
   }
@@ -17278,6 +17499,7 @@ export async function handleManagerCancellationReply({
     return { handled: false };
   }
 
+  cleanupStaleManagerProposals(db, saveDatabase);
   const pendingList = (db.pendingCancellationProposals || []).filter(p => p && p.status === "pending_manager");
   if (pendingList.length === 0) {
     return { handled: false };
@@ -17307,11 +17529,11 @@ export async function handleManagerCancellationReply({
 
   const cleanCmd = norm.replace(/^#?canc-[a-z0-9\-]+\s*[,:\-]?\s*/i, "").trim();
   let chosenOption = null;
-  if (/^(?:1|op[cç][aã]o\s*1|plano\s*1)\b/.test(cleanCmd) || /\b(?:autorizar\s+cancelamento|cancelar\s+sem\s+multa|isentar)\b/.test(cleanCmd)) {
+  if (/^(?:1|op[cç][aã]o\s*1|plano\s*1)(?:\s*$|[.!?,;:])/i.test(cleanCmd) || /\b(?:autorizar\s+cancelamento|cancelar\s+sem\s+multa|isentar)\b/.test(cleanCmd)) {
     chosenOption = 1;
-  } else if (/^(?:2|op[cç][aã]o\s*2|plano\s*2)\b/.test(cleanCmd) || /\b(?:cr[eé]dito|remarcar|deixar\s+de\s+cr[eé]dito)\b/.test(cleanCmd)) {
+  } else if (/^(?:2|op[cç][aã]o\s*2|plano\s*2)(?:\s*$|[.!?,;:])/i.test(cleanCmd) || /\b(?:cr[eé]dito|remarcar|deixar\s+de\s+cr[eé]dito)\b/.test(cleanCmd)) {
     chosenOption = 2;
-  } else if (/^(?:3|op[cç][aã]o\s*3|plano\s*3)\b/.test(cleanCmd) || /\b(?:manter\s+cobran[cç]a|negar\s+exce[cç][aã]o|cobrar\s+100)\b/.test(cleanCmd)) {
+  } else if (/^(?:3|op[cç][aã]o\s*3|plano\s*3)(?:\s*$|[.!?,;:])/i.test(cleanCmd) || /\b(?:manter\s+cobran[cç]a|negar\s+exce[cç][aã]o|cobrar\s+100)\b/.test(cleanCmd)) {
     chosenOption = 3;
   }
 
