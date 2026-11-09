@@ -6052,10 +6052,18 @@ export function reconcileUniversalIntegrity(incomingState = null) {
 
           const hasCleanBetween = (db.cleaningRequests || []).some(c => {
             if (String(c.flatNumber) !== String(r.flatNumber) && (!r.flatId || c.flatId !== r.flatId)) return false;
-            const isResolvedCleanOrDeleted = c.status === "clean" || ((c.status === "deleted" || c.isDeleted) && (!r.createdAt || !c.deletedAt || c.deletedAt >= r.createdAt));
-            if (!isResolvedCleanOrDeleted) return false;
             const cDate = c.requestDate || c.effectiveDate;
             if (!cDate || cDate < checkoutDate) return false;
+            const isManualAdminDeleteForSameCheckout =
+              cDate === checkoutDate &&
+              (c.status === "deleted" || c.isDeleted) &&
+              c.deletedBy !== "pre_reservation_expired" &&
+              c.deletedBy !== "reservation_cancelled" &&
+              c.deletedBy !== "auto_orphan_checkout_cleanup" &&
+              (!c.deletedReservationId || Number(c.deletedReservationId) === Number(r.id)) &&
+              (!r.createdAt || !c.deletedAt || c.deletedAt >= r.createdAt);
+            const isResolvedCleanOrDeleted = c.status === "clean" || isManualAdminDeleteForSameCheckout;
+            if (!isResolvedCleanOrDeleted) return false;
             if (cDate <= todayStr) return true;
             if (nextCheckinDate && cDate <= nextCheckinDate) return true;
             return false;
@@ -16280,13 +16288,21 @@ function reconcileCleaningRequests() {
     } else {
       const revertedItem = items.find(i => i.status === "dirty" && i.revertedToDirtyAt);
       const cleanItem = items.find(i => i.status === "clean");
-      const deletedItem = items.find(i => i.status === "deleted" || i.isDeleted);
+      const deletedItem = items.find(i =>
+        (i.status === "deleted" || i.isDeleted) &&
+        i.deletedBy !== "pre_reservation_expired" &&
+        i.deletedBy !== "reservation_cancelled" &&
+        i.deletedBy !== "auto_orphan_checkout_cleanup"
+      );
       const newerActiveAfterDelete = deletedItem ? items.find(i =>
         i !== deletedItem &&
         !i.isDeleted &&
         i.status !== "deleted" &&
-        deletedItem.deletedAt &&
-        (i.createdAt || "") > deletedItem.deletedAt
+        (
+          i.isVacantExplicitlySet ||
+          !deletedItem.deletedAt ||
+          (i.createdAt || "") > deletedItem.deletedAt
+        )
       ) : null;
       if (revertedItem && (!cleanItem || String(revertedItem.revertedToDirtyAt) >= String(cleanItem.completedAt || ""))) {
         for (const other of items) {
@@ -19851,11 +19867,38 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr(), prec
     const yesterdayStr = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-1) : "";
     const recentCheckoutRes = yesterdayStr ? activeRes.find(r => String(r.checkoutDate || "").substring(0, 10) === yesterdayStr) : null;
     if (recentCheckoutRes) {
-      const recentClean = (db.cleaningRequests || []).find(c =>
+      const hasActiveDirtyYesterday = (db.cleaningRequests || []).some(c =>
         matchesTargetFlat(c) &&
-        (String(c.requestDate || "").substring(0, 10) >= yesterdayStr || String(c.effectiveDate || "").substring(0, 10) >= yesterdayStr) &&
-        (c.status === "clean" || c.status === "inspected" || c.status === "deleted" || Boolean(c.isDeleted) || Boolean(c.completedAt))
+        !c.isDeleted &&
+        c.status !== "deleted" &&
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction" &&
+        c.type !== "instruction" &&
+        c.type !== "bed_adjustment_only" &&
+        String(c.requestDate || "").substring(0, 10) === yesterdayStr &&
+        c.status !== "clean" &&
+        c.status !== "inspected" &&
+        !c.completedAt
       );
+      const recentClean = (db.cleaningRequests || []).find(c => {
+        if (!matchesTargetFlat(c)) return false;
+        if (c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only") return false;
+        const cReqDate = String(c.requestDate || "").substring(0, 10);
+        const cEffDate = String(c.effectiveDate || "").substring(0, 10);
+        if (cReqDate < yesterdayStr && cEffDate < yesterdayStr) return false;
+        if (c.status === "clean" || c.status === "inspected" || Boolean(c.completedAt)) return true;
+        if (
+          !hasActiveDirtyYesterday &&
+          cReqDate === yesterdayStr &&
+          (c.status === "deleted" || Boolean(c.isDeleted)) &&
+          c.deletedBy !== "pre_reservation_expired" &&
+          c.deletedBy !== "reservation_cancelled" &&
+          c.deletedBy !== "auto_orphan_checkout_cleanup"
+        ) {
+          return true;
+        }
+        return false;
+      });
       if (!recentClean) {
         isDirty = true;
         cleaningStatus = "dirty";
@@ -21626,7 +21669,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         c.type !== "bed_adjustment_only" &&
         (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= r.requestDate &&
         (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) <= targetDate &&
-        (c.status === "clean" || ((c.status === "deleted" || c.isDeleted) && (!r.createdAt || !c.deletedAt || c.deletedAt >= r.createdAt)))
+        c.status === "clean"
       );
       return !alreadyResolvedAfter;
     });
@@ -21840,7 +21883,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         c.type !== "instruction" &&
         c.type !== "bed_adjustment_only" &&
         (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= resDate &&
-        (c.status === "clean" || ((c.status === "deleted" || c.isDeleted) && (!pmsRes.createdAt || !c.deletedAt || c.deletedAt >= pmsRes.createdAt)))
+        c.status === "clean"
       );
 
       if (!alreadyCleanedAfter) {
@@ -21957,11 +22000,20 @@ function getRequestsForDate(dateStr, isNested = false) {
     const activeExactCleanings = exactDateCleanings.filter(c => !c.isDeleted && c.status !== "deleted");
     const deletedExactCleaning = exactDateCleanings.find(c => c.isDeleted || c.status === "deleted");
     if (deletedExactCleaning && activeExactCleanings.length === 0) {
+      const isAutoDeletedOtherRes = Boolean(
+        deletedExactCleaning.deletedBy === "pre_reservation_expired" ||
+        deletedExactCleaning.deletedBy === "reservation_cancelled" ||
+        deletedExactCleaning.deletedBy === "auto_orphan_checkout_cleanup" ||
+        (deletedExactCleaning.deletedReservationId && Number(pmsRes.id) !== Number(deletedExactCleaning.deletedReservationId))
+      );
       const isNewResAfterDelete = Boolean(
-        pmsRes.createdAt &&
-        deletedExactCleaning.deletedAt &&
-        pmsRes.createdAt > deletedExactCleaning.deletedAt &&
-        (!deletedExactCleaning.deletedReservationId || Number(pmsRes.id) !== Number(deletedExactCleaning.deletedReservationId))
+        isAutoDeletedOtherRes ||
+        (
+          pmsRes.createdAt &&
+          deletedExactCleaning.deletedAt &&
+          pmsRes.createdAt > deletedExactCleaning.deletedAt &&
+          (!deletedExactCleaning.deletedReservationId || Number(pmsRes.id) !== Number(deletedExactCleaning.deletedReservationId))
+        )
       );
       if (!isNewResAfterDelete) {
         existingFlatNumbersForDate.add(flatNumber);
@@ -22357,17 +22409,15 @@ function getRequestsForDate(dateStr, isNested = false) {
       // Descarta cards de checkout órfãos cuja reserva associada na data foi cancelada, no_show ou remarcada
       if (isOrphanCheckoutRequest(r, fNumber)) return false;
 
-      // Se o flat já possui qualquer limpeza concluída (status === "clean") ou excluída (status === "deleted") nessa mesma data ou em data posterior,
-      // ele já foi resolvido e NÃO deve ser considerado pendência nem reaparecer para limpar!
-      const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c =>
-        (String(c.flatNumber) === fNumber || c.flatId === r.flatId) &&
-        !c.isInstructionOnly &&
-        c.source !== "manual_instruction" &&
-        c.type !== "instruction" &&
-        c.type !== "bed_adjustment_only" &&
-        (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= r.requestDate &&
-        (c.status === "clean" || ((c.status === "deleted" || c.isDeleted) && (!r.createdAt || !c.deletedAt || c.deletedAt >= r.createdAt)))
-      );
+      // Se o flat já possui qualquer limpeza efetivamente concluída (status === "clean") nessa mesma data ou em data posterior (até dateStr),
+      // ele já foi higienizado e NÃO deve ser considerado pendência nem reaparecer para limpar!
+      const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c => {
+        if (String(c.flatNumber) !== fNumber && c.flatId !== r.flatId) return false;
+        if (c.isInstructionOnly || c.isBedAdjustmentOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only") return false;
+        if (c.status !== "clean") return false;
+        const cExecDate = c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate);
+        return Boolean(cExecDate && cExecDate >= r.requestDate && cExecDate <= dateStr);
+      });
       if (alreadyCleanedOnOrAfter) return false;
 
       return true;
@@ -45067,6 +45117,7 @@ app.get("/api/reception/today", (req, res) => {
 
     // 1. Chegadas Previstas para Hoje (Aguardando Check-in ou com Entrada Parcial Ativa)
     // Pré-reservas aguardando pagamento NUNCA são enviadas/exibidas na recepção/portaria.
+    const todayCleaningRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(today) : (db.cleaningRequests || []);
     const arrivals = (db.reservations || [])
       .filter(r => {
         const resDate = r.checkinDate ? r.checkinDate.substring(0, 10) : "";
@@ -45094,9 +45145,19 @@ app.get("/api/reception/today", (req, res) => {
             (r.guestPhone && g.phone && r.guestPhone.replace(/\D/g, "") === g.phone.replace(/\D/g, ""))
           )
         ) || {};
-        const cleanReq = (db.cleaningRequests || []).find(c =>
+        const cleanReq = todayCleaningRequests.find(c =>
+          (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) &&
+          !c.isDeleted &&
+          c.status !== "deleted" &&
+          !c.isInstructionOnly &&
+          c.source !== "manual_instruction" &&
+          c.type !== "bed_adjustment_only" &&
+          c.type !== "instruction"
+        ) || (db.cleaningRequests || []).find(c =>
           (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) &&
           c.requestDate === today &&
+          !c.isDeleted &&
+          c.status !== "deleted" &&
           !c.isInstructionOnly &&
           c.source !== "manual_instruction" &&
           c.type !== "bed_adjustment_only" &&

@@ -15370,12 +15370,11 @@ export function isFlatStillBeingCleanedOnCheckinDay(db, resv, todayStr) {
     const st = String(c.status || "").toLowerCase();
     if (!pendingStatuses.has(st)) return false;
     if (!c.requestDate || c.requestDate >= todayStr || c.requestDate < "2026-09-01") return false;
-    // Verifica se já houve limpeza concluída ou exclusão em data igual ou posterior a esta solicitação antiga
+    // Verifica se já houve limpeza efetivamente concluída em data igual ou posterior a esta solicitação antiga
     const resolvedOnOrAfter = flatAllCleanings.some(other => {
       const otherDate = other.effectiveDate || (other.completedAt ? String(other.completedAt).substring(0, 10) : other.requestDate) || "";
       if (otherDate < c.requestDate) return false;
       if (other.status === "clean" || other.status === "completed") return true;
-      if ((other.isDeleted || other.status === "deleted") && (!c.createdAt || !other.deletedAt || other.deletedAt >= c.createdAt)) return true;
       return false;
     }) || (db.auditLogs || []).some(l =>
       (l?.action === "CLEANING_STATUS_CLEAN" || l?.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") &&
