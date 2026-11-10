@@ -42,6 +42,10 @@ const {
   renderTemplateButtons,
   buildMirrorEmailSubject,
   triggerImmediateWhatsApp,
+  isInitialConfirmationInFlightOrSent,
+  normalizeReservationChannel,
+  isTemplateAllowedForChannel,
+  dispatchCatchUpGuestRulerMessages,
   DEFAULT_WHATSAPP_TEMPLATES
 } = zapi;
 
@@ -268,5 +272,103 @@ describe("Privacidade financeira quando há Solicitante distinto do Hóspede", (
     const heuristicReply = generateHeuristicResponse("Qual o PIX para pagar minha reserva?", guestCtx, null, [], db);
     assert.ok(heuristicReply.includes("Maria Gestora"), `Resposta deve citar o solicitante: ${heuristicReply}`);
     assert.ok(!heuristicReply.includes("R$ 900"));
+  });
+
+  it("6. Pré-reserva paga no dia do check-in (pós 07:01) com Solicitante ≠ Hóspede envia comprovante ao Solicitante e as 3 msgs da régua ao Hóspede", async () => {
+    // Valida normalização do canal 'empresa' (🏢 Empresa PJ) para a régua
+    const tplIntro = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_corpflats_intro");
+    assert.equal(normalizeReservationChannel("empresa"), "whatsapp");
+    assert.equal(isTemplateAllowedForChannel(tplIntro, "empresa"), true);
+
+    const fixedNow = new Date("2026-11-10T18:24:00.000Z"); // 15:24 BRT
+    const resSameDay = makeCorporateReservation({
+      id: 790,
+      code: "RES-116-0790",
+      flatId: 116,
+      flatNumber: "116",
+      channel: "empresa",
+      status: "confirmada",
+      paymentStatus: "pago_total",
+      totalAmount: 350,
+      paidAmount: 350,
+      paidAt: fixedNow.toISOString(),
+      checkinDate: "2026-11-10",
+      checkoutDate: "2026-11-11",
+      createdAt: new Date(fixedNow.getTime() - 50 * 3600 * 1000).toISOString(), // criada >48h antes, paga agora
+      guests: [
+        { index: 1, name: "João Hóspede", phone: "5522999991111", email: "" }
+      ],
+      guestEmail: "",
+      requesterInfo: {
+        name: "Maria Gestora",
+        phone: "5511988882222",
+        email: ""
+      },
+      _nowOverride: fixedNow,
+      _fastIntroDelay: true
+    });
+
+    const db = {
+      _nowOverride: fixedNow,
+      zapiConfig: {
+        enabled: true,
+        instanceId: "",
+        token: "",
+        testModeOnly: false,
+        channels: {
+          guest_schedule: { enabled: true, testMode: false, whitelist: [], blacklist: [] }
+        }
+      },
+      settings: { emailSettings: { enabled: false }, checkinTime: "14:00", checkoutTime: "12:00" },
+      whatsappTemplates: JSON.parse(JSON.stringify(DEFAULT_WHATSAPP_TEMPLATES)),
+      flats: [{ id: 116, number: "116", isActive: true, wifiNetwork: "apto 116", wifiPassword: "123" }],
+      cleaningRequests: [],
+      reservations: [resSameDay],
+      reservationCommunications: [],
+      whatsappHistory: [],
+      whatsappConversations: [],
+      whatsappQueue: []
+    };
+
+    // Passo 1: Disparo do comprovante financeiro apenas ao Solicitante (_onlyRequesterTarget)
+    await triggerImmediateWhatsApp(db, () => {}, "payment_confirmed", {
+      ...resSameDay,
+      _onlyRequesterTarget: true,
+      _skipAutoIntro: true,
+      _forceInitialWelcome: true
+    }, "https://corpflats.com.br");
+
+    assert.equal(db.whatsappHistory.length, 1);
+    assert.equal(db.whatsappHistory[0].recipientType, "requester");
+    assert.equal(db.whatsappHistory[0].guestPhone, "5511988882222");
+    assert.equal(db.whatsappHistory[0].triggerEvent, "payment_confirmed");
+
+    // A confirmação do Solicitante NÃO pode mascarar que o Hóspede ainda não recebeu a confirmação!
+    assert.equal(isInitialConfirmationInFlightOrSent(db, resSameDay), false);
+
+    // Passo 2: Recuperação / disparo da régua do Hóspede (corpflats_intro + sameday_reservation + Manual PDF, sem duplicar room_ready)
+    const catchUpResult = await dispatchCatchUpGuestRulerMessages(db, () => {}, resSameDay, {
+      baseUrl: "https://corpflats.com.br",
+      nowOverride: fixedNow,
+      fastDelay: true
+    });
+
+    assert.deepEqual(catchUpResult.dispatchedStages, ["corpflats_intro", "sameday_reservation"]);
+
+    const guestHistory = db.whatsappHistory.filter(h => h.guestPhone === "5522999991111");
+    assert.equal(guestHistory.length, 2, "Hóspede deve receber corpflats_intro + sameday_reservation (com PDF embutido)");
+    assert.equal(guestHistory[0].triggerEvent, "corpflats_intro");
+    assert.ok(guestHistory[0].message.includes("Somos a *CorpFlats*"));
+    assert.equal(guestHistory[1].triggerEvent, "sameday_reservation");
+    assert.ok(guestHistory[1].message.includes("RES-116-0790"));
+    assert.ok(!guestHistory[1].message.includes("R$"), "Hóspede não deve ver valores financeiros");
+    assert.equal(guestHistory[1].documentName, "Manual_do_Hospede_CorpFlats.pdf", "3ª mensagem (Manual em PDF) deve acompanhar a confirmação");
+
+    // Solicitante não recebe duplicidade
+    const reqHistory = db.whatsappHistory.filter(h => h.guestPhone === "5511988882222");
+    assert.equal(reqHistory.length, 1);
+
+    // Agora a confirmação inicial da reserva consta como entregue ao Hóspede
+    assert.equal(isInitialConfirmationInFlightOrSent(db, resSameDay), true);
   });
 });

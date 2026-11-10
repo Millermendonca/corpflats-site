@@ -191,13 +191,14 @@ export const ALL_CHANNEL_IDS = ["site", "whatsapp", "booking", "airbnb", "b2b", 
  */
 export function normalizeReservationChannel(rawChannel) {
   const c = String(rawChannel || "").toLowerCase().trim();
+  if (!c) return "site";
   if (c.includes("b2b")) return "b2b";
   if (c.includes("booking")) return "booking";
   if (c.includes("airbnb")) return "airbnb";
-  if (c.includes("whats") || c.includes("direta") || c.includes("wpp")) return "whatsapp";
+  if (c.includes("whats") || c.includes("direta") || c.includes("wpp") || c.includes("empresa") || c.includes("corporat")) return "whatsapp";
   if (c.includes("site")) return "site";
   if (c.includes("balcao") || c.includes("balcão") || c.includes("presencial") || c.includes("decolar") || c.includes("expedia")) return "outros";
-  return c || "site";
+  return "outros";
 }
 
 /**
@@ -547,7 +548,7 @@ Para agilizar sua entrada na portaria, realize com antecedência o seu *Pré-Che
     title: "Nova Reserva (Site/WhatsApp) • Confirmação + Early Check-in",
     description: "Enviado para reservas via Site ou WhatsApp confirmadas antes das 00:00 do dia do check-in. Garante benefício de Early Check-in a partir das 10:00 mediante disponibilidade de limpeza.",
     enabled: true,
-    channels: ["site", "whatsapp"],
+    channels: ["site", "whatsapp", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -635,7 +636,7 @@ Para agilizar a liberação da portaria sem burocracia, realize seu *Pré-Check-
     title: "Quarto Liberado • Early Check-in Disponível (Site/WhatsApp)",
     description: "Disparado quando a limpeza do flat é concluída no dia do check-in, para reservas via Site ou WhatsApp. Condicional: se já fez o check-in online, orienta ir direto à recepção; se ainda não fez, avisa que o quarto está limpo aguardando concluir o check-in online.",
     enabled: true,
-    channels: ["site", "whatsapp"],
+    channels: ["site", "whatsapp", "outros"],
     recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -1217,7 +1218,7 @@ Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX (
     title: "Pagamento Confirmado (Site/WhatsApp) • Reserva Garantida",
     description: "Enviado exclusivamente para reservas de Site ou WhatsApp quando uma pré-reserva é quitada e convertida em confirmada. Disparado para o Solicitante e o Hóspede.",
     enabled: true,
-    channels: ["site", "whatsapp"],
+    channels: ["site", "whatsapp", "outros"],
     recipientTarget: "both",
     triggerTiming: "immediate",
     offsetValue: 0,
@@ -8080,7 +8081,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_payment_confirmed") {
-          tpl.channels = ["site", "whatsapp"];
+          tpl.channels = ["site", "whatsapp", "outros"];
           tpl.recipientTarget = "both";
           const defPay = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_confirmed");
           if (defPay) {
@@ -8141,6 +8142,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_new_reservation_direct") {
+          tpl.channels = ["site", "whatsapp", "outros"];
           const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
           if (defDir) {
             tpl.hasAttachment = true;
@@ -8206,10 +8208,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_payment_confirmed") {
-          tpl.channels = ["site", "whatsapp"];
+          tpl.channels = ["site", "whatsapp", "outros"];
           tpl.recipientTarget = "both";
         }
         if (tpl.id === "tpl_room_ready_direct") {
+          tpl.channels = ["site", "whatsapp", "outros"];
           const defRoomDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_direct");
           if (defRoomDir && !tpl.message?.includes("instrucao_acesso_quarto_pronto")) {
             tpl.message = defRoomDir.message;
@@ -12201,10 +12204,20 @@ export function isInitialConfirmationInFlightOrSent(db, reservation) {
   const resKey = getReservationDedupKey(reservation);
   const rCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
   const rId = reservation.id ? String(reservation.id) : "";
+  const recips = getReservationRecipients(reservation, db || {});
+  const guestPhoneNorm = normalizePhoneForDedup(recips.guest?.phone || "");
+  const reqPhoneNorm = normalizePhoneForDedup(recips.requester?.phone || "");
+  const requireGuestConfirmation = Boolean(
+    recips.requester?.isDifferentFromGuest &&
+    !isMissingGuestDataForCredential(reservation) &&
+    guestPhoneNorm.length >= 10
+  );
 
   for (const key of inFlightDispatches) {
     if (resKey && key.startsWith(`${resKey}:INITIAL_CONFIRMATION:`)) {
-      return true;
+      if (!requireGuestConfirmation || key.endsWith(`:${guestPhoneNorm}`)) {
+        return true;
+      }
     }
   }
 
@@ -12213,7 +12226,15 @@ export function isInitialConfirmationInFlightOrSent(db, reservation) {
     const hCode = String(h.reservationCode || "").trim().toUpperCase();
     const hId = h.reservationId ? String(h.reservationId) : "";
     const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
-    return isSameRes && MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS.has(h.triggerEvent) && isWhatsappHistorySuccessStatus(h.status);
+    if (!isSameRes || !MUTUALLY_EXCLUSIVE_CONFIRMATION_EVENTS.has(h.triggerEvent) || !isWhatsappHistorySuccessStatus(h.status)) {
+      return false;
+    }
+    if (requireGuestConfirmation) {
+      if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
+      const hPhoneNorm = normalizePhoneForDedup(h.guestPhone || "");
+      if (reqPhoneNorm && reqPhoneNorm !== guestPhoneNorm && hPhoneNorm === reqPhoneNorm) return false;
+    }
+    return true;
   });
 }
 
@@ -13565,6 +13586,8 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     const credentialedRecently = Boolean(
       reservation._forceInitialWelcome ||
       reservation._isPreReservationUpdate ||
+      (reservation.paidAt && (now.getTime() - new Date(reservation.paidAt).getTime()) <= 48 * 3600 * 1000) ||
+      (reservation.confirmedAt && (now.getTime() - new Date(reservation.confirmedAt).getTime()) <= 48 * 3600 * 1000) ||
       (reservation.b2bCredentialCompletedAt && (now.getTime() - new Date(reservation.b2bCredentialCompletedAt).getTime()) <= 48 * 3600 * 1000) ||
       (reservation.guestPhoneUpdatedAt && (now.getTime() - new Date(reservation.guestPhoneUpdatedAt).getTime()) <= 48 * 3600 * 1000)
     );
@@ -15060,6 +15083,7 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
     if (
       todayStr === reservation.checkinDate &&
       reservation.roomReadySentDate !== todayStr &&
+      guestOnlyRes.roomReadySentDate !== todayStr &&
       !hasGuestReceivedEvent(["room_ready", "room_ready_ota", "room_ready_regular"])
     ) {
       const resvChannel = normalizeReservationChannel(reservation.channel || reservation.source || "site");

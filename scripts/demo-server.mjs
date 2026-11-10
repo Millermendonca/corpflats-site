@@ -36017,8 +36017,14 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const currentTot = Number(r.totalAmount) || 0;
     if (sumPaid >= currentTot && currentTot > 0) {
       r.paymentStatus = "pago_total";
+      if (!r.paidAt) {
+        r.paidAt = r.payments[r.payments.length - 1]?.date || new Date().toISOString();
+      }
     } else if (sumPaid > 0) {
       r.paymentStatus = "sinal_pago";
+      if (!r.paidAt) {
+        r.paidAt = r.payments[r.payments.length - 1]?.date || new Date().toISOString();
+      }
     } else {
       r.paymentStatus = "pendente";
     }
@@ -36280,11 +36286,22 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       } else if ((effectivePaidAfterOtaExt >= currentTot - 0.01 || (isFullyPaidOnPut && totalPaymentsReceived >= currentTot - 0.01)) && currentTot > 0) {
         r.paidAmount = Math.max(currentTot, totalPaymentsReceived);
         r.paymentStatus = "pago_total";
-      } else if (r.paymentStatus === "pago_total" && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
+        if (!r.paidAt) r.paidAt = new Date().toISOString();
+      } else if ((r.paymentStatus === "pago_total" || r.paymentStatus === "pago") && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
         r.paidAmount = currentTot;
+        if (!r.paidAt) r.paidAt = new Date().toISOString();
       }
-    } else if (r.paymentStatus === "pago_total" && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
+    } else if ((r.paymentStatus === "pago_total" || r.paymentStatus === "pago") && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
       r.paidAmount = currentTot;
+      if (!r.paidAt) r.paidAt = new Date().toISOString();
+      if (!isB2bDirectCheck && req.body.status === undefined && r.status === "pre_reserva") {
+        r.status = "confirmada";
+        r.expiresAt = null;
+        r.reminderAt = null;
+        delete r.expiredAt;
+        delete r.expiredWhatsappSentAt;
+        delete r.preReservationReminderSentAt;
+      }
     }
   }
 
@@ -37064,6 +37081,29 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
     const recipsOnConfirm = getReservationRecipients(r, db);
     const hasSepReqOnConfirm = Boolean(recipsOnConfirm.requester?.isDifferentFromGuest);
+    const chanOnConfirm = String(r.channel || "").toLowerCase();
+    const isDirectOnConfirm = !chanOnConfirm.includes("booking") && !chanOnConfirm.includes("airbnb") && !chanOnConfirm.includes("b2b") && !r.b2bReservationNumber;
+
+    if (hasSepReqOnConfirm && recipsOnConfirm.requester?.hasOwnContact && isDirectOnConfirm && Number(r.paidAmount) > 0) {
+      const rCodeUp = String(r.code || "").toUpperCase();
+      const rIdSt = String(r.id || "");
+      const hasReqReceiptOnConfirm = (db.whatsappHistory || []).some(h => {
+        const hCode = String(h.reservationCode || "").toUpperCase();
+        const hId = h.reservationId ? String(h.reservationId) : "";
+        const isSameRes = (rCodeUp && hCode === rCodeUp) || (rIdSt && (hId === rIdSt || hCode === rIdSt));
+        return isSameRes && h.triggerEvent === "payment_confirmed" && (h.recipientType === "requester" || h.recipientRole === "solicitante") && isWaHistoryStatusDispatched(h.status);
+      });
+      if (!hasReqReceiptOnConfirm) {
+        triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", {
+          ...r,
+          _onlyRequesterTarget: true,
+          _skipAutoIntro: true,
+          _forceInitialWelcome: true
+        }, editBaseUrl).catch(err => {
+          console.warn("[Requester Payment Confirmed WhatsApp] Erro ao enviar comprovante na confirmação:", err.message);
+        });
+      }
+    }
 
     if (hasSepReqOnConfirm && isMissingGuestDataForCredential(r)) {
       dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
@@ -37077,7 +37117,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       });
     }
 
-    if (newGuestPhone.length >= 10) {
+    const effectiveGuestDigitsOnConfirm = String(newGuestPhone || recipsOnConfirm.guest?.cleanDigits || "").replace(/\D/g, "");
+    if (effectiveGuestDigitsOnConfirm.length >= 10 && !isMissingGuestDataForCredential(r)) {
       dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(() => {});
     } else if (!hasSepReqOnConfirm || !isMissingGuestDataForCredential(r)) {
       const now = new Date();
@@ -37088,14 +37129,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
 
       if (isAfter0701) {
-        triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r, editBaseUrl).catch(() => {});
+        triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", { ...r, _forceInitialWelcome: true }, editBaseUrl).catch(() => {});
       } else {
-        const chan = String(r.channel || "").toLowerCase();
-        const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
-        if (isDirect) {
-          triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r, editBaseUrl).catch(() => {});
+        if (isDirectOnConfirm) {
+          triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", { ...r, _forceInitialWelcome: true }, editBaseUrl).catch(() => {});
         } else {
-          triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r, editBaseUrl).catch(() => {});
+          triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", { ...r, _forceInitialWelcome: true }, editBaseUrl).catch(() => {});
         }
       }
     }
@@ -38013,7 +38052,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
         console.warn("[Guest Portal] Erro ao checar Mercado Pago:", errMp.message);
       }
     }
-  } else if (!isCancelledRes && isPaid && !isOta && !isB2b && r.guestPhone) {
+  } else if (!isCancelledRes && isPaid && !isOta && !isB2b && (r.guestPhone || reservationHasAnyContact(r, db))) {
     ensurePaymentConfirmationDispatched(r);
   }
 
@@ -66320,7 +66359,7 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
               ? Math.round((priorPaid + valorPago) * 100) / 100
               : (valorPago > 0 ? valorPago : expectedTotal);
             const isFullPayment = expectedTotal <= 0 || newPaidAmount >= (expectedTotal - 0.05);
-            const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation;
+            const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || r.status === "expirada" || !r.status || r.isPreReservation;
 
             r.paymentStatus = isFullPayment ? "pago_total" : "pago_parcial";
             r.paidAmount = newPaidAmount;
@@ -66329,6 +66368,8 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
 
             if (isFullPayment && wasPreReserva) {
               r.status = "confirmada";
+              delete r.expiredAt;
+              delete r.expiresAt;
             }
 
             const payRecord = {
@@ -66745,15 +66786,31 @@ function isConfirmationAlreadyDispatched(r) {
   const history = db.whatsappHistory || [];
   const rCode = String(r.code || "").toUpperCase();
   const rId = String(r.id || "");
+  const recips = getReservationRecipients(r, db);
+  const guestPhoneNorm = String(recips.guest?.cleanDigits || "").replace(/^55/, "");
+  const reqPhoneNorm = String(recips.requester?.cleanDigits || "").replace(/^55/, "");
+  const requireGuestConfirmation = Boolean(
+    recips.requester?.isDifferentFromGuest &&
+    !isMissingGuestDataForCredential(r) &&
+    guestPhoneNorm.length >= 10
+  );
+
   return history.some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
     const hId = h.reservationId ? String(h.reservationId) : "";
     const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
-    return isSameRes && (
+    if (!isSameRes) return false;
+    const isConfirmEv =
       h.triggerEvent === "payment_confirmed" ||
       h.triggerEvent === "reservation_created" ||
-      h.triggerEvent === "sameday_reservation"
-    ) && isWaHistoryStatusDispatched(h.status);
+      h.triggerEvent === "sameday_reservation";
+    if (!isConfirmEv || !isWaHistoryStatusDispatched(h.status)) return false;
+    if (requireGuestConfirmation) {
+      if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
+      const hPhoneNorm = String(h.guestPhone || "").replace(/\D/g, "").replace(/^55/, "");
+      if (reqPhoneNorm && reqPhoneNorm !== guestPhoneNorm && hPhoneNorm === reqPhoneNorm) return false;
+    }
+    return true;
   });
 }
 
@@ -66936,46 +66993,60 @@ async function ensureReceptionAndGarageNotifiedForArrival(r, { trigger = "self_c
 async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } = {}) {
   if (!r) return;
   if (!r.guestPhone) {
-    const rCodeUpper = String(r.code || "").trim().toUpperCase();
-    const rIdStr = r.id ? String(r.id) : "";
-    const histWithPhone = (db.whatsappHistory || []).find(h => {
-      if (!h || !h.guestPhone) return false;
-      const hCode = String(h.reservationCode || "").trim().toUpperCase();
-      const hId = h.reservationId ? String(h.reservationId) : "";
-      return (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
-    });
-    if (histWithPhone?.guestPhone) {
-      r.guestPhone = histWithPhone.guestPhone;
-      if (Array.isArray(r.guests) && r.guests[0] && !r.guests[0].phone) {
-        r.guests[0].phone = histWithPhone.guestPhone;
-      }
-      if (Array.isArray(db.whatsappQueue)) {
-        for (const qItem of db.whatsappQueue) {
-          if (!qItem || qItem.guestPhone) continue;
-          const qCode = String(qItem.reservationCode || "").trim().toUpperCase();
-          const qId = qItem.reservationId ? String(qItem.reservationId) : "";
-          if ((rCodeUpper && qCode === rCodeUpper) || (rIdStr && (qId === rIdStr || qCode === rIdStr))) {
-            qItem.guestPhone = histWithPhone.guestPhone;
+    const firstGuestPhone = String(r.guests?.[0]?.phone || "").trim();
+    if (!r.guestPending && firstGuestPhone.replace(/\D/g, "").length >= 10) {
+      r.guestPhone = firstGuestPhone;
+      saveDatabase();
+    } else {
+      const recipsInit = getReservationRecipients(r, db);
+      const reqInitPhoneNorm = String(recipsInit.requester?.cleanDigits || "").replace(/^55/, "");
+      const rCodeUpper = String(r.code || "").trim().toUpperCase();
+      const rIdStr = r.id ? String(r.id) : "";
+      const histWithPhone = (db.whatsappHistory || []).find(h => {
+        if (!h || !h.guestPhone) return false;
+        if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
+        const hPhoneNorm = String(h.guestPhone || "").replace(/\D/g, "").replace(/^55/, "");
+        if (recipsInit.requester?.isDifferentFromGuest && (!hPhoneNorm || hPhoneNorm === reqInitPhoneNorm)) return false;
+        const hCode = String(h.reservationCode || "").trim().toUpperCase();
+        const hId = h.reservationId ? String(h.reservationId) : "";
+        return (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+      });
+      if (histWithPhone?.guestPhone) {
+        r.guestPhone = histWithPhone.guestPhone;
+        if (Array.isArray(r.guests) && r.guests[0] && !r.guests[0].phone) {
+          r.guests[0].phone = histWithPhone.guestPhone;
+        }
+        if (Array.isArray(db.whatsappQueue)) {
+          for (const qItem of db.whatsappQueue) {
+            if (!qItem || qItem.guestPhone || qItem.recipientType === "requester") continue;
+            const qCode = String(qItem.reservationCode || "").trim().toUpperCase();
+            const qId = qItem.reservationId ? String(qItem.reservationId) : "";
+            if ((rCodeUpper && qCode === rCodeUpper) || (rIdStr && (qId === rIdStr || qCode === rIdStr))) {
+              qItem.guestPhone = histWithPhone.guestPhone;
+            }
           }
         }
+        saveDatabase();
       }
-      saveDatabase();
     }
   }
   if (!r.guestPhone && !reservationHasAnyContact(r, db)) return;
   // Nunca confirma nem dispara confirmação para pré-reserva sem pagamento real comprovado
-  const isPreStatus = r.status === "pre_reserva" || r.status === "pendente" || !r.status;
-  if (isPreStatus && !hasRealPaymentEvidence(r)) return;
+  const isPreStatus = r.status === "pre_reserva" || r.status === "pendente" || r.status === "expirada" || !r.status;
+  const hasRecordedPayment = hasRealPaymentEvidence(r) || (Array.isArray(r.payments) && r.payments.some(p => Number(p?.amount) > 0));
+  if (isPreStatus && !hasRecordedPayment) return;
 
-  const isPreOrWasPre = wasPreReserva || r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation || (db.whatsappHistory || []).some(h => {
+  const isPreOrWasPre = wasPreReserva || isPreStatus || r.isPreReservation || Boolean(r.holdPreset || r._preReservationRulerSentAt) || (db.whatsappHistory || []).some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
     const rCode = String(r.code || "").toUpperCase();
     const rId = String(r.id || "");
     return ((rCode && hCode === rCode) || (rId && hCode === rId)) && h.triggerEvent === "pre_reservation_created";
   });
 
-  if (r.status === "pre_reserva" || r.status === "pendente" || !r.status) {
+  if (isPreStatus) {
     r.status = "confirmada";
+    delete r.expiredAt;
+    delete r.expiresAt;
     saveDatabase();
   }
 
@@ -67000,26 +67071,27 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
   const wasPaidBeforeToday0701 = Boolean(paidBrIso && paidBrIso < `${todayStr}T07:01`);
   const isAfter0701 = isSameDay && !wasPaidBeforeToday0701 && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
   const chan = String(r.channel || "").toLowerCase();
-  const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
+  const isDirect = !chan.includes("booking") && !chan.includes("airbnb") && !chan.includes("b2b") && !r.b2bReservationNumber;
 
   if (isAfter0701) {
-    // Quando a reserva para HOJE é criada ou paga após as 07:01, o hóspede deve receber APENAS 1 mensagem consolidada (sameday_reservation)
-    // sem duplicar payment_confirmed + sameday_reservation nem reservation_created + sameday_reservation.
-    // Se houver Solicitante distinto com WhatsApp próprio, enviamos o comprovante financeiro apenas ao Solicitante.
+    // Quando a reserva para HOJE é criada ou paga após as 07:01, o hóspede deve receber a régua de entrada no mesmo dia
+    // (corpflats_intro + sameday_reservation + Manual em PDF) sem duplicar payment_confirmed + sameday_reservation.
+    // Se houver Solicitante distinto com contato próprio, enviamos o comprovante financeiro apenas ao Solicitante.
     if (recipsPay.requester?.isDifferentFromGuest && recipsPay.requester?.hasOwnContact && isPreOrWasPre && isDirect) {
       const hasRequesterReceipt = (db.whatsappHistory || []).some(h => {
         const hCode = String(h.reservationCode || "").toUpperCase();
         const rCode = String(r.code || "").toUpperCase();
         const rId = String(r.id || "");
         const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
-        return isSameRes && h.triggerEvent === "payment_confirmed" && h.recipientRole === "solicitante" && isWaHistoryStatusDispatched(h.status);
+        return isSameRes && h.triggerEvent === "payment_confirmed" && (h.recipientType === "requester" || h.recipientRole === "solicitante") && isWaHistoryStatusDispatched(h.status);
       });
       if (!hasRequesterReceipt) {
         try {
           await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", {
             ...r,
             _onlyRequesterTarget: true,
-            _skipAutoIntro: true
+            _skipAutoIntro: true,
+            _forceInitialWelcome: true
           });
         } catch (err) {
           console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed ao Solicitante:", err.message);
@@ -67027,28 +67099,49 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
       }
     }
 
+    const guestPhoneNorm = String(recipsPay.guest?.cleanDigits || "").replace(/^55/, "");
+    const reqPhoneNorm = String(recipsPay.requester?.cleanDigits || "").replace(/^55/, "");
+    const hasGuestRecipientForSameDay = Boolean(
+      !recipsPay.requester?.isDifferentFromGuest ||
+      !isMissingGuestDataForCredential(r) ||
+      guestPhoneNorm.length >= 10 ||
+      Boolean(recipsPay.guest?.email) ||
+      (Array.isArray(recipsPay.companions) && recipsPay.companions.length > 0)
+    );
+
     const hasSameDayDispatched = (db.whatsappHistory || []).some(h => {
       const hCode = String(h.reservationCode || "").toUpperCase();
       const hId = h.reservationId ? String(h.reservationId) : "";
       const rCode = String(r.code || "").toUpperCase();
       const rId = String(r.id || "");
       const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
-      return isSameRes && (
+      if (!isSameRes) return false;
+      if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
+      if (recipsPay.requester?.isDifferentFromGuest && reqPhoneNorm && reqPhoneNorm !== guestPhoneNorm) {
+        const hPhoneNorm = String(h.guestPhone || "").replace(/\D/g, "").replace(/^55/, "");
+        if (hPhoneNorm === reqPhoneNorm) return false;
+      }
+      return (
         h.triggerEvent === "sameday_reservation" ||
         h.triggerEvent === "payment_confirmed" ||
         h.triggerEvent === "reservation_created"
       ) && isWaHistoryStatusDispatched(h.status);
     });
 
-    if (!hasSameDayDispatched) {
+    if (!hasSameDayDispatched && hasGuestRecipientForSameDay) {
       console.log(`[WhatsApp Dispatch] Reserva para HOJE após 07:01 confirmada: disparando mensagem única consolidada (sameday_reservation) para ${r.guestName} (${r.code})...`);
       try {
-        await triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r);
-        scheduleUpcomingReservationTriggers(db, saveDatabase);
+        await triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", {
+          ...r,
+          _forceInitialWelcome: true
+        });
       } catch (err) {
         console.error("[WhatsApp Dispatch] Erro ao disparar sameday_reservation:", err.message);
       }
     }
+    try {
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+    } catch (_) {}
     return;
   }
 
@@ -67057,7 +67150,10 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
     if (isPreOrWasPre && isDirect) {
       console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento (payment_confirmed) para ${r.guestName} (${r.code})...`);
       try {
-        await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r);
+        await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", {
+          ...r,
+          _forceInitialWelcome: true
+        });
         scheduleUpcomingReservationTriggers(db, saveDatabase);
       } catch (err) {
         console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed:", err.message);
@@ -67066,7 +67162,10 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
       // Para OTAs (booking/airbnb) ou reservas diretas já criadas confirmadas sem passar por pré-reserva
       console.log(`[WhatsApp Dispatch] Disparando confirmação padrão (reservation_created) para ${r.guestName} (${r.code})...`);
       try {
-        await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
+        await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", {
+          ...r,
+          _forceInitialWelcome: true
+        });
         scheduleUpcomingReservationTriggers(db, saveDatabase);
       } catch (err) {
         console.error("[WhatsApp Dispatch] Erro ao disparar reservation_created:", err.message);
@@ -67075,14 +67174,16 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
   }
 
   // Se o check-in é hoje, o pagamento ocorreu antes das 07:01 e já são >= 07:00 sem que checkin_day_instructions tenha saído no WhatsApp, dispara também
-  if (isSameDay && wasPaidBeforeToday0701 && brNow.hour >= 7 && r.guestPhone) {
+  if (isSameDay && wasPaidBeforeToday0701 && brNow.hour >= 7 && (r.guestPhone || recipsPay.guest?.phone)) {
     const rCode = String(r.code || "").toUpperCase();
     const rId = String(r.id || "");
     const hasCheckinDayWa = (db.whatsappHistory || []).some(h => {
       const hCode = String(h.reservationCode || "").toUpperCase();
       const hId = h.reservationId ? String(h.reservationId) : "";
       const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
-      return isSameRes && (h.triggerEvent === "checkin_day_instructions" || h.triggerEvent === "sameday_reservation") && isWaHistoryStatusDispatched(h.status);
+      if (!isSameRes) return false;
+      if (h.recipientType === "requester" || h.recipientRole === "solicitante") return false;
+      return (h.triggerEvent === "checkin_day_instructions" || h.triggerEvent === "sameday_reservation") && isWaHistoryStatusDispatched(h.status);
     });
     if (!hasCheckinDayWa) {
       try {
@@ -67394,7 +67495,7 @@ async function confirmReservationPayment(r, {
   r.payments = enrichReservationPayments(r);
 
   // Identifica se era uma pré-reserva antes da alteração de status
-  const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation || (db.whatsappHistory || []).some(h => {
+  const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || r.status === "expirada" || !r.status || r.isPreReservation || Boolean(r.holdPreset || r._preReservationRulerSentAt) || (db.whatsappHistory || []).some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
     const rCode = String(r.code || "").toUpperCase();
     const rId = String(r.id || "");
@@ -67402,8 +67503,10 @@ async function confirmReservationPayment(r, {
   });
 
   // Transição de status para confirmada
-  if (r.paymentStatus === "pago_total" && wasPreReserva) {
+  if ((r.paymentStatus === "pago_total" || r.paymentStatus === "sinal_pago") && wasPreReserva) {
     r.status = "confirmada";
+    delete r.expiredAt;
+    delete r.expiresAt;
   }
 
   createNotification({
@@ -67471,7 +67574,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
 
     // Se já está marcado como pago ou canal OTA sem saldo direto pendente (Booking/Airbnb), retorna de imediato
     if (!isUnverifiedPreReservation(r) && !hasPendingDirectBalance && (isOta || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))) {
-      if (!isOta && r.guestPhone) {
+      if (!isOta && (r.guestPhone || reservationHasAnyContact(r, db))) {
         ensurePaymentConfirmationDispatched(r);
       }
       if (
@@ -69335,9 +69438,20 @@ function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Ma
       );
       const allBoletosPaid = resBoletos.length > 0 && resBoletos.every(b => b.status === "pago");
       const paidSum = resBoletos.filter(b => b.status === "pago").reduce((s, b) => s + (Number(b.paidAmount || b.amount) || 0), 0);
+      const wasPreBoleto = r.status === "pre_reserva" || r.status === "pendente" || r.status === "expirada" || !r.status || r.isPreReservation;
       r.paidAmount = Math.max(Number(r.paidAmount || 0), paidSum);
       r.paymentStatus = allBoletosPaid ? "pago_total" : "sinal_pago";
       r.paidAt = nowIso;
+      if (wasPreBoleto && r.paidAmount > 0) {
+        r.status = "confirmada";
+        delete r.expiredAt;
+        delete r.expiresAt;
+      }
+      if (allBoletosPaid || wasPreBoleto) {
+        ensurePaymentConfirmationDispatched(r, { wasPreReserva: wasPreBoleto }).catch(err => {
+          console.warn("[Boleto Paid Confirmation Dispatch] Erro ao disparar régua após liquidação do boleto:", err.message);
+        });
+      }
     }
   }
 
@@ -72932,15 +73046,63 @@ setInterval(async () => {
       }
     }
 
-    // B) Auto-healing de reservas diretas recentes (id > 560, criadas nas últimas 48h, check-in >= hoje) já pagas que ainda não receberam confirmação no WhatsApp
+    // B) Auto-healing de reservas diretas recentes (id > 560, criadas ou pagas nas últimas 48h, check-in >= hoje) já pagas que ainda não receberam confirmação no WhatsApp (incluindo hóspede distinto do solicitante)
     const recentPaidMissingConfirm = db.reservations.filter(r => {
       if (!r || Number(r.id) <= 560) return false;
-      if (r.status === "cancelada" || r.status === "cancelled" || r.status === "expirada") return false;
-      if (!r.checkinDate || r.checkinDate < todayStr) return false;
-      if (r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return false;
-      if (!hasRealPaymentEvidence(r)) return false;
-      if (r.createdAt && (now.getTime() - new Date(r.createdAt).getTime()) > 48 * 3600 * 1000) return false;
-      return !isConfirmationAlreadyDispatched(r);
+      if (
+        r.status === "cancelada" ||
+        r.status === "cancelled" ||
+        r.status === "expirada" ||
+        r.checkoutDone ||
+        r.status === "completed" ||
+        r.status === "checked_out" ||
+        r.status === "checkout"
+      ) return false;
+      if (!r.checkinDate || (r.checkoutDate ? r.checkoutDate < todayStr : r.checkinDate < todayStr)) return false;
+      const isConfirmedWithSignal = r.status === "confirmada" && (r.paymentStatus === "sinal_pago" || r.paymentStatus === "pago_parcial" || r.paymentStatus === "parcial");
+      if (r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago" && !isConfirmedWithSignal) return false;
+      const hasPayEvidence = hasRealPaymentEvidence(r) || (Array.isArray(r.payments) && r.payments.some(p => Number(p?.amount) > 0));
+      if (!hasPayEvidence) return false;
+      const refIso = r.paidAt || r.confirmedAt || r.createdAt;
+      if (refIso && (now.getTime() - new Date(refIso).getTime()) > 48 * 3600 * 1000) return false;
+      if (isConfirmationAlreadyDispatched(r)) return false;
+
+      const recipsHeal = getReservationRecipients(r, db);
+      if (recipsHeal.requester?.isDifferentFromGuest && isMissingGuestDataForCredential(r)) {
+        const rCodeUp = String(r.code || "").toUpperCase();
+        const rIdSt = String(r.id || "");
+        const hasReqAlreadyNotified = (db.whatsappHistory || []).some(h => {
+          if (!h || !isWaHistoryStatusDispatched(h.status)) return false;
+          const hCode = String(h.reservationCode || "").toUpperCase();
+          const hId = h.reservationId ? String(h.reservationId) : "";
+          const isSameRes = (rCodeUp && hCode === rCodeUp) || (rIdSt && (hId === rIdSt || hCode === rIdSt));
+          return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "b2b_agency_credential_request");
+        });
+        if (hasReqAlreadyNotified) return false;
+      }
+      const guestPhoneHeal = recipsHeal.guest?.phone || r.guestPhone || "";
+      const guestPhoneNormHeal = String(guestPhoneHeal).replace(/\D/g, "").replace(/^55/, "");
+      if (guestPhoneNormHeal.length >= 10) {
+        const policyCheck = evaluateZapiChannelPolicy(db?.zapiConfig, {
+          channelId: "guest_schedule",
+          phone: guestPhoneHeal,
+          db
+        });
+        if (!policyCheck.allowed) return false;
+        const rCodeUp = String(r.code || "").toUpperCase();
+        const rIdSt = String(r.id || "");
+        const failedCountForGuest = (db.whatsappHistory || []).filter(h => {
+          if (!h || h.status !== "failed") return false;
+          const hCode = String(h.reservationCode || "").toUpperCase();
+          const hId = h.reservationId ? String(h.reservationId) : "";
+          const isSameRes = (rCodeUp && hCode === rCodeUp) || (rIdSt && (hId === rIdSt || hCode === rIdSt));
+          if (!isSameRes) return false;
+          if (h.triggerEvent !== "sameday_reservation" && h.triggerEvent !== "payment_confirmed" && h.triggerEvent !== "reservation_created") return false;
+          return String(h.guestPhone || "").replace(/\D/g, "").replace(/^55/, "") === guestPhoneNormHeal;
+        }).length;
+        if (failedCountForGuest >= 2) return false;
+      }
+      return true;
     });
     for (const rPaid of recentPaidMissingConfirm) {
       await ensurePaymentConfirmationDispatched(rPaid, { wasPreReserva: true });
