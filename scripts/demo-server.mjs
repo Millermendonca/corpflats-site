@@ -7410,6 +7410,13 @@ function sanitizeReservationFlags() {
   if (oct28Changed) {
     saveDatabase();
   }
+
+  if (sanitizeFaturadoBoletoReservations(db)) {
+    try {
+      saveDatabase("sanitize_faturado_boleto_reservations");
+      console.log("[Auto-Fix] Reservas com Boleto Faturado (incluindo RES-211-0770) regularizadas: pixTxId espúrio removido e status pendente restaurado onde não há liquidação real.");
+    } catch (_) {}
+  }
 }
 
 
@@ -30904,7 +30911,8 @@ const FRIENDLY_PAYMENT_METHOD_NAMES = {
 export function ensurePaymentMethodExists(methodId, methodName) {
   if (!methodId) return null;
   const methods = getPaymentMethodsList();
-  const cleanId = String(methodId).toLowerCase().trim().replace(/[^a-z0-9_-]/g, "_");
+  const normalizedInput = normalizePaymentMethodId(methodId);
+  const cleanId = String(normalizedInput || methodId).toLowerCase().trim().replace(/[^a-z0-9_-]/g, "_");
   let existing = methods.find(m => m.id === cleanId || m.name.toLowerCase() === String(methodName || methodId).toLowerCase());
   if (!existing) {
     const isBooking = cleanId === "booking";
@@ -30925,6 +30933,135 @@ export function ensurePaymentMethodExists(methodId, methodName) {
     saveDatabase();
   }
   return existing;
+}
+
+export function isFaturadoBoletoMethod(method) {
+  const pm = String(method || "").toLowerCase().trim();
+  return (
+    pm === "boleto_faturado" ||
+    pm === "faturado_boleto" ||
+    pm === "boleto" ||
+    pm === "faturado_pj" ||
+    pm === "faturado_b2b"
+  );
+}
+
+export function normalizePaymentMethodId(method) {
+  if (!method) return null;
+  const pm = String(method).trim().toLowerCase();
+  if (!pm) return null;
+  if (pm === "boleto_faturado" || pm === "faturado_boleto") return "boleto_faturado";
+  return pm;
+}
+
+export function isFaturadoBoletoReservation(r, overrideMethod = null) {
+  const pm = overrideMethod !== null ? overrideMethod : r?.paymentMethod;
+  return Boolean(
+    r?.isFaturadoBoleto ||
+    isFaturadoBoletoMethod(pm) ||
+    String(r?.b2bPaymentType || "").toUpperCase() === "FATURADO"
+  );
+}
+
+export function isSyntheticAutoQuitacaoEntry(p) {
+  if (!p) return true;
+  if (p.endToEndId || p.pixEndToEndId || p.mpPaymentId) return false;
+  if (String(p.id || "").startsWith("pay_bol_")) return false;
+  const note = String(p.notes || "").trim();
+  if (/boleto|baixa manual|comprovante|extrato/i.test(note)) return false;
+  return /^(pagamento integral|pagamento inicial|complemento de quita[cç][aã]o)$/i.test(note);
+}
+
+export function hasRealSettlementForFaturadoBoleto(r, targetDb = db) {
+  if (!r) return false;
+  if (r.pixEndToEndId || r.mpPaymentId) return true;
+  const hasPaidBoleto = (targetDb?.boletos || []).some(b =>
+    b &&
+    b.status === "pago" &&
+    ((b.reservationId && Number(b.reservationId) === Number(r.id)) ||
+     (r.code && b.reservationCode === r.code))
+  );
+  if (hasPaidBoleto) return true;
+  const hasPaidReceivable = (targetDb?.accountsReceivable || []).some(ar =>
+    ar &&
+    (ar.status === "recebido" || ar.status === "pago") &&
+    ((ar.reservationId && Number(ar.reservationId) === Number(r.id)) ||
+     (r.code && ar.reservationCode === r.code))
+  );
+  if (hasPaidReceivable) return true;
+  const codeUpper = String(r.code || r.reservationCode || "").trim().toUpperCase();
+  if (codeUpper === "RES-211-0770") {
+    // Reserva RES-211-0770 (Josiane) foi marcada como paga por auto-preenchimento indevido; só é paga quando houver boleto liquidado ou E2E real
+    return false;
+  }
+  if (Array.isArray(r.payments) && r.payments.some(p => p && Number(p.amount) > 0 && !isSyntheticAutoQuitacaoEntry(p))) {
+    return true;
+  }
+  return false;
+}
+
+export function sanitizeFaturadoBoletoReservations(targetDb = db) {
+  if (!targetDb || !Array.isArray(targetDb.reservations)) return false;
+  let changed = false;
+  for (const r of targetDb.reservations) {
+    if (!r) continue;
+    if (r.paymentMethod) {
+      const normPm = normalizePaymentMethodId(r.paymentMethod);
+      if (normPm && normPm !== r.paymentMethod) {
+        r.paymentMethod = normPm;
+        changed = true;
+      }
+    }
+    if (!isFaturadoBoletoReservation(r)) continue;
+
+    if (!r.isFaturadoBoleto) {
+      r.isFaturadoBoleto = true;
+      changed = true;
+    }
+    const isB2bRes = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
+    if (!r.paymentMethod || r.paymentMethod === "pix") {
+      r.paymentMethod = isB2bRes ? "faturado_b2b" : "boleto_faturado";
+      changed = true;
+    }
+
+    // Remove qualquer cobrança PIX avulsa/pré-gerada (pixTxId sem pixEndToEndId real) em reservas de Boleto Faturado
+    if (!r.pixEndToEndId && (r.pixTxId || r.pixCopiaECola || r.pixChargedAmount)) {
+      r.pixTxId = null;
+      r.pixCopiaECola = "";
+      r.pixChargedAmount = 0;
+      changed = true;
+    }
+    if (!r.pixEndToEndId && Array.isArray(r.payments)) {
+      for (const p of r.payments) {
+        if (p && (p.txId || p.pixTxId)) {
+          delete p.txId;
+          delete p.pixTxId;
+          changed = true;
+        }
+      }
+    }
+
+    // Restaura status pendente se foi marcada como paga sem boleto liquidado nem pagamento real
+    if (!hasRealSettlementForFaturadoBoleto(targetDb === db ? r : r, targetDb)) {
+      const hadAutoPayments = Array.isArray(r.payments) && r.payments.length > 0;
+      const wasMarkedPaid = r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || Number(r.paidAmount) > 0 || Boolean(r.paidAt);
+      if (hadAutoPayments || wasMarkedPaid) {
+        r.payments = [];
+        r.paidAmount = 0;
+        r.amountPaid = 0;
+        r.paymentStatus = "pendente";
+        r.paidAt = null;
+        if (!r.status || r.status === "pre_reserva") {
+          r.status = "confirmada";
+          r.expiresAt = null;
+          r.reminderAt = null;
+          delete r.expiredAt;
+        }
+        changed = true;
+      }
+    }
+  }
+  return changed;
 }
 
 /**
@@ -33408,8 +33545,15 @@ app.post("/api/pms/reservations", async (req, res) => {
     resolvedPaymentStatus = "pendente";
   }
 
-  let resolvedPaymentMethod = paymentMethod;
-  if (!resolvedPaymentMethod || ((isOta || isB2b) && resolvedPaymentMethod === "pix")) {
+  let resolvedPaymentMethod = normalizePaymentMethodId(paymentMethod);
+  const isFaturadoOnCreate = Boolean(
+    req.body.isFaturadoBoleto ||
+    isFaturadoBoletoMethod(resolvedPaymentMethod) ||
+    String(b2bPaymentType || "").toUpperCase() === "FATURADO"
+  );
+  if (isFaturadoOnCreate && (!resolvedPaymentMethod || resolvedPaymentMethod === "pix")) {
+    resolvedPaymentMethod = isB2b ? "faturado_b2b" : "boleto_faturado";
+  } else if (!resolvedPaymentMethod || ((isOta || isB2b) && resolvedPaymentMethod === "pix")) {
     if (isB2b) resolvedPaymentMethod = b2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b";
     else if (chanLower.includes("booking")) resolvedPaymentMethod = "booking";
     else if (chanLower.includes("airbnb")) resolvedPaymentMethod = "airbnb";
@@ -33424,13 +33568,16 @@ app.post("/api/pms/reservations", async (req, res) => {
     normalizedPayments = payments.map(p => ({
       id: String(p.id || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
       amount: Number(p.amount) || 0,
-      method: String(p.method || resolvedPaymentMethod || "pix"),
+      method: String(normalizePaymentMethodId(p.method) || resolvedPaymentMethod || "pix"),
       date: String(p.date || new Date().toISOString()),
       notes: p.notes ? String(p.notes) : undefined
-    })).filter(p => p.amount > 0 || p.method);
+    })).filter(p => (p.amount > 0 || p.method) && !(isFaturadoOnCreate && isSyntheticAutoQuitacaoEntry(p)));
   }
 
-  if (isOta && !isPropertyCollect) {
+  if (isFaturadoOnCreate && normalizedPayments.length === 0 && !req.body.pixEndToEndId && !req.body.mpPaymentId) {
+    resolvedPaidAmount = 0;
+    resolvedPaymentStatus = "pendente";
+  } else if (isOta && !isPropertyCollect) {
     resolvedPaymentStatus = "pago_total";
     if (finalTotalAmount > 0) {
       resolvedPaidAmount = finalTotalAmount;
@@ -33458,7 +33605,7 @@ app.post("/api/pms/reservations", async (req, res) => {
         normalizedPayments[0].notes = normalizedPayments[0].notes || (otaMethod === "booking" ? "Pagamento integral Booking.com" : "Pagamento integral Airbnb");
       }
     }
-  } else {
+  } else if (!isFaturadoOnCreate) {
     if (resolvedPaymentStatus === "pago_total" && finalTotalAmount > 0 && resolvedPaidAmount === 0) {
       resolvedPaidAmount = finalTotalAmount;
     }
@@ -33480,14 +33627,14 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
   }
 
-  // A reserva só é confirmada de fato se explicitamente informada como confirmada no campo (ou canal OTA / B2B)
+  // A reserva só é confirmada de fato se explicitamente informada como confirmada no campo (ou canal OTA / B2B / Boleto Faturado)
   let resolvedStatus = "pre_reserva";
   if (status) {
     resolvedStatus = String(status).trim();
-  } else if (isOta || isB2b || resolvedPaymentStatus === "pago_total" || resolvedPaidAmount > 0) {
+  } else if (isOta || isB2b || isFaturadoOnCreate || resolvedPaymentStatus === "pago_total" || resolvedPaidAmount > 0) {
     resolvedStatus = "confirmada";
   }
-  if (isB2b && resolvedStatus === "pre_reserva") {
+  if ((isB2b || isFaturadoOnCreate) && resolvedStatus === "pre_reserva") {
     resolvedStatus = "confirmada";
   }
 
@@ -34310,7 +34457,7 @@ app.post("/api/pms/reservations", async (req, res) => {
   const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
   const initialPendingAmt = Math.max(0, Math.round(((Number(newReservation.totalAmount) || 0) - (Number(newReservation.paidAmount) || 0)) * 100) / 100);
 
-  if (!isOta && !isB2b && !newReservation.pixCopiaECola && initialPendingAmt > 0) {
+  if (!isOta && !isB2b && !newReservation.isFaturadoBoleto && !isFaturadoBoletoMethod(newReservation.paymentMethod) && !newReservation.pixCopiaECola && initialPendingAmt > 0) {
     const recipsForPix = getReservationRecipients(newReservation, db);
     const pixDebtorName = isGuestPending
       ? (recipsForPix.requester?.name || newReservation.companyName || "Solicitante CorpFlats")
@@ -35589,6 +35736,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       };
     }
   }
+  if (r.paymentMethod) {
+    r.paymentMethod = normalizePaymentMethodId(r.paymentMethod) || r.paymentMethod;
+  }
   if (
     r.paymentMethod === "faturado_boleto" ||
     r.paymentMethod === "boleto_faturado" ||
@@ -35598,6 +35748,17 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     r.b2bPaymentType === "FATURADO"
   ) {
     r.isFaturadoBoleto = true;
+  }
+  if (r.isFaturadoBoleto) {
+    const isB2bPutInit = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
+    if (!r.paymentMethod || r.paymentMethod === "pix") {
+      r.paymentMethod = isB2bPutInit ? "faturado_b2b" : "boleto_faturado";
+    }
+    if (!r.pixEndToEndId) {
+      r.pixTxId = null;
+      r.pixCopiaECola = "";
+      r.pixChargedAmount = 0;
+    }
   }
   if (req.body.isCamposResident !== undefined) {
     const isCamposVal = Boolean(req.body.isCamposResident);
@@ -36114,15 +36275,26 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     .reduce((acc, d) => acc + (Number(d.rate ?? d.amount) || 0), 0) * 100) / 100;
 
   // Normalização de payments na edição
+  const isFaturadoPut = isFaturadoBoletoReservation(r);
+  const hasRealBoletoOrGatewayOnPut = Boolean(
+    r.pixEndToEndId ||
+    r.mpPaymentId ||
+    (db.boletos || []).some(b =>
+      b &&
+      b.status === "pago" &&
+      ((b.reservationId && Number(b.reservationId) === Number(r.id)) ||
+       (r.code && b.reservationCode === r.code))
+    )
+  );
   let explicitPaymentsSumOnPut = null;
   if (Array.isArray(req.body.payments)) {
     r.payments = req.body.payments.map(p => ({
       id: String(p.id || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
       amount: Number(p.amount) || 0,
-      method: String(p.method || r.paymentMethod || "pix"),
+      method: String(normalizePaymentMethodId(p.method) || r.paymentMethod || "pix"),
       date: String(p.date || new Date().toISOString()),
       notes: p.notes ? String(p.notes) : undefined
-    })).filter(p => p.amount > 0 || p.method);
+    })).filter(p => (p.amount > 0 || p.method) && !(isFaturadoPut && !hasRealBoletoOrGatewayOnPut && isSyntheticAutoQuitacaoEntry(p)));
 
     const sumPaid = r.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
     explicitPaymentsSumOnPut = sumPaid;
@@ -36140,7 +36312,17 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     } else {
       r.paymentStatus = "pendente";
+      if (isFaturadoPut && !hasRealBoletoOrGatewayOnPut) {
+        r.paidAt = null;
+        r.amountPaid = 0;
+      }
     }
+  } else if (isFaturadoPut && !hasRealSettlementForFaturadoBoleto(r, db)) {
+    r.payments = [];
+    r.paidAmount = 0;
+    r.amountPaid = 0;
+    r.paymentStatus = "pendente";
+    r.paidAt = null;
   }
 
   // Regra oficial Pré-Reserva x Confirmada (canais diretos):
@@ -36160,7 +36342,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       delete r.b2bNetRate;
     }
     if (!ruleIsOta && !ruleIsB2b) {
-      if (req.body.status === "pre_reserva") {
+      if (isFaturadoPut && r.status === "pre_reserva") {
+        r.status = "confirmada";
+      } else if (req.body.status === "pre_reserva") {
         r.payments = [];
         r.paidAmount = 0;
         r.paymentStatus = "pendente";
@@ -36240,14 +36424,17 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const existingPaymentsSum = Array.isArray(r.payments) && r.payments.length > 0
     ? r.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
     : 0;
-  const totalPaymentsReceived = Math.round(Math.max(
-    explicitPaymentsSumOnPut !== null ? explicitPaymentsSumOnPut : 0,
-    req.body.paidAmount !== undefined ? Number(req.body.paidAmount) : 0,
-    req.body.amountPaid !== undefined ? Number(req.body.amountPaid) : 0,
-    Number(r.paidAmount) || 0,
-    Number(r.amountPaid) || 0,
-    existingPaymentsSum
-  ) * 100) / 100;
+  const ignoreUnverifiedFaturadoPaid = isFaturadoPut && !hasRealSettlementForFaturadoBoleto(r, db);
+  const totalPaymentsReceived = ignoreUnverifiedFaturadoPaid
+    ? 0
+    : Math.round(Math.max(
+        explicitPaymentsSumOnPut !== null ? explicitPaymentsSumOnPut : 0,
+        req.body.paidAmount !== undefined ? Number(req.body.paidAmount) : 0,
+        req.body.amountPaid !== undefined ? Number(req.body.amountPaid) : 0,
+        Number(r.paidAmount) || 0,
+        Number(r.amountPaid) || 0,
+        existingPaymentsSum
+      ) * 100) / 100;
   const hasDirectDailyRateInOta = Array.isArray(r.dailyRates) && r.dailyRates.some(d => {
     const dc = String(d?.channel || "").toLowerCase();
     return dc && !dc.includes("booking") && !dc.includes("airbnb") && !dc.includes("b2b");
@@ -36408,11 +36595,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         r.paidAmount = Math.max(currentTot, totalPaymentsReceived);
         r.paymentStatus = "pago_total";
         if (!r.paidAt) r.paidAt = new Date().toISOString();
-      } else if ((r.paymentStatus === "pago_total" || r.paymentStatus === "pago") && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
+      } else if (!ignoreUnverifiedFaturadoPaid && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
         r.paidAmount = currentTot;
         if (!r.paidAt) r.paidAt = new Date().toISOString();
       }
-    } else if ((r.paymentStatus === "pago_total" || r.paymentStatus === "pago") && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
+    } else if (!ignoreUnverifiedFaturadoPaid && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") && currentTot > 0 && (!r.paidAmount || r.paidAmount < currentTot)) {
       r.paidAmount = currentTot;
       if (!r.paidAt) r.paidAt = new Date().toISOString();
       if (!isB2bDirectCheck && req.body.status === undefined && r.status === "pre_reserva") {
@@ -36461,7 +36648,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const chanLowerEdit = String(r.channel || "").toLowerCase();
     const isB2bEdit = chanLowerEdit.includes("b2b") || Boolean(r.b2bReservationNumber);
     const isOtaEdit = chanLowerEdit.includes("booking") || chanLowerEdit.includes("airbnb");
-    const allowPixGenerationOnEdit = !isB2bEdit && (!isOtaEdit || hasOtaPartialPendingExtension);
+    const isFaturadoEdit = isFaturadoBoletoReservation(r);
+    const allowPixGenerationOnEdit = !isB2bEdit && !isFaturadoEdit && (!isOtaEdit || hasOtaPartialPendingExtension);
 
     if (
       allowPixGenerationOnEdit &&
@@ -36501,7 +36689,10 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       r.mpInitPoint = null;
       r.mpPreferenceId = null;
       r.mpChargedAmount = null;
-    } else if (updatedPendingAmt <= 0.01 || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || isB2bEdit) {
+    } else if (updatedPendingAmt <= 0.01 || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || isB2bEdit || isFaturadoEdit) {
+      if ((isB2bEdit || isFaturadoEdit) && !r.pixEndToEndId) {
+        r.pixTxId = null;
+      }
       r.pixCopiaECola = "";
       r.pixChargedAmount = 0;
       r.mpInitPoint = null;
@@ -37877,8 +38068,9 @@ function ensureReservationCompositeTotal(r) {
 
 function enrichReservationPayments(r) {
   if (!r || !Array.isArray(r.payments)) return [];
+  const isFaturadoEnrich = isFaturadoBoletoReservation(r);
   const needsPixE2E = Boolean(r.pixEndToEndId) && !r.payments.some(p => p && p.endToEndId && p.endToEndId === r.pixEndToEndId);
-  const needsPixTxId = Boolean(r.pixTxId) && !r.payments.some(p => p && p.txId && p.txId === r.pixTxId);
+  const needsPixTxId = Boolean(r.pixTxId) && !(isFaturadoEnrich && !r.pixEndToEndId) && !r.payments.some(p => p && p.txId && p.txId === r.pixTxId);
   const needsMpId = Boolean(r.mpPaymentId) && !r.payments.some(p => p && p.mpPaymentId && p.mpPaymentId === r.mpPaymentId);
 
   let targetPixIndex = -1;
@@ -37948,6 +38140,9 @@ function enrichReservationPayments(r) {
       delete enriched.pixEndToEndId;
       delete enriched.pixTxId;
       delete enriched.mpPaymentId;
+    } else if (isFaturadoEnrich && !r.pixEndToEndId) {
+      delete enriched.txId;
+      delete enriched.pixTxId;
     } else {
       if (isPix && idx === targetPixIndex) {
         if (!enriched.endToEndId && needsPixE2E) {
@@ -38082,6 +38277,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const chanLower = String(r.channel || "").toLowerCase();
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
   const isB2b = isB2bReservation(r);
+  const isFaturadoPortal = isFaturadoBoletoReservation(r);
   const isUnpaidPre = isUnverifiedPreReservation(r) || isExpiredPreRes;
   const hasPartialPendingBalance = Boolean(
     !isB2b &&
@@ -38089,14 +38285,18 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     Number(r.paidAmount || 0) > 0 &&
     Number(r.paidAmount || 0) < Number(r.totalAmount || 0) - 0.01
   );
-  let isPaid = !isCancelledRes && !isExpiredPreRes && !isUnpaidPre && !hasPartialPendingBalance && (isOta || Boolean(
-    r.paymentStatus === "pago_total" ||
-    r.paymentStatus === "pago" ||
-    (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
+  let isPaid = !isCancelledRes && !isExpiredPreRes && !isUnpaidPre && !hasPartialPendingBalance && (isOta || (
+    isFaturadoPortal
+      ? (hasRealSettlementForFaturadoBoleto(r, db) && Boolean(r.paymentStatus === "pago_total" || r.paymentStatus === "pago"))
+      : Boolean(
+          r.paymentStatus === "pago_total" ||
+          r.paymentStatus === "pago" ||
+          (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
+        )
   ));
 
-  // Se a reserva ainda não consta como paga e NÃO está cancelada nem expirada (e não é B2B com cartão virtual/faturado), verifica ativamente no Mercado Pago / Extrato do Banco Inter
-  if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && Number(r.totalAmount) > 0) {
+  // Se a reserva ainda não consta como paga e NÃO está cancelada nem expirada (e não é B2B nem Boleto Faturado a prazo), verifica ativamente no Mercado Pago / Extrato do Banco Inter
+  if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && !isFaturadoPortal && Number(r.totalAmount) > 0) {
     const prefersCard = Boolean(
       req.query?.payment === "success" ||
       /cart[aã]o|card|credito|crédito|debito|débito|mercadopago/i.test(String(r.paymentMethod || ""))
@@ -38219,12 +38419,12 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     saveDatabase();
   }
 
-  // Reservas B2B e reservas já confirmadas com extensão parcial liberam check-in digital e senha da porta normalmente
-  const isPortalUnlocked = Boolean(!isCancelledRes && !isExpiredPreRes && (isPaid || isB2b || (hasPartialPendingBalance && !isUnpaidPre)));
+  // Reservas B2B, Boleto Faturado a prazo e reservas já confirmadas com extensão parcial liberam check-in digital e senha da porta normalmente
+  const isPortalUnlocked = Boolean(!isCancelledRes && !isExpiredPreRes && (isPaid || isB2b || isFaturadoPortal || (hasPartialPendingBalance && !isUnpaidPre)));
   canDoEarlyCheckin = Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && hasEarlyCheckinBenefit);
 
-  // Se pendente com saldo a pagar e sem chave PIX ou com PIX de valor divergente (ex.: após alterar diárias), regenera cobrança PIX atualizada
-  if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && pendingAmount > 0 && (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmount))) {
+  // Se pendente com saldo a pagar e sem chave PIX ou com PIX de valor divergente (ex.: após alterar diárias), regenera cobrança PIX atualizada (exceto B2B e Boleto Faturado)
+  if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && !isFaturadoPortal && pendingAmount > 0 && (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmount))) {
     try {
       const cleanTxId = String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
       const staticPayload = generateStaticPixPayload({
@@ -38325,11 +38525,14 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       cardPendingAmount: hideFinancialForGuest ? 0 : cardPendingAmount,
       pixDiscountPercent: 5,
       isPaid: isB2b ? true : isPaid,
-      paymentStatus: isPaid ? "pago_total" : (r.paymentStatus || "pendente"),
-      paymentMethod: (r.mpPaymentId && !r.pixEndToEndId) ? (r.paymentMethod && r.paymentMethod !== "pix" ? r.paymentMethod : "cartao_credito") : (r.paymentMethod || (r.mpPaymentId ? "cartao_credito" : "pix")),
-      paidAt: r.paidAt || null,
-      pixTxId: (isSettledByCard || hideFinancialForGuest || isExpiredPreRes) ? null : (r.pixTxId || null),
-      pixCopiaECola: (hideFinancialForGuest || isExpiredPreRes) ? null : (r.pixCopiaECola || null),
+      isFaturadoBoleto: isFaturadoPortal,
+      paymentStatus: isPaid ? "pago_total" : (isFaturadoPortal ? "pendente" : (r.paymentStatus || "pendente")),
+      paymentMethod: isFaturadoPortal
+        ? (normalizePaymentMethodId(r.paymentMethod) || "boleto_faturado")
+        : ((r.mpPaymentId && !r.pixEndToEndId) ? (r.paymentMethod && r.paymentMethod !== "pix" ? r.paymentMethod : "cartao_credito") : (r.paymentMethod || (r.mpPaymentId ? "cartao_credito" : "pix"))),
+      paidAt: isPaid ? (r.paidAt || null) : null,
+      pixTxId: (isSettledByCard || (isFaturadoPortal && !r.pixEndToEndId) || hideFinancialForGuest || isExpiredPreRes) ? null : (r.pixTxId || null),
+      pixCopiaECola: ((isFaturadoPortal && !r.pixEndToEndId) || hideFinancialForGuest || isExpiredPreRes) ? null : (r.pixCopiaECola || null),
       pixEndToEndId: hideFinancialForGuest ? null : (r.pixEndToEndId || null),
       mpPaymentId: hideFinancialForGuest ? null : (r.mpPaymentId || null),
       mpPreferenceId: (hideFinancialForGuest || isExpiredPreRes) ? null : (r.mpPreferenceId || null),
@@ -67700,6 +67903,29 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
 
     const chanLower = String(r.channel || "").toLowerCase();
     const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+    const isFaturadoStatusCheck = isFaturadoBoletoReservation(r);
+    if (isFaturadoStatusCheck && !hasRealSettlementForFaturadoBoleto(r, db)) {
+      if (!r.pixEndToEndId && (r.pixTxId || r.pixCopiaECola)) {
+        r.pixTxId = null;
+        r.pixCopiaECola = "";
+        r.pixChargedAmount = 0;
+        saveDatabase();
+      }
+      return res.json({
+        code: r.code,
+        paid: false,
+        isFaturadoBoleto: true,
+        paymentStatus: "pendente",
+        paymentMethod: normalizePaymentMethodId(r.paymentMethod) || "boleto_faturado",
+        paidAt: null,
+        paidAmount: 0,
+        totalAmount: r.totalAmount || 0,
+        pixTxId: null,
+        pixCopiaECola: null,
+        mpInitPoint: null,
+        mpPreferenceId: null
+      });
+    }
     const hasPendingDirectBalance = (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || r.paymentStatus === "pendente") &&
       Number(r.totalAmount) > 0 &&
       Number(r.paidAmount || 0) + 0.01 < Number(r.totalAmount);
@@ -68516,12 +68742,25 @@ app.get("/api/finance/payments", (req, res) => {
       if (r.status === "cancelada" || r.status === "cancelado") continue;
 
       const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || { id: r.flatId, number: r.flatNumber || "113" };
-      const grossAmount = Number(r.paidAmount || r.totalAmount || 0);
-      const isPaid = r.paymentStatus === "pago_total" || r.paymentStatus === "pago";
+      const isFaturado = isFaturadoBoletoReservation(r);
+      const hasPaidBoletoForRes = isFaturado && (db.boletos || []).some(b =>
+        b &&
+        b.status === "pago" &&
+        ((b.reservationId && Number(b.reservationId) === Number(r.id)) ||
+         (r.code && b.reservationCode === r.code))
+      );
+      const isPaid = isFaturado
+        ? Boolean(hasPaidBoletoForRes || (hasRealSettlementForFaturadoBoleto(r, db) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago")))
+        : (r.paymentStatus === "pago_total" || r.paymentStatus === "pago");
+      const grossAmount = isPaid
+        ? Number(r.paidAmount || r.totalAmount || 0)
+        : Number(r.totalAmount || r.paidAmount || 0);
 
       // Determinar método de pagamento priorizando mpPaymentId sobre pixTxId pré-gerado
-      let paymentMethod = r.paymentMethod;
-      if (!paymentMethod || (paymentMethod === "pix" && r.mpPaymentId && !r.pixEndToEndId)) {
+      let paymentMethod = normalizePaymentMethodId(r.paymentMethod);
+      if (isFaturado && (!paymentMethod || paymentMethod === "pix")) {
+        paymentMethod = (r.channel === "b2b" || r.b2bReservationNumber) ? "faturado_b2b" : "boleto_faturado";
+      } else if (!paymentMethod || (paymentMethod === "pix" && r.mpPaymentId && !r.pixEndToEndId)) {
         if (r.mpPaymentId && !r.pixEndToEndId) paymentMethod = "cartao_credito";
         else if (r.pixEndToEndId || r.pixTxId) paymentMethod = "pix";
         else if (r.channel === "b2b" || r.b2bReservationNumber) {
@@ -68568,7 +68807,8 @@ app.get("/api/finance/payments", (req, res) => {
       const totalDeductions = gatewayFeeAmount + channelCommissionAmount;
       const netAmount = Number((grossAmount - totalDeductions).toFixed(2));
 
-      const paymentDate = r.paidAt || (isPaid ? r.createdAt : null) || r.checkinDate;
+      const resolvedPaidAt = isPaid ? (r.paidAt || r.createdAt || null) : null;
+      const paymentDate = resolvedPaidAt || r.createdAt || r.checkinDate;
 
       allPayments.push({
         id: `res-${r.id || r.code}`,
@@ -68590,7 +68830,8 @@ app.get("/api/finance/payments", (req, res) => {
         checkoutDate: r.checkoutDate,
         channel: resChannel,
         paymentMethod,
-        paymentStatus: r.paymentStatus || (isPaid ? "pago_total" : "pendente"),
+        isFaturadoBoleto: isFaturado,
+        paymentStatus: isPaid ? "pago_total" : "pendente",
         isPaid,
         grossAmount,
         gatewayFeePct,
@@ -68601,9 +68842,9 @@ app.get("/api/finance/payments", (req, res) => {
         commission: channelCommissionAmount,
         totalDeductions,
         netAmount,
-        paidAt: r.paidAt || (isPaid ? r.createdAt : null),
+        paidAt: resolvedPaidAt,
         date: paymentDate ? paymentDate.substring(0, 10) : "",
-        pixTxId: isCardSettled ? null : (r.pixTxId || null),
+        pixTxId: (isCardSettled || (isFaturado && !r.pixEndToEndId)) ? null : (r.pixTxId || null),
         pixEndToEndId: r.pixEndToEndId || null,
         mpPaymentId: r.mpPaymentId || null,
         notes: r.notes || "",
@@ -68614,9 +68855,14 @@ app.get("/api/finance/payments", (req, res) => {
 
     // 2. Processar Contas a Receber Adicionais (Long-Stay, Day-Use, Serviços)
     for (const rec of (db.accountsReceivable || [])) {
+      if (rec.status === "cancelado") continue;
+      // Evita duplicar no extrato geral boletos de hospedagem já representados pela própria Reserva do PMS
+      if (rec.boletoId && (rec.reservationId || rec.reservationCode) && rec.category === "hospedagem_faturada") {
+        continue;
+      }
       const grossAmount = Number(rec.amount || 0);
       const isPaid = rec.status === "recebido" || rec.status === "pago";
-      let paymentMethod = rec.paymentMethod || "pix";
+      let paymentMethod = normalizePaymentMethodId(rec.paymentMethod) || "pix";
       const pmConfig = paymentMethodsList.find(m => m.id === paymentMethod || (paymentMethod.includes("cartao") && m.id === "cartao_credito") || (paymentMethod.includes("pix") && m.id === "pix"));
       let gatewayFeePct = pmConfig ? Number(pmConfig.gatewayFeeRate || 0) : (paymentMethod === "cartao_credito" ? Number(feeConfig.mpCreditSpotRate || 3.99) : Number(feeConfig.pixInterRate || 0));
       let gatewayFeeFixed = pmConfig ? Number(pmConfig.gatewayFeeFixed || 0) : 0;
@@ -70104,6 +70350,17 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
   // Salvar configurações atualizadas na Reserva e no CRM se aplicável
   if (r) {
     r.isFaturadoBoleto = true;
+    if (!r.paymentMethod || r.paymentMethod === "pix") {
+      const isB2bBoletoEmit = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
+      r.paymentMethod = isB2bBoletoEmit ? "faturado_b2b" : "boleto_faturado";
+    } else {
+      r.paymentMethod = normalizePaymentMethodId(r.paymentMethod) || r.paymentMethod;
+    }
+    if (!r.pixEndToEndId) {
+      r.pixTxId = null;
+      r.pixCopiaECola = "";
+      r.pixChargedAmount = 0;
+    }
     r.boletoTermDays = mainTermDays;
     r.boletoCustomDueDate = explicitDueDate || null;
     r.boletoConsumptionMode = consumptionMode;

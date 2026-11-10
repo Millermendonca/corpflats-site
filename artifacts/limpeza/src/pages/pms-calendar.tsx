@@ -3913,10 +3913,29 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
     const chan = resItem.channel || "whatsapp"
     const isOtaRes = (chan === "booking" || chan === "airbnb")
-    const isGatewayPaid = Boolean(resItem.pixEndToEndId || resItem.mpPaymentId || resItem.paidAt);
+    const rawResPmLower = String(resItem.paymentMethod || "").trim().toLowerCase()
+    const isFatResEarly = Boolean(
+      resItem.isFaturadoBoleto ||
+      rawResPmLower === "boleto" ||
+      rawResPmLower === "boleto_faturado" ||
+      rawResPmLower === "faturado_boleto" ||
+      rawResPmLower === "faturado_pj" ||
+      rawResPmLower === "faturado_b2b" ||
+      resItem.b2bPaymentType === "FATURADO"
+    )
+    const hasNonSyntheticFaturadoPay = isFatResEarly && Array.isArray(resItem.payments) && resItem.payments.some((p: any) =>
+      p && Number(p.amount) > 0 && (
+        p.endToEndId ||
+        p.mpPaymentId ||
+        String(p.id || "").startsWith("pay_bol_") ||
+        !/^(pagamento integral|pagamento inicial|complemento de quita[cç][aã]o)$/i.test(String(p.notes || "").trim())
+      )
+    )
+    const isGatewayPaid = Boolean(resItem.pixEndToEndId || resItem.mpPaymentId || (!isFatResEarly && resItem.paidAt));
     // Regra: Pré-Reserva (canal direto) sem comprovação real de PIX/cartão nunca é considerada paga,
-    // mesmo que o banco tenha um paymentStatus inconsistente (ex.: pagamento integral pré-preenchido)
-    const isUnpaidPreReserva = resItem.status === "pre_reserva" && !isOtaRes && !isGatewayPaid;
+    // e Reserva de Boleto Faturado sem boleto liquidado/comprovante real permanece Pendente (a faturar)
+    const isUnpaidPreReserva = (resItem.status === "pre_reserva" && !isOtaRes && !isGatewayPaid) ||
+      (isFatResEarly && !isGatewayPaid && !hasNonSyntheticFaturadoPay);
     const hasOtaPartialExtension = isOtaRes && (
       resItem.paymentStatus === "sinal_pago" ||
       resItem.paymentStatus === "parcial" ||
@@ -3932,8 +3951,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
 
     setFormChannel(chan);
-    let resolvedMethod = resItem.paymentMethod;
-    if (!resolvedMethod) {
+    let resolvedMethod = rawResPmLower === "boleto_faturado" || rawResPmLower === "faturado_boleto"
+      ? "boleto_faturado"
+      : resItem.paymentMethod;
+    if (isFatResEarly && (!resolvedMethod || resolvedMethod === "pix")) {
+      resolvedMethod = chan === "b2b" ? "faturado_b2b" : "boleto_faturado";
+    } else if (!resolvedMethod) {
       if (chan === "booking") resolvedMethod = "booking";
       else if (chan === "airbnb") resolvedMethod = "airbnb";
       else if (chan === "b2b") resolvedMethod = resItem.b2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b";
@@ -5032,6 +5055,15 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     const isBooking = targetChannel === "booking";
     const isB2b = targetChannel === "b2b";
     const resolvedMethod = targetMethod || (isBooking ? "booking" : (targetChannel === "airbnb" ? "airbnb" : (isB2b ? (formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b") : formPaymentMethod)));
+    const rmLower = String(resolvedMethod || "").toLowerCase();
+    const isFaturadoSync = Boolean(
+      formIsFaturadoBoleto ||
+      rmLower === "boleto_faturado" ||
+      rmLower === "faturado_boleto" ||
+      rmLower === "boleto" ||
+      rmLower === "faturado_pj" ||
+      rmLower === "faturado_b2b"
+    );
 
     if (isBooking) {
       setFormPaymentMethod("booking");
@@ -5039,9 +5071,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     } else if (targetChannel === "airbnb") {
       setFormPaymentMethod("airbnb");
       setFormPaymentStatus("pago_total");
-    } else if (isB2b) {
-      setFormPaymentMethod(resolvedMethod);
-      if (formPayments.length === 0) {
+    } else if (isB2b || isFaturadoSync) {
+      setFormPaymentMethod(isFaturadoSync && !isB2b ? "boleto_faturado" : resolvedMethod);
+      const nonSyntheticPays = formPayments.filter(p =>
+        p && !(isFaturadoSync && /^(pagamento integral|pagamento inicial)$/i.test(String(p.notes || "").trim()))
+      );
+      if (nonSyntheticPays.length === 0) {
+        if (formPayments.length > 0) setFormPayments([]);
         setFormPaidAmount("0");
         setFormPaymentStatus("pendente");
         return newTot;
@@ -5269,6 +5305,20 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
   const handleSelectConfirmada = () => {
     setFormStatus("confirmada")
+    const pmLower = String(formPaymentMethod || "").toLowerCase()
+    const isFaturadoMode = Boolean(
+      formIsFaturadoBoleto ||
+      formChannel === "b2b" ||
+      pmLower === "boleto_faturado" ||
+      pmLower === "faturado_boleto" ||
+      pmLower === "boleto" ||
+      pmLower === "faturado_pj" ||
+      pmLower === "faturado_b2b"
+    )
+    if (isFaturadoMode) {
+      // Reserva faturada no boleto / B2B pode ser confirmada sem pagamento antecipado (permanece a faturar / pendente)
+      return
+    }
     const curPaid = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
     if (curPaid > 0) return // mantém sinal/quitação já lançados
     const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
@@ -5505,12 +5555,20 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         : (rawFormTot > 0 ? rawFormTot : calcTot)
       const isOta = formChannel === "booking" || formChannel === "airbnb"
       const isB2b = formChannel === "b2b" || formRequesterType === "agency_b2b"
-      const sumPaidFromList = formPayments.length > 0
-        ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
-        : (Number(formPaidAmount) || 0)
+      const cleanedFormPayments = formIsFaturadoBoleto && !selectedRes?.pixEndToEndId && !selectedRes?.mpPaymentId
+        ? formPayments.filter(p =>
+            p && (
+              String(p.id || "").startsWith("pay_bol_") ||
+              !/^(pagamento integral|pagamento inicial|complemento de quita[cç][aã]o)$/i.test(String(p.notes || "").trim())
+            )
+          )
+        : formPayments
+      const sumPaidFromList = cleanedFormPayments.length > 0
+        ? cleanedFormPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+        : (formIsFaturadoBoleto ? 0 : (Number(formPaidAmount) || 0))
       let resolvedPaidAmount = sumPaidFromList
-      let resolvedMethod = formPaymentMethod
-      let normalizedPayments = formPayments
+      let resolvedMethod = formIsFaturadoBoleto ? "boleto_faturado" : formPaymentMethod
+      let normalizedPayments = cleanedFormPayments
       let resolvedPaymentStatus = "pendente"
 
       const hasOtaPartialExtensionInForm = isOta && Boolean(
@@ -9530,6 +9588,16 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               setFormRequesterEmail(c.email || c.financialEmail || c.emailFinanceiro);
                             }
                             setFormIsFaturadoBoleto(true);
+                            setFormPaymentMethod("boleto_faturado");
+                            setFormAutoInvoice(true);
+                            const nonAutoCompanyPays = formPayments.filter(p =>
+                              p && (String(p.id || "").startsWith("pay_bol_") || !/^(pagamento integral|pagamento inicial)$/i.test(String(p.notes || "").trim()))
+                            );
+                            if (nonAutoCompanyPays.length === 0) {
+                              setFormPayments([]);
+                              setFormPaidAmount("0");
+                              setFormPaymentStatus("pendente");
+                            }
                             setFormBoletoPayerType("company");
                             if (c.defaultBoletoTermDays || c.billingTerms) {
                               const parsedDays = Number(c.defaultBoletoTermDays) || parseInt(String(c.billingTerms || "").replace(/\D/g, ""), 10) || 15;
@@ -11546,6 +11614,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                             <Badge className="bg-amber-600 text-white px-2.5 py-1 text-xs font-bold flex items-center gap-1 shadow-xs">
                               <span>⚡ Sinal Pago</span>
                             </Badge>
+                          ) : formIsFaturadoBoleto ? (
+                            <Badge className="bg-amber-600 text-white px-2.5 py-1 text-xs font-bold flex items-center gap-1 shadow-xs">
+                              <span>🏦 A Faturar (Boleto a Prazo)</span>
+                            </Badge>
                           ) : (
                             <Badge className="bg-rose-500 text-white px-2.5 py-1 text-xs font-bold flex items-center gap-1 shadow-xs">
                               <span>⏳ Pagamento Pendente</span>
@@ -11653,6 +11725,19 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               setFormPaymentMethod("boleto_faturado");
                               setFormAutoInvoice(true);
                               if (formStatus === "pre_reserva") setFormStatus("confirmada");
+                              const realPays = formPayments.filter(p =>
+                                p && (String(p.id || "").startsWith("pay_bol_") || !/^(pagamento integral|pagamento inicial|complemento de quita[cç][aã]o)$/i.test(String(p.notes || "").trim()))
+                              );
+                              if (realPays.length === 0) {
+                                setFormPayments([]);
+                                setFormPaidAmount("0");
+                                setFormPaymentStatus("pendente");
+                              } else if (realPays.length !== formPayments.length) {
+                                const realSum = realPays.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+                                setFormPayments(realPays);
+                                setFormPaidAmount(String(realSum));
+                                setFormPaymentStatus(realSum > 0 ? "sinal_pago" : "pendente");
+                              }
                             }
                           }}
                           className={`h-8 px-3 text-xs font-bold rounded-xl cursor-pointer ${

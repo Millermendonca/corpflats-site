@@ -1001,6 +1001,14 @@ export default function GuestPortal() {
   const isB2b = Boolean(channelLower === "b2b" || channelLower.includes("b2b") || reservation?.agencyId || reservation?.b2bReservationNumber || reservation?.b2bLocatorRloc)
   const isOta = channelLower.includes("booking") || channelLower.includes("airbnb") || isB2b
   const rawPayMethod = String(reservation?.paymentMethod || "").toLowerCase()
+  const isFaturadoBoleto = Boolean(
+    reservation?.isFaturadoBoleto ||
+    rawPayMethod === "boleto_faturado" ||
+    rawPayMethod === "faturado_boleto" ||
+    rawPayMethod === "boleto" ||
+    rawPayMethod === "faturado_pj" ||
+    rawPayMethod === "faturado_b2b"
+  )
   const isCardPayment = Boolean(
     rawPayMethod.includes("cartao") ||
     rawPayMethod.includes("cartão") ||
@@ -1195,7 +1203,7 @@ export default function GuestPortal() {
 
   // Polling automático de status de pagamento a cada 6 segundos quando pendente
   useEffect(() => {
-    if (!reservation?.code || isPaid || isCancelled || isExpiredPreReservation) return
+    if (!reservation?.code || isPaid || isFaturadoBoleto || isCancelled || isExpiredPreReservation) return
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
@@ -2312,6 +2320,11 @@ export default function GuestPortal() {
                     ✓ <span className="hidden sm:inline">{hideFinancialForGuest ? "Reserva Confirmada" : (isOta ? (channelLower.includes("booking") ? "Pago via Booking" : "Pago via Airbnb") : "Reserva Confirmada & Paga")}</span>
                     <span className="sm:hidden">Pago</span>
                   </Badge>
+                ) : isFaturadoBoleto ? (
+                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
+                    ✓ <span className="hidden sm:inline">Reserva Confirmada • Faturada</span>
+                    <span className="sm:hidden">Confirmada</span>
+                  </Badge>
                 ) : (
                   <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 animate-pulse shrink-0 whitespace-nowrap">
                     ⏳ <span className="hidden sm:inline">Aguardando Pagamento</span>
@@ -3355,33 +3368,48 @@ export default function GuestPortal() {
           </Card>
         ) : (
         <Card className={`rounded-3xl border shadow-md p-5 sm:p-7 space-y-4 transition-all ${
-          isPaid 
+          (isPaid || isFaturadoBoleto)
             ? "bg-gradient-to-br from-emerald-50/90 via-white to-emerald-50/40 border-emerald-200/90" 
             : "bg-white border-amber-300 shadow-lg ring-1 ring-amber-300/60"
         }`}>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
               <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shadow-2xs shrink-0 ${
-                isPaid ? "bg-emerald-100 text-emerald-700 border border-emerald-300" : "bg-amber-100 text-amber-800 border border-amber-300"
+                (isPaid || isFaturadoBoleto) ? "bg-emerald-100 text-emerald-700 border border-emerald-300" : "bg-amber-100 text-amber-800 border border-amber-300"
               }`}>
-                {isPaid ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <Clock className="w-5 h-5 text-amber-600" />}
+                {(isPaid || isFaturadoBoleto) ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <Clock className="w-5 h-5 text-amber-600" />}
               </div>
               <div>
                 <h2 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
-                  {hideFinancialForGuest ? (isPaid ? "Reserva Confirmada & Garantida" : "Reserva Gerenciada pelo Solicitante") : (isPaid ? "Pagamento Confirmado & Liquidado" : "Concluir Pagamento da Reserva")}
+                  {hideFinancialForGuest
+                    ? ((isPaid || isFaturadoBoleto) ? "Reserva Confirmada & Garantida" : "Reserva Gerenciada pelo Solicitante")
+                    : (isPaid ? "Pagamento Confirmado & Liquidado" : (isFaturadoBoleto ? "Reserva Confirmada • Boleto Faturado" : "Concluir Pagamento da Reserva"))}
                 </h2>
                 <span className="text-xs text-slate-500">
-                  {isPaid 
+                  {(isPaid || isFaturadoBoleto)
                     ? "Sua hospedagem está 100% garantida e o acesso ao condomínio liberado." 
                     : "Escolha como deseja pagar para confirmar e garantir a sua estadia."}
                 </span>
               </div>
             </div>
 
-            <Badge className={isPaid ? "bg-emerald-600 text-white font-bold text-xs" : "bg-amber-600 text-white font-bold text-xs"}>
-              {hideFinancialForGuest ? (isPaid ? "✓ Confirmada" : "⏳ Em Confirmação") : (isPaid ? "✓ Pago" : "⏳ Aguardando Pagamento")}
+            <Badge className={isPaid ? "bg-emerald-600 text-white font-bold text-xs" : (isFaturadoBoleto ? "bg-indigo-600 text-white font-bold text-xs" : "bg-amber-600 text-white font-bold text-xs")}>
+              {hideFinancialForGuest
+                ? ((isPaid || isFaturadoBoleto) ? "✓ Confirmada" : "⏳ Em Confirmação")
+                : (isPaid ? "✓ Pago" : (isFaturadoBoleto ? "🏦 Faturado a Prazo" : "⏳ Aguardando Pagamento"))}
             </Badge>
           </div>
+
+          {!isPaid && isFaturadoBoleto && !hideFinancialForGuest && (
+            <div className="p-4 bg-indigo-50/70 rounded-2xl border border-indigo-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-indigo-950">
+              <div>
+                <span className="font-bold block text-sm">Hospedagem Confirmada • Faturamento via Boleto Banco Inter</span>
+                <span className="text-indigo-800 text-xs">
+                  O pagamento desta reserva ({hasAmount ? `R$ ${totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "a faturar"}) está programado para faturamento via boleto bancário conforme condições acordadas.
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Se PAGO mas SEM VALOR PREENCHIDO: Mostra somente "Pago" */}
           {isPaid && !hasAmount && (
@@ -3522,8 +3550,8 @@ export default function GuestPortal() {
             </div>
           )}
 
-          {/* Se NÃO PAGO: Permanece com Resumo Financeiro Completo para Pagamento */}
-          {!isPaid && !hideFinancialForGuest && (
+          {/* Se NÃO PAGO (exceto Boleto Faturado): Permanece com Resumo Financeiro Completo para Pagamento */}
+          {!isPaid && !isFaturadoBoleto && !hideFinancialForGuest && (
             <div className={`grid grid-cols-1 ${paidAmount > 0 ? "sm:grid-cols-3" : "sm:grid-cols-2"} gap-2.5 text-xs`}>
               <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
                 <span className="text-slate-500 font-bold uppercase text-[10px] block">Valor no Cartão de Crédito</span>
@@ -3555,8 +3583,8 @@ export default function GuestPortal() {
             </div>
           )}
 
-          {/* Se NÃO PAGO: Seletor de Método e Instruções */}
-          {!isPaid && !hideFinancialForGuest && (
+          {/* Se NÃO PAGO (exceto Boleto Faturado): Seletor de Método e Instruções */}
+          {!isPaid && !isFaturadoBoleto && !hideFinancialForGuest && (
             <div className="space-y-4 pt-2">
               {reservation.status === "pre_reserva" && reservation.expiresAt && (
                 <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-xs text-amber-950 flex items-start gap-2.5">
@@ -3833,7 +3861,7 @@ export default function GuestPortal() {
                 </div>
               </div>
 
-              {Boolean(accessCode && isPaid && ((data.isCheckinToday && (isPastOrExact14h || isFlatClean)) || reservation.status === "in_house" || reservation.status === "checkin")) && (
+              {Boolean(accessCode && (isPaid || isB2b || isFaturadoBoleto) && ((data.isCheckinToday && (isPastOrExact14h || isFlatClean)) || reservation.status === "in_house" || reservation.status === "checkin")) && (
                 <div className="p-3 bg-white rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">

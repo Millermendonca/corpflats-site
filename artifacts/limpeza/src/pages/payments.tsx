@@ -732,7 +732,11 @@ export default function Payments() {
                             {/* Status */}
                             <td className="p-3 text-center whitespace-nowrap">
                               <Badge className={p.isPaid ? "bg-emerald-600 text-white font-bold text-[10px]" : "bg-amber-600 text-white font-bold text-[10px]"}>
-                                {p.isPaid ? "✓ Pago" : "Pendente"}
+                                {p.isPaid
+                                  ? "✓ Pago"
+                                  : ((p.isFaturadoBoleto || ["boleto_faturado", "faturado_boleto", "boleto", "faturado_pj", "faturado_b2b"].includes(String(p.paymentMethod || "").toLowerCase()))
+                                      ? "⏳ A Faturar / Boleto"
+                                      : "Pendente")}
                               </Badge>
                             </td>
 
@@ -746,7 +750,7 @@ export default function Payments() {
                                   className="h-7 px-2 text-xs font-semibold text-primary hover:text-primary/90"
                                 >
                                   <Eye className="w-3.5 h-3.5 mr-1" />
-                                  <span>Ver Recibo</span>
+                                  <span>{p.isPaid ? "Ver Recibo" : "Ver Detalhes"}</span>
                                 </Button>
 
                                 {!p.isPaid && p.pixTxId && (
@@ -1296,26 +1300,47 @@ export default function Payments() {
         <DialogContent className="sm:max-w-lg bg-card text-foreground border-border">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base font-bold">
-              <ShieldCheck className="w-5 h-5 text-emerald-600" />
-              <span>Comprovante de Liquidação Bancária</span>
+              {selectedPayment?.isPaid ? (
+                <>
+                  <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                  <span>Comprovante de Liquidação Bancária</span>
+                </>
+              ) : (
+                <>
+                  <Building2 className="w-5 h-5 text-amber-600" />
+                  <span>Demonstrativo de Cobrança / Faturamento</span>
+                </>
+              )}
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Registro auditável de pagamento recebido pela CorpFlats Hospedagens.
+              {selectedPayment?.isPaid
+                ? "Registro auditável de pagamento recebido pela CorpFlats Hospedagens."
+                : "Título pendente de liquidação / faturamento a prazo (não liquidado)."}
             </DialogDescription>
           </DialogHeader>
 
           {selectedPayment && (
             <div className="space-y-4 text-xs py-2">
-              {/* Header do Recibo */}
-              <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex items-center justify-between">
+              {/* Header do Recibo / Cobrança */}
+              <div className={`p-3.5 rounded-2xl flex items-center justify-between border ${
+                selectedPayment.isPaid
+                  ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800"
+                  : "bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800"
+              }`}>
                 <div>
-                  <span className="text-[10px] text-emerald-800 dark:text-emerald-400 font-bold uppercase block">Valor Liquidado</span>
-                  <span className="text-2xl font-black text-emerald-700 dark:text-emerald-300">
+                  <span className={`text-[10px] font-bold uppercase block ${
+                    selectedPayment.isPaid ? "text-emerald-800 dark:text-emerald-400" : "text-amber-800 dark:text-amber-400"
+                  }`}>
+                    {selectedPayment.isPaid ? "Valor Liquidado" : "Valor a Receber (Em Aberto)"}
+                  </span>
+                  <span className={`text-2xl font-black ${
+                    selectedPayment.isPaid ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"
+                  }`}>
                     R$ {selectedPayment.grossAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </span>
                 </div>
                 <Badge className={selectedPayment.isPaid ? "bg-emerald-600 text-white font-bold" : "bg-amber-600 text-white font-bold"}>
-                  {selectedPayment.isPaid ? "✓ Pago Integralmente" : "Pendente"}
+                  {selectedPayment.isPaid ? "✓ Pago Integralmente" : "⏳ Aguardando Liquidação"}
                 </Badge>
               </div>
 
@@ -1418,7 +1443,10 @@ export default function Payments() {
                   </div>
                 )}
 
-                {selectedPayment.pixTxId && !selectedPayment.mpPaymentId && !String(selectedPayment.paymentMethod || "").toLowerCase().includes("cartao") && (
+                {selectedPayment.pixTxId &&
+                  !selectedPayment.mpPaymentId &&
+                  !String(selectedPayment.paymentMethod || "").toLowerCase().includes("cartao") &&
+                  !(["boleto_faturado", "faturado_boleto", "boleto", "faturado_pj", "faturado_b2b"].includes(String(selectedPayment.paymentMethod || "").toLowerCase()) && !selectedPayment.pixEndToEndId) && (
                   <div className="space-y-1 pt-1 border-b border-border/40 pb-1.5">
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground font-medium">Identificador TxId (Banco Inter):</span>
@@ -1458,7 +1486,7 @@ export default function Payments() {
                   <span>- R$ {selectedPayment.channelCommissionAmount.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between pt-1 border-t border-border/40 font-bold text-emerald-600 dark:text-emerald-400 text-xs">
-                  <span>Valor Líquido Creditado:</span>
+                  <span>{selectedPayment.isPaid ? "Valor Líquido Creditado:" : "Valor Líquido Previsto:"}</span>
                   <span>R$ {selectedPayment.netAmount.toFixed(2)}</span>
                 </div>
               </div>
