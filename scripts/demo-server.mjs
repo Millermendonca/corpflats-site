@@ -36940,8 +36940,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const totalAmt = Number(r.totalAmount) || 0;
     const paidAmt = Number(r.paidAmount) || 0;
     const pendingAmt = Math.max(0, Math.round((totalAmt - paidAmt) * 100) / 100);
-    const hadCheckoutExtension = (req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout);
-    const hadPendingIncrease = !isB2bChannel && pendingAmt > 0 && (
+    const hadCheckoutExtension = Boolean(req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout);
+    const hadCheckoutExtensionWithPending = Boolean(hadCheckoutExtension && !isB2bChannel && pendingAmt > 0.01);
+    const hadPendingIncrease = !isB2bChannel && pendingAmt > 0.01 && (
       r.paymentStatus === "pendente" ||
       r.paymentStatus === "parcial" ||
       r.paymentStatus === "sinal_pago" ||
@@ -37045,8 +37046,27 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
         console.warn(`[WhatsApp Catch-Up] Erro ao disparar recuperação da régua para ${r.code}:`, err.message);
       });
-    } else if ((hadCheckoutExtension || hadPendingIncrease) && !isPreReservationBlocked(r)) {
+    } else if ((hadCheckoutExtensionWithPending || hadPendingIncrease) && !isPreReservationBlocked(r)) {
       console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente identificado na reserva ${r.code}. Disparando additional_daily_pending.`);
+      r.pendingStayExtension = {
+        txid: r.pixTxId || null,
+        amount: pendingAmt,
+        extraNights: (hadCheckoutExtension && oldCheckout && r.checkoutDate)
+          ? Math.max(1, Math.round((new Date(`${r.checkoutDate}T12:00:00Z`).getTime() - new Date(`${oldCheckout}T12:00:00Z`).getTime()) / 86400000))
+          : 1,
+        oldCheckoutDate: oldCheckout || r.previousCheckoutDate || r.checkinDate,
+        newCheckoutDate: r.checkoutDate,
+        oldTotalAmount: oldTotalAmount,
+        newTotalAmount: totalAmt,
+        alreadyAppliedToReservation: true,
+        changes: guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs,
+        requestedAt: new Date().toISOString(),
+        status: "pending_payment",
+        source: "pms_admin_edit"
+      };
+      delete r.extensionPaymentConfirmationSentAt;
+      saveDatabase();
+
       const resvWithPendingChanges = {
         ...r,
         _changesContext: guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs
@@ -37082,7 +37102,28 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         });
       }
     } else if (!isPreReservationBlocked(r)) {
-      if (guestFacingDiffs.length > 0 || isDatesOrFlatChanged) {
+      const wasPendingExtensionJustPaidOnPut = Boolean(
+        oldPendingAmount > 0.01 &&
+        pendingAmt <= 0.01 &&
+        (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") &&
+        (
+          r.pendingStayExtension ||
+          hadCheckoutExtension ||
+          (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate) ||
+          (db.whatsappHistory || []).some(h => (h.reservationCode === r.code || h.reservationId === r.id) && h.triggerEvent === "additional_daily_pending")
+        )
+      );
+      if (wasPendingExtensionJustPaidOnPut) {
+        ensureExtensionPaymentConfirmationDispatched(r, {
+          valorPago: oldPendingAmount,
+          priorPaid: oldPaidAmount,
+          paymentMethod: r.paymentMethod || "pix",
+          source: "PMS Calendário (Edição Manual)",
+          baseUrl: editBaseUrl
+        }).catch(err => {
+          console.warn("[WhatsApp Trigger] Erro ao disparar confirmação de pagamento de extensão na edição:", err.message);
+        });
+      } else if (guestFacingDiffs.length > 0 || isDatesOrFlatChanged) {
         if (isDatesOrFlatChanged && r.needsReSignature) {
           const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br");
           dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
@@ -54273,6 +54314,163 @@ export async function executeNfseEmissionInternal(payload) {
       }
       resolvedCompanyId = Number(comp.id);
     }
+  } else if (cleanDoc.length === 11) {
+    if (!db.guests) db.guests = [];
+    let guestRec = matchedGuest || db.guests.find(g =>
+      g && (
+        onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc ||
+        (payload.guestId && Number(g.id) === Number(payload.guestId)) ||
+        (matchedRes?.guestId && Number(g.id) === Number(matchedRes.guestId))
+      )
+    );
+    if (!guestRec) {
+      const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+      guestRec = {
+        id: nextGuestId,
+        fullName: toTitleCase(tomadorNome),
+        name: toTitleCase(tomadorNome),
+        documentNumber: cleanDoc,
+        document: cleanDoc,
+        cpf: cleanDoc,
+        docType: "CPF",
+        email: cleanEmail || "",
+        phone: cleanTel || "",
+        address: endLogradouro || "",
+        street: endLogradouro || "",
+        logradouro: endLogradouro || "",
+        number: endNumero || "",
+        streetNumber: endNumero || "",
+        numero: endNumero || "",
+        complement: endComplemento || "",
+        complemento: endComplemento || "",
+        neighborhood: endBairro || "",
+        bairro: endBairro || "",
+        cep: endCep || "",
+        city: endCidade || "",
+        cidade: endCidade || "",
+        state: endUf || "",
+        uf: endUf || "",
+        ibgeCode: endCodMun || "",
+        codigoMunicipio: endCodMun || "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      db.guests.unshift(guestRec);
+    } else {
+      if (tomadorNome && (!guestRec.fullName || guestRec.fullName === "Hóspede")) {
+        guestRec.fullName = toTitleCase(tomadorNome);
+        guestRec.name = toTitleCase(tomadorNome);
+      }
+      guestRec.documentNumber = cleanDoc;
+      guestRec.document = cleanDoc;
+      guestRec.cpf = cleanDoc;
+      if (cleanEmail) guestRec.email = cleanEmail;
+      if (cleanTel && !isInternalOrForbiddenGuestPhone(cleanTel)) guestRec.phone = cleanTel;
+      if (hasRealPayloadOrCheckinAddr) {
+        if (endLogradouro) {
+          guestRec.address = endLogradouro;
+          guestRec.street = endLogradouro;
+          guestRec.logradouro = endLogradouro;
+        }
+        if (endNumero) {
+          guestRec.number = endNumero;
+          guestRec.streetNumber = endNumero;
+          guestRec.numero = endNumero;
+        }
+        if (endComplemento !== undefined) {
+          guestRec.complement = endComplemento;
+          guestRec.complemento = endComplemento;
+        }
+        if (endBairro) {
+          guestRec.neighborhood = endBairro;
+          guestRec.bairro = endBairro;
+        }
+        if (endCep) guestRec.cep = endCep;
+        if (endCidade) {
+          guestRec.city = endCidade;
+          guestRec.cidade = endCidade;
+        }
+        if (endUf) {
+          guestRec.state = endUf;
+          guestRec.uf = endUf;
+        }
+        if (endCodMun) {
+          guestRec.ibgeCode = endCodMun;
+          guestRec.codigoMunicipio = endCodMun;
+        }
+      }
+      guestRec.updatedAt = new Date().toISOString();
+    }
+    payload.guestId = guestRec.id;
+
+    // Propaga CPF e endereço real para a reserva atual e demais reservas do mesmo hóspede
+    const guestNormName = String(guestRec.fullName || guestRec.name || tomadorNome || "").trim().toLowerCase();
+    for (const r of (db.reservations || [])) {
+      if (!r) continue;
+      const rDoc = onlyDigits(r.guestDocument || r.document || "");
+      const isSameGuestRes =
+        (matchedRes && Number(r.id) === Number(matchedRes.id)) ||
+        (guestRec.id && Number(r.guestId) === Number(guestRec.id)) ||
+        (rDoc && rDoc === cleanDoc) ||
+        (!rDoc && guestNormName.length >= 4 && String(r.guestName || "").trim().toLowerCase() === guestNormName);
+      if (!isSameGuestRes) continue;
+      if (!r.guestId) r.guestId = guestRec.id;
+      if (!r.guestDocument) r.guestDocument = cleanDoc;
+      if (!r.document) r.document = cleanDoc;
+      if (cleanEmail && !r.guestEmail) r.guestEmail = cleanEmail;
+      if (cleanTel && !r.guestPhone && !isInternalOrForbiddenGuestPhone(cleanTel)) r.guestPhone = cleanTel;
+      if (hasRealPayloadOrCheckinAddr) {
+        if (endLogradouro) {
+          r.street = endLogradouro;
+          r.guestStreet = endLogradouro;
+          r.address = endLogradouro;
+          r.guestAddress = endLogradouro;
+        }
+        if (endNumero) {
+          r.streetNumber = endNumero;
+          r.guestStreetNumber = endNumero;
+          r.number = endNumero;
+        }
+        if (endComplemento !== undefined) {
+          r.complement = endComplemento;
+          r.guestComplement = endComplemento;
+        }
+        if (endBairro) {
+          r.neighborhood = endBairro;
+          r.guestNeighborhood = endBairro;
+        }
+        if (endCep) {
+          r.cep = endCep;
+          r.guestCep = endCep;
+        }
+        if (endCidade) {
+          r.city = endCidade;
+          r.guestCity = endCidade;
+        }
+        if (endUf) {
+          r.state = endUf;
+          r.guestState = endUf;
+        }
+        if (endCodMun) {
+          r.ibgeCode = endCodMun;
+          r.codigoMunicipio = endCodMun;
+        }
+      }
+      if (Array.isArray(r.guests) && r.guests[0]) {
+        if (!r.guests[0].cpf) r.guests[0].cpf = cleanDoc;
+        if (hasRealPayloadOrCheckinAddr) {
+          if (endLogradouro) {
+            r.guests[0].street = endLogradouro;
+            r.guests[0].address = endLogradouro;
+          }
+          if (endNumero) r.guests[0].streetNumber = endNumero;
+          if (endBairro) r.guests[0].neighborhood = endBairro;
+          if (endCep) r.guests[0].cep = endCep;
+          if (endCidade) r.guests[0].city = endCidade;
+          if (endUf) r.guests[0].state = endUf;
+        }
+      }
+    }
   }
 
   const defaultDesc = matchedRes
@@ -54523,6 +54721,249 @@ globalThis.executeNfseEmissionInternal = (payload, callerDb = null) => {
   return executeNfseEmissionInternal(payload);
 };
 globalThis.getOfficialNfseDraftForReservation = (opts) => buildOfficialNfseDraftForReservation(db, opts);
+
+// Sincronização imediata dos dados preenchidos na aba "Formulário" (/notas) direto para o cadastro do Hóspede / Empresa / Agência no CRM
+app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const cleanDoc = onlyDigits(body.tomadorCpfCnpj || "");
+    const rawName = String(body.tomadorNome || "").trim();
+    const cleanEmail = String(body.tomadorEmail || "").trim().toLowerCase();
+    const cleanTel = cleanPhone(body.tomadorTelefone || "");
+    const rawEnd = String(body.tomadorEndereco || body.tomadorStreet || "").trim();
+    const rawNum = String(body.tomadorNumero || "").trim();
+    const rawComp = String(body.tomadorComplemento || "").trim();
+    const rawBairro = String(body.tomadorBairro || "").trim();
+    const rawCep = cleanCep(body.tomadorCep || "");
+    const rawCidade = String(body.tomadorCidade || "").trim();
+    const rawUf = String(body.tomadorUf || "").trim().toUpperCase();
+    const rawIbge = onlyDigits(body.tomadorCodigoMunicipio || "");
+    const hasRealAddr = Boolean(
+      (rawEnd && !isGenericPelincaAddr(rawEnd)) ||
+      (rawCep && !isGenericPelincaCep(rawCep))
+    );
+    const mode = String(body.tomadorMode || (cleanDoc.length === 14 ? "pj" : "pf")).toLowerCase();
+
+    if (mode === "agency" || (cleanDoc.length === 14 && body.agencyId)) {
+      if (!db.agencies) db.agencies = [];
+      let ag = db.agencies.find(a =>
+        (body.agencyId && Number(a.id) === Number(body.agencyId)) ||
+        (cleanDoc.length === 14 && onlyDigits(a.cnpj) === cleanDoc)
+      );
+      if (ag) {
+        if (rawName) { ag.corporateName = rawName; ag.razaoSocial = rawName; }
+        if (cleanDoc.length === 14) ag.cnpj = cleanDoc;
+        if (cleanEmail) ag.financialEmail = cleanEmail;
+        if (cleanTel) ag.phone = cleanTel;
+        if (hasRealAddr) {
+          if (rawEnd) { ag.address = rawEnd; ag.logradouro = rawEnd; }
+          if (rawNum) ag.number = rawNum;
+          if (rawComp !== undefined) ag.complement = rawComp;
+          if (rawBairro) ag.neighborhood = rawBairro;
+          if (rawCep) ag.cep = rawCep;
+          if (rawCidade) ag.city = rawCidade;
+          if (rawUf) ag.state = rawUf;
+          if (rawIbge) ag.ibgeCode = rawIbge;
+        }
+        ag.updatedAt = new Date().toISOString();
+        saveDatabase();
+        return res.json({ success: true, entityType: "agency", entity: ag });
+      }
+    }
+
+    if (mode === "pj" || cleanDoc.length === 14) {
+      if (!db.companies) db.companies = [];
+      let comp = db.companies.find(c =>
+        (body.companyId && Number(c.id) === Number(body.companyId)) ||
+        (cleanDoc.length === 14 && onlyDigits(c.cnpj) === cleanDoc)
+      );
+      if (!comp && cleanDoc.length === 14 && rawName) {
+        const nextCompId = db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) + 1 : 1;
+        comp = {
+          id: nextCompId,
+          corporateName: toTitleCase(rawName),
+          tradeName: toTitleCase(rawName),
+          cnpj: cleanDoc,
+          financialEmail: cleanEmail,
+          phone: cleanTel,
+          address: hasRealAddr ? rawEnd : "",
+          logradouro: hasRealAddr ? rawEnd : "",
+          number: hasRealAddr ? rawNum : "",
+          complement: rawComp,
+          neighborhood: hasRealAddr ? rawBairro : "",
+          cep: hasRealAddr ? rawCep : "",
+          city: hasRealAddr ? rawCidade : "",
+          state: hasRealAddr ? rawUf : "",
+          ibgeCode: hasRealAddr ? rawIbge : "",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        db.companies.unshift(comp);
+      } else if (comp) {
+        if (rawName) comp.corporateName = toTitleCase(rawName);
+        if (cleanDoc.length === 14) comp.cnpj = cleanDoc;
+        if (cleanEmail) comp.financialEmail = cleanEmail;
+        if (cleanTel) comp.phone = cleanTel;
+        if (hasRealAddr) {
+          if (rawEnd) { comp.address = rawEnd; comp.logradouro = rawEnd; comp.street = rawEnd; }
+          if (rawNum) { comp.number = rawNum; comp.numero = rawNum; }
+          if (rawComp !== undefined) { comp.complement = rawComp; comp.complemento = rawComp; }
+          if (rawBairro) { comp.neighborhood = rawBairro; comp.bairro = rawBairro; }
+          if (rawCep) comp.cep = rawCep;
+          if (rawCidade) { comp.city = rawCidade; comp.cidade = rawCidade; }
+          if (rawUf) { comp.state = rawUf; comp.uf = rawUf; }
+          if (rawIbge) { comp.ibgeCode = rawIbge; comp.codigoMunicipio = rawIbge; }
+        }
+        comp.updatedAt = new Date().toISOString();
+      }
+      saveDatabase();
+      return res.json({ success: true, entityType: "company", entity: comp });
+    }
+
+    // Hóspede (PF)
+    if (!db.guests) db.guests = [];
+    const matchedRes = body.reservationId
+      ? (db.reservations || []).find(r => r && Number(r.id) === Number(body.reservationId))
+      : null;
+    const targetGuestNameLower = String(rawName || matchedRes?.guestName || "").trim().toLowerCase();
+    let guestRec = db.guests.find(g =>
+      g && (
+        (body.guestId && Number(g.id) === Number(body.guestId)) ||
+        (matchedRes?.guestId && Number(g.id) === Number(matchedRes.guestId)) ||
+        (cleanDoc.length === 11 && onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc) ||
+        (targetGuestNameLower.length >= 4 && String(g.fullName || g.name || "").trim().toLowerCase() === targetGuestNameLower)
+      )
+    );
+
+    if (!guestRec && (rawName || cleanDoc.length === 11)) {
+      const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+      guestRec = {
+        id: nextGuestId,
+        fullName: toTitleCase(rawName || matchedRes?.guestName || "Hóspede"),
+        name: toTitleCase(rawName || matchedRes?.guestName || "Hóspede"),
+        documentNumber: cleanDoc.length === 11 ? cleanDoc : "",
+        document: cleanDoc.length === 11 ? cleanDoc : "",
+        cpf: cleanDoc.length === 11 ? cleanDoc : "",
+        docType: "CPF",
+        email: cleanEmail || "",
+        phone: cleanTel || "",
+        address: hasRealAddr ? rawEnd : "",
+        street: hasRealAddr ? rawEnd : "",
+        logradouro: hasRealAddr ? rawEnd : "",
+        number: hasRealAddr ? rawNum : "",
+        streetNumber: hasRealAddr ? rawNum : "",
+        numero: hasRealAddr ? rawNum : "",
+        complement: rawComp || "",
+        complemento: rawComp || "",
+        neighborhood: hasRealAddr ? rawBairro : "",
+        bairro: hasRealAddr ? rawBairro : "",
+        cep: hasRealAddr ? rawCep : "",
+        city: hasRealAddr ? rawCidade : "",
+        cidade: hasRealAddr ? rawCidade : "",
+        state: hasRealAddr ? rawUf : "",
+        uf: hasRealAddr ? rawUf : "",
+        ibgeCode: hasRealAddr ? rawIbge : "",
+        codigoMunicipio: hasRealAddr ? rawIbge : "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      db.guests.unshift(guestRec);
+    } else if (guestRec) {
+      if (rawName && (!guestRec.fullName || guestRec.fullName === "Hóspede")) {
+        guestRec.fullName = toTitleCase(rawName);
+        guestRec.name = toTitleCase(rawName);
+      }
+      if (cleanDoc.length === 11) {
+        guestRec.documentNumber = cleanDoc;
+        guestRec.document = cleanDoc;
+        guestRec.cpf = cleanDoc;
+      }
+      if (cleanEmail) guestRec.email = cleanEmail;
+      if (cleanTel && !isInternalOrForbiddenGuestPhone(cleanTel)) guestRec.phone = cleanTel;
+      if (hasRealAddr) {
+        if (rawEnd) {
+          guestRec.address = rawEnd;
+          guestRec.street = rawEnd;
+          guestRec.logradouro = rawEnd;
+        }
+        if (rawNum) {
+          guestRec.number = rawNum;
+          guestRec.streetNumber = rawNum;
+          guestRec.numero = rawNum;
+        }
+        if (rawComp !== undefined) {
+          guestRec.complement = rawComp;
+          guestRec.complemento = rawComp;
+        }
+        if (rawBairro) {
+          guestRec.neighborhood = rawBairro;
+          guestRec.bairro = rawBairro;
+        }
+        if (rawCep) guestRec.cep = rawCep;
+        if (rawCidade) {
+          guestRec.city = rawCidade;
+          guestRec.cidade = rawCidade;
+        }
+        if (rawUf) {
+          guestRec.state = rawUf;
+          guestRec.uf = rawUf;
+        }
+        if (rawIbge) {
+          guestRec.ibgeCode = rawIbge;
+          guestRec.codigoMunicipio = rawIbge;
+        }
+      }
+      guestRec.updatedAt = new Date().toISOString();
+    }
+
+    if (guestRec) {
+      const gNameLower = String(guestRec.fullName || guestRec.name || "").trim().toLowerCase();
+      for (const r of (db.reservations || [])) {
+        if (!r) continue;
+        const rDoc = onlyDigits(r.guestDocument || r.document || "");
+        const isMatch =
+          (matchedRes && Number(r.id) === Number(matchedRes.id)) ||
+          (guestRec.id && Number(r.guestId) === Number(guestRec.id)) ||
+          (cleanDoc.length === 11 && rDoc === cleanDoc) ||
+          (!rDoc && gNameLower.length >= 4 && String(r.guestName || "").trim().toLowerCase() === gNameLower);
+        if (!isMatch) continue;
+        if (!r.guestId) r.guestId = guestRec.id;
+        if (cleanDoc.length === 11) {
+          r.guestDocument = cleanDoc;
+          r.document = cleanDoc;
+        }
+        if (cleanEmail) r.guestEmail = cleanEmail;
+        if (cleanTel && !isInternalOrForbiddenGuestPhone(cleanTel)) r.guestPhone = cleanTel;
+        if (hasRealAddr) {
+          if (rawEnd) { r.street = rawEnd; r.guestStreet = rawEnd; r.address = rawEnd; r.guestAddress = rawEnd; }
+          if (rawNum) { r.streetNumber = rawNum; r.guestStreetNumber = rawNum; r.number = rawNum; }
+          if (rawComp !== undefined) { r.complement = rawComp; r.guestComplement = rawComp; }
+          if (rawBairro) { r.neighborhood = rawBairro; r.guestNeighborhood = rawBairro; }
+          if (rawCep) { r.cep = rawCep; r.guestCep = rawCep; }
+          if (rawCidade) { r.city = rawCidade; r.guestCity = rawCidade; }
+          if (rawUf) { r.state = rawUf; r.guestState = rawUf; }
+          if (rawIbge) { r.ibgeCode = rawIbge; r.codigoMunicipio = rawIbge; }
+        }
+        if (Array.isArray(r.guests) && r.guests[0]) {
+          if (cleanDoc.length === 11) r.guests[0].cpf = cleanDoc;
+          if (hasRealAddr) {
+            if (rawEnd) { r.guests[0].street = rawEnd; r.guests[0].address = rawEnd; }
+            if (rawNum) r.guests[0].streetNumber = rawNum;
+            if (rawBairro) r.guests[0].neighborhood = rawBairro;
+            if (rawCep) r.guests[0].cep = rawCep;
+            if (rawCidade) r.guests[0].city = rawCidade;
+            if (rawUf) r.guests[0].state = rawUf;
+          }
+        }
+      }
+      saveDatabase();
+    }
+
+    return res.json({ success: true, entityType: "guest", entity: guestRec || null });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // Endpoint Oficial de Rascunho de NFS-e da Reserva (/notas + Sofia WhatsApp)
 app.get("/api/nfse/reservation-draft/:id", async (req, res) => {
@@ -65099,12 +65540,13 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
             if (resServiceOrder.pendingStayExtension?.txid === txid && resServiceOrder.pendingStayExtension.status !== "paid") {
               const extMeta = resServiceOrder.pendingStayExtension;
               const extAmt = valorPago > 0 ? valorPago : (Number(extMeta.amount) || 0);
-              extMeta.status = "paid";
-              extMeta.paidAt = paidIso;
-              extMeta.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
-
-              const oldCheckout = resServiceOrder.checkoutDate;
-              if (extMeta.newCheckoutDate) {
+              const alreadyApplied = Boolean(
+                extMeta.alreadyAppliedToReservation ||
+                (extMeta.newCheckoutDate && resServiceOrder.checkoutDate === extMeta.newCheckoutDate && Number(resServiceOrder.totalAmount || 0) > Number(resServiceOrder.paidAmount || 0) + 0.05)
+              );
+              const oldCheckout = extMeta.oldCheckoutDate || resServiceOrder.previousCheckoutDate || resServiceOrder.checkoutDate;
+              if (extMeta.newCheckoutDate && resServiceOrder.checkoutDate !== extMeta.newCheckoutDate) {
+                resServiceOrder.previousCheckoutDate = resServiceOrder.checkoutDate;
                 resServiceOrder.checkoutDate = extMeta.newCheckoutDate;
               }
               if (extMeta.newFlatNumber && String(extMeta.newFlatNumber) !== String(resServiceOrder.flatNumber)) {
@@ -65115,41 +65557,31 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
                 }
               }
 
-              if (!Array.isArray(resServiceOrder.charges)) resServiceOrder.charges = [];
-              resServiceOrder.charges.push({
-                id: `chg_ext_${Date.now()}`,
-                description: `Prorrogação de Estadia (+${extMeta.extraNights || 1} diária(s): ${oldCheckout} -> ${resServiceOrder.checkoutDate})`,
-                amount: extAmt,
-                category: "stay_extension",
-                date: paidIso
-              });
-              if (!Array.isArray(resServiceOrder.payments)) resServiceOrder.payments = [];
-              resServiceOrder.payments.push({
-                id: `pay_ext_${Date.now()}`,
-                amount: extAmt,
-                method: "pix",
-                date: paidIso,
-                notes: `PIX Prorrogação de Estadia (${txid})`
-              });
-              resServiceOrder.totalAmount = Math.round(((Number(resServiceOrder.totalAmount) || 0) + extAmt) * 100) / 100;
-              resServiceOrder.paidAmount = Math.round(((Number(resServiceOrder.paidAmount) || 0) + extAmt) * 100) / 100;
-
-              createNotification({
-                category: "reservation",
-                title: `📅 Prorrogação Paga (R$ ${extAmt.toFixed(2)}): Flat ${resServiceOrder.flatNumber}`,
-                message: `Estadia de ${resServiceOrder.guestName} prorrogada até ${resServiceOrder.checkoutDate} após confirmação do PIX!`,
-                severity: "success",
-                metadata: { reservationCode: resServiceOrder.code, txid, newCheckoutDate: resServiceOrder.checkoutDate },
-                targetUrl: `/reservas`
-              });
-
-              if (resServiceOrder.guestPhone && typeof sendZapiMessage === "function") {
-                sendZapiMessage(
-                  resServiceOrder.guestPhone,
-                  `✅ *Prorrogação Confirmada!* Recebemos o seu PIX de R$ ${extAmt.toFixed(2).replace(".", ",")}. Sua estadia no *Flat ${resServiceOrder.flatNumber}* foi estendida com sucesso até *${String(resServiceOrder.checkoutDate).split("-").reverse().join("/")}*!`,
-                  { isAutomated: true, skipQueue: true }
-                ).catch(() => {});
+              if (!alreadyApplied) {
+                if (!Array.isArray(resServiceOrder.charges)) resServiceOrder.charges = [];
+                resServiceOrder.charges.push({
+                  id: `chg_ext_${Date.now()}`,
+                  description: `Prorrogação de Estadia (+${extMeta.extraNights || 1} diária(s): ${oldCheckout} -> ${resServiceOrder.checkoutDate})`,
+                  amount: extAmt,
+                  category: "stay_extension",
+                  date: paidIso
+                });
+                resServiceOrder.totalAmount = Math.round(((Number(resServiceOrder.totalAmount) || 0) + extAmt) * 100) / 100;
+                extMeta.alreadyAppliedToReservation = true;
               }
+
+              extMeta.status = "paid";
+              extMeta.paidAt = paidIso;
+              extMeta.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
+
+              await confirmReservationPayment(resServiceOrder, {
+                amount: extAmt,
+                paidAt: paidIso,
+                endToEndId: extMeta.pixEndToEndId,
+                txId: txid,
+                paymentMethod: "pix",
+                source: "Banco Inter Webhook"
+              });
               continue;
             }
 
@@ -65302,7 +65734,17 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
           );
           if (r) {
             const expectedTotal = Number(r.totalAmount) || 0;
-            const newPaidAmount = valorPago > 0 ? valorPago : expectedTotal;
+            const priorPaid = Math.max(0, Number(r.paidAmount || 0));
+            const pendingBefore = Math.max(0, Math.round((expectedTotal - priorPaid) * 100) / 100);
+            const isComplementaryPayment = Boolean(
+              priorPaid > 0 &&
+              pendingBefore > 0 &&
+              valorPago > 0 &&
+              Math.abs(valorPago - pendingBefore) <= 0.5
+            );
+            const newPaidAmount = isComplementaryPayment
+              ? Math.round((priorPaid + valorPago) * 100) / 100
+              : (valorPago > 0 ? valorPago : expectedTotal);
             const isFullPayment = expectedTotal <= 0 || newPaidAmount >= (expectedTotal - 0.05);
             const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation;
 
@@ -65317,25 +65759,28 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
 
             const payRecord = {
               id: `pay_pix_${Date.now()}`,
-              amount: newPaidAmount,
+              amount: isComplementaryPayment ? valorPago : newPaidAmount,
               method: "pix",
               date: r.paidAt,
-              notes: `PIX confirmado via Banco Inter Webhook${r.pixEndToEndId ? ` (E2E: ${r.pixEndToEndId})` : ""}`
+              endToEndId: r.pixEndToEndId,
+              txId: txid || r.pixTxId || undefined,
+              notes: `${isComplementaryPayment ? "Complemento " : ""}PIX confirmado via Banco Inter Webhook${r.pixEndToEndId ? ` (E2E: ${r.pixEndToEndId})` : ""}`
             };
             if (!Array.isArray(r.payments) || r.payments.length === 0) {
-              r.payments = [payRecord];
+              r.payments = [{ ...payRecord, amount: newPaidAmount }];
             } else {
               const existingSum = r.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
               if (existingSum === 0) {
-                r.payments = [payRecord];
-              } else if (existingSum < newPaidAmount) {
+                r.payments = [{ ...payRecord, amount: newPaidAmount }];
+              } else if (existingSum + 0.01 < newPaidAmount) {
                 r.payments.push({
                   ...payRecord,
-                  amount: newPaidAmount - existingSum,
+                  amount: Math.round((newPaidAmount - existingSum) * 100) / 100,
                   notes: `Complemento PIX via Banco Inter Webhook`
                 });
               }
             }
+            r.payments = enrichReservationPayments(r);
 
             createNotification({
               category: "checkout",
@@ -65351,7 +65796,7 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
             });
 
             if (isFullPayment) {
-              confirmedItems.push({ r, wasPreReserva });
+              confirmedItems.push({ r, wasPreReserva, isComplementaryPayment, valorPago, priorPaid });
             }
           } else {
             // Verifica se o pagamento é referente a um pedido de Frigobar (db.minibarOrders)
@@ -65379,6 +65824,14 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
       saveDatabase();
       for (const item of confirmedItems) {
         try {
+          if (item.isComplementaryPayment || item.r?.pendingStayExtension || (item.r?.previousCheckoutDate && item.r.previousCheckoutDate < item.r.checkoutDate)) {
+            await ensureExtensionPaymentConfirmationDispatched(item.r, {
+              valorPago: item.valorPago,
+              priorPaid: item.priorPaid,
+              paymentMethod: "pix",
+              source: "Banco Inter Webhook"
+            });
+          }
           await ensurePaymentConfirmationDispatched(item.r, { wasPreReserva: item.wasPreReserva });
         } catch (dispErr) {
           console.warn("[Banco Inter Webhook] Falha ao disparar confirmação:", dispErr.message);

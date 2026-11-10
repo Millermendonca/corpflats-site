@@ -1845,6 +1845,10 @@ export default function FiscalInvoicesPage() {
       setLastEmittedInvoice(successPayload)
       fetchInvoices()
       fetchRetryQueue()
+      fetchGuests()
+      fetchCompanies()
+      fetchAgencies()
+      fetchReservations()
 
       toast({
         title: "NFS-e Autorizada com Sucesso! 🎉",
@@ -1869,6 +1873,53 @@ export default function FiscalInvoicesPage() {
       })
     } finally {
       setIsEmitting(false)
+    }
+  }
+
+  // ── Sincronizar Dados do Formulário Direto no Cadastro do Hóspede / CRM ────
+  const handleSaveTomadorToCrm = async (silent = false, overrides: Record<string, any> = {}) => {
+    const payload = {
+      tomadorMode,
+      guestId: linkedGuest?.id || selectedGuest?.id || linkedReservation?.guestId || undefined,
+      reservationId: linkedReservation?.id || undefined,
+      companyId: linkedCompany?.id || linkedReservation?.companyId || undefined,
+      agencyId: linkedAgency?.id || linkedReservation?.agencyId || undefined,
+      tomadorNome: overrides.tomadorNome !== undefined ? overrides.tomadorNome : formTomadorNome,
+      tomadorCpfCnpj: overrides.tomadorCpfCnpj !== undefined ? overrides.tomadorCpfCnpj : formTomadorDoc,
+      tomadorEmail: overrides.tomadorEmail !== undefined ? overrides.tomadorEmail : formTomadorEmail,
+      tomadorTelefone: overrides.tomadorTelefone !== undefined ? overrides.tomadorTelefone : formTomadorTelefone,
+      tomadorEndereco: overrides.tomadorEndereco !== undefined ? overrides.tomadorEndereco : formTomadorEndereco,
+      tomadorNumero: overrides.tomadorNumero !== undefined ? overrides.tomadorNumero : formTomadorNumero,
+      tomadorComplemento: overrides.tomadorComplemento !== undefined ? overrides.tomadorComplemento : formTomadorComplemento,
+      tomadorBairro: overrides.tomadorBairro !== undefined ? overrides.tomadorBairro : formTomadorBairro,
+      tomadorCidade: overrides.tomadorCidade !== undefined ? overrides.tomadorCidade : formTomadorCidade,
+      tomadorUf: overrides.tomadorUf !== undefined ? overrides.tomadorUf : formTomadorUf,
+      tomadorCep: overrides.tomadorCep !== undefined ? overrides.tomadorCep : formTomadorCep,
+      tomadorCodigoMunicipio: overrides.tomadorCodigoMunicipio !== undefined ? overrides.tomadorCodigoMunicipio : formTomadorIbge
+    }
+    const cleanDoc = String(payload.tomadorCpfCnpj || "").replace(/\D/g, "")
+    if (!payload.tomadorNome && cleanDoc.length < 11 && !payload.guestId && !payload.reservationId) return
+    try {
+      const res = await fetch("/api/nfse/sync-tomador-crm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include"
+      })
+      if (res.ok) {
+        fetchGuests()
+        fetchCompanies()
+        fetchAgencies()
+        fetchReservations()
+        if (!silent) {
+          toast({
+            title: "Salvo no Cadastro! 💾",
+            description: "CPF e endereço já ficaram salvos no cadastro para as próximas notas."
+          })
+        }
+      }
+    } catch {
+      // silent
     }
   }
 
@@ -2001,6 +2052,7 @@ export default function FiscalInvoicesPage() {
         description: `${data.logradouro || ''} - ${data.bairro || ''}${resolvedCity ? ` (${resolvedCity}/${data.uf || 'RJ'})` : ''}`
       })
       syncFormToPreview(nextOverrides)
+      handleSaveTomadorToCrm(true, nextOverrides)
     } catch {
       toast({
         title: "Erro na Busca de CEP",
@@ -3634,6 +3686,7 @@ export default function FiscalInvoicesPage() {
                                       handleLookupDoc(cleanVal)
                                     }
                                   }}
+                                  onBlur={() => handleSaveTomadorToCrm(true)}
                                   className="h-9 text-xs rounded-xl"
                                 />
                                 <Button 
@@ -3661,6 +3714,7 @@ export default function FiscalInvoicesPage() {
                                   setFormTomadorNome(e.target.value)
                                   syncFormToPreview()
                                 }}
+                                onBlur={() => handleSaveTomadorToCrm(true)}
                                 className="h-9 text-xs rounded-xl font-bold"
                               />
                             </div>
@@ -3675,6 +3729,7 @@ export default function FiscalInvoicesPage() {
                                   setFormTomadorEmail(e.target.value)
                                   syncFormToPreview()
                                 }}
+                                onBlur={() => handleSaveTomadorToCrm(true)}
                                 className="h-9 text-xs rounded-xl"
                               />
                             </div>
@@ -3688,6 +3743,7 @@ export default function FiscalInvoicesPage() {
                                   setFormTomadorTelefone(e.target.value)
                                   syncFormToPreview()
                                 }}
+                                onBlur={() => handleSaveTomadorToCrm(true)}
                                 className="h-9 text-xs rounded-xl"
                               />
                             </div>
@@ -3727,9 +3783,21 @@ export default function FiscalInvoicesPage() {
 
                         {/* Seção Endereço com Busca Automática de CEP */}
                         <div className="space-y-2.5 pt-2 border-t border-border">
-                          <span className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                            <MapPin className="w-3.5 h-3.5 text-primary" /> Endereço do Tomador
-                          </span>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                              <MapPin className="w-3.5 h-3.5 text-primary" /> Endereço do Tomador
+                            </span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleSaveTomadorToCrm(false)}
+                              className="h-7 px-2.5 rounded-lg text-[11px] font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                              title="Gravar CPF, contato e endereço no cadastro do hóspede/empresa para as próximas notas"
+                            >
+                              💾 Salvar no Cadastro
+                            </Button>
+                          </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
                             <div className="sm:col-span-4 space-y-1">
@@ -3747,6 +3815,7 @@ export default function FiscalInvoicesPage() {
                                       handleLookupCep(cleanVal)
                                     }
                                   }}
+                                  onBlur={() => handleSaveTomadorToCrm(true)}
                                   className="h-9 text-xs rounded-xl"
                                 />
                                 <Button 
@@ -3765,12 +3834,13 @@ export default function FiscalInvoicesPage() {
                             <div className="sm:col-span-6 space-y-1">
                               <Label className="text-[11px] font-bold">Logradouro / Rua</Label>
                               <Input 
-                                placeholder="Av. Pelinca"
+                                placeholder="Ex: Rua Sebastião Rangel"
                                 value={formTomadorEndereco}
                                 onChange={e => {
                                   setFormTomadorEndereco(e.target.value)
                                   syncFormToPreview()
                                 }}
+                                onBlur={() => handleSaveTomadorToCrm(true)}
                                 className="h-9 text-xs rounded-xl"
                               />
                             </div>
@@ -3778,12 +3848,13 @@ export default function FiscalInvoicesPage() {
                             <div className="sm:col-span-2 space-y-1">
                               <Label className="text-[11px] font-bold">Número</Label>
                               <Input 
-                                placeholder="100"
+                                placeholder="Ex: 26"
                                 value={formTomadorNumero}
                                 onChange={e => {
                                   setFormTomadorNumero(e.target.value)
                                   syncFormToPreview()
                                 }}
+                                onBlur={() => handleSaveTomadorToCrm(true)}
                                 className="h-9 text-xs rounded-xl"
                               />
                             </div>
@@ -3791,12 +3862,13 @@ export default function FiscalInvoicesPage() {
                             <div className="sm:col-span-4 space-y-1">
                               <Label className="text-[11px] font-bold">Bairro</Label>
                               <Input 
-                                placeholder="Pelinca"
+                                placeholder="Ex: Centro"
                                 value={formTomadorBairro}
                                 onChange={e => {
                                   setFormTomadorBairro(e.target.value)
                                   syncFormToPreview()
                                 }}
+                                onBlur={() => handleSaveTomadorToCrm(true)}
                                 className="h-9 text-xs rounded-xl"
                               />
                             </div>
@@ -3804,12 +3876,13 @@ export default function FiscalInvoicesPage() {
                             <div className="sm:col-span-5 space-y-1">
                               <Label className="text-[11px] font-bold">Município</Label>
                               <Input 
-                                placeholder="Campos dos Goytacazes"
+                                placeholder="Ex: Campos dos Goytacazes"
                                 value={formTomadorCidade}
                                 onChange={e => {
                                   setFormTomadorCidade(e.target.value)
                                   syncFormToPreview()
                                 }}
+                                onBlur={() => handleSaveTomadorToCrm(true)}
                                 className="h-9 text-xs rounded-xl"
                               />
                             </div>
@@ -3823,6 +3896,7 @@ export default function FiscalInvoicesPage() {
                                   setFormTomadorUf(e.target.value)
                                   syncFormToPreview()
                                 }}
+                                onBlur={() => handleSaveTomadorToCrm(true)}
                                 className="h-9 text-xs rounded-xl"
                               />
                             </div>
