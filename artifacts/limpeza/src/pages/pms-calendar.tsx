@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, Fragment } from "react"
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fragment } from "react"
 import { useLocation } from "wouter"
 import { useGetMe, useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
@@ -13,7 +13,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
-import { Popover, PopoverContent, PopoverAnchor } from "@/components/ui/popover"
+import { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from "@/components/ui/popover"
 import { 
   CalendarDays, Plus, Wand2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
@@ -2557,9 +2557,29 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   }
 
 
-  // Timeline Contínua Multi-Mês (desativada quando modalOnly para evitar overhead pesado)
-  const timelineStart = useMemo(() => modalOnly ? new Date() : subDays(new Date(), 30), [modalOnly])
-  const timelineEnd = useMemo(() => modalOnly ? new Date() : addDays(new Date(), 90), [modalOnly])
+  // Timeline Contínua Multi-Mês com Rolagem Infinita (desativada quando modalOnly para evitar overhead pesado)
+  const [timelineStart, setTimelineStart] = useState<Date>(() =>
+    modalOnly ? new Date() : startOfMonth(subMonths(new Date(), 4))
+  )
+  const [timelineEnd, setTimelineEnd] = useState<Date>(() =>
+    modalOnly ? new Date() : endOfMonth(addMonths(new Date(), 6))
+  )
+  const timelineBoundsRef = useRef<{ start: Date; end: Date }>({
+    start: timelineStart,
+    end: timelineEnd
+  })
+  timelineBoundsRef.current = { start: timelineStart, end: timelineEnd }
+
+  const pendingScrollLeftDeltaRef = useRef<number>(0)
+  const pendingTargetScrollRef = useRef<{ dateStr: string; behavior: "auto" | "smooth" } | null>(null)
+  const isProgrammaticScrollRef = useRef<boolean>(false)
+  const programmaticScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isExpandingEdgeRef = useRef<boolean>(false)
+  const hasInitialScrolledRef = useRef<boolean>(false)
+  const [monthPickerOpen, setMonthPickerOpen] = useState<boolean>(false)
+  const [pickerYear, setPickerYear] = useState<number>(() => new Date().getFullYear())
+  const [todayPulseActive, setTodayPulseActive] = useState<boolean>(false)
+
   const daysInView = useMemo(() => {
     if (modalOnly) return []
     return eachDayOfInterval({ start: timelineStart, end: timelineEnd })
@@ -2713,17 +2733,23 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   };
 
   const isFetchingRef = useRef(false);
+  const pendingFetchRef = useRef(false);
   const lastAuxFetchRef = useRef(0);
 
   const fetchData = async (showLoading = false) => {
-    if (isFetchingRef.current) return;
+    if (isFetchingRef.current) {
+      pendingFetchRef.current = true;
+      return;
+    }
     isFetchingRef.current = true;
     if (showLoading) setLoading(true);
     else setIsSyncing(true);
 
     try {
-      const startStr = format(subDays(timelineStart, 5), "yyyy-MM-dd");
-      const endStr = format(addDays(timelineEnd, 5), "yyyy-MM-dd");
+      const activeStart = timelineBoundsRef.current.start;
+      const activeEnd = timelineBoundsRef.current.end;
+      const startStr = format(subDays(activeStart, 5), "yyyy-MM-dd");
+      const endStr = format(addDays(activeEnd, 5), "yyyy-MM-dd");
       const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}&_t=${Date.now()}`, { cache: "no-store", credentials: "include" });
       if (res.ok) {
         const json = await res.json();
@@ -2771,6 +2797,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       if (showLoading) setLoading(false);
       else setIsSyncing(false);
       isFetchingRef.current = false;
+      if (pendingFetchRef.current) {
+        pendingFetchRef.current = false;
+        fetchData(false);
+      }
     }
   };
 
@@ -2786,6 +2816,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     }
     fetchData(true);
   }, [modalOnly, autoOpenNewRes]);
+
+  useEffect(() => {
+    if (modalOnly || loading) return;
+    fetchData(false);
+  }, [timelineStart, timelineEnd, modalOnly]);
 
   const handleConfirmDragMove = async () => {
     if (!dragConfirmData) return;
@@ -2940,25 +2975,204 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     }
   }
 
-  const scrollToToday = (behavior: "auto" | "smooth" = "smooth") => {
-    if (scrollContainerRef.current) {
-      // Posiciona exatamente 2 dias antes de hoje na visão inicial
-      const targetDateStr = format(subDays(new Date(), 2), "yyyy-MM-dd")
-      const targetEl = scrollContainerRef.current.querySelector(`[data-header-day="${targetDateStr}"]`) as HTMLElement
-      if (targetEl) {
-        const leftPos = Math.max(0, targetEl.offsetLeft - 145)
-        scrollContainerRef.current.scrollTo({ left: leftPos, behavior })
+  // Compensação síncrona de scrollLeft ao expandir meses para trás (esquerda) sem pulo visual
+  useLayoutEffect(() => {
+    if (pendingScrollLeftDeltaRef.current !== 0 && scrollContainerRef.current) {
+      const container = scrollContainerRef.current
+      const delta = pendingScrollLeftDeltaRef.current
+      pendingScrollLeftDeltaRef.current = 0
+      const prevBehavior = container.style.scrollBehavior
+      container.style.scrollBehavior = "auto"
+      container.scrollLeft += delta
+      container.style.scrollBehavior = prevBehavior
+    }
+    isExpandingEdgeRef.current = false
+  }, [timelineStart, timelineEnd])
+
+  // Executa rolagem pendente assim que um mês recém-expandido entra no dayLayoutMap
+  useLayoutEffect(() => {
+    const pending = pendingTargetScrollRef.current
+    if (!pending || !scrollContainerRef.current) return
+    const layout = dayLayoutMap[pending.dateStr]
+    if (layout) {
+      pendingTargetScrollRef.current = null
+      pendingScrollLeftDeltaRef.current = 0
+      const leftPos = Math.max(0, layout.left - FLAT_COL_WIDTH)
+      const container = scrollContainerRef.current
+      if (pending.behavior === "auto") {
+        const prevBehavior = container.style.scrollBehavior
+        container.style.scrollBehavior = "auto"
+        container.scrollLeft = leftPos
+        container.style.scrollBehavior = prevBehavior
+      } else {
+        container.scrollTo({ left: leftPos, behavior: "smooth" })
       }
     }
-  }
+  }, [dayLayoutMap])
+
+  const markProgrammaticScroll = useCallback((durationMs = 650) => {
+    isProgrammaticScrollRef.current = true
+    if (programmaticScrollTimerRef.current) {
+      clearTimeout(programmaticScrollTimerRef.current)
+    }
+    programmaticScrollTimerRef.current = setTimeout(() => {
+      isProgrammaticScrollRef.current = false
+    }, durationMs)
+  }, [])
+
+  const scrollToDate = useCallback((targetDate: Date, behavior: "auto" | "smooth" = "smooth") => {
+    const targetDateStr = format(targetDate, "yyyy-MM-dd")
+    const minRequiredStart = startOfMonth(subMonths(targetDate, 1))
+    const minRequiredEnd = endOfMonth(addMonths(targetDate, 2))
+    const curStart = timelineBoundsRef.current.start
+    const curEnd = timelineBoundsRef.current.end
+
+    let needsExpansion = false
+    if (minRequiredStart < curStart) {
+      const nextStart = startOfMonth(subMonths(targetDate, 2))
+      timelineBoundsRef.current.start = nextStart
+      setTimelineStart(nextStart)
+      needsExpansion = true
+    }
+    if (minRequiredEnd > curEnd) {
+      const nextEnd = endOfMonth(addMonths(targetDate, 3))
+      timelineBoundsRef.current.end = nextEnd
+      setTimelineEnd(nextEnd)
+      needsExpansion = true
+    }
+
+    markProgrammaticScroll(behavior === "smooth" ? 700 : 150)
+
+    if (needsExpansion || !dayLayoutMap[targetDateStr]) {
+      pendingTargetScrollRef.current = { dateStr: targetDateStr, behavior }
+      return
+    }
+
+    if (scrollContainerRef.current) {
+      const container = scrollContainerRef.current
+      const layout = dayLayoutMap[targetDateStr]
+      const leftPos = Math.max(0, layout.left - FLAT_COL_WIDTH)
+      if (behavior === "auto") {
+        const prevBehavior = container.style.scrollBehavior
+        container.style.scrollBehavior = "auto"
+        container.scrollLeft = leftPos
+        container.style.scrollBehavior = prevBehavior
+      } else {
+        container.scrollTo({ left: leftPos, behavior: "smooth" })
+      }
+    }
+  }, [dayLayoutMap, markProgrammaticScroll])
+
+  const scrollToToday = useCallback((behavior: "auto" | "smooth" = "smooth") => {
+    const now = new Date()
+    setCurrentDate(now)
+    setPickerYear(now.getFullYear())
+    setMonthPickerOpen(false)
+    // Posiciona Ontem e Hoje logo à esquerda da grade (ao lado da coluna Apartamento)
+    const targetDate = subDays(now, 1)
+    scrollToDate(targetDate, behavior)
+    if (behavior === "smooth") {
+      setTodayPulseActive(true)
+      setTimeout(() => setTodayPulseActive(false), 1600)
+    }
+  }, [scrollToDate])
+
+  const navigateToMonth = useCallback((monthDate: Date) => {
+    const firstDay = startOfMonth(monthDate)
+    setCurrentDate(firstDay)
+    setPickerYear(firstDay.getFullYear())
+    setMonthPickerOpen(false)
+    scrollToDate(firstDay, "smooth")
+  }, [scrollToDate])
+
+  const handlePrevMonth = useCallback(() => {
+    setCurrentDate(prev => {
+      const target = startOfMonth(subMonths(prev, 1))
+      setPickerYear(target.getFullYear())
+      setMonthPickerOpen(false)
+      scrollToDate(target, "smooth")
+      return target
+    })
+  }, [scrollToDate])
+
+  const handleNextMonth = useCallback(() => {
+    setCurrentDate(prev => {
+      const target = startOfMonth(addMonths(prev, 1))
+      setPickerYear(target.getFullYear())
+      setMonthPickerOpen(false)
+      scrollToDate(target, "smooth")
+      return target
+    })
+  }, [scrollToDate])
+
+  const handleTimelineScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget
+    if (!container || daysInView.length === 0) return
+
+    const scrollLeft = container.scrollLeft
+    const clientWidth = container.clientWidth
+    const scrollWidth = container.scrollWidth
+
+    // 1. Atualiza o Mês/Ano exibido no seletor superior conforme o usuário rola manualmente
+    if (!isProgrammaticScrollRef.current) {
+      const probeX = scrollLeft + FLAT_COL_WIDTH + 24
+      let accumX = FLAT_COL_WIDTH
+      for (let i = 0; i < daysInView.length; i++) {
+        const d = daysInView[i]
+        const w = getDayColWidth(d)
+        if (probeX >= accumX && probeX < accumX + w) {
+          setCurrentDate(prev => {
+            if (prev.getMonth() === d.getMonth() && prev.getFullYear() === d.getFullYear()) {
+              return prev
+            }
+            return startOfMonth(d)
+          })
+          break
+        }
+        accumX += w
+      }
+    }
+
+    // 2. Expansão infinita automática nas bordas (esquerda = passado, direita = futuro)
+    if (isExpandingEdgeRef.current || resDragStateRef.current || blockDragStateRef.current) return
+
+    if (scrollLeft < 320) {
+      isExpandingEdgeRef.current = true
+      const curStart = timelineBoundsRef.current.start
+      const nextStart = startOfMonth(subMonths(curStart, 2))
+      if (nextStart < curStart) {
+        const addedDays = eachDayOfInterval({ start: nextStart, end: subDays(curStart, 1) })
+        const addedWidthPx = addedDays.reduce((acc, d) => acc + getDayColWidth(d), 0)
+        pendingScrollLeftDeltaRef.current += addedWidthPx
+        timelineBoundsRef.current.start = nextStart
+        setTimelineStart(nextStart)
+      } else {
+        isExpandingEdgeRef.current = false
+      }
+    } else if (scrollWidth - (scrollLeft + clientWidth) < 420) {
+      isExpandingEdgeRef.current = true
+      const curEnd = timelineBoundsRef.current.end
+      const nextEnd = endOfMonth(addMonths(curEnd, 2))
+      if (nextEnd > curEnd) {
+        timelineBoundsRef.current.end = nextEnd
+        setTimelineEnd(nextEnd)
+      } else {
+        isExpandingEdgeRef.current = false
+      }
+    }
+  }, [daysInView])
 
   useEffect(() => {
-    if (!loading && data.flats.length > 0) {
+    if (!loading && data.flats.length > 0 && !hasInitialScrolledRef.current) {
+      hasInitialScrolledRef.current = true
+      requestAnimationFrame(() => {
+        scrollToToday("auto")
+      })
       setTimeout(() => {
         scrollToToday("auto")
       }, 100)
     }
-  }, [loading])
+  }, [loading, data.flats.length, scrollToToday])
 
 
   // Drag-to-Select State
@@ -5940,33 +6154,130 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         </div>
 
         {/* Navigation & Controls */}
-        <Card className="rounded-xl border shadow-2xs">
+        <Card className="rounded-xl border shadow-2xs overflow-hidden min-w-0 max-w-full">
           <div className="p-3 bg-muted/20 border-b flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => setCurrentDate(subDays(startOfMonth(currentDate), 1))}
-                className="h-8 w-8 p-0"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </Button>
+              {/* Seletor de Mês Anterior / Mês e Ano Atual / Próximo Mês */}
+              <div className="flex items-center gap-0.5 bg-background border rounded-lg p-0.5 shadow-2xs">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={handlePrevMonth}
+                  className="h-7 w-7 p-0 hover:bg-muted text-foreground"
+                  title="Voltar para o mês anterior (posiciona no dia 1º)"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+
+                <Popover
+                  open={monthPickerOpen}
+                  onOpenChange={(open) => {
+                    setMonthPickerOpen(open)
+                    if (open) setPickerYear(currentDate.getFullYear())
+                  }}
+                >
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="h-7 px-2.5 rounded-md text-xs font-black capitalize text-slate-900 dark:text-slate-100 hover:bg-muted transition-colors flex items-center gap-1 min-w-[138px] justify-center select-none"
+                      title="Clique para escolher qualquer mês ou ano rapidamente"
+                    >
+                      <span>{format(currentDate, "MMMM yyyy", { locale: ptBR })}</span>
+                      <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-3" align="start">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between border-b pb-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPickerYear(y => y - 1)}
+                          className="h-7 w-7 p-0"
+                          title="Ano anterior"
+                        >
+                          <ChevronLeft className="w-3.5 h-3.5" />
+                        </Button>
+                        <span className="text-xs font-black text-foreground">
+                          {pickerYear}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPickerYear(y => y + 1)}
+                          className="h-7 w-7 p-0"
+                          title="Próximo ano"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {Array.from({ length: 12 }).map((_, mIdx) => {
+                          const candidateDate = new Date(pickerYear, mIdx, 1)
+                          const isSelectedMonth =
+                            currentDate.getMonth() === mIdx &&
+                            currentDate.getFullYear() === pickerYear
+                          const now = new Date()
+                          const isCurrentRealMonth =
+                            now.getMonth() === mIdx &&
+                            now.getFullYear() === pickerYear
+
+                          return (
+                            <button
+                              key={mIdx}
+                              type="button"
+                              onClick={() => navigateToMonth(candidateDate)}
+                              className={`py-1.5 px-2 rounded-md text-xs font-bold capitalize transition-all ${
+                                isSelectedMonth
+                                  ? "bg-primary text-primary-foreground shadow-xs"
+                                  : isCurrentRealMonth
+                                  ? "border border-primary/50 text-primary bg-primary/5 hover:bg-primary/10"
+                                  : "hover:bg-muted text-foreground"
+                              }`}
+                            >
+                              {format(candidateDate, "MMM", { locale: ptBR }).replace(".", "")}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      <div className="pt-1 border-t flex justify-center">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => scrollToToday("smooth")}
+                          className="w-full h-7 text-[11px] font-bold text-primary hover:bg-primary/10 gap-1"
+                        >
+                          <CalendarIcon className="w-3 h-3" />
+                          <span>Ir para Hoje ({format(new Date(), "dd/MM/yyyy")})</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={handleNextMonth}
+                  className="h-7 w-7 p-0 hover:bg-muted text-foreground"
+                  title="Avançar para o próximo mês (posiciona no dia 1º)"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+
+              {/* Botão Ir para Hoje */}
               <Button 
                 variant="outline" 
                 size="sm" 
                 onClick={() => scrollToToday("smooth")}
-                className="h-8 text-xs font-bold px-3 gap-1 bg-primary text-primary-foreground hover:bg-primary/90"
+                className="h-8 text-xs font-bold px-3 gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 border-primary shadow-2xs"
+                title="Voltar imediatamente para a coluna de Hoje"
               >
                 <CalendarIcon className="w-3.5 h-3.5" />
                 <span>Ir para Hoje</span>
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => setCurrentDate(addDays(endOfMonth(currentDate), 1))}
-                className="h-8 w-8 p-0"
-              >
-                <ChevronRight className="w-4 h-4" />
               </Button>
 
               {/* Filtro Rápido de Status de Limpeza */}
@@ -6083,11 +6394,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
           {/* Timeline Grid Table */}
           <div 
             ref={scrollContainerRef}
-            className={`overflow-x-auto select-none ${
+            onScroll={handleTimelineScroll}
+            className={`w-full max-w-full overflow-x-auto select-none ${
               (resDragState && (resDragState.hasMoved || resDragState.isLongPressReady)) ||
               (blockDragState && (blockDragState.hasMoved || blockDragState.isLongPressReady))
                 ? 'overflow-x-hidden touch-none'
-                : 'scroll-smooth'
+                : ''
             }`}
             onMouseUp={handleFinishDrag}
             onMouseLeave={() => { if (isDragging) handleFinishDrag(); }}
@@ -6098,7 +6410,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                 style={{ gridTemplateColumns }}
                 className="grid border-b bg-muted/40 text-center font-bold text-xs sticky top-0 z-20 shadow-2xs"
               >
-                <div className="px-3 py-2.5 text-left border-r-2 border-r-border/80 bg-slate-100 dark:bg-slate-900 sticky left-0 z-30 font-black text-xs text-foreground shadow-[2px_0_6px_-2px_rgba(0,0,0,0.1)] select-none">
+                <div className="px-3 py-2.5 text-left border-r-2 border-r-border/80 bg-slate-100 dark:bg-slate-900 sticky left-0 z-30 font-black text-xs text-foreground shadow-[2px_0_6px_-2px_rgba(0,0,0,0.1)] select-none flex items-center">
                   Apartamento
                 </div>
                 {daysInView.map((day) => {
@@ -6113,10 +6425,14 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       <div 
                         key={day.toISOString()} 
                         data-header-day={dayStr}
-                        className="p-1 border-r relative flex flex-col items-center justify-center bg-primary/20 text-primary font-black shadow-inner ring-1 ring-primary/40"
+                        className={`p-1 border-r relative flex flex-col items-center justify-center bg-primary/20 text-primary font-black shadow-inner transition-all ${
+                          todayPulseActive
+                            ? "ring-2 ring-primary bg-primary/30 scale-[1.02] z-10"
+                            : "ring-1 ring-primary/40"
+                        }`}
                       >
                         {isFirstOfMonth && (
-                          <span className="absolute -top-2.5 left-1 text-[8px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded-md shadow-xs">
+                          <span className="absolute top-0.5 left-1 text-[8px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded-md shadow-xs">
                             {format(day, "MMM", { locale: ptBR })}
                           </span>
                         )}
@@ -6143,7 +6459,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         className="p-1 border-r relative flex flex-col items-center justify-center bg-slate-200/60 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 font-bold border-l border-border/60 shadow-2xs"
                       >
                         {isFirstOfMonth && (
-                          <span className="absolute -top-2.5 left-1 text-[8px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded-md shadow-xs">
+                          <span className="absolute top-0.5 left-1 text-[8px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded-md shadow-xs">
                             {format(day, "MMM", { locale: ptBR })}
                           </span>
                         )}
@@ -6167,14 +6483,14 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       key={day.toISOString()} 
                       data-header-day={dayStr}
                       className={`p-1 border-r relative flex flex-col items-center justify-center ${
-                        isFirstOfMonth ? 'border-l-2 border-l-primary bg-primary/5' : ''
+                        isFirstOfMonth ? 'border-l-2 border-l-primary bg-primary/5 pt-3.5' : ''
                       } ${
                         isWeekend ? 'bg-muted/60 text-foreground' : 'text-muted-foreground'
                       }`}
                     >
                       {isFirstOfMonth && (
-                        <span className="absolute -top-2.5 left-1 text-[9px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1.5 py-0.2 rounded-md shadow-xs">
-                          {format(day, "MMM", { locale: ptBR })}
+                        <span className="absolute top-0.5 left-1 text-[8px] leading-tight font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded shadow-xs">
+                          {format(day, "MMM", { locale: ptBR }).replace(".", "")}
                         </span>
                       )}
                       <span className="text-[9px] uppercase font-bold">{format(day, "EEE", { locale: ptBR })}</span>
