@@ -54996,10 +54996,6 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
     }
 
     // Hóspede (PF)
-    if (!db.guests) db.guests = [];
-    const matchedRes = body.reservationId
-      ? (db.reservations || []).find(r => r && Number(r.id) === Number(body.reservationId))
-      : null;
     const targetGuestNameLower = String(rawName || matchedRes?.guestName || "").trim().toLowerCase();
     let guestRec = db.guests.find(g =>
       g && (
