@@ -3264,7 +3264,11 @@ export function buildMirrorEmailSubject(tpl, reservation = {}, db = {}, baseUrl 
   const hotelName = db?.siteConfig?.branding?.brandName || "CorpFlats";
   const event = String(tpl?.triggerEvent || "");
   let label = EMAIL_SUBJECT_BY_EVENT[event] || "Informações da sua reserva";
-  if (hideFinancialForGuest && event === "payment_confirmed") {
+  if (reservation._isExtensionPaymentConfirmed) {
+    label = hideFinancialForGuest
+      ? "Extensão de estadia confirmada"
+      : "Pagamento e extensão de estadia confirmados";
+  } else if (hideFinancialForGuest && event === "payment_confirmed") {
     label = EMAIL_SUBJECT_BY_EVENT.reservation_created;
   }
   const resCode = reservation.code || reservation.reservationCode || "";
@@ -3935,6 +3939,52 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       /Recebemos o pedido de \*Pré-Reserva\*/gi,
       "Atualizamos os dados da sua *Pré-Reserva*"
     );
+  }
+  if (reservation._isExtensionPaymentConfirmed && (templateId === "tpl_reservation_updated" || triggerEvent === "reservation_updated")) {
+    const extPaidAmt = Number(reservation._extensionPaidAmount) || Number(reservation.pendingStayExtension?.amount) || 0;
+    const extPaidFmt = extPaidAmt > 0 ? formatCurrency(extPaidAmt) : formatCurrency(paidAmount);
+    const rawExtMethod = String(reservation._extensionPaymentMethod || reservation.paymentMethod || "pix").toLowerCase();
+    const extMethodLabel = /cart[aã]o|card|credit|debito|mercadopago/i.test(rawExtMethod) ? "Cartão de Crédito" : "PIX";
+    const hasCheckoutChange = (Array.isArray(changes) && changes.some(c => c && c.field === "checkoutDate")) ||
+      Boolean(reservation.pendingStayExtension?.newCheckoutDate || reservation.previousCheckoutDate);
+    const needReSignNote = Boolean(reservation.needsReSignature && !(recipientIsRequester && requester.isDifferentFromGuest));
+
+    if (!hideFinancialForGuest) {
+      rendered = rendered
+        .replace(/Olá,\s*\*\{\{primeiro_nome\}\}\*!\s*🔄/i, "Olá, *{{primeiro_nome}}*! ✅🎉")
+        .replace(
+          /Sua reserva \(\*\{\{numero_reserva\}\}\*\) no \*\{\{nome_hotel\}\}\* foi alterada\./i,
+          `Confirmamos o recebimento do seu pagamento de *${extPaidFmt}* (*${extMethodLabel}*) e a *${hasCheckoutChange ? "extensão da sua estadia" : "quitação do saldo da sua reserva"}* (*{{numero_reserva}}*) no *{{nome_hotel}}* (*Flat {{quarto}}*)!`
+        );
+      const extSummaryBlock =
+        `\n\n📋 *Resumo Atualizado da Hospedagem:*\n` +
+        `• Acomodação: *Flat {{quarto}}*\n` +
+        `• Período: *{{data_checkin}} a {{data_checkout}}* ({{num_diarias}} diária(s))\n` +
+        `• Horário de Check-out: *até às {{horario_checkout}}*\n` +
+        `• Pagamento Confirmado Agora: *${extPaidFmt} (${extMethodLabel})*\n` +
+        `• Valor Total Pago: *{{valor_pago}}*\n` +
+        `• Situação Financeira: *Pago Integralmente (100% Quitada)*` +
+        (needReSignNote
+          ? `\n\n📝 *Assinatura da Ficha Atualizada:*\nComo o período da sua estadia foi prorrogado, clique no botão *"Assinar Ficha Atualizada"* abaixo para atualizar rapidamente sua ficha na recepção.`
+          : "");
+      rendered = rendered.replace("{{resumo_alteracoes}}", `{{resumo_alteracoes}}${extSummaryBlock}`);
+    } else {
+      rendered = rendered
+        .replace(/Olá,\s*\*\{\{primeiro_nome\}\}\*!\s*🔄/i, "Olá, *{{primeiro_nome}}*! ✅🎉")
+        .replace(
+          /Sua reserva \(\*\{\{numero_reserva\}\}\*\) no \*\{\{nome_hotel\}\}\* foi alterada\./i,
+          `Confirmamos a *extensão da sua estadia* na reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* (*Flat {{quarto}}*)!`
+        );
+      const extSummaryGuestBlock =
+        `\n\n📋 *Resumo Atualizado da Hospedagem:*\n` +
+        `• Acomodação: *Flat {{quarto}}*\n` +
+        `• Período: *{{data_checkin}} a {{data_checkout}}* ({{num_diarias}} diária(s))\n` +
+        `• Horário de Check-out: *até às {{horario_checkout}}*` +
+        (needReSignNote
+          ? `\n\n📝 *Assinatura da Ficha Atualizada:*\nComo o período da sua estadia foi prorrogado, clique no botão *"Assinar Ficha Atualizada"* abaixo para atualizar rapidamente sua ficha na recepção.`
+          : "");
+      rendered = rendered.replace("{{resumo_alteracoes}}", `{{resumo_alteracoes}}${extSummaryGuestBlock}`);
+    }
   }
   if (hideFinancialForGuest) {
     rendered = rendered
@@ -13843,6 +13893,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         // Se a reserva tiver solicitante distinto (ou para acompanhantes guest_2/guest_3) e a alteração foi EXCLUSIVAMENTE financeira,
         // não envia notificação de atualização ao hóspede/acompanhantes.
         const isCompanionTarget = String(target.type || "").startsWith("guest_");
+        if (reservation._excludeCompanionsTarget && isCompanionTarget) {
+          continue;
+        }
         if (isUpdatedEvent && ((recipients.requester?.isDifferentFromGuest && target.type !== "requester") || isCompanionTarget)) {
           const changes = reservation._changesContext || [];
           if (Array.isArray(changes) && changes.length > 0 && !hasNonFinancialChanges(changes)) {
@@ -13882,6 +13935,15 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
                 }
                 if (eventName === "pre_checkin_completed" && (h.recipientType || "guest") !== (target.type || "guest")) return false;
                 if (normalizePhoneForDedup(h.guestPhone) !== normTargetPhone) return false;
+                if (isUpdatedEvent && reservation._isExtensionPaymentConfirmed) {
+                  const isPrevExtConfirm = /Confirmamos o recebimento do seu pagamento|Confirmamos a \*extens[aã]o da sua estadia\*/i.test(String(h.message || ""));
+                  if (!isPrevExtConfirm) return false;
+                  if (h.sentAt) {
+                    const ageMs = Date.now() - new Date(h.sentAt).getTime();
+                    return ageMs >= 0 && ageMs < 10 * 60 * 1000;
+                  }
+                  return true;
+                }
                 if ((isUpdatedEvent || isReSignPreCheckin) && h.sentAt) {
                   const ageMs = Date.now() - new Date(h.sentAt).getTime();
                   return ageMs >= 0 && ageMs < 30000;
@@ -13932,6 +13994,15 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
               }
               if (eventName === "pre_checkin_completed" && (c.metadata?.recipientType || "guest") !== (target.type || "guest")) return false;
               if (String(c.recipient || "").trim().toLowerCase() !== normTargetEmail) return false;
+              if (isUpdatedEvent && reservation._isExtensionPaymentConfirmed) {
+                const isPrevExtEmail = /Pagamento e extens[aã]o de estadia|Extens[aã]o de estadia confirmada/i.test(String(c.subject || ""));
+                if (!isPrevExtEmail) return false;
+                if (c.sent_at) {
+                  const ageMs = Date.now() - new Date(c.sent_at).getTime();
+                  return ageMs >= 0 && ageMs < 10 * 60 * 1000;
+                }
+                return true;
+              }
               if ((isUpdatedEvent || isReSignPreCheckin) && c.sent_at) {
                 const ageMs = Date.now() - new Date(c.sent_at).getTime();
                 return ageMs >= 0 && ageMs < 30000;

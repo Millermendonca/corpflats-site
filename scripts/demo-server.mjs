@@ -66505,6 +66505,166 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
   }
 }
 
+function isExtensionPaymentConfirmationDispatched(r) {
+  if (!r) return true;
+  const paidAtMs = r.paidAt ? new Date(r.paidAt).getTime() : 0;
+  if (r.extensionPaymentConfirmationSentAt) {
+    const sentAtMs = new Date(r.extensionPaymentConfirmationSentAt).getTime();
+    if (!paidAtMs || (sentAtMs && sentAtMs >= paidAtMs - 60000)) {
+      return true;
+    }
+  }
+  const history = db.whatsappHistory || [];
+  const rCode = String(r.code || "").toUpperCase();
+  const rId = String(r.id || "");
+  return history.some(h => {
+    if (!isWaHistoryStatusDispatched(h.status)) return false;
+    const hCode = String(h.reservationCode || "").toUpperCase();
+    const hId = h.reservationId ? String(h.reservationId) : "";
+    const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+    if (!isSameRes) return false;
+    const recType = String(h.recipientType || "guest");
+    if (recType.startsWith("guest_")) return false;
+    if (h.triggerEvent !== "reservation_updated") return false;
+    const msg = String(h.message || "");
+    if (/Confirmamos o recebimento do seu pagamento|Confirmamos a \*extens[aã]o da sua estadia\*/i.test(msg)) {
+      if (!paidAtMs || !h.sentAt) return true;
+      return new Date(h.sentAt).getTime() >= paidAtMs - 60000;
+    }
+    if (paidAtMs && h.sentAt && new Date(h.sentAt).getTime() >= paidAtMs - 5000) {
+      return true;
+    }
+    return false;
+  });
+}
+
+async function ensureExtensionPaymentConfirmationDispatched(r, {
+  valorPago,
+  priorPaid,
+  paymentMethod,
+  source = "Sistema de Pagamentos",
+  baseUrl
+} = {}) {
+  if (!r) return;
+  if (r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return;
+  if (isExtensionPaymentConfirmationDispatched(r)) return;
+
+  const extMeta = r.pendingStayExtension || null;
+  const validPayments = Array.isArray(r.payments) ? r.payments.filter(p => p && Number(p.amount) > 0) : [];
+  const lastPay = validPayments.length > 0 ? validPayments[validPayments.length - 1] : null;
+  const effectiveTotal = Number(r.totalAmount) || Number(r.paidAmount) || 0;
+  const effectivePaidNow = Math.round((
+    Number(valorPago) ||
+    Number(extMeta?.amount) ||
+    (validPayments.length >= 2 ? Number(lastPay?.amount) : 0) ||
+    effectiveTotal
+  ) * 100) / 100;
+  const effectivePriorPaid = Math.round((
+    Number(priorPaid) > 0
+      ? Number(priorPaid)
+      : Math.max(0, effectiveTotal - effectivePaidNow)
+  ) * 100) / 100;
+  const effectiveMethod = paymentMethod || lastPay?.method || r.paymentMethod || "pix";
+
+  let oldCheckoutDate = extMeta?.oldCheckoutDate || r.previousCheckoutDate || "";
+  if (!oldCheckoutDate && Array.isArray(r.auditLogs)) {
+    for (const logItem of r.auditLogs) {
+      if (!logItem || !Array.isArray(logItem.changes)) continue;
+      const chkDiff = logItem.changes.find(c => c && c.field === "checkoutDate" && c.oldValue && c.oldValue !== r.checkoutDate);
+      if (chkDiff) {
+        oldCheckoutDate = String(chkDiff.oldValue).trim();
+        break;
+      }
+    }
+  }
+  const newCheckoutDate = r.checkoutDate || extMeta?.newCheckoutDate || "";
+
+  const extChanges = [];
+  if (Array.isArray(extMeta?.changes) && extMeta.changes.length > 0) {
+    for (const c of extMeta.changes) {
+      if (!c || !c.field) continue;
+      if (c.field === "paymentStatus" || c.field === "paidAmount" || c.field === "status") continue;
+      extChanges.push({ ...c });
+    }
+  }
+  if (oldCheckoutDate && newCheckoutDate && oldCheckoutDate !== newCheckoutDate && !extChanges.some(c => c.field === "checkoutDate")) {
+    extChanges.unshift({
+      field: "checkoutDate",
+      label: "Data de Saída (Check-out)",
+      oldValue: oldCheckoutDate,
+      newValue: newCheckoutDate
+    });
+  }
+  if (effectivePriorPaid > 0 && Math.abs(effectiveTotal - effectivePriorPaid) > 0.01 && !extChanges.some(c => c.field === "totalAmount")) {
+    extChanges.push({
+      field: "totalAmount",
+      label: "Valor Total",
+      oldValue: `R$ ${effectivePriorPaid.toFixed(2).replace(".", ",")}`,
+      newValue: `R$ ${effectiveTotal.toFixed(2).replace(".", ",")}`
+    });
+  }
+  extChanges.push({
+    field: "paidAmount",
+    label: "Valor Pago",
+    oldValue: effectivePriorPaid > 0 ? `R$ ${effectivePriorPaid.toFixed(2).replace(".", ",")}` : undefined,
+    newValue: `R$ ${(Number(r.paidAmount) || effectiveTotal).toFixed(2).replace(".", ",")}`
+  });
+  extChanges.push({
+    field: "paymentStatus",
+    label: "Situação do Pagamento",
+    oldValue: "sinal_pago",
+    newValue: "pago_total"
+  });
+
+  const rCode = String(r.code || "").toUpperCase();
+  const rId = String(r.id || "");
+  const companionsAlreadyNotified = (db.whatsappHistory || []).some(h => {
+    if (!isWaHistoryStatusDispatched(h.status)) return false;
+    const hCode = String(h.reservationCode || "").toUpperCase();
+    const hId = h.reservationId ? String(h.reservationId) : "";
+    const isSameRes = (rCode && hCode === rCode) || (rId && (hId === rId || hCode === rId));
+    return isSameRes && h.triggerEvent === "reservation_updated" && String(h.recipientType || "").startsWith("guest_");
+  });
+
+  const nowIso = new Date().toISOString();
+  r.extensionPaymentConfirmationSentAt = nowIso;
+  if (r.pendingStayExtension) {
+    r.pendingStayExtension.status = "paid";
+    r.pendingStayExtension.paidAt = r.paidAt || nowIso;
+    r.pendingStayExtension.confirmationSentAt = nowIso;
+  }
+
+  try {
+    if (typeof addReservationAuditLog === "function") {
+      addReservationAuditLog(r, {
+        action: "extension_payment_confirmed",
+        actor: { id: null, name: source, role: "system", type: "system" },
+        source,
+        description: `Confirmação de pagamento complementar (R$ ${effectivePaidNow.toFixed(2).replace(".", ",")}) e extensão da estadia disparada ao hóspede.`,
+        changes: extChanges
+      });
+    }
+  } catch (_) {}
+
+  saveDatabase();
+
+  try {
+    console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento e extensão de estadia para ${r.guestName} (${r.code}) — Valor: R$ ${effectivePaidNow.toFixed(2)}...`);
+    await triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", {
+      ...r,
+      _isExtensionPaymentConfirmed: true,
+      _extensionPaidAmount: effectivePaidNow,
+      _extensionPaymentMethod: effectiveMethod,
+      _changesContext: extChanges,
+      _excludeCompanionsTarget: companionsAlreadyNotified
+    }, baseUrl);
+    scheduleUpcomingReservationTriggers(db, saveDatabase);
+    ensureReservationScheduledEmails(db, saveDatabase, r);
+  } catch (err) {
+    console.error("[WhatsApp Dispatch] Erro ao disparar confirmação de extensão paga:", err.message);
+  }
+}
+
 async function confirmReservationPayment(r, {
   amount,
   paidAt,
@@ -66516,6 +66676,41 @@ async function confirmReservationPayment(r, {
   source = "Banco Inter Extrato"
 } = {}) {
   if (!r) return;
+
+  // Se havia uma prorrogação pendente que ainda não tinha atualizado checkoutDate/totalAmount (ex: Opção 2 c/ troca de flat), aplica antes do cálculo
+  if (r.pendingStayExtension && r.pendingStayExtension.status !== "paid") {
+    const extMeta = r.pendingStayExtension;
+    const alreadyApplied = Boolean(
+      extMeta.alreadyAppliedToReservation ||
+      (extMeta.newCheckoutDate && r.checkoutDate === extMeta.newCheckoutDate && Number(r.totalAmount || 0) > Number(r.paidAmount || 0) + 0.05)
+    );
+    if (extMeta.newCheckoutDate && r.checkoutDate !== extMeta.newCheckoutDate) {
+      r.previousCheckoutDate = r.checkoutDate;
+      r.checkoutDate = extMeta.newCheckoutDate;
+    }
+    if (extMeta.newFlatNumber && String(extMeta.newFlatNumber) !== String(r.flatNumber)) {
+      const targetFlatObj = (db.flats || []).find(f => String(f.number) === String(extMeta.newFlatNumber));
+      if (targetFlatObj) {
+        r.flatId = targetFlatObj.id;
+        r.flatNumber = String(targetFlatObj.number);
+      }
+    }
+    if (!alreadyApplied) {
+      const extAmt = Number(amount || extMeta.amount || 0);
+      if (extAmt > 0) {
+        if (!Array.isArray(r.charges)) r.charges = [];
+        r.charges.push({
+          id: `chg_ext_${Date.now()}`,
+          description: `Prorrogação de Estadia (+${extMeta.extraNights || 1} diária(s): ${extMeta.oldCheckoutDate || r.previousCheckoutDate || ""} -> ${r.checkoutDate})`,
+          amount: extAmt,
+          category: "stay_extension",
+          date: paidAt || new Date().toISOString()
+        });
+        r.totalAmount = Math.round(((Number(r.totalAmount) || 0) + extAmt) * 100) / 100;
+      }
+      extMeta.alreadyAppliedToReservation = true;
+    }
+  }
 
   const priorPaid = Math.max(0, Number(r.paidAmount || 0));
   const totalAmount = Number(r.totalAmount || 0);
@@ -66553,6 +66748,12 @@ async function confirmReservationPayment(r, {
   r.paymentStatus = (effectiveTotalAmount > 0 && cumulativePaid + 0.01 < effectiveTotalAmount) ? "sinal_pago" : "pago_total";
   r.paidAmount = cumulativePaid;
   r.paidAt = paidAt || r.paidAt || new Date().toISOString();
+
+  if (r.pendingStayExtension) {
+    r.pendingStayExtension.status = "paid";
+    r.pendingStayExtension.paidAt = r.paidAt;
+    if (endToEndId) r.pendingStayExtension.pixEndToEndId = endToEndId;
+  }
 
   if (isCard) {
     if (mpPaymentId || txId) r.mpPaymentId = String(mpPaymentId || txId);
@@ -66629,6 +66830,26 @@ async function confirmReservationPayment(r, {
 
   saveDatabase();
 
+  const rCodeNorm = String(r.code || "").toUpperCase();
+  const rIdNorm = String(r.id || "");
+  const hadAdditionalDailyPendingWa = (db.whatsappHistory || []).some(h => {
+    const hCode = String(h.reservationCode || "").toUpperCase();
+    const hId = h.reservationId ? String(h.reservationId) : "";
+    return ((rCodeNorm && hCode === rCodeNorm) || (rIdNorm && (hId === rIdNorm || hCode === rIdNorm))) && h.triggerEvent === "additional_daily_pending";
+  });
+
+  if (
+    r.paymentStatus === "pago_total" &&
+    (isComplementaryPayment || Boolean(r.pendingStayExtension) || (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate) || hadAdditionalDailyPendingWa)
+  ) {
+    await ensureExtensionPaymentConfirmationDispatched(r, {
+      valorPago,
+      priorPaid,
+      paymentMethod: r.paymentMethod || (isCard ? "cartao_credito" : "pix"),
+      source
+    });
+  }
+
   await ensurePaymentConfirmationDispatched(r, { wasPreReserva });
 }
 
@@ -66655,11 +66876,23 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
 
     const chanLower = String(r.channel || "").toLowerCase();
     const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+    const hasPendingDirectBalance = (r.paymentStatus === "sinal_pago" || r.paymentStatus === "parcial" || r.paymentStatus === "pendente") &&
+      Number(r.totalAmount) > 0 &&
+      Number(r.paidAmount || 0) + 0.01 < Number(r.totalAmount);
 
-    // Se já está marcado como pago ou canal OTA (Booking/Airbnb), retorna de imediato
-    if (!isUnverifiedPreReservation(r) && (isOta || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))) {
+    // Se já está marcado como pago ou canal OTA sem saldo direto pendente (Booking/Airbnb), retorna de imediato
+    if (!isUnverifiedPreReservation(r) && !hasPendingDirectBalance && (isOta || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))) {
       if (!isOta && r.guestPhone) {
         ensurePaymentConfirmationDispatched(r);
+      }
+      if (
+        (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") &&
+        (r.pendingStayExtension || (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate)) &&
+        Array.isArray(r.payments) &&
+        r.payments.length >= 2 &&
+        r.payments.some(p => /complemento|prorroga|extens/i.test(String(p?.notes || "")))
+      ) {
+        ensureExtensionPaymentConfirmationDispatched(r);
       }
       const isSettledByCard = Boolean(
         !r.pixEndToEndId &&
@@ -70190,6 +70423,29 @@ setInterval(async () => {
     });
     for (const rPaid of recentPaidMissingConfirm) {
       await ensurePaymentConfirmationDispatched(rPaid, { wasPreReserva: true });
+    }
+
+    // C) Auto-healing de extensões de estadia / complementos pagos recentemente (ex: RES-511-0763) que ainda não receberam confirmação do pagamento e da extensão
+    const recentPaidExtensionsMissingConfirm = db.reservations.filter(r => {
+      if (!r || Number(r.id) <= 560) return false;
+      if (r.status === "cancelada" || r.status === "cancelled" || r.status === "expirada") return false;
+      if (!r.checkoutDate || r.checkoutDate < todayStr) return false;
+      if (r.paymentStatus !== "pago_total" && r.paymentStatus !== "pago") return false;
+      if (!r.paidAt || (now.getTime() - new Date(r.paidAt).getTime()) > 48 * 3600 * 1000) return false;
+      if (isExtensionPaymentConfirmationDispatched(r)) return false;
+
+      const hasComplementaryPayment = Array.isArray(r.payments) && r.payments.length >= 2 && r.payments.some(p =>
+        /complemento|prorroga|extens/i.test(String(p?.notes || ""))
+      );
+      const hasCheckoutExt = Boolean(
+        r.pendingStayExtension ||
+        (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate) ||
+        (Array.isArray(r.auditLogs) && r.auditLogs.some(l => l && l.action === "dates_changed" && Array.isArray(l.changes) && l.changes.some(c => c && c.field === "checkoutDate")))
+      );
+      return hasComplementaryPayment && hasCheckoutExt;
+    });
+    for (const rExt of recentPaidExtensionsMissingConfirm) {
+      await ensureExtensionPaymentConfirmationDispatched(rExt, { source: "Auto-Healing Extensão" });
     }
   } catch (errLoop) {
     // Silencioso
