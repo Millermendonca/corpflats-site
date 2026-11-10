@@ -54313,6 +54313,48 @@ export async function executeNfseEmissionInternal(payload) {
         comp.uf = endUf;
       }
       resolvedCompanyId = Number(comp.id);
+      if (matchedGuest) {
+        matchedGuest.companyId = Number(comp.id);
+        matchedGuest.companyName = comp.tradeName || comp.corporateName || toTitleCase(tomadorNome);
+        matchedGuest.companyCnpj = cleanDoc;
+        if (!Array.isArray(matchedGuest.tags)) matchedGuest.tags = [];
+        if (!matchedGuest.tags.includes("Corporativo")) matchedGuest.tags.push("Corporativo");
+        matchedGuest.updatedAt = new Date().toISOString();
+      }
+      if (matchedRes) {
+        matchedRes.companyId = Number(comp.id);
+        matchedRes.companyName = comp.corporateName || comp.tradeName || toTitleCase(tomadorNome);
+        matchedRes.companyCnpj = cleanDoc;
+        if (comp.address) matchedRes.companyAddress = comp.address;
+        if (comp.number) matchedRes.companyNumber = comp.number;
+        if (comp.complement !== undefined) matchedRes.companyComplement = comp.complement;
+        if (comp.neighborhood) matchedRes.companyNeighborhood = comp.neighborhood;
+        if (comp.cep) matchedRes.companyCep = comp.cep;
+        if (comp.city) matchedRes.companyCity = comp.city;
+        if (comp.state) matchedRes.companyState = comp.state;
+        if (comp.ibgeCode) matchedRes.companyIbgeCode = comp.ibgeCode;
+        matchedRes.invoiceRecipientType = "company";
+        matchedRes.nfRecipientType = "company";
+      }
+    }
+    if (isAgencyTomador && resolvedAgencyId && matchedRes) {
+      const agObj = db.agencies.find(a => Number(a.id) === Number(resolvedAgencyId));
+      matchedRes.agencyId = Number(resolvedAgencyId);
+      if (agObj) {
+        matchedRes.agencyName = agObj.corporateName || agObj.tradeName;
+        matchedRes.agencyTradeName = agObj.tradeName || agObj.corporateName;
+        matchedRes.agencyCnpj = agObj.cnpj || cleanDoc;
+        if (agObj.address) matchedRes.agencyAddress = agObj.address;
+        if (agObj.number) matchedRes.agencyNumber = agObj.number;
+        if (agObj.complement !== undefined) matchedRes.agencyComplement = agObj.complement;
+        if (agObj.neighborhood) matchedRes.agencyNeighborhood = agObj.neighborhood;
+        if (agObj.cep) matchedRes.agencyCep = agObj.cep;
+        if (agObj.city) matchedRes.agencyCity = agObj.city;
+        if (agObj.state) matchedRes.agencyState = agObj.state;
+        if (agObj.ibgeCode) matchedRes.agencyIbgeCode = agObj.ibgeCode;
+      }
+      matchedRes.invoiceRecipientType = "agency";
+      matchedRes.nfRecipientType = "agency";
     }
   } else if (cleanDoc.length === 11) {
     if (!db.guests) db.guests = [];
@@ -54743,15 +54785,86 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
       (rawCep && !isGenericPelincaCep(rawCep))
     );
     const mode = String(body.tomadorMode || (cleanDoc.length === 14 ? "pj" : "pf")).toLowerCase();
+    const deliveryEmails = Array.isArray(body.nfDeliveryEmails)
+      ? body.nfDeliveryEmails
+      : (typeof body.nfDeliveryEmails === "string" && body.nfDeliveryEmails.trim()
+          ? body.nfDeliveryEmails.split(/[;,]+/).map(s => s.trim()).filter(Boolean)
+          : []);
 
-    if (mode === "agency" || (cleanDoc.length === 14 && body.agencyId)) {
-      if (!db.agencies) db.agencies = [];
+    if (!db.guests) db.guests = [];
+    if (!db.companies) db.companies = [];
+    if (!db.agencies) db.agencies = [];
+
+    const matchedRes = (body.reservationId || body.reservationCode)
+      ? (db.reservations || []).find(r =>
+          r && (
+            (body.reservationId && Number(r.id) === Number(body.reservationId)) ||
+            (body.reservationCode && String(r.code) === String(body.reservationCode))
+          )
+        )
+      : null;
+
+    const hintGuestNameLower = String(body.guestName || matchedRes?.guestName || (mode === "pf" ? rawName : "") || "").trim().toLowerCase();
+    const hintGuestDoc = onlyDigits(body.guestDocument || matchedRes?.guestDocument || (cleanDoc.length === 11 ? cleanDoc : "") || "");
+    let linkedGuestRec = db.guests.find(g =>
+      g && (
+        (body.guestId && Number(g.id) === Number(body.guestId)) ||
+        (matchedRes?.guestId && Number(g.id) === Number(matchedRes.guestId)) ||
+        (hintGuestDoc.length === 11 && onlyDigits(g.documentNumber || g.document || g.cpf || "") === hintGuestDoc) ||
+        (hintGuestNameLower.length >= 4 && String(g.fullName || g.name || "").trim().toLowerCase() === hintGuestNameLower)
+      )
+    );
+
+    if (matchedRes) {
+      if (body.nfHideFromGuest !== undefined) matchedRes.nfHideFromGuest = Boolean(body.nfHideFromGuest);
+      if (deliveryEmails.length > 0) matchedRes.nfDeliveryEmails = deliveryEmails;
+      if (body.descricaoServico) {
+        if (!matchedRes.confirmedFiscalData) matchedRes.confirmedFiscalData = {};
+        matchedRes.confirmedFiscalData.descricaoServico = String(body.descricaoServico);
+      }
+    }
+
+    if (mode === "agency" || (cleanDoc.length === 14 && body.agencyId && mode !== "pj")) {
       let ag = db.agencies.find(a =>
         (body.agencyId && Number(a.id) === Number(body.agencyId)) ||
         (cleanDoc.length === 14 && onlyDigits(a.cnpj) === cleanDoc)
       );
-      if (ag) {
-        if (rawName) { ag.corporateName = rawName; ag.razaoSocial = rawName; }
+      if (!ag && (cleanDoc.length === 14 || rawName)) {
+        const nextAgId = db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) + 1 : 1;
+        ag = {
+          id: nextAgId,
+          corporateName: toTitleCase(rawName || "Agência de Viagens"),
+          razaoSocial: toTitleCase(rawName || "Agência de Viagens"),
+          tradeName: toTitleCase(rawName || "Agência de Viagens"),
+          nomeFantasia: toTitleCase(rawName || "Agência de Viagens"),
+          cnpj: cleanDoc,
+          financialEmail: cleanEmail || deliveryEmails[0] || "",
+          phone: cleanTel,
+          address: hasRealAddr ? rawEnd : "",
+          logradouro: hasRealAddr ? rawEnd : "",
+          number: hasRealAddr ? rawNum : "",
+          complement: rawComp,
+          neighborhood: hasRealAddr ? rawBairro : "",
+          cep: hasRealAddr ? rawCep : "",
+          city: hasRealAddr ? rawCidade : "",
+          state: hasRealAddr ? rawUf : "",
+          ibgeCode: hasRealAddr ? rawIbge : "",
+          defaultRatePolicy: "COMISSIONADA",
+          defaultCommissionPct: 12,
+          defaultInvoiceRecipient: "agency",
+          posUnits: [],
+          agents: [],
+          clientCompanyIds: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        db.agencies.push(ag);
+      } else if (ag) {
+        if (rawName) {
+          ag.corporateName = toTitleCase(rawName);
+          ag.razaoSocial = toTitleCase(rawName);
+          if (!ag.tradeName) ag.tradeName = toTitleCase(rawName);
+        }
         if (cleanDoc.length === 14) ag.cnpj = cleanDoc;
         if (cleanEmail) ag.financialEmail = cleanEmail;
         if (cleanTel) ag.phone = cleanTel;
@@ -54766,41 +54879,67 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
           if (rawIbge) ag.ibgeCode = rawIbge;
         }
         ag.updatedAt = new Date().toISOString();
-        saveDatabase();
-        return res.json({ success: true, entityType: "agency", entity: ag });
       }
+      if (ag && matchedRes) {
+        matchedRes.agencyId = Number(ag.id);
+        matchedRes.agencyName = ag.corporateName || ag.tradeName;
+        matchedRes.agencyTradeName = ag.tradeName || ag.corporateName;
+        if (ag.cnpj) matchedRes.agencyCnpj = ag.cnpj;
+        if (ag.address) matchedRes.agencyAddress = ag.address;
+        if (ag.number) matchedRes.agencyNumber = ag.number;
+        if (ag.complement !== undefined) matchedRes.agencyComplement = ag.complement;
+        if (ag.neighborhood) matchedRes.agencyNeighborhood = ag.neighborhood;
+        if (ag.cep) matchedRes.agencyCep = ag.cep;
+        if (ag.city) matchedRes.agencyCity = ag.city;
+        if (ag.state) matchedRes.agencyState = ag.state;
+        if (ag.ibgeCode) matchedRes.agencyIbgeCode = ag.ibgeCode;
+        matchedRes.invoiceRecipientType = "agency";
+        matchedRes.nfRecipientType = "agency";
+      }
+      saveDatabase();
+      return res.json({ success: true, entityType: "agency", entity: ag, guest: linkedGuestRec || null });
     }
 
     if (mode === "pj" || cleanDoc.length === 14) {
-      if (!db.companies) db.companies = [];
       let comp = db.companies.find(c =>
         (body.companyId && Number(c.id) === Number(body.companyId)) ||
-        (cleanDoc.length === 14 && onlyDigits(c.cnpj) === cleanDoc)
+        (cleanDoc.length === 14 && onlyDigits(c.cnpj) === cleanDoc) ||
+        (!cleanDoc && rawName.length >= 3 && String(c.corporateName || c.tradeName || c.name || "").trim().toLowerCase() === rawName.toLowerCase())
       );
-      if (!comp && cleanDoc.length === 14 && rawName) {
+      if (!comp && (cleanDoc.length === 14 || rawName)) {
         const nextCompId = db.companies.length > 0 ? Math.max(...db.companies.map(c => Number(c.id) || 0)) + 1 : 1;
         comp = {
           id: nextCompId,
-          corporateName: toTitleCase(rawName),
-          tradeName: toTitleCase(rawName),
+          corporateName: toTitleCase(rawName || "Empresa Parceira"),
+          tradeName: toTitleCase(rawName || "Empresa Parceira"),
           cnpj: cleanDoc,
-          financialEmail: cleanEmail,
+          financialEmail: cleanEmail || deliveryEmails[0] || "",
           phone: cleanTel,
           address: hasRealAddr ? rawEnd : "",
           logradouro: hasRealAddr ? rawEnd : "",
+          street: hasRealAddr ? rawEnd : "",
           number: hasRealAddr ? rawNum : "",
+          numero: hasRealAddr ? rawNum : "",
           complement: rawComp,
+          complemento: rawComp,
           neighborhood: hasRealAddr ? rawBairro : "",
+          bairro: hasRealAddr ? rawBairro : "",
           cep: hasRealAddr ? rawCep : "",
           city: hasRealAddr ? rawCidade : "",
+          cidade: hasRealAddr ? rawCidade : "",
           state: hasRealAddr ? rawUf : "",
+          uf: hasRealAddr ? rawUf : "",
           ibgeCode: hasRealAddr ? rawIbge : "",
+          codigoMunicipio: hasRealAddr ? rawIbge : "",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
         db.companies.unshift(comp);
       } else if (comp) {
-        if (rawName) comp.corporateName = toTitleCase(rawName);
+        if (rawName) {
+          comp.corporateName = toTitleCase(rawName);
+          if (!comp.tradeName) comp.tradeName = toTitleCase(rawName);
+        }
         if (cleanDoc.length === 14) comp.cnpj = cleanDoc;
         if (cleanEmail) comp.financialEmail = cleanEmail;
         if (cleanTel) comp.phone = cleanTel;
@@ -54816,8 +54955,44 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
         }
         comp.updatedAt = new Date().toISOString();
       }
+
+      // Vincula automaticamente a empresa ao cadastro do hóspede (cliente) e às reservas dele
+      if (comp) {
+        if (linkedGuestRec) {
+          linkedGuestRec.companyId = Number(comp.id);
+          linkedGuestRec.companyName = comp.tradeName || comp.corporateName;
+          if (comp.cnpj) linkedGuestRec.companyCnpj = comp.cnpj;
+          if (!Array.isArray(linkedGuestRec.tags)) linkedGuestRec.tags = [];
+          if (!linkedGuestRec.tags.includes("Corporativo")) linkedGuestRec.tags.push("Corporativo");
+          linkedGuestRec.updatedAt = new Date().toISOString();
+        }
+        const gNameLower = String(linkedGuestRec?.fullName || linkedGuestRec?.name || hintGuestNameLower || "").trim().toLowerCase();
+        for (const r of (db.reservations || [])) {
+          if (!r) continue;
+          const isTargetRes =
+            (matchedRes && Number(r.id) === Number(matchedRes.id)) ||
+            (linkedGuestRec?.id && Number(r.guestId) === Number(linkedGuestRec.id)) ||
+            (gNameLower.length >= 4 && String(r.guestName || "").trim().toLowerCase() === gNameLower);
+          if (!isTargetRes) continue;
+          r.companyId = Number(comp.id);
+          r.companyName = comp.corporateName || comp.tradeName;
+          if (comp.cnpj) r.companyCnpj = comp.cnpj;
+          if (comp.address) r.companyAddress = comp.address;
+          if (comp.number) r.companyNumber = comp.number;
+          if (comp.complement !== undefined) r.companyComplement = comp.complement;
+          if (comp.neighborhood) r.companyNeighborhood = comp.neighborhood;
+          if (comp.cep) r.companyCep = comp.cep;
+          if (comp.city) r.companyCity = comp.city;
+          if (comp.state) r.companyState = comp.state;
+          if (comp.ibgeCode) r.companyIbgeCode = comp.ibgeCode;
+          if (matchedRes && Number(r.id) === Number(matchedRes.id)) {
+            r.invoiceRecipientType = "company";
+            r.nfRecipientType = "company";
+          }
+        }
+      }
       saveDatabase();
-      return res.json({ success: true, entityType: "company", entity: comp });
+      return res.json({ success: true, entityType: "company", entity: comp, guest: linkedGuestRec || null });
     }
 
     // Hóspede (PF)

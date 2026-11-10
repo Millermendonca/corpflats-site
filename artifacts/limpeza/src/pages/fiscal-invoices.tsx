@@ -1878,12 +1878,19 @@ export default function FiscalInvoicesPage() {
 
   // ── Sincronizar Dados do Formulário Direto no Cadastro do Hóspede / CRM ────
   const handleSaveTomadorToCrm = async (silent = false, overrides: Record<string, any> = {}) => {
+    const activeGuestObj = linkedGuest || selectedGuest
     const payload = {
       tomadorMode,
-      guestId: linkedGuest?.id || selectedGuest?.id || linkedReservation?.guestId || undefined,
+      guestId: activeGuestObj?.id || linkedReservation?.guestId || undefined,
+      guestName: activeGuestObj?.fullName || activeGuestObj?.name || linkedReservation?.guestName || undefined,
+      guestDocument: activeGuestObj?.documentNumber || activeGuestObj?.document || activeGuestObj?.cpf || linkedReservation?.guestDocument || undefined,
       reservationId: linkedReservation?.id || undefined,
+      reservationCode: linkedReservation?.code || undefined,
       companyId: linkedCompany?.id || linkedReservation?.companyId || undefined,
       agencyId: linkedAgency?.id || linkedReservation?.agencyId || undefined,
+      nfHideFromGuest: overrides.nfHideFromGuest !== undefined ? overrides.nfHideFromGuest : formNfHideFromGuest,
+      nfDeliveryEmails: overrides.nfDeliveryEmails !== undefined ? overrides.nfDeliveryEmails : formNfDeliveryEmails,
+      descricaoServico: overrides.descricaoServico !== undefined ? overrides.descricaoServico : formDescricao,
       tomadorNome: overrides.tomadorNome !== undefined ? overrides.tomadorNome : formTomadorNome,
       tomadorCpfCnpj: overrides.tomadorCpfCnpj !== undefined ? overrides.tomadorCpfCnpj : formTomadorDoc,
       tomadorEmail: overrides.tomadorEmail !== undefined ? overrides.tomadorEmail : formTomadorEmail,
@@ -1907,6 +1914,19 @@ export default function FiscalInvoicesPage() {
         credentials: "include"
       })
       if (res.ok) {
+        const resData = await res.json().catch(() => null)
+        if (resData?.entityType === "company" && resData.entity) {
+          setLinkedCompany(resData.entity)
+        } else if (resData?.entityType === "agency" && resData.entity) {
+          setLinkedAgency(resData.entity)
+        } else if (resData?.entityType === "guest" && resData.entity) {
+          setLinkedGuest(resData.entity)
+          setSelectedGuest(resData.entity)
+        }
+        if (resData?.guest) {
+          setLinkedGuest(resData.guest)
+          setSelectedGuest(resData.guest)
+        }
         fetchGuests()
         fetchCompanies()
         fetchAgencies()
@@ -1914,7 +1934,7 @@ export default function FiscalInvoicesPage() {
         if (!silent) {
           toast({
             title: "Salvo no Cadastro! 💾",
-            description: "CPF e endereço já ficaram salvos no cadastro para as próximas notas."
+            description: "Dados do tomador e vínculo com o hóspede/reserva salvos para as próximas notas."
           })
         }
       }
@@ -2011,6 +2031,7 @@ export default function FiscalInvoicesPage() {
         description: `${data.razaoSocial || 'Dados importados com sucesso'}${resolvedCity ? ` • ${resolvedCity}/${data.uf || 'RJ'}` : ''}`
       })
       syncFormToPreview(nextOverrides)
+      handleSaveTomadorToCrm(true, nextOverrides)
     } catch {
       toast({
         title: "Erro na Busca",
@@ -3755,7 +3776,11 @@ export default function FiscalInvoicesPage() {
                                   <input
                                     type="checkbox"
                                     checked={formNfHideFromGuest}
-                                    onChange={e => setFormNfHideFromGuest(e.target.checked)}
+                                    onChange={e => {
+                                      const val = e.target.checked
+                                      setFormNfHideFromGuest(val)
+                                      handleSaveTomadorToCrm(true, { nfHideFromGuest: val })
+                                    }}
                                     className="rounded border-fuchsia-500 text-fuchsia-600"
                                   />
                                   <span>🔒 Ocultar NFS-e e valores do Hóspede (Enviar apenas para Agência / Empresa)</span>
@@ -3774,6 +3799,7 @@ export default function FiscalInvoicesPage() {
                                   placeholder="Ex: faturamento@agencia.com.br, conciliacao@empresa.com.br"
                                   value={formNfDeliveryEmails}
                                   onChange={e => setFormNfDeliveryEmails(e.target.value)}
+                                  onBlur={() => handleSaveTomadorToCrm(true)}
                                   className="h-8 text-[11px] rounded-lg bg-background"
                                 />
                               </div>
