@@ -502,7 +502,7 @@ export default function MaidWhatsappAutomation() {
       const res = await fetch("/api/maid-automation/dispatch-retroactive-reviews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: false })
+        body: JSON.stringify({ force: true })
       })
       const data = await res.json()
 

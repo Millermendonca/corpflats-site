@@ -2569,10 +2569,11 @@ export async function dispatchDailyReviewsSummary(db, {
  */
 export async function dispatchNovemberRetroactiveReviews(db, {
   sendZapiFn = null,
-  force = false
+  force = false,
+  previewOnly = false
 } = {}) {
   if (!db) {
-    return { maidsNotified: 0, totalReviewsSent: 0, summaryByMaid: {}, error: "db não fornecido" };
+    return { maidsNotified: 0, totalReviewsSent: 0, summaryByMaid: {}, previews: {}, error: "db não fornecido" };
   }
 
   const seenIds = new Set();
@@ -2692,6 +2693,7 @@ export async function dispatchNovemberRetroactiveReviews(db, {
   let maidsNotified = 0;
   let totalReviewsSent = 0;
   const summaryByMaid = {};
+  const previews = {};
 
   for (const maidId of Object.keys(groupedByMaid)) {
     const { maidUser, reviews } = groupedByMaid[maidId];
@@ -2707,6 +2709,21 @@ export async function dispatchNovemberRetroactiveReviews(db, {
       reviews,
       isRetroactive: true
     });
+
+    previews[maidUser.name || maidUser.username || maidId] = {
+      maidId: maidUser.id,
+      maidName: maidUser.name || maidUser.username,
+      phone: cleanPh,
+      count: reviews.length,
+      message
+    };
+
+    if (previewOnly) {
+      maidsNotified++;
+      totalReviewsSent += reviews.length;
+      summaryByMaid[maidUser.id] = reviews.length;
+      continue;
+    }
 
     const sendRes = await sender(db.zapiConfig || {}, {
       phone: cleanPh,
@@ -2750,7 +2767,7 @@ export async function dispatchNovemberRetroactiveReviews(db, {
     summaryByMaid[maidUser.id] = reviews.length;
   }
 
-  return { maidsNotified, totalReviewsSent, summaryByMaid };
+  return { maidsNotified, totalReviewsSent, summaryByMaid, previews };
 }
 
 // ── Inicialização do Motor de Automações para Camareiras ────────────────────
@@ -3011,13 +3028,18 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
     res.json({ success: true, count: dispatched.length, dispatched });
   });
 
-  // 7. Disparo Retroativo de Avaliações de Novembro/2026 com Trava de Idempotência
+  // 7. Disparo Retroativo de Avaliações de Novembro/2026
   app.post("/api/maid-automation/dispatch-retroactive-reviews", async (req, res) => {
     try {
-      const { force = false } = req.body || {};
+      const { strictIdempotency = false, previewOnly = false } = req.body || {};
       const db = getDb();
-      const result = await dispatchNovemberRetroactiveReviews(db, { force: Boolean(force) });
-      saveDatabase("dispatch_retroactive_reviews_november");
+      const result = await dispatchNovemberRetroactiveReviews(db, {
+        force: !strictIdempotency,
+        previewOnly: Boolean(previewOnly)
+      });
+      if (!previewOnly) {
+        saveDatabase("dispatch_retroactive_reviews_november");
+      }
       res.json({
         success: true,
         ...result,
