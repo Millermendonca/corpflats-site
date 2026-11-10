@@ -542,7 +542,7 @@ export default function Payments() {
                       <th className="p-3">Forma de Pagamento</th>
                       <th className="p-3 text-right">Valor Bruto</th>
                       <th className="p-3 text-right">Taxa Gateway</th>
-                      <th className="p-3 text-right">Comissão OTA</th>
+                      <th className="p-3 text-right">Comissão (Canal)</th>
                       <th className="p-3 text-right font-bold text-foreground">Valor Líquido</th>
                       <th className="p-3 text-center">Status</th>
                       <th className="p-3 text-center">Ações</th>
@@ -581,14 +581,25 @@ export default function Payments() {
                               </span>
                             </td>
 
-                            {/* Hóspede & Código */}
+                            {/* Hóspede & Código & Canal */}
                             <td className="p-3">
                               <span className="font-bold text-slate-900 dark:text-slate-100 block">
                                 {p.guestName || "Hóspede sem nome"}
                               </span>
-                              <span className="text-[10px] font-mono text-muted-foreground">
-                                {p.code}
-                              </span>
+                              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                <span className="text-[10px] font-mono text-muted-foreground">
+                                  {p.code}
+                                </span>
+                                {(() => {
+                                  const ch = String(p.channel || "").toLowerCase();
+                                  if (ch === "booking") return <span className="text-[9px] font-bold px-1.5 py-0 rounded bg-blue-500/10 text-blue-700 dark:text-blue-300">🔵 Booking</span>;
+                                  if (ch === "airbnb") return <span className="text-[9px] font-bold px-1.5 py-0 rounded bg-rose-500/10 text-rose-700 dark:text-rose-300">🔴 Airbnb</span>;
+                                  if (ch === "b2b") return <span className="text-[9px] font-bold px-1.5 py-0 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300">🟣 B2B</span>;
+                                  if (ch === "whatsapp") return <span className="text-[9px] font-bold px-1.5 py-0 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">💬 WhatsApp</span>;
+                                  if (ch === "site") return <span className="text-[9px] font-bold px-1.5 py-0 rounded bg-sky-500/10 text-sky-700 dark:text-sky-300">🌐 Site</span>;
+                                  return <span className="text-[9px] font-bold px-1.5 py-0 rounded bg-slate-500/10 text-slate-700 dark:text-slate-300">🏠 Direta</span>;
+                                })()}
+                              </div>
                             </td>
 
                             {/* Flat */}
@@ -601,14 +612,34 @@ export default function Payments() {
                             {/* Forma de Pagamento */}
                             <td className="p-3 whitespace-nowrap">
                               {(() => {
+                                const rawPm = String(p.paymentMethod || "").toLowerCase();
+                                if (rawPm === "boleto_faturado" || rawPm === "faturado_boleto" || rawPm === "boleto") {
+                                  return (
+                                    <div className="flex items-center gap-1.5 font-semibold text-indigo-700 dark:text-indigo-300">
+                                      <span>🏦</span>
+                                      <span>Boleto Faturado</span>
+                                    </div>
+                                  );
+                                }
+                                if (rawPm === "faturado_pj") {
+                                  return (
+                                    <div className="flex items-center gap-1.5 font-semibold text-indigo-700 dark:text-indigo-300">
+                                      <span>🏢</span>
+                                      <span>Faturado (PJ)</span>
+                                    </div>
+                                  );
+                                }
                                 const pmObj = (paymentsData?.paymentMethods || []).find((m: any) => m.id === p.paymentMethod);
                                 if (pmObj) {
                                   const isB = pmObj.id === "booking";
                                   const isA = pmObj.id === "airbnb";
+                                  const isBoleto = pmObj.id.includes("boleto");
+                                  const isVcn = pmObj.id.includes("vcn");
+                                  const isFaturadoB2b = pmObj.id === "faturado_b2b";
                                   const isP = pmObj.id.includes("pix");
                                   const isC = pmObj.id.includes("cartao") || pmObj.id.includes("card") || pmObj.id.includes("mercadopago");
                                   const isCash = pmObj.id.includes("dinheiro");
-                                  const icon = isB ? "🔵" : (isA ? "🔴" : (isP ? "⚡" : (isC ? "💳" : (isCash ? "💵" : "💰"))));
+                                  const icon = isB ? "🔵" : (isA ? "🔴" : (isBoleto ? "🏦" : (isVcn ? "🟣" : (isFaturadoB2b ? "🏢" : (isP ? "⚡" : (isC ? "💳" : (isCash ? "💵" : "💰")))))));
                                   return (
                                     <div className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200">
                                       <span>{icon}</span>
@@ -669,7 +700,7 @@ export default function Payments() {
                               )}
                             </td>
 
-                            {/* Comissão OTA */}
+                            {/* Comissão (Canal) */}
                             <td className="p-3 text-right whitespace-nowrap">
                               {p.channelCommissionAmount > 0 ? (
                                 <div>
@@ -679,7 +710,15 @@ export default function Payments() {
                                   <span className="text-[10px] text-muted-foreground">({p.channelCommissionPct}%)</span>
                                 </div>
                               ) : (
-                                <span className="text-muted-foreground text-[11px]">0% (Site/Direta)</span>
+                                <span className="text-muted-foreground text-[11px]">
+                                  {p.channel === "whatsapp"
+                                    ? "0% (WhatsApp)"
+                                    : p.channel === "site"
+                                      ? "0% (Site Próprio)"
+                                      : p.channel === "b2b"
+                                        ? "0% (B2B NET)"
+                                        : "0% (Direta)"}
+                                </span>
                               )}
                             </td>
 
@@ -892,7 +931,12 @@ export default function Payments() {
                   </div>
 
                   <div className="p-3 bg-muted/40 rounded-xl space-y-3">
-                    <h3 className="font-bold text-xs text-foreground">2. Comissões de Canais de Venda (OTAs)</h3>
+                    <div>
+                      <h3 className="font-bold text-xs text-foreground">2. Comissões de Canais de Venda (OTAs)</h3>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Filtradas exclusivamente pelo <strong>Canal da Reserva</strong> (nunca pelo meio de pagamento). Reservas via <strong>WhatsApp</strong> ou <strong>Site Próprio</strong> têm sempre <strong>0% de comissão</strong>.
+                      </p>
+                    </div>
                     
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1">
@@ -1293,16 +1337,36 @@ export default function Payments() {
                 </div>
 
                 <div className="flex justify-between border-b border-border/40 pb-1.5">
+                  <span className="text-muted-foreground font-medium">Canal de Origem da Reserva:</span>
+                  <span className="font-semibold text-foreground">
+                    {(() => {
+                      const ch = String(selectedPayment.channel || "").toLowerCase();
+                      if (ch === "booking") return "🔵 Booking.com (OTA Comissionada)";
+                      if (ch === "airbnb") return "🔴 Airbnb (OTA Comissionada)";
+                      if (ch === "b2b") return selectedPayment.channelCommissionPct > 0 ? `🟣 Agência B2B (${selectedPayment.channelCommissionPct}% Comissão)` : "🟣 Agência B2B (Tarifa NET • 0%)";
+                      if (ch === "whatsapp") return "💬 WhatsApp Direto (Sem Comissão)";
+                      if (ch === "site") return "🌐 Site Próprio CorpFlats (Sem Comissão)";
+                      return "🏠 Venda Direta (Sem Comissão)";
+                    })()}
+                  </span>
+                </div>
+
+                <div className="flex justify-between border-b border-border/40 pb-1.5">
                   <span className="text-muted-foreground font-medium">Forma de Pagamento:</span>
                   <span className="font-semibold text-foreground">
                     {(() => {
                       const pm = String(selectedPayment.paymentMethod || "").toLowerCase();
                       const isCard = pm.includes("cartao") || pm.includes("card") || pm.includes("credito") || pm.includes("debito") || Boolean(selectedPayment.mpPaymentId && !selectedPayment.pixEndToEndId);
-                      if (pm.includes("booking")) return "🌐 Booking.com (Canal Parceiro)";
-                      if (pm.includes("airbnb")) return "🔴 Airbnb (Canal Parceiro)";
+                      if (pm === "boleto_faturado" || pm === "faturado_boleto" || pm === "boleto") return "🏦 Boleto Faturado (Banco Inter)";
+                      if (pm === "faturado_pj") return "🏢 Faturado Corporativo (PJ)";
+                      if (pm === "faturado_b2b") return "🏢 Faturado B2B / Agência";
+                      if (pm.includes("vcn")) return "🟣 Cartão Virtual B2B (VCN)";
+                      if (pm.includes("dinheiro")) return "💵 Dinheiro em Espécie";
+                      if (pm.includes("booking")) return "🔵 Booking.com (Coleta Canal)";
+                      if (pm.includes("airbnb")) return "🔴 Airbnb (Coleta Canal)";
                       if (isCard) return selectedPayment.mpPaymentId ? "💳 Cartão de Crédito (Mercado Pago)" : "💳 Cartão de Crédito";
-                      if (selectedPayment.pixEndToEndId || selectedPayment.pixTxId) return "⚡ PIX Banco Inter Oficial (mTLS v2)";
-                      return "PIX / PMS";
+                      if (selectedPayment.pixEndToEndId || selectedPayment.pixTxId || pm.includes("pix")) return "⚡ PIX Banco Inter Oficial (mTLS v2)";
+                      return selectedPayment.paymentMethod || "PIX / PMS";
                     })()}
                   </span>
                 </div>

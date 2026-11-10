@@ -49,10 +49,11 @@ import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservat
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
-  { id: "booking", name: "Booking.com", gatewayFeeRate: 0, commissionRate: 13, active: true, isSystem: true },
-  { id: "airbnb", name: "Airbnb", gatewayFeeRate: 0, commissionRate: 3, active: true, isSystem: true },
+  { id: "booking", name: "Booking.com", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
+  { id: "airbnb", name: "Airbnb", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
   { id: "vcn_b2b", name: "Cartão Virtual B2B (VCN)", gatewayFeeRate: 3.49, commissionRate: 0, active: true, isSystem: true },
   { id: "faturado_b2b", name: "Faturado B2B", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
+  { id: "boleto_faturado", name: "Boleto Faturado (Inter)", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
   { id: "pix", name: "PIX", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
   { id: "cartao_credito", name: "Cartão de Crédito", gatewayFeeRate: 3.99, commissionRate: 0, active: true, isSystem: true },
   { id: "dinheiro", name: "Dinheiro", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },

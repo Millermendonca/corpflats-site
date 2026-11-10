@@ -2180,8 +2180,8 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
     const aPm = partial.paymentMethods.find(m => m.id === "airbnb");
     const pPm = partial.paymentMethods.find(m => m.id === "pix");
     const cPm = partial.paymentMethods.find(m => m.id === "cartao_credito");
-    if (bPm && bPm.commissionRate !== undefined) pmBookingRate = Number(bPm.commissionRate);
-    if (aPm && aPm.commissionRate !== undefined) pmAirbnbRate = Number(aPm.commissionRate);
+    if (bPm && bPm.commissionRate !== undefined && Number(bPm.commissionRate) > 0) pmBookingRate = Number(bPm.commissionRate);
+    if (aPm && aPm.commissionRate !== undefined && Number(aPm.commissionRate) > 0) pmAirbnbRate = Number(aPm.commissionRate);
     if (pPm && pPm.gatewayFeeRate !== undefined) pmPixRate = Number(pPm.gatewayFeeRate);
     if (cPm && cPm.gatewayFeeRate !== undefined) pmCardRate = Number(cPm.gatewayFeeRate);
   }
@@ -30834,12 +30834,23 @@ export const DEFAULT_PAYMENT_METHODS = [
     isSystem: false
   },
   {
+    id: "boleto_faturado",
+    name: "Boleto Faturado (Inter)",
+    channelDefault: null,
+    gatewayFeeRate: 0.0,
+    gatewayFeeFixed: 0.0,
+    commissionRate: 0.0,
+    description: "Boleto Faturado a prazo com QR Code PIX via Banco Inter (sem taxa)",
+    active: true,
+    isSystem: true
+  },
+  {
     id: "vcn_b2b",
     name: "Cartão Virtual B2B (VCN)",
     channelDefault: "b2b",
     gatewayFeeRate: 2.99,
     gatewayFeeFixed: 0.0,
-    commissionRate: 12.0,
+    commissionRate: 0.0,
     description: "Cartão Virtual Corporativo B2B (Mastercard / Amex VCN - Agências)",
     active: true,
     isSystem: true
@@ -30850,7 +30861,7 @@ export const DEFAULT_PAYMENT_METHODS = [
     channelDefault: null,
     gatewayFeeRate: 0.0,
     gatewayFeeFixed: 0.0,
-    commissionRate: 12.0,
+    commissionRate: 0.0,
     description: "Faturamento corporativo B2B via Agência / Empresa",
     active: true,
     isSystem: true
@@ -30867,9 +30878,28 @@ export function getPaymentMethodsList() {
         db.settings.paymentMethods.push(JSON.parse(JSON.stringify(defPm)));
       }
     }
+    for (const pm of db.settings.paymentMethods) {
+      if (!pm) continue;
+      if ((pm.id === "boleto_faturado" || pm.id === "faturado_boleto") && (!pm.name || pm.name === "BOLETO_FATURADO" || pm.name === "FATURADO_BOLETO")) {
+        pm.name = "Boleto Faturado (Inter)";
+      }
+      if (pm.id !== "booking" && pm.id !== "airbnb") {
+        pm.commissionRate = 0;
+      }
+    }
   }
   return db.settings.paymentMethods;
 }
+
+const FRIENDLY_PAYMENT_METHOD_NAMES = {
+  boleto_faturado: "Boleto Faturado (Inter)",
+  faturado_boleto: "Boleto Faturado (Inter)",
+  boleto: "Boleto Bancário",
+  faturado_pj: "Faturado (PJ)",
+  credit_card: "Cartão de Crédito",
+  debit_card: "Cartão de Débito",
+  ted: "Transferência Bancária"
+};
 
 export function ensurePaymentMethodExists(methodId, methodName) {
   if (!methodId) return null;
@@ -30877,17 +30907,17 @@ export function ensurePaymentMethodExists(methodId, methodName) {
   const cleanId = String(methodId).toLowerCase().trim().replace(/[^a-z0-9_-]/g, "_");
   let existing = methods.find(m => m.id === cleanId || m.name.toLowerCase() === String(methodName || methodId).toLowerCase());
   if (!existing) {
-    const isBooking = cleanId.includes("booking");
-    const isAirbnb = cleanId.includes("airbnb");
+    const isBooking = cleanId === "booking";
+    const isAirbnb = cleanId === "airbnb";
     const isCard = cleanId.includes("cartao") || cleanId.includes("card") || cleanId.includes("mercadopago");
     existing = {
       id: cleanId,
-      name: methodName || cleanId.toUpperCase(),
+      name: methodName || FRIENDLY_PAYMENT_METHOD_NAMES[cleanId] || cleanId.toUpperCase(),
       channelDefault: isBooking ? "booking" : (isAirbnb ? "airbnb" : null),
       gatewayFeeRate: isCard ? 3.99 : 0.0,
       gatewayFeeFixed: 0.0,
-      commissionRate: isBooking ? 15.0 : (isAirbnb ? 15.0 : 0.0),
-      description: `Forma de pagamento ${methodName || cleanId} cadastrada automaticamente`,
+      commissionRate: 0.0,
+      description: `Forma de pagamento ${methodName || FRIENDLY_PAYMENT_METHOD_NAMES[cleanId] || cleanId} cadastrada automaticamente`,
       active: true,
       isSystem: false
     };
@@ -30895,6 +30925,89 @@ export function ensurePaymentMethodExists(methodId, methodName) {
     saveDatabase();
   }
   return existing;
+}
+
+/**
+ * Regra Canônica de Comissão por Canal da Reserva:
+ * - A existência e o percentual de comissão dependem EXCLUSIVAMENTE do canal de origem
+ *   pelo qual a reserva foi feita (r.channel), NUNCA do meio de pagamento utilizado.
+ * - Canais diretos (WhatsApp, Site Próprio, Direta, Balcão, Telefone, Recepção, etc.)
+ *   SEMPRE possuem 0% de comissão, independentemente da forma de pagamento (PIX, Cartão,
+ *   Boleto Faturado, Faturado PJ, VCN, etc.).
+ */
+export function resolveReservationChannelAndCommission(r, feeConfig = DEFAULT_FEE_SETTINGS, agenciesList = []) {
+  const rawChannel = String(r?.channel || "").trim().toLowerCase();
+  const rawPm = String(r?.paymentMethod || "").trim().toLowerCase();
+
+  let resChannel = "site";
+  if (rawChannel) {
+    if (rawChannel.includes("whatsapp") || rawChannel === "whats" || rawChannel === "zap") {
+      resChannel = "whatsapp";
+    } else if (rawChannel.includes("site") || rawChannel === "motor" || rawChannel === "website" || rawChannel === "corpflats") {
+      resChannel = "site";
+    } else if (rawChannel === "direct" || rawChannel === "direta" || rawChannel === "direto") {
+      resChannel = "direta";
+    } else if (rawChannel.includes("booking")) {
+      resChannel = "booking";
+    } else if (rawChannel.includes("airbnb")) {
+      resChannel = "airbnb";
+    } else if (rawChannel.includes("expedia") || rawChannel.includes("decolar")) {
+      resChannel = "expedia";
+    } else if (rawChannel === "b2b" || rawChannel.includes("b2b") || rawChannel === "agencia" || rawChannel === "agency") {
+      resChannel = "b2b";
+    } else {
+      // Outros canais diretos (telefone, balcao, recepcao, walkin, mensalista, etc.)
+      resChannel = rawChannel;
+    }
+  } else {
+    // Fallback estrito apenas quando r.channel estiver totalmente ausente em registro legado
+    // Nota: "boleto_faturado", "faturado_boleto" e "faturado_pj" são meios de pagamento diretos e NÃO definem canal B2B!
+    if (r?.b2bReservationNumber || r?.agencyId || rawPm === "vcn_b2b" || rawPm === "faturado_b2b") {
+      resChannel = "b2b";
+    } else if (rawPm === "booking") {
+      resChannel = "booking";
+    } else if (rawPm === "airbnb") {
+      resChannel = "airbnb";
+    } else {
+      resChannel = "site";
+    }
+  }
+
+  let channelCommissionPct = 0;
+  if (resChannel === "booking") {
+    channelCommissionPct = r?.otaCommissionPct != null
+      ? Number(r.otaCommissionPct) || 0
+      : Number(feeConfig?.bookingCommissionRate ?? 15.0);
+  } else if (resChannel === "airbnb") {
+    channelCommissionPct = r?.otaCommissionPct != null
+      ? Number(r.otaCommissionPct) || 0
+      : Number(feeConfig?.airbnbCommissionRate ?? 15.0);
+  } else if (resChannel === "expedia") {
+    channelCommissionPct = r?.otaCommissionPct != null
+      ? Number(r.otaCommissionPct) || 0
+      : Number(feeConfig?.expediaCommissionRate ?? 15.0);
+  } else if (resChannel === "b2b") {
+    const policy = String(r?.b2bRatePolicy || "").trim().toUpperCase();
+    if (policy === "NET") {
+      channelCommissionPct = 0;
+    } else if (r?.b2bCommissionPct !== undefined && r?.b2bCommissionPct !== null) {
+      channelCommissionPct = Number(r.b2bCommissionPct) || 0;
+    } else {
+      const linkedAgency = r?.agencyId && Array.isArray(agenciesList)
+        ? agenciesList.find(a => a && Number(a.id) === Number(r.agencyId))
+        : null;
+      if (linkedAgency && String(linkedAgency.defaultRatePolicy || "").toUpperCase() === "NET") {
+        channelCommissionPct = 0;
+      } else {
+        channelCommissionPct = Number(linkedAgency?.defaultCommissionPct ?? 12.0);
+      }
+    }
+  } else {
+    // Canais diretos (whatsapp, site, direta, balcao, telefone, recepcao, etc.) -> SEMPRE 0%
+    channelCommissionPct = 0;
+  }
+
+  return { resChannel, channelCommissionPct };
 }
 
 // ── Endpoint de Reserva Direta com Rodízio e Governança Inteligente ──────────
@@ -36038,6 +36151,14 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const ruleChan = String(r.channel || "").toLowerCase();
     const ruleIsOta = ruleChan.includes("booking") || ruleChan.includes("airbnb");
     const ruleIsB2b = ruleChan === "b2b" || ruleChan.includes("b2b") || Boolean(r.b2bReservationNumber);
+    if (!ruleIsB2b) {
+      // Reservas fora do canal B2B (WhatsApp, Site, Direta, Booking, Airbnb) não mantêm comissão B2B residual
+      delete r.b2bRatePolicy;
+      delete r.b2bCommissionPct;
+      delete r.b2bCommissionAmount;
+      delete r.b2bNetAmount;
+      delete r.b2bNetRate;
+    }
     if (!ruleIsOta && !ruleIsB2b) {
       if (req.body.status === "pre_reserva") {
         r.payments = [];
@@ -58563,9 +58684,16 @@ app.get(["/api/agencies", "/api/pms/agencies"], (req, res) => {
         (ag.tradeName && r.agencyName && String(r.agencyName).toLowerCase().includes(String(ag.tradeName).toLowerCase()))
       )
     );
+    const getB2bCommAmt = (resObj) => {
+      const { resChannel } = resolveReservationChannelAndCommission(resObj, db.settings?.feeSettings, db.agencies || []);
+      return resChannel === "b2b" ? (Number(resObj.b2bCommissionAmount) || 0) : 0;
+    };
     const totalRevenue = reservations.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
-    const totalCommission = reservations.reduce((acc, r) => acc + (Number(r.b2bCommissionAmount) || 0), 0);
-    const totalNet = reservations.reduce((acc, r) => acc + (Number(r.b2bNetAmount) || (Number(r.totalAmount) || 0) - (Number(r.b2bCommissionAmount) || 0)), 0);
+    const totalCommission = reservations.reduce((acc, r) => acc + getB2bCommAmt(r), 0);
+    const totalNet = reservations.reduce((acc, r) => {
+      const comm = getB2bCommAmt(r);
+      return acc + ((Number(r.totalAmount) || 0) - comm);
+    }, 0);
 
     // Normaliza clientCompanies para sempre expor objetos { id, name, tradeName, corporateName, cnpj }
     const rawClientCompanies = Array.isArray(ag.clientCompanies) ? ag.clientCompanies : [];
@@ -58687,11 +58815,15 @@ app.get(["/api/agencies/:id", "/api/pms/agencies/:id"], (req, res) => {
     )
   ).map(b => enrichBoletoDynamicStatus(b));
 
+  const getActiveB2bCommAmt = (resObj) => {
+    const { resChannel } = resolveReservationChannelAndCommission(resObj, db.settings?.feeSettings, db.agencies || []);
+    return resChannel === "b2b" ? (Number(resObj.b2bCommissionAmount) || 0) : 0;
+  };
   const activeRes = reservations.filter(r => r.status !== "cancelada" && r.status !== "cancelled");
   const totalNights = activeRes.reduce((acc, r) => acc + (Number(r.nights) || 1), 0);
   const totalRevenue = activeRes.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
-  const totalCommission = activeRes.reduce((acc, r) => acc + (Number(r.b2bCommissionAmount) || 0), 0);
-  const totalNet = activeRes.reduce((acc, r) => acc + (Number(r.b2bNetAmount) || (Number(r.totalAmount) || 0) - (Number(r.b2bCommissionAmount) || 0)), 0);
+  const totalCommission = activeRes.reduce((acc, r) => acc + getActiveB2bCommAmt(r), 0);
+  const totalNet = activeRes.reduce((acc, r) => acc + ((Number(r.totalAmount) || 0) - getActiveB2bCommAmt(r)), 0);
 
   const metrics = {
     totalReservations: reservations.length,
@@ -68405,49 +68537,31 @@ app.get("/api/finance/payments", (req, res) => {
         (r.mpPaymentId || /cart[aã]o|card|credito|crédito|debito|débito|mercadopago|infinite|vcn/i.test(String(paymentMethod || "")))
       );
 
-      // Buscar configuração da forma de pagamento
-      const pmConfig = paymentMethodsList.find(m =>
-        m.id === paymentMethod ||
-        (paymentMethod.includes("vcn") && m.id === "vcn_b2b") ||
-        (paymentMethod.includes("faturado") && m.id === "faturado_b2b") ||
-        (paymentMethod.includes("booking") && m.id === "booking") ||
-        (paymentMethod.includes("airbnb") && m.id === "airbnb") ||
-        (paymentMethod.includes("pix") && m.id === "pix") ||
-        ((paymentMethod.includes("cartao") || paymentMethod.includes("card")) && m.id === "cartao_credito") ||
-        (paymentMethod.includes("mercadopago") && m.id === "mercadopago") ||
-        (paymentMethod.includes("dinheiro") && m.id === "dinheiro")
+      // 1) Resolver Canal da Reserva e Comissão EXCLUSIVAMENTE pelo canal (nunca pelo meio de pagamento)
+      const { resChannel, channelCommissionPct } = resolveReservationChannelAndCommission(
+        r,
+        feeConfig,
+        db.agencies || []
       );
 
-      let gatewayFeePct = pmConfig ? Number(pmConfig.gatewayFeeRate || 0) : 0;
-      let gatewayFeeFixed = pmConfig ? Number(pmConfig.gatewayFeeFixed || 0) : 0;
-      let channelCommissionPct = pmConfig ? Number(pmConfig.commissionRate || 0) : 0;
+      // 2) Resolver Taxa de Gateway EXCLUSIVAMENTE pelo meio de pagamento (priorizando ID exato antes de fallback)
+      const pmExact = paymentMethodsList.find(m => m && m.id === paymentMethod);
+      const pmConfig = pmExact || paymentMethodsList.find(m => {
+        if (!m) return false;
+        if ((paymentMethod === "boleto_faturado" || paymentMethod === "faturado_boleto" || paymentMethod === "boleto" || paymentMethod === "faturado_pj") && m.id === "boleto_faturado") return true;
+        if (paymentMethod.includes("vcn") && m.id === "vcn_b2b") return true;
+        if (paymentMethod === "faturado_b2b" && m.id === "faturado_b2b") return true;
+        if (paymentMethod === "booking" && m.id === "booking") return true;
+        if (paymentMethod === "airbnb" && m.id === "airbnb") return true;
+        if (paymentMethod.includes("pix") && m.id === "pix") return true;
+        if (paymentMethod.includes("mercadopago") && m.id === "mercadopago") return true;
+        if ((paymentMethod.includes("cartao") || paymentMethod.includes("card") || paymentMethod.includes("credito") || paymentMethod.includes("debito")) && m.id === "cartao_credito") return true;
+        if (paymentMethod.includes("dinheiro") && m.id === "dinheiro") return true;
+        return false;
+      });
 
-      // Se for reserva B2B, respeita a política tarifária individual (NET 0% vs COMISSIONADA %)
-      const resChannel =
-        r.channel ||
-        (paymentMethod.includes("vcn") || paymentMethod.includes("faturado") || r.b2bReservationNumber
-          ? "b2b"
-          : paymentMethod.includes("booking")
-            ? "booking"
-            : paymentMethod.includes("airbnb")
-              ? "airbnb"
-              : "site");
-
-      if (resChannel === "b2b" || r.b2bRatePolicy) {
-        if (String(r.b2bRatePolicy || "").toUpperCase() === "NET") {
-          channelCommissionPct = 0;
-        } else if (r.b2bCommissionPct !== undefined && r.b2bCommissionPct !== null) {
-          channelCommissionPct = Number(r.b2bCommissionPct) || 0;
-        } else if (channelCommissionPct === 0) {
-          channelCommissionPct = 12.0;
-        }
-      } else if (channelCommissionPct === 0) {
-        if (resChannel === "booking") {
-          channelCommissionPct = Number(feeConfig.bookingCommissionRate ?? 15.0);
-        } else if (resChannel === "airbnb") {
-          channelCommissionPct = Number(feeConfig.airbnbCommissionRate ?? 15.0);
-        }
-      }
+      const gatewayFeePct = pmConfig ? Number(pmConfig.gatewayFeeRate || 0) : 0;
+      const gatewayFeeFixed = pmConfig ? Number(pmConfig.gatewayFeeFixed || 0) : 0;
 
       const gatewayFeeAmount = Number(((grossAmount * (gatewayFeePct / 100)) + (grossAmount > 0 ? gatewayFeeFixed : 0)).toFixed(2));
       const channelCommissionAmount = Number((grossAmount * (channelCommissionPct / 100)).toFixed(2));
@@ -68560,12 +68674,18 @@ app.get("/api/finance/payments", (req, res) => {
         if (method === "booking" && p.paymentMethod.includes("booking")) return true;
         if (method === "airbnb" && p.paymentMethod.includes("airbnb")) return true;
         if (method === "vcn_b2b" && p.paymentMethod.includes("vcn")) return true;
-        if (method === "faturado_b2b" && p.paymentMethod.includes("faturado")) return true;
+        if (method === "faturado_b2b" && p.paymentMethod === "faturado_b2b") return true;
+        if (method === "boleto_faturado" && (p.paymentMethod === "boleto_faturado" || p.paymentMethod === "faturado_boleto" || p.paymentMethod === "boleto")) return true;
         return false;
       });
     }
     if (channel && channel !== "all") {
-      filtered = filtered.filter(p => p.channel === channel);
+      filtered = filtered.filter(p => {
+        if (p.channel === channel) return true;
+        if (channel === "whatsapp" && (p.channel === "whatsapp" || p.channel === "direta" || p.channel === "balcao" || p.channel === "telefone" || p.channel === "recepcao")) return true;
+        if (channel === "site" && (p.channel === "site" || p.channel === "motor")) return true;
+        return false;
+      });
     }
     if (status && status !== "all") {
       if (status === "paid") filtered = filtered.filter(p => p.isPaid);

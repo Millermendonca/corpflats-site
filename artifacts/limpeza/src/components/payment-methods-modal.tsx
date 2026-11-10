@@ -203,7 +203,7 @@ export function PaymentMethodsModal({
                   Configuração de Formas de Pagamento & Taxas
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground">
-                  Ajuste comissões, taxas de gateways e valores aplicados no cálculo financeiro.
+                  Ajuste as taxas de processamento (gateway / maquininha) das formas de pagamento.
                 </DialogDescription>
               </div>
             </div>
@@ -221,6 +221,9 @@ export function PaymentMethodsModal({
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-[11px] text-emerald-900 dark:text-emerald-200 leading-relaxed">
+            💡 <strong>Regra de Comissões por Canal:</strong> Formas de pagamento controlam apenas <strong>taxas de gateway/processamento</strong>. Comissões são filtradas exclusivamente pelo <strong>Canal da Reserva</strong> (Booking, Airbnb ou Agência B2B comissionada) — reservas via <strong>WhatsApp</strong> ou <strong>Site Próprio</strong> têm sempre <strong>0% de comissão</strong>.
+          </div>
           {successMsg && (
             <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700 rounded-xl text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2 font-medium">
               <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
@@ -274,21 +277,6 @@ export function PaymentMethodsModal({
 
                 <div className="space-y-1">
                   <Label className="text-[11px] font-semibold flex items-center gap-1">
-                    <Percent className="w-3 h-3 text-indigo-600 shrink-0" /> Comissão de Canal / OTA (%)
-                  </Label>
-                  <Input 
-                    type="number"
-                    step="0.01"
-                    value={newCommissionRate} 
-                    onChange={e => setNewCommissionRate(e.target.value)} 
-                    placeholder="0.00" 
-                    className="h-8 text-xs font-semibold"
-                  />
-                  <span className="text-[10px] text-muted-foreground">Ex: Booking 13% ou 15%, Airbnb 3%, Venda Direta 0%</span>
-                </div>
-
-                <div className="space-y-1">
-                  <Label className="text-[11px] font-semibold flex items-center gap-1">
                     <DollarSign className="w-3 h-3 text-slate-600 shrink-0" /> Taxa Fixa por Transação (R$)
                   </Label>
                   <Input 
@@ -302,7 +290,7 @@ export function PaymentMethodsModal({
                   <span className="text-[10px] text-muted-foreground">Opcional (Ex: R$ 0,50 por boleto/pix)</span>
                 </div>
 
-                <div className="space-y-1">
+                <div className="space-y-1 sm:col-span-2">
                   <Label className="text-[11px] font-semibold">Descrição / Observações</Label>
                   <Input 
                     value={newDescription} 
@@ -340,7 +328,7 @@ export function PaymentMethodsModal({
           <div className="space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-semibold text-muted-foreground px-1">
               <span>Formas Cadastradas ({methods.length})</span>
-              <span>Comissão Canal | Taxa Gateway</span>
+              <span>Taxa Gateway | Taxa Fixa</span>
             </div>
 
             {loading ? (
@@ -353,7 +341,8 @@ export function PaymentMethodsModal({
                 const isBooking = m.id === "booking"
                 const isAirbnb = m.id === "airbnb"
                 const isB2bVcn = m.id === "vcn_b2b" || m.id.includes("vcn")
-                const isB2bFaturado = m.id === "faturado_b2b" || m.id.includes("faturado")
+                const isBoletoFaturado = m.id === "boleto_faturado" || m.id === "faturado_boleto" || m.id.includes("boleto")
+                const isB2bFaturado = m.id === "faturado_b2b"
                 const isPix = m.id.includes("pix")
                 const isCard = m.id.includes("cartao") || m.id.includes("card") || m.id.includes("mercadopago")
 
@@ -365,7 +354,7 @@ export function PaymentMethodsModal({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-base shrink-0">
-                          {isBooking ? "🔵" : isAirbnb ? "🔴" : isB2bVcn ? "🟣" : isB2bFaturado ? "🏢" : isPix ? "⚡" : isCard ? "💳" : "💵"}
+                          {isBooking ? "🔵" : isAirbnb ? "🔴" : isBoletoFaturado ? "🏦" : isB2bVcn ? "🟣" : isB2bFaturado ? "🏢" : isPix ? "⚡" : isCard ? "💳" : "💵"}
                         </span>
                         <div className="min-w-0">
                           <div className="font-bold text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-1.5">
@@ -403,18 +392,7 @@ export function PaymentMethodsModal({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-border/40">
-                      <div className="space-y-0.5">
-                        <Label className="text-[10px] font-semibold text-muted-foreground">Comissão Canal (%)</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={m.commissionRate}
-                          onChange={e => handleUpdateMethod(m.id, "commissionRate", Number(e.target.value) || 0)}
-                          className="h-7 text-xs font-bold text-indigo-700 dark:text-indigo-300"
-                        />
-                      </div>
-
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-border/40">
                       <div className="space-y-0.5">
                         <Label className="text-[10px] font-semibold text-muted-foreground">Taxa Gateway / Maquininha (%)</Label>
                         <Input
