@@ -1237,6 +1237,32 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [parsingVoucher, setParsingVoucher] = useState(false)
   const [sendingB2bCredentialEmail, setSendingB2bCredentialEmail] = useState(false)
 
+  // Faturamento a Prazo / Boleto Banco Inter States
+  const [formIsFaturadoBoleto, setFormIsFaturadoBoleto] = useState(false)
+  const [formBoletoTermDays, setFormBoletoTermDays] = useState<number>(15)
+  const [formBoletoCustomDueDate, setFormBoletoCustomDueDate] = useState("")
+  const [formBoletoConsumptionMode, setFormBoletoConsumptionMode] = useState<"single_boleto" | "separate_boletos">("single_boleto")
+  const [formBoletoPayerType, setFormBoletoPayerType] = useState<"company" | "agency" | "requester" | "financial_responsible" | "guest">("company")
+  const [formConsumptionSamePayerAndDue, setFormConsumptionSamePayerAndDue] = useState(true)
+  const [formConsumptionPayerType, setFormConsumptionPayerType] = useState<"guest" | "company" | "agency" | "requester" | "financial_responsible">("guest")
+  const [formConsumptionTermDays, setFormConsumptionTermDays] = useState<number>(15)
+  const [formConsumptionCustomDueDate, setFormConsumptionCustomDueDate] = useState("")
+  const [formBoletoFinePct, setFormBoletoFinePct] = useState<number>(2)
+  const [formBoletoInterestPct, setFormBoletoInterestPct] = useState<number>(1)
+  const [formAutoEmitBoletoOnCheckout, setFormAutoEmitBoletoOnCheckout] = useState(true)
+  const [formAutoReminderEnabled, setFormAutoReminderEnabled] = useState(true)
+  const [formFinRespName, setFormFinRespName] = useState("")
+  const [formFinRespEmail, setFormFinRespEmail] = useState("")
+  const [formFinRespPhone, setFormFinRespPhone] = useState("")
+  const [formFinRespDoc, setFormFinRespDoc] = useState("")
+  const [formRecGuest, setFormRecGuest] = useState(false)
+  const [formRecRequester, setFormRecRequester] = useState(true)
+  const [formRecCompany, setFormRecCompany] = useState(true)
+  const [formRecFinResp, setFormRecFinResp] = useState(true)
+  const [formRecSendEmail, setFormRecSendEmail] = useState(true)
+  const [formRecSendWhatsapp, setFormRecSendWhatsapp] = useState(true)
+  const [emittingResBoleto, setEmittingResBoleto] = useState(false)
+
   // Quick Inline Agency Creation State
   const [newAgencyInlineOpen, setNewAgencyInlineOpen] = useState(false)
   const [newAgencyTradeName, setNewAgencyTradeName] = useState("")
@@ -3684,6 +3710,29 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormIsFlatLocked(false)
     setFormFlatLockReason("")
     setFormForceReplace(false)
+    setFormIsFaturadoBoleto(false)
+    setFormBoletoTermDays(15)
+    setFormBoletoCustomDueDate("")
+    setFormBoletoConsumptionMode("single_boleto")
+    setFormBoletoPayerType("company")
+    setFormConsumptionSamePayerAndDue(true)
+    setFormConsumptionPayerType("guest")
+    setFormConsumptionTermDays(15)
+    setFormConsumptionCustomDueDate("")
+    setFormBoletoFinePct(2)
+    setFormBoletoInterestPct(1)
+    setFormAutoEmitBoletoOnCheckout(true)
+    setFormAutoReminderEnabled(true)
+    setFormFinRespName("")
+    setFormFinRespEmail("")
+    setFormFinRespPhone("")
+    setFormFinRespDoc("")
+    setFormRecGuest(false)
+    setFormRecRequester(true)
+    setFormRecCompany(true)
+    setFormRecFinResp(true)
+    setFormRecSendEmail(true)
+    setFormRecSendWhatsapp(true)
     setPhoneVerification(null)
     setAuditLogs([])
     setCommunications([])
@@ -4083,6 +4132,47 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormIsCamposResident(isCamposRes)
     setFormIsFlatLocked(Boolean(resItem.isFlatLocked || resItem.flatLocked))
     setFormFlatLockReason(resItem.flatLockReason || "")
+    const crmEntity = matchedAgency || matchedCompany || matchedGuest || {}
+    const isFatRes = Boolean(
+      resItem.isFaturadoBoleto ||
+      resItem.paymentMethod === "boleto" ||
+      resItem.paymentMethod === "boleto_faturado" ||
+      resItem.paymentMethod === "faturado_pj" ||
+      resItem.paymentMethod === "faturado_b2b" ||
+      resItem.b2bPaymentType === "FATURADO"
+    )
+    setFormIsFaturadoBoleto(isFatRes)
+    setFormBoletoTermDays(Number(resItem.boletoTermDays || crmEntity.defaultBoletoTermDays || 15))
+    setFormBoletoCustomDueDate(resItem.boletoCustomDueDate || "")
+    setFormBoletoConsumptionMode(
+      resItem.boletoConsumptionMode === "separate_boletos" || crmEntity.defaultBoletoConsumptionMode === "separate_boletos"
+        ? "separate_boletos"
+        : "single_boleto"
+    )
+    setFormBoletoPayerType(
+      (resItem.boletoPayerType as any) ||
+      (matchedAgency ? "agency" : (matchedCompany ? "company" : (resItem.requesterInfo?.name ? "requester" : "guest")))
+    )
+    setFormConsumptionSamePayerAndDue(resItem.consumptionSamePayerAndDue !== false)
+    setFormConsumptionPayerType((resItem.consumptionPayerType as any) || "guest")
+    setFormConsumptionTermDays(Number(resItem.consumptionTermDays || resItem.boletoTermDays || crmEntity.defaultBoletoTermDays || 15))
+    setFormConsumptionCustomDueDate(resItem.consumptionCustomDueDate || "")
+    setFormBoletoFinePct(resItem.boletoFinePct !== undefined ? Number(resItem.boletoFinePct) : Number(crmEntity.defaultBoletoFinePct ?? 2))
+    setFormBoletoInterestPct(resItem.boletoInterestPct !== undefined ? Number(resItem.boletoInterestPct) : Number(crmEntity.defaultBoletoInterestPct ?? 1))
+    setFormAutoEmitBoletoOnCheckout(resItem.autoEmitBoletoOnCheckout !== false)
+    setFormAutoReminderEnabled(resItem.autoReminderEnabled !== false)
+    const finResp = resItem.financialResponsible || crmEntity.financialResponsible || {}
+    setFormFinRespName(finResp.name || "")
+    setFormFinRespEmail(finResp.email || "")
+    setFormFinRespPhone(finResp.phone || finResp.whatsapp || "")
+    setFormFinRespDoc(finResp.document || "")
+    const billRec = resItem.billingRecipients || crmEntity.defaultBillingRecipients || {}
+    setFormRecGuest(Boolean(billRec.guest ?? (!matchedCompany && !matchedAgency)))
+    setFormRecRequester(Boolean(billRec.requester ?? true))
+    setFormRecCompany(Boolean(billRec.company ?? Boolean(matchedCompany || matchedAgency)))
+    setFormRecFinResp(Boolean(billRec.financialResponsible ?? true))
+    setFormRecSendEmail(billRec.sendEmail !== false)
+    setFormRecSendWhatsapp(billRec.sendWhatsapp !== false)
     setResModalTab("reservation")
     setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
     fetchAuditLogs(resItem.code || resItem.id)
@@ -4232,6 +4322,22 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         setFormCompanyId(String(g.companyId))
         const comp = companies.find(c => c.id === Number(g.companyId))
         if (comp) setFormCompanyName(comp.tradeName || comp.corporateName)
+      }
+      if (g.defaultBoletoTermDays) setFormBoletoTermDays(Number(g.defaultBoletoTermDays))
+      if (g.defaultBoletoConsumptionMode === "separate_boletos") setFormBoletoConsumptionMode("separate_boletos")
+      if (g.financialResponsible?.name && !formFinRespName) {
+        setFormFinRespName(g.financialResponsible.name || "")
+        setFormFinRespEmail(g.financialResponsible.email || "")
+        setFormFinRespPhone(g.financialResponsible.phone || g.financialResponsible.whatsapp || "")
+        setFormFinRespDoc(g.financialResponsible.document || "")
+      }
+      if (g.defaultBillingRecipients) {
+        setFormRecGuest(Boolean(g.defaultBillingRecipients.guest ?? true))
+        setFormRecRequester(Boolean(g.defaultBillingRecipients.requester ?? true))
+        setFormRecCompany(Boolean(g.defaultBillingRecipients.company ?? false))
+        setFormRecFinResp(Boolean(g.defaultBillingRecipients.financialResponsible ?? true))
+        setFormRecSendEmail(g.defaultBillingRecipients.sendEmail !== false)
+        setFormRecSendWhatsapp(g.defaultBillingRecipients.sendWhatsapp !== false)
       }
       if (g.docPhotoUrl && (!formDocPhotoUrl || !isSameGuest)) {
         setFormDocPhotoUrl(g.docPhotoUrl)
@@ -5599,8 +5705,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         checkoutDate: formCheckout,
         checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
         checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
-        status: statusToSave,
-        ...(holdInfoForSave ? {
+        status: formIsFaturadoBoleto && statusToSave === "pre_reserva" ? "confirmada" : statusToSave,
+        ...(holdInfoForSave && !formIsFaturadoBoleto ? {
           holdPreset: holdInfoForSave.holdPreset,
           holdDurationMinutes: holdInfoForSave.holdDurationMinutes,
           holdDurationLabel: holdInfoForSave.holdDurationLabel,
@@ -5609,7 +5715,35 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         } : {}),
         ...(isReactivatingNow ? { reactivatePreReservation: true } : {}),
         channel: isB2b ? "b2b" : (formChannel || (formDailyRates.length > 0 && formDailyRates[0].channel) || "whatsapp"),
-        paymentMethod: resolvedMethod,
+        paymentMethod: formIsFaturadoBoleto ? "boleto_faturado" : resolvedMethod,
+        isFaturadoBoleto: Boolean(formIsFaturadoBoleto),
+        boletoTermDays: Number(formBoletoTermDays) || 15,
+        boletoCustomDueDate: formBoletoCustomDueDate || undefined,
+        boletoConsumptionMode: formBoletoConsumptionMode,
+        boletoPayerType: formBoletoPayerType,
+        consumptionSamePayerAndDue: Boolean(formConsumptionSamePayerAndDue),
+        consumptionPayerType: formConsumptionSamePayerAndDue ? formBoletoPayerType : formConsumptionPayerType,
+        consumptionTermDays: formConsumptionSamePayerAndDue ? (Number(formBoletoTermDays) || 15) : (Number(formConsumptionTermDays) || 15),
+        consumptionCustomDueDate: formConsumptionSamePayerAndDue ? (formBoletoCustomDueDate || undefined) : (formConsumptionCustomDueDate || undefined),
+        boletoFinePct: Number(formBoletoFinePct ?? 2),
+        boletoInterestPct: Number(formBoletoInterestPct ?? 1),
+        autoEmitBoletoOnCheckout: Boolean(formAutoEmitBoletoOnCheckout),
+        autoReminderEnabled: Boolean(formAutoReminderEnabled),
+        financialResponsible: {
+          name: formFinRespName.trim(),
+          email: formFinRespEmail.trim(),
+          phone: formFinRespPhone.trim(),
+          whatsapp: formFinRespPhone.trim(),
+          document: formFinRespDoc.trim()
+        },
+        billingRecipients: {
+          guest: Boolean(formRecGuest),
+          requester: Boolean(formRecRequester),
+          company: Boolean(formRecCompany),
+          financialResponsible: Boolean(formRecFinResp),
+          sendEmail: Boolean(formRecSendEmail),
+          sendWhatsapp: Boolean(formRecSendWhatsapp)
+        },
         dailyRate: formDailyRates.length > 0 
           ? Math.round((nightsSubInSave / formDailyRates.length) * 100) / 100
           : (Number(formDailyRate) || 0),
@@ -5625,7 +5759,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         notes: formNotes.trim() || formSpecialRequests.trim() || "",
         earlyCheckinAuthorized: formEarlyCheckin,
         receptionNotes: formReceptionNotes,
-        autoEmitInvoice: formAutoInvoice,
+        autoEmitInvoice: formIsFaturadoBoleto ? true : formAutoInvoice,
         prefersHighFloor: formPrefersHighFloor,
         twinBeds: formTwinBeds,
         extraMattress: formExtraMattress,
@@ -5634,7 +5768,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
         clientType: formIsMonthlyGuest
           ? "mensalista"
-          : ((isB2b || resolvedReqType === "company" || selectedRes?.clientType === "corporativo") ? "corporativo" : "avulso"),
+          : ((isB2b || resolvedReqType === "company" || formIsFaturadoBoleto || selectedRes?.clientType === "corporativo") ? "corporativo" : "avulso"),
         source: selectedRes ? "PMS Calendário (Edição Manual)" : "PMS Calendário (Nova Reserva)",
         docPhotoUrl: formDocPhotoUrl || undefined,
         hasMinor: formHasMinor,
@@ -9389,6 +9523,33 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                             if (!formRequesterEmail.trim() && (c.email || c.financialEmail || c.emailFinanceiro)) {
                               setFormRequesterEmail(c.email || c.financialEmail || c.emailFinanceiro);
                             }
+                            setFormIsFaturadoBoleto(true);
+                            setFormBoletoPayerType("company");
+                            if (c.defaultBoletoTermDays || c.billingTerms) {
+                              const parsedDays = Number(c.defaultBoletoTermDays) || parseInt(String(c.billingTerms || "").replace(/\D/g, ""), 10) || 15;
+                              setFormBoletoTermDays(parsedDays);
+                            }
+                            if (c.defaultBoletoConsumptionMode) {
+                              setFormBoletoConsumptionMode(c.defaultBoletoConsumptionMode === "separate_boletos" ? "separate_boletos" : "single_boleto");
+                            }
+                            if (c.financialResponsible?.name) {
+                              setFormFinRespName(c.financialResponsible.name || "");
+                              setFormFinRespEmail(c.financialResponsible.email || "");
+                              setFormFinRespPhone(c.financialResponsible.phone || c.financialResponsible.whatsapp || "");
+                              setFormFinRespDoc(c.financialResponsible.document || "");
+                            }
+                            if (c.defaultBillingRecipients) {
+                              setFormRecGuest(Boolean(c.defaultBillingRecipients.guest ?? false));
+                              setFormRecRequester(Boolean(c.defaultBillingRecipients.requester ?? true));
+                              setFormRecCompany(Boolean(c.defaultBillingRecipients.company ?? true));
+                              setFormRecFinResp(Boolean(c.defaultBillingRecipients.financialResponsible ?? true));
+                              setFormRecSendEmail(c.defaultBillingRecipients.sendEmail !== false);
+                              setFormRecSendWhatsapp(c.defaultBillingRecipients.sendWhatsapp !== false);
+                            } else {
+                              setFormRecCompany(true);
+                              setFormRecRequester(true);
+                              setFormRecFinResp(true);
+                            }
                           }
                         }}
                       >
@@ -11437,6 +11598,493 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       </div>
                     );
                   })()}
+
+                  {/* 1.5 Faturamento a Prazo • Boleto Banco Inter + NFS-e Automática no Check-out */}
+                  <div className={`p-3.5 rounded-2xl border transition-all space-y-3 text-xs ${
+                    formIsFaturadoBoleto
+                      ? "bg-amber-50/70 dark:bg-amber-950/30 border-amber-400/70 dark:border-amber-700/70 shadow-sm"
+                      : "bg-slate-50/80 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800"
+                  }`}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                          formIsFaturadoBoleto
+                            ? "bg-amber-500 text-white"
+                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                        }`}>
+                          🏦
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-black text-foreground text-xs sm:text-sm">
+                              Faturamento a Prazo • Boleto Banco Inter & NFS-e no Check-out
+                            </span>
+                            {formIsFaturadoBoleto && (
+                              <Badge className="bg-amber-600 text-white text-[9px] px-1.5 py-0 font-bold">
+                                ✓ Faturado Ativo ({formBoletoCustomDueDate ? `Venc: ${formBoletoCustomDueDate}` : `${formBoletoTermDays} dias`})
+                              </Badge>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-muted-foreground block">
+                            Emite NFS-e (somente hospedagem) + Boleto(s) com QR Code PIX no check-out e envia por E-mail e WhatsApp para os destinatários marcados
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={formIsFaturadoBoleto ? "default" : "outline"}
+                          onClick={() => {
+                            const nextVal = !formIsFaturadoBoleto;
+                            setFormIsFaturadoBoleto(nextVal);
+                            if (nextVal) {
+                              setFormPaymentMethod("boleto_faturado");
+                              setFormAutoInvoice(true);
+                              if (formStatus === "pre_reserva") setFormStatus("confirmada");
+                            }
+                          }}
+                          className={`h-8 px-3 text-xs font-bold rounded-xl cursor-pointer ${
+                            formIsFaturadoBoleto
+                              ? "bg-amber-600 hover:bg-amber-700 text-white"
+                              : "border-amber-500/50 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
+                          }`}
+                        >
+                          {formIsFaturadoBoleto ? "✓ Reserva Faturada (Boleto a Prazo)" : "Ativar Boleto Faturado a Prazo"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {formIsFaturadoBoleto && (
+                      <div className="space-y-3 pt-2 border-t border-amber-300/50 dark:border-amber-800/50">
+                        {/* Linha 1: Composição (1 Boleto vs 2 Boletos), Pagador Principal e Prazo */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div className="space-y-1">
+                            <Label className="text-[11px] font-bold text-foreground">
+                              Composição do Boleto (Hospedagem vs Consumo)
+                            </Label>
+                            <select
+                              value={formBoletoConsumptionMode}
+                              onChange={e => setFormBoletoConsumptionMode(e.target.value as any)}
+                              className="w-full h-8 rounded-xl border border-border bg-background px-2.5 text-xs font-bold"
+                            >
+                              <option value="single_boleto">1 Boleto Unificado (Hospedagem + Consumo)</option>
+                              <option value="separate_boletos">2 Boletos Separados (1 Hospedagem + 1 Consumo)</option>
+                            </select>
+                            <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold block">
+                              📌 Na NFS-e entra sempre apenas Hospedagem (Consumo é emitido pela Anserve)
+                            </span>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[11px] font-bold text-foreground">
+                              Pagador (Sacado) do Boleto Principal
+                            </Label>
+                            <select
+                              value={formBoletoPayerType}
+                              onChange={e => setFormBoletoPayerType(e.target.value as any)}
+                              className="w-full h-8 rounded-xl border border-border bg-background px-2.5 text-xs font-bold"
+                            >
+                              <option value="company">🏢 Empresa Parceira (PJ)</option>
+                              <option value="agency">🟣 Agência B2B (PJ)</option>
+                              <option value="requester">👤 Solicitante da Reserva</option>
+                              <option value="financial_responsible">💼 Responsável Financeiro</option>
+                              <option value="guest">🛏️ Hóspede Titular (PF)</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[11px] font-bold text-foreground">
+                              Prazo (Dias após Check-out) ou Data Fixa
+                            </Label>
+                            <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1">
+                                {[7, 15, 28, 30].map(d => (
+                                  <button
+                                    key={d}
+                                    type="button"
+                                    onClick={() => {
+                                      setFormBoletoTermDays(d);
+                                      setFormBoletoCustomDueDate("");
+                                    }}
+                                    className={`px-2 py-1 rounded-lg text-[10px] font-black border transition-all cursor-pointer ${
+                                      !formBoletoCustomDueDate && Number(formBoletoTermDays) === d
+                                        ? "bg-amber-600 text-white border-amber-600"
+                                        : "bg-background text-muted-foreground border-border hover:border-amber-500"
+                                    }`}
+                                  >
+                                    {d}d
+                                  </button>
+                                ))}
+                              </div>
+                              <Input
+                                type="number"
+                                min={1}
+                                max={180}
+                                value={formBoletoTermDays}
+                                onChange={e => {
+                                  setFormBoletoTermDays(Number(e.target.value) || 15);
+                                  setFormBoletoCustomDueDate("");
+                                }}
+                                className="h-8 w-14 text-xs font-mono text-center px-1 bg-background"
+                                title="Prazo em dias após o check-out"
+                              />
+                              <Input
+                                type="date"
+                                value={formBoletoCustomDueDate}
+                                onChange={e => setFormBoletoCustomDueDate(e.target.value)}
+                                className="h-8 flex-1 text-[11px] px-2 bg-background"
+                                title="Ou escolha uma data de vencimento fixa"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Linha 1.B: Regra quando forem 2 Boletos Separados */}
+                        {formBoletoConsumptionMode === "separate_boletos" && (
+                          <div className="p-2.5 rounded-xl bg-background/90 border border-amber-300/70 dark:border-amber-800 space-y-2">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <span className="font-bold text-amber-800 dark:text-amber-300 text-[11px]">
+                                🥤 Configuração do 2º Boleto (Consumo Frigobar / Extras)
+                              </span>
+                              <label className="flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={formConsumptionSamePayerAndDue}
+                                  onChange={e => setFormConsumptionSamePayerAndDue(e.target.checked)}
+                                  className="rounded"
+                                />
+                                <span>Usar mesmo pagador e mesmo prazo do boleto de hospedagem</span>
+                              </label>
+                            </div>
+
+                            {!formConsumptionSamePayerAndDue && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                                <div className="space-y-1">
+                                  <Label className="text-[10px] font-bold">Pagador do Boleto de Consumo</Label>
+                                  <select
+                                    value={formConsumptionPayerType}
+                                    onChange={e => setFormConsumptionPayerType(e.target.value as any)}
+                                    className="w-full h-8 rounded-lg border border-border bg-background px-2 text-xs font-semibold"
+                                  >
+                                    <option value="guest">🛏️ Hóspede Titular (PF)</option>
+                                    <option value="company">🏢 Empresa Parceira (PJ)</option>
+                                    <option value="agency">🟣 Agência B2B (PJ)</option>
+                                    <option value="requester">👤 Solicitante da Reserva</option>
+                                    <option value="financial_responsible">💼 Responsável Financeiro</option>
+                                  </select>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[10px] font-bold">Prazo Consumo (Dias após Check-out)</Label>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={180}
+                                    value={formConsumptionTermDays}
+                                    onChange={e => setFormConsumptionTermDays(Number(e.target.value) || 15)}
+                                    className="h-8 text-xs font-mono"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[10px] font-bold">Ou Vencimento Fixo (Consumo)</Label>
+                                  <Input
+                                    type="date"
+                                    value={formConsumptionCustomDueDate}
+                                    onChange={e => setFormConsumptionCustomDueDate(e.target.value)}
+                                    className="h-8 text-xs"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Linha 2: Responsável Financeiro (Quando não for o hóspede nem o solicitante) */}
+                        <div className="p-2.5 rounded-xl bg-background/90 border border-border space-y-2">
+                          <div className="flex items-center justify-between flex-wrap gap-1">
+                            <span className="font-bold text-foreground text-[11px] flex items-center gap-1.5">
+                              <span>💼 Responsável Financeiro (Setor Financeiro / Contas a Pagar)</span>
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              Opcional — Pré-preenchido do perfil do cliente/empresa no CRM
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                            <Input
+                              value={formFinRespName}
+                              onChange={e => setFormFinRespName(e.target.value)}
+                              placeholder="Nome do Resp. Financeiro"
+                              className="h-8 text-xs"
+                            />
+                            <Input
+                              type="email"
+                              value={formFinRespEmail}
+                              onChange={e => setFormFinRespEmail(e.target.value)}
+                              placeholder="E-mail para Notas e Boletos"
+                              className="h-8 text-xs"
+                            />
+                            <Input
+                              value={formFinRespPhone}
+                              onChange={e => setFormFinRespPhone(e.target.value)}
+                              placeholder="WhatsApp (DDD + Número)"
+                              className="h-8 text-xs"
+                            />
+                            <Input
+                              value={formFinRespDoc}
+                              onChange={e => setFormFinRespDoc(e.target.value)}
+                              placeholder="CPF/CNPJ (Opcional)"
+                              className="h-8 text-xs font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Linha 3: Matriz de Destinatários (Quem recebe Nota Fiscal + Boleto) & Encargos */}
+                        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                          <div className="sm:col-span-8 p-2.5 rounded-xl bg-background/90 border border-border space-y-2">
+                            <div className="flex items-center justify-between flex-wrap gap-1">
+                              <span className="font-bold text-foreground text-[11px]">
+                                📬 Para quem enviar a NFS-e + Boleto PDF + Linha Digitável/PIX?
+                              </span>
+                              <div className="flex items-center gap-3 text-[11px]">
+                                <label className="flex items-center gap-1 font-bold text-blue-600 dark:text-blue-400 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={formRecSendEmail}
+                                    onChange={e => setFormRecSendEmail(e.target.checked)}
+                                    className="rounded"
+                                  />
+                                  <span>📧 E-mail (Anexos PDF)</span>
+                                </label>
+                                <label className="flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={formRecSendWhatsapp}
+                                    onChange={e => setFormRecSendWhatsapp(e.target.checked)}
+                                    className="rounded"
+                                  />
+                                  <span>📲 WhatsApp (Z-API)</span>
+                                </label>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
+                              <label className={`p-2 rounded-lg border flex items-center gap-1.5 cursor-pointer transition-all ${
+                                formRecGuest ? "bg-primary/10 border-primary font-bold text-foreground" : "bg-muted/20 border-border text-muted-foreground"
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={formRecGuest}
+                                  onChange={e => setFormRecGuest(e.target.checked)}
+                                  className="rounded"
+                                />
+                                <span>🛏️ Hóspede Final</span>
+                              </label>
+
+                              <label className={`p-2 rounded-lg border flex items-center gap-1.5 cursor-pointer transition-all ${
+                                formRecRequester ? "bg-primary/10 border-primary font-bold text-foreground" : "bg-muted/20 border-border text-muted-foreground"
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={formRecRequester}
+                                  onChange={e => setFormRecRequester(e.target.checked)}
+                                  className="rounded"
+                                />
+                                <span>👤 Solicitante</span>
+                              </label>
+
+                              <label className={`p-2 rounded-lg border flex items-center gap-1.5 cursor-pointer transition-all ${
+                                formRecCompany ? "bg-primary/10 border-primary font-bold text-foreground" : "bg-muted/20 border-border text-muted-foreground"
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={formRecCompany}
+                                  onChange={e => setFormRecCompany(e.target.checked)}
+                                  className="rounded"
+                                />
+                                <span>🏢 Empresa / Agência</span>
+                              </label>
+
+                              <label className={`p-2 rounded-lg border flex items-center gap-1.5 cursor-pointer transition-all ${
+                                formRecFinResp ? "bg-primary/10 border-primary font-bold text-foreground" : "bg-muted/20 border-border text-muted-foreground"
+                              }`}>
+                                <input
+                                  type="checkbox"
+                                  checked={formRecFinResp}
+                                  onChange={e => setFormRecFinResp(e.target.checked)}
+                                  className="rounded"
+                                />
+                                <span>💼 Resp. Financeiro</span>
+                              </label>
+                            </div>
+                          </div>
+
+                          <div className="sm:col-span-4 p-2.5 rounded-xl bg-background/90 border border-border space-y-2">
+                            <span className="font-bold text-foreground text-[11px] block">
+                              ⚙️ Multa, Juros & Automação
+                            </span>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <Label className="text-[10px] text-muted-foreground">Multa Atraso (%)</Label>
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  value={formBoletoFinePct}
+                                  onChange={e => setFormBoletoFinePct(Number(e.target.value) || 0)}
+                                  className="h-7 text-xs font-mono"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-[10px] text-muted-foreground">Juros a.m. (%)</Label>
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  value={formBoletoInterestPct}
+                                  onChange={e => setFormBoletoInterestPct(Number(e.target.value) || 0)}
+                                  className="h-7 text-xs font-mono"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-1 pt-0.5 text-[10.5px]">
+                              <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
+                                <input
+                                  type="checkbox"
+                                  checked={formAutoEmitBoletoOnCheckout}
+                                  onChange={e => setFormAutoEmitBoletoOnCheckout(e.target.checked)}
+                                  className="rounded"
+                                />
+                                <span>Emitir e enviar automático no Check-out</span>
+                              </label>
+                              <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
+                                <input
+                                  type="checkbox"
+                                  checked={formAutoReminderEnabled}
+                                  onChange={e => setFormAutoReminderEnabled(e.target.checked)}
+                                  className="rounded"
+                                />
+                                <span>Lembrete no dia do vencimento e atraso</span>
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Linha 4: Ação Manual para Emitir/Antecipar Boleto + NFS-e quando editando reserva */}
+                        {selectedRes && (
+                          <div className="flex items-center justify-between flex-wrap gap-2 pt-1">
+                            <div className="text-[11px] text-muted-foreground">
+                              {Array.isArray(selectedRes.boletoIds) && selectedRes.boletoIds.length > 0 ? (
+                                <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                                  ✓ {selectedRes.boletoIds.length} boleto(s) já vinculado(s) a esta reserva ({selectedRes.boletoIds.join(", ")})
+                                </span>
+                              ) : (
+                                <span>Deseja antecipar o faturamento antes do check-out? Emita com 1 clique:</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {Array.isArray(selectedRes.boletoIds) && selectedRes.boletoIds.map((bId: string) => (
+                                <Button
+                                  key={bId}
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => window.open(`/api/boletos/${bId}/pdf`, "_blank")}
+                                  className="h-7 px-2.5 text-[11px] font-bold border-amber-500/50 text-amber-700 dark:text-amber-300"
+                                >
+                                  📄 PDF {bId}
+                                </Button>
+                              ))}
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={emittingResBoleto}
+                                onClick={async () => {
+                                  setEmittingResBoleto(true);
+                                  try {
+                                    // Primeiro atualiza a reserva com as configurações atuais de faturamento
+                                    await fetch(`/api/pms/reservations/${selectedRes.id}`, {
+                                      method: "PUT",
+                                      headers: { "Content-Type": "application/json" },
+                                      credentials: "include",
+                                      body: JSON.stringify({
+                                        isFaturadoBoleto: true,
+                                        paymentMethod: "boleto_faturado",
+                                        boletoTermDays: Number(formBoletoTermDays) || 15,
+                                        boletoCustomDueDate: formBoletoCustomDueDate || undefined,
+                                        boletoConsumptionMode: formBoletoConsumptionMode,
+                                        boletoPayerType: formBoletoPayerType,
+                                        consumptionSamePayerAndDue: formConsumptionSamePayerAndDue,
+                                        consumptionPayerType: formConsumptionSamePayerAndDue ? formBoletoPayerType : formConsumptionPayerType,
+                                        consumptionTermDays: formConsumptionSamePayerAndDue ? (Number(formBoletoTermDays) || 15) : (Number(formConsumptionTermDays) || 15),
+                                        consumptionCustomDueDate: formConsumptionSamePayerAndDue ? (formBoletoCustomDueDate || undefined) : (formConsumptionCustomDueDate || undefined),
+                                        boletoFinePct: Number(formBoletoFinePct ?? 2),
+                                        boletoInterestPct: Number(formBoletoInterestPct ?? 1),
+                                        autoEmitBoletoOnCheckout: formAutoEmitBoletoOnCheckout,
+                                        autoReminderEnabled: formAutoReminderEnabled,
+                                        financialResponsible: {
+                                          name: formFinRespName.trim(),
+                                          email: formFinRespEmail.trim(),
+                                          phone: formFinRespPhone.trim(),
+                                          whatsapp: formFinRespPhone.trim(),
+                                          document: formFinRespDoc.trim()
+                                        },
+                                        billingRecipients: {
+                                          guest: formRecGuest,
+                                          requester: formRecRequester,
+                                          company: formRecCompany,
+                                          financialResponsible: formRecFinResp,
+                                          sendEmail: formRecSendEmail,
+                                          sendWhatsapp: formRecSendWhatsapp
+                                        }
+                                      })
+                                    });
+                                    const res = await fetch("/api/boletos/emit", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      credentials: "include",
+                                      body: JSON.stringify({
+                                        reservationId: selectedRes.id,
+                                        mode: formBoletoConsumptionMode,
+                                        emitNfse: true,
+                                        sendNotifications: true
+                                      })
+                                    });
+                                    const json = await res.json();
+                                    if (res.ok && json.success) {
+                                      toast({
+                                        title: "🏦 Boleto(s) Inter & NFS-e Emitidos!",
+                                        description: `${(json.boletos || []).length} boleto(s) gerado(s) e enviados aos destinatários marcados.`
+                                      });
+                                      fetchData(false);
+                                      if (json.boletos?.[0]?.id) {
+                                        window.open(`/api/boletos/${json.boletos[0].id}/pdf`, "_blank");
+                                      }
+                                    } else {
+                                      toast({
+                                        title: "Erro ao emitir boleto",
+                                        description: json.error || "Verifique os dados da reserva.",
+                                        variant: "destructive"
+                                      });
+                                    }
+                                  } catch (err: any) {
+                                    toast({
+                                      title: "Erro de conexão",
+                                      description: err.message,
+                                      variant: "destructive"
+                                    });
+                                  } finally {
+                                    setEmittingResBoleto(false);
+                                  }
+                                }}
+                                className="h-7 px-3 text-[11px] font-black bg-amber-600 hover:bg-amber-700 text-white rounded-lg cursor-pointer"
+                              >
+                                {emittingResBoleto ? "Emitindo..." : "⚡ Emitir / Antecipar NFS-e + Boleto Agora"}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
                   {/* 2. Banner de Conciliação Bancária Oficial (se houver dados de PIX Inter ou Mercado Pago) */}
                   {selectedRes && (selectedRes.pixTxId || selectedRes.pixEndToEndId || selectedRes.mpPaymentId || selectedRes.paidAt) && (

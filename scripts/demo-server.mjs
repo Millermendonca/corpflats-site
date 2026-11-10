@@ -139,6 +139,16 @@ import {
 } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
 import {
+  issueInterBoleto,
+  updateInterBoleto,
+  cancelInterBoleto,
+  checkInterBoletoRemoteStatus,
+  generateBoletoPdfBuffer,
+  normalizeInterBoletoPayer,
+  buildInterFebrabanCodes,
+  buildEmvPixPayload
+} from "./inter-boleto-service.mjs";
+import {
   getSmtpConfig,
   verifySmtpConnection,
   sendEmailAsync,
@@ -5679,6 +5689,27 @@ export function reconcileUniversalIntegrity(incomingState = null) {
         changed = true;
       }
     }
+
+    // 1.W Boletos Faturados Banco Inter (db.boletos)
+    if (Array.isArray(incomingState.boletos) && incomingState.boletos.length > 0) {
+      if (!Array.isArray(db.boletos)) db.boletos = [];
+      incomingState.boletos.forEach(incBol => {
+        if (!incBol || !incBol.id) return;
+        const existingIdx = db.boletos.findIndex(b => String(b.id) === String(incBol.id) || (b.code && incBol.code && b.code === incBol.code));
+        if (existingIdx === -1) {
+          db.boletos.push({ ...incBol });
+          changed = true;
+        } else {
+          const cur = db.boletos[existingIdx];
+          const incDate = incBol.updatedAt || incBol.paidAt || incBol.createdAt || "";
+          const curDate = cur.updatedAt || cur.paidAt || cur.createdAt || "";
+          if (incDate > curDate || (incBol.status === "pago" && cur.status !== "pago") || (incBol.status === "cancelado" && cur.status !== "cancelado")) {
+            db.boletos[existingIdx] = { ...cur, ...incBol };
+            changed = true;
+          }
+        }
+      });
+    }
   }
 
   if (ensureB2bSeedData(db)) {
@@ -11132,6 +11163,7 @@ async function _loadDatabaseImpl() {
       if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length !== 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
       if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
       if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
+      if (!Array.isArray(db.boletos)) db.boletos = [];
       if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
       else if (db.minibarSettings.pixFeePercent === undefined && (!db.minibarSettings.pixFeeFixed || Number(db.minibarSettings.pixFeeFixed) === 0)) {
         db.minibarSettings.pixFeePercent = 0.99;
@@ -33869,6 +33901,86 @@ app.post("/api/pms/reservations", async (req, res) => {
     nfDeliveryEmails: resolvedNfEmails,
     nfHideFromGuest: resolvedNfHideFromGuest,
     invoiceDetails: invoiceDetails || null,
+    // Regras de Faturamento a Prazo (Boleto Banco Inter), Responsável Financeiro e Destinatários
+    isFaturadoBoleto: Boolean(
+      req.body.isFaturadoBoleto ||
+      resolvedPaymentMethod === "faturado_boleto" ||
+      resolvedPaymentMethod === "faturado_b2b" ||
+      b2bPaymentType === "FATURADO"
+    ),
+    boletoTermDays: Number(
+      req.body.boletoTermDays ??
+      resolvedCompany?.defaultBoletoTermDays ??
+      resolvedAgency?.defaultBoletoTermDays ??
+      guest?.defaultBoletoTermDays ??
+      15
+    ),
+    boletoCustomDueDate: req.body.boletoCustomDueDate || null,
+    boletoConsumptionMode: String(
+      req.body.boletoConsumptionMode ||
+      resolvedCompany?.defaultBoletoConsumptionMode ||
+      resolvedAgency?.defaultBoletoConsumptionMode ||
+      guest?.defaultBoletoConsumptionMode ||
+      "single"
+    ),
+    boletoPayerType: String(
+      req.body.boletoPayerType ||
+      resolvedCompany?.defaultBoletoPayerType ||
+      resolvedAgency?.defaultBoletoPayerType ||
+      resolvedInvRecipient ||
+      (resolvedCompany ? "company" : (resolvedAgency ? "agency" : "guest"))
+    ),
+    consumptionSamePayerAndDue: req.body.consumptionSamePayerAndDue !== undefined ? Boolean(req.body.consumptionSamePayerAndDue) : true,
+    consumptionPayerType: String(req.body.consumptionPayerType || req.body.boletoPayerType || resolvedInvRecipient || "guest"),
+    consumptionTermDays: Number(
+      req.body.consumptionTermDays ??
+      req.body.boletoTermDays ??
+      resolvedCompany?.defaultBoletoTermDays ??
+      resolvedAgency?.defaultBoletoTermDays ??
+      guest?.defaultBoletoTermDays ??
+      15
+    ),
+    consumptionCustomDueDate: req.body.consumptionCustomDueDate || null,
+    consumptionCustomPayer: req.body.consumptionCustomPayer || null,
+    boletoFinePct: Number(req.body.boletoFinePct ?? resolvedCompany?.defaultBoletoFinePct ?? resolvedAgency?.defaultBoletoFinePct ?? guest?.defaultBoletoFinePct ?? 2),
+    boletoInterestPct: Number(req.body.boletoInterestPct ?? resolvedCompany?.defaultBoletoInterestPct ?? resolvedAgency?.defaultBoletoInterestPct ?? guest?.defaultBoletoInterestPct ?? 1),
+    boletoAutoWriteOffDays: Number(req.body.boletoAutoWriteOffDays ?? resolvedCompany?.defaultBoletoAutoWriteOffDays ?? resolvedAgency?.defaultBoletoAutoWriteOffDays ?? guest?.defaultBoletoAutoWriteOffDays ?? 60),
+    autoEmitBoletoOnCheckout: req.body.autoEmitBoletoOnCheckout !== undefined
+      ? Boolean(req.body.autoEmitBoletoOnCheckout)
+      : Boolean(resolvedCompany?.defaultAutoEmitBoletoOnCheckout ?? resolvedAgency?.defaultAutoEmitBoletoOnCheckout ?? guest?.defaultAutoEmitBoletoOnCheckout ?? true),
+    autoReminderEnabled: req.body.autoReminderEnabled !== undefined
+      ? Boolean(req.body.autoReminderEnabled)
+      : Boolean(resolvedCompany?.defaultAutoReminderEnabled ?? resolvedAgency?.defaultAutoReminderEnabled ?? guest?.defaultAutoReminderEnabled ?? true),
+    financialResponsible: (() => {
+      const src = req.body.financialResponsible || resolvedCompany?.financialResponsible || resolvedAgency?.financialResponsible || guest?.financialResponsible || {};
+      const name = String(req.body.financialResponsibleName ?? src.name ?? resolvedCompany?.financialResponsibleName ?? resolvedAgency?.financialResponsibleName ?? guest?.financialResponsibleName ?? "").trim();
+      const email = String(req.body.financialResponsibleEmail ?? src.email ?? resolvedCompany?.financialResponsibleEmail ?? resolvedAgency?.financialResponsibleEmail ?? guest?.financialResponsibleEmail ?? "").trim();
+      const phone = String(req.body.financialResponsiblePhone ?? src.phone ?? resolvedCompany?.financialResponsiblePhone ?? resolvedAgency?.financialResponsiblePhone ?? guest?.financialResponsiblePhone ?? "").trim();
+      const document = String(req.body.financialResponsibleDocument ?? src.document ?? resolvedCompany?.financialResponsibleDocument ?? resolvedAgency?.financialResponsibleDocument ?? guest?.financialResponsibleDocument ?? "").trim();
+      return { name, email, phone, document };
+    })(),
+    billingRecipients: (() => {
+      const src = req.body.billingRecipients || resolvedCompany?.defaultBillingRecipients || resolvedAgency?.defaultBillingRecipients || guest?.defaultBillingRecipients || null;
+      if (src && typeof src === "object") {
+        return {
+          guest: Boolean(src.guest),
+          requester: Boolean(src.requester),
+          company: Boolean(src.company ?? (resolvedCompany || resolvedAgency)),
+          financialResponsible: Boolean(src.financialResponsible),
+          sendEmail: src.sendEmail !== false,
+          sendWhatsapp: src.sendWhatsapp !== false
+        };
+      }
+      const hasFinResp = Boolean(req.body.financialResponsible?.email || req.body.financialResponsible?.phone || req.body.financialResponsibleEmail || req.body.financialResponsiblePhone);
+      return {
+        guest: !resolvedCompany && !resolvedAgency,
+        requester: Boolean(finalRequesterInfo && (finalRequesterInfo.email || finalRequesterInfo.phone)),
+        company: Boolean(resolvedCompany || resolvedAgency),
+        financialResponsible: hasFinResp,
+        sendEmail: true,
+        sendWhatsapp: true
+      };
+    })(),
     checkinDate,
     checkoutDate,
     checkinTime: String(checkinTime || db.settings?.checkinTime || "14:00").trim(),
@@ -35309,6 +35421,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     "b2bRatePolicy", "b2bCommissionPct", "b2bCommissionAmount", "b2bNetRate", "b2bNetAmount",
     "b2bPaymentType", "b2bCardBrand", "b2bCardMasked", "b2bVcnToken", "b2bConciliationUrl", "voucherUrl", "b2bVoucherUrl", "b2bConciliationStatus", "b2bAuthorizedExpenses",
     "invoiceRecipientType", "nfRecipientType", "invoicingInstructions", "nfDeliveryEmails", "nfHideFromGuest",
+    "isFaturadoBoleto", "boletoTermDays", "boletoCustomDueDate", "boletoConsumptionMode", "boletoPayerType",
+    "consumptionSamePayerAndDue", "consumptionPayerType", "consumptionTermDays", "consumptionCustomDueDate", "consumptionCustomPayer",
+    "boletoFinePct", "boletoInterestPct", "boletoAutoWriteOffDays", "autoEmitBoletoOnCheckout", "autoReminderEnabled",
+    "financialResponsible", "financialResponsibleName", "financialResponsibleEmail", "financialResponsiblePhone", "financialResponsibleDocument",
+    "billingRecipients",
     "docPhotoUrl", "hasMinor", "minorAge", "isCamposResident", "riskAttentionAlert", "riskAttentionReason",
     "isFlatLocked", "flatLocked", "flatLockReason",
     "earlyCheckout", "originalCheckoutDate", "earlyCheckoutDate", "earlyCheckoutTime", "earlyCheckoutReportedBy", "earlyCheckoutNote"
@@ -35320,6 +35437,25 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldRatesSumBeforeEdit = oldDailyRatesBeforeEdit.reduce((acc, d) => acc + (Number(d.rate ?? d.amount) || 0), 0);
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+  if (
+    req.body.financialResponsible !== undefined ||
+    req.body.financialResponsibleName !== undefined ||
+    req.body.financialResponsibleEmail !== undefined ||
+    req.body.financialResponsiblePhone !== undefined ||
+    req.body.financialResponsibleDocument !== undefined
+  ) {
+    const prevFr = r.financialResponsible || {};
+    const inFr = typeof req.body.financialResponsible === "object" && req.body.financialResponsible ? req.body.financialResponsible : {};
+    r.financialResponsible = {
+      name: String(req.body.financialResponsibleName ?? inFr.name ?? prevFr.name ?? "").trim(),
+      email: String(req.body.financialResponsibleEmail ?? inFr.email ?? prevFr.email ?? "").trim(),
+      phone: String(req.body.financialResponsiblePhone ?? inFr.phone ?? prevFr.phone ?? "").trim(),
+      document: String(req.body.financialResponsibleDocument ?? inFr.document ?? prevFr.document ?? "").trim()
+    };
+  }
+  if (r.paymentMethod === "faturado_boleto" || r.paymentMethod === "faturado_b2b" || r.b2bPaymentType === "FATURADO") {
+    r.isFaturadoBoleto = true;
   }
   if (req.body.isCamposResident !== undefined) {
     const isCamposVal = Boolean(req.body.isCamposResident);
@@ -44480,6 +44616,14 @@ app.get("/api/pms/guests/:id", async (req, res) => {
     reservations: guestReservations,
     stays: guestReservations,
     invoices: guestInvoices,
+    boletos: (db.boletos || []).filter(b =>
+      b && (
+        (b.guestId && Number(b.guestId) === Number(guest.id)) ||
+        (cleanDoc && onlyDigits(b.payer?.cpfCnpj || b.payerDocument || "") === cleanDoc) ||
+        (b.reservationId && guestResIds.has(String(b.reservationId))) ||
+        (b.reservationCode && guestResCodes.has(b.reservationCode))
+      )
+    ).map(b => enrichBoletoDynamicStatus(b)),
     breakfastOrders: guestBreakfastOrders,
     minibarOrders: guestMinibarOrders.map(o => ({
       ...o,
@@ -44751,6 +44895,8 @@ const handleUpdateGuest = async (req, res) => {
     });
   }
 
+  applyCrmBillingConfigFields(guest, req.body);
+
   guest.updatedAt = new Date().toISOString();
 
   // Sincronização Bidirecional Atômica CRM -> Minha Conta (db.guestAccounts) e Reservas
@@ -44890,6 +45036,7 @@ app.post("/api/pms/guests", async (req, res) => {
     tags: tags || [],
     createdAt: new Date().toISOString()
   };
+  applyCrmBillingConfigFields(newGuest, req.body);
   db.guests.unshift(newGuest);
   syncBidirectionalGuestProfile(db, newGuest, { ...req.body, guestId: newGuest.id });
   saveDatabase();
@@ -46003,9 +46150,10 @@ const handleCheckout = async (req, res) => {
 
   if (shouldAutoEmit && !r.invoiceId && !existingInvForCheckout && (r.guestName || confFiscal?.tomadorNome) && (company || r.guestDocument || guest?.document || guest?.documentNumber || confFiscal?.tomadorCpfCnpj)) {
     try {
+      const breakdown = computeReservationAccommodationAndConsumption(r, db);
       const valor = (confFiscal?.managerApprovedValue && Number(confFiscal.valorServico) > 0)
         ? Number(confFiscal.valorServico)
-        : Number(r.totalAmount || r.dailyRate || confFiscal?.valorServico || 250);
+        : Number(breakdown.accommodationAmount || r.dailyRate || confFiscal?.valorServico || 250);
 
       // Calcular quantidade de diárias (preservando o período contratado em caso de check-out antecipado)
       let quantidadeDiarias = 1;
@@ -46135,6 +46283,41 @@ const handleCheckout = async (req, res) => {
     }
   }
 
+  // ── Emissão e Disparo Automático de Boleto(s) Banco Inter + NFS-e no Check-out (Faturado a Prazo) ──
+  let autoBoletosEmitted = false;
+  let emittedBoletos = [];
+  let faturadoDispatchResult = null;
+  const isResFaturado = Boolean(
+    r.isFaturadoBoleto ||
+    r.paymentMethod === "faturado_boleto" ||
+    r.paymentMethod === "faturado_b2b" ||
+    r.b2bPaymentType === "FATURADO" ||
+    req.body?.emitBoleto === true
+  );
+  const shouldEmitBoletoOnCheckout = isResFaturado && (r.autoEmitBoletoOnCheckout !== false || req.body?.emitBoleto === true);
+  if (shouldEmitBoletoOnCheckout) {
+    try {
+      const faturadoPkg = await emitCheckoutFaturadoPackage(r, {
+        ...(req.body || {}),
+        triggerSource: "checkout_auto"
+      });
+      if (faturadoPkg) {
+        if (Array.isArray(faturadoPkg.boletos) && faturadoPkg.boletos.length > 0) {
+          autoBoletosEmitted = true;
+          emittedBoletos = faturadoPkg.boletos;
+        }
+        if (faturadoPkg.invoice) {
+          autoInvoiceEmitted = true;
+          autoInvoiceNumber = faturadoPkg.invoice.numeroNfse || faturadoPkg.invoice.numeroNota || autoInvoiceNumber;
+          autoInvoicePdf = faturadoPkg.invoice.danfseUrl || faturadoPkg.invoice.linkPdf || autoInvoicePdf;
+        }
+        faturadoDispatchResult = faturadoPkg.dispatchResult || null;
+      }
+    } catch (bolErr) {
+      console.error("[Auto-Boleto Checkout Error]", bolErr);
+    }
+  }
+
   saveDatabase();
 
   // Dispara WhatsApp de check-out com desduplicação e agendamento da avaliação Google
@@ -46144,14 +46327,19 @@ const handleCheckout = async (req, res) => {
 
   res.json({
     success: true,
-    message: autoInvoiceEmitted
+    message: autoBoletosEmitted
+      ? `Check-out do Apt ${r.flatNumber} realizado! ${emittedBoletos.length} Boleto(s) Inter${autoInvoiceNumber ? ` e NFS-e Nº ${autoInvoiceNumber}` : ""} emitido(s) e enviado(s) automaticamente.`
+      : autoInvoiceEmitted
       ? `Check-out do Apt ${r.flatNumber} realizado com sucesso! NFS-e Nº ${autoInvoiceNumber} emitida automaticamente.`
       : `Check-out do Apt ${r.flatNumber} realizado. Apartamento desocupado!`,
     reservationId: r.id,
     flatNumber: r.flatNumber,
     autoInvoiceEmitted,
     autoInvoiceNumber,
-    autoInvoicePdf
+    autoInvoicePdf,
+    autoBoletosEmitted,
+    boletos: emittedBoletos,
+    faturadoDispatchResult
   });
 };
 app.post("/api/reception/checkout/:reservationId", handleCheckout);
@@ -53865,8 +54053,13 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       const diff = Math.round((new Date(r.checkoutDate) - new Date(r.checkinDate)) / 86400000);
       if (diff > 0) diarias = diff;
     }
-    const valorServico = Number(r.totalAmount || (Number(r.dailyRate || 0) * diarias) || 250);
+    const breakdown = computeReservationAccommodationAndConsumption(r, db);
+    const valorServico = Number(breakdown.accommodationAmount || (Number(r.dailyRate || 0) * diarias) || 250);
     const discriminacaoSugerida = buildB2bNfseDescription(r, guest, company, agency);
+    const resBoletos = (db.boletos || []).filter(b =>
+      b && (Number(b.reservationId) === Number(r.id) || (r.code && b.reservationCode === r.code))
+    ).map(b => enrichBoletoDynamicStatus(b));
+    const crmEntity = company || agency || guest || {};
 
     const item = {
       id: r.id,
@@ -53878,8 +54071,45 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       diarias,
       valorServico,
       valorSugerido: valorServico,
+      accommodationAmount: breakdown.accommodationAmount,
+      consumptionAmount: breakdown.consumptionAmount,
+      totalWithConsumption: breakdown.totalWithConsumption,
+      consumptionItems: breakdown.consumptionItems,
       status: r.status,
       channel: r.channel || "direct",
+      paymentMethod: r.paymentMethod || "pix",
+      isFaturadoBoleto: Boolean(
+        r.isFaturadoBoleto ||
+        r.paymentMethod === "faturado_boleto" ||
+        r.paymentMethod === "faturado_b2b" ||
+        r.b2bPaymentType === "FATURADO"
+      ),
+      boletoTermDays: Number(r.boletoTermDays ?? crmEntity.defaultBoletoTermDays ?? 15),
+      boletoCustomDueDate: r.boletoCustomDueDate || null,
+      boletoConsumptionMode: r.boletoConsumptionMode || crmEntity.defaultBoletoConsumptionMode || "single",
+      boletoPayerType: r.boletoPayerType || invoiceRecipientType || "company",
+      consumptionSamePayerAndDue: r.consumptionSamePayerAndDue !== false,
+      consumptionPayerType: r.consumptionPayerType || r.boletoPayerType || "guest",
+      consumptionTermDays: Number(r.consumptionTermDays ?? r.boletoTermDays ?? crmEntity.defaultBoletoTermDays ?? 15),
+      consumptionCustomDueDate: r.consumptionCustomDueDate || null,
+      boletoFinePct: Number(r.boletoFinePct ?? crmEntity.defaultBoletoFinePct ?? 2),
+      boletoInterestPct: Number(r.boletoInterestPct ?? crmEntity.defaultBoletoInterestPct ?? 1),
+      boletoAutoWriteOffDays: Number(r.boletoAutoWriteOffDays ?? crmEntity.defaultBoletoAutoWriteOffDays ?? 60),
+      financialResponsible: r.financialResponsible || crmEntity.financialResponsible || {
+        name: crmEntity.financialResponsibleName || "",
+        email: crmEntity.financialResponsibleEmail || "",
+        phone: crmEntity.financialResponsiblePhone || "",
+        document: crmEntity.financialResponsibleDocument || ""
+      },
+      billingRecipients: r.billingRecipients || crmEntity.defaultBillingRecipients || {
+        guest: !company && !agency,
+        requester: Boolean(r.requesterInfo && (r.requesterInfo.email || r.requesterInfo.phone)),
+        company: Boolean(company || agency),
+        financialResponsible: Boolean((r.financialResponsible || crmEntity.financialResponsible)?.email || (r.financialResponsible || crmEntity.financialResponsible)?.phone),
+        sendEmail: true,
+        sendWhatsapp: true
+      },
+      boletos: resBoletos,
       invoiceRecipientType,
       nfDeliveryEmails: Array.isArray(r.nfDeliveryEmails) ? r.nfDeliveryEmails : (tomadorEmail ? [tomadorEmail] : []),
       nfHideFromGuest: Boolean(r.nfHideFromGuest),
@@ -57884,7 +58114,84 @@ app.get("/api/companies", (req, res) => {
   if (ensureB2bSeedData(db)) {
     setImmediate(() => saveDatabase("b2b_companies_backfill"));
   }
-  res.json(db.companies);
+  const enrichedCompanies = (db.companies || []).map(c => {
+    const compId = Number(c.id);
+    const compCnpj = onlyDigits(c.cnpj || "");
+    const compBoletos = (db.boletos || []).filter(b =>
+      b && (
+        (b.companyId && Number(b.companyId) === compId) ||
+        (compCnpj && onlyDigits(b.payer?.cpfCnpj || b.payerDocument || "") === compCnpj)
+      )
+    ).map(b => enrichBoletoDynamicStatus(b));
+    const openBoletos = compBoletos.filter(b => b.status === "aberto" || b.status === "vencido");
+    const paidBoletos = compBoletos.filter(b => b.status === "pago");
+    return {
+      ...c,
+      boletosCount: compBoletos.length,
+      openBoletosCount: openBoletos.length,
+      openBoletosAmount: Number(openBoletos.reduce((s, b) => s + (Number(b.amount) || 0), 0).toFixed(2)),
+      paidBoletosAmount: Number(paidBoletos.reduce((s, b) => s + (Number(b.paidAmount || b.amount) || 0), 0).toFixed(2))
+    };
+  });
+  res.json(enrichedCompanies);
+});
+
+app.get(["/api/companies/:id", "/api/pms/companies/:id"], (req, res) => {
+  const id = Number(req.params.id);
+  const company = (db.companies || []).find(c => Number(c.id) === id);
+  if (!company) return res.status(404).json({ error: "Empresa não encontrada" });
+
+  const compCnpj = onlyDigits(company.cnpj || "");
+  const reservations = (db.reservations || []).filter(r =>
+    (r.companyId && Number(r.companyId) === id) ||
+    (compCnpj && onlyDigits(r.companyCnpj || "") === compCnpj) ||
+    (company.tradeName && r.companyName && String(r.companyName).toLowerCase().includes(String(company.tradeName).toLowerCase()))
+  );
+  const resIds = new Set(reservations.map(r => String(r.id)));
+  const resCodes = new Set(reservations.map(r => r.code).filter(Boolean));
+
+  const invoices = (db.invoices || []).filter(inv =>
+    (inv.companyId && Number(inv.companyId) === id) ||
+    (compCnpj && onlyDigits(inv.tomadorCpfCnpj || "") === compCnpj) ||
+    (inv.reservationId && resIds.has(String(inv.reservationId))) ||
+    (inv.reservationCode && resCodes.has(inv.reservationCode))
+  );
+
+  const boletos = (db.boletos || []).filter(b =>
+    b && (
+      (b.companyId && Number(b.companyId) === id) ||
+      (compCnpj && onlyDigits(b.payer?.cpfCnpj || b.payerDocument || "") === compCnpj) ||
+      (b.reservationId && resIds.has(String(b.reservationId))) ||
+      (b.reservationCode && resCodes.has(b.reservationCode))
+    )
+  ).map(b => enrichBoletoDynamicStatus(b));
+
+  const guests = (db.guests || []).filter(g =>
+    (g.companyId && Number(g.companyId) === id) ||
+    reservations.some(r => Number(r.guestId) === Number(g.id))
+  );
+
+  const totalRevenue = reservations
+    .filter(r => r.status !== "cancelada" && r.status !== "cancelled")
+    .reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
+
+  res.json({
+    ...company,
+    company,
+    reservations,
+    invoices,
+    boletos,
+    guests,
+    metrics: {
+      totalReservations: reservations.length,
+      invoicesCount: invoices.length,
+      boletosCount: boletos.length,
+      openBoletosCount: boletos.filter(b => b.status === "aberto" || b.status === "vencido").length,
+      openBoletosAmount: Number(boletos.filter(b => b.status === "aberto" || b.status === "vencido").reduce((s, b) => s + (Number(b.amount) || 0), 0).toFixed(2)),
+      paidBoletosAmount: Number(boletos.filter(b => b.status === "pago").reduce((s, b) => s + (Number(b.paidAmount || b.amount) || 0), 0).toFixed(2)),
+      totalRevenue: Number(totalRevenue.toFixed(2))
+    }
+  });
 });
 
 app.post("/api/companies", (req, res) => {
@@ -57981,6 +58288,8 @@ app.post("/api/companies", (req, res) => {
     createdAt: new Date().toISOString()
   };
 
+  applyCrmBillingConfigFields(newCompany, req.body);
+
   db.companies.push(newCompany);
   saveDatabase("company_created_" + newCompany.id);
   logAuditEvent({
@@ -57994,7 +58303,7 @@ app.post("/api/companies", (req, res) => {
   res.status(201).json(newCompany);
 });
 
-app.patch("/api/companies/:id", (req, res) => {
+const handleUpdateCompany = (req, res) => {
   const id = Number(req.params.id);
   if (!db.companies) db.companies = [];
   const company = db.companies.find(c => c.id === id);
@@ -58095,6 +58404,8 @@ app.patch("/api/companies/:id", (req, res) => {
     company.codigoMunicipio = patchedGeo.codigoMunicipio;
   }
 
+  applyCrmBillingConfigFields(company, b);
+
   company.updatedAt = new Date().toISOString();
   saveDatabase("company_updated_" + id);
   logAuditEvent({
@@ -58106,7 +58417,9 @@ app.patch("/api/companies/:id", (req, res) => {
     source: "CRM Empresas"
   });
   res.json(company);
-});
+};
+app.patch("/api/companies/:id", handleUpdateCompany);
+app.put("/api/companies/:id", handleUpdateCompany);
 
 app.delete("/api/companies/:id", (req, res) => {
   const id = Number(req.params.id);
@@ -58258,6 +58571,14 @@ app.get(["/api/agencies/:id", "/api/pms/agencies/:id"], (req, res) => {
     reservations.some(r => Number(r.id) === Number(inv.reservationId) || (r.code && r.code === inv.reservationCode))
   );
 
+  const boletos = (db.boletos || []).filter(b =>
+    b && (
+      (b.agencyId && Number(b.agencyId) === id) ||
+      (agCnpj && onlyDigits(b.payer?.cpfCnpj || b.payerDocument || "") === agCnpj) ||
+      reservations.some(r => Number(r.id) === Number(b.reservationId) || (r.code && r.code === b.reservationCode))
+    )
+  ).map(b => enrichBoletoDynamicStatus(b));
+
   const activeRes = reservations.filter(r => r.status !== "cancelada" && r.status !== "cancelled");
   const totalNights = activeRes.reduce((acc, r) => acc + (Number(r.nights) || 1), 0);
   const totalRevenue = activeRes.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
@@ -58276,6 +58597,10 @@ app.get(["/api/agencies/:id", "/api/pms/agencies/:id"], (req, res) => {
     guestsServedCount: guests.length,
     invoicesCount: invoices.length,
     invoicesIssuedCount: invoices.length,
+    boletosCount: boletos.length,
+    openBoletosCount: boletos.filter(b => b.status === "aberto" || b.status === "vencido").length,
+    openBoletosAmount: Number(boletos.filter(b => b.status === "aberto" || b.status === "vencido").reduce((s, b) => s + (Number(b.amount) || 0), 0).toFixed(2)),
+    paidBoletosAmount: Number(boletos.filter(b => b.status === "pago").reduce((s, b) => s + (Number(b.paidAmount || b.amount) || 0), 0).toFixed(2)),
     totalRevenue: Number(totalRevenue.toFixed(2)),
     totalCommission: Number(totalCommission.toFixed(2)),
     totalNet: Number(totalNet.toFixed(2)),
@@ -58293,6 +58618,7 @@ app.get(["/api/agencies/:id", "/api/pms/agencies/:id"], (req, res) => {
     guests,
     guestsServed: guests,
     invoices,
+    boletos,
     metrics,
     stats: metrics
   });
@@ -58316,6 +58642,7 @@ app.post(["/api/agencies", "/api/pms/agencies"], (req, res) => {
       if (b.agents && Array.isArray(b.agents)) existing.agents = b.agents;
       if (b.financialEmail || b.email) existing.financialEmail = (b.financialEmail || b.email).trim();
       if (b.phone || b.telefone) existing.phone = (b.phone || b.telefone).trim();
+      applyCrmBillingConfigFields(existing, b);
       existing.updatedAt = new Date().toISOString();
       saveDatabase("agency_upserted_" + existing.id);
       return res.status(200).json(existing);
@@ -58388,6 +58715,8 @@ app.post(["/api/agencies", "/api/pms/agencies"], (req, res) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+
+  applyCrmBillingConfigFields(newAgency, b);
 
   db.agencies.push(newAgency);
   saveDatabase("agency_created_" + newAgency.id);
@@ -58500,6 +58829,8 @@ const updateAgencyHandler = (req, res) => {
     agency.ibgeCode = val;
     agency.codigoMunicipio = val;
   }
+
+  applyCrmBillingConfigFields(agency, b);
 
   agency.updatedAt = new Date().toISOString();
   saveDatabase("agency_updated_" + id);
@@ -65970,24 +66301,39 @@ app.post("/api/pms/inter/webhook", async (req, res) => {
               confirmedItems.push({ r, wasPreReserva, isComplementaryPayment, valorPago, priorPaid });
             }
           } else {
-            // Verifica se o pagamento é referente a um pedido de Frigobar (db.minibarOrders)
-            const mbOrder = (db.minibarOrders || []).find(o => 
-              o.pixTxId === txid || 
-              o.id === txid || 
-              (txid && o.id && txid.includes(o.id))
+            // Verifica se o pagamento é referente a um Boleto Faturado (db.boletos)
+            const matchedBoleto = (db.boletos || []).find(b =>
+              b && b.status !== "pago" && (
+                (txid && (b.txId === txid || b.seuNumero === txid || b.code === txid || b.nossoNumero === txid || b.codigoSolicitacao === txid))
+              )
             );
-            if (mbOrder && mbOrder.paymentStatus !== "pago") {
-              mbOrder.paymentStatus = "pago";
-              mbOrder.paidAt = item.horario || new Date().toISOString();
-              mbOrder.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
-              createNotification({
-                category: "checkout",
-                title: `🍾 Frigobar Pago (PIX): R$ ${valorPago.toLocaleString("pt-BR")} (Flat ${mbOrder.flatNumber})`,
-                message: `Pedido ${mbOrder.id} de frigobar pago via PIX Banco Inter por ${mbOrder.guestName}!`,
-                severity: "success",
-                metadata: { orderId: mbOrder.id, txid, amount: valorPago },
-                targetUrl: `/anserve`
+            if (matchedBoleto) {
+              markBoletoAsPaid(matchedBoleto, {
+                paidAmount: valorPago > 0 ? valorPago : matchedBoleto.amount,
+                paidAt: item.horario || new Date().toISOString(),
+                endToEndId: item.endToEndId || `E2E_INTER_${Date.now()}`,
+                source: "Banco Inter Webhook"
               });
+            } else {
+              // Verifica se o pagamento é referente a um pedido de Frigobar (db.minibarOrders)
+              const mbOrder = (db.minibarOrders || []).find(o => 
+                o.pixTxId === txid || 
+                o.id === txid || 
+                (txid && o.id && txid.includes(o.id))
+              );
+              if (mbOrder && mbOrder.paymentStatus !== "pago") {
+                mbOrder.paymentStatus = "pago";
+                mbOrder.paidAt = item.horario || new Date().toISOString();
+                mbOrder.pixEndToEndId = item.endToEndId || `E2E_INTER_${Date.now()}`;
+                createNotification({
+                  category: "checkout",
+                  title: `🍾 Frigobar Pago (PIX): R$ ${valorPago.toLocaleString("pt-BR")} (Flat ${mbOrder.flatNumber})`,
+                  message: `Pedido ${mbOrder.id} de frigobar pago via PIX Banco Inter por ${mbOrder.guestName}!`,
+                  severity: "success",
+                  metadata: { orderId: mbOrder.id, txid, amount: valorPago },
+                  targetUrl: `/anserve`
+                });
+              }
             }
           }
         }
@@ -68114,8 +68460,12 @@ app.get("/api/finance/payments", (req, res) => {
       }
     }
 
+    const enrichedBoletosForPayments = (db.boletos || []).map(b => enrichBoletoDynamicStatus(b));
+
     res.json({
       payments: filtered,
+      boletos: enrichedBoletosForPayments,
+      boletosSummary: computeBoletosSummaryMetrics(enrichedBoletosForPayments),
       summary: {
         totalGross: Number(totalGross.toFixed(2)),
         totalFees: Number(totalFees.toFixed(2)),
@@ -68216,6 +68566,1715 @@ app.post("/api/finance/payments/reconcile/:code", async (req, res) => {
       reconciled: r.paymentStatus === "pago_total",
       status: r.paymentStatus || "PENDENTE",
       message: r.paymentStatus === "pago_total" ? "Reserva já consta como quitada." : "Transação ainda pendente de liquidação no Banco Inter."
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MÓDULO 8.4: BOLETOS FATURADOS BANCO INTER (BOLEPIX v3/v2, PRAZOS, 1 OU 2 BOLETOS,
+//             DESTINATÁRIOS MÚLTIPLOS, RESPONSÁVEL FINANCEIRO, EDIÇÃO E LEMBRETES)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function applyCrmBillingConfigFields(entity, body = {}) {
+  if (!entity || !body || typeof body !== "object") return entity;
+
+  if (body.defaultBoletoTermDays !== undefined || body.boletoTermDays !== undefined) {
+    const val = Number(body.defaultBoletoTermDays ?? body.boletoTermDays);
+    if (!Number.isNaN(val) && val >= 0) entity.defaultBoletoTermDays = val;
+  }
+  if (body.defaultBoletoConsumptionMode !== undefined || body.boletoConsumptionMode !== undefined) {
+    const mode = String(body.defaultBoletoConsumptionMode ?? body.boletoConsumptionMode).toLowerCase();
+    entity.defaultBoletoConsumptionMode = mode === "separate" ? "separate" : "single";
+  }
+  if (body.defaultBoletoPayerType !== undefined || body.boletoPayerType !== undefined) {
+    entity.defaultBoletoPayerType = String(body.defaultBoletoPayerType ?? body.boletoPayerType).toLowerCase();
+  }
+  if (body.defaultBoletoFinePct !== undefined || body.boletoFinePct !== undefined) {
+    entity.defaultBoletoFinePct = Number(body.defaultBoletoFinePct ?? body.boletoFinePct ?? 2);
+  }
+  if (body.defaultBoletoInterestPct !== undefined || body.boletoInterestPct !== undefined) {
+    entity.defaultBoletoInterestPct = Number(body.defaultBoletoInterestPct ?? body.boletoInterestPct ?? 1);
+  }
+  if (body.defaultBoletoAutoWriteOffDays !== undefined || body.boletoAutoWriteOffDays !== undefined) {
+    entity.defaultBoletoAutoWriteOffDays = Number(body.defaultBoletoAutoWriteOffDays ?? body.boletoAutoWriteOffDays ?? 60);
+  }
+  if (body.defaultAutoEmitBoletoOnCheckout !== undefined || body.autoEmitBoletoOnCheckout !== undefined) {
+    entity.defaultAutoEmitBoletoOnCheckout = Boolean(body.defaultAutoEmitBoletoOnCheckout ?? body.autoEmitBoletoOnCheckout);
+  }
+  if (body.defaultAutoReminderEnabled !== undefined || body.autoReminderEnabled !== undefined) {
+    entity.defaultAutoReminderEnabled = Boolean(body.defaultAutoReminderEnabled ?? body.autoReminderEnabled);
+  }
+
+  if (
+    body.financialResponsible !== undefined ||
+    body.financialResponsibleName !== undefined ||
+    body.financialResponsibleEmail !== undefined ||
+    body.financialResponsiblePhone !== undefined ||
+    body.financialResponsibleDocument !== undefined
+  ) {
+    const prevFr = entity.financialResponsible || {};
+    const inFr = typeof body.financialResponsible === "object" && body.financialResponsible ? body.financialResponsible : {};
+    const name = String(body.financialResponsibleName ?? inFr.name ?? prevFr.name ?? entity.financialResponsibleName ?? "").trim();
+    const email = String(body.financialResponsibleEmail ?? inFr.email ?? prevFr.email ?? entity.financialResponsibleEmail ?? "").trim();
+    const phone = String(body.financialResponsiblePhone ?? inFr.phone ?? prevFr.phone ?? entity.financialResponsiblePhone ?? "").trim();
+    const document = String(body.financialResponsibleDocument ?? inFr.document ?? prevFr.document ?? entity.financialResponsibleDocument ?? "").trim();
+    entity.financialResponsible = { name, email, phone, document };
+    entity.financialResponsibleName = name;
+    entity.financialResponsibleEmail = email;
+    entity.financialResponsiblePhone = phone;
+    entity.financialResponsibleDocument = document;
+  }
+
+  if (body.defaultBillingRecipients !== undefined || body.billingRecipients !== undefined) {
+    const src = body.defaultBillingRecipients || body.billingRecipients || {};
+    if (src && typeof src === "object") {
+      entity.defaultBillingRecipients = {
+        guest: Boolean(src.guest),
+        requester: Boolean(src.requester),
+        company: Boolean(src.company),
+        financialResponsible: Boolean(src.financialResponsible),
+        sendEmail: src.sendEmail !== false,
+        sendWhatsapp: src.sendWhatsapp !== false
+      };
+    }
+  }
+  return entity;
+}
+
+function getBrasiliaDateStr(dateObj = new Date()) {
+  const br = new Date(dateObj.getTime() - 3 * 3600000);
+  return br.toISOString().slice(0, 10);
+}
+
+function addDaysToIsoDate(baseDateStr, days = 15) {
+  const cleanBase = String(baseDateStr || getBrasiliaDateStr()).slice(0, 10);
+  const d = new Date(`${cleanBase}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) {
+    return new Date(Date.now() + Number(days || 15) * 86400000).toISOString().slice(0, 10);
+  }
+  const target = new Date(d.getTime() + Math.max(0, Number(days || 0)) * 86400000);
+  return target.toISOString().slice(0, 10);
+}
+
+function enrichBoletoDynamicStatus(boleto) {
+  if (!boleto) return null;
+  const todayStr = getBrasiliaDateStr();
+  const dueStr = String(boleto.dueDate || boleto.dataVencimento || todayStr).slice(0, 10);
+  const rawStatus = String(boleto.status || "aberto").toLowerCase();
+  const amount = Number(boleto.amount || boleto.valorNominal || 0);
+  const finePct = Number(boleto.finePct ?? 2);
+  const interestPct = Number(boleto.interestPct ?? 1);
+
+  let effectiveStatus = rawStatus;
+  let daysOverdue = 0;
+  let isDueToday = false;
+  let fineAmount = 0;
+  let interestAmount = 0;
+
+  if (rawStatus !== "pago" && rawStatus !== "cancelado") {
+    if (dueStr < todayStr) {
+      effectiveStatus = "vencido";
+      const dDue = new Date(`${dueStr}T12:00:00Z`);
+      const dToday = new Date(`${todayStr}T12:00:00Z`);
+      daysOverdue = Math.max(1, Math.round((dToday.getTime() - dDue.getTime()) / 86400000));
+      fineAmount = Math.round(amount * (finePct / 100) * 100) / 100;
+      interestAmount = Math.round(amount * ((interestPct / 30) / 100) * daysOverdue * 100) / 100;
+    } else if (dueStr === todayStr) {
+      effectiveStatus = "aberto";
+      isDueToday = true;
+    } else {
+      effectiveStatus = "aberto";
+    }
+  }
+
+  const updatedTotalWithCharges = Math.round((amount + fineAmount + interestAmount) * 100) / 100;
+
+  return {
+    ...boleto,
+    status: effectiveStatus,
+    isDueToday,
+    daysOverdue,
+    fineAmount,
+    interestAmount,
+    updatedTotalWithCharges
+  };
+}
+
+function computeBoletosSummaryMetrics(boletosList = []) {
+  const enriched = boletosList.map(b => enrichBoletoDynamicStatus(b)).filter(Boolean);
+  const open = enriched.filter(b => b.status === "aberto");
+  const dueToday = enriched.filter(b => b.status === "aberto" && b.isDueToday);
+  const overdue = enriched.filter(b => b.status === "vencido");
+  const paid = enriched.filter(b => b.status === "pago");
+  const cancelled = enriched.filter(b => b.status === "cancelado");
+
+  const sumAmt = (arr, field = "amount") =>
+    Number(arr.reduce((s, x) => s + (Number(x[field] ?? x.amount ?? 0) || 0), 0).toFixed(2));
+
+  return {
+    totalCount: enriched.length,
+    openCount: open.length,
+    openAmount: sumAmt(open),
+    dueTodayCount: dueToday.length,
+    dueTodayAmount: sumAmt(dueToday),
+    overdueCount: overdue.length,
+    overdueAmount: sumAmt(overdue),
+    overdueWithChargesAmount: sumAmt(overdue, "updatedTotalWithCharges"),
+    totalPendingCount: open.length + overdue.length,
+    totalPendingAmount: Number((sumAmt(open) + sumAmt(overdue)).toFixed(2)),
+    paidCount: paid.length,
+    paidAmount: sumAmt(paid, "paidAmount"),
+    cancelledCount: cancelled.length,
+    cancelledAmount: sumAmt(cancelled)
+  };
+}
+
+/**
+ * Calcula estritamente:
+ *  1) Valor de Hospedagem Pura (accommodationAmount) -> SEMPRE usado na NFS-e (pois consumo é faturado pela Anserve)
+ *  2) Valor de Consumo / Frigobar (consumptionAmount) -> pode ser somado em 1 boleto único ou emitido em 2º boleto separado
+ */
+function computeReservationAccommodationAndConsumption(r, dbRef = db) {
+  if (!r) {
+    return {
+      accommodationAmount: 0,
+      consumptionAmount: 0,
+      totalWithConsumption: 0,
+      consumptionItems: []
+    };
+  }
+
+  const charges = Array.isArray(r.charges) ? r.charges : [];
+  const consumptionCharges = charges.filter(c =>
+    c && /minibar|frigobar|consumo|consumption|anserve/i.test(String(c.type || c.category || c.title || c.description || ""))
+  );
+  const nonConsumptionChargesSum = charges
+    .filter(c => c && !consumptionCharges.includes(c))
+    .reduce((s, c) => s + (Number(c.amount) || 0), 0);
+
+  const consumptionFromCharges = consumptionCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+
+  // Pedidos de frigobar / consumo em db.minibarOrders vinculados à reserva e ainda não pagos separadamente
+  const minibarOrders = (dbRef?.minibarOrders || []).filter(o => {
+    if (!o || o.status === "cancelado" || o.paymentStatus === "pago") return false;
+    if (o.reservationId && Number(o.reservationId) === Number(r.id)) return true;
+    if (r.code && o.reservationCode && String(o.reservationCode) === String(r.code)) return true;
+    return false;
+  });
+  const consumptionFromMinibarOrders = minibarOrders.reduce((s, o) => s + (Number(o.totalAmount || o.amount) || 0), 0);
+  const explicitConsumption = Number(r.extraConsumptionAmount || r.consumptionAmount || 0);
+
+  const consumptionItems = [
+    ...consumptionCharges.map(c => ({
+      id: c.id || "charge",
+      title: c.title || c.description || "Consumo / Extra",
+      amount: Number(c.amount) || 0,
+      source: "reservation_charge"
+    })),
+    ...minibarOrders.map(o => ({
+      id: o.id,
+      title: `Consumo Frigobar / Anserve (${Array.isArray(o.items) ? o.items.map(i => `${i.quantity || 1}x ${i.name}`).join(", ") : "Itens"})`,
+      amount: Number(o.totalAmount || o.amount) || 0,
+      source: "minibar_order"
+    }))
+  ];
+
+  const totalConsumption = Math.max(
+    0,
+    Math.round(((consumptionFromCharges + consumptionFromMinibarOrders) || explicitConsumption) * 100) / 100
+  );
+
+  // Cálculo do valor puro de hospedagem
+  const ratesSum = Array.isArray(r.dailyRates) && r.dailyRates.length > 0
+    ? r.dailyRates.reduce((s, d) => s + (Number(d.rate ?? d.amount) || 0), 0)
+    : 0;
+  const rawTotal = Number(r.totalAmount) || 0;
+
+  let accommodationAmount = 0;
+  if (ratesSum > 0) {
+    // Se rawTotal inclui consumo em charges, subtrai o consumo em charges; caso contrário usa rawTotal (ou ratesSum + taxas de hospedagem)
+    if (consumptionFromCharges > 0 && rawTotal >= ratesSum + consumptionFromCharges - 0.05) {
+      accommodationAmount = Math.max(0, Math.round((rawTotal - consumptionFromCharges) * 100) / 100);
+    } else if (rawTotal > 0) {
+      accommodationAmount = Math.max(0, Math.round(rawTotal * 100) / 100);
+    } else {
+      accommodationAmount = Math.max(0, Math.round((ratesSum + nonConsumptionChargesSum) * 100) / 100);
+    }
+  } else {
+    accommodationAmount = Math.max(0, Math.round((rawTotal - consumptionFromCharges) * 100) / 100);
+  }
+
+  if (accommodationAmount <= 0 && Number(r.dailyRate) > 0) {
+    const d1 = r.checkinDate ? new Date(r.checkinDate) : null;
+    const d2 = r.checkoutDate ? new Date(r.checkoutDate) : null;
+    const nights = d1 && d2 ? Math.max(1, Math.round((d2 - d1) / 86400000)) : 1;
+    accommodationAmount = Math.round(Number(r.dailyRate) * nights * 100) / 100;
+  }
+
+  const totalWithConsumption = Math.round((accommodationAmount + totalConsumption) * 100) / 100;
+
+  return {
+    accommodationAmount,
+    consumptionAmount: totalConsumption,
+    totalWithConsumption,
+    consumptionItems,
+    minibarOrderIds: minibarOrders.map(o => o.id)
+  };
+}
+
+function resolveReservationCrmLinks(r) {
+  if (!r) return { guest: null, company: null, agency: null };
+  const guest = (db.guests || []).find(g =>
+    g && (
+      (r.guestId && Number(g.id) === Number(r.guestId)) ||
+      (r.guestDocument && onlyDigits(g.documentNumber || g.document || "") === onlyDigits(r.guestDocument))
+    )
+  ) || null;
+
+  const compId = r.companyId || guest?.companyId;
+  const company = (db.companies || []).find(c =>
+    c && (
+      (compId && Number(c.id) === Number(compId)) ||
+      (r.companyCnpj && onlyDigits(c.cnpj || "") === onlyDigits(r.companyCnpj))
+    )
+  ) || null;
+
+  const agId = r.agencyId || guest?.agencyId;
+  const agency = (db.agencies || []).find(a =>
+    a && (
+      (agId && Number(a.id) === Number(agId)) ||
+      (r.agencyCnpj && onlyDigits(a.cnpj || "") === onlyDigits(r.agencyCnpj))
+    )
+  ) || null;
+
+  return { guest, company, agency };
+}
+
+/**
+ * Resolve a lista de destinatários marcados para receber NFS-e + Boleto(s) + Linha Digitável / PIX
+ * suportando: Hóspede, Solicitante, Empresa/Agência e Responsável Financeiro (um, vários ou todos)
+ */
+function resolveReservationBillingRecipientsList(r, overrideRecipients = null, overrideFinResp = null) {
+  const { guest, company, agency } = resolveReservationCrmLinks(r || {});
+  const crmEntity = company || agency || guest || {};
+
+  const recFlags = {
+    guest: false,
+    requester: false,
+    company: false,
+    financialResponsible: false,
+    sendEmail: true,
+    sendWhatsapp: true,
+    ...(crmEntity.defaultBillingRecipients || {}),
+    ...(r?.billingRecipients || {}),
+    ...(overrideRecipients || {})
+  };
+
+  if (
+    !overrideRecipients &&
+    !r?.billingRecipients &&
+    !crmEntity.defaultBillingRecipients
+  ) {
+    recFlags.company = Boolean(company || agency);
+    recFlags.guest = !company && !agency;
+    recFlags.requester = Boolean(r?.requesterInfo && (r.requesterInfo.email || r.requesterInfo.phone));
+    recFlags.financialResponsible = Boolean(
+      overrideFinResp?.email ||
+      overrideFinResp?.phone ||
+      r?.financialResponsible?.email ||
+      r?.financialResponsible?.phone ||
+      crmEntity.financialResponsible?.email ||
+      crmEntity.financialResponsible?.phone
+    );
+  }
+
+  const finResp = {
+    name: String(
+      overrideFinResp?.name ??
+      r?.financialResponsible?.name ??
+      r?.financialResponsibleName ??
+      crmEntity.financialResponsible?.name ??
+      crmEntity.financialResponsibleName ??
+      ""
+    ).trim(),
+    email: String(
+      overrideFinResp?.email ??
+      r?.financialResponsible?.email ??
+      r?.financialResponsibleEmail ??
+      crmEntity.financialResponsible?.email ??
+      crmEntity.financialResponsibleEmail ??
+      ""
+    ).trim(),
+    phone: String(
+      overrideFinResp?.phone ??
+      r?.financialResponsible?.phone ??
+      r?.financialResponsiblePhone ??
+      crmEntity.financialResponsible?.phone ??
+      crmEntity.financialResponsiblePhone ??
+      ""
+    ).trim(),
+    document: String(
+      overrideFinResp?.document ??
+      r?.financialResponsible?.document ??
+      r?.financialResponsibleDocument ??
+      crmEntity.financialResponsible?.document ??
+      crmEntity.financialResponsibleDocument ??
+      ""
+    ).trim()
+  };
+
+  const candidates = [];
+
+  if (recFlags.guest) {
+    candidates.push({
+      role: "guest",
+      roleLabel: "Hóspede",
+      name: r?.guestName || guest?.fullName || guest?.name || "Hóspede",
+      email: (r?.guestEmail || guest?.email || "").trim(),
+      phone: cleanPhone(r?.guestPhone || guest?.phone || ""),
+      document: onlyDigits(r?.guestDocument || guest?.documentNumber || guest?.document || "")
+    });
+  }
+
+  if (recFlags.requester) {
+    const reqInfo = r?.requesterInfo || {};
+    candidates.push({
+      role: "requester",
+      roleLabel: "Solicitante da Reserva",
+      name: reqInfo.name || r?.agencyAgentName || company?.contactPerson || agency?.contactPerson || "Solicitante",
+      email: (reqInfo.email || r?.agencyAgentEmail || "").trim(),
+      phone: cleanPhone(reqInfo.phone || r?.agencyAgentPhone || ""),
+      document: onlyDigits(reqInfo.cpf || reqInfo.document || "")
+    });
+  }
+
+  if (recFlags.company) {
+    const targetOrg = company || agency;
+    const extraEmails = Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails : [];
+    const primaryOrgEmail = (targetOrg?.financialEmail || targetOrg?.emailFinanceiro || extraEmails[0] || r?.agencyAgentEmail || "").trim();
+    candidates.push({
+      role: "company",
+      roleLabel: company ? "Empresa Contratante" : (agency ? "Agência B2B" : "Empresa"),
+      name: targetOrg?.corporateName || targetOrg?.tradeName || r?.companyName || r?.agencyName || "Empresa",
+      email: primaryOrgEmail,
+      phone: cleanPhone(targetOrg?.phone || targetOrg?.telefone || r?.agencyAgentPhone || ""),
+      document: onlyDigits(targetOrg?.cnpj || r?.companyCnpj || r?.agencyCnpj || "")
+    });
+    for (const extraEmail of extraEmails) {
+      const cleanExtra = String(extraEmail || "").trim();
+      if (cleanExtra && cleanExtra.toLowerCase() !== primaryOrgEmail.toLowerCase()) {
+        candidates.push({
+          role: "company",
+          roleLabel: "E-mail Fiscal Adicional",
+          name: targetOrg?.tradeName || r?.companyName || "Financeiro",
+          email: cleanExtra,
+          phone: "",
+          document: ""
+        });
+      }
+    }
+  }
+
+  if (recFlags.financialResponsible && (finResp.name || finResp.email || finResp.phone)) {
+    candidates.push({
+      role: "financialResponsible",
+      roleLabel: "Responsável Financeiro",
+      name: finResp.name || "Responsável Financeiro",
+      email: finResp.email,
+      phone: cleanPhone(finResp.phone),
+      document: onlyDigits(finResp.document)
+    });
+  }
+
+  // Fallback de segurança caso nenhum destinatário marcado possua contato preenchido
+  if (candidates.length === 0) {
+    const fallbackOrg = company || agency;
+    if (fallbackOrg) {
+      candidates.push({
+        role: "company",
+        roleLabel: "Empresa",
+        name: fallbackOrg.corporateName || fallbackOrg.tradeName,
+        email: (fallbackOrg.financialEmail || "").trim(),
+        phone: cleanPhone(fallbackOrg.phone || ""),
+        document: onlyDigits(fallbackOrg.cnpj || "")
+      });
+    } else if (r || guest) {
+      candidates.push({
+        role: "guest",
+        roleLabel: "Hóspede",
+        name: r?.guestName || guest?.fullName || "Cliente",
+        email: (r?.guestEmail || guest?.email || "").trim(),
+        phone: cleanPhone(r?.guestPhone || guest?.phone || ""),
+        document: onlyDigits(r?.guestDocument || guest?.documentNumber || "")
+      });
+    }
+  }
+
+  return {
+    recipients: candidates,
+    flags: recFlags,
+    financialResponsible: finResp
+  };
+}
+
+function resolveBoletoPayerData(r, payerType = "company", customPayer = null) {
+  if (customPayer && typeof customPayer === "object" && (customPayer.name || customPayer.nome || customPayer.document || customPayer.cpfCnpj)) {
+    return normalizeInterBoletoPayer(customPayer);
+  }
+
+  const { guest, company, agency } = resolveReservationCrmLinks(r || {});
+  const pType = String(payerType || r?.boletoPayerType || r?.invoiceRecipientType || (company ? "company" : (agency ? "agency" : "guest"))).toLowerCase();
+
+  if (pType === "company" && (company || r?.companyName || r?.companyCnpj)) {
+    return normalizeInterBoletoPayer({
+      name: company?.corporateName || company?.tradeName || r?.companyName || "Empresa Contratante",
+      document: company?.cnpj || r?.companyCnpj || "",
+      email: company?.financialEmail || r?.financialResponsible?.email || "",
+      phone: company?.phone || r?.financialResponsible?.phone || "",
+      street: company?.address || company?.logradouro || r?.companyAddress || "",
+      streetNumber: company?.number || company?.numero || r?.companyNumber || "S/N",
+      complement: company?.complement || "",
+      neighborhood: company?.neighborhood || company?.bairro || "Centro",
+      city: company?.city || company?.cidade || "Campos dos Goytacazes",
+      state: company?.state || company?.uf || "RJ",
+      cep: company?.cep || "28035253"
+    });
+  }
+
+  if (pType === "agency" && (agency || r?.agencyName || r?.agencyCnpj)) {
+    return normalizeInterBoletoPayer({
+      name: agency?.corporateName || agency?.tradeName || r?.agencyName || "Agência B2B",
+      document: agency?.cnpj || r?.agencyCnpj || "",
+      email: agency?.financialEmail || r?.agencyAgentEmail || "",
+      phone: agency?.phone || r?.agencyAgentPhone || "",
+      street: agency?.address || agency?.logradouro || "",
+      streetNumber: agency?.number || "1000",
+      complement: agency?.complement || "",
+      neighborhood: agency?.neighborhood || "Centro",
+      city: agency?.city || "São Paulo",
+      state: agency?.state || "SP",
+      cep: agency?.cep || "01310100"
+    });
+  }
+
+  if (pType === "requester" && r?.requesterInfo && (r.requesterInfo.name || r.requesterInfo.cpf || r.requesterInfo.document)) {
+    return normalizeInterBoletoPayer({
+      name: r.requesterInfo.name || "Solicitante",
+      document: r.requesterInfo.cpf || r.requesterInfo.document || r?.guestDocument || "",
+      email: r.requesterInfo.email || "",
+      phone: r.requesterInfo.phone || "",
+      street: guest?.street || guest?.address || "",
+      streetNumber: guest?.streetNumber || guest?.number || "S/N",
+      neighborhood: guest?.neighborhood || "Centro",
+      city: guest?.city || "Campos dos Goytacazes",
+      state: guest?.state || "RJ",
+      cep: guest?.cep || "28035253"
+    });
+  }
+
+  if (pType === "financial_responsible" && (r?.financialResponsible?.name || r?.financialResponsible?.document)) {
+    return normalizeInterBoletoPayer({
+      name: r.financialResponsible.name || company?.corporateName || r?.guestName || "Responsável Financeiro",
+      document: r.financialResponsible.document || company?.cnpj || r?.guestDocument || "",
+      email: r.financialResponsible.email || "",
+      phone: r.financialResponsible.phone || "",
+      street: company?.address || guest?.street || "",
+      streetNumber: company?.number || guest?.number || "S/N",
+      neighborhood: company?.neighborhood || guest?.neighborhood || "Centro",
+      city: company?.city || guest?.city || "Campos dos Goytacazes",
+      state: company?.state || guest?.state || "RJ",
+      cep: company?.cep || guest?.cep || "28035253"
+    });
+  }
+
+  return normalizeInterBoletoPayer({
+    name: r?.guestName || guest?.fullName || guest?.name || company?.corporateName || "Hóspede",
+    document: r?.guestDocument || guest?.documentNumber || guest?.document || company?.cnpj || "",
+    email: r?.guestEmail || guest?.email || "",
+    phone: r?.guestPhone || guest?.phone || "",
+    street: r?.street || guest?.street || guest?.address || "",
+    streetNumber: r?.streetNumber || guest?.streetNumber || guest?.number || "S/N",
+    complement: r?.complement || guest?.complement || "",
+    neighborhood: r?.neighborhood || guest?.neighborhood || "Centro",
+    city: r?.city || guest?.city || "Campos dos Goytacazes",
+    state: r?.state || guest?.state || "RJ",
+    cep: r?.cep || guest?.cep || "28035253"
+  });
+}
+
+function syncBoletoWithAccountsReceivable(boleto) {
+  if (!boleto) return;
+  if (!Array.isArray(db.accountsReceivable)) db.accountsReceivable = [];
+  const recKey = `BOLETO_${boleto.id}`;
+  const existingIdx = db.accountsReceivable.findIndex(ar =>
+    ar && (ar.boletoId === boleto.id || ar.externalRef === recKey)
+  );
+  const recStatus = boleto.status === "pago" ? "recebido" : (boleto.status === "cancelado" ? "cancelado" : "pendente");
+  const recEntry = {
+    id: existingIdx !== -1 ? db.accountsReceivable[existingIdx].id : (db.accountsReceivable.length > 0 ? Math.max(...db.accountsReceivable.map(x => Number(x.id) || 0)) + 1 : 1),
+    boletoId: boleto.id,
+    externalRef: recKey,
+    reservationId: boleto.reservationId || null,
+    reservationCode: boleto.reservationCode || null,
+    flatId: boleto.flatId || null,
+    flatNumber: boleto.flatNumber || null,
+    clientName: boleto.payer?.nome || boleto.guestName || "Cliente Faturado",
+    description: boleto.description || `Boleto #${boleto.code} (${boleto.reservationCode || "Avulso"})`,
+    amount: Number(boleto.amount || 0),
+    dueDate: boleto.dueDate,
+    status: recStatus,
+    receivedDate: boleto.paidAt ? String(boleto.paidAt).slice(0, 10) : null,
+    paidAt: boleto.paidAt || null,
+    paymentMethod: "faturado_boleto",
+    category: boleto.billingScope === "consumption_only" ? "consumo_faturado" : "hospedagem_faturada",
+    pixTxId: boleto.txId || null,
+    updatedAt: new Date().toISOString()
+  };
+  if (existingIdx !== -1) {
+    db.accountsReceivable[existingIdx] = { ...db.accountsReceivable[existingIdx], ...recEntry };
+  } else {
+    db.accountsReceivable.push(recEntry);
+  }
+}
+
+function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Manual / Conciliação" } = {}) {
+  if (!boleto) return null;
+  const nowIso = paidAt || new Date().toISOString();
+  const resolvedPaid = Number(paidAmount) > 0 ? Number(paidAmount) : Number(boleto.amount || boleto.valorNominal || 0);
+  boleto.status = "pago";
+  boleto.paidAt = nowIso;
+  boleto.paidAmount = resolvedPaid;
+  if (endToEndId) boleto.pixEndToEndId = endToEndId;
+  boleto.paymentSource = source;
+  boleto.updatedAt = new Date().toISOString();
+
+  syncBoletoWithAccountsReceivable(boleto);
+
+  if (boleto.reservationId || boleto.reservationCode) {
+    const r = (db.reservations || []).find(x =>
+      x && ((boleto.reservationId && Number(x.id) === Number(boleto.reservationId)) || (boleto.reservationCode && x.code === boleto.reservationCode))
+    );
+    if (r) {
+      if (!Array.isArray(r.payments)) r.payments = [];
+      const payId = `pay_bol_${boleto.id}`;
+      if (!r.payments.some(p => p.id === payId)) {
+        r.payments.push({
+          id: payId,
+          amount: resolvedPaid,
+          method: "faturado_boleto",
+          date: nowIso,
+          notes: `Boleto Banco Inter #${boleto.code} liquidado (${source})`
+        });
+      }
+      const resBoletos = (db.boletos || []).filter(b =>
+        b && b.status !== "cancelado" && (Number(b.reservationId) === Number(r.id) || (r.code && b.reservationCode === r.code))
+      );
+      const allBoletosPaid = resBoletos.length > 0 && resBoletos.every(b => b.status === "pago");
+      const paidSum = resBoletos.filter(b => b.status === "pago").reduce((s, b) => s + (Number(b.paidAmount || b.amount) || 0), 0);
+      r.paidAmount = Math.max(Number(r.paidAmount || 0), paidSum);
+      r.paymentStatus = allBoletosPaid ? "pago_total" : "sinal_pago";
+      r.paidAt = nowIso;
+    }
+  }
+
+  if (Array.isArray(boleto.minibarOrderIds) && boleto.minibarOrderIds.length > 0) {
+    for (const mbId of boleto.minibarOrderIds) {
+      const mb = (db.minibarOrders || []).find(o => o && String(o.id) === String(mbId));
+      if (mb && mb.paymentStatus !== "pago") {
+        mb.paymentStatus = "pago";
+        mb.paidAt = nowIso;
+      }
+    }
+  }
+
+  createNotification({
+    category: "checkout",
+    title: `🏦 Boleto Liquidado: R$ ${resolvedPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (#${boleto.code})`,
+    message: `Boleto Banco Inter #${boleto.code} de ${boleto.payer?.nome || boleto.guestName || "Cliente"} confirmado (${source}).`,
+    severity: "success",
+    metadata: { boletoId: boleto.id, boletoCode: boleto.code, reservationCode: boleto.reservationCode, amount: resolvedPaid },
+    targetUrl: `/notas`
+  });
+
+  return enrichBoletoDynamicStatus(boleto);
+}
+
+/**
+ * Dispara o pacote de faturamento (PDF da NFS-e + PDF do(s) Boleto(s) + Linha Digitável + PIX Copia e Cola)
+ * tanto por E-mail quanto por WhatsApp para cada destinatário marcado (Hóspede, Solicitante, Empresa, Resp. Financeiro).
+ */
+async function dispatchFaturadoBillingPackage({
+  reservation = null,
+  boletos = [],
+  invoice = null,
+  recipientsOverride = null,
+  financialResponsibleOverride = null,
+  isReminder = false,
+  reminderType = null
+}) {
+  const validBoletos = (Array.isArray(boletos) ? boletos : [boletos]).filter(Boolean).map(b => enrichBoletoDynamicStatus(b));
+  if (validBoletos.length === 0) {
+    return { success: false, dispatchedTo: [], emailCount: 0, whatsappCount: 0 };
+  }
+
+  const firstBoleto = validBoletos[0];
+  const linkedRes = reservation || (db.reservations || []).find(r =>
+    r && ((firstBoleto.reservationId && Number(r.id) === Number(firstBoleto.reservationId)) || (firstBoleto.reservationCode && r.code === firstBoleto.reservationCode))
+  ) || null;
+
+  const linkedInvoice = invoice || (
+    (firstBoleto.invoiceId || linkedRes?.invoiceId)
+      ? (db.invoices || []).find(i => i && (Number(i.id) === Number(firstBoleto.invoiceId || linkedRes?.invoiceId) || String(i.numeroNfse) === String(firstBoleto.nfseNumber || linkedRes?.numeroNfse)))
+      : findExistingInvoiceForReservation(db, { reservation: linkedRes, reservationId: firstBoleto.reservationId, reservationCode: firstBoleto.reservationCode })
+  ) || null;
+
+  const { recipients, flags, financialResponsible } = resolveReservationBillingRecipientsList(
+    linkedRes || {
+      guestName: firstBoleto.guestName,
+      guestEmail: firstBoleto.payer?.email,
+      guestPhone: firstBoleto.payer?.telefone ? `${firstBoleto.payer.ddd || "22"}${firstBoleto.payer.telefone}` : "",
+      guestDocument: firstBoleto.payer?.cpfCnpj,
+      companyId: firstBoleto.companyId,
+      agencyId: firstBoleto.agencyId,
+      billingRecipients: firstBoleto.billingRecipients,
+      financialResponsible: firstBoleto.financialResponsible
+    },
+    recipientsOverride || firstBoleto.billingRecipients,
+    financialResponsibleOverride || firstBoleto.financialResponsible
+  );
+
+  // Gera buffers PDF dos boletos e da NFS-e (quando vinculada)
+  const attachments = [];
+  const boletoPdfBuffersMap = new Map();
+
+  for (const bol of validBoletos) {
+    try {
+      const pdfBuf = await generateBoletoPdfBuffer(bol, {
+        corporateName: db.nfseConfig?.razaoSocial || "CORPFLATS EMPREENDIMENTOS E HOSPEDAGEM LTDA",
+        cnpj: db.nfseConfig?.cnpj || "47964813000165"
+      });
+      if (pdfBuf) {
+        boletoPdfBuffersMap.set(bol.id, pdfBuf);
+        attachments.push({
+          filename: `Boleto-Inter-${bol.code || bol.id}.pdf`,
+          content: pdfBuf,
+          contentType: "application/pdf"
+        });
+      }
+    } catch (pdfErr) {
+      console.warn(`[Faturado Dispatch] Falha ao gerar PDF do boleto ${bol.code}:`, pdfErr.message);
+    }
+  }
+
+  let nfsePdfBuf = null;
+  if (linkedInvoice && typeof generateNfsePdfBuffer === "function") {
+    try {
+      nfsePdfBuf = await generateNfsePdfBuffer(linkedInvoice);
+      if (nfsePdfBuf) {
+        attachments.push({
+          filename: `NFSe-${linkedInvoice.numeroNfse || linkedInvoice.id}.pdf`,
+          content: nfsePdfBuf,
+          contentType: "application/pdf"
+        });
+      }
+    } catch (nfErr) {
+      console.warn(`[Faturado Dispatch] Falha ao gerar PDF da NFS-e:`, nfErr.message);
+    }
+  }
+
+  const formatBrl = (v) => Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatBrDate = (d) => {
+    const s = String(d || "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const [y, m, day] = s.split("-");
+      return `${day}/${m}/${y}`;
+    }
+    return s || "—";
+  };
+
+  const dispatchedTo = [];
+  let emailCount = 0;
+  let whatsappCount = 0;
+  const sentEmailsSet = new Set();
+  const sentPhonesSet = new Set();
+
+  for (const rec of recipients) {
+    const recResult = {
+      role: rec.role,
+      roleLabel: rec.roleLabel,
+      name: rec.name,
+      email: rec.email || null,
+      phone: rec.phone || null,
+      emailSent: false,
+      whatsappSent: false,
+      sentAt: new Date().toISOString()
+    };
+
+    const headerTitle = isReminder
+      ? (reminderType === "overdue"
+          ? `⚠️ Lembrete de Boleto em Atraso — CorpFlats (${firstBoleto.reservationCode || firstBoleto.code})`
+          : `⏰ Lembrete: Boleto Vence Hoje — CorpFlats (${firstBoleto.reservationCode || firstBoleto.code})`)
+      : `🏦 Faturamento Emitido: Boleto(s) Banco Inter${linkedInvoice ? ` + NFS-e #${linkedInvoice.numeroNfse}` : ""} — CorpFlats`;
+
+    // 1. Disparo por E-mail com PDFs anexados
+    const cleanRecEmail = String(rec.email || "").trim().toLowerCase();
+    if (flags.sendEmail !== false && cleanRecEmail && cleanRecEmail.includes("@") && !sentEmailsSet.has(cleanRecEmail)) {
+      sentEmailsSet.add(cleanRecEmail);
+      try {
+        const boletosHtmlBlocks = validBoletos.map((b, idx) => {
+          const scopeBadge = b.billingScope === "accommodation_only"
+            ? "Hospedagem"
+            : b.billingScope === "consumption_only"
+            ? "Consumo / Extras"
+            : "Unificado (Hospedagem + Consumo)";
+          return `
+            <div style="background:#FFF7ED;border:1px solid #FDBA74;border-radius:10px;padding:14px;margin-bottom:12px;">
+              <div style="font-weight:700;color:#9A3412;font-size:14px;margin-bottom:6px;">
+                🏦 Boleto ${validBoletos.length > 1 ? `${idx + 1}/${validBoletos.length}` : ""} #${b.code} — ${scopeBadge}
+              </div>
+              <div style="font-size:13px;color:#1E293B;line-height:1.6;">
+                <strong>Pagador:</strong> ${b.payer?.nome || "—"} (${b.payer?.cpfCnpj || "—"})<br/>
+                <strong>Valor:</strong> R$ ${formatBrl(b.amount)} ${b.daysOverdue > 0 ? `<span style="color:#DC2626;">(Atualizado c/ multa ${b.finePct}% + juros ${b.interestPct}% a.m.: R$ ${formatBrl(b.updatedTotalWithCharges)})</span>` : ""}<br/>
+                <strong>Vencimento:</strong> <span style="color:#C2410C;font-weight:700;">${formatBrDate(b.dueDate)}</span><br/>
+                <strong>Multa/Juros após vencimento:</strong> Multa ${b.finePct ?? 2}% + Juros ${b.interestPct ?? 1}% a.m. (Baixa automática em ${b.autoWriteOffDays ?? 60} dias)
+              </div>
+              <div style="margin-top:10px;padding:10px;background:#FFFFFF;border:1px dashed #FB923C;border-radius:6px;">
+                <div style="font-size:11px;font-weight:700;color:#64748B;">LINHA DIGITÁVEL (COPIE E COLE NO BANCO):</div>
+                <div style="font-family:monospace;font-size:13px;font-weight:700;color:#EA580C;word-break:break-all;margin-top:3px;">${b.linhaDigitavel || "—"}</div>
+                <div style="font-size:11px;font-weight:700;color:#64748B;margin-top:8px;">PIX COPIA E COLA (LIQUIDAÇÃO IMEDIATA):</div>
+                <div style="font-family:monospace;font-size:11px;color:#334155;word-break:break-all;margin-top:3px;">${b.pixCopiaECola || "—"}</div>
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        const nfseHtmlBlock = linkedInvoice
+          ? `
+            <div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:#0C4A6E;">
+              <strong>🧾 Nota Fiscal de Hospedagem (NFS-e Nacional):</strong> Nº <strong>${linkedInvoice.numeroNfse}</strong> (Cód. Verificação: ${linkedInvoice.codigoVerificacao || "—"})<br/>
+              <strong>Valor da Nota (Hospedagem):</strong> R$ ${formatBrl(linkedInvoice.valorServico)} <em>(em anexo em PDF)</em>
+            </div>
+          `
+          : "";
+
+        const bodyHtml = wrapEmailTemplate({
+          title: headerTitle,
+          subtitle: `Destinatário: ${rec.name} (${rec.roleLabel})`,
+          contentHtml: `
+            <p style="font-size:14px;color:#334155;">Olá, <strong>${rec.name}</strong>!</p>
+            <p style="font-size:13.5px;color:#475569;">
+              ${isReminder
+                ? (reminderType === "overdue"
+                    ? `Identificamos que o(s) boleto(s) faturado(s) referente(s) à reserva <strong>${firstBoleto.reservationCode || firstBoleto.code}</strong> encontra(m)-se em aberto após o vencimento.`
+                    : `Lembramos que o(s) boleto(s) faturado(s) referente(s) à reserva <strong>${firstBoleto.reservationCode || firstBoleto.code}</strong> vence(m) <strong>hoje (${formatBrDate(firstBoleto.dueDate)})</strong>.`)
+                : `Seguem em anexo os documentos fiscais e boleto(s) bancário(s) faturado(s) via <strong>Banco Inter</strong> referentes à estadia no Flat <strong>${firstBoleto.flatNumber || linkedRes?.flatNumber || "—"}</strong> (${firstBoleto.guestName || linkedRes?.guestName || "Hóspede"}).`}
+            </p>
+            ${nfseHtmlBlock}
+            ${boletosHtmlBlocks}
+            <p style="font-size:12px;color:#64748B;margin-top:14px;">
+              Os arquivos em formato <strong>PDF</strong> do(s) Boleto(s) e da Nota Fiscal seguem anexados a este e-mail.
+            </p>
+          `
+        });
+
+        await sendEmailAsync({
+          to: cleanRecEmail,
+          subject: headerTitle,
+          html: bodyHtml,
+          attachments,
+          category: isReminder ? "boleto_reminder" : "boleto_faturado",
+          reservationId: linkedRes?.id || firstBoleto.reservationId || null,
+          db
+        });
+        recResult.emailSent = true;
+        emailCount++;
+      } catch (emErr) {
+        console.warn(`[Faturado Dispatch Email Error] (${cleanRecEmail}):`, emErr.message);
+      }
+    }
+
+    // 2. Disparo por WhatsApp (Mensagem + Linha Digitável + PDFs via Z-API)
+    const cleanRecPhone = cleanPhone(rec.phone || "");
+    if (flags.sendWhatsapp !== false && cleanRecPhone && cleanRecPhone.length >= 10 && !sentPhonesSet.has(cleanRecPhone)) {
+      sentPhonesSet.add(cleanRecPhone);
+      try {
+        const bolLines = validBoletos.map((b, idx) => {
+          const scopeLabel = b.billingScope === "accommodation_only"
+            ? "Hospedagem"
+            : b.billingScope === "consumption_only"
+            ? "Consumo/Frigobar"
+            : "Hospedagem + Consumo";
+          return (
+            `🏦 *Boleto ${validBoletos.length > 1 ? `${idx + 1}/${validBoletos.length} ` : ""}#${b.code} (${scopeLabel})*\n` +
+            `• *Pagador:* ${b.payer?.nome || "—"}\n` +
+            `• *Valor:* R$ ${formatBrl(b.amount)}${b.daysOverdue > 0 ? ` (Atualizado c/ encargos: R$ ${formatBrl(b.updatedTotalWithCharges)})` : ""}\n` +
+            `• *Vencimento:* ${formatBrDate(b.dueDate)}\n` +
+            `• *Linha Digitável:*\n\`${b.linhaDigitavel || ""}\`\n` +
+            `• *PIX Copia e Cola:*\n\`${b.pixCopiaECola || ""}\``
+          );
+        }).join("\n\n");
+
+        const nfLine = linkedInvoice
+          ? `🧾 *NFS-e Hospedagem:* Nº ${linkedInvoice.numeroNfse} — R$ ${formatBrl(linkedInvoice.valorServico)}\n\n`
+          : "";
+
+        const waMsg =
+          `${headerTitle}\n\n` +
+          `Olá, *${rec.name}* (${rec.roleLabel})!\n` +
+          `${isReminder
+            ? (reminderType === "overdue"
+                ? `Identificamos que o boleto referente à reserva *${firstBoleto.reservationCode || firstBoleto.code}* encontra-se vencido. Seguem os dados para quitação:`
+                : `Lembramos que seu boleto referente à reserva *${firstBoleto.reservationCode || firstBoleto.code}* vence *hoje (${formatBrDate(firstBoleto.dueDate)})*:`)
+            : `Seguem os dados de faturamento da estadia (Reserva *${firstBoleto.reservationCode || "Avulso"}* - Flat *${firstBoleto.flatNumber || "—"}*):`}\n\n` +
+          nfLine +
+          bolLines +
+          `\n\n📎 *Os arquivos PDF do Boleto e da Nota Fiscal estão sendo enviados logo abaixo.*`;
+
+        if (typeof sendZapiMessage === "function") {
+          await sendZapiMessage(db.zapiConfig, {
+            phone: cleanRecPhone,
+            message: waMsg,
+            channelId: "ai_agent",
+            recipientRole: rec.role === "guest" ? "guest" : "company",
+            triggerEvent: isReminder ? "boleto_reminder_whatsapp" : "boleto_faturado_whatsapp",
+            bypassTestMode: true,
+            db
+          }).catch(() => {});
+        }
+
+        if (typeof sendZapiDocument === "function") {
+          for (const bol of validBoletos) {
+            const pdfBuf = boletoPdfBuffersMap.get(bol.id);
+            if (pdfBuf) {
+              const b64Doc = `data:application/pdf;base64,${pdfBuf.toString("base64")}`;
+              await sendZapiDocument(db.zapiConfig, {
+                phone: cleanRecPhone,
+                document: b64Doc,
+                fileName: `Boleto-Inter-${bol.code}.pdf`,
+                caption: `🏦 Boleto Banco Inter #${bol.code} - Vencimento ${formatBrDate(bol.dueDate)} (R$ ${formatBrl(bol.amount)})`,
+                bypassTestMode: true,
+                db
+              }).catch(() => {});
+            }
+          }
+          if (nfsePdfBuf && linkedInvoice && !isReminder) {
+            const b64Nf = `data:application/pdf;base64,${nfsePdfBuf.toString("base64")}`;
+            await sendZapiDocument(db.zapiConfig, {
+              phone: cleanRecPhone,
+              document: b64Nf,
+              fileName: `NFSe-${linkedInvoice.numeroNfse}.pdf`,
+              caption: `🧾 NFS-e Hospedagem Nº ${linkedInvoice.numeroNfse} (R$ ${formatBrl(linkedInvoice.valorServico)})`,
+              bypassTestMode: true,
+              db
+            }).catch(() => {});
+          }
+        }
+
+        recResult.whatsappSent = true;
+        whatsappCount++;
+      } catch (waErr) {
+        console.warn(`[Faturado Dispatch WhatsApp Error] (${cleanRecPhone}):`, waErr.message);
+      }
+    }
+
+    dispatchedTo.push(recResult);
+  }
+
+  const nowIso = new Date().toISOString();
+  for (const bol of validBoletos) {
+    const dbBol = (db.boletos || []).find(x => x && Number(x.id) === Number(bol.id));
+    if (dbBol) {
+      if (!Array.isArray(dbBol.dispatchHistory)) dbBol.dispatchHistory = [];
+      dbBol.dispatchHistory.unshift({
+        id: `disp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        type: isReminder ? `reminder_${reminderType || "due"}` : "billing_package",
+        dispatchedAt: nowIso,
+        emailCount,
+        whatsappCount,
+        recipients: dispatchedTo
+      });
+      dbBol.lastDispatchedAt = nowIso;
+      dbBol.financialResponsible = financialResponsible;
+    }
+  }
+
+  return {
+    success: true,
+    dispatchedTo,
+    emailCount,
+    whatsappCount,
+    timestamp: nowIso
+  };
+}
+
+/**
+ * Emite o pacote completo de Faturamento (NFS-e sempre apenas de hospedagem + 1 ou 2 Boletos Banco Inter)
+ * e dispara para todos os destinatários marcados (E-mail + WhatsApp).
+ */
+async function emitCheckoutFaturadoPackage(r, options = {}) {
+  if (!db.boletos) db.boletos = [];
+
+  const breakdown = computeReservationAccommodationAndConsumption(r, db);
+  const { guest, company, agency } = resolveReservationCrmLinks(r || {});
+  const crmEntity = company || agency || guest || {};
+
+  // 1. Verificar se já existem boletos ativos para esta reserva quando for disparo automático de check-out
+  if (options.triggerSource === "checkout_auto" && !options.forceReissue) {
+    const existingActiveBoletos = (db.boletos || []).filter(b =>
+      b && b.status !== "cancelado" && (Number(b.reservationId) === Number(r?.id) || (r?.code && b.reservationCode === r.code))
+    );
+    if (existingActiveBoletos.length > 0) {
+      const existingInv = findExistingInvoiceForReservation(db, { reservation: r, reservationId: r?.id, reservationCode: r?.code });
+      return {
+        alreadyEmitted: true,
+        boletos: existingActiveBoletos.map(b => enrichBoletoDynamicStatus(b)),
+        invoice: existingInv || null,
+        dispatchResult: null
+      };
+    }
+  }
+
+  // 2. Garantir emissão da NFS-e SEMPRE APENAS DE HOSPEDAGEM (consumo é emitido pela Anserve)
+  let invoice = null;
+  if (r) {
+    invoice = findExistingInvoiceForReservation(db, {
+      reservation: r,
+      reservationId: r.id,
+      reservationCode: r.code
+    });
+    if (!invoice && options.emitNfse !== false) {
+      try {
+        const payerForNf = resolveBoletoPayerData(
+          r,
+          options.invoiceRecipientType || r.invoiceRecipientType || r.boletoPayerType || (company ? "company" : (agency ? "agency" : "guest"))
+        );
+        const nfValue = Number(options.accommodationAmount ?? breakdown.accommodationAmount ?? r.totalAmount ?? 250);
+        if (typeof executeNfseEmissionInternal === "function") {
+          const nfResult = await executeNfseEmissionInternal({
+            reservationId: r.id,
+            reservationCode: r.code,
+            flatNumber: r.flatNumber,
+            companyId: company?.id || r.companyId || null,
+            agencyId: agency?.id || r.agencyId || null,
+            guestId: guest?.id || r.guestId || null,
+            tomadorType: payerForNf.tipoPessoa === "JURIDICA" ? "pj" : "pf",
+            tomadorNome: payerForNf.nome,
+            tomadorCpfCnpj: payerForNf.cpfCnpj,
+            tomadorEmail: payerForNf.email,
+            tomadorTelefone: `${payerForNf.ddd || ""}${payerForNf.telefone || ""}`,
+            tomadorEndereco: payerForNf.endereco,
+            tomadorNumero: payerForNf.numero,
+            tomadorComplemento: payerForNf.complemento,
+            tomadorBairro: payerForNf.bairro,
+            tomadorCidade: payerForNf.cidade,
+            tomadorUf: payerForNf.uf,
+            tomadorCep: payerForNf.cep,
+            valorServico: nfValue,
+            checkinDate: r.checkinDate,
+            checkoutDate: r.checkoutDate,
+            skipAutoWhatsApp: true
+          });
+          if (nfResult?.invoice) {
+            invoice = nfResult.invoice;
+            r.invoiceId = invoice.id;
+            r.numeroNfse = invoice.numeroNfse;
+          }
+        }
+      } catch (nfErr) {
+        console.warn("[Faturado Package] Aviso ao emitir NFS-e automática:", nfErr.message);
+      }
+    }
+  }
+
+  // 3. Resolver parâmetros de prazo, multa, juros, baixa e separação de boletos
+  const baseCheckoutDate = r?.checkoutDate || getBrasiliaDateStr();
+  const mainTermDays = Number(options.boletoTermDays ?? r?.boletoTermDays ?? crmEntity.defaultBoletoTermDays ?? 15);
+  const mainDueDate = options.dueDate || options.boletoCustomDueDate || r?.boletoCustomDueDate || addDaysToIsoDate(baseCheckoutDate, mainTermDays);
+
+  const finePct = Number(options.finePct ?? options.boletoFinePct ?? r?.boletoFinePct ?? crmEntity.defaultBoletoFinePct ?? 2);
+  const interestPct = Number(options.interestPct ?? options.boletoInterestPct ?? r?.boletoInterestPct ?? crmEntity.defaultBoletoInterestPct ?? 1);
+  const autoWriteOffDays = Number(options.autoWriteOffDays ?? options.boletoAutoWriteOffDays ?? r?.boletoAutoWriteOffDays ?? crmEntity.defaultBoletoAutoWriteOffDays ?? 60);
+  const autoReminderEnabled = options.autoReminderEnabled !== undefined
+    ? Boolean(options.autoReminderEnabled)
+    : Boolean(r?.autoReminderEnabled ?? crmEntity.defaultAutoReminderEnabled ?? true);
+
+  const consumptionMode = String(
+    options.boletoConsumptionMode ||
+    options.consumptionMode ||
+    r?.boletoConsumptionMode ||
+    crmEntity.defaultBoletoConsumptionMode ||
+    "single"
+  ).toLowerCase();
+
+  const accommodationAmt = Number(
+    options.accommodationAmount !== undefined
+      ? options.accommodationAmount
+      : (r ? breakdown.accommodationAmount : Number(options.amount || 0))
+  );
+  const consumptionAmt = Number(
+    options.consumptionAmount !== undefined
+      ? options.consumptionAmount
+      : (r ? breakdown.consumptionAmount : 0)
+  );
+
+  const mainPayerType = String(
+    options.boletoPayerType ||
+    options.payerType ||
+    r?.boletoPayerType ||
+    crmEntity.defaultBoletoPayerType ||
+    r?.invoiceRecipientType ||
+    (company ? "company" : (agency ? "agency" : "guest"))
+  ).toLowerCase();
+  const mainPayer = resolveBoletoPayerData(r, mainPayerType, options.payer || options.customPayer);
+
+  const { flags: recFlags, financialResponsible } = resolveReservationBillingRecipientsList(
+    r,
+    options.billingRecipients,
+    options.financialResponsible
+  );
+
+  // Salvar configurações atualizadas na Reserva e no CRM se aplicável
+  if (r) {
+    r.isFaturadoBoleto = true;
+    r.boletoTermDays = mainTermDays;
+    r.boletoCustomDueDate = options.dueDate || options.boletoCustomDueDate || r.boletoCustomDueDate || null;
+    r.boletoConsumptionMode = consumptionMode;
+    r.boletoPayerType = mainPayerType;
+    r.boletoFinePct = finePct;
+    r.boletoInterestPct = interestPct;
+    r.boletoAutoWriteOffDays = autoWriteOffDays;
+    r.autoReminderEnabled = autoReminderEnabled;
+    r.financialResponsible = financialResponsible;
+    r.billingRecipients = recFlags;
+  }
+  if (options.saveToCrm !== false && crmEntity && (crmEntity.id || crmEntity.corporateName || crmEntity.name)) {
+    applyCrmBillingConfigFields(crmEntity, {
+      defaultBoletoTermDays: mainTermDays,
+      defaultBoletoConsumptionMode: consumptionMode,
+      defaultBoletoPayerType: mainPayerType,
+      defaultBoletoFinePct: finePct,
+      defaultBoletoInterestPct: interestPct,
+      defaultBoletoAutoWriteOffDays: autoWriteOffDays,
+      defaultAutoReminderEnabled: autoReminderEnabled,
+      financialResponsible,
+      defaultBillingRecipients: recFlags
+    });
+  }
+
+  // Determinar se serão gerados 2 boletos separados (Hospedagem + Consumo) ou 1 boleto único
+  const specsToEmit = [];
+  if (consumptionMode === "separate" && consumptionAmt > 0 && accommodationAmt > 0) {
+    const sameConsumptionPayerAndDue = options.consumptionSamePayerAndDue !== undefined
+      ? Boolean(options.consumptionSamePayerAndDue)
+      : (r?.consumptionSamePayerAndDue !== false);
+
+    const consTermDays = sameConsumptionPayerAndDue
+      ? mainTermDays
+      : Number(options.consumptionTermDays ?? r?.consumptionTermDays ?? mainTermDays);
+
+    const consDueDate = sameConsumptionPayerAndDue
+      ? mainDueDate
+      : (options.consumptionDueDate || options.consumptionCustomDueDate || r?.consumptionCustomDueDate || addDaysToIsoDate(baseCheckoutDate, consTermDays));
+
+    const consPayerType = sameConsumptionPayerAndDue
+      ? mainPayerType
+      : String(options.consumptionPayerType || r?.consumptionPayerType || "guest").toLowerCase();
+
+    const consPayer = sameConsumptionPayerAndDue
+      ? mainPayer
+      : resolveBoletoPayerData(r, consPayerType, options.consumptionCustomPayer || r?.consumptionCustomPayer);
+
+    specsToEmit.push({
+      suffix: "HOSP",
+      billingScope: "accommodation_only",
+      amount: accommodationAmt,
+      accommodationAmount: accommodationAmt,
+      consumptionAmount: 0,
+      dueDate: mainDueDate,
+      termDays: mainTermDays,
+      payerType: mainPayerType,
+      payer: mainPayer,
+      description: options.description || `Fatura de Hospedagem - Reserva ${r?.code || "Avulsa"} (Flat ${r?.flatNumber || "—"})`,
+      minibarOrderIds: []
+    });
+
+    specsToEmit.push({
+      suffix: "CONS",
+      billingScope: "consumption_only",
+      amount: consumptionAmt,
+      accommodationAmount: 0,
+      consumptionAmount: consumptionAmt,
+      dueDate: consDueDate,
+      termDays: consTermDays,
+      payerType: consPayerType,
+      payer: consPayer,
+      description: `Fatura de Consumo / Extras - Reserva ${r?.code || "Avulsa"} (Flat ${r?.flatNumber || "—"})`,
+      minibarOrderIds: breakdown.minibarOrderIds || []
+    });
+  } else {
+    const singleAmount = options.amount !== undefined
+      ? Number(options.amount)
+      : Math.max(0.01, Math.round((accommodationAmt + consumptionAmt) * 100) / 100);
+    specsToEmit.push({
+      suffix: "UNIF",
+      billingScope: consumptionAmt > 0 ? "combined" : "accommodation_only",
+      amount: singleAmount,
+      accommodationAmount: accommodationAmt || singleAmount,
+      consumptionAmount: consumptionAmt,
+      dueDate: mainDueDate,
+      termDays: mainTermDays,
+      payerType: mainPayerType,
+      payer: mainPayer,
+      description: options.description || `Fatura ${consumptionAmt > 0 ? "Unificada (Hospedagem + Consumo)" : "de Hospedagem"} - Reserva ${r?.code || "Avulsa"}${r?.flatNumber ? ` (Flat ${r.flatNumber})` : ""}`,
+      minibarOrderIds: breakdown.minibarOrderIds || []
+    });
+  }
+
+  const createdBoletos = [];
+
+  for (const spec of specsToEmit) {
+    const nextBolId = db.boletos.length > 0 ? Math.max(...db.boletos.map(b => Number(b.id) || 0)) + 1 : 1001;
+    const bolCode = `BOL-${nextBolId}`;
+    const seuNumero = `${r?.code ? r.code.replace(/[^A-Za-z0-9]/g, "").slice(-8) : "CF"}${nextBolId}`.slice(0, 15);
+
+    const interIssued = await issueInterBoleto({
+      seuNumero,
+      amount: spec.amount,
+      dueDate: spec.dueDate,
+      payer: spec.payer,
+      finePct,
+      interestPct,
+      autoWriteOffDays,
+      messages: [
+        spec.description,
+        invoice?.numeroNfse ? `NFS-e Hospedagem vinculada: #${invoice.numeroNfse}` : `CorpFlats Empreendimentos`,
+        `Apos vencimento multa de ${finePct}% e juros de ${interestPct}% ao mes.`
+      ],
+      pixKey: db.nfseConfig?.cnpj || "47964813000165"
+    });
+
+    const newBoleto = {
+      id: nextBolId,
+      code: bolCode,
+      seuNumero: interIssued.seuNumero,
+      nossoNumero: interIssued.nossoNumero,
+      codigoSolicitacao: interIssued.codigoSolicitacao,
+      codigoBarras: interIssued.codigoBarras,
+      linhaDigitavel: interIssued.linhaDigitavel,
+      pixCopiaECola: interIssued.pixCopiaECola,
+      txId: interIssued.txId,
+      provider: interIssued.provider,
+      simulated: interIssued.simulated,
+      interSynced: interIssued.interSynced,
+      interLastSyncedAt: interIssued.interLastSyncedAt,
+      status: "aberto",
+      billingScope: spec.billingScope,
+      consumptionMode,
+      amount: spec.amount,
+      valorNominal: spec.amount,
+      accommodationAmount: spec.accommodationAmount,
+      consumptionAmount: spec.consumptionAmount,
+      issueDate: getBrasiliaDateStr(),
+      dueDate: spec.dueDate,
+      dataVencimento: spec.dueDate,
+      termDays: spec.termDays,
+      finePct,
+      interestPct,
+      autoWriteOffDays,
+      autoReminderEnabled,
+      payerType: spec.payerType,
+      payer: interIssued.pagador,
+      payerName: interIssued.pagador.nome,
+      payerDocument: interIssued.pagador.cpfCnpj,
+      payerEmail: interIssued.pagador.email,
+      reservationId: r?.id || options.reservationId || null,
+      reservationCode: r?.code || options.reservationCode || null,
+      flatId: r?.flatId || options.flatId || null,
+      flatNumber: r?.flatNumber || options.flatNumber || null,
+      checkinDate: r?.checkinDate || options.checkinDate || null,
+      checkoutDate: r?.checkoutDate || options.checkoutDate || null,
+      guestId: guest?.id || r?.guestId || options.guestId || null,
+      guestName: r?.guestName || guest?.fullName || spec.payer.nome || "Hóspede",
+      companyId: company?.id || r?.companyId || options.companyId || null,
+      companyName: company?.corporateName || company?.tradeName || r?.companyName || null,
+      agencyId: agency?.id || r?.agencyId || options.agencyId || null,
+      agencyName: agency?.tradeName || agency?.corporateName || r?.agencyName || null,
+      invoiceId: invoice?.id || r?.invoiceId || null,
+      nfseNumber: invoice?.numeroNfse || r?.numeroNfse || null,
+      financialResponsible,
+      billingRecipients: recFlags,
+      description: spec.description,
+      notes: options.notes || r?.invoicingInstructions || "",
+      minibarOrderIds: spec.minibarOrderIds,
+      pdfUrl: `/api/boletos/${nextBolId}/pdf`,
+      dispatchHistory: [],
+      editHistory: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    db.boletos.unshift(newBoleto);
+    syncBoletoWithAccountsReceivable(newBoleto);
+    createdBoletos.push(enrichBoletoDynamicStatus(newBoleto));
+  }
+
+  if (r) {
+    if (!Array.isArray(r.boletoIds)) r.boletoIds = [];
+    for (const cb of createdBoletos) {
+      if (!r.boletoIds.includes(cb.id)) r.boletoIds.push(cb.id);
+    }
+    r.lastBoletoCode = createdBoletos[0]?.code || null;
+    r.lastBoletoDueDate = createdBoletos[0]?.dueDate || null;
+  }
+
+  let dispatchResult = null;
+  if (options.autoDispatch !== false) {
+    dispatchResult = await dispatchFaturadoBillingPackage({
+      reservation: r,
+      boletos: createdBoletos,
+      invoice,
+      recipientsOverride: recFlags,
+      financialResponsibleOverride: financialResponsible,
+      isReminder: false
+    });
+  }
+
+  saveDatabase("boletos_emitted");
+
+  return {
+    alreadyEmitted: false,
+    boletos: createdBoletos.map(b => enrichBoletoDynamicStatus(db.boletos.find(x => x.id === b.id) || b)),
+    invoice,
+    dispatchResult,
+    breakdown
+  };
+}
+
+/**
+ * Rotina de Lembretes Automáticos de Vencimento de Boletos (no dia do vencimento e em atraso)
+ */
+async function processAutomaticBoletoReminders({ force = false } = {}) {
+  const todayStr = getBrasiliaDateStr();
+  const results = [];
+  if (!Array.isArray(db.boletos)) return { processed: 0, results };
+
+  for (const bol of db.boletos) {
+    if (!bol || bol.status === "pago" || bol.status === "cancelado") continue;
+    if (bol.autoReminderEnabled === false && !force) continue;
+
+    const enriched = enrichBoletoDynamicStatus(bol);
+    const dueStr = String(bol.dueDate || "").slice(0, 10);
+
+    if (dueStr === todayStr && (force || bol.lastDueTodayReminderDate !== todayStr)) {
+      const disp = await dispatchFaturadoBillingPackage({
+        boletos: [bol],
+        isReminder: true,
+        reminderType: "due_today"
+      });
+      bol.lastDueTodayReminderDate = todayStr;
+      results.push({ boletoId: bol.id, code: bol.code, type: "due_today", dispatch: disp });
+    } else if (dueStr < todayStr && (force || bol.lastOverdueReminderDate !== todayStr)) {
+      const disp = await dispatchFaturadoBillingPackage({
+        boletos: [bol],
+        isReminder: true,
+        reminderType: "overdue"
+      });
+      bol.lastOverdueReminderDate = todayStr;
+      results.push({ boletoId: bol.id, code: bol.code, type: "overdue", daysOverdue: enriched.daysOverdue, dispatch: disp });
+    }
+  }
+
+  if (results.length > 0) {
+    saveDatabase("boleto_reminders_dispatched");
+  }
+  return { processed: results.length, todayStr, results };
+}
+
+// Verificação periódica automática de lembretes de boletos (a cada 6 horas)
+setInterval(() => {
+  processAutomaticBoletoReminders({ force: false }).catch(err => {
+    console.warn("[Boleto Reminder Scheduler] Erro:", err.message);
+  });
+}, 6 * 3600 * 1000);
+
+// ── Rotas REST de Boletos Banco Inter (/api/boletos) ─────────────────────────
+
+app.get("/api/boletos", (req, res) => {
+  try {
+    if (!Array.isArray(db.boletos)) db.boletos = [];
+    const { status, companyId, agencyId, guestId, reservationId, search, startDate, endDate } = req.query;
+
+    let list = db.boletos.map(b => enrichBoletoDynamicStatus(b)).filter(Boolean);
+
+    if (status && status !== "all" && status !== "todos") {
+      if (status === "pendentes" || status === "open_all") {
+        list = list.filter(b => b.status === "aberto" || b.status === "vencido");
+      } else if (status === "vence_hoje") {
+        list = list.filter(b => b.status === "aberto" && b.isDueToday);
+      } else {
+        list = list.filter(b => b.status === status);
+      }
+    }
+    if (companyId) {
+      list = list.filter(b => Number(b.companyId) === Number(companyId));
+    }
+    if (agencyId) {
+      list = list.filter(b => Number(b.agencyId) === Number(agencyId));
+    }
+    if (guestId) {
+      list = list.filter(b => Number(b.guestId) === Number(guestId));
+    }
+    if (reservationId) {
+      list = list.filter(b => Number(b.reservationId) === Number(reservationId) || String(b.reservationCode) === String(reservationId));
+    }
+    if (startDate) {
+      list = list.filter(b => String(b.dueDate || "") >= String(startDate));
+    }
+    if (endDate) {
+      list = list.filter(b => String(b.dueDate || "") <= String(endDate));
+    }
+    if (search && String(search).trim()) {
+      const q = String(search).trim().toLowerCase();
+      list = list.filter(b =>
+        String(b.code || "").toLowerCase().includes(q) ||
+        String(b.nossoNumero || "").toLowerCase().includes(q) ||
+        String(b.payer?.nome || b.payerName || "").toLowerCase().includes(q) ||
+        String(b.payer?.cpfCnpj || b.payerDocument || "").toLowerCase().includes(q) ||
+        String(b.guestName || "").toLowerCase().includes(q) ||
+        String(b.companyName || "").toLowerCase().includes(q) ||
+        String(b.agencyName || "").toLowerCase().includes(q) ||
+        String(b.reservationCode || "").toLowerCase().includes(q) ||
+        String(b.flatNumber || "").toLowerCase().includes(q)
+      );
+    }
+
+    const summary = computeBoletosSummaryMetrics(db.boletos);
+    res.json({
+      boletos: list,
+      summary
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/boletos/:id", (req, res) => {
+  const idParam = String(req.params.id);
+  const bol = (db.boletos || []).find(b => b && (String(b.id) === idParam || String(b.code) === idParam));
+  if (!bol) return res.status(404).json({ error: "Boleto não encontrado" });
+  res.json(enrichBoletoDynamicStatus(bol));
+});
+
+app.get("/api/boletos/:id/pdf", async (req, res) => {
+  try {
+    const idParam = String(req.params.id);
+    const bol = (db.boletos || []).find(b => b && (String(b.id) === idParam || String(b.code) === idParam));
+    if (!bol) return res.status(404).json({ error: "Boleto não encontrado" });
+
+    const enriched = enrichBoletoDynamicStatus(bol);
+    const pdfBuf = await generateBoletoPdfBuffer(enriched, {
+      corporateName: db.nfseConfig?.razaoSocial || "CORPFLATS EMPREENDIMENTOS E HOSPEDAGEM LTDA",
+      cnpj: db.nfseConfig?.cnpj || "47964813000165"
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="Boleto-Inter-${bol.code || bol.id}.pdf"`);
+    res.send(pdfBuf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/boletos/emit", async (req, res) => {
+  try {
+    const body = req.body || {};
+    let reservation = null;
+    if (body.reservationId || body.reservationCode) {
+      reservation = (db.reservations || []).find(r =>
+        r && (
+          (body.reservationId && Number(r.id) === Number(body.reservationId)) ||
+          (body.reservationCode && String(r.code) === String(body.reservationCode))
+        )
+      ) || null;
+    }
+
+    const pkg = await emitCheckoutFaturadoPackage(reservation, {
+      ...body,
+      forceReissue: true,
+      triggerSource: "manual_api"
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `${pkg.boletos.length} Boleto(s) Banco Inter emitido(s) com sucesso!`,
+      ...pkg
+    });
+  } catch (err) {
+    console.error("[Emit Boleto Error]:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const handleUpdateBoleto = async (req, res) => {
+  try {
+    const idParam = String(req.params.id);
+    const bol = (db.boletos || []).find(b => b && (String(b.id) === idParam || String(b.code) === idParam));
+    if (!bol) return res.status(404).json({ error: "Boleto não encontrado" });
+
+    const b = req.body || {};
+    const snapshotBefore = {
+      dueDate: bol.dueDate,
+      amount: bol.amount,
+      finePct: bol.finePct,
+      interestPct: bol.interestPct,
+      payerName: bol.payer?.nome,
+      payerDoc: bol.payer?.cpfCnpj
+    };
+
+    const syncedUpdate = await updateInterBoleto(
+      bol,
+      {
+        amount: b.amount !== undefined ? Number(b.amount) : undefined,
+        dueDate: b.dueDate || b.dataVencimento || undefined,
+        finePct: b.finePct !== undefined ? Number(b.finePct) : undefined,
+        interestPct: b.interestPct !== undefined ? Number(b.interestPct) : undefined,
+        autoWriteOffDays: b.autoWriteOffDays !== undefined ? Number(b.autoWriteOffDays) : undefined,
+        payer: b.payer || (b.payerName || b.payerDocument || b.payerEmail ? {
+          name: b.payerName || bol.payer?.nome,
+          document: b.payerDocument || bol.payer?.cpfCnpj,
+          email: b.payerEmail ?? bol.payer?.email,
+          phone: b.payerPhone ?? bol.payer?.telefone,
+          street: b.payerStreet ?? bol.payer?.endereco,
+          streetNumber: b.payerNumber ?? bol.payer?.numero,
+          neighborhood: b.payerNeighborhood ?? bol.payer?.bairro,
+          city: b.payerCity ?? bol.payer?.cidade,
+          state: b.payerState ?? bol.payer?.uf,
+          cep: b.payerCep ?? bol.payer?.cep
+        } : undefined)
+      },
+      db.nfseConfig?.cnpj || "47964813000165"
+    );
+
+    Object.assign(bol, syncedUpdate);
+    bol.payerName = bol.payer?.nome || bol.payerName;
+    bol.payerDocument = bol.payer?.cpfCnpj || bol.payerDocument;
+    bol.payerEmail = bol.payer?.email || bol.payerEmail;
+
+    if (b.description !== undefined) bol.description = String(b.description).trim();
+    if (b.notes !== undefined) bol.notes = String(b.notes).trim();
+    if (b.autoReminderEnabled !== undefined) bol.autoReminderEnabled = Boolean(b.autoReminderEnabled);
+    if (b.financialResponsible !== undefined) {
+      bol.financialResponsible = {
+        ...(bol.financialResponsible || {}),
+        ...b.financialResponsible
+      };
+    }
+    if (b.billingRecipients !== undefined) {
+      bol.billingRecipients = {
+        ...(bol.billingRecipients || {}),
+        ...b.billingRecipients
+      };
+    }
+
+    if (!Array.isArray(bol.editHistory)) bol.editHistory = [];
+    bol.editHistory.unshift({
+      editedAt: new Date().toISOString(),
+      editedBy: getAuthUser(req)?.name || "Administrador",
+      before: snapshotBefore,
+      after: {
+        dueDate: bol.dueDate,
+        amount: bol.amount,
+        finePct: bol.finePct,
+        interestPct: bol.interestPct,
+        payerName: bol.payer?.nome,
+        payerDoc: bol.payer?.cpfCnpj
+      },
+      interSynced: syncedUpdate.interSynced
+    });
+    bol.updatedAt = new Date().toISOString();
+
+    syncBoletoWithAccountsReceivable(bol);
+
+    let dispatchResult = null;
+    if (b.resendAfterEdit) {
+      dispatchResult = await dispatchFaturadoBillingPackage({
+        boletos: [bol],
+        recipientsOverride: bol.billingRecipients,
+        financialResponsibleOverride: bol.financialResponsible
+      });
+    }
+
+    saveDatabase("boleto_updated_" + bol.id);
+    res.json({
+      success: true,
+      message: "Boleto atualizado e sincronizado com o Banco Inter!",
+      boleto: enrichBoletoDynamicStatus(bol),
+      dispatchResult
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+app.patch("/api/boletos/:id", handleUpdateBoleto);
+app.put("/api/boletos/:id", handleUpdateBoleto);
+
+app.post("/api/boletos/:id/cancel", async (req, res) => {
+  try {
+    const idParam = String(req.params.id);
+    const bol = (db.boletos || []).find(b => b && (String(b.id) === idParam || String(b.code) === idParam));
+    if (!bol) return res.status(404).json({ error: "Boleto não encontrado" });
+
+    const cancelInfo = await cancelInterBoleto(bol, req.body?.reason || "ACERTOS");
+    bol.status = "cancelado";
+    bol.cancelledAt = cancelInfo.cancelledAt;
+    bol.cancelReason = cancelInfo.cancelReason;
+    bol.remoteCancelled = cancelInfo.remoteCancelled;
+    bol.updatedAt = new Date().toISOString();
+
+    syncBoletoWithAccountsReceivable(bol);
+    saveDatabase("boleto_cancelled_" + bol.id);
+
+    res.json({
+      success: true,
+      message: `Boleto #${bol.code} cancelado e baixado com sucesso!`,
+      boleto: enrichBoletoDynamicStatus(bol)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/boletos/:id/mark-paid", (req, res) => {
+  try {
+    const idParam = String(req.params.id);
+    const bol = (db.boletos || []).find(b => b && (String(b.id) === idParam || String(b.code) === idParam));
+    if (!bol) return res.status(404).json({ error: "Boleto não encontrado" });
+
+    const updated = markBoletoAsPaid(bol, {
+      paidAmount: req.body?.paidAmount || bol.amount,
+      paidAt: req.body?.paidAt || new Date().toISOString(),
+      source: req.body?.source || "Baixa Manual Financeiro"
+    });
+    saveDatabase("boleto_paid_" + bol.id);
+    res.json({
+      success: true,
+      message: `Boleto #${bol.code} marcado como PAGO!`,
+      boleto: updated
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/boletos/:id/reconcile", async (req, res) => {
+  try {
+    const idParam = String(req.params.id);
+    const bol = (db.boletos || []).find(b => b && (String(b.id) === idParam || String(b.code) === idParam));
+    if (!bol) return res.status(404).json({ error: "Boleto não encontrado" });
+
+    if (bol.status === "pago") {
+      return res.json({
+        success: true,
+        reconciled: true,
+        status: "pago",
+        boleto: enrichBoletoDynamicStatus(bol),
+        message: "Boleto já consta como liquidado."
+      });
+    }
+
+    const remoteStatus = await checkInterBoletoRemoteStatus(bol);
+    if (remoteStatus.status === "pago") {
+      const updated = markBoletoAsPaid(bol, {
+        paidAmount: remoteStatus.paidAmount,
+        paidAt: remoteStatus.paidAt,
+        source: "Banco Inter API Conciliação"
+      });
+      saveDatabase("boleto_reconciled_" + bol.id);
+      return res.json({
+        success: true,
+        reconciled: true,
+        status: "pago",
+        boleto: updated,
+        message: "Pagamento localizado e conciliado com sucesso no Banco Inter!"
+      });
+    }
+
+    if (bol.txId) {
+      const pixCob = await checkInterPixCobStatus(bol.txId);
+      if (pixCob && (pixCob.status === "CONCLUIDA" || (Array.isArray(pixCob.pix) && pixCob.pix.length > 0))) {
+        const updated = markBoletoAsPaid(bol, {
+          paidAmount: Number(pixCob.pix?.[0]?.valor || bol.amount),
+          paidAt: pixCob.pix?.[0]?.horario || new Date().toISOString(),
+          endToEndId: pixCob.pix?.[0]?.endToEndId,
+          source: "Banco Inter PIX do Boleto"
+        });
+        saveDatabase("boleto_reconciled_pix_" + bol.id);
+        return res.json({
+          success: true,
+          reconciled: true,
+          status: "pago",
+          boleto: updated,
+          message: "Boleto pago via QR Code PIX e conciliado com sucesso no Banco Inter!"
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      reconciled: false,
+      status: enrichBoletoDynamicStatus(bol).status,
+      boleto: enrichBoletoDynamicStatus(bol),
+      message: "Boleto consultado no Banco Inter: ainda aguarda compensação/pagamento."
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/boletos/:id/dispatch", async (req, res) => {
+  try {
+    const idParam = String(req.params.id);
+    const bol = (db.boletos || []).find(b => b && (String(b.id) === idParam || String(b.code) === idParam));
+    if (!bol) return res.status(404).json({ error: "Boleto não encontrado" });
+
+    const b = req.body || {};
+    if (b.financialResponsible) {
+      bol.financialResponsible = { ...(bol.financialResponsible || {}), ...b.financialResponsible };
+    }
+    if (b.billingRecipients) {
+      bol.billingRecipients = { ...(bol.billingRecipients || {}), ...b.billingRecipients };
+    }
+
+    const disp = await dispatchFaturadoBillingPackage({
+      boletos: [bol],
+      recipientsOverride: b.billingRecipients || bol.billingRecipients,
+      financialResponsibleOverride: b.financialResponsible || bol.financialResponsible,
+      isReminder: Boolean(b.isReminder),
+      reminderType: b.reminderType || null
+    });
+
+    saveDatabase("boleto_dispatched_" + bol.id);
+    res.json({
+      success: true,
+      message: `Boleto #${bol.code} enviado com sucesso (${disp.emailCount} e-mail(s), ${disp.whatsappCount} WhatsApp(s))!`,
+      dispatchResult: disp,
+      boleto: enrichBoletoDynamicStatus(bol)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/boletos/process-reminders", async (req, res) => {
+  try {
+    const force = Boolean(req.body?.force);
+    const out = await processAutomaticBoletoReminders({ force });
+    res.json({
+      success: true,
+      message: `${out.processed} lembrete(s) de vencimento/atraso processado(s).`,
+      ...out
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

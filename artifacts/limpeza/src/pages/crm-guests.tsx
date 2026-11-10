@@ -238,6 +238,42 @@ export default function CrmGuests() {
   const [agencyAgents, setAgencyAgents] = useState<Array<{ name: string; email: string; phone: string; posUnit: string }>>([])
   const [loadingAgencyCnpj, setLoadingAgencyCnpj] = useState(false)
   const [loadingAgencyCep, setLoadingAgencyCep] = useState(false)
+
+  // ── Faturamento a Prazo (Boleto Inter), Responsável Financeiro & Destinatários Padrão ──
+  const [formBoletoTermDays, setFormBoletoTermDays] = useState("15")
+  const [formBoletoConsumptionMode, setFormBoletoConsumptionMode] = useState<"single" | "separate">("single")
+  const [formFinRespName, setFormFinRespName] = useState("")
+  const [formFinRespEmail, setFormFinRespEmail] = useState("")
+  const [formFinRespPhone, setFormFinRespPhone] = useState("")
+  const [formRecGuest, setFormRecGuest] = useState(true)
+  const [formRecRequester, setFormRecRequester] = useState(false)
+  const [formRecCompany, setFormRecCompany] = useState(false)
+  const [formRecFinResp, setFormRecFinResp] = useState(true)
+
+  const [compBoletoTermDays, setCompBoletoTermDays] = useState("28")
+  const [compBoletoConsumptionMode, setCompBoletoConsumptionMode] = useState<"single" | "separate">("single")
+  const [compFinRespName, setCompFinRespName] = useState("")
+  const [compFinRespEmail, setCompFinRespEmail] = useState("")
+  const [compFinRespPhone, setCompFinRespPhone] = useState("")
+  const [compRecGuest, setCompRecGuest] = useState(false)
+  const [compRecRequester, setCompRecRequester] = useState(true)
+  const [compRecCompany, setCompRecCompany] = useState(true)
+  const [compRecFinResp, setCompRecFinResp] = useState(true)
+
+  const [agencyBoletoTermDays, setAgencyBoletoTermDays] = useState("15")
+  const [agencyBoletoConsumptionMode, setAgencyBoletoConsumptionMode] = useState<"single" | "separate">("single")
+  const [agencyFinRespName, setAgencyFinRespName] = useState("")
+  const [agencyFinRespEmail, setAgencyFinRespEmail] = useState("")
+  const [agencyFinRespPhone, setAgencyFinRespPhone] = useState("")
+  const [agencyRecGuest, setAgencyRecGuest] = useState(false)
+  const [agencyRecRequester, setAgencyRecRequester] = useState(true)
+  const [agencyRecCompany, setAgencyRecCompany] = useState(true)
+  const [agencyRecFinResp, setAgencyRecFinResp] = useState(true)
+
+  // Modal Visão 360º da Empresa (PJ)
+  const [companyDetailModalOpen, setCompanyDetailModalOpen] = useState(false)
+  const [activeCompanyDetail, setActiveCompanyDetail] = useState<any | null>(null)
+  const [loadingCompanyDetail, setLoadingCompanyDetail] = useState(false)
   const [savingAgency, setSavingAgency] = useState(false)
 
   // Modal 360º Agência B2B
@@ -631,6 +667,15 @@ export default function CrmGuests() {
       vehiclePlate: "",
       breakfastNotes: ""
     })
+    setFormBoletoTermDays("15")
+    setFormBoletoConsumptionMode("single")
+    setFormFinRespName("")
+    setFormFinRespEmail("")
+    setFormFinRespPhone("")
+    setFormRecGuest(true)
+    setFormRecRequester(false)
+    setFormRecCompany(false)
+    setFormRecFinResp(true)
     setGuestModalOpen(true)
   }
 
@@ -676,6 +721,17 @@ export default function CrmGuests() {
       vehiclePlate: g.vehiclePlate || g.vehicle?.plate || g.preferences?.vehiclePlate || "",
       breakfastNotes: g.preferences?.breakfastNotes || ""
     })
+    setFormBoletoTermDays(String(g.defaultBoletoTermDays ?? 15))
+    setFormBoletoConsumptionMode(g.defaultBoletoConsumptionMode === "separate" ? "separate" : "single")
+    const fr = g.financialResponsible || {}
+    setFormFinRespName(fr.name || "")
+    setFormFinRespEmail(fr.email || "")
+    setFormFinRespPhone(fr.phone || "")
+    const dr = g.defaultBillingRecipients || {}
+    setFormRecGuest(dr.guest !== false)
+    setFormRecRequester(Boolean(dr.requester))
+    setFormRecCompany(Boolean(dr.company))
+    setFormRecFinResp(dr.financialResponsible !== false)
     setGuestModalOpen(true)
   }
 
@@ -713,7 +769,22 @@ export default function CrmGuests() {
         state: formState.trim().toUpperCase(),
         uf: formState.trim().toUpperCase(),
         ibgeCode: formIbgeCode.trim() || (/campos\s+dos\s+go[yi]tacazes/i.test(formCity.trim()) ? "3301009" : ""),
-        codigoMunicipio: formIbgeCode.trim() || (/campos\s+dos\s+go[yi]tacazes/i.test(formCity.trim()) ? "3301009" : "")
+        codigoMunicipio: formIbgeCode.trim() || (/campos\s+dos\s+go[yi]tacazes/i.test(formCity.trim()) ? "3301009" : ""),
+        defaultBoletoTermDays: Number(formBoletoTermDays) || 15,
+        defaultBoletoConsumptionMode: formBoletoConsumptionMode,
+        financialResponsible: {
+          name: formFinRespName.trim(),
+          email: formFinRespEmail.trim(),
+          phone: formFinRespPhone.trim()
+        },
+        defaultBillingRecipients: {
+          guest: formRecGuest,
+          requester: formRecRequester,
+          company: formRecCompany,
+          financialResponsible: formRecFinResp,
+          sendEmail: true,
+          sendWhatsApp: true
+        }
       }
 
       if (formDocPhotoUrl) {
@@ -738,7 +809,7 @@ export default function CrmGuests() {
           credentials: "include"
         })
       }
-      setGuestModalOpen(false); if (editingGuest && activeGuest && activeGuest.id === editingGuest.id) { fetchGuestDetail({ ...activeGuest, ...payload }) }
+      setGuestModalOpen(false); if (editingGuest && activeGuest && activeGuest.id === editingGuest.id) { handleOpenDetail({ ...activeGuest, ...payload }) }
       fetchGuests()
     } finally {
       setSavingGuest(false)
@@ -765,6 +836,15 @@ export default function CrmGuests() {
     setCompCity("Campos dos Goytacazes")
     setCompState("RJ")
     setCompIbgeCode("3301009")
+    setCompBoletoTermDays("28")
+    setCompBoletoConsumptionMode("single")
+    setCompFinRespName("")
+    setCompFinRespEmail("")
+    setCompFinRespPhone("")
+    setCompRecGuest(false)
+    setCompRecRequester(true)
+    setCompRecCompany(true)
+    setCompRecFinResp(true)
     setCompanyModalOpen(true)
   }
 
@@ -788,6 +868,17 @@ export default function CrmGuests() {
     setCompCity(c.city || c.cidade || c.municipio || "Campos dos Goytacazes")
     setCompState(c.state || c.uf || c.estado || "RJ")
     setCompIbgeCode(c.ibgeCode || c.codigoMunicipio || c.codigoIbge || "3301009")
+    setCompBoletoTermDays(String(c.defaultBoletoTermDays ?? 28))
+    setCompBoletoConsumptionMode(c.defaultBoletoConsumptionMode === "separate" ? "separate" : "single")
+    const fr = c.financialResponsible || {}
+    setCompFinRespName(fr.name || "")
+    setCompFinRespEmail(fr.email || "")
+    setCompFinRespPhone(fr.phone || "")
+    const dr = c.defaultBillingRecipients || {}
+    setCompRecGuest(Boolean(dr.guest))
+    setCompRecRequester(dr.requester !== false)
+    setCompRecCompany(dr.company !== false)
+    setCompRecFinResp(dr.financialResponsible !== false)
     setCompanyModalOpen(true)
   }
 
@@ -824,7 +915,22 @@ export default function CrmGuests() {
         state: compState.trim().toUpperCase(),
         uf: compState.trim().toUpperCase(),
         ibgeCode: compIbgeCode.trim() || "3301009",
-        codigoMunicipio: compIbgeCode.trim() || "3301009"
+        codigoMunicipio: compIbgeCode.trim() || "3301009",
+        defaultBoletoTermDays: Number(compBoletoTermDays) || 28,
+        defaultBoletoConsumptionMode: compBoletoConsumptionMode,
+        financialResponsible: {
+          name: compFinRespName.trim(),
+          email: compFinRespEmail.trim(),
+          phone: compFinRespPhone.trim()
+        },
+        defaultBillingRecipients: {
+          guest: compRecGuest,
+          requester: compRecRequester,
+          company: compRecCompany,
+          financialResponsible: compRecFinResp,
+          sendEmail: true,
+          sendWhatsApp: true
+        }
       }
 
       if (editingCompany) {
@@ -844,8 +950,23 @@ export default function CrmGuests() {
       }
       setCompanyModalOpen(false)
       fetchCompanies()
+      if (editingCompany && activeCompanyDetail?.id === editingCompany.id) {
+        handleOpenCompanyDetail(editingCompany)
+      }
     } finally {
       setSavingCompany(false)
+    }
+  }
+
+  const handleOpenCompanyDetail = async (c: any) => {
+    setLoadingCompanyDetail(true)
+    setCompanyDetailModalOpen(true)
+    try {
+      const res = await fetch(`/api/companies/${c.id}`, { credentials: "include" })
+      const data = await res.json()
+      setActiveCompanyDetail(data)
+    } finally {
+      setLoadingCompanyDetail(false)
     }
   }
 
@@ -924,6 +1045,15 @@ export default function CrmGuests() {
     setAgencyNotes("")
     setAgencyPosUnits([{ name: "Corporativo Nacional", email: "", phone: "" }])
     setAgencyAgents([])
+    setAgencyBoletoTermDays("15")
+    setAgencyBoletoConsumptionMode("single")
+    setAgencyFinRespName("")
+    setAgencyFinRespEmail("")
+    setAgencyFinRespPhone("")
+    setAgencyRecGuest(false)
+    setAgencyRecRequester(true)
+    setAgencyRecCompany(true)
+    setAgencyRecFinResp(true)
     setAgencyModalOpen(true)
   }
 
@@ -952,6 +1082,17 @@ export default function CrmGuests() {
     setAgencyNotes(ag.notes || "")
     setAgencyPosUnits(Array.isArray(ag.posUnits) ? ag.posUnits.map((u: any) => ({ name: u.name || "", email: u.email || "", phone: u.phone || "" })) : [])
     setAgencyAgents(Array.isArray(ag.agents) ? ag.agents.map((a: any) => ({ name: a.name || "", email: a.email || "", phone: a.phone || "", posUnit: a.posUnit || "" })) : [])
+    setAgencyBoletoTermDays(String(ag.defaultBoletoTermDays ?? 15))
+    setAgencyBoletoConsumptionMode(ag.defaultBoletoConsumptionMode === "separate" ? "separate" : "single")
+    const fr = ag.financialResponsible || {}
+    setAgencyFinRespName(fr.name || "")
+    setAgencyFinRespEmail(fr.email || "")
+    setAgencyFinRespPhone(fr.phone || "")
+    const dr = ag.defaultBillingRecipients || {}
+    setAgencyRecGuest(Boolean(dr.guest))
+    setAgencyRecRequester(dr.requester !== false)
+    setAgencyRecCompany(dr.company !== false)
+    setAgencyRecFinResp(dr.financialResponsible !== false)
     setAgencyModalOpen(true)
   }
 
@@ -993,7 +1134,22 @@ export default function CrmGuests() {
         codigoMunicipio: agencyIbgeCode.trim() || "3550308",
         notes: agencyNotes.trim(),
         posUnits: agencyPosUnits.filter(u => u.name.trim()),
-        agents: agencyAgents.filter(a => a.name.trim() || a.email.trim())
+        agents: agencyAgents.filter(a => a.name.trim() || a.email.trim()),
+        defaultBoletoTermDays: Number(agencyBoletoTermDays) || 15,
+        defaultBoletoConsumptionMode: agencyBoletoConsumptionMode,
+        financialResponsible: {
+          name: agencyFinRespName.trim(),
+          email: agencyFinRespEmail.trim(),
+          phone: agencyFinRespPhone.trim()
+        },
+        defaultBillingRecipients: {
+          guest: agencyRecGuest,
+          requester: agencyRecRequester,
+          company: agencyRecCompany,
+          financialResponsible: agencyRecFinResp,
+          sendEmail: true,
+          sendWhatsApp: true
+        }
       }
 
       if (editingAgency) {
@@ -1681,6 +1837,15 @@ export default function CrmGuests() {
 
                           <td className="p-3.5 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                size="sm"
+                                onClick={() => handleOpenCompanyDetail(c)}
+                                className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 bg-indigo-500/15 text-indigo-600 hover:bg-indigo-500/25"
+                                title="Ver Visão 360º da Empresa, Boletos Pagos/Pendentes/Cancelados e Notas Fiscais"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Ver 360º / Boletos</span>
+                              </Button>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -2772,6 +2937,68 @@ export default function CrmGuests() {
                     </div>
                   )}
                 </div>
+
+                {/* Histórico de Boletos Bancários & Faturado a Prazo */}
+                <div className="space-y-2">
+                  <div className="font-bold text-foreground flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Building2 className="w-4 h-4 text-indigo-600" />
+                      <span>🏦 Boletos Bancários & Faturado a Prazo ({activeGuest.boletos?.length || 0})</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setDetailModalOpen(false)
+                        setLocation("/notas?tab=boletos")
+                      }}
+                      className="h-6 px-2 text-[10px] font-bold rounded-lg text-indigo-600 border-indigo-500/30"
+                    >
+                      Gerenciar Boletos
+                    </Button>
+                  </div>
+                  {(!activeGuest.boletos || activeGuest.boletos.length === 0) ? (
+                    <div className="p-4 text-center text-muted-foreground bg-muted/20 rounded-2xl text-xs">
+                      Nenhum boleto bancário vinculado a este cliente.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                      {activeGuest.boletos.map((b: any) => {
+                        const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)
+                        return (
+                          <div key={b.id} className="p-2.5 rounded-xl bg-muted/40 border border-border flex items-center justify-between gap-2 flex-wrap text-xs">
+                            <div>
+                              <div className="font-bold text-foreground flex items-center gap-1.5">
+                                <span>Boleto #{b.id} ({b.boletoKind === "accommodation" ? "1/2 Hosp" : b.boletoKind === "consumption" ? "2/2 Consumo" : "Unificado"})</span>
+                                <Badge className={`text-[9px] px-1.5 py-0 ${
+                                  b.status === "pago" ? "bg-emerald-600 text-white" :
+                                  b.status === "cancelado" ? "bg-slate-500 text-white" :
+                                  isOverdue ? "bg-rose-600 text-white" : "bg-amber-600 text-white"
+                                }`}>
+                                  {b.status === "pago" ? "✓ Pago" : b.status === "cancelado" ? "Cancelado" : isOverdue ? "Vencido" : "Em Aberto"}
+                                </Badge>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground font-mono">
+                                Venc.: {b.dueDate} • Nosso Nº: {b.nossoNumero || "—"} • Reserva: {b.reservationCode || `#${b.reservationId}`}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-black text-indigo-600 font-mono">R$ {Number(b.amount || 0).toFixed(2)}</span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open(`/api/boletos/${b.id}/pdf`, "_blank")}
+                                className="h-6 px-2 text-[10px] font-bold rounded-lg"
+                              >
+                                PDF
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -2933,6 +3160,63 @@ export default function CrmGuests() {
                   </div>
                 </div>
                 <Switch checked={formAutoInvoice} onCheckedChange={setFormAutoInvoice} />
+              </div>
+
+              {/* Faturamento a Prazo (Boleto Inter), Responsável Financeiro & Destinatários Padrão (Hóspede PF) */}
+              <div className="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl space-y-2.5">
+                <div className="font-bold text-indigo-700 dark:text-indigo-300 text-xs flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>🏦 Boleto Faturado a Prazo, Responsável Financeiro & Destinatários Padrão</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold">Prazo Padrão Boleto (Dias após Check-out)</Label>
+                    <Input
+                      type="number"
+                      value={formBoletoTermDays}
+                      onChange={e => setFormBoletoTermDays(e.target.value)}
+                      placeholder="Ex: 15"
+                      className="h-8 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold">Padrão de Boletos no Check-out</Label>
+                    <select
+                      value={formBoletoConsumptionMode}
+                      onChange={e => setFormBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
+                      className="w-full h-8 px-2 text-xs rounded-xl border border-border bg-background font-semibold"
+                    >
+                      <option value="single">1 Boleto Unificado (Hosp + Consumo)</option>
+                      <option value="separate">2 Boletos Separados (1 Hosp + 1 Consumo)</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <Input
+                    value={formFinRespName}
+                    onChange={e => setFormFinRespName(e.target.value)}
+                    placeholder="Nome Resp. Financeiro"
+                    className="h-8 text-xs rounded-xl"
+                  />
+                  <Input
+                    value={formFinRespEmail}
+                    onChange={e => setFormFinRespEmail(e.target.value)}
+                    placeholder="E-mail Notas/Boletos"
+                    className="h-8 text-xs rounded-xl"
+                  />
+                  <Input
+                    value={formFinRespPhone}
+                    onChange={e => setFormFinRespPhone(e.target.value)}
+                    placeholder="WhatsApp Resp. Fin."
+                    className="h-8 text-xs rounded-xl font-mono"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-3 text-[11px] font-semibold pt-0.5">
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={formRecGuest} onChange={e => setFormRecGuest(e.target.checked)} /> 👤 Hóspede</label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={formRecRequester} onChange={e => setFormRecRequester(e.target.checked)} /> 📋 Solicitante</label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={formRecCompany} onChange={e => setFormRecCompany(e.target.checked)} /> 🏢 Empresa</label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={formRecFinResp} onChange={e => setFormRecFinResp(e.target.checked)} /> 💼 Resp. Financeiro</label>
+                </div>
               </div>
 
               <div className="space-y-1">
@@ -3149,6 +3433,47 @@ export default function CrmGuests() {
                 </div>
               </div>
 
+              {/* Faturamento a Prazo (Boleto Inter), Responsável Financeiro & Destinatários Padrão (Empresa PJ) */}
+              <div className="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl space-y-2">
+                <div className="font-bold text-indigo-700 dark:text-indigo-300 text-xs">
+                  🏦 Boleto Faturado a Prazo, Responsável Financeiro & Destinatários Padrão
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold">Prazo Padrão (Dias após Check-out)</Label>
+                    <Input
+                      type="number"
+                      value={compBoletoTermDays}
+                      onChange={e => setCompBoletoTermDays(e.target.value)}
+                      placeholder="Ex: 28"
+                      className="h-8 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold">Padrão de Boletos no Check-out</Label>
+                    <select
+                      value={compBoletoConsumptionMode}
+                      onChange={e => setCompBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
+                      className="w-full h-8 px-2 text-xs rounded-xl border border-border bg-background font-semibold"
+                    >
+                      <option value="single">1 Boleto Unificado (Hosp + Consumo)</option>
+                      <option value="separate">2 Boletos Separados (1 Hosp + 1 Consumo)</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <Input value={compFinRespName} onChange={e => setCompFinRespName(e.target.value)} placeholder="Nome Resp. Financeiro" className="h-8 text-xs rounded-xl" />
+                  <Input value={compFinRespEmail} onChange={e => setCompFinRespEmail(e.target.value)} placeholder="E-mail Notas/Boletos" className="h-8 text-xs rounded-xl" />
+                  <Input value={compFinRespPhone} onChange={e => setCompFinRespPhone(e.target.value)} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
+                </div>
+                <div className="flex flex-wrap gap-3 text-[11px] font-semibold pt-0.5">
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecGuest} onChange={e => setCompRecGuest(e.target.checked)} /> 👤 Hóspede</label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecRequester} onChange={e => setCompRecRequester(e.target.checked)} /> 📋 Solicitante</label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecCompany} onChange={e => setCompRecCompany(e.target.checked)} /> 🏢 Empresa</label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecFinResp} onChange={e => setCompRecFinResp(e.target.checked)} /> 💼 Resp. Financeiro</label>
+                </div>
+              </div>
+
               <div className="space-y-1">
                 <Label className="font-bold">Observações Internas</Label>
                 <Textarea value={compNotes} onChange={e => setCompNotes(e.target.value)} rows={2} className="text-xs rounded-xl" placeholder="Anotações de faturamento..." />
@@ -3275,6 +3600,41 @@ export default function CrmGuests() {
                       <option value="guest">Hóspede (PF)</option>
                     </select>
                   </div>
+                </div>
+              </div>
+
+              {/* Boleto Faturado, Responsável Financeiro & Destinatários Padrão (Agência B2B) */}
+              <div className="p-3.5 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl space-y-2">
+                <div className="font-bold text-indigo-700 dark:text-indigo-300 text-xs">
+                  🏦 Boleto Faturado a Prazo, Responsável Financeiro & Destinatários Padrão
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold">Prazo Padrão Boleto (Dias após Check-out)</Label>
+                    <Input type="number" value={agencyBoletoTermDays} onChange={e => setAgencyBoletoTermDays(e.target.value)} className="h-8 text-xs rounded-xl font-mono" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold">Padrão de Boletos no Check-out</Label>
+                    <select
+                      value={agencyBoletoConsumptionMode}
+                      onChange={e => setAgencyBoletoConsumptionMode(e.target.value === "separate" ? "separate" : "single")}
+                      className="w-full h-8 px-2 text-xs rounded-xl border border-border bg-background font-semibold"
+                    >
+                      <option value="single">1 Boleto Unificado (Hosp + Consumo)</option>
+                      <option value="separate">2 Boletos Separados (1 Hosp + 1 Consumo)</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <Input value={agencyFinRespName} onChange={e => setAgencyFinRespName(e.target.value)} placeholder="Nome Resp. Financeiro" className="h-8 text-xs rounded-xl" />
+                  <Input value={agencyFinRespEmail} onChange={e => setAgencyFinRespEmail(e.target.value)} placeholder="E-mail Notas/Boletos" className="h-8 text-xs rounded-xl" />
+                  <Input value={agencyFinRespPhone} onChange={e => setAgencyFinRespPhone(e.target.value)} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
+                </div>
+                <div className="flex flex-wrap gap-3 text-[11px] font-semibold pt-0.5">
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={agencyRecGuest} onChange={e => setAgencyRecGuest(e.target.checked)} /> 👤 Hóspede</label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={agencyRecRequester} onChange={e => setAgencyRecRequester(e.target.checked)} /> 📋 Solicitante</label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={agencyRecCompany} onChange={e => setAgencyRecCompany(e.target.checked)} /> 🏢 Empresa/Agência</label>
+                  <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={agencyRecFinResp} onChange={e => setAgencyRecFinResp(e.target.checked)} /> 💼 Resp. Financeiro</label>
                 </div>
               </div>
 
@@ -3736,6 +4096,220 @@ export default function CrmGuests() {
                           <div className="font-mono font-bold text-emerald-600">
                             R$ {Number(inv.valorServicos || inv.amount || 0).toFixed(2)}
                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Boletos Bancários Faturados da Agência */}
+                <div className="space-y-2">
+                  <div className="font-black text-foreground flex items-center justify-between">
+                    <span>🏦 Boletos Bancários & Faturado a Prazo ({(activeAgencyDetail.boletos || []).length})</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setAgencyDetailModalOpen(false)
+                        setLocation("/notas?tab=boletos")
+                      }}
+                      className="h-7 px-2.5 text-[10px] font-bold rounded-xl gap-1 text-indigo-600 border-indigo-300"
+                    >
+                      <span>Gerenciar Boletos</span>
+                    </Button>
+                  </div>
+                  {(activeAgencyDetail.boletos || []).length === 0 ? (
+                    <div className="p-3 rounded-xl border border-dashed border-border text-xs text-muted-foreground text-center">
+                      Nenhum boleto bancário emitido para esta agência.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {(activeAgencyDetail.boletos || []).map((b: any) => {
+                        const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)
+                        return (
+                          <div key={b.id} className="p-2.5 rounded-xl bg-muted/20 border border-border flex items-center justify-between text-xs">
+                            <div>
+                              <div className="font-bold text-foreground flex items-center gap-1.5">
+                                <span>Boleto #{b.id} • {b.payerName}</span>
+                                <Badge className={`text-[9px] px-1.5 py-0 ${
+                                  b.status === "pago" ? "bg-emerald-600 text-white" :
+                                  b.status === "cancelado" ? "bg-slate-500 text-white" :
+                                  isOverdue ? "bg-rose-600 text-white" : "bg-amber-600 text-white"
+                                }`}>
+                                  {b.status === "pago" ? "✓ Pago" : b.status === "cancelado" ? "Cancelado" : isOverdue ? "Vencido" : "Em Aberto"}
+                                </Badge>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground font-mono">
+                                Venc.: {b.dueDate} • Nosso Nº: {b.nossoNumero || "—"} • Reserva: {b.reservationCode || `#${b.reservationId}`}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono font-bold text-indigo-600">R$ {Number(b.amount || 0).toFixed(2)}</span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open(`/api/boletos/${b.id}/pdf`, "_blank")}
+                                className="h-6 px-2 text-[10px] font-bold rounded-lg"
+                              >
+                                PDF
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL VISÃO 360º DA EMPRESA (PJ) — BOLETOS, NOTAS E RESERVAS ── */}
+        <Dialog open={companyDetailModalOpen} onOpenChange={setCompanyDetailModalOpen}>
+          <DialogContent className="sm:max-w-4xl bg-card border border-border rounded-3xl max-h-[90vh] overflow-y-auto p-6">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-indigo-600" />
+                  <span>Visão 360º da Empresa • {activeCompanyDetail?.tradeName || activeCompanyDetail?.corporateName || "Empresa PJ"}</span>
+                </div>
+                {activeCompanyDetail && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setCompanyDetailModalOpen(false)
+                      handleEditCompany(activeCompanyDetail)
+                    }}
+                    className="h-8 px-3 text-xs font-bold rounded-xl gap-1"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    <span>Editar Cadastro / Prazo</span>
+                  </Button>
+                )}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                CNPJ: {activeCompanyDetail?.cnpj || "—"} • Prazo padrão boleto: {activeCompanyDetail?.defaultBoletoTermDays ?? 28} dias após check-out
+              </DialogDescription>
+            </DialogHeader>
+
+            {loadingCompanyDetail ? (
+              <div className="p-8 text-center text-xs text-muted-foreground">Carregando histórico 360º da empresa...</div>
+            ) : activeCompanyDetail && (
+              <div className="space-y-4 text-xs pt-2">
+                {/* KPIs de Boletos da Empresa */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Card className="p-3 rounded-2xl border border-indigo-500/30 bg-indigo-500/5">
+                    <div className="text-[10px] font-bold uppercase text-indigo-600">Em Aberto</div>
+                    <div className="text-lg font-black text-indigo-600 mt-0.5">
+                      R$ {Number(activeCompanyDetail.boletosSummary?.openAmount || 0).toFixed(2)}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">{activeCompanyDetail.boletosSummary?.openCount || 0} boleto(s)</div>
+                  </Card>
+
+                  <Card className="p-3 rounded-2xl border border-rose-500/30 bg-rose-500/5">
+                    <div className="text-[10px] font-bold uppercase text-rose-600">Vencidos</div>
+                    <div className="text-lg font-black text-rose-600 mt-0.5">
+                      R$ {Number(activeCompanyDetail.boletosSummary?.overdueAmount || 0).toFixed(2)}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">{activeCompanyDetail.boletosSummary?.overdueCount || 0} boleto(s)</div>
+                  </Card>
+
+                  <Card className="p-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/5">
+                    <div className="text-[10px] font-bold uppercase text-emerald-600">Pagos / Quitados</div>
+                    <div className="text-lg font-black text-emerald-600 mt-0.5">
+                      R$ {Number(activeCompanyDetail.boletosSummary?.paidAmount || 0).toFixed(2)}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">{activeCompanyDetail.boletosSummary?.paidCount || 0} boleto(s)</div>
+                  </Card>
+
+                  <Card className="p-3 rounded-2xl border border-border bg-muted/20">
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">Responsável Financeiro</div>
+                    <div className="text-xs font-bold text-foreground mt-0.5 truncate">
+                      {activeCompanyDetail.financialResponsible?.name || activeCompanyDetail.contactPerson || "Não definido"}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground truncate">
+                      {activeCompanyDetail.financialResponsible?.email || activeCompanyDetail.financialEmail || "—"}
+                    </div>
+                  </Card>
+                </div>
+
+                {/* Lista de Boletos da Empresa */}
+                <div className="space-y-2">
+                  <div className="font-black text-foreground flex items-center justify-between">
+                    <span>🏦 Todos os Boletos da Empresa (Pagos, Pendentes, Vencidos, Cancelados) ({(activeCompanyDetail.boletos || []).length})</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setCompanyDetailModalOpen(false)
+                        setLocation("/notas?tab=boletos")
+                      }}
+                      className="h-7 px-2.5 text-[10px] font-bold rounded-xl text-indigo-600 border-indigo-300"
+                    >
+                      Abrir Painel de Boletos
+                    </Button>
+                  </div>
+                  {(activeCompanyDetail.boletos || []).length === 0 ? (
+                    <div className="p-4 rounded-2xl border border-dashed border-border text-center text-muted-foreground">
+                      Nenhum boleto emitido para esta empresa até o momento.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                      {(activeCompanyDetail.boletos || []).map((b: any) => {
+                        const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)
+                        return (
+                          <div key={b.id} className="p-2.5 rounded-xl bg-muted/30 border border-border flex items-center justify-between gap-2 flex-wrap">
+                            <div>
+                              <div className="font-bold text-foreground flex items-center gap-1.5">
+                                <span>Boleto #{b.id} ({b.boletoKind === "accommodation" ? "1/2 Hospedagem" : b.boletoKind === "consumption" ? "2/2 Consumo" : "Unificado"})</span>
+                                <Badge className={`text-[9px] px-1.5 py-0 ${
+                                  b.status === "pago" ? "bg-emerald-600 text-white" :
+                                  b.status === "cancelado" ? "bg-slate-500 text-white" :
+                                  isOverdue ? "bg-rose-600 text-white" : "bg-amber-600 text-white"
+                                }`}>
+                                  {b.status === "pago" ? "✓ Pago" : b.status === "cancelado" ? "Cancelado" : isOverdue ? "Vencido" : "Em Aberto"}
+                                </Badge>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground font-mono">
+                                Venc.: {b.dueDate} • Nosso Nº: {b.nossoNumero || "—"} • Hóspede: {b.guestName || "—"} ({b.reservationCode || `#${b.reservationId}`})
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-black text-indigo-600">R$ {Number(b.amount || 0).toFixed(2)}</span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open(`/api/boletos/${b.id}/pdf`, "_blank")}
+                                className="h-6 px-2 text-[10px] font-bold rounded-lg"
+                              >
+                                PDF
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Notas Fiscais da Empresa */}
+                <div className="space-y-2">
+                  <div className="font-black text-foreground">🧾 Notas Fiscais Emitidas ({(activeCompanyDetail.invoices || []).length})</div>
+                  {(activeCompanyDetail.invoices || []).length === 0 ? (
+                    <div className="p-3 rounded-xl border border-dashed border-border text-center text-muted-foreground">
+                      Nenhuma NFS-e emitida para esta empresa.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                      {(activeCompanyDetail.invoices || []).map((inv: any) => (
+                        <div key={inv.id} className="p-2.5 rounded-xl bg-muted/20 border border-border flex items-center justify-between">
+                          <div>
+                            <span className="font-bold font-mono text-primary">NFS-e #{inv.numeroNfse || inv.id}</span>
+                            <span className="text-[10px] text-muted-foreground ml-2">{inv.reservationCode || ""}</span>
+                          </div>
+                          <span className="font-mono font-bold text-emerald-600">R$ {Number(inv.valorServico || inv.valorServicos || 0).toFixed(2)}</span>
                         </div>
                       ))}
                     </div>

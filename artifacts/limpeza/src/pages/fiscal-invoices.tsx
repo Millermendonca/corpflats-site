@@ -62,8 +62,15 @@ interface CrmSearchItem {
 export default function FiscalInvoicesPage() {
   const { toast } = useToast()
 
-  // ── Navegação do Hub Fiscal (5 Abas Especializadas) ─────────────────────────
-  const [activeTab, setActiveTab] = useState<"studio" | "batch" | "history" | "contingency" | "settings">("studio")
+  // ── Navegação do Hub Fiscal (6 Abas Especializadas) ─────────────────────────
+  const [activeTab, setActiveTab] = useState<"studio" | "batch" | "boletos" | "history" | "contingency" | "settings">(() => {
+    try {
+      const p = new URLSearchParams(window.location.search)
+      const t = p.get("tab")
+      if (t === "boletos" || t === "batch" || t === "history" || t === "contingency" || t === "settings") return t
+    } catch {}
+    return "studio"
+  })
 
   // ── Motor Emissor Ativo (Emissor Nacional Gov.br / ADN) ───────────────────
   const [sistemaEmissor] = useState<"padrao_nacional">("padrao_nacional")
@@ -307,6 +314,327 @@ export default function FiscalInvoicesPage() {
     }
   }
 
+  // ── Estado e Operações de Boletos Faturados (Banco Inter) ──────────────────
+  const [boletos, setBoletos] = useState<any[]>([])
+  const [boletosSummary, setBoletosSummary] = useState<any>({
+    totalCount: 0,
+    openCount: 0,
+    overdueCount: 0,
+    dueTodayCount: 0,
+    paidCount: 0,
+    cancelledCount: 0,
+    openAmount: 0,
+    overdueAmount: 0,
+    dueTodayAmount: 0,
+    paidAmount: 0
+  })
+  const [loadingBoletos, setLoadingBoletos] = useState(false)
+  const [boletoSearch, setBoletoSearch] = useState("")
+  const [boletoStatusFilter, setBoletoStatusFilter] = useState<"all" | "em_aberto" | "vencido" | "pago" | "cancelado">("all")
+  const [processingReminders, setProcessingReminders] = useState(false)
+
+  // Modal de Emissão NFS-e + Boleto(s) Inter para Reserva
+  const [emitBoletoModalOpen, setEmitBoletoModalOpen] = useState(false)
+  const [emitBoletoTargetRes, setEmitBoletoTargetRes] = useState<any | null>(null)
+  const [emittingBoletoPackage, setEmittingBoletoPackage] = useState(false)
+  const [ebEmitNfseToo, setEbEmitNfseToo] = useState(true)
+  const [ebConsumptionMode, setEbConsumptionMode] = useState<"single" | "separate">("single")
+  const [ebTermDays, setEbTermDays] = useState("15")
+  const [ebCustomDueDate, setEbCustomDueDate] = useState("")
+  const [ebConsumptionDueDate, setEbConsumptionDueDate] = useState("")
+  const [ebConsumptionPayerSame, setEbConsumptionPayerSame] = useState(true)
+  const [ebConsumptionPayerType, setEbConsumptionPayerType] = useState<"guest" | "company" | "agency" | "financial_responsible">("guest")
+  const [ebConsumptionPayerName, setEbConsumptionPayerName] = useState("")
+  const [ebConsumptionPayerDoc, setEbConsumptionPayerDoc] = useState("")
+  const [ebFinRespName, setEbFinRespName] = useState("")
+  const [ebFinRespEmail, setEbFinRespEmail] = useState("")
+  const [ebFinRespPhone, setEbFinRespPhone] = useState("")
+  const [ebFinRespDoc, setEbFinRespDoc] = useState("")
+  const [ebRecGuest, setEbRecGuest] = useState(false)
+  const [ebRecRequester, setEbRecRequester] = useState(false)
+  const [ebRecCompany, setEbRecCompany] = useState(true)
+  const [ebRecFinResp, setEbRecFinResp] = useState(true)
+  const [ebRecSendEmail, setEbRecSendEmail] = useState(true)
+  const [ebRecSendWhatsApp, setEbRecSendWhatsApp] = useState(true)
+  const [ebMultaPct, setEbMultaPct] = useState("2")
+  const [ebJurosMonthlyPct, setEbJurosMonthlyPct] = useState("1")
+
+  // Modal de Edição de Boleto (Sincronizado com Banco Inter)
+  const [editingBoleto, setEditingBoleto] = useState<any | null>(null)
+  const [editBoletoModalOpen, setEditBoletoModalOpen] = useState(false)
+  const [savingBoletoEdit, setSavingBoletoEdit] = useState(false)
+  const [editBoletoDueDate, setEditBoletoDueDate] = useState("")
+  const [editBoletoAmount, setEditBoletoAmount] = useState("")
+  const [editBoletoPayerName, setEditBoletoPayerName] = useState("")
+  const [editBoletoPayerDoc, setEditBoletoPayerDoc] = useState("")
+  const [editBoletoMultaPct, setEditBoletoMultaPct] = useState("2")
+  const [editBoletoJurosPct, setEditBoletoJurosPct] = useState("1")
+  const [editBoletoFinRespName, setEditBoletoFinRespName] = useState("")
+  const [editBoletoFinRespEmail, setEditBoletoFinRespEmail] = useState("")
+  const [editBoletoFinRespPhone, setEditBoletoFinRespPhone] = useState("")
+  const [editBoletoNotes, setEditBoletoNotes] = useState("")
+
+  const fetchBoletos = async () => {
+    setLoadingBoletos(true)
+    try {
+      const res = await fetch("/api/boletos", { credentials: "include" })
+      const data = await res.json()
+      if (data && Array.isArray(data.boletos)) {
+        setBoletos(data.boletos)
+        if (data.summary) setBoletosSummary(data.summary)
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoadingBoletos(false)
+    }
+  }
+
+  const handleOpenEmitBoletoModal = (res: any) => {
+    setEmitBoletoTargetRes(res)
+    setEbEmitNfseToo(!res.invoiceIssued)
+    setEbConsumptionMode(res.boletoConsumptionMode === "separate" ? "separate" : "single")
+    const term = String(res.boletoTermDays ?? res.company?.defaultBoletoTermDays ?? res.agency?.defaultBoletoTermDays ?? res.guest?.defaultBoletoTermDays ?? 15)
+    setEbTermDays(term)
+    setEbCustomDueDate(res.boletoCustomDueDate || "")
+    setEbConsumptionDueDate(res.boletoConsumptionDueDate || "")
+    setEbConsumptionPayerSame(res.boletoConsumptionPayerSame !== false)
+    setEbConsumptionPayerType(res.boletoConsumptionPayerType || "guest")
+    setEbConsumptionPayerName(res.boletoConsumptionPayerName || res.guestName || "")
+    setEbConsumptionPayerDoc(res.boletoConsumptionPayerDoc || res.guestDocument || "")
+    const fr = res.financialResponsible || res.company?.financialResponsible || res.agency?.financialResponsible || res.guest?.financialResponsible || {}
+    setEbFinRespName(fr.name || res.financialResponsibleName || "")
+    setEbFinRespEmail(fr.email || res.financialResponsibleEmail || "")
+    setEbFinRespPhone(fr.phone || res.financialResponsiblePhone || "")
+    setEbFinRespDoc(fr.document || res.financialResponsibleDoc || "")
+    const dr = res.billingDeliveryRecipients || res.company?.defaultBillingRecipients || res.agency?.defaultBillingRecipients || res.guest?.defaultBillingRecipients || {}
+    setEbRecGuest(Boolean(dr.guest ?? (!res.company && !res.agency)))
+    setEbRecRequester(Boolean(dr.requester ?? false))
+    setEbRecCompany(Boolean(dr.company ?? Boolean(res.company || res.agency)))
+    setEbRecFinResp(Boolean(dr.financialResponsible ?? true))
+    setEbRecSendEmail(dr.sendEmail !== false)
+    setEbRecSendWhatsApp(dr.sendWhatsApp !== false)
+    setEbMultaPct(String(res.boletoMultaPct ?? 2))
+    setEbJurosMonthlyPct(String(res.boletoJurosMonthlyPct ?? 1))
+    setEmitBoletoModalOpen(true)
+  }
+
+  const handleConfirmEmitBoletoPackage = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!emitBoletoTargetRes) return
+    setEmittingBoletoPackage(true)
+    try {
+      const resp = await fetch("/api/boletos/emit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          reservationId: emitBoletoTargetRes.id,
+          reservationCode: emitBoletoTargetRes.code,
+          emitNfseToo: ebEmitNfseToo,
+          consumptionMode: ebConsumptionMode,
+          termDays: Number(ebTermDays) || 15,
+          customDueDate: ebCustomDueDate || null,
+          consumptionDueDate: ebConsumptionDueDate || null,
+          consumptionPayerSame: ebConsumptionPayerSame,
+          consumptionPayerType: ebConsumptionPayerType,
+          consumptionPayerName: ebConsumptionPayerName,
+          consumptionPayerDoc: ebConsumptionPayerDoc,
+          multaPct: Number(ebMultaPct) || 2,
+          jurosMonthlyPct: Number(ebJurosMonthlyPct) || 1,
+          financialResponsible: {
+            name: ebFinRespName.trim(),
+            email: ebFinRespEmail.trim(),
+            phone: ebFinRespPhone.trim(),
+            document: ebFinRespDoc.trim()
+          },
+          billingDeliveryRecipients: {
+            guest: ebRecGuest,
+            requester: ebRecRequester,
+            company: ebRecCompany,
+            financialResponsible: ebRecFinResp,
+            sendEmail: ebRecSendEmail,
+            sendWhatsApp: ebRecSendWhatsApp
+          }
+        })
+      })
+      const data = await resp.json()
+      if (!resp.ok || data.error) {
+        toast({ title: "Falha ao emitir pacote faturado", description: data.error || "Verifique os dados.", variant: "destructive" })
+      } else {
+        const count = Array.isArray(data.boletos) ? data.boletos.length : 1
+        toast({
+          title: "✅ Pacote Faturado Emitido e Enviado!",
+          description: `${ebEmitNfseToo ? "NFS-e (Hospedagem) + " : ""}${count} Boleto(s) Banco Inter gerado(s) e disparado(s) aos destinatários.`
+        })
+        setEmitBoletoModalOpen(false)
+        fetchBoletos()
+        fetchInvoices()
+        fetchReservations()
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de comunicação", description: err.message, variant: "destructive" })
+    } finally {
+      setEmittingBoletoPackage(false)
+    }
+  }
+
+  const handleOpenEditBoleto = (b: any) => {
+    setEditingBoleto(b)
+    setEditBoletoDueDate(b.dueDate || "")
+    setEditBoletoAmount(String(b.amount || ""))
+    setEditBoletoPayerName(b.payerName || "")
+    setEditBoletoPayerDoc(b.payerDoc || "")
+    setEditBoletoMultaPct(String(b.multaPct ?? 2))
+    setEditBoletoJurosPct(String(b.jurosMonthlyPct ?? 1))
+    setEditBoletoFinRespName(b.financialResponsible?.name || "")
+    setEditBoletoFinRespEmail(b.financialResponsible?.email || "")
+    setEditBoletoFinRespPhone(b.financialResponsible?.phone || "")
+    setEditBoletoNotes(b.notes || "")
+    setEditBoletoModalOpen(true)
+  }
+
+  const handleSaveEditBoleto = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingBoleto) return
+    setSavingBoletoEdit(true)
+    try {
+      const resp = await fetch(`/api/boletos/${editingBoleto.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          dueDate: editBoletoDueDate,
+          amount: Number(editBoletoAmount) || editingBoleto.amount,
+          payerName: editBoletoPayerName.trim(),
+          payerDoc: editBoletoPayerDoc.trim(),
+          multaPct: Number(editBoletoMultaPct ?? 2),
+          jurosMonthlyPct: Number(editBoletoJurosPct ?? 1),
+          financialResponsible: {
+            name: editBoletoFinRespName.trim(),
+            email: editBoletoFinRespEmail.trim(),
+            phone: editBoletoFinRespPhone.trim()
+          },
+          notes: editBoletoNotes.trim()
+        })
+      })
+      const data = await resp.json()
+      if (!resp.ok || data.error) {
+        toast({ title: "Erro ao atualizar boleto", description: data.error || "Tente novamente.", variant: "destructive" })
+      } else {
+        toast({
+          title: "✅ Boleto Atualizado e Sincronizado!",
+          description: data.interSync?.synced
+            ? "Alterações salvas e sincronizadas com a API do Banco Inter."
+            : "Alterações salvas com sucesso."
+        })
+        setEditBoletoModalOpen(false)
+        fetchBoletos()
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao salvar boleto", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingBoletoEdit(false)
+    }
+  }
+
+  const handleMarkBoletoPaid = async (b: any) => {
+    try {
+      const resp = await fetch(`/api/boletos/${b.id}/mark-paid`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ paidAmount: b.amount })
+      })
+      const data = await resp.json()
+      if (resp.ok && data.success) {
+        toast({ title: "✅ Boleto Quitado!", description: `Boleto #${b.id} marcado como PAGO.` })
+        fetchBoletos()
+        fetchReservations()
+      }
+    } catch (err: any) {
+      toast({ title: "Erro", description: err.message, variant: "destructive" })
+    }
+  }
+
+  const handleReconcileBoleto = async (b: any) => {
+    try {
+      const resp = await fetch(`/api/boletos/${b.id}/reconcile`, {
+        method: "POST",
+        credentials: "include"
+      })
+      const data = await resp.json()
+      toast({
+        title: data.paid ? "✅ Pago no Banco Inter!" : "🔍 Status Consultado no Banco Inter",
+        description: data.paid ? `Liquidação confirmada para o boleto #${b.id}.` : `Situação atual: ${data.situacao || b.status}`
+      })
+      fetchBoletos()
+    } catch (err: any) {
+      toast({ title: "Erro na conciliação", description: err.message, variant: "destructive" })
+    }
+  }
+
+  const handleDispatchBoleto = async (b: any) => {
+    try {
+      toast({ title: "📤 Disparando E-mail e WhatsApp...", description: `Enviando PDF da NFS-e + Boleto #${b.id} aos destinatários.` })
+      const resp = await fetch(`/api/boletos/${b.id}/dispatch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({})
+      })
+      const data = await resp.json()
+      if (resp.ok && data.success) {
+        toast({ title: "✅ Envios Concluídos!", description: "PDFs e linha digitável/PIX enviados aos destinatários marcados." })
+        fetchBoletos()
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao reenviar", description: err.message, variant: "destructive" })
+    }
+  }
+
+  const handleCancelBoleto = async (b: any) => {
+    try {
+      const resp = await fetch(`/api/boletos/${b.id}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ motivoCancelamento: "ACERTOS" })
+      })
+      const data = await resp.json()
+      if (resp.ok && data.success) {
+        toast({ title: "🗑️ Boleto Cancelado", description: `Baixa efetuada para o boleto #${b.id}.` })
+        fetchBoletos()
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao cancelar", description: err.message, variant: "destructive" })
+    }
+  }
+
+  const handleProcessBoletoReminders = async () => {
+    setProcessingReminders(true)
+    try {
+      const resp = await fetch("/api/boletos/process-reminders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ force: true })
+      })
+      const data = await resp.json()
+      if (resp.ok && data.success) {
+        toast({
+          title: "🔔 Lembretes de Vencimento/Atraso Processados!",
+          description: `${data.processedCount || 0} boleto(s) notificado(s) por E-mail e WhatsApp.`
+        })
+        fetchBoletos()
+      }
+    } catch (err: any) {
+      toast({ title: "Erro nos lembretes", description: err.message, variant: "destructive" })
+    } finally {
+      setProcessingReminders(false)
+    }
+  }
+
   useEffect(() => {
     fetchInvoices()
     fetchGuests()
@@ -315,6 +643,7 @@ export default function FiscalInvoicesPage() {
     fetchReservations()
     fetchRetryQueue()
     fetchFiscalSettings()
+    fetchBoletos()
   }, [])
 
   const KNOWN_PJ_DIRECTORY_FRONTEND: Record<string, {
@@ -2235,7 +2564,19 @@ export default function FiscalInvoicesPage() {
         }
       }
 
-      const resolvedTotalAmount = Number(r.totalAmount || r.totalPrice || r.price || (Number(r.dailyRate || 0) * diarias) || 250)
+      const rawCharges = Array.isArray(r.charges) ? r.charges : []
+      const chargesConsumption = rawCharges
+        .filter((c: any) => c.type === "damage" || c.type === "consumo" || /frigobar|consumo|bebida|lanche/i.test(String(c.description || "")))
+        .reduce((acc: number, c: any) => acc + Number(c.amount || 0), 0)
+      const chargesOther = rawCharges
+        .filter((c: any) => !(c.type === "damage" || c.type === "consumo" || /frigobar|consumo|bebida|lanche/i.test(String(c.description || ""))))
+        .reduce((acc: number, c: any) => acc + Number(c.amount || 0), 0)
+      const explicitAcc = Number(r.accommodationAmount || 0)
+      const baseGross = Number(r.totalAmount || r.totalPrice || r.price || (Number(r.dailyRate || 0) * diarias) || 250)
+      const resolvedAccommodationAmount = explicitAcc > 0
+        ? explicitAcc
+        : Math.max(0, Number(r.dailyRate || 0) > 0 ? (Number(r.dailyRate) * diarias) + chargesOther : baseGross - chargesConsumption)
+      const resolvedConsumptionAmount = Number(r.consumptionAmount || chargesConsumption || 0)
 
       const tomadorDefaultName = activeTomadorType === "agency"
         ? (agency?.corporateName || agency?.tradeName || r.agencyName || "Agência sem razão social")
@@ -2245,7 +2586,10 @@ export default function FiscalInvoicesPage() {
 
       return {
         ...r,
-        totalAmount: resolvedTotalAmount,
+        totalAmount: resolvedAccommodationAmount || baseGross,
+        accommodationAmount: resolvedAccommodationAmount || baseGross,
+        consumptionAmount: resolvedConsumptionAmount,
+        totalWithConsumption: (resolvedAccommodationAmount || baseGross) + resolvedConsumptionAmount,
         diarias,
         guest,
         company,
@@ -3273,9 +3617,9 @@ export default function FiscalInvoicesPage() {
           </div>
         </div>
 
-        {/* ── NAVEGAÇÃO DO HUB FISCAL (5 ABAS ESPECÍFICAS) ── */}
+        {/* ── NAVEGAÇÃO DO HUB FISCAL (6 ABAS ESPECÍFICAS) ── */}
         <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="space-y-5">
-          <TabsList className="bg-card border border-border p-1.5 rounded-2xl h-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 shadow-xs">
+          <TabsList className="bg-card border border-border p-1.5 rounded-2xl h-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 shadow-xs">
             <TabsTrigger value="studio" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Sparkles className="w-4 h-4" />
               <span>✨ Emissor Studio</span>
@@ -3287,6 +3631,16 @@ export default function FiscalInvoicesPage() {
               {pendingReservationsList.length > 0 && (
                 <Badge className="ml-1 bg-amber-500 text-white text-[10px] px-1.5 py-0">
                   {pendingReservationsList.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+
+            <TabsTrigger value="boletos" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Building2 className="w-4 h-4" />
+              <span>🏦 Boletos & Faturado</span>
+              {boletosSummary.openCount > 0 && (
+                <Badge className={`ml-1 text-white text-[10px] px-1.5 py-0 ${boletosSummary.overdueCount > 0 ? "bg-rose-600" : "bg-indigo-600"}`}>
+                  {boletosSummary.openCount}
                 </Badge>
               )}
             </TabsTrigger>
@@ -4445,7 +4799,13 @@ export default function FiscalInvoicesPage() {
                               </td>
 
                               <td className="p-3 font-black text-emerald-600 font-mono">
-                                R$ {Number(res.totalAmount || res.price || 0).toFixed(2)}
+                                <div>R$ {Number(res.accommodationAmount || res.totalAmount || res.price || 0).toFixed(2)}</div>
+                                <div className="text-[9px] text-muted-foreground font-sans font-semibold">Só Hospedagem (NF)</div>
+                                {Number(res.consumptionAmount || 0) > 0 && (
+                                  <Badge variant="outline" className="mt-0.5 text-[9px] h-4 px-1 border-amber-500/40 text-amber-600 bg-amber-500/10 font-mono">
+                                    +R$ {Number(res.consumptionAmount).toFixed(2)} Consumo
+                                  </Badge>
+                                )}
                               </td>
 
                               <td className="p-3">
@@ -4461,16 +4821,26 @@ export default function FiscalInvoicesPage() {
                               </td>
 
                               <td className="p-3 text-right">
-                                <div className="flex items-center justify-end gap-1.5">
+                                <div className="flex items-center justify-end gap-1.5 flex-wrap">
                                   <Button
                                     size="sm"
                                     onClick={() => handleEmitPendingSingle(res)}
                                     disabled={!displayHasDoc || isEmitting}
                                     className="h-7 px-2 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white gap-1 shadow-2xs"
-                                    title="Emitir NFS-e com 1 clique"
+                                    title="Emitir apenas NFS-e (Só Hospedagem) com 1 clique"
                                   >
                                     <Zap className="w-3 h-3" />
-                                    <span>1-Clique</span>
+                                    <span>1-Clique NF</span>
+                                  </Button>
+
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleOpenEmitBoletoModal(res)}
+                                    className="h-7 px-2 text-[11px] font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white gap-1 shadow-2xs"
+                                    title="Emitir NFS-e (Hospedagem) + Boleto(s) Faturado Banco Inter (1 ou 2 boletos)"
+                                  >
+                                    <Building2 className="w-3 h-3" />
+                                    <span>🏦 NF + Boleto</span>
                                   </Button>
 
                                   <Button
@@ -5223,7 +5593,717 @@ export default function FiscalInvoicesPage() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* ══════════════════════════════════════════════════════════════════════
+              ABA BOLETOS & FATURADO A PRAZO (BANCO INTER + NFS-E VINCULADA)
+             ══════════════════════════════════════════════════════════════════════ */}
+          <TabsContent value="boletos" className="space-y-4 m-0">
+            {/* KPIs de Boletos Faturados */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <Card className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
+                <div className="text-[10px] font-bold uppercase text-indigo-700 dark:text-indigo-300">Boletos em Aberto (A Vencer)</div>
+                <div className="text-xl font-black text-indigo-600 mt-1">
+                  R$ {Number(boletosSummary.openAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">{boletosSummary.openCount || 0} título(s) aguardando pagamento</div>
+              </Card>
+
+              <Card className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+                <div className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-300">Vencendo Hoje</div>
+                <div className="text-xl font-black text-amber-600 mt-1">
+                  R$ {Number(boletosSummary.dueTodayAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">{boletosSummary.dueTodayCount || 0} título(s) com vencimento hoje</div>
+              </Card>
+
+              <Card className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-4">
+                <div className="text-[10px] font-bold uppercase text-rose-700 dark:text-rose-300">Vencidos / Em Atraso</div>
+                <div className="text-xl font-black text-rose-600 mt-1">
+                  R$ {Number(boletosSummary.overdueAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">{boletosSummary.overdueCount || 0} título(s) com multa 2% + juros 1% a.m.</div>
+              </Card>
+
+              <Card className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                <div className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-300">Boletos Pagos / Liquidados</div>
+                <div className="text-xl font-black text-emerald-600 mt-1">
+                  R$ {Number(boletosSummary.paidAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">{boletosSummary.paidCount || 0} título(s) compensado(s) no Banco Inter</div>
+              </Card>
+            </div>
+
+            {/* Barra de Filtros & Lembretes Automáticos */}
+            <Card className="rounded-3xl border border-border shadow-xs">
+              <CardHeader className="pb-3 border-b border-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-sm font-black flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-indigo-600" />
+                    <span>Gestão de Boletos Faturados (Banco Inter mTLS • Boleto + QR Code PIX)</span>
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Acompanhe vencimentos, edite dados sincronizados com o Banco Inter, baixe PDFs e dispare lembretes para Hóspede, Solicitante, Empresa e Responsável Financeiro.
+                  </CardDescription>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleProcessBoletoReminders}
+                    disabled={processingReminders}
+                    className="h-8 text-xs font-bold rounded-xl gap-1.5 border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
+                  >
+                    <Clock className={`w-3.5 h-3.5 ${processingReminders ? "animate-spin" : ""}`} />
+                    <span>{processingReminders ? "Disparando..." : "🔔 Disparar Lembretes (Vencimento/Atraso)"}</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={fetchBoletos}
+                    disabled={loadingBoletos}
+                    className="h-8 text-xs font-bold rounded-xl gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingBoletos ? "animate-spin" : ""}`} />
+                    <span>Atualizar</span>
+                  </Button>
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-4 space-y-4">
+                <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between">
+                  <div className="relative w-full sm:max-w-sm">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-muted-foreground" />
+                    <Input
+                      value={boletoSearch}
+                      onChange={e => setBoletoSearch(e.target.value)}
+                      placeholder="Buscar por pagador, empresa, reserva, nosso número..."
+                      className="pl-8 h-8.5 text-xs rounded-xl"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
+                    {([
+                      { id: "all", label: `Todos (${boletos.length})` },
+                      { id: "em_aberto", label: `⏳ Em Aberto (${boletosSummary.openCount || 0})` },
+                      { id: "vencido", label: `🚨 Vencidos (${boletosSummary.overdueCount || 0})` },
+                      { id: "pago", label: `✅ Pagos (${boletosSummary.paidCount || 0})` },
+                      { id: "cancelado", label: `🗑️ Cancelados (${boletosSummary.cancelledCount || 0})` }
+                    ] as const).map(st => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => setBoletoStatusFilter(st.id)}
+                        className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                          boletoStatusFilter === st.id
+                            ? "bg-indigo-600 text-white border-indigo-600"
+                            : "bg-background text-muted-foreground border-border hover:border-indigo-500/40"
+                        }`}
+                      >
+                        {st.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-border">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-muted/50 border-b border-border text-muted-foreground font-bold">
+                        <th className="p-3">Pagador / Reserva</th>
+                        <th className="p-3">Composição & NFS-e</th>
+                        <th className="p-3">Nosso Número</th>
+                        <th className="p-3">Vencimento & Prazo</th>
+                        <th className="p-3 text-right">Valor & Encargos</th>
+                        <th className="p-3">Destinatários / Envios</th>
+                        <th className="p-3 text-center">Status</th>
+                        <th className="p-3 text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {(() => {
+                        const todayIso = new Date().toISOString().slice(0, 10)
+                        const list = boletos.filter(b => {
+                          const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < todayIso
+                          if (boletoStatusFilter === "em_aberto" && b.status !== "em_aberto") return false
+                          if (boletoStatusFilter === "vencido" && !isOverdue && b.status !== "vencido") return false
+                          if (boletoStatusFilter === "pago" && b.status !== "pago") return false
+                          if (boletoStatusFilter === "cancelado" && b.status !== "cancelado") return false
+                          if (boletoSearch.trim()) {
+                            const q = boletoSearch.toLowerCase()
+                            const hay = `${b.payerName || ""} ${b.payerDoc || ""} ${b.guestName || ""} ${b.companyName || ""} ${b.agencyName || ""} ${b.reservationCode || ""} ${b.nossoNumero || ""} ${b.seuNumero || ""} ${b.financialResponsible?.name || ""}`.toLowerCase()
+                            if (!hay.includes(q)) return false
+                          }
+                          return true
+                        })
+
+                        if (list.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={8} className="p-8 text-center text-muted-foreground">
+                                Nenhum boleto faturado encontrado para os filtros selecionados. Use a aba <strong>📥 Faturamento & Lote</strong> ou faça o check-out de uma reserva faturada para emitir.
+                              </td>
+                            </tr>
+                          )
+                        }
+
+                        return list.map(b => {
+                          const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < todayIso
+                          const isDueToday = b.status === "em_aberto" && b.dueDate === todayIso
+                          const dr = b.billingDeliveryRecipients || {}
+                          return (
+                            <tr key={b.id} className="hover:bg-muted/20">
+                              <td className="p-3">
+                                <div className="font-bold text-foreground">{b.payerName}</div>
+                                <div className="text-[10px] font-mono text-muted-foreground">{b.payerDoc}</div>
+                                <div className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold mt-0.5">
+                                  Reserva {b.reservationCode || `#${b.reservationId}`} • Hóspede: {b.guestName || "—"} (Flat {b.flatNumber || "—"})
+                                </div>
+                              </td>
+
+                              <td className="p-3">
+                                <Badge variant="outline" className="text-[10px] font-bold border-indigo-500/40 text-indigo-700 dark:text-indigo-300">
+                                  {b.boletoKind === "accommodation"
+                                    ? "1/2 • Só Hospedagem"
+                                    : b.boletoKind === "consumption"
+                                      ? "2/2 • Só Consumo"
+                                      : "Unificado (Hosp + Consumo)"}
+                                </Badge>
+                                {b.nfseNumber && (
+                                  <div className="text-[10px] text-emerald-600 font-bold mt-1">
+                                    🧾 NFS-e #{b.nfseNumber} (Só Hospedagem)
+                                  </div>
+                                )}
+                              </td>
+
+                              <td className="p-3 font-mono text-[11px]">
+                                <div className="font-bold text-foreground">{b.nossoNumero || "—"}</div>
+                                <div className="text-[10px] text-muted-foreground">Seu Nº: {b.seuNumero || "—"}</div>
+                              </td>
+
+                              <td className="p-3">
+                                <div className="font-mono font-bold text-foreground">{b.dueDate}</div>
+                                <div className="text-[10px] text-muted-foreground">Prazo: {b.termDays || 15} dias</div>
+                                {isOverdue && (
+                                  <Badge className="mt-0.5 bg-rose-600 text-white text-[9px] px-1.5 py-0">🚨 Em Atraso</Badge>
+                                )}
+                                {isDueToday && (
+                                  <Badge className="mt-0.5 bg-amber-600 text-white text-[9px] px-1.5 py-0">⚠️ Vence Hoje</Badge>
+                                )}
+                              </td>
+
+                              <td className="p-3 text-right font-mono">
+                                <div className="font-black text-sm text-foreground">
+                                  R$ {Number(b.amount || 0).toFixed(2)}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground">
+                                  Multa {b.multaPct ?? 2}% • Juros {b.jurosMonthlyPct ?? 1}% a.m.
+                                </div>
+                              </td>
+
+                              <td className="p-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {dr.guest && <Badge variant="outline" className="text-[9px] px-1 py-0">👤 Hóspede</Badge>}
+                                  {dr.requester && <Badge variant="outline" className="text-[9px] px-1 py-0">📋 Solicitante</Badge>}
+                                  {dr.company && <Badge variant="outline" className="text-[9px] px-1 py-0">🏢 Empresa</Badge>}
+                                  {dr.financialResponsible && <Badge variant="outline" className="text-[9px] px-1 py-0">💼 Resp. Fin.</Badge>}
+                                </div>
+                                {b.financialResponsible?.name && (
+                                  <div className="text-[10px] text-muted-foreground mt-0.5 truncate max-w-[180px]">
+                                    Resp: {b.financialResponsible.name} ({b.financialResponsible.email || b.financialResponsible.phone || ""})
+                                  </div>
+                                )}
+                              </td>
+
+                              <td className="p-3 text-center">
+                                {b.status === "pago" ? (
+                                  <Badge className="bg-emerald-600 text-white text-[10px]">✓ Pago</Badge>
+                                ) : b.status === "cancelado" ? (
+                                  <Badge variant="outline" className="text-muted-foreground text-[10px]">Cancelado</Badge>
+                                ) : isOverdue ? (
+                                  <Badge className="bg-rose-600 text-white text-[10px]">Vencido</Badge>
+                                ) : (
+                                  <Badge className="bg-amber-600 text-white text-[10px]">Em Aberto</Badge>
+                                )}
+                              </td>
+
+                              <td className="p-3 text-right">
+                                <div className="flex items-center justify-end gap-1 flex-wrap">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => window.open(`/api/boletos/${b.id}/pdf`, "_blank")}
+                                    className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1"
+                                    title="Abrir PDF Oficial do Boleto Banco Inter com QR Code PIX"
+                                  >
+                                    <FileText className="w-3 h-3 text-indigo-600" />
+                                    <span>PDF</span>
+                                  </Button>
+
+                                  {b.linhaDigitavel && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(b.linhaDigitavel)
+                                        toast({ title: "📋 Linha Digitável Copiada!", description: b.linhaDigitavel })
+                                      }}
+                                      className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1"
+                                      title="Copiar Linha Digitável"
+                                    >
+                                      <Copy className="w-3 h-3" />
+                                      <span>Linha</span>
+                                    </Button>
+                                  )}
+
+                                  {b.pixCopiaECola && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(b.pixCopiaECola)
+                                        toast({ title: "⚡ PIX Copia e Cola Copiado!", description: "Código PIX do boleto copiado." })
+                                      }}
+                                      className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1 text-emerald-600 border-emerald-500/30"
+                                      title="Copiar PIX Copia e Cola do Boleto"
+                                    >
+                                      <QrCode className="w-3 h-3" />
+                                      <span>PIX</span>
+                                    </Button>
+                                  )}
+
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleOpenEditBoleto(b)}
+                                    className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1 text-indigo-600 border-indigo-500/30"
+                                    title="Editar Vencimento, Valor, Pagador ou Multa/Juros (Sincronizado com Banco Inter)"
+                                  >
+                                    <Sliders className="w-3 h-3" />
+                                    <span>Editar</span>
+                                  </Button>
+
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleDispatchBoleto(b)}
+                                    className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1"
+                                    title="Reenviar PDF da NFS-e + PDF do Boleto por E-mail e WhatsApp"
+                                  >
+                                    <Send className="w-3 h-3" />
+                                    <span>Enviar</span>
+                                  </Button>
+
+                                  {b.status === "em_aberto" && (
+                                    <>
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleMarkBoletoPaid(b)}
+                                        className="h-7 px-2 text-[10px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+                                        title="Dar baixa manual / marcar como Pago"
+                                      >
+                                        ✓ Quitar
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => handleReconcileBoleto(b)}
+                                        className="h-7 px-1.5 text-[10px] font-bold rounded-lg"
+                                        title="Consultar liquidação no Banco Inter"
+                                      >
+                                        <RefreshCw className="w-3 h-3" />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => handleCancelBoleto(b)}
+                                        className="h-7 px-1.5 text-[10px] font-bold rounded-lg text-rose-600"
+                                        title="Cancelar boleto no Banco Inter"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </Button>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
+
+        {/* ══════════════════════════════════════════════════════════════════════
+            MODAIS DE BOLETO FATURADO BANCO INTER (EMISSÃO & EDIÇÃO SINCRONIZADA)
+           ══════════════════════════════════════════════════════════════════════ */}
+
+        {/* Modal 1: Emitir NFS-e (Só Hospedagem) + Boleto(s) Faturado Banco Inter */}
+        <Dialog open={emitBoletoModalOpen} onOpenChange={setEmitBoletoModalOpen}>
+          <DialogContent className="sm:max-w-2xl bg-card border border-border rounded-3xl max-h-[92vh] overflow-y-auto p-6 shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-indigo-600" />
+                <span>Emitir Pacote Faturado: NFS-e + Boleto(s) Banco Inter</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                A NFS-e é emitida sempre apenas sobre a Hospedagem (consumo é faturado pela Anserve). Escolha abaixo se o boleto será unificado ou dividido em 2 boletos separados.
+              </DialogDescription>
+            </DialogHeader>
+
+            {emitBoletoTargetRes && (
+              <form onSubmit={handleConfirmEmitBoletoPackage} className="space-y-4 text-xs pt-2">
+                <div className="p-3.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">Valor Hospedagem (NFS-e)</div>
+                    <div className="text-base font-black text-emerald-600 font-mono">
+                      R$ {Number(emitBoletoTargetRes.accommodationAmount || emitBoletoTargetRes.totalAmount || 0).toFixed(2)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">Consumo / Frigobar (Anserve)</div>
+                    <div className="text-base font-black text-amber-600 font-mono">
+                      R$ {Number(emitBoletoTargetRes.consumptionAmount || 0).toFixed(2)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold uppercase text-muted-foreground">Total Geral (Hosp + Consumo)</div>
+                    <div className="text-base font-black text-indigo-600 font-mono">
+                      R$ {Number((emitBoletoTargetRes.accommodationAmount || emitBoletoTargetRes.totalAmount || 0) + (emitBoletoTargetRes.consumptionAmount || 0)).toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-xl bg-muted/40 border border-border">
+                  <div>
+                    <div className="font-bold text-foreground">Emitir também a NFS-e de Hospedagem agora?</div>
+                    <div className="text-[11px] text-muted-foreground">Envia o PDF da NFS-e junto com o(s) PDF(s) do(s) Boleto(s) e Linha Digitável/PIX.</div>
+                  </div>
+                  <Switch checked={ebEmitNfseToo} onCheckedChange={setEbEmitNfseToo} />
+                </div>
+
+                {/* 1 Boleto vs 2 Boletos */}
+                <div className="space-y-1.5">
+                  <Label className="font-bold">Composição dos Boletos no Check-out</Label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEbConsumptionMode("single")}
+                      className={`p-3 rounded-xl border text-left transition-all ${
+                        ebConsumptionMode === "single"
+                          ? "bg-indigo-600 text-white border-indigo-600 font-bold"
+                          : "bg-background border-border text-foreground"
+                      }`}
+                    >
+                      <div className="text-xs font-black">1 Boleto Unificado (Hosp. + Consumo)</div>
+                      <div className={`text-[10px] mt-0.5 ${ebConsumptionMode === "single" ? "text-indigo-100" : "text-muted-foreground"}`}>
+                        Junta hospedagem e consumo no mesmo boleto
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEbConsumptionMode("separate")}
+                      className={`p-3 rounded-xl border text-left transition-all ${
+                        ebConsumptionMode === "separate"
+                          ? "bg-indigo-600 text-white border-indigo-600 font-bold"
+                          : "bg-background border-border text-foreground"
+                      }`}
+                    >
+                      <div className="text-xs font-black">2 Boletos Separados (1 Hosp. + 1 Consumo)</div>
+                      <div className={`text-[10px] mt-0.5 ${ebConsumptionMode === "separate" ? "text-indigo-100" : "text-muted-foreground"}`}>
+                        Permite mesmo pagador/prazo ou pagador/vencimento diferente p/ consumo
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Prazo, Vencimento e Multa/Juros */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="space-y-1">
+                    <Label className="font-bold text-[11px]">Prazo (Dias após Check-out)</Label>
+                    <Input
+                      type="number"
+                      value={ebTermDays}
+                      onChange={e => setEbTermDays(e.target.value)}
+                      className="h-8.5 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="font-bold text-[11px]">Ou Vencimento Fixo</Label>
+                    <Input
+                      type="date"
+                      value={ebCustomDueDate}
+                      onChange={e => setEbCustomDueDate(e.target.value)}
+                      className="h-8.5 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="font-bold text-[11px]">Multa Atraso (%)</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      value={ebMultaPct}
+                      onChange={e => setEbMultaPct(e.target.value)}
+                      className="h-8.5 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="font-bold text-[11px]">Juros ao Mês (%)</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      value={ebJurosMonthlyPct}
+                      onChange={e => setEbJurosMonthlyPct(e.target.value)}
+                      className="h-8.5 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Regra do 2º Boleto de Consumo */}
+                {ebConsumptionMode === "separate" && (
+                  <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-800 dark:text-amber-200">
+                        🍫 Configuração do 2º Boleto (Consumo)
+                      </span>
+                      <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold">
+                        <input
+                          type="checkbox"
+                          checked={ebConsumptionPayerSame}
+                          onChange={e => setEbConsumptionPayerSame(e.target.checked)}
+                        />
+                        <span>Usar mesmo pagador e prazo do boleto principal</span>
+                      </label>
+                    </div>
+                    {!ebConsumptionPayerSame && (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <Input
+                          value={ebConsumptionPayerName}
+                          onChange={e => setEbConsumptionPayerName(e.target.value)}
+                          placeholder="Nome do Pagador do Consumo"
+                          className="h-8 text-xs rounded-xl"
+                        />
+                        <Input
+                          value={ebConsumptionPayerDoc}
+                          onChange={e => setEbConsumptionPayerDoc(e.target.value)}
+                          placeholder="CPF/CNPJ do Pagador"
+                          className="h-8 text-xs rounded-xl font-mono"
+                        />
+                        <Input
+                          type="date"
+                          value={ebConsumptionDueDate}
+                          onChange={e => setEbConsumptionDueDate(e.target.value)}
+                          className="h-8 text-xs rounded-xl font-mono"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Responsável Financeiro */}
+                <div className="p-3 rounded-2xl bg-muted/30 border border-border space-y-2">
+                  <div className="font-bold text-foreground">💼 Responsável Financeiro (quando não for Hóspede nem Solicitante)</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <Input
+                      value={ebFinRespName}
+                      onChange={e => setEbFinRespName(e.target.value)}
+                      placeholder="Nome do Resp. Financeiro"
+                      className="h-8 text-xs rounded-xl"
+                    />
+                    <Input
+                      value={ebFinRespEmail}
+                      onChange={e => setEbFinRespEmail(e.target.value)}
+                      placeholder="E-mail p/ Nota e Boleto"
+                      className="h-8 text-xs rounded-xl"
+                    />
+                    <Input
+                      value={ebFinRespPhone}
+                      onChange={e => setEbFinRespPhone(e.target.value)}
+                      placeholder="WhatsApp (DDD + Número)"
+                      className="h-8 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                </div>
+
+                {/* Destinatários e Canais */}
+                <div className="p-3 rounded-2xl bg-muted/30 border border-border space-y-2">
+                  <div className="font-bold text-foreground">📨 Destinatários do Pacote (PDF NFS-e + PDF Boleto + Linha Digitável + PIX)</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <label className="flex items-center gap-1.5 p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
+                      <input type="checkbox" checked={ebRecGuest} onChange={e => setEbRecGuest(e.target.checked)} />
+                      <span>👤 Hóspede</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
+                      <input type="checkbox" checked={ebRecRequester} onChange={e => setEbRecRequester(e.target.checked)} />
+                      <span>📋 Solicitante</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
+                      <input type="checkbox" checked={ebRecCompany} onChange={e => setEbRecCompany(e.target.checked)} />
+                      <span>🏢 Empresa/Agência</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 p-2 rounded-xl border border-border bg-background cursor-pointer font-semibold">
+                      <input type="checkbox" checked={ebRecFinResp} onChange={e => setEbRecFinResp(e.target.checked)} />
+                      <span>💼 Resp. Financeiro</span>
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-4 pt-1">
+                    <label className="flex items-center gap-1.5 cursor-pointer font-bold text-indigo-600">
+                      <input type="checkbox" checked={ebRecSendEmail} onChange={e => setEbRecSendEmail(e.target.checked)} />
+                      <span>📧 Enviar por E-mail (com PDFs anexos)</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer font-bold text-emerald-600">
+                      <input type="checkbox" checked={ebRecSendWhatsApp} onChange={e => setEbRecSendWhatsApp(e.target.checked)} />
+                      <span>💬 Enviar por WhatsApp (Z-API)</span>
+                    </label>
+                  </div>
+                </div>
+
+                <DialogFooter className="gap-2">
+                  <Button type="button" variant="outline" onClick={() => setEmitBoletoModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
+                    Cancelar
+                  </Button>
+                  <Button type="submit" disabled={emittingBoletoPackage} className="rounded-xl h-9 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5">
+                    {emittingBoletoPackage ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                    <span>{emittingBoletoPackage ? "Emitindo e Enviando..." : "Emitir e Disparar Agora"}</span>
+                  </Button>
+                </DialogFooter>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal 2: Editar Boleto Faturado (Sincronizado com Banco Inter) */}
+        <Dialog open={editBoletoModalOpen} onOpenChange={setEditBoletoModalOpen}>
+          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl p-6 shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-indigo-600" />
+                <span>Editar Boleto #{editingBoleto?.id} (Sincronizado Banco Inter)</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Altere data de vencimento, valor nominal, dados do pagador, multa/juros ou responsável financeiro.
+              </DialogDescription>
+            </DialogHeader>
+
+            {editingBoleto && (
+              <form onSubmit={handleSaveEditBoleto} className="space-y-3 text-xs pt-2">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <Label className="font-bold">Data de Vencimento</Label>
+                    <Input
+                      type="date"
+                      value={editBoletoDueDate}
+                      onChange={e => setEditBoletoDueDate(e.target.value)}
+                      required
+                      className="h-9 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="font-bold">Valor Nominal (R$)</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={editBoletoAmount}
+                      onChange={e => setEditBoletoAmount(e.target.value)}
+                      required
+                      className="h-9 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <Label className="font-bold">Nome / Razão Social do Pagador</Label>
+                    <Input
+                      value={editBoletoPayerName}
+                      onChange={e => setEditBoletoPayerName(e.target.value)}
+                      className="h-9 text-xs rounded-xl"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="font-bold">CPF / CNPJ do Pagador</Label>
+                    <Input
+                      value={editBoletoPayerDoc}
+                      onChange={e => setEditBoletoPayerDoc(e.target.value)}
+                      className="h-9 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <Label className="font-bold">Multa de Atraso (%)</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      value={editBoletoMultaPct}
+                      onChange={e => setEditBoletoMultaPct(e.target.value)}
+                      className="h-9 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="font-bold">Juros de Mora ao Mês (%)</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      value={editBoletoJurosPct}
+                      onChange={e => setEditBoletoJurosPct(e.target.value)}
+                      className="h-9 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-muted/30 border border-border space-y-2">
+                  <div className="font-bold text-foreground">💼 Responsável Financeiro</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <Input
+                      value={editBoletoFinRespName}
+                      onChange={e => setEditBoletoFinRespName(e.target.value)}
+                      placeholder="Nome"
+                      className="h-8 text-xs rounded-xl"
+                    />
+                    <Input
+                      value={editBoletoFinRespEmail}
+                      onChange={e => setEditBoletoFinRespEmail(e.target.value)}
+                      placeholder="E-mail"
+                      className="h-8 text-xs rounded-xl"
+                    />
+                    <Input
+                      value={editBoletoFinRespPhone}
+                      onChange={e => setEditBoletoFinRespPhone(e.target.value)}
+                      placeholder="WhatsApp"
+                      className="h-8 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="font-bold">Observações Internas</Label>
+                  <Textarea
+                    value={editBoletoNotes}
+                    onChange={e => setEditBoletoNotes(e.target.value)}
+                    rows={2}
+                    className="text-xs rounded-xl"
+                  />
+                </div>
+
+                <DialogFooter className="gap-2 pt-2">
+                  <Button type="button" variant="outline" onClick={() => setEditBoletoModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
+                    Cancelar
+                  </Button>
+                  <Button type="submit" disabled={savingBoletoEdit} className="rounded-xl h-9 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white">
+                    {savingBoletoEdit ? "Sincronizando..." : "Salvar & Sincronizar Banco Inter"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* ══════════════════════════════════════════════════════════════════════
             MODAIS AUXILIARES
