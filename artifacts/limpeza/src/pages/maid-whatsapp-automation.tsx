@@ -490,6 +490,47 @@ export default function MaidWhatsappAutomation() {
     }
   }
 
+  const [dispatchingRetroactive, setDispatchingRetroactive] = useState(false)
+
+  const handleDispatchRetroactiveNovember = async () => {
+    if (!confirm("Deseja consolidar e enviar retroativamente as avaliações elegíveis de Novembro/2026 para as camareiras correspondentes? Avaliações já despachadas não serão duplicadas (trava de idempotência).")) {
+      return
+    }
+
+    try {
+      setDispatchingRetroactive(true)
+      const res = await fetch("/api/maid-automation/dispatch-retroactive-reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: false })
+      })
+      const data = await res.json()
+
+      if (res.ok) {
+        toast({
+          title: "✓ Envio Retroativo de Novembro Concluído!",
+          description: `${data.maidsNotified || 0} camareiras notificadas, ${data.totalReviewsSent || 0} avaliações elegíveis despachadas.`
+        })
+        const resHist = await fetch("/api/maid-automation/history")
+        if (resHist.ok) setHistory(await resHist.json())
+      } else {
+        toast({
+          title: "Falha no disparo retroativo",
+          description: data.error || "Erro ao processar disparo retroativo de Novembro.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de conexão",
+        description: err.message,
+        variant: "destructive"
+      })
+    } finally {
+      setDispatchingRetroactive(false)
+    }
+  }
+
   // Disparo manual imediato para todas as camareiras ativas
   const handleDispatchToAll = async (triggerId: string) => {
     const trigger = triggers.find(t => t.id === triggerId)
@@ -602,6 +643,7 @@ export default function MaidWhatsappAutomation() {
   const overtimeTrigger = triggers.find(t => t.id === "trigger_overtime_cleaning")
   const dailyTrigger = triggers.find(t => t.id === "trigger_daily_summary")
   const closingTrigger = triggers.find(t => t.id === "trigger_quinzena_closing")
+  const reviewSummaryTrigger = triggers.find(t => t.id === "trigger_daily_review_summary")
 
   const configuredCleanersCount = cleaners.filter(c => c.whatsapp || c.phone).length
 
@@ -662,7 +704,7 @@ export default function MaidWhatsappAutomation() {
         </div>
 
         {/* Status & Quick Metrics Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
           <Card className="rounded-2xl border border-border/80 shadow-xs bg-card">
             <CardContent className="p-4 flex items-center gap-3.5">
               <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
@@ -711,6 +753,19 @@ export default function MaidWhatsappAutomation() {
                 <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Fechamento Quinzena</p>
                 <p className="text-xl font-black text-foreground">15 e Fim do Mês</p>
                 <p className="text-[10px] text-muted-foreground">Disparo pontual às {closingTrigger?.scheduledTime || "18:00"}</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl border border-border/80 shadow-xs bg-card">
+            <CardContent className="p-4 flex items-center gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Resumo Avaliações</p>
+                <p className="text-xl font-black text-foreground">{reviewSummaryTrigger?.scheduledTime || "18:00"}</p>
+                <p className="text-[10px] text-muted-foreground">{reviewSummaryTrigger?.enabled ? "✓ Ativo e pontual" : "Inativo"}</p>
               </div>
             </CardContent>
           </Card>
@@ -1337,6 +1392,178 @@ export default function MaidWhatsappAutomation() {
                           .replace(/\{\{nome_hotel\}\}/g, "CorpFlats")
                         }
                         time={closingTrigger.scheduledTime || "18:00"}
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* ── CARD GATILHO 4: RESUMO DIÁRIO DE AVALIAÇÕES (F8, F9, F10) ── */}
+            {reviewSummaryTrigger && (
+              <Card className="rounded-3xl border border-border/80 shadow-xs bg-card overflow-hidden">
+                <CardHeader className="bg-amber-500/5 border-b border-border/60 p-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+                        <Sparkles className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-base font-black text-foreground">
+                            {reviewSummaryTrigger.name}
+                          </CardTitle>
+                          <Badge className="bg-amber-500/10 text-amber-700 border-amber-500/20 text-[10px] font-bold">
+                            Diário Pontual
+                          </Badge>
+                          <Badge className="bg-purple-500/10 text-purple-700 border-purple-500/20 text-[10px] font-bold gap-1">
+                            <Sparkles className="w-3 h-3" />
+                            Triagem IA
+                          </Badge>
+                        </div>
+                        <CardDescription className="text-xs mt-0.5">
+                          {reviewSummaryTrigger.description}
+                        </CardDescription>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={dispatchingRetroactive}
+                        onClick={handleDispatchRetroactiveNovember}
+                        className="rounded-xl text-xs font-bold gap-1.5 h-8 border-purple-500/30 text-purple-700 hover:bg-purple-500/10"
+                        title="Consolidar e enviar retroativamente histórico elegível de Novembro/2026 com trava de idempotência"
+                      >
+                        {dispatchingRetroactive ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5" />
+                        )}
+                        <span>Disparar Retroativo Nov/26</span>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleDispatchToAll(reviewSummaryTrigger.id)}
+                        className="rounded-xl text-xs font-bold gap-1.5 h-8 border-amber-500/30 text-amber-700 hover:bg-amber-500/10"
+                        title="Enviar resumo de avaliações de hoje para todas as camareiras elegíveis"
+                      >
+                        <Play className="w-3 h-3" />
+                        <span>Disparar Resumo Hoje</span>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleOpenTestModal(reviewSummaryTrigger)}
+                        className="rounded-xl text-xs font-bold gap-1.5 h-8 border-amber-500/30 text-amber-700 hover:bg-amber-500/10"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Testar</span>
+                      </Button>
+
+                      <div className="flex items-center gap-2 pl-2 border-l border-border">
+                        <Label className="text-xs font-bold cursor-pointer">
+                          {reviewSummaryTrigger.enabled ? "Ativo" : "Pausado"}
+                        </Label>
+                        <Switch
+                          checked={reviewSummaryTrigger.enabled}
+                          onCheckedChange={checked => updateTriggerField(reviewSummaryTrigger.id, "enabled", checked)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="p-5 space-y-4">
+                  {/* Configuração de Parâmetros */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-3.5 rounded-2xl bg-muted/30 border border-border/60">
+                    <div className="space-y-1">
+                      <Label className="text-xs font-bold text-foreground">Horário de Disparo Diário</Label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="time"
+                          value={reviewSummaryTrigger.scheduledTime || "18:00"}
+                          onChange={e => updateTriggerField(reviewSummaryTrigger.id, "scheduledTime", e.target.value)}
+                          className="text-xs font-bold rounded-xl h-9 w-32 font-mono"
+                        />
+                        <span className="text-xs text-muted-foreground font-medium">(Horário de Brasília)</span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">Consolida e envia diariamente nesse horário para as camareiras avaliadas.</p>
+                    </div>
+
+                    <div className="sm:col-span-2 space-y-1">
+                      <Label className="text-xs font-bold text-foreground">Critério de Envio & Triagem por IA</Label>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        • <strong>Nota 5:</strong> Incluída automaticamente no resumo da camareira responsável pela limpeza.<br />
+                        • <strong>Notas &lt; 5 com motivo de limpeza</strong> (box, enxoval, louças, amenities): Encaminhadas para a camareira.<br />
+                        • <strong>Notas &lt; 5 com motivo alheio</strong> (check-in, Wi-Fi, portaria, ar-condicionado): Descartadas com proteção anti-cobrança indevida.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Editor e Preview lado a lado */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    {/* Coluna 1: Editor */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-bold text-foreground">Modelo da Mensagem</Label>
+                        <span className="text-[10px] text-muted-foreground">Clique nas variáveis para inserir no texto</span>
+                      </div>
+
+                      {/* Tags clicáveis */}
+                      <div className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-muted/40 border border-border/60">
+                        {[
+                          { tag: "{{nome_camareira}}", label: "Nome Camareira" },
+                          { tag: "{{data_hoje}}", label: "Data de Hoje" },
+                          { tag: "{{lista_avaliacoes}}", label: "Lista de Avaliações" },
+                          { tag: "{{media_dia}}", label: "Média do Dia" },
+                          { tag: "{{total_avaliacoes}}", label: "Total Avaliações" },
+                        ].map(t => (
+                          <button
+                            key={t.tag}
+                            type="button"
+                            onClick={() => insertTagAtCursor(reviewSummaryTrigger.id, t.tag)}
+                            className="px-2 py-1 rounded-lg bg-background hover:bg-amber-500/10 hover:text-amber-700 text-[11px] font-mono font-medium border border-border/80 transition-colors"
+                            title={`Inserir ${t.tag}`}
+                          >
+                            + {t.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <Textarea
+                        ref={el => { textareaRefs.current[reviewSummaryTrigger.id] = el }}
+                        rows={12}
+                        value={reviewSummaryTrigger.template}
+                        onChange={e => updateTriggerField(reviewSummaryTrigger.id, "template", e.target.value)}
+                        className="text-xs font-mono leading-relaxed rounded-2xl p-3.5 border-border focus-visible:ring-1"
+                        placeholder="Digite o texto da mensagem..."
+                      />
+                    </div>
+
+                    {/* Coluna 2: Preview WhatsApp */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                          <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Pré-visualização no WhatsApp</span>
+                        </Label>
+                        <span className="text-[10px] text-emerald-600 font-semibold">Exemplo com Avaliações do Dia</span>
+                      </div>
+
+                      <WhatsAppMessageBubble
+                        text={reviewSummaryTrigger.template
+                          .replace(/\{\{nome_camareira\}\}/g, "Cris")
+                          .replace(/\{\{data_hoje\}\}/g, serverTime ? `${serverTime.date.split("-")[2]}/${serverTime.date.split("-")[1]}/${serverTime.date.split("-")[0]}` : "10/11/2026")
+                          .replace(/\{\{lista_avaliacoes\}\}/g, "• *Flat 113*\n   📅 Limpeza: 08/11/2026\n   ⭐ Nota: *5* ⭐⭐⭐⭐⭐\n   💬 _\"Excelente limpeza e capricho!\"_\n\n• *Flat 211*\n   📅 Limpeza: 09/11/2026\n   ⭐ Nota: *4* ⭐⭐⭐⭐\n   💬 _\"Faltou pano de prato\"_")
+                          .replace(/\{\{media_dia\}\}/g, "4.7")
+                          .replace(/\{\{total_avaliacoes\}\}/g, "2")
+                        }
+                        time={reviewSummaryTrigger.scheduledTime || "18:00"}
                       />
                     </div>
                   </div>

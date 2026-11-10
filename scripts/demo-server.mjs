@@ -126,7 +126,8 @@ import {
   checkZapiPhoneExists,
   extractPixPayloadAmount,
   isPixPayloadStaleForAmount,
-  computeCardAmountFromPix
+  computeCardAmountFromPix,
+  invokeMaidReviewHookSafe
 } from "./zapi-service.mjs";
 import {
   initMaidAutomationEngine,
@@ -62841,6 +62842,18 @@ app.post("/api/ai/import-review", async (req, res) => {
     if (Number(newRev.rating) <= 4) {
       await rebuildNpsImprovementsSummary(db);
     }
+
+    // [Feature F2 Hook Point 5: Avaliação importada externamente (Airbnb, Booking)]
+    invokeMaidReviewHookSafe(db, {
+      hookType: "imported_review",
+      review: newRev,
+      score: Number(newRev.rating),
+      comment: newRev.comment,
+      flatNumber: newRev.flatMentioned,
+      guestName: newRev.author,
+      respondedAt: newRev.date
+    }, { saveDatabase }).catch(e => console.warn("[Hook 5 Non-Blocking]", e?.message));
+
     saveDatabase();
 
     res.json({ success: true, review: newRev });
@@ -63442,6 +63455,19 @@ app.post("/api/ai/nps-response", async (req, res) => {
         saveDatabase
       });
     }
+
+    // [Feature F2 Hook Point 4: Resposta NPS via Portal/API]
+    invokeMaidReviewHookSafe(db, {
+      hookType: "portal_or_api_nps_response",
+      npsItem: targetNpsEntry,
+      score: numScore,
+      comment: comment || null,
+      reservationId: reservationId || null,
+      flatNumber: targetNpsEntry.flatNumber,
+      guestPhone: targetNpsEntry.guestPhone,
+      guestName: targetNpsEntry.guestName,
+      respondedAt: targetNpsEntry.respondedAt
+    }, { saveDatabase }).catch(e => console.warn("[Hook 4 Non-Blocking]", e?.message));
 
     saveDatabase();
     res.json({ success: true, npsEntry: targetNpsEntry, googleLinkSent, autoAction, improvements });

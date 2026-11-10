@@ -16203,6 +16203,32 @@ export function wasNpsSurveySentToPhone(db, phone, options = {}) {
 }
 
 /**
+ * Invoca com isolamento total de falhas o hook de avaliações para camareiras.
+ */
+export async function invokeMaidReviewHookSafe(db, payload, { saveDatabase, sendZapiFn = sendZapiMessage } = {}) {
+  try {
+    if (!db || !payload) return { handled: false, reason: "missing_payload" };
+
+    let hookHandler = null;
+    if (typeof globalThis.__CORPFLATS_MAID_REVIEW_HOOK__ === "function") {
+      hookHandler = globalThis.__CORPFLATS_MAID_REVIEW_HOOK__;
+    } else {
+      const maidService = await import("./maid-automation-service.mjs").catch(() => null);
+      if (maidService && typeof maidService.handleMaidReviewHook === "function") {
+        hookHandler = maidService.handleMaidReviewHook;
+      }
+    }
+
+    if (!hookHandler) return { handled: false, reason: "hook_not_available" };
+
+    return await hookHandler(db, payload, { saveDatabase, sendZapiFn });
+  } catch (err) {
+    console.warn("[MaidReviewHookSafe] Falha não crítica no hook de avaliação:", err?.message || err);
+    return { handled: false, error: err?.message || String(err) };
+  }
+}
+
+/**
  * Intercepta e processa respostas de NPS (nota 1 a 5) e também a resposta escrita subsequente
  * de hóspedes que deram nota de 1 a 4.
  * ESTRITO: Só aceita números de 1 a 5 como nota se a pergunta de avaliação (post_checkout_review)
@@ -16319,6 +16345,19 @@ export async function handleInboundNpsScoreOrComment({
       existingNps.autoAction = "google_link_sent";
       existingNps.googleLinkSent = true;
       existingNps.awaitingFeedbackComment = false;
+
+      // [Feature F2 Hook Point 1: Avaliação Nota 5 (Elegível para Resumo Diário)]
+      invokeMaidReviewHookSafe(db, {
+        hookType: "score_5_received",
+        npsItem: existingNps,
+        score: 5,
+        comment: inlineComment || null,
+        reservation: matchedReservation,
+        flatNumber: resolvedFlat,
+        guestPhone: rawPhone || targetPhone,
+        guestName: resolvedGuestName,
+        respondedAt: existingNps.respondedAt
+      }, { saveDatabase, sendZapiFn }).catch(e => console.warn("[Hook 1 Non-Blocking]", e?.message));
     } else {
       existingNps.googleLinkSent = false;
       if (score <= 2) {
@@ -16345,6 +16384,19 @@ export async function handleInboundNpsScoreOrComment({
         existingNps.commentReceivedAt = new Date().toISOString();
         existingNps.awaitingFeedbackComment = false;
         syncNpsCommentToReviews(db, existingNps);
+
+        // [Feature F2 Hook Point 2: Nota <= 4 com comentário inline]
+        invokeMaidReviewHookSafe(db, {
+          hookType: "inline_sub5_comment_received",
+          npsItem: existingNps,
+          score,
+          comment: inlineComment,
+          reservation: matchedReservation,
+          flatNumber: resolvedFlat,
+          guestPhone: rawPhone || targetPhone,
+          guestName: resolvedGuestName,
+          respondedAt: existingNps.respondedAt
+        }, { saveDatabase, sendZapiFn }).catch(e => console.warn("[Hook 2 Non-Blocking]", e?.message));
       } else {
         existingNps.awaitingFeedbackComment = true;
         existingNps.awaitingFeedbackSince = new Date().toISOString();
@@ -16485,6 +16537,19 @@ export async function handleInboundNpsScoreOrComment({
 
       // Sincroniza em db.reviews para constar também na aba de Feedbacks
       syncNpsCommentToReviews(db, existingNps);
+
+      // [Feature F2 Hook Point 3: Resposta escrita de comentário coletada na Etapa 2]
+      invokeMaidReviewHookSafe(db, {
+        hookType: "sub5_comment_received",
+        npsItem: existingNps,
+        score: Number(existingNps.score),
+        comment: existingNps.comment,
+        reservation: matchedReservation,
+        flatNumber: existingNps.flatNumber || flatNumber,
+        guestPhone: rawPhone || targetPhone,
+        guestName: existingNps.guestName,
+        respondedAt: existingNps.commentReceivedAt || new Date().toISOString()
+      }, { saveDatabase, sendZapiFn }).catch(e => console.warn("[Hook 3 Non-Blocking]", e?.message));
 
       // Envia template de agradecimento pós-comentário (tpl_nps_feedback_thanks)
       const thanksTpl = getNpsThanksTemplate(db);

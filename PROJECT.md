@@ -1,109 +1,105 @@
-# Project: Ingestão Autônoma de Reservas e Cancelamentos B2B
+# Project: Envio Automático de Resumo Diário, Triagem por IA e Síntese de Avaliações para Camareiras
 
 ## Architecture
-- **Email Ingestion Core**: `artifacts/api-server/zoho-mail-service.mjs` (espelhado em `scripts/zoho-mail-service.mjs`).
-  - Webhook entrypoint (`POST /api/webmail/zoho-webhook` via `demo-server.mjs:42783`).
-  - Polling synchronization (`syncZohoMessagesToCache`).
-  - Message detail parser (`getWebmailMessageDetail`).
-- **Voucher Parser & Enricher**:
-  - `parseB2bVoucherText`: Parsing estruturado de vouchers (regexes para datas, diárias, agência, CNPJ, faturamento e NFS-e).
-  - `fetchAndParseB2bVoucher`: Obtenção do conteúdo via anexo PDF ou link HTTP do portal B2B / operadoras.
-  - `ingestB2bVoucherIntoDb`: Persistência determinística da reserva, hóspede, `dailyRates`, agência e empresa em `db`.
-- **B2B Cancellation Service**: `artifacts/api-server/b2b-cancellation-service.mjs` (espelhado em `scripts/b2b-cancellation-service.mjs`).
-  - `detectB2bEmailIntent`: Discriminação entre confirmação, cancelamento e outros comunicados.
-  - `matchReservationForCancellation`: Busca em 4 camadas (número B2B, RLOC, código PMS, heurística hóspede + checkin).
-  - `executeAutonomousB2bCancellation`: Aplicação da cascata canônica de cancelamento do PMS, trava `CHECKED_IN_CANCELLATION`, registro duplo de auditoria e disparo de alerta via Z-API ao gestor.
-- **Twin-Server Parity**: Todo arquivo `.mjs` modificado em `artifacts/api-server/` deve ter paridade exata SHA-256 com seu correspondente em `scripts/`.
+- **Review Hook & Ingestion**:
+  - `artifacts/api-server/zapi-service.mjs` (espelhado em `scripts/zapi-service.mjs`): Hook listeners em `handleInboundNpsScoreOrComment` (linhas 16321, 16348, 16488) e `syncNpsCommentToReviews`. Preservação 100% intacta do fluxo de 2 etapas (`tpl_nps_satisfaction_check` e `tpl_nps_score_1..4`).
+  - `artifacts/api-server/demo-server.mjs` (espelhado em `scripts/demo-server.mjs`): Hooks em `POST /api/ai/nps-response` e `POST /api/ai/import-review`.
+- **Maid Attribution & Housekeeping Engine**:
+  - `artifacts/api-server/maid-automation-service.mjs` (espelhado em `scripts/maid-automation-service.mjs`):
+    - `resolveMaidCleaningForReservation(db, reservation)`: Identifica deterministicamente a camareira responsável pela última limpeza do quarto correspondente à reserva avaliada (verificando limpezas de preparação na data ou anterior ao check-in e stayovers durante a estadia).
+- **AI Triage Engine (Sub-5 Feedback)**:
+  - `triageSub5Review`: Arquitetura Two-Tier (Tier 1: Google Gemini JSON estruturado via `gemini-2.5-flash` com `thinkingBudget: 0`; Tier 2: Fallback determinístico por expressões regulares cobrindo 100% de precisão sem falhas quando offline).
+  - Separação estrita: responsabilidades da camareira (lençol manchado/sujo, toalhas, amenities, louça/talher, box do banheiro, poeira/lixo) vs alheios (check-in, portaria, Wi-Fi/internet, ar-condicionado, barulho externo).
+  - Notas 5: Elegíveis por definição sem necessidade de triagem. Notas < 5 sem comentário: retidas de envio para a camareira.
+- **Mercado Livre Style Opinion Synthesis & Evolution Engine**:
+  - Persistência em `db.maidOpinionSynthesis[maidId]`.
+  - Agregação em tempo real: nota média acumulada, distribuição de notas, destaques positivos e termômetro de recorrência de itens críticos (Box e Banheiro; Louças, Pratos e Talheres; Enxoval de Cama e Banho; Piso e Superfícies).
+  - Cálculo de evolução delta contra período anterior ($\Delta = \text{Média Atual} - \text{Média Anterior}$), determinando evolução (subiu 📈), estabilidade (➡️) ou regressão (pontos de atenção 📉).
+  - Envio duplo em tempo real: Mensagem 1 (avaliação recebida) + Mensagem 2 (síntese atualizada com comparativo).
+- **Scheduled Daily Summary & Retroactive November Dispatcher**:
+  - Trigger diário em horário fixo em `DEFAULT_MAID_TRIGGERS` (`trigger_daily_review_summary`, padrão 18:00).
+  - Mensagem consolidada contendo número do quarto, data da limpeza e nota recebida.
+  - Rotina e endpoint `POST /api/maid-automation/dispatch-retroactive-reviews` para consolidação e despacho retroativo de Novembro/2026 com idempotência registrada em `dispatchedReviews`.
+- **Frontend Settings**:
+  - `artifacts/limpeza/src/pages/maid-whatsapp-automation.tsx`: Card de configuração do resumo diário de avaliações, seletor de horário fixo, botão de disparo retroativo de Novembro e visualização do histórico.
+- **Twin-Server Parity**: Todo arquivo `.mjs` modificado em `artifacts/api-server/` deve manter paridade SHA-256 byte a byte com seu espelho em `scripts/`.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | F1_CALCULO_DIARIAS | Suporte a períodos numéricos e regex explícito de diárias/noites no parser | M1 | R1, Survey 1 |
-| 2 | F2_FALLBACK_MATEMATICO_NOITES | Fallback matemático de noites por valor total / diária e cálculo seguro de checkout | M1 | R1, Survey 1 |
-| 3 | F3_DAILY_RATES_GERACAO | Geração do array completo de `dailyRates` para todas as diárias da reserva | M1 | R1, Survey 1 |
-| 4 | F4_VALIDACAO_GABARITO_113 | Conferência com o gabarito do Flat 113 (B2B-25055349 / Pires Hage, 2 diárias) | M1 | R1, Survey 1 |
-| 5 | F5_PDF_EXTRACTION_SERVICE | Utilitário seguro para extração de texto a partir de buffers PDF | M2 | R2, Survey 2 |
-| 6 | F6_DOWNLOAD_ANEXOS_EMAIL | Download e extração de vouchers recebidos em anexos PDF no webhook e sync | M2 | R2, Survey 2 |
-| 7 | F7_CRAWLER_HTTP_VOUCHER | Acesso HTTP ao link do voucher sem travas impeditivas e suporte a múltiplos padrões | M2 | R2, Survey 2 |
-| 8 | F8_EXTRACAO_DADOS_AGENCIA | Extração de Nome da Agência, CNPJ, Agente, Telefone e E-mail | M2 | R2, Survey 2 |
-| 9 | F9_EXTRACAO_VALORES_FINANCEIROS | Extração de Valor Total e Comissão da Agência | M2 | R2, Survey 2 |
-| 10 | F10_EXTRACAO_INSTRUCOES_NFSE | Extração integral das instruções de emissão de NFS-e do voucher | M2 | R2, Survey 2 |
-| 11 | F11_PERSISTENCIA_CAMPOS_AGENCIA_FISCAL | Gravação e sincronização dos dados cadastrais/fiscais em reservas, agências e empresas | M2 | R2, Survey 2 |
-| 12 | F12_DETECCAO_EMAIL_CANCELAMENTO | Identificação precisa de e-mails de cancelamento B2B antes da ingestão | M3 | R3, Survey 3 |
-| 13 | F13_CASAMENTO_RESERVA_CANCELAMENTO | Localização determinística da reserva a cancelar (B2B num, RLOC, PMS code, heurística) | M3 | R3, Survey 3 |
-| 14 | F14_TRAVA_SEGURANCA_CHECKED_IN | Trava operacional bloqueando cancelamento autônomo de hóspede já em estada | M3 | R3, Survey 3 |
-| 15 | F15_CASCATA_CANCELAMENTO_PMS | Execução canônica de liberação de quarto, tarefas de governança, café, FNRH e ARI | M3 | R3, Survey 3 |
-| 16 | F16_AUDITORIA_NOTIFICACAO_GESTOR | Auditoria dupla e alerta imediato via WhatsApp Z-API ao gestor (5522997124021) | M3 | R3, Survey 3 |
-| 17 | F17_TESTES_E2E_SUITE | Execução de suíte E2E pontual validando R1, R2, R3 e Flat 113 | M4 | Critérios de Aceite |
+| 1 | F1_MAID_ATTRIBUTION | Algoritmo determinístico de identificação da camareira da última limpeza correspondente à reserva avaliada | M1 | R1, Survey 1, Survey 2 |
+| 2 | F2_REVIEW_FLOW_PRESERVATION | Preservação integral do fluxo de 2 etapas de coleta de notas e comentários (R2) | M1 | R2, Survey 1 |
+| 3 | F3_AI_SUB5_TRIAGE | Motor Two-Tier de triagem por IA (Gemini JSON + Fallback) para notas < 5 separando limpeza vs alheios | M1 | R3, Survey 3 |
+| 4 | F4_FORWARDING_RULES | Regras de elegibilidade (nota 5 sempre incluída; sub-5 sem comentário ou alheia descartada) | M1 | R3, Survey 2, Survey 3 |
+| 5 | F5_OPINION_SYNTHESIS_DATA | Estrutura de agregação incremental de síntese de opiniões da camareira (`db.maidOpinionSynthesis`) | M2 | R5, Survey 3 |
+| 6 | F6_EVOLUTION_COMPARATIVE | Cálculo do comparativo de evolução entre períodos (delta, tendência subiu/desceu, aspectos de melhoria) | M2 | R5, Survey 3 |
+| 7 | F7_REALTIME_DUAL_MESSAGE | Disparo em tempo real via WhatsApp da avaliação + síntese atualizada Mercado Livre ao receber comentário | M2 | R5, Survey 1, Survey 3 |
+| 8 | F8_DAILY_SUMMARY_CRON | Job agendado diário em horário fixo para consolidação e envio do resumo de avaliações | M3 | R1, Survey 2 |
+| 9 | F9_DAILY_MESSAGE_FORMAT | Formatação da mensagem diária com número do quarto, data da limpeza e nota recebida | M3 | R1, Survey 2 |
+| 10 | F10_RETROACTIVE_NOVEMBER | Rotina e endpoint de envio retroativo das avaliações elegíveis de Novembro/2026 com trava de idempotência | M3 | R4, Survey 2 |
+| 11 | F11_FRONTEND_AUTOMATION_UI | Card na interface de automações das camareiras para ativação, horário e disparo retroativo | M3 | Survey 2 |
+| 12 | F12_PUNCTUAL_TEST_SUITE | Suíte de testes pontual dedicada (`tests/maid-review-ai-synthesis.test.mjs`) validando R1 a R5 | M4 | Critérios de Aceite |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Correção de Diárias & Estadia B2B | F1, F2, F3, F4 | none | DONE |
-| M2 | Ingestão Completa de Voucher (PDF & Link) | F5, F6, F7, F8, F9, F10, F11 | M1 | DONE |
-| M3 | Cancelamento Autônomo B2B & Notificação | F12, F13, F14, F15, F16 | M2 | DONE |
-| M4 | E2E Integration & Verification | F17 (Tiers 1-4 + Adversarial) | M1, M2, M3 | IN_PROGRESS |
+| M1 | Atribuição de Limpeza & Motor de Triagem por IA | F1, F2, F3, F4 | none | PLANNED |
+| M2 | Síntese de Opiniões Mercado Livre & Comparativo | F5, F6, F7 | M1 | PLANNED |
+| M3 | Resumo Diário, Envio Retroativo Novembro & UI | F8, F9, F10, F11 | M2 | PLANNED |
+| M4 | Verificação Integrada & Hardening de Cobertura | F12 | M1, M2, M3 | PLANNED |
 
 ## Interface Contracts
 
-### M1: Parser de Diárias (`parseB2bVoucherText`)
-- Entrada: `rawText: string`, `options?: { ... }`
+### M1: Atribuição de Camareira (`resolveMaidCleaningForReservation`)
+- Localização: `artifacts/api-server/maid-automation-service.mjs`
+- Assinatura: `resolveMaidCleaningForReservation(db, reservation: object): { maidUser: object | null, cleaningRequest: object | null, cleaningDate: string | null, isStayover: boolean }`
+- Invariante: Localiza a limpeza concluída (`status: "clean"`) correspondente à reserva avaliada, priorizando stayover executado durante a estadia ou a limpeza de preparação na data ou anterior ao check-in.
+
+### M1: Triagem de Feedback por IA (`triageSub5Review`)
+- Localização: `artifacts/api-server/maid-automation-service.mjs` (ou módulo dedicado de triagem)
+- Assinatura: `triageSub5Review({ score: number, comment: string, flatNumber?: string, db?: object, aiClientMock?: Function }): Promise<FeedbackTriageResult>`
 - Retorno garantido:
   ```typescript
-  {
-    checkinDate: string; // YYYY-MM-DD
-    checkoutDate: string; // YYYY-MM-DD
-    nights: number; // >= 1
-    dailyRate: number; // >= 0
-    totalAmount: number; // >= dailyRate * nights
-    // ...
+  interface FeedbackTriageResult {
+    isCleaningRelated: boolean;
+    category: "maid_cleaning" | "non_maid_infrastructure" | "non_maid_checkin_service" | "non_maid_external_noise" | "mixed";
+    primaryResponsibility: "camareira" | "hotel_gestao" | "manutencao" | "recepcao_portaria" | "externo";
+    forwardToMaid: boolean;
+    cleaningAspects: string[];
+    nonCleaningAspects: string[];
+    explanation: string;
+    triageMethod: "gemini_llm" | "deterministic_fallback";
   }
   ```
-- Invariante: `nights === Math.round((new Date(checkoutDate) - new Date(checkinDate)) / 86400000)`. Se a reserva tem 2 noites, `nights` DEVE ser 2.
+- Invariante: `score === 5` retorna `forwardToMaid: true` imediatamente. Comentários contendo aspectos de limpeza retornam `forwardToMaid: true`. Comentários puramente sobre Wi-Fi, portaria, check-in, etc. retornam `forwardToMaid: false`.
 
-### M2: Extração de Voucher & Dados Cadastrais/Fiscais
-- Assinatura: `extractVoucherData(source: { buffer?: Buffer, mimeType?: string, url?: string, text?: string })`
-- Retorno:
-  ```typescript
-  {
-    agencyName: string;
-    agencyCnpj: string;
-    agencyAgentName: string;
-    agencyAgentPhone: string;
-    agencyAgentEmail: string;
-    companyName: string;
-    companyCnpj: string;
-    totalAmount: number;
-    b2bCommissionPct: number;
-    b2bCommissionAmount: number;
-    invoicingInstructions: string;
-    // ...
-  }
-  ```
-- Invariante: Preservar a integridade textual das instruções de NFS-e e salvar em `r.invoicingInstructions` e `r.agencyCnpj`.
+### M2: Síntese de Opiniões & Comparativo (`updateMaidOpinionSynthesis`)
+- Localização: `artifacts/api-server/maid-automation-service.mjs`
+- Assinatura: `updateMaidOpinionSynthesis(db, { maidId: number, review: object, triageResult?: object }): MaidOpinionSynthesis`
+- Retorno garantido: Objeto com `avgScore`, contagem de itens (box, louças/utensílios, enxoval, piso), comparativo de evolução com o período anterior (`delta`, `trend: "evolucao" | "estabilidade" | "regressao"`).
 
-### M3: Cancelamento Autônomo (`b2b-cancellation-service.mjs`)
-- Assinatura: `executeAutonomousB2bCancellation(db, emailData: { subject: string, from: string, text: string, html: string })`
-- Retorno:
-  ```typescript
-  {
-    success: boolean;
-    cancelled: boolean;
-    blockedReason?: 'CHECKED_IN_CANCELLATION' | 'RESERVATION_NOT_FOUND' | 'MULTIPLE_MATCHES';
-    reservationCode?: string;
-    matchedBy?: 'b2b_number' | 'rloc' | 'pms_code' | 'heuristic';
-    alertSent: boolean;
-  }
-  ```
+### M2: Disparo em Tempo Real (`dispatchRealtimeMaidReviewAlerts`)
+- Assinatura: `dispatchRealtimeMaidReviewAlerts(db, { review, maidUser, cleaningDate, triageResult }): Promise<{ success: boolean, messagesSent: number }>`
+- Envia Mensagem 1 (avaliação recebida com quarto, data da limpeza, nota e comentário) e Mensagem 2 (síntese atualizada Mercado Livre com comparativo).
+
+### M3: Resumo Diário Consolidado (`dispatchDailyReviewsSummary`)
+- Assinatura: `dispatchDailyReviewsSummary(db, { targetDate?: string, force?: boolean }): Promise<{ maidsNotified: number, totalReviewsSent: number }>`
+- Envia para cada camareira a mensagem diária contendo quarto, data da limpeza e nota recebida apenas das avaliações elegíveis do período.
+
+### M3: Disparo Retroativo de Novembro (`dispatchNovemberRetroactiveReviews`)
+- Assinatura: `dispatchNovemberRetroactiveReviews(db): Promise<{ maidsNotified: number, totalReviewsSent: number, summaryByMaid: Record<string, number> }>`
+- Consolidada histórico de Novembro/2026, marca avaliações como `dispatchedToMaidAt` para evitar duplicidade.
 
 ## Code Layout
 - Backend:
-  - `artifacts/api-server/zoho-mail-service.mjs`
-  - `artifacts/api-server/b2b-cancellation-service.mjs` (novo módulo desacoplado)
+  - `artifacts/api-server/maid-automation-service.mjs`
+  - `artifacts/api-server/zapi-service.mjs`
   - `artifacts/api-server/demo-server.mjs`
-  - Espelhos obrigatórios: `scripts/zoho-mail-service.mjs` e `scripts/b2b-cancellation-service.mjs`
-- Testes Pontuais (sem varredura global):
-  - `tests/b2b-voucher-dates.test.mjs` (M1)
-  - `tests/b2b-voucher-extraction.test.mjs` (M2)
-  - `tests/b2b-cancellation.test.mjs` (M3)
-  - `tests/b2b-e2e-suite.test.mjs` (M4)
+  - Espelhos idênticos (paridade SHA-256):
+    - `scripts/maid-automation-service.mjs`
+    - `scripts/zapi-service.mjs`
+    - `scripts/demo-server.mjs`
+- Frontend:
+  - `artifacts/limpeza/src/pages/maid-whatsapp-automation.tsx`
+- Testes Pontuais (estritamente pontual conforme AGENTS.md):
+  - `tests/maid-review-ai-synthesis.test.mjs`
