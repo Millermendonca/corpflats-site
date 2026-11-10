@@ -1057,6 +1057,115 @@ describe("Tier 1: Feature Coverage", () => {
       assert.equal(res2.totalReviewsSent, 0, "Segunda execução não deve reenviar avaliações já despachadas");
       assert.equal(mockSend.sent.length, countAfterFirstRun, "Nenhuma mensagem nova deve ser enviada");
     });
+
+    it("6.3 Deduplicates mirrored reviews (fromNpsId) and same cleaningRequestId, excludes October cleanings, and strips mixed non-cleaning clauses", async () => {
+      const dispatchRetroactive = requireMaidExport("dispatchNovemberRetroactiveReviews");
+      const mockSend = createMockSendZapi();
+      const db = createMockDb({
+        cleaningRequests: [
+          { id: 1010, flatNumber: "211", requestDate: "2026-11-07", status: "clean", assignedUserId: 3 },
+          { id: 1011, flatNumber: "212", requestDate: "2026-11-02", status: "clean", assignedUserId: 3 },
+          { id: 1012, flatNumber: "512", requestDate: "2026-10-19", status: "clean", assignedUserId: 3 }
+        ],
+        reservations: [
+          { id: 1110, code: "RES-211-1110", flatNumber: "211", checkinDate: "2026-11-07", checkoutDate: "2026-11-09" },
+          { id: 1111, code: "RES-212-1111", flatNumber: "212", checkinDate: "2026-11-02", checkoutDate: "2026-11-03" },
+          { id: 1112, code: "RES-512-OCT", flatNumber: "512", checkinDate: "2026-10-19", checkoutDate: "2026-10-22" }
+        ],
+        npsResponses: [
+          {
+            id: "nps_herman",
+            reservationId: 1110,
+            flatNumber: "211",
+            score: 4,
+            comment: "Uma colher suja, um lençol rasgado, vassoura guardada embaixo da pia do banheiro.",
+            respondedAt: "2026-11-09T15:04:46Z"
+          },
+          {
+            id: "nps_diego",
+            reservationId: 1111,
+            flatNumber: "212",
+            score: 4,
+            comment: "Os talheres da mesa estavam sujos e o ar condicionado pela madrugada começou a ficar um pouco barulhento",
+            respondedAt: "2026-11-03T15:01:01Z"
+          },
+          {
+            id: "nps_oct_cleaning",
+            reservationId: 1112,
+            flatNumber: "512",
+            score: 5,
+            comment: null,
+            respondedAt: "2026-11-06T15:47:07Z"
+          }
+        ],
+        reviews: [
+          {
+            id: 7,
+            fromNpsId: "nps_herman",
+            rating: 4,
+            flatMentioned: "211",
+            date: "2026-11-09",
+            comment: "Uma colher suja, um lençol rasgado, vassoura guardada embaixo da pia do banheiro."
+          },
+          {
+            id: 5,
+            fromNpsId: "nps_diego",
+            rating: 4,
+            flatMentioned: "212",
+            date: "2026-11-03",
+            comment: "Os talheres da mesa estavam sujos e o ar condicionado pela madrugada começou a ficar um pouco barulhento"
+          }
+        ]
+      });
+
+      const res = await dispatchRetroactive(db, { sendZapiFn: mockSend, force: true });
+      assert.equal(res.maidsNotified, 1);
+      assert.equal(res.totalReviewsSent, 2, "Deve enviar apenas as 2 avaliações únicas de Novembro (sem duplicar reviews e sem incluir limpeza de Outubro)");
+      const msg = mockSend.sent[0].message;
+      assert.doesNotMatch(msg, /19\/10\/2026/, "Não deve incluir limpeza realizada em Outubro");
+      assert.match(msg, /Os talheres da mesa estavam sujos/, "Deve manter o trecho de limpeza na avaliação mista");
+      assert.doesNotMatch(msg, /ar condicionado pela madrugada/, "Deve remover o trecho de ar-condicionado da avaliação mista");
+    });
+
+    it("6.4 Includes sub-5 ratings without comments (and sanitizes [image] placeholders to score-only)", async () => {
+      const dispatchRetroactive = requireMaidExport("dispatchNovemberRetroactiveReviews");
+      const mockSend = createMockSendZapi();
+      const db = createMockDb({
+        cleaningRequests: [
+          { id: 1020, flatNumber: "313", requestDate: "2026-11-04", status: "clean", assignedUserId: 3 },
+          { id: 1021, flatNumber: "113", requestDate: "2026-11-05", status: "clean", assignedUserId: 3 }
+        ],
+        reservations: [
+          { id: 1120, code: "RES-313-1120", flatNumber: "313", checkinDate: "2026-11-04", checkoutDate: "2026-11-06" },
+          { id: 1121, code: "RES-113-1121", flatNumber: "113", checkinDate: "2026-11-05", checkoutDate: "2026-11-07" }
+        ],
+        npsResponses: [
+          {
+            id: "nps_sub5_nocomment",
+            reservationId: 1120,
+            flatNumber: "313",
+            score: 4,
+            comment: null,
+            respondedAt: "2026-11-06T15:03:51Z"
+          },
+          {
+            id: "nps_sub5_image",
+            reservationId: 1121,
+            flatNumber: "113",
+            score: 4,
+            comment: "[image]",
+            respondedAt: "2026-11-07T15:02:10Z"
+          }
+        ]
+      });
+
+      const res = await dispatchRetroactive(db, { sendZapiFn: mockSend, force: true });
+      assert.equal(res.totalReviewsSent, 2, "Notas < 5 sem comentário escrito (ou apenas [image]) devem ser enviadas como nota");
+      const msg = mockSend.sent[0].message;
+      assert.match(msg, /Flat 313/);
+      assert.match(msg, /Flat 113/);
+      assert.doesNotMatch(msg, /\[image\]/, "Não deve exibir o placeholder [image] como texto de comentário");
+    });
   });
 });
 

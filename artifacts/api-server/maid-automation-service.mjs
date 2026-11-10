@@ -1178,6 +1178,7 @@ export function resolveMaidCleaningForReservation(db, reservation, options = {})
 
   let matchedCleaning = null;
   let isStayover = false;
+  const evalDateUpper = String(options?.evaluationDate || resObj?.evaluationDate || "").trim().substring(0, 10);
 
   // 3. Etapa 1: Priorização de Stayover executado durante a estadia do hóspede
   if (preferStayover) {
@@ -1186,6 +1187,7 @@ export function resolveMaidCleaningForReservation(db, reservation, options = {})
       if (!isSt) return false;
       const cDate = getCleaningDate(c);
       if (!cDate) return false;
+      if (evalDateUpper && cDate > evalDateUpper) return false;
       return cDate >= checkinDate && cDate <= checkoutDate;
     });
 
@@ -1209,8 +1211,11 @@ export function resolveMaidCleaningForReservation(db, reservation, options = {})
     const prepCandidates = cleaningsPool.filter(c => {
       const isSt = c.cleaningType === "stayover" || c.source === "stayover" || c.type === "stayover";
       if (isSt) return false;
-      const reqDate = String(c.requestDate || c.effectiveDate || getCleaningDate(c)).substring(0, 10);
+      const execDate = getCleaningDate(c);
+      const reqDate = String(c.requestDate || c.effectiveDate || execDate).substring(0, 10);
       if (!reqDate) return false;
+      if (evalDateUpper && execDate && execDate > evalDateUpper) return false;
+      if (checkoutDate && execDate && execDate > checkoutDate) return false;
       return reqDate <= checkinDate;
     });
 
@@ -1939,6 +1944,163 @@ export async function dispatchRealtimeMaidReviewAlerts(db, {
 // ── Feature F2: Hook Listener de Avaliações para Camareiras ───────────────────
 
 /**
+ * Sanitiza o comentário de uma avaliação, removendo placeholders de mídia do WhatsApp
+ * (como "[image]", "[audio]", "[video]", "[sticker]", "[document]") para que sejam tratados
+ * como avaliação sem comentário escrito.
+ */
+export function sanitizeReviewComment(rawComment) {
+  if (typeof rawComment !== "string") return "";
+  const trimmed = rawComment.trim();
+  if (!trimmed) return "";
+  if (/^\[(?:image|audio|video|sticker|document|media|foto|imagem|[aá]udio|v[ií]deo|figurinha)\]$/i.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+/**
+ * Para avaliações mistas (que contêm crítica de limpeza + crítica de infraestrutura/ar-condicionado/Wi-Fi),
+ * extrai apenas os trechos pertinentes à camareira/governança para exibição limpa na mensagem.
+ */
+export function extractCleaningCommentForMaid(comment, triageResult = null) {
+  const clean = sanitizeReviewComment(comment);
+  if (!clean) return "";
+  if (!triageResult || triageResult.category !== "mixed") {
+    return clean;
+  }
+
+  // Divide em orações preservando sentido
+  const clauses = clean
+    .split(/(?:[.!?;]+|\n+|,\s*(?=(?:o\s+box|o\s+ar|a\s+internet|o\s+wi-?fi|o\s+check-?in|a\s+portaria|a\s+recep[cç][aã]o|por[eé]m|mas\b|contudo))|\s+\b(?:e\s+(?:o\s+ar(?:-|\s+)condicionado|a\s+internet|o\s+wi-?fi|a\s+tv|o\s+chuveiro|o\s+check-?in|a\s+portaria|o\s+barulho)|mas\b|por[eé]m\b|contudo\b|todavia\b)\s*)/i)
+    .map(c => c.trim().replace(/^[,;:\-–]+\s*|\s*[,;:\-–]+$/g, "").trim())
+    .filter(Boolean);
+
+  if (clauses.length <= 1) {
+    // Tenta corte direto antes de conjunção + item de infraestrutura conhecido
+    const stripped = clean.replace(
+      /\s*(?:,\s*)?\b(?:e|mas|por[eé]m)\s+(?:o\s+ar(?:-|\s+)?condicionado|a\s+internet|o\s+wi-?fi|a\s+tv|o\s+barulho|a\s+portaria|o\s+check-?in)\b[\s\S]*$/i,
+      ""
+    ).trim();
+    return stripped || clean;
+  }
+
+  const keptClauses = clauses.filter(cl => {
+    const hasCleaningTarget = CLEANING_CATEGORY_RULES.some(r => r.targetRegex.test(cl)) || EXPLICIT_CLEANING_DEFECT_REGEX.test(cl);
+    const hasNonCleaning = NON_CLEANING_CATEGORY_RULES.some(r => r.regex.test(cl));
+    if (hasNonCleaning && !hasCleaningTarget) return false;
+    // Remove elogio genérico introdutório ("Adorei a estadia") se houver cláusulas específicas de limpeza
+    if (/^(?:adorei|gostei\s+muito|tudo\s+[oó]timo|estadia\s+boa)\b/i.test(cl) && !hasCleaningTarget) return false;
+    return true;
+  });
+
+  if (keptClauses.length === 0) return clean;
+  const joined = keptClauses.join(", ");
+  return joined.charAt(0).toUpperCase() + joined.slice(1);
+}
+
+/**
+ * Resolve de forma consistente a reserva associada a um item de avaliação (npsResponses ou reviews).
+ * Protege contra registros legados em que npsResponses reutilizou o reservationId de uma estadia anterior
+ * do mesmo hóspede em outro flat ou em outro mês.
+ */
+export function resolveConsistentReservationForReview(db, item, fallbackDate = null) {
+  if (!db || !item) return null;
+
+  const itemFlat = String(item.flatNumber || item.flatMentioned || item.roomNumber || "").trim();
+  const resCodeOrId = item.reservationId || item.reservationCode || item.code;
+  const evalDate = String(item.respondedAt || item.date || item.sentAt || item.createdAt || fallbackDate || "").substring(0, 10);
+  const sentDate = String(item.sentAt || evalDate || "").substring(0, 10);
+  const guestPhone = cleanWhatsAppPhone(item.guestPhone || item.phone || "");
+  const guestName = String(item.guestName || item.author || "").trim().toLowerCase();
+
+  const allReservations = Array.isArray(db.reservations) ? db.reservations : [];
+
+  let directRes = null;
+  if (resCodeOrId && allReservations.length > 0) {
+    directRes = allReservations.find(r =>
+      String(r.id) === String(resCodeOrId) || String(r.code) === String(resCodeOrId)
+    ) || null;
+  }
+
+  const isDateClose = (d1, d2, maxDaysAfter = 14) => {
+    if (!d1 || !d2) return true;
+    const ms1 = new Date(`${d1.substring(0, 10)}T12:00:00Z`).getTime();
+    const ms2 = new Date(`${d2.substring(0, 10)}T12:00:00Z`).getTime();
+    if (isNaN(ms1) || isNaN(ms2)) return true;
+    const diffDays = (ms1 - ms2) / 86400000;
+    return diffDays >= -2 && diffDays <= maxDaysAfter;
+  };
+
+  if (directRes) {
+    const resFlat = String(directRes.flatNumber || directRes.roomNumber || "").trim();
+    const resOut = String(directRes.checkoutDate || directRes.checkOut || "").substring(0, 10);
+    const flatMatches = !itemFlat || !resFlat || resFlat === itemFlat;
+    const dateMatches = isDateClose(evalDate, resOut, 14);
+    if (flatMatches && dateMatches) {
+      return directRes;
+    }
+  }
+
+  // Se directRes não existe, ou tem flat divergente / data antiga, busca em db.reservations pelo flat correto
+  if (allReservations.length > 0 && itemFlat) {
+    const sameFlatCandidates = allReservations.filter(r => {
+      const rFlat = String(r.flatNumber || r.roomNumber || "").trim();
+      if (rFlat !== itemFlat) return false;
+      const cIn = String(r.checkinDate || r.checkIn || "").substring(0, 10);
+      if (evalDate && cIn && cIn > evalDate) return false;
+      return true;
+    });
+
+    if (sameFlatCandidates.length > 0) {
+      sameFlatCandidates.sort((a, b) => {
+        const aPhone = cleanWhatsAppPhone(a.guestPhone || a.phone || "");
+        const bPhone = cleanWhatsAppPhone(b.guestPhone || b.phone || "");
+        const aPhoneMatch = Boolean(guestPhone && aPhone && (aPhone.endsWith(guestPhone.slice(-8)) || guestPhone.endsWith(aPhone.slice(-8))));
+        const bPhoneMatch = Boolean(guestPhone && bPhone && (bPhone.endsWith(guestPhone.slice(-8)) || guestPhone.endsWith(bPhone.slice(-8))));
+        if (aPhoneMatch !== bPhoneMatch) return aPhoneMatch ? -1 : 1;
+
+        const aName = String(a.guestName || "").trim().toLowerCase();
+        const bName = String(b.guestName || "").trim().toLowerCase();
+        const aNameMatch = Boolean(guestName && aName && (aName.includes(guestName) || guestName.includes(aName)));
+        const bNameMatch = Boolean(guestName && bName && (bName.includes(guestName) || guestName.includes(bName)));
+        if (aNameMatch !== bNameMatch) return aNameMatch ? -1 : 1;
+
+        const aOut = String(a.checkoutDate || a.checkOut || a.checkinDate || "").substring(0, 10);
+        const bOut = String(b.checkoutDate || b.checkOut || b.checkinDate || "").substring(0, 10);
+        return bOut.localeCompare(aOut);
+      });
+
+      const best = sameFlatCandidates[0];
+      const bestOut = String(best.checkoutDate || best.checkOut || best.checkinDate || "").substring(0, 10);
+      if (isDateClose(evalDate, bestOut, 20)) {
+        return best;
+      }
+    }
+  }
+
+  // Se directRes tinha o mesmo flat (apenas data distante) e não achou outra reserva mais recente, mantém directRes
+  if (directRes) {
+    const resFlat = String(directRes.flatNumber || directRes.roomNumber || "").trim();
+    if (!itemFlat || resFlat === itemFlat) {
+      return directRes;
+    }
+  }
+
+  if (itemFlat) {
+    return {
+      id: directRes ? null : (item.reservationId || null),
+      flatNumber: itemFlat,
+      checkinDate: sentDate || evalDate,
+      checkoutDate: evalDate,
+      date: evalDate,
+      guestName: item.guestName || item.author || null
+    };
+  }
+
+  return directRes;
+}
+
+/**
  * Hook listener unificado para novas avaliações e respostas NPS.
  * Acionado de forma não-invasiva pelos pontos de ingestão (Z-API e demo-server).
  *
@@ -1976,37 +2138,19 @@ export async function handleMaidReviewHook(db, payload, { saveDatabase, sendZapi
   } = payload;
 
   const numScore = Number(score);
-  const cleanComment = typeof comment === "string" ? comment.trim() : "";
+  const cleanComment = sanitizeReviewComment(comment);
 
   // 1. Resolução da Reserva correspondente
-  let matchedReservation = reservation || null;
-  const resCodeOrId = npsItem?.reservationCode || npsItem?.reservationId || payload?.reservationId;
-  if (!matchedReservation && Array.isArray(db.reservations)) {
-    if (resCodeOrId) {
-      matchedReservation = db.reservations.find(r =>
-        String(r.code) === String(resCodeOrId) || String(r.id) === String(resCodeOrId)
-      ) || null;
-    }
-    if (!matchedReservation && (guestPhone || npsItem?.guestPhone)) {
-      const p = cleanWhatsAppPhone(guestPhone || npsItem.guestPhone);
-      matchedReservation = db.reservations.find(r => {
-        const rP = cleanWhatsAppPhone(r.guestPhone || r.phone);
-        return rP && p && (rP.endsWith(p.slice(-8)) || p.endsWith(rP.slice(-8)));
-      }) || null;
-    }
-    if (!matchedReservation && (flatNumber || npsItem?.flatNumber || review?.flatMentioned)) {
-      const fn = String(flatNumber || npsItem?.flatNumber || review?.flatMentioned);
-      const refDate = String(respondedAt || npsItem?.respondedAt || review?.date || "").substring(0, 10);
-      if (refDate) {
-        matchedReservation = db.reservations.find(r => {
-          if (String(r.flatNumber || r.roomNumber || "") !== fn) return false;
-          const cIn = String(r.checkinDate || r.checkIn || "").substring(0, 10);
-          const cOut = String(r.checkoutDate || r.checkOut || "").substring(0, 10);
-          return (cOut === refDate) || (cIn <= refDate && cOut >= refDate);
-        }) || null;
-      }
-    }
-  }
+  let matchedReservation = reservation || resolveConsistentReservationForReview(db, {
+    ...(npsItem || {}),
+    ...(review || {}),
+    reservationId: payload?.reservationId || npsItem?.reservationId,
+    reservationCode: npsItem?.reservationCode,
+    flatNumber: flatNumber || npsItem?.flatNumber || review?.flatMentioned,
+    guestPhone: guestPhone || npsItem?.guestPhone,
+    guestName: guestName || npsItem?.guestName || review?.author,
+    respondedAt: respondedAt || npsItem?.respondedAt || review?.date
+  });
 
   // 2. Atribuição determinística da última limpeza (Feature F1)
   const targetFlat = flatNumber || matchedReservation?.flatNumber || npsItem?.flatNumber || review?.flatMentioned;
@@ -2023,6 +2167,7 @@ export async function handleMaidReviewHook(db, payload, { saveDatabase, sendZapi
   // 3. Regras de Elegibilidade e Triagem por IA (Features F3 e F4)
   let forwardToMaid = false;
   let triageResult = null;
+  let displayComment = cleanComment;
 
   if (numScore === 5) {
     forwardToMaid = true;
@@ -2038,17 +2183,17 @@ export async function handleMaidReviewHook(db, payload, { saveDatabase, sendZapi
     };
   } else if (numScore <= 4) {
     if (!cleanComment) {
-      // Sub-5 sem comentário: retida de envio à camareira (aguarda Etapa 2)
-      forwardToMaid = false;
+      // Sub-5 sem comentário: elegível para o resumo diário (nota sem comentário, igual à nota 5 sem comentário)
+      forwardToMaid = true;
       triageResult = {
         isCleaningRelated: false,
         category: "sub5_sem_comentario",
-        primaryResponsibility: "hotel_gestao",
-        forwardToMaid: false,
+        primaryResponsibility: "camareira",
+        forwardToMaid: true,
         cleaningAspects: [],
         nonCleaningAspects: [],
-        explanation: "Avaliação < 5 sem comentário não é encaminhada à camareira.",
-        triageMethod: "sub5_withheld_no_comment"
+        explanation: "Avaliação < 5 sem comentário é incluída no resumo diário apenas com a nota.",
+        triageMethod: "sub5_score_only_no_comment"
       };
     } else {
       // Triagem por IA (Two-Tier)
@@ -2059,6 +2204,9 @@ export async function handleMaidReviewHook(db, payload, { saveDatabase, sendZapi
         db
       });
       forwardToMaid = Boolean(triageResult?.forwardToMaid);
+      if (forwardToMaid) {
+        displayComment = extractCleaningCommentForMaid(cleanComment, triageResult);
+      }
     }
   }
 
@@ -2067,10 +2215,10 @@ export async function handleMaidReviewHook(db, payload, { saveDatabase, sendZapi
     id: npsItem?.id || review?.id || `rev_hook_${Date.now()}`,
     source: npsItem ? "nps_whatsapp" : "review",
     score: numScore,
-    comment: cleanComment || null,
+    comment: displayComment || null,
     guestName: guestName || npsItem?.guestName || review?.author || "Hóspede",
     guestPhone: guestPhone || npsItem?.guestPhone || null,
-    flatNumber: targetFlat || null,
+    flatNumber: attribution?.cleaningRequest?.flatNumber || targetFlat || null,
     reservationId: matchedReservation?.id || null,
     reservationCode: matchedReservation?.code || null,
     cleaningDate: cleaningDate,
@@ -2099,7 +2247,7 @@ export async function handleMaidReviewHook(db, payload, { saveDatabase, sendZapi
 
   // 6. Atualização de Síntese de Opiniões & Disparo em Tempo Real (R5 / F5 / F6 / F7)
   let realtimeAlertDispatched = false;
-  if (forwardToMaid && maidId && cleanComment && triageResult?.isCleaningRelated) {
+  if (forwardToMaid && maidId && displayComment && triageResult?.isCleaningRelated) {
     // Evita duplicidade se já despachou em tempo real para este review
     if (!npsItem?.realtimeMaidAlertDispatched) {
       if (typeof updateMaidOpinionSynthesis === "function") {
@@ -2170,15 +2318,22 @@ export function formatDailyReviewsSummaryMessage({
   isRetroactive = false
 }) {
   const formattedTargetDate = formatDateBr(targetDate);
-  const total = reviews.length;
-  const sumScores = reviews.reduce((acc, r) => acc + (Number(r.score) || 0), 0);
+  const sortedReviews = [...reviews].sort((a, b) => {
+    const dA = String(a.cleaningDate || "");
+    const dB = String(b.cleaningDate || "");
+    if (dA !== dB) return dB.localeCompare(dA);
+    return String(a.flatNumber || "").localeCompare(String(b.flatNumber || ""), undefined, { numeric: true });
+  });
+
+  const total = sortedReviews.length;
+  const sumScores = sortedReviews.reduce((acc, r) => acc + (Number(r.score) || 0), 0);
   const avgScore = total > 0 ? (sumScores / total).toFixed(1) : "0.0";
 
   const header = isRetroactive
     ? `⭐ *Resumo de Avaliações de Novembro/2026 • CorpFlats* ⭐\n\nOlá, *${maidName}*!\nReunimos aqui o histórico das avaliações dos hóspedes sobre os quartos higienizados por você em Novembro:`
     : `⭐ *Resumo Diário de Avaliações • CorpFlats* ⭐\n\nOlá, *${maidName}*!\nAqui está o resumo das avaliações recebidas hoje (${formattedTargetDate}) referente aos quartos preparados por você:`;
 
-  const itemsText = reviews.map(r => {
+  const itemsText = sortedReviews.map(r => {
     const rawFlat = r.flatNumber || r.roomNumber || r.flat || "Quarto";
     const flatDisplay = String(rawFlat).trim().toLowerCase().startsWith("flat")
       ? String(rawFlat).trim()
@@ -2186,12 +2341,14 @@ export function formatDailyReviewsSummaryMessage({
     const cleanDateBr = formatDateBr(r.cleaningDate || targetDate);
     const scoreVal = Number(r.score) || 5;
     const stars = "⭐".repeat(Math.max(1, Math.min(5, Math.round(scoreVal))));
-    const commentPart = r.comment ? `\n   💬 _"${r.comment}"_` : "";
+    const cleanComment = sanitizeReviewComment(r.comment);
+    const commentPart = cleanComment ? `\n   💬 _"${cleanComment}"_` : "";
 
     return `• *${flatDisplay}*\n   📅 Limpeza: ${cleanDateBr}\n   ⭐ Nota: *${scoreVal}* ${stars}${commentPart}`;
   }).join("\n\n");
 
-  const footer = `\n\n📊 *Média do dia:* *${avgScore}* ⭐ (${total} ${total === 1 ? "avaliação" : "avaliações"})\n\nMuito obrigado pelo seu cuidado e dedicação aos nossos hóspedes! ✨`;
+  const mediaLabel = isRetroactive ? "Média do mês" : "Média do dia";
+  const footer = `\n\n📊 *${mediaLabel}:* *${avgScore}* ⭐ (${total} ${total === 1 ? "avaliação" : "avaliações"})\n\nMuito obrigado pelo seu cuidado e dedicação aos nossos hóspedes! ✨`;
 
   return `${header}\n\n${itemsText}${footer}`;
 }
@@ -2217,14 +2374,18 @@ export async function dispatchDailyReviewsSummary(db, {
 
   const effectiveDate = targetDate ? String(targetDate).substring(0, 10) : getBrasiliaNow().date;
 
-  // 1. Coleta candidatas correspondentes à data alvo
+  // 1. Coleta candidatas correspondentes à data alvo (com deduplicação entre npsResponses e reviews)
   const candidateItems = [];
   const seenIds = new Set();
+  const allNpsIds = new Set();
 
   const allNps = Array.isArray(db.npsResponses) ? db.npsResponses : [];
   for (const item of allNps) {
-    if (!item || (item.id && seenIds.has(item.id))) continue;
-    if (item.id) seenIds.add(item.id);
+    if (!item) continue;
+    if (item.id) allNpsIds.add(String(item.id));
+    if (item.score == null && item.rating == null) continue;
+    if (item.id && seenIds.has(String(item.id))) continue;
+    if (item.id) seenIds.add(String(item.id));
     const itemDate = String(item.respondedAt || item.date || item.createdAt || "").substring(0, 10);
     if (itemDate === effectiveDate) {
       candidateItems.push({ ...item, _sourceCollection: "npsResponses", _originalRef: item });
@@ -2233,8 +2394,13 @@ export async function dispatchDailyReviewsSummary(db, {
 
   const allReviews = Array.isArray(db.reviews) ? db.reviews : [];
   for (const item of allReviews) {
-    if (!item || (item.id && seenIds.has(item.id))) continue;
-    if (item.id) seenIds.add(item.id);
+    if (!item) continue;
+    if (item.score == null && item.rating == null) continue;
+    // Ignora espelhos sincronizados de db.npsResponses (fromNpsId) para evitar duplicidade
+    if (item.fromNpsId && allNpsIds.has(String(item.fromNpsId))) continue;
+    const revKey = `rev_${item.id}`;
+    if (item.id && seenIds.has(revKey)) continue;
+    if (item.id) seenIds.add(revKey);
     const itemDate = String(item.date || item.respondedAt || item.createdAt || "").substring(0, 10);
     if (itemDate === effectiveDate) {
       candidateItems.push({ ...item, _sourceCollection: "reviews", _originalRef: item });
@@ -2253,25 +2419,13 @@ export async function dispatchDailyReviewsSummary(db, {
       continue;
     }
 
-    // Resolução da Reserva correspondente
-    let reservation = null;
-    const resCodeOrId = item.reservationId || item.reservationCode || item.code;
-    if (resCodeOrId && Array.isArray(db.reservations)) {
-      reservation = db.reservations.find(r =>
-        String(r.id) === String(resCodeOrId) || String(r.code) === String(resCodeOrId)
-      ) || null;
-    }
-    if (!reservation && (item.flatNumber || item.flatMentioned)) {
-      reservation = {
-        id: item.reservationId || null,
-        flatNumber: item.flatNumber || item.flatMentioned,
-        date: item.respondedAt || item.date || effectiveDate
-      };
-    }
+    // Resolução consistente da Reserva correspondente
+    const reservation = resolveConsistentReservationForReview(db, item, effectiveDate);
+    const targetFlat = String(reservation?.flatNumber || item.flatNumber || item.flatMentioned || "").trim();
 
     // Atribuição da camareira da última limpeza (F1)
     const attribution = resolveMaidCleaningForReservation(db, reservation, {
-      flatNumber: item.flatNumber || item.flatMentioned,
+      flatNumber: targetFlat,
       evaluationDate: item.respondedAt || item.date || effectiveDate
     });
 
@@ -2282,17 +2436,21 @@ export async function dispatchDailyReviewsSummary(db, {
 
     // Triagem de elegibilidade por IA (F3 / F4)
     const score = Number(item.score ?? item.rating ?? 5);
-    const comment = String(item.comment || item.text || item.feedback || "").trim();
+    const rawComment = sanitizeReviewComment(item.comment || item.text || item.feedback || "");
+    let displayComment = rawComment;
 
     let eligible = true;
-    if (score < 5 && comment) {
+    if (score < 5 && rawComment) {
       const triage = await triageSub5Review({
         score,
-        comment,
-        flatNumber: item.flatNumber || item.flatMentioned,
+        comment: rawComment,
+        flatNumber: targetFlat,
         db
       });
       eligible = Boolean(triage?.forwardToMaid);
+      if (eligible) {
+        displayComment = extractCleaningCommentForMaid(rawComment, triage);
+      }
     }
 
     if (!eligible) {
@@ -2303,18 +2461,38 @@ export async function dispatchDailyReviewsSummary(db, {
     if (!groupedByMaid[maidId]) {
       groupedByMaid[maidId] = {
         maidUser,
-        reviews: []
+        reviews: [],
+        seenCleaningKeys: new Map()
       };
     }
 
-    groupedByMaid[maidId].reviews.push({
+    const finalFlat = String(attribution.cleaningRequest?.flatNumber || targetFlat || "Quarto").trim();
+    const finalCleaningDate = attribution.cleaningDate || effectiveDate;
+    const dedupeKey = attribution.cleaningRequest?.id
+      ? `clean_${attribution.cleaningRequest.id}`
+      : `flat_${finalFlat}_${finalCleaningDate}`;
+
+    const existingIdx = groupedByMaid[maidId].seenCleaningKeys.get(dedupeKey);
+    const entryObj = {
       id: item.id,
-      flatNumber: item.flatNumber || item.flatMentioned || reservation?.flatNumber || "Quarto",
-      cleaningDate: attribution.cleaningDate || effectiveDate,
+      flatNumber: finalFlat,
+      cleaningDate: finalCleaningDate,
       score,
-      comment,
+      comment: displayComment,
       rawItem: item._originalRef || item
-    });
+    };
+
+    if (existingIdx !== undefined) {
+      // Se já existe avaliação para a mesma limpeza, mantém a que possui comentário descritivo
+      const prevEntry = groupedByMaid[maidId].reviews[existingIdx];
+      if (!prevEntry.comment && entryObj.comment) {
+        groupedByMaid[maidId].reviews[existingIdx] = entryObj;
+      }
+      continue;
+    }
+
+    groupedByMaid[maidId].seenCleaningKeys.set(dedupeKey, groupedByMaid[maidId].reviews.length);
+    groupedByMaid[maidId].reviews.push(entryObj);
   }
 
   const sender = typeof sendZapiFn === "function" ? sendZapiFn : sendZapiMessage;
@@ -2398,12 +2576,16 @@ export async function dispatchNovemberRetroactiveReviews(db, {
   }
 
   const seenIds = new Set();
+  const allNpsIds = new Set();
   const candidateItems = [];
 
   const allNps = Array.isArray(db.npsResponses) ? db.npsResponses : [];
   for (const item of allNps) {
-    if (!item || (item.id && seenIds.has(item.id))) continue;
-    if (item.id) seenIds.add(item.id);
+    if (!item) continue;
+    if (item.id) allNpsIds.add(String(item.id));
+    if (item.score == null && item.rating == null) continue;
+    if (item.id && seenIds.has(String(item.id))) continue;
+    if (item.id) seenIds.add(String(item.id));
     const itemDate = String(item.respondedAt || item.date || item.createdAt || "").substring(0, 10);
     if (itemDate.startsWith("2026-11")) {
       candidateItems.push({ ...item, _originalRef: item });
@@ -2412,8 +2594,13 @@ export async function dispatchNovemberRetroactiveReviews(db, {
 
   const allReviews = Array.isArray(db.reviews) ? db.reviews : [];
   for (const item of allReviews) {
-    if (!item || (item.id && seenIds.has(item.id))) continue;
-    if (item.id) seenIds.add(item.id);
+    if (!item) continue;
+    if (item.score == null && item.rating == null) continue;
+    // Ignora espelhos sincronizados de db.npsResponses (fromNpsId) para evitar duplicidade
+    if (item.fromNpsId && allNpsIds.has(String(item.fromNpsId))) continue;
+    const revKey = `rev_${item.id}`;
+    if (item.id && seenIds.has(revKey)) continue;
+    if (item.id) seenIds.add(revKey);
     const itemDate = String(item.date || item.respondedAt || item.createdAt || "").substring(0, 10);
     if (itemDate.startsWith("2026-11")) {
       candidateItems.push({ ...item, _originalRef: item });
@@ -2428,41 +2615,39 @@ export async function dispatchNovemberRetroactiveReviews(db, {
       continue;
     }
 
-    let reservation = null;
-    const resCodeOrId = item.reservationId || item.reservationCode || item.code;
-    if (resCodeOrId && Array.isArray(db.reservations)) {
-      reservation = db.reservations.find(r =>
-        String(r.id) === String(resCodeOrId) || String(r.code) === String(resCodeOrId)
-      ) || null;
-    }
-    if (!reservation && (item.flatNumber || item.flatMentioned)) {
-      reservation = {
-        id: item.reservationId || null,
-        flatNumber: item.flatNumber || item.flatMentioned,
-        date: item.respondedAt || item.date
-      };
-    }
+    const reservation = resolveConsistentReservationForReview(db, item);
+    const targetFlat = String(reservation?.flatNumber || item.flatNumber || item.flatMentioned || "").trim();
 
     const attribution = resolveMaidCleaningForReservation(db, reservation, {
-      flatNumber: item.flatNumber || item.flatMentioned,
+      flatNumber: targetFlat,
       evaluationDate: item.respondedAt || item.date
     });
 
     const maidUser = attribution?.maidUser;
     if (!maidUser || !maidUser.id) continue;
 
+    const finalCleaningDate = String(attribution.cleaningDate || item.respondedAt || item.date || "").substring(0, 10);
+    // Filtra estritamente limpezas realizadas em Novembro/2026 (exclui limpezas de Outubro/2026)
+    if (!finalCleaningDate.startsWith("2026-11")) {
+      continue;
+    }
+
     const score = Number(item.score ?? item.rating ?? 5);
-    const comment = String(item.comment || item.text || item.feedback || "").trim();
+    const rawComment = sanitizeReviewComment(item.comment || item.text || item.feedback || "");
+    let displayComment = rawComment;
 
     let eligible = true;
-    if (score < 5 && comment) {
+    if (score < 5 && rawComment) {
       const triage = await triageSub5Review({
         score,
-        comment,
-        flatNumber: item.flatNumber || item.flatMentioned,
+        comment: rawComment,
+        flatNumber: targetFlat,
         db
       });
       eligible = Boolean(triage?.forwardToMaid);
+      if (eligible) {
+        displayComment = extractCleaningCommentForMaid(rawComment, triage);
+      }
     }
 
     if (!eligible) continue;
@@ -2471,18 +2656,36 @@ export async function dispatchNovemberRetroactiveReviews(db, {
     if (!groupedByMaid[maidId]) {
       groupedByMaid[maidId] = {
         maidUser,
-        reviews: []
+        reviews: [],
+        seenCleaningKeys: new Map()
       };
     }
 
-    groupedByMaid[maidId].reviews.push({
+    const finalFlat = String(attribution.cleaningRequest?.flatNumber || targetFlat || "Quarto").trim();
+    const dedupeKey = attribution.cleaningRequest?.id
+      ? `clean_${attribution.cleaningRequest.id}`
+      : `flat_${finalFlat}_${finalCleaningDate}`;
+
+    const existingIdx = groupedByMaid[maidId].seenCleaningKeys.get(dedupeKey);
+    const entryObj = {
       id: item.id,
-      flatNumber: item.flatNumber || item.flatMentioned || reservation?.flatNumber || "Quarto",
-      cleaningDate: attribution.cleaningDate || String(item.respondedAt || item.date || "").substring(0, 10),
+      flatNumber: finalFlat,
+      cleaningDate: finalCleaningDate,
       score,
-      comment,
+      comment: displayComment,
       rawItem: item._originalRef || item
-    });
+    };
+
+    if (existingIdx !== undefined) {
+      const prevEntry = groupedByMaid[maidId].reviews[existingIdx];
+      if (!prevEntry.comment && entryObj.comment) {
+        groupedByMaid[maidId].reviews[existingIdx] = entryObj;
+      }
+      continue;
+    }
+
+    groupedByMaid[maidId].seenCleaningKeys.set(dedupeKey, groupedByMaid[maidId].reviews.length);
+    groupedByMaid[maidId].reviews.push(entryObj);
   }
 
   const sender = typeof sendZapiFn === "function" ? sendZapiFn : sendZapiMessage;
