@@ -514,7 +514,14 @@ export function buildNationalDpsPayload({
     numeroDps: numeroDps
   });
 
-  const enderObj = {
+  const rawTomaStreet = String(tomador.street || tomador.logradouro || tomador.endereco || "").trim();
+  const rawTomaCep = cleanCep(tomador.cep || "");
+  const isGenericTomaPelinca = /^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(rawTomaStreet) && (!tomador.numero || String(tomador.numero).trim() === "100");
+  const hasExplicitTomadorAddress = Boolean(
+    (rawTomaStreet && !isGenericTomaPelinca) ||
+    (rawTomaCep && rawTomaCep !== "28035000")
+  );
+  const enderObj = hasExplicitTomadorAddress ? {
     endNac: {
       cMun: onlyDigits(normAddr.ibge || rule.municipioIncidencia).padStart(7, "0").substring(0, 7) || "3301009",
       CEP: tomadorCepSanitizado
@@ -525,7 +532,7 @@ export function buildNationalDpsPayload({
     xBairro: normAddr.bairro,
     xMun: normAddr.cidade,
     UF: normAddr.uf
-  };
+  } : undefined;
 
   const dpsPayload = {
     versao: "1.01",
@@ -899,9 +906,17 @@ export async function processNationalInvoiceEmission({
     endNac.CEP = cepToma;
   }
 
-  const buildTomaXml = (cMunVal, cepVal) => {
-    let inner = `${tomaTag}<xNome>${escXml(dps.toma?.xNome || "Miller Pessanha")}</xNome>`;
-    inner += `<end><endNac><cMun>${cMunVal}</cMun><CEP>${cepVal}</CEP></endNac><xLgr>${escXml(xLgrToma)}</xLgr><nro>${escXml(nroToma)}</nro>${xCplToma ? `<xCpl>${escXml(xCplToma)}</xCpl>` : ""}<xBairro>${escXml(xBairroToma)}</xBairro></end>`;
+  const hasExplicitEnder = Boolean(
+    ender && (
+      (ender.xLgr && !/^(av\.?\s*pelinca|avenida\s*pelinca)$/i.test(String(ender.xLgr).trim())) ||
+      (endNac.CEP && cleanCep(endNac.CEP) !== "28035000")
+    )
+  );
+  const buildTomaXml = (cMunVal, cepVal, includeEnd = hasExplicitEnder || isCnpj) => {
+    let inner = `${tomaTag}<xNome>${escXml(dps.toma?.xNome || "Hóspede")}</xNome>`;
+    if (includeEnd) {
+      inner += `<end><endNac><cMun>${cMunVal}</cMun><CEP>${cepVal}</CEP></endNac><xLgr>${escXml(xLgrToma)}</xLgr><nro>${escXml(nroToma)}</nro>${xCplToma ? `<xCpl>${escXml(xCplToma)}</xCpl>` : ""}<xBairro>${escXml(xBairroToma)}</xBairro></end>`;
+    }
     if (foneToma && foneToma.length >= 6 && foneToma.length <= 20) {
       inner += `<fone>${foneToma}</fone>`;
     }
@@ -1004,6 +1019,38 @@ export async function processNationalInvoiceEmission({
           includeFinNFSe: false
         });
         dpsXml = signOrWrapDps(retryInfDps, "1.00", currentIdDps);
+        sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
+      }
+
+      // Se foi omitido <end> (PF sem endereço) e a SEFIN exigir <end> no schema/regra municipal, reenvia com <end> técnico
+      const missingEndErrors = sefinResult?.response?.erros || [];
+      if (
+        !hasExplicitEnder &&
+        !isCnpj &&
+        Array.isArray(missingEndErrors) &&
+        missingEndErrors.length > 0 &&
+        missingEndErrors.some(e => /end|endere[cç]o|xLgr|CEP|cMun|E02/i.test(`${e.Codigo || ""} ${e.Descricao || ""} ${e.Complemento || ""}`))
+      ) {
+        tomaXml = buildTomaXml(cMunToma, cepToma, true);
+        currentNDps = String(Math.floor(Date.now() / 1000) % 900000 + 100000);
+        currentIdDps = `DPS${cLocEmi}${tpInsc}${cnpj}${seriePad}${currentNDps.padStart(15, "0")}`;
+        const retryWithEndInfDps = buildCanonicalInfDpsXml({
+          idDPS: currentIdDps,
+          tpAmb,
+          dhStr,
+          serie,
+          nDPS: currentNDps,
+          dComp,
+          cLocEmi,
+          cnpj,
+          includeIm: false,
+          tomaXml,
+          xDescServ,
+          valorNum,
+          pAliq,
+          includeFinNFSe: false
+        });
+        dpsXml = signOrWrapDps(retryWithEndInfDps, "1.00", currentIdDps);
         sefinResult = await transmitDpsToNationalAdn(dpsXml, envMode);
       }
 
@@ -1458,13 +1505,18 @@ export function renderDanfseHtml(invoice = {}) {
       ? foneDigits.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3")
       : foneDigits || "-";
 
+  const rawInvEnd = String(invoice.tomadorStreet || invoice.tomadorLogradouro || invoice.tomadorEndereco || "").trim();
+  const rawInvCep = cleanCep(invoice.tomadorCep || "");
+  const isGenericInvPelinca = /^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(rawInvEnd) && (!invoice.tomadorNumero || String(invoice.tomadorNumero).trim() === "100");
+  const hasRealInvAddr = Boolean((rawInvEnd && !isGenericInvPelinca) || (rawInvCep && rawInvCep !== "28035000"));
   const addr = normalizeTomadorAddressFields(invoice);
-  const cepFmt = addr.cep.replace(/^(\d{2})(\d{3})(\d{3})$/, "$1.$2-$3");
-  const ibgeFmt = addr.ibge.replace(/^(\d{2})(\d{5})$/, "$1.$2");
+  const cepFmt = hasRealInvAddr ? addr.cep.replace(/^(\d{2})(\d{3})(\d{3})$/, "$1.$2-$3") : "-";
+  const ibgeFmt = hasRealInvAddr ? addr.ibge.replace(/^(\d{2})(\d{5})$/, "$1.$2") : "-";
+  const munUfFmt = hasRealInvAddr ? `${addr.cidade} / ${addr.uf}` : "-";
   const endParts = [addr.logradouro, addr.numero];
   if (addr.complemento) endParts.push(addr.complemento);
   if (addr.bairro) endParts.push(addr.bairro);
-  const endFormatado = endParts.filter(Boolean).join(", ");
+  const endFormatado = hasRealInvAddr ? endParts.filter(Boolean).join(", ") : "-";
 
   const emiDate = invoice.dataEmissao ? new Date(invoice.dataEmissao) : new Date();
   const dataFormatada = emiDate.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }).replace(",", "");
@@ -1589,7 +1641,7 @@ export function renderDanfseHtml(invoice = {}) {
           </tr>
           <tr>
             <td colspan="2"><div class="lbl">Nome / Nome Empresarial</div><div class="val">${toTitleCase(invoice.tomadorNome || "Hóspede")}</div></td>
-            <td><div class="lbl">Município / Sigla UF</div><div class="val">${addr.cidade} / ${addr.uf}</div></td>
+            <td><div class="lbl">Município / Sigla UF</div><div class="val">${munUfFmt}</div></td>
             <td><div class="lbl">Código IBGE / CEP</div><div class="val">${ibgeFmt} / ${cepFmt}</div></td>
           </tr>
           <tr>
@@ -1736,13 +1788,18 @@ export async function generateNfsePdfBuffer(invoice = {}) {
       ? foneDigits.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3")
       : foneDigits || "-";
 
+  const rawPdfEnd = String(invoice.tomadorStreet || invoice.tomadorLogradouro || invoice.tomadorEndereco || "").trim();
+  const rawPdfCep = cleanCep(invoice.tomadorCep || "");
+  const isGenericPdfPelinca = /^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(rawPdfEnd) && (!invoice.tomadorNumero || String(invoice.tomadorNumero).trim() === "100");
+  const hasRealPdfAddr = Boolean((rawPdfEnd && !isGenericPdfPelinca) || (rawPdfCep && rawPdfCep !== "28035000"));
   const addr = normalizeTomadorAddressFields(invoice);
-  const cepFormatado = addr.cep.replace(/^(\d{2})(\d{3})(\d{3})$/, "$1.$2-$3");
-  const ibgeFormatado = addr.ibge.replace(/^(\d{2})(\d{5})$/, "$1.$2");
+  const cepFormatado = hasRealPdfAddr ? addr.cep.replace(/^(\d{2})(\d{3})(\d{3})$/, "$1.$2-$3") : "-";
+  const ibgeFormatado = hasRealPdfAddr ? addr.ibge.replace(/^(\d{2})(\d{5})$/, "$1.$2") : "-";
+  const munUfPdf = hasRealPdfAddr ? `${addr.cidade} / ${addr.uf}` : "-";
   const endParts = [addr.logradouro, addr.numero];
   if (addr.complemento) endParts.push(addr.complemento);
   if (addr.bairro) endParts.push(addr.bairro);
-  const endTomador = endParts.filter(Boolean).join(", ");
+  const endTomador = hasRealPdfAddr ? endParts.filter(Boolean).join(", ") : "-";
 
   // URL oficial exata do QR Code do DANFSe v2.0 (Portal Nacional NFS-e)
   const qrPortalUrl = `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${chaveAcesso}`;
@@ -1902,7 +1959,7 @@ export async function generateNfsePdfBuffer(invoice = {}) {
       y += 19.32;
 
       field(X0, y, "Nome / Nome Empresarial", toTitleCase(invoice.tomadorNome || "Hóspede"), { width: W_COL * 2 });
-      field(X2, y, "Município / Sigla UF", `${addr.cidade} / ${addr.uf}`);
+      field(X2, y, "Município / Sigla UF", munUfPdf);
       field(X3, y, "Código IBGE / CEP", `${ibgeFormatado} / ${cepFormatado}`);
       y += 19.07;
 

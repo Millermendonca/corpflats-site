@@ -54126,22 +54126,28 @@ export async function executeNfseEmissionInternal(payload) {
     tomadorCodigoMunicipio: resolvedCnpjAddr ? (resolvedCnpjAddr.codigoMunicipio || "3550308") : (useCheckinAddr ? resolvedCheckin.ibge : (rawPayCodMun || "3301009"))
   });
 
-  const endLogradouro = normPayAddr.logradouro;
-  const endNumero = normPayAddr.numero;
+  const hasRealPayloadOrCheckinAddr = Boolean(
+    resolvedCnpjAddr ||
+    useCheckinAddr ||
+    (rawPayLogradouro && !isGenericFallbackAddress(rawPayLogradouro, rawPayCep)) ||
+    (rawPayCep && cleanCep(rawPayCep) !== "28035000")
+  );
+  const endLogradouro = hasRealPayloadOrCheckinAddr ? normPayAddr.logradouro : "";
+  const endNumero = hasRealPayloadOrCheckinAddr ? normPayAddr.numero : "";
   const endComplemento = normPayAddr.complemento;
-  const endBairro = normPayAddr.bairro;
-  const resolvedGeoPay = await resolveValidCepAndIbge({
+  const endBairro = hasRealPayloadOrCheckinAddr ? normPayAddr.bairro : "";
+  const resolvedGeoPay = hasRealPayloadOrCheckinAddr ? await resolveValidCepAndIbge({
     cep: normPayAddr.cep,
     logradouro: endLogradouro,
     bairro: endBairro,
     cidade: normPayAddr.cidade,
     uf: normPayAddr.uf,
     codigoMunicipio: normPayAddr.ibge
-  });
-  const endCep = resolvedGeoPay.cep || normPayAddr.cep || "28035000";
-  const endCidade = resolvedGeoPay.cidade || normPayAddr.cidade || "Campos dos Goytacazes";
-  const endUf = resolvedGeoPay.uf || normPayAddr.uf || "RJ";
-  const endCodMun = resolvedGeoPay.codigoMunicipio || normPayAddr.ibge || "3301009";
+  }) : { cep: "", cidade: "", uf: "", codigoMunicipio: "" };
+  const endCep = hasRealPayloadOrCheckinAddr ? (resolvedGeoPay.cep || normPayAddr.cep || "") : "";
+  const endCidade = hasRealPayloadOrCheckinAddr ? (resolvedGeoPay.cidade || normPayAddr.cidade || "") : "";
+  const endUf = hasRealPayloadOrCheckinAddr ? (resolvedGeoPay.uf || normPayAddr.uf || "") : "";
+  const endCodMun = hasRealPayloadOrCheckinAddr ? (resolvedGeoPay.codigoMunicipio || normPayAddr.ibge || "") : "";
   const cleanEmail = (payload.tomadorEmail || resolvedCheckin?.email || "").trim().toLowerCase();
   const rawTomadorTel = cleanPhone(payload.tomadorTelefone || resolvedCheckin?.telefone || "");
   const guestWhatsappPhone = cleanPhone(
@@ -54323,11 +54329,11 @@ export async function executeNfseEmissionInternal(payload) {
         nome: toTitleCase(tomadorNome),
         telefone: cleanTel,
         email: resolvedNfDeliveryEmails[0] || (resolvedNfHideFromGuest ? "" : cleanEmail),
-        logradouro: endLogradouro || "Av. Pelinca",
-        numero: endNumero || "100",
+        logradouro: endLogradouro,
+        numero: endNumero,
         complemento: endComplemento,
-        bairro: endBairro || "Pelinca",
-        cidade: endCidade || "Campos dos Goytacazes",
+        bairro: endBairro,
+        cidade: endCidade,
         cep: endCep,
         uf: endUf,
         codigoMunicipio: endCodMun
