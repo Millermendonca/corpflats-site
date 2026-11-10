@@ -5724,9 +5724,10 @@ export default function FiscalInvoicesPage() {
                       {(() => {
                         const todayIso = new Date().toISOString().slice(0, 10)
                         const list = boletos.filter(b => {
-                          const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < todayIso
-                          if (boletoStatusFilter === "em_aberto" && b.status !== "em_aberto") return false
-                          if (boletoStatusFilter === "vencido" && !isOverdue && b.status !== "vencido") return false
+                          const isOverdue = b.status === "vencido" || ((b.status === "aberto" || b.status === "em_aberto") && Boolean(b.dueDate && b.dueDate < todayIso))
+                          const isOpen = (b.status === "aberto" || b.status === "em_aberto") && !isOverdue
+                          if (boletoStatusFilter === "em_aberto" && !isOpen) return false
+                          if (boletoStatusFilter === "vencido" && !isOverdue) return false
                           if (boletoStatusFilter === "pago" && b.status !== "pago") return false
                           if (boletoStatusFilter === "cancelado" && b.status !== "cancelado") return false
                           if (boletoSearch.trim()) {
@@ -5748,9 +5749,10 @@ export default function FiscalInvoicesPage() {
                         }
 
                         return list.map(b => {
-                          const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < todayIso
-                          const isDueToday = b.status === "em_aberto" && b.dueDate === todayIso
-                          const dr = b.billingDeliveryRecipients || {}
+                          const isOverdue = b.status === "vencido" || ((b.status === "aberto" || b.status === "em_aberto") && Boolean(b.dueDate && b.dueDate < todayIso))
+                          const isDueToday = (b.status === "aberto" || b.status === "em_aberto") && b.dueDate === todayIso
+                          const isUnpaid = b.status !== "pago" && b.status !== "cancelado"
+                          const dr = b.billingDeliveryRecipients || b.billingRecipients || {}
                           return (
                             <tr key={b.id} className="hover:bg-muted/20">
                               <td className="p-3">
@@ -5797,7 +5799,7 @@ export default function FiscalInvoicesPage() {
                                   R$ {Number(b.amount || 0).toFixed(2)}
                                 </div>
                                 <div className="text-[10px] text-muted-foreground">
-                                  Multa {b.multaPct ?? 2}% • Juros {b.jurosMonthlyPct ?? 1}% a.m.
+                                  Multa {b.multaPct ?? b.finePct ?? 2}% • Juros {b.jurosMonthlyPct ?? b.interestPct ?? 1}% a.m.
                                 </div>
                               </td>
 
@@ -5894,7 +5896,7 @@ export default function FiscalInvoicesPage() {
                                     <span>Enviar</span>
                                   </Button>
 
-                                  {b.status === "em_aberto" && (
+                                  {isUnpaid && (
                                     <>
                                       <Button
                                         size="sm"

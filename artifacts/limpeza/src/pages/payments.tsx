@@ -1139,9 +1139,10 @@ export default function Payments() {
                     {(() => {
                       const todayIso = new Date().toISOString().slice(0, 10)
                       const list = (paymentsData?.boletos || []).filter((b: any) => {
-                        const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < todayIso
-                        if (boletoStatusFilter === "em_aberto" && b.status !== "em_aberto") return false
-                        if (boletoStatusFilter === "vencido" && !isOverdue && b.status !== "vencido") return false
+                        const isOverdue = b.status === "vencido" || ((b.status === "aberto" || b.status === "em_aberto") && Boolean(b.dueDate && b.dueDate < todayIso))
+                        const isOpen = (b.status === "aberto" || b.status === "em_aberto") && !isOverdue
+                        if (boletoStatusFilter === "em_aberto" && !isOpen) return false
+                        if (boletoStatusFilter === "vencido" && !isOverdue) return false
                         if (boletoStatusFilter === "pago" && b.status !== "pago") return false
                         if (boletoStatusFilter === "cancelado" && b.status !== "cancelado") return false
                         return true
@@ -1158,7 +1159,7 @@ export default function Payments() {
                       }
 
                       return list.map((b: any) => {
-                        const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < todayIso
+                        const isOverdue = b.status === "vencido" || ((b.status === "aberto" || b.status === "em_aberto") && Boolean(b.dueDate && b.dueDate < todayIso))
                         return (
                           <tr key={b.id} className="hover:bg-muted/30">
                             <td className="p-3">

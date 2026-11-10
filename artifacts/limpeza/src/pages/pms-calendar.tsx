@@ -4145,7 +4145,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormBoletoTermDays(Number(resItem.boletoTermDays || crmEntity.defaultBoletoTermDays || 15))
     setFormBoletoCustomDueDate(resItem.boletoCustomDueDate || "")
     setFormBoletoConsumptionMode(
-      resItem.boletoConsumptionMode === "separate_boletos" || crmEntity.defaultBoletoConsumptionMode === "separate_boletos"
+      resItem.boletoConsumptionMode === "separate_boletos" ||
+      resItem.boletoConsumptionMode === "separate" ||
+      crmEntity.defaultBoletoConsumptionMode === "separate_boletos" ||
+      crmEntity.defaultBoletoConsumptionMode === "separate"
         ? "separate_boletos"
         : "single_boleto"
     )
@@ -4324,7 +4327,9 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         if (comp) setFormCompanyName(comp.tradeName || comp.corporateName)
       }
       if (g.defaultBoletoTermDays) setFormBoletoTermDays(Number(g.defaultBoletoTermDays))
-      if (g.defaultBoletoConsumptionMode === "separate_boletos") setFormBoletoConsumptionMode("separate_boletos")
+      if (g.defaultBoletoConsumptionMode === "separate_boletos" || g.defaultBoletoConsumptionMode === "separate") {
+        setFormBoletoConsumptionMode("separate_boletos")
+      }
       if (g.financialResponsible?.name && !formFinRespName) {
         setFormFinRespName(g.financialResponsible.name || "")
         setFormFinRespEmail(g.financialResponsible.email || "")
@@ -9530,7 +9535,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               setFormBoletoTermDays(parsedDays);
                             }
                             if (c.defaultBoletoConsumptionMode) {
-                              setFormBoletoConsumptionMode(c.defaultBoletoConsumptionMode === "separate_boletos" ? "separate_boletos" : "single_boleto");
+                              setFormBoletoConsumptionMode(
+                                c.defaultBoletoConsumptionMode === "separate_boletos" || c.defaultBoletoConsumptionMode === "separate"
+                                  ? "separate_boletos"
+                                  : "single_boleto"
+                              );
                             }
                             if (c.financialResponsible?.name) {
                               setFormFinRespName(c.financialResponsible.name || "");

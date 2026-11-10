@@ -152,42 +152,28 @@ console.log('🧪 Iniciando Teste Pontual: Boleto Faturado Banco Inter & NFS-e C
 
 // 4, 5 & 6. Teste End-to-End HTTP (Rotas /api/boletos/*, /api/companies, /api/nfse/pending-reservations, /api/finance/payments e Visão 360º CRM)
 {
-  const testPort = 3987;
+  const testPort = 3989;
   let baseUrl = null;
-  let spawnedServer = null;
+  const spawnedServer = spawn(process.execPath, ['artifacts/api-server/demo-server.mjs'], {
+    env: {
+      ...process.env,
+      PORT: String(testPort),
+      WHATSAPP_SIMULATION_MODE: 'true',
+      DISABLE_BACKGROUND_CRONS: 'true',
+    },
+    stdio: 'ignore',
+  });
 
-  for (const p of [3001, 5000]) {
+  const targetUrl = `http://127.0.0.1:${testPort}`;
+  for (let attempt = 0; attempt < 25; attempt++) {
+    await new Promise((r) => setTimeout(r, 400));
     try {
-      const r = await fetch(`http://127.0.0.1:${p}/api/boletos`, { signal: AbortSignal.timeout(1200) });
-      if (r.ok) {
-        baseUrl = `http://127.0.0.1:${p}`;
+      const res = await fetch(`${targetUrl}/api/boletos`, { signal: AbortSignal.timeout(1000) });
+      if (res.ok) {
+        baseUrl = targetUrl;
         break;
       }
     } catch {}
-  }
-
-  if (!baseUrl) {
-    spawnedServer = spawn(process.execPath, ['artifacts/api-server/demo-server.mjs'], {
-      env: {
-        ...process.env,
-        PORT: String(testPort),
-        WHATSAPP_SIMULATION_MODE: 'true',
-        DISABLE_BACKGROUND_CRONS: 'true',
-      },
-      stdio: 'ignore',
-    });
-
-    const targetUrl = `http://127.0.0.1:${testPort}`;
-    for (let attempt = 0; attempt < 25; attempt++) {
-      await new Promise((r) => setTimeout(r, 400));
-      try {
-        const res = await fetch(`${targetUrl}/api/boletos`, { signal: AbortSignal.timeout(1000) });
-        if (res.ok) {
-          baseUrl = targetUrl;
-          break;
-        }
-      } catch {}
-    }
   }
 
   try {
@@ -272,19 +258,26 @@ console.log('🧪 Iniciando Teste Pontual: Boleto Faturado Banco Inter & NFS-e C
     const hospBoleto = emitData.boletos.find((b) => b.billingScope === 'accommodation_only');
     const consBoleto = emitData.boletos.find((b) => b.billingScope === 'consumption_only');
     assert.ok(hospBoleto && consBoleto, 'Deve conter 1 boleto de hospedagem e 1 de consumo');
+    assert.equal(hospBoleto.boletoKind, 'accommodation', 'Deve expor boletoKind=accommodation para o frontend');
+    assert.equal(consBoleto.boletoKind, 'consumption', 'Deve expor boletoKind=consumption para o frontend');
     assert.equal(hospBoleto.amount, 850.0);
     assert.equal(hospBoleto.dueDate, '2026-12-08');
     assert.equal(consBoleto.amount, 145.5);
     assert.equal(consBoleto.dueDate, '2026-12-01');
     assert.equal(consBoleto.payer.nome, 'Hóspede Pagador Consumo');
+    assert.equal(consBoleto.payerDoc, '11122233344', 'Deve expor payerDoc compatível com a tabela do frontend');
 
-    // C) Editar o boleto de hospedagem (sincronizado com Inter)
+    // C) Editar o boleto de hospedagem usando os aliases do frontend (multaPct, jurosMonthlyPct, payerDoc, customDueDate)
     const patchRes = await fetch(`${baseUrl}/api/boletos/${hospBoleto.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        dueDate: '2026-12-20',
+        customDueDate: '2026-12-20',
         amount: 890.0,
+        multaPct: 3.5,
+        jurosMonthlyPct: 1.5,
+        payerName: 'Empresa Teste Boleto Inter LTDA Editada',
+        payerDoc: '47964813000165',
         notes: 'Prorrogado conforme acordo comercial',
       }),
     });
@@ -292,11 +285,19 @@ console.log('🧪 Iniciando Teste Pontual: Boleto Faturado Banco Inter & NFS-e C
     const patchedBoleto = (await patchRes.json()).boleto;
     assert.equal(patchedBoleto.dueDate, '2026-12-20');
     assert.equal(patchedBoleto.amount, 890.0);
+    assert.equal(patchedBoleto.multaPct, 3.5);
+    assert.equal(patchedBoleto.jurosMonthlyPct, 1.5);
+    assert.equal(patchedBoleto.payerName, 'Empresa Teste Boleto Inter LTDA Editada');
 
-    // D) Baixar PDF via rota HTTP
+    // D) Baixar PDF via rota HTTP e filtrar por status=em_aberto
     const pdfRes = await fetch(`${baseUrl}/api/boletos/${hospBoleto.id}/pdf`);
     assert.equal(pdfRes.status, 200, 'GET /api/boletos/:id/pdf deve retornar PDF 200');
     assert.ok(pdfRes.headers.get('content-type')?.includes('application/pdf'));
+
+    const openListRes = await fetch(`${baseUrl}/api/boletos?status=em_aberto`);
+    assert.equal(openListRes.status, 200);
+    const openListData = await openListRes.json();
+    assert.ok(openListData.boletos.some((b) => b.id === hospBoleto.id), 'Filtro status=em_aberto deve retornar boletos abertos');
 
     // E) Verificar separação estrita de Hospedagem vs Consumo nas Reservas Pendentes de NFS-e
     const pendingNfseRes = await fetch(`${baseUrl}/api/nfse/pending-reservations`);
@@ -309,11 +310,12 @@ console.log('🧪 Iniciando Teste Pontual: Boleto Faturado Banco Inter & NFS-e C
       assert.equal(typeof item.consumptionAmount, 'number', 'Reserva pendente deve expor consumptionAmount separado');
     }
 
-    // F) Verificar Visão 360º da Empresa no CRM, Painel Financeiro e Processamento de Lembretes
+    // F) Verificar Visão 360º da Empresa no CRM (incluindo boletosSummary), Painel Financeiro e Processamento de Lembretes
     const crm360Res = await fetch(`${baseUrl}/api/companies/${createdCompany.id}`);
     assert.equal(crm360Res.status, 200, 'GET /api/companies/:id deve retornar visão 360º com boletos');
     const crm360Data = await crm360Res.json();
     assert.ok(Array.isArray(crm360Data.boletos) && crm360Data.boletos.length >= 2, 'Visão 360º da empresa deve listar os boletos vinculados');
+    assert.ok(crm360Data.boletosSummary && crm360Data.boletosSummary.openCount >= 2, 'Visão 360º da empresa deve conter boletosSummary');
 
     const finRes = await fetch(`${baseUrl}/api/finance/payments`);
     assert.equal(finRes.status, 200);
@@ -327,8 +329,76 @@ console.log('🧪 Iniciando Teste Pontual: Boleto Faturado Banco Inter & NFS-e C
       body: JSON.stringify({ force: false }),
     });
     assert.equal(remRes.status, 200, 'POST /api/boletos/process-reminders deve responder 200');
+    const remData = await remRes.json();
+    assert.equal(typeof remData.processedCount, 'number', 'process-reminders deve expor processedCount para o frontend');
 
-    // G) Quitar boleto de consumo e Cancelar boleto de hospedagem de teste
+    // G) Testar Check-out Automático de Reserva Faturada com Adiantamento Parcial (paidAmount > 0) + Consumo em 2 Boletos Separados
+    const createResResp = await fetch(`${baseUrl}/api/pms/reservations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        flatId: 1,
+        flatNumber: '512',
+        guestName: 'Executivo Check-out Faturado',
+        guestDocument: '52998224725',
+        guestEmail: 'executivo@testeinter.com.br',
+        guestPhone: '22999990005',
+        companyId: createdCompany.id,
+        companyName: createdCompany.corporateName,
+        companyCnpj: createdCompany.cnpj,
+        checkinDate: '2029-05-10',
+        checkoutDate: '2029-05-13',
+        dailyRate: 300,
+        totalAmount: 900,
+        paidAmount: 300, // Sinal / adiantamento já pago de R$ 300
+        paymentMethod: 'boleto_faturado',
+        isFaturadoBoleto: true,
+        boletoTermDays: 21,
+        boletoConsumptionMode: 'separate_boletos',
+        consumptionSamePayerAndDue: false,
+        consumptionPayerType: 'guest',
+        consumptionTermDays: 7,
+        autoEmitBoletoOnCheckout: true,
+        charges: [
+          { id: 'chg_mb_1', type: 'minibar', title: 'Consumo Frigobar Anserve', amount: 140.0 },
+        ],
+        financialResponsible: createdCompany.financialResponsible,
+        billingDeliveryRecipients: {
+          guest: false,
+          requester: true,
+          company: true,
+          financialResponsible: true,
+          sendEmail: false,
+          sendWhatsApp: false,
+        },
+      }),
+    });
+    assert.equal(createResResp.status, 201, 'Deve criar reserva faturada com sucesso');
+    const createdRes = await createResResp.json();
+    assert.equal(createdRes.isFaturadoBoleto, true);
+    assert.equal(createdRes.boletoConsumptionMode, 'separate', 'Deve normalizar separate_boletos para separate');
+
+    const checkoutResp = await fetch(`${baseUrl}/api/pms/reservations/${createdRes.id}/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(checkoutResp.status, 200, 'POST /api/pms/reservations/:id/checkout deve concluir com 200');
+    const checkoutData = await checkoutResp.json();
+    assert.ok(checkoutData.faturadoPackage, 'Check-out deve retornar faturadoPackage');
+    assert.ok(checkoutData.faturadoPackage.invoice, 'Check-out deve emitir NFS-e automaticamente');
+    assert.equal(
+      checkoutData.faturadoPackage.invoice.valorServico,
+      900,
+      'NFS-e no check-out deve ter SEMPRE o valor cheio da hospedagem pura (R$ 900), sem consumo e sem descontar adiantamento financeiro'
+    );
+    assert.equal(checkoutData.faturadoPackage.boletos.length, 2, 'Check-out deve emitir 2 boletos separados');
+    const coHospBol = checkoutData.faturadoPackage.boletos.find((b) => b.billingScope === 'accommodation_only');
+    const coConsBol = checkoutData.faturadoPackage.boletos.find((b) => b.billingScope === 'consumption_only');
+    assert.equal(coHospBol.amount, 600, 'Boleto de hospedagem deve abater o sinal prévio de R$ 300 (900 - 300 = 600)');
+    assert.equal(coConsBol.amount, 140, 'Boleto de consumo deve cobrar os R$ 140 de frigobar separadamente');
+
+    // H) Quitar e Cancelar boletos de teste e limpar dados criados
     const paidRes = await fetch(`${baseUrl}/api/boletos/${consBoleto.id}/mark-paid`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -340,17 +410,19 @@ console.log('🧪 Iniciando Teste Pontual: Boleto Faturado Banco Inter & NFS-e C
     const cancelRes = await fetch(`${baseUrl}/api/boletos/${hospBoleto.id}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason: 'TESTE_AUTOMATIZADO' }),
+      body: JSON.stringify({ motivoCancelamento: 'TESTE_AUTOMATIZADO' }),
     });
     assert.equal(cancelRes.status, 200);
     assert.equal((await cancelRes.json()).boleto.status, 'cancelado');
 
-    // Limpar empresa temporária de teste
+    await fetch(`${baseUrl}/api/boletos/${coHospBol.id}`, { method: 'DELETE' });
+    await fetch(`${baseUrl}/api/boletos/${coConsBol.id}`, { method: 'DELETE' });
+    await fetch(`${baseUrl}/api/pms/reservations/${createdRes.id}`, { method: 'DELETE' });
     await fetch(`${baseUrl}/api/companies/${createdCompany.id}`, { method: 'DELETE' });
 
-    console.log('  ✅ [4/6] Rotas HTTP (/api/boletos/emit, PATCH, PDF, /api/finance/payments) validadas end-to-end.');
-    console.log('  ✅ [5/6] Regra NFS-e Só Hospedagem (accommodationAmount vs consumptionAmount) + Lembretes validados.');
-    console.log('  ✅ [6/6] Visão 360º CRM (Empresa/Hóspede/Agência) + 2 Boletos Separados + Quitação/Baixa validados.');
+    console.log('  ✅ [4/6] Rotas HTTP (/api/boletos/emit, PATCH, PDF, /api/finance/payments) e aliases do frontend validados.');
+    console.log('  ✅ [5/6] Check-out Faturado Automático c/ Sinal Parcial + NFS-e Só Hospedagem + 2 Boletos Separados validados.');
+    console.log('  ✅ [6/6] Visão 360º CRM (boletosSummary) + Lembretes + Quitação/Baixa validados.');
   } finally {
     if (spawnedServer) {
       spawnedServer.kill('SIGTERM');

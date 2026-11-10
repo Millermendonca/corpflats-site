@@ -2964,7 +2964,7 @@ export default function CrmGuests() {
                   ) : (
                     <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
                       {activeGuest.boletos.map((b: any) => {
-                        const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)
+                        const isOverdue = b.status === "vencido" || ((b.status === "aberto" || b.status === "em_aberto") && Boolean(b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)))
                         return (
                           <div key={b.id} className="p-2.5 rounded-xl bg-muted/40 border border-border flex items-center justify-between gap-2 flex-wrap text-xs">
                             <div>
@@ -4125,7 +4125,7 @@ export default function CrmGuests() {
                   ) : (
                     <div className="space-y-1.5">
                       {(activeAgencyDetail.boletos || []).map((b: any) => {
-                        const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)
+                        const isOverdue = b.status === "vencido" || ((b.status === "aberto" || b.status === "em_aberto") && Boolean(b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)))
                         return (
                           <div key={b.id} className="p-2.5 rounded-xl bg-muted/20 border border-border flex items-center justify-between text-xs">
                             <div>
@@ -4258,7 +4258,7 @@ export default function CrmGuests() {
                   ) : (
                     <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
                       {(activeCompanyDetail.boletos || []).map((b: any) => {
-                        const isOverdue = b.status === "em_aberto" && b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)
+                        const isOverdue = b.status === "vencido" || ((b.status === "aberto" || b.status === "em_aberto") && Boolean(b.dueDate && b.dueDate < new Date().toISOString().slice(0, 10)))
                         return (
                           <div key={b.id} className="p-2.5 rounded-xl bg-muted/30 border border-border flex items-center justify-between gap-2 flex-wrap">
                             <div>
