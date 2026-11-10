@@ -10759,20 +10759,19 @@ export function ensureB2bSeedData(targetDb = db) {
         rChanged = true;
       }
     }
-    // Cura qualquer confirmedFiscalData / invoiceDetails de tomador PJ que esteja poluído com o fallback "Av. Pelinca"
+    // Cura qualquer confirmedFiscalData / invoiceDetails de tomador PJ ou PF que esteja poluído com o fallback "Av. Pelinca"
     for (const overlayKey of ["confirmedFiscalData", "invoiceDetails"]) {
       const ov = r[overlayKey];
       if (!ov) continue;
       const ovDoc = String(ov.tomadorCpfCnpj || ov.doc || "").replace(/\D/g, "");
-      if (
-        (ovDoc.length === 14 || ov.tomadorTipo === "PJ") &&
-        isGenericPelincaCompanyAddress({
-          address: ov.tomadorEndereco,
-          cep: ov.tomadorCep,
-          neighborhood: ov.tomadorBairro,
-          city: ov.tomadorCidade
-        })
-      ) {
+      const isGenericOv = isGenericPelincaCompanyAddress({
+        address: ov.tomadorEndereco,
+        number: ov.tomadorNumero,
+        cep: ov.tomadorCep,
+        neighborhood: ov.tomadorBairro,
+        city: ov.tomadorCidade
+      });
+      if ((ovDoc.length === 14 || ov.tomadorTipo === "PJ") && isGenericOv) {
         const entityMatch =
           (compMatch && (!ovDoc || String(compMatch.cnpj || "").replace(/\D/g, "") === ovDoc)) ? compMatch :
           (agMatch && (!ovDoc || String(agMatch.cnpj || "").replace(/\D/g, "") === ovDoc)) ? agMatch :
@@ -10789,6 +10788,16 @@ export function ensureB2bSeedData(targetDb = db) {
           ov.tomadorCodigoMunicipio = String(entityMatch.ibgeCode || entityMatch.codigoMunicipio || "").replace(/\D/g, "");
           rChanged = true;
         }
+      } else if (isGenericOv && (ov.tomadorEndereco || ov.tomadorCep === "28035000" || /^pelinca$/i.test(String(ov.tomadorBairro || "").trim()))) {
+        if (ov.tomadorEndereco && isGenericPelincaAddr(ov.tomadorEndereco)) ov.tomadorEndereco = "";
+        if (ov.tomadorNumero === "100") ov.tomadorNumero = "";
+        if (ov.tomadorBairro && isGenericPelincaBairro(ov.tomadorBairro)) ov.tomadorBairro = "";
+        if (ov.tomadorCep && isGenericPelincaCep(ov.tomadorCep)) ov.tomadorCep = "";
+        if (/^campos(\s+dos\s+go[yi]tacazes)?$/i.test(String(ov.tomadorCidade || "").trim())) {
+          ov.tomadorCidade = "";
+          ov.tomadorUf = "";
+        }
+        rChanged = true;
       }
     }
     if (r.voucherUrl && !r.b2bVoucherUrl) { r.b2bVoucherUrl = r.voucherUrl; rChanged = true; }
@@ -12066,8 +12075,30 @@ export function mergeGuestRecords(target, source, database) {
   if (!target.nationality && source.nationality) target.nationality = source.nationality;
   if (!target.profession && source.profession) target.profession = source.profession;
 
+  if (target.address && isGenericPelincaAddr(target.address) && (!target.number || target.number === "100")) {
+    target.address = "";
+  }
+  if (target.street && isGenericPelincaAddr(target.street) && (!target.number || target.number === "100")) {
+    target.street = "";
+  }
+  if (target.logradouro && isGenericPelincaAddr(target.logradouro) && (!target.number || target.number === "100")) {
+    target.logradouro = "";
+  }
+  if (!target.address && !target.street && target.number === "100") {
+    target.number = "";
+    target.streetNumber = "";
+    target.numero = "";
+  }
+  if (!target.address && !target.street && target.neighborhood && isGenericPelincaBairro(target.neighborhood)) {
+    target.neighborhood = "";
+    target.bairro = "";
+  }
+  if (!target.address && !target.street && target.cep && isGenericPelincaCep(target.cep)) {
+    target.cep = "";
+  }
+
   const srcAddr = source.street || source.logradouro || source.address || source.endereco || source.tomadorEndereco || "";
-  if ((!target.address || isGenericPelincaAddr(target.address)) && srcAddr && (!isGenericPelincaAddr(srcAddr) || !target.address)) {
+  if ((!target.address || isGenericPelincaAddr(target.address)) && srcAddr && !isGenericPelincaAddr(srcAddr)) {
     let parsedStreet = String(source.street || source.logradouro || srcAddr).trim();
     let parsedNum = String(source.number || source.streetNumber || source.numero || source.tomadorNumero || "").trim();
     let parsedBairro = String(source.neighborhood || source.bairro || source.tomadorBairro || "").trim();
@@ -12093,16 +12124,20 @@ export function mergeGuestRecords(target, source, database) {
       target.streetNumber = parsedNum;
       target.numero = parsedNum;
     }
-    if (parsedBairro) {
+    if (parsedBairro && !isGenericPelincaBairro(parsedBairro)) {
       target.neighborhood = parsedBairro;
       target.bairro = parsedBairro;
     }
   }
   if (!target.street && (source.street || target.address)) {
-    target.street = source.street || target.address;
+    const candSt = source.street || target.address;
+    if (candSt && !isGenericPelincaAddr(candSt)) {
+      target.street = candSt;
+    }
   }
   const srcNum = source.number || source.streetNumber || source.numero || source.tomadorNumero;
-  if ((!target.number || (target.number === "100" && srcNum && srcNum !== "100")) && srcNum) {
+  const isSrcNumGeneric100 = String(srcNum || "").trim() === "100" && (!srcAddr || isGenericPelincaAddr(srcAddr));
+  if ((!target.number || (target.number === "100" && srcNum && srcNum !== "100")) && srcNum && !isSrcNumGeneric100) {
     target.number = srcNum;
     target.streetNumber = srcNum;
     target.numero = srcNum;
@@ -12114,12 +12149,12 @@ export function mergeGuestRecords(target, source, database) {
     target.complemento = c;
   }
   const srcBairro = source.neighborhood || source.bairro || source.tomadorBairro;
-  if ((!target.neighborhood || isGenericPelincaBairro(target.neighborhood)) && srcBairro && (!isGenericPelincaBairro(srcBairro) || !target.neighborhood)) {
+  if ((!target.neighborhood || isGenericPelincaBairro(target.neighborhood)) && srcBairro && !isGenericPelincaBairro(srcBairro)) {
     target.neighborhood = srcBairro;
     target.bairro = srcBairro;
   }
   const srcCep = String(source.cep || source.guestCep || source.zipCode || source.postalCode || source.tomadorCep || "").replace(/\D/g, "");
-  if ((!target.cep || isGenericPelincaCep(target.cep)) && srcCep && (!isGenericPelincaCep(srcCep) || !target.cep)) {
+  if ((!target.cep || isGenericPelincaCep(target.cep)) && srcCep && !isGenericPelincaCep(srcCep)) {
     target.cep = srcCep;
   }
   const srcHasRealAddrOrCep = Boolean(
@@ -12140,8 +12175,10 @@ export function mergeGuestRecords(target, source, database) {
   }
   if (!target.state && (source.state || source.uf || source.estado || source.tomadorUf)) {
     const st = String(source.state || source.uf || source.estado || source.tomadorUf).toUpperCase();
-    target.state = st;
-    target.uf = st;
+    if (st !== "RJ" || target.city || srcHasRealAddrOrCep) {
+      target.state = st;
+      target.uf = st;
+    }
   }
   if (!target.country && source.country) target.country = source.country;
   if (!target.ibgeCode && (source.ibgeCode || source.codigoMunicipio || source.codigoIbge || source.tomadorCodigoMunicipio)) {
@@ -13299,17 +13336,48 @@ export function healContaminatedGuestAndReservationLinks(database) {
         changed = true;
       }
     }
+    const gRealAddr = String(g.street || g.address || g.logradouro || "").trim();
+    const gRealCep = String(g.cep || "").replace(/\D/g, "");
+    const gRealNum = String(g.number || g.streetNumber || g.numero || "").trim();
+    const gRealBairro = String(g.neighborhood || g.bairro || "").trim();
+    const hasGenericPelincaContamination = Boolean(
+      (gRealAddr && isGenericPelincaAddr(gRealAddr) && (!gRealNum || gRealNum === "100")) ||
+      (gRealCep && isGenericPelincaCep(gRealCep) && (!gRealAddr || isGenericPelincaAddr(gRealAddr))) ||
+      (gRealBairro && isGenericPelincaBairro(gRealBairro) && (!gRealAddr || isGenericPelincaAddr(gRealAddr)))
+    );
+    if (hasGenericPelincaContamination) {
+      if (g.street && isGenericPelincaAddr(g.street)) g.street = "";
+      if (g.address && isGenericPelincaAddr(g.address)) g.address = "";
+      if (g.logradouro && isGenericPelincaAddr(g.logradouro)) g.logradouro = "";
+      if (gRealNum === "100") {
+        g.number = "";
+        g.streetNumber = "";
+        g.numero = "";
+      }
+      if (gRealBairro && isGenericPelincaBairro(gRealBairro)) {
+        g.neighborhood = "";
+        g.bairro = "";
+      }
+      if (gRealCep && isGenericPelincaCep(gRealCep)) {
+        g.cep = "";
+      }
+      changed = true;
+    }
     const gCityTrim = String(g.city || g.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
     if (/^campos(\s+dos\s+go[yi]tacazes)?$/i.test(gCityTrim) && g.isCamposResident !== true && !g.aiDocInspection?.isCamposResident) {
-      const gRealAddr = String(g.street || g.address || g.logradouro || "").trim();
-      const gRealCep = String(g.cep || "").replace(/\D/g, "");
+      const gCleanAddr = String(g.street || g.address || g.logradouro || "").trim();
+      const gCleanCep = String(g.cep || "").replace(/\D/g, "");
       const hasRealCamposProof = Boolean(
-        (gRealAddr && !isGenericPelincaAddr(gRealAddr)) ||
-        (gRealCep && !isGenericPelincaCep(gRealCep) && (gRealCep.startsWith("280") || gRealCep.startsWith("281")))
+        (gCleanAddr && !isGenericPelincaAddr(gCleanAddr)) ||
+        (gCleanCep && !isGenericPelincaCep(gCleanCep) && (gCleanCep.startsWith("280") || gCleanCep.startsWith("281")))
       );
       if (!hasRealCamposProof) {
         g.city = "";
         g.cidade = "";
+        if (!gCleanAddr && !gCleanCep && (g.state === "RJ" || g.uf === "RJ")) {
+          g.state = "";
+          g.uf = "";
+        }
         if (g.ibgeCode === "3301009") {
           g.ibgeCode = "";
           g.codigoMunicipio = "";
@@ -13320,13 +13388,68 @@ export function healContaminatedGuestAndReservationLinks(database) {
   }
   for (const r of currentDb.reservations) {
     if (!r) continue;
+    const rRealAddr = String(r.guestStreet || r.street || r.guestAddress || r.address || "").trim();
+    const rRealCep = String(r.guestCep || r.cep || "").replace(/\D/g, "");
+    const rRealNum = String(r.guestStreetNumber || r.streetNumber || r.number || "").trim();
+    const rRealBairro = String(r.guestNeighborhood || r.neighborhood || "").trim();
+    if (
+      (rRealAddr && isGenericPelincaAddr(rRealAddr) && (!rRealNum || rRealNum === "100")) ||
+      (rRealCep && isGenericPelincaCep(rRealCep) && (!rRealAddr || isGenericPelincaAddr(rRealAddr))) ||
+      (rRealBairro && isGenericPelincaBairro(rRealBairro) && (!rRealAddr || isGenericPelincaAddr(rRealAddr)))
+    ) {
+      if (r.guestStreet && isGenericPelincaAddr(r.guestStreet)) r.guestStreet = "";
+      if (r.street && isGenericPelincaAddr(r.street)) r.street = "";
+      if (r.guestAddress && isGenericPelincaAddr(r.guestAddress)) r.guestAddress = "";
+      if (r.address && isGenericPelincaAddr(r.address)) r.address = "";
+      if (rRealNum === "100") {
+        if (r.guestStreetNumber === "100") r.guestStreetNumber = "";
+        if (r.streetNumber === "100") r.streetNumber = "";
+        if (r.number === "100") r.number = "";
+      }
+      if (rRealBairro && isGenericPelincaBairro(rRealBairro)) {
+        if (r.guestNeighborhood) r.guestNeighborhood = "";
+        if (r.neighborhood) r.neighborhood = "";
+      }
+      if (rRealCep && isGenericPelincaCep(rRealCep)) {
+        if (r.guestCep) r.guestCep = "";
+        if (r.cep) r.cep = "";
+      }
+      changed = true;
+    }
+    if (Array.isArray(r.guests)) {
+      for (const rg of r.guests) {
+        if (!rg) continue;
+        const rgAddr = String(rg.street || rg.address || "").trim();
+        const rgCep = String(rg.cep || rg.guestCep || "").replace(/\D/g, "");
+        const rgNum = String(rg.streetNumber || rg.number || "").trim();
+        const rgBairro = String(rg.neighborhood || "").trim();
+        if (
+          (rgAddr && isGenericPelincaAddr(rgAddr) && (!rgNum || rgNum === "100")) ||
+          (rgCep && isGenericPelincaCep(rgCep) && (!rgAddr || isGenericPelincaAddr(rgAddr))) ||
+          (rgBairro && isGenericPelincaBairro(rgBairro) && (!rgAddr || isGenericPelincaAddr(rgAddr)))
+        ) {
+          if (rg.street && isGenericPelincaAddr(rg.street)) rg.street = "";
+          if (rg.address && isGenericPelincaAddr(rg.address)) rg.address = "";
+          if (rgNum === "100") {
+            rg.streetNumber = "";
+            rg.number = "";
+          }
+          if (rgBairro && isGenericPelincaBairro(rgBairro)) rg.neighborhood = "";
+          if (rgCep && isGenericPelincaCep(rgCep)) {
+            rg.cep = "";
+            if (rg.guestCep) rg.guestCep = "";
+          }
+          changed = true;
+        }
+      }
+    }
     const rCityTrim = String(r.guestCity || r.city || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
     if (/^campos(\s+dos\s+go[yi]tacazes)?$/i.test(rCityTrim) && r.isCamposResident !== true && !r.aiDocInspection?.isCamposResident) {
-      const rRealAddr = String(r.guestStreet || r.street || r.guestAddress || r.address || "").trim();
-      const rRealCep = String(r.guestCep || r.cep || "").replace(/\D/g, "");
+      const rCleanAddr = String(r.guestStreet || r.street || r.guestAddress || r.address || "").trim();
+      const rCleanCep = String(r.guestCep || r.cep || "").replace(/\D/g, "");
       const hasRealResProof = Boolean(
-        (rRealAddr && !isGenericPelincaAddr(rRealAddr)) ||
-        (rRealCep && !isGenericPelincaCep(rRealCep) && (rRealCep.startsWith("280") || rRealCep.startsWith("281")))
+        (rCleanAddr && !isGenericPelincaAddr(rCleanAddr)) ||
+        (rCleanCep && !isGenericPelincaCep(rCleanCep) && (rCleanCep.startsWith("280") || rCleanCep.startsWith("281")))
       );
       if (!hasRealResProof) {
         if (r.guestCity) r.guestCity = "";
@@ -13336,6 +13459,28 @@ export function healContaminatedGuestAndReservationLinks(database) {
         }
         changed = true;
       }
+    }
+  }
+  for (const acc of (currentDb.guestAccounts || [])) {
+    if (!acc) continue;
+    const aAddr = String(acc.street || acc.address || "").trim();
+    const aCep = String(acc.cep || "").replace(/\D/g, "");
+    const aNum = String(acc.streetNumber || acc.number || "").trim();
+    const aBairro = String(acc.neighborhood || "").trim();
+    if (
+      (aAddr && isGenericPelincaAddr(aAddr) && (!aNum || aNum === "100")) ||
+      (aCep && isGenericPelincaCep(aCep) && (!aAddr || isGenericPelincaAddr(aAddr))) ||
+      (aBairro && isGenericPelincaBairro(aBairro) && (!aAddr || isGenericPelincaAddr(aAddr)))
+    ) {
+      if (acc.street && isGenericPelincaAddr(acc.street)) acc.street = "";
+      if (acc.address && isGenericPelincaAddr(acc.address)) acc.address = "";
+      if (aNum === "100") {
+        acc.streetNumber = "";
+        acc.number = "";
+      }
+      if (aBairro && isGenericPelincaBairro(aBairro)) acc.neighborhood = "";
+      if (aCep && isGenericPelincaCep(aCep)) acc.cep = "";
+      changed = true;
     }
   }
 
@@ -14259,11 +14404,11 @@ export function reconcileAndMergeGuests(database, force = false) {
       document: inv.tomadorCpfCnpj,
       email: inv.tomadorEmail,
       phone: isInternalOrForbiddenGuestPhone(inv.tomadorTelefone) ? "" : inv.tomadorTelefone,
-      cep: inv.tomadorCep,
-      address: inv.tomadorEndereco,
-      number: inv.tomadorNumero,
-      complement: inv.tomadorComplemento,
-      neighborhood: inv.tomadorBairro,
+      cep: invHasRealAddr && !isGenericPelincaCep(inv.tomadorCep) ? inv.tomadorCep : "",
+      address: invHasRealAddr && !isGenericPelincaAddr(inv.tomadorEndereco) ? inv.tomadorEndereco : "",
+      number: invHasRealAddr ? inv.tomadorNumero : "",
+      complement: invHasRealAddr ? inv.tomadorComplemento : "",
+      neighborhood: invHasRealAddr && !isGenericPelincaBairro(inv.tomadorBairro) ? inv.tomadorBairro : "",
       city: isFallbackCamposOnInv ? "" : inv.tomadorCidade,
       state: isFallbackCamposOnInv ? "" : inv.tomadorUf,
       ibgeCode: isFallbackCamposOnInv ? "" : inv.tomadorCodigoMunicipio
@@ -42016,17 +42161,39 @@ app.get("/api/pms/guests", (req, res) => {
       if (!signatureUrl && r.signatureUrl) signatureUrl = r.signatureUrl;
     }
 
-    const normGuestAddr = normalizeTomadorAddressFields({
-      tomadorStreet: g.street || g.logradouro,
-      tomadorEndereco: g.address || g.street || g.logradouro,
-      tomadorNumero: g.number || g.streetNumber || g.numero,
-      tomadorComplemento: g.complement || g.complemento,
-      tomadorBairro: g.neighborhood || g.bairro,
-      tomadorCidade: g.city || g.cidade,
-      tomadorUf: g.state || g.uf,
-      tomadorCep: g.cep,
-      tomadorCodigoMunicipio: g.ibgeCode || g.codigoMunicipio
-    });
+    let rawGuestStreet = String(g.street || g.logradouro || g.address || "").trim();
+    let rawGuestNum = String(g.streetNumber || g.number || g.numero || "").trim();
+    let rawGuestComp = String(g.complement || g.complemento || "").trim();
+    let rawGuestBairro = String(g.neighborhood || g.bairro || "").trim();
+    let rawGuestCep = String(g.cep || "").replace(/\D/g, "");
+    let rawGuestCity = String(g.city || g.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
+    let rawGuestState = String(g.state || g.uf || "").trim().toUpperCase();
+    for (const r of guestReservations) {
+      const rSt = String(r.guestStreet || r.street || r.guestAddress || r.address || r.guests?.[0]?.street || r.guests?.[0]?.address || "").trim();
+      const rNum = String(r.guestStreetNumber || r.streetNumber || r.number || r.guests?.[0]?.streetNumber || r.guests?.[0]?.number || "").trim();
+      const rComp = String(r.guestComplement || r.complement || r.guests?.[0]?.complement || "").trim();
+      const rBairro = String(r.guestNeighborhood || r.neighborhood || r.guests?.[0]?.neighborhood || "").trim();
+      const rCep = String(r.guestCep || r.cep || r.guests?.[0]?.cep || "").replace(/\D/g, "");
+      const rCity = String(r.guestCity || r.city || r.guests?.[0]?.city || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim();
+      const rState = String(r.guestState || r.state || r.guests?.[0]?.state || "").trim().toUpperCase();
+      if ((!rawGuestStreet || isGenericPelincaAddr(rawGuestStreet)) && rSt && !isGenericPelincaAddr(rSt)) rawGuestStreet = rSt;
+      if ((!rawGuestNum || rawGuestNum === "100") && rNum && !(rNum === "100" && (!rSt || isGenericPelincaAddr(rSt)))) rawGuestNum = rNum;
+      if (!rawGuestComp && rComp) rawGuestComp = rComp;
+      if ((!rawGuestBairro || isGenericPelincaBairro(rawGuestBairro)) && rBairro && !isGenericPelincaBairro(rBairro)) rawGuestBairro = rBairro;
+      if ((!rawGuestCep || isGenericPelincaCep(rawGuestCep)) && rCep && !isGenericPelincaCep(rCep)) rawGuestCep = rCep;
+      if (!rawGuestCity && rCity) rawGuestCity = rCity;
+      if (!rawGuestState && rState) rawGuestState = rState;
+    }
+    if (isGenericPelincaAddr(rawGuestStreet) && (!rawGuestNum || rawGuestNum === "100")) {
+      rawGuestStreet = "";
+      if (rawGuestNum === "100") rawGuestNum = "";
+    }
+    if (!rawGuestStreet && isGenericPelincaBairro(rawGuestBairro)) rawGuestBairro = "";
+    if (!rawGuestStreet && isGenericPelincaCep(rawGuestCep)) rawGuestCep = "";
+    if (!rawGuestStreet && !rawGuestCep && /^campos(\s+dos\s+go[yi]tacazes)?$/i.test(rawGuestCity) && g.isCamposResident !== true) {
+      rawGuestCity = "";
+      if (rawGuestState === "RJ") rawGuestState = "";
+    }
 
     // Cálculo O(1) direto do callerIdPreview sem varrer todos os hóspedes
     const activeGuestRes = guestReservations
@@ -42073,17 +42240,17 @@ app.get("/api/pms/guests", (req, res) => {
       signatureUrl,
       birthDate: g.birthDate || "",
       gender: g.gender || "",
-      address: g.address || normGuestAddr.logradouro || "",
-      street: g.street || normGuestAddr.logradouro || "",
-      logradouro: g.logradouro || normGuestAddr.logradouro || "",
-      streetNumber: g.streetNumber || g.number || normGuestAddr.numero || "",
-      number: g.number || g.streetNumber || normGuestAddr.numero || "",
-      numero: g.numero || g.number || g.streetNumber || normGuestAddr.numero || "",
-      complement: g.complement || normGuestAddr.complemento || "",
-      neighborhood: g.neighborhood || normGuestAddr.bairro || "",
-      cep: g.cep || normGuestAddr.cep || "",
-      city: String(g.city || normGuestAddr.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim(),
-      state: g.state || normGuestAddr.uf || "",
+      address: rawGuestStreet,
+      street: rawGuestStreet,
+      logradouro: rawGuestStreet,
+      streetNumber: rawGuestNum,
+      number: rawGuestNum,
+      numero: rawGuestNum,
+      complement: rawGuestComp,
+      neighborhood: rawGuestBairro,
+      cep: rawGuestCep,
+      city: rawGuestCity,
+      state: rawGuestState,
       vehiclePlate: g.vehiclePlate || "",
       vehicleModel: g.vehicleModel || "",
       vehicleBrand: g.vehicleBrand || "",
@@ -44103,16 +44270,26 @@ app.get("/api/pms/guests/:id", async (req, res) => {
   }
 
   for (const inv of guestInvoices) {
+    const invHasRealAddr = Boolean(
+      (inv.tomadorEndereco && !isGenericPelincaAddr(inv.tomadorEndereco)) ||
+      (inv.tomadorCep && !isGenericPelincaCep(inv.tomadorCep))
+    );
+    if (!invHasRealAddr) continue;
     if ((!cep || isGenericPelincaCep(cep)) && inv.tomadorCep && !isGenericPelincaCep(inv.tomadorCep)) {
       cep = String(inv.tomadorCep).replace(/\D/g, "");
     }
-    if (!address && inv.tomadorEndereco) address = inv.tomadorEndereco;
-    if (!streetNumber && inv.tomadorNumero) streetNumber = inv.tomadorNumero;
+    if (!address && inv.tomadorEndereco && !isGenericPelincaAddr(inv.tomadorEndereco)) address = inv.tomadorEndereco;
+    if (!streetNumber && inv.tomadorNumero && !(inv.tomadorNumero === "100" && isGenericPelincaAddr(inv.tomadorEndereco))) streetNumber = inv.tomadorNumero;
     if (!complement && inv.tomadorComplemento) complement = inv.tomadorComplemento;
-    if (!neighborhood && inv.tomadorBairro) neighborhood = inv.tomadorBairro;
+    if (!neighborhood && inv.tomadorBairro && !isGenericPelincaBairro(inv.tomadorBairro)) neighborhood = inv.tomadorBairro;
     if (!city && inv.tomadorCidade) city = inv.tomadorCidade;
     if (!state && inv.tomadorUf) state = inv.tomadorUf;
   }
+  if (address && isGenericPelincaAddr(address) && (!streetNumber || streetNumber === "100")) address = "";
+  if (street && isGenericPelincaAddr(street) && (!streetNumber || streetNumber === "100")) street = "";
+  if (!address && !street && streetNumber === "100") streetNumber = "";
+  if (!address && !street && neighborhood && isGenericPelincaBairro(neighborhood)) neighborhood = "";
+  if (!address && !street && cep && isGenericPelincaCep(cep)) cep = "";
 
   if (!cep && address) {
     cep = extractCepFromText(address);
@@ -47327,14 +47504,25 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
   const finalGender = pickVal(["gender"], guest.gender || account?.gender || "");
   const finalNationality = pickVal(["nationality"], guest.nationality || account?.nationality || "Brasileira");
   const finalProfession = pickVal(["profession"], guest.profession || account?.profession || "");
-  const finalCep = String(pickVal(["cep"], guest.cep || account?.cep || "")).replace(/\D/g, "");
-  const finalStreet = pickVal(["street", "logradouro", "address", "endereco"], guest.street || guest.logradouro || guest.address || account?.street || account?.address || "");
-  const finalAddress = pickVal(["address", "street", "logradouro", "endereco"], finalStreet);
-  const finalNumber = String(pickVal(["streetNumber", "number", "numero"], guest.streetNumber || guest.number || guest.numero || account?.streetNumber || account?.number || ""));
+  let finalCep = String(pickVal(["cep"], guest.cep || account?.cep || "")).replace(/\D/g, "");
+  let finalStreet = pickVal(["street", "logradouro", "address", "endereco"], guest.street || guest.logradouro || guest.address || account?.street || account?.address || "");
+  let finalAddress = pickVal(["address", "street", "logradouro", "endereco"], finalStreet);
+  let finalNumber = String(pickVal(["streetNumber", "number", "numero"], guest.streetNumber || guest.number || guest.numero || account?.streetNumber || account?.number || ""));
   const finalComplement = pickVal(["complement", "complemento"], guest.complement || guest.complemento || account?.complement || "");
-  const finalNeighborhood = pickVal(["neighborhood", "bairro"], guest.neighborhood || guest.bairro || account?.neighborhood || "");
-  const finalCity = pickVal(["city", "cidade", "municipio"], guest.city || guest.cidade || account?.city || "");
-  const finalState = String(pickVal(["state", "uf", "estado"], guest.state || guest.uf || account?.state || "RJ")).toUpperCase();
+  let finalNeighborhood = pickVal(["neighborhood", "bairro"], guest.neighborhood || guest.bairro || account?.neighborhood || "");
+  let finalCity = pickVal(["city", "cidade", "municipio"], guest.city || guest.cidade || account?.city || "");
+  let finalState = String(pickVal(["state", "uf", "estado"], guest.state || guest.uf || account?.state || "")).toUpperCase();
+  if (isGenericPelincaAddr(finalStreet) && (!finalNumber || finalNumber === "100")) {
+    finalStreet = "";
+    finalAddress = "";
+    if (finalNumber === "100") finalNumber = "";
+  }
+  if (!finalStreet && isGenericPelincaBairro(finalNeighborhood)) finalNeighborhood = "";
+  if (!finalStreet && isGenericPelincaCep(finalCep)) finalCep = "";
+  if (!finalStreet && !finalCep && /^campos(\s+dos\s+go[yi]tacazes)?$/i.test(finalCity) && guest?.isCamposResident !== true) {
+    finalCity = "";
+    if (finalState === "RJ") finalState = "";
+  }
   const syncTargetInfo = { id: guest?.id, document: finalDocClean, fullName: finalName, name: finalName };
   let finalDocPhotoUrl = pickVal(["docPhotoUrl", "documentPhotoUrl"], guest.docPhotoUrl || guest.documentPhotoUrl || account?.docPhotoUrl || "");
   if (finalDocPhotoUrl && isContaminatedOrForeignDocUrl(finalDocPhotoUrl, syncTargetInfo, db)) {
@@ -52637,7 +52825,7 @@ function resolveGuestDigitalCheckinData({ guestId, cpfCnpj, name, reservationId,
       tomadorUf: rawState,
       tomadorCodigoMunicipio: rawIbge
     });
-    const hasRealAddress = !isGenericFallbackAddress(rawStreet, rawCep) && !isGenericFallbackAddress(norm.logradouro, norm.cep);
+    const hasRealAddress = Boolean(rawStreet || rawCep) && !isGenericFallbackAddress(rawStreet, rawCep) && !isGenericFallbackAddress(norm.logradouro, norm.cep);
     candidates.push({
       priority: hasRealAddress ? priority + 10 : priority,
       hasRealAddress,
@@ -52646,7 +52834,16 @@ function resolveGuestDigitalCheckinData({ guestId, cpfCnpj, name, reservationId,
       cpfCnpj: onlyDigits(src.documentNumber || src.document || src.cpf || src.guestDocument || src.tomadorCpfCnpj || cleanDoc),
       email: (src.email || src.guestEmail || src.tomadorEmail || "").trim().toLowerCase(),
       telefone: cleanPhone(src.phone || src.phoneNumber || src.guestPhone || src.tomadorTelefone || ""),
-      ...norm
+      ...(hasRealAddress ? norm : {
+        logradouro: "",
+        numero: "",
+        complemento: rawComp || "",
+        bairro: "",
+        cep: "",
+        cidade: (!/^campos(\s+dos\s+go[yi]tacazes)?$/i.test(String(rawCity || "").trim()) ? String(rawCity || "").trim() : ""),
+        uf: (!/^campos(\s+dos\s+go[yi]tacazes)?$/i.test(String(rawCity || "").trim()) && rawCity ? String(rawState || "").trim().toUpperCase() : ""),
+        ibge: ""
+      })
     });
   };
 

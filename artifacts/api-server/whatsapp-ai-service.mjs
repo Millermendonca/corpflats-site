@@ -12919,7 +12919,7 @@ export async function handleWhatsAppFiscalFlow({
     const cleanCpfNum = onlyDigits(rawCpf);
     const emailFromText = extractEmail(messageText);
     const cepFromText = extractCep(messageText);
-    const cleanCepNum = cleanCep(cepFromText || crmPf?.tomadorCep || "28035000");
+    const cleanCepNum = cleanCep(cepFromText || crmPf?.tomadorCep || "");
     const nameFromText = extractPersonName(messageText);
     const finalName = toTitleCase(nameFromText || crmPf?.tomadorNome || contactDisplayName || "Hóspede");
 
@@ -12943,13 +12943,13 @@ export async function handleWhatsAppFiscalFlow({
       tomadorTipo: "PF",
       tomadorEmail: emailFromText || crmPf?.tomadorEmail || matchedGuest?.email || "",
       tomadorTelefone: cleanTarget,
-      tomadorEndereco: crmPf?.tomadorEndereco || "Endereço cadastrado",
-      tomadorNumero: crmPf?.tomadorNumero || "S/N",
-      tomadorBairro: crmPf?.tomadorBairro || "Pelinca",
-      tomadorCidade: crmPf?.tomadorCidade || "Campos dos Goytacazes",
-      tomadorUf: crmPf?.tomadorUf || "RJ",
-      tomadorCep: cleanCepNum,
-      tomadorCodigoMunicipio: crmPf?.tomadorCodigoMunicipio || "3301009",
+      tomadorEndereco: crmPf?.tomadorEndereco || officialDraftPf.tomadorEndereco || "",
+      tomadorNumero: crmPf?.tomadorNumero || officialDraftPf.tomadorNumero || "",
+      tomadorBairro: crmPf?.tomadorBairro || officialDraftPf.tomadorBairro || "",
+      tomadorCidade: crmPf?.tomadorCidade || officialDraftPf.tomadorCidade || "",
+      tomadorUf: crmPf?.tomadorUf || officialDraftPf.tomadorUf || "",
+      tomadorCep: cleanCepNum || officialDraftPf.tomadorCep || "",
+      tomadorCodigoMunicipio: crmPf?.tomadorCodigoMunicipio || officialDraftPf.tomadorCodigoMunicipio || "",
       descricaoServico: desc,
       valorOriginal: valTotal,
       valorServico: valTotal,

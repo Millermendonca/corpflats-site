@@ -613,10 +613,10 @@ export default function FiscalInvoicesPage() {
     let rawNum = String(src?.streetNumber || src?.number || src?.numero || src?.guestStreetNumber || src?.tomadorNumero || "").trim()
     let rawComp = String(src?.complement || src?.complemento || src?.guestComplement || src?.tomadorComplemento || "").trim()
     let rawBairro = String(src?.neighborhood || src?.bairro || src?.guestNeighborhood || src?.tomadorBairro || "").trim()
-    let rawCidade = String(src?.city || src?.cidade || src?.guestCity || src?.tomadorCidade || "Campos dos Goytacazes").trim()
-    let rawUf = String(src?.state || src?.uf || src?.guestState || src?.tomadorUf || "RJ").trim().toUpperCase()
+    let rawCidade = String(src?.city || src?.cidade || src?.guestCity || src?.tomadorCidade || "").trim()
+    let rawUf = String(src?.state || src?.uf || src?.guestState || src?.tomadorUf || "").trim().toUpperCase()
     let rawCep = String(src?.cep || src?.guestCep || src?.tomadorCep || "").replace(/\D/g, "")
-    let rawIbge = String(src?.ibgeCode || src?.codigoMunicipio || src?.tomadorCodigoMunicipio || "3301009").replace(/\D/g, "") || "3301009"
+    let rawIbge = String(src?.ibgeCode || src?.codigoMunicipio || src?.tomadorCodigoMunicipio || "").replace(/\D/g, "")
 
     if (rawCidade.includes("/")) {
       const parts = rawCidade.split("/").map(s => s.trim()).filter(Boolean)
@@ -667,14 +667,28 @@ export default function FiscalInvoicesPage() {
       }
     }
 
+    if (isGenericPelinca && (!rawCep || rawCep === "28035000")) {
+      const hasRealNonCamposCity = Boolean(rawCidade && !/^campos(\s+dos\s+go[yi]tacazes)?$/i.test(rawCidade))
+      return {
+        logradouro: "",
+        numero: "",
+        complemento: rawComp,
+        bairro: "",
+        cidade: hasRealNonCamposCity ? rawCidade : "",
+        uf: hasRealNonCamposCity ? rawUf : "",
+        cep: "",
+        ibge: hasRealNonCamposCity ? rawIbge : ""
+      }
+    }
+
     return {
-      logradouro: rawEnd || "Av. Pelinca",
-      numero: rawNum || "100",
+      logradouro: isGenericPelinca ? "" : rawEnd,
+      numero: (isGenericPelinca && rawNum === "100") ? "" : rawNum,
       complemento: rawComp,
-      bairro: rawBairro || "Pelinca",
-      cidade: rawCidade || "Campos dos Goytacazes",
-      uf: rawUf || "RJ",
-      cep: rawCep || "28035000",
+      bairro: /^pelinca$/i.test(rawBairro) && isGenericPelinca ? "" : rawBairro,
+      cidade: rawCidade,
+      uf: rawUf,
+      cep: rawCep === "28035000" && isGenericPelinca ? "" : rawCep,
       ibge: rawIbge
     }
   }
@@ -879,14 +893,14 @@ export default function FiscalInvoicesPage() {
     const rawAgIbge = ag?.ibgeCode || ag?.codigoMunicipio || r?.agencyIbgeCode || ""
     const isGenericAg = isGenericPelincaCompanyAddr(rawAgEnd, rawAgCep, rawAgBairro, rawAgCidade, rawAgNum)
 
-    const agEnd = (!isGenericAg && rawAgEnd) ? rawAgEnd : (knownAg?.logradouro || "Av. Paulista")
-    const agNum = (!isGenericAg && rawAgNum) ? rawAgNum : (knownAg?.numero || "100")
+    const agEnd = (!isGenericAg && rawAgEnd) ? rawAgEnd : (knownAg?.logradouro || "")
+    const agNum = (!isGenericAg && rawAgNum) ? rawAgNum : (knownAg?.numero || "")
     const agComp = (!isGenericAg && rawAgComp) ? rawAgComp : (knownAg?.complemento || rawAgComp || "")
-    const agBairro = (!isGenericAg && rawAgBairro) ? rawAgBairro : (knownAg?.bairro || "Centro")
-    const agCidade = (!isGenericAg && rawAgCidade) ? rawAgCidade : (knownAg?.cidade || "São Paulo")
-    const agUf = (!isGenericAg && rawAgUf) ? rawAgUf : (knownAg?.uf || "SP")
-    const agCep = (!isGenericAg && rawAgCep) ? rawAgCep : (knownAg?.cep || "01310100")
-    const agIbge = (!isGenericAg && rawAgIbge) ? rawAgIbge : (knownAg?.ibge || "3550308")
+    const agBairro = (!isGenericAg && rawAgBairro) ? rawAgBairro : (knownAg?.bairro || "")
+    const agCidade = (!isGenericAg && rawAgCidade) ? rawAgCidade : (knownAg?.cidade || "")
+    const agUf = (!isGenericAg && rawAgUf) ? rawAgUf : (knownAg?.uf || "")
+    const agCep = (!isGenericAg && rawAgCep) ? rawAgCep : (knownAg?.cep || "")
+    const agIbge = (!isGenericAg && rawAgIbge) ? rawAgIbge : (knownAg?.ibge || "")
 
     const guestName = guestInfo?.fullName || guestInfo?.name || r?.guestName || "Hóspede"
     const flat = stayInfo?.flatNumber || extractedData.flatNumber || formFlatNumber
@@ -1057,6 +1071,43 @@ export default function FiscalInvoicesPage() {
     if (guestName && guestDoc && valor) {
       setIsReadyToEmit(true)
     }
+
+    if (guestDoc.length === 11 && !guestEnd && !guestCep) {
+      fetch(`/api/nfse/lookup-cpf/${guestDoc}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!data || !data.hasRealAddress) return
+          const resolvedEnd = data.logradouro || data.endereco || ""
+          const resolvedCep = String(data.cep || "").replace(/\D/g, "")
+          if (isGenericPelincaCompanyAddr(resolvedEnd, resolvedCep, data.bairro, data.cidade, data.numero)) return
+          const resolvedNum = data.numero || ""
+          const resolvedComp = data.complemento || guestComp || ""
+          const resolvedBairro = data.bairro || ""
+          const resolvedCity = data.cidade || ""
+          const resolvedUf = data.uf || ""
+          const resolvedIbge = String(data.ibge || data.codigoMunicipio || "")
+          setFormTomadorEndereco(resolvedEnd)
+          setFormTomadorNumero(resolvedNum)
+          setFormTomadorComplemento(resolvedComp)
+          setFormTomadorBairro(resolvedBairro)
+          setFormTomadorCep(resolvedCep)
+          setFormTomadorCidade(resolvedCity)
+          setFormTomadorUf(resolvedUf)
+          setFormTomadorIbge(resolvedIbge)
+          setExtractedData(prev => ({
+            ...prev,
+            tomadorEndereco: resolvedEnd,
+            tomadorNumero: resolvedNum,
+            tomadorComplemento: resolvedComp,
+            tomadorBairro: resolvedBairro,
+            tomadorCep: resolvedCep,
+            tomadorCidade: resolvedCity,
+            tomadorUf: resolvedUf,
+            tomadorCodigoMunicipio: resolvedIbge
+          }))
+        })
+        .catch(() => {})
+    }
   }
 
   // ── Selecionar ou Alternar Tomador (PF, Empresa PJ ou Agência B2B) ─────────
@@ -1137,6 +1188,18 @@ export default function FiscalInvoicesPage() {
       (res.guestDocument && (g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "") === String(res.guestDocument).replace(/\D/g, "")) ||
       (res.guestName && (g.fullName || g.name || "").toLowerCase() === String(res.guestName).toLowerCase())
     )
+    const pickNonGenericStr = (pred: (v: string) => boolean, ...vals: any[]) => {
+      for (const v of vals) {
+        const s = String(v || "").trim()
+        if (s && pred(s)) return s
+      }
+      return ""
+    }
+    const isRealStreet = (s: string) => !/^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(s)
+    const isRealBairro = (s: string) => !/^pelinca$/i.test(s)
+    const isRealCep = (s: string) => s.replace(/\D/g, "") !== "" && s.replace(/\D/g, "") !== "28035000"
+    const foundStreet = pickNonGenericStr(isRealStreet, res.street, res.guestStreet, resSlot?.street, crmGuest?.street, crmGuest?.logradouro, res.address, res.guestAddress, resSlot?.address, crmGuest?.address)
+    const foundCep = pickNonGenericStr(isRealCep, res.cep, res.guestCep, resSlot?.cep, crmGuest?.cep)
     const foundGuest = (crmGuest || res.guestName) ? {
       ...(crmGuest || {}),
       ...(resSlot || {}),
@@ -1144,15 +1207,15 @@ export default function FiscalInvoicesPage() {
       documentNumber: crmGuest?.documentNumber || crmGuest?.document || res.guestDocument || res.document || resSlot?.cpf,
       email: res.guestEmail || resSlot?.email || crmGuest?.email,
       phone: res.guestPhone || resSlot?.phone || crmGuest?.phone,
-      street: res.street || res.guestStreet || resSlot?.street || crmGuest?.street || crmGuest?.logradouro,
-      address: res.address || res.guestAddress || resSlot?.address || crmGuest?.address,
-      streetNumber: res.streetNumber || res.guestStreetNumber || resSlot?.streetNumber || crmGuest?.streetNumber || crmGuest?.number,
+      street: foundStreet,
+      address: foundStreet,
+      streetNumber: foundStreet ? (res.streetNumber || res.guestStreetNumber || resSlot?.streetNumber || crmGuest?.streetNumber || crmGuest?.number || "") : "",
       complement: res.complement || res.guestComplement || resSlot?.complement || crmGuest?.complement,
-      neighborhood: res.neighborhood || res.guestNeighborhood || resSlot?.neighborhood || crmGuest?.neighborhood,
-      cep: res.cep || res.guestCep || resSlot?.cep || crmGuest?.cep,
-      city: res.city || res.guestCity || resSlot?.city || crmGuest?.city,
-      state: res.state || res.guestState || resSlot?.state || crmGuest?.state,
-      ibgeCode: res.ibgeCode || res.codigoMunicipio || resSlot?.ibgeCode || crmGuest?.ibgeCode || crmGuest?.codigoMunicipio
+      neighborhood: pickNonGenericStr(isRealBairro, res.neighborhood, res.guestNeighborhood, resSlot?.neighborhood, crmGuest?.neighborhood),
+      cep: foundCep,
+      city: (foundStreet || foundCep) ? (res.city || res.guestCity || resSlot?.city || crmGuest?.city || "") : "",
+      state: (foundStreet || foundCep) ? (res.state || res.guestState || resSlot?.state || crmGuest?.state || "") : "",
+      ibgeCode: (foundStreet || foundCep) ? (res.ibgeCode || res.codigoMunicipio || resSlot?.ibgeCode || crmGuest?.ibgeCode || crmGuest?.codigoMunicipio || "") : ""
     } : null
 
     const crmAgency = agencies.find(a =>
@@ -1272,7 +1335,7 @@ export default function FiscalInvoicesPage() {
           cf.tomadorCidade,
           cf.tomadorNumero
         )
-        if (!cfIsGenericPelinca || !cfIsPj) {
+        if (!cfIsGenericPelinca) {
           if (cf.tomadorEndereco) setFormTomadorEndereco(cf.tomadorEndereco)
           if (cf.tomadorNumero) setFormTomadorNumero(cf.tomadorNumero)
           if (cf.tomadorBairro) setFormTomadorBairro(cf.tomadorBairro)

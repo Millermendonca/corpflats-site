@@ -634,20 +634,35 @@ export default function CrmGuests() {
     setGuestModalOpen(true)
   }
 
+  const isGenericPelincaFallback = (g: any) => {
+    const st = String(g?.address || g?.street || g?.logradouro || "").trim()
+    const num = String(g?.number || g?.streetNumber || g?.numero || "").trim()
+    const cep = String(g?.cep || g?.guestCep || g?.zipCode || "").replace(/\D/g, "")
+    const bairro = String(g?.neighborhood || g?.bairro || "").trim()
+    const isPelincaSt = /^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(st)
+    if (isPelincaSt && (!num || num === "100")) return true
+    if (!st && cep === "28035000") return true
+    if (!st && /^pelinca$/i.test(bairro)) return true
+    return false
+  }
+
   const handleEditGuest = (g: any) => {
+    const isFakePelinca = isGenericPelincaFallback(g)
     setEditingGuest(g)
     setFormName(g.fullName || g.name || "")
     setFormPhone(g.phone || "")
     setFormEmail(g.email || "")
     setFormDocument(g.documentNumber || g.document || "")
-    setFormCity(String(g.city || g.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim())
-    setFormState(g.state || g.uf || "")
-    const rawCep = String(g.cep || g.guestCep || g.zipCode || "").replace(/\D/g, "").slice(0, 8); setFormCep(rawCep.length > 5 ? `${rawCep.slice(0, 5)}-${rawCep.slice(5)}` : rawCep)
-    setFormAddress(g.address || g.logradouro || "")
-    setFormNumber(g.number || g.numero || "")
+    const cleanCity = String(g.city || g.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim()
+    setFormCity(isFakePelinca && /^campos(\s+dos\s+go[yi]tacazes)?$/i.test(cleanCity) ? "" : cleanCity)
+    setFormState(isFakePelinca && /^campos(\s+dos\s+go[yi]tacazes)?$/i.test(cleanCity) ? "" : (g.state || g.uf || ""))
+    const rawCep = isFakePelinca ? "" : String(g.cep || g.guestCep || g.zipCode || "").replace(/\D/g, "").slice(0, 8)
+    setFormCep(rawCep.length > 5 ? `${rawCep.slice(0, 5)}-${rawCep.slice(5)}` : rawCep)
+    setFormAddress(isFakePelinca ? "" : (g.address || g.logradouro || g.street || ""))
+    setFormNumber(isFakePelinca ? "" : (g.number || g.numero || g.streetNumber || ""))
     setFormComplement(g.complement || g.complemento || "")
-    setFormNeighborhood(g.neighborhood || g.bairro || "")
-    setFormIbgeCode(g.ibgeCode || g.codigoMunicipio || "")
+    setFormNeighborhood(isFakePelinca ? "" : (g.neighborhood || g.bairro || ""))
+    setFormIbgeCode(isFakePelinca ? "" : (g.ibgeCode || g.codigoMunicipio || ""))
     setFormCompanyId(g.companyId ? String(g.companyId) : "")
     setFormDocPhotoUrl(g.docPhotoUrl || "")
     setFormDocFileName(g.docPhotoUrl ? "documento_anexado" : "")
@@ -2479,14 +2494,16 @@ export default function CrmGuests() {
                     <div className="col-span-2">
                       <div className="text-[10px] uppercase font-bold text-muted-foreground">Endereço Residencial Completo</div>
                       <div className="text-xs font-semibold text-foreground mt-0.5">
-                        {activeGuest.address || (activeGuest.street ? [activeGuest.street, activeGuest.streetNumber || activeGuest.number, activeGuest.complement, activeGuest.neighborhood].filter(Boolean).join(", ") : "Endereço não cadastrado")}
+                        {isGenericPelincaFallback(activeGuest)
+                          ? "Endereço não cadastrado"
+                          : (activeGuest.address || (activeGuest.street ? [activeGuest.street, activeGuest.streetNumber || activeGuest.number, activeGuest.complement, activeGuest.neighborhood].filter(Boolean).join(", ") : "Endereço não cadastrado"))}
                       </div>
                     </div>
 
                     <div className="col-span-2">
-                      <div className="grid grid-cols-2 gap-2.5"><div><div className="text-[10px] uppercase font-bold text-muted-foreground">CEP</div><div className="text-xs font-bold text-foreground mt-0.5 font-mono">{(() => { const rawCep = String(activeGuest.cep || activeGuest.guestCep || activeGuest.zipCode || "").replace(/\D/g, ""); return rawCep.length === 8 ? `${rawCep.slice(0, 5)}-${rawCep.slice(5)}` : (rawCep || "Não informado"); })()}</div></div><div><div className="text-[10px] uppercase font-bold text-muted-foreground">Cidade / Estado / País</div>
+                      <div className="grid grid-cols-2 gap-2.5"><div><div className="text-[10px] uppercase font-bold text-muted-foreground">CEP</div><div className="text-xs font-bold text-foreground mt-0.5 font-mono">{(() => { if (isGenericPelincaFallback(activeGuest)) return "Não informado"; const rawCep = String(activeGuest.cep || activeGuest.guestCep || activeGuest.zipCode || "").replace(/\D/g, ""); return rawCep.length === 8 ? `${rawCep.slice(0, 5)}-${rawCep.slice(5)}` : (rawCep || "Não informado"); })()}</div></div><div><div className="text-[10px] uppercase font-bold text-muted-foreground">Cidade / Estado / País</div>
                       <div className="text-xs font-semibold text-foreground mt-0.5">
-                        {(() => { const cleanCity = String(activeGuest.city || activeGuest.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim(); const cleanState = String(activeGuest.state || activeGuest.uf || "RJ").trim().toUpperCase(); return cleanCity ? `${cleanCity}/${cleanState}` : "Não informada"; })()} • {activeGuest.country || "Brasil"}</div></div>
+                        {(() => { const cleanCity = String(activeGuest.city || activeGuest.cidade || "").replace(/\s*\/\s*[A-Za-z]{2}\s*$/, "").trim(); if (isGenericPelincaFallback(activeGuest) && /^campos(\s+dos\s+go[yi]tacazes)?$/i.test(cleanCity)) return `Não informada • ${activeGuest.country || "Brasil"}`; const cleanState = String(activeGuest.state || activeGuest.uf || "RJ").trim().toUpperCase(); return `${cleanCity ? `${cleanCity}/${cleanState}` : "Não informada"} • ${activeGuest.country || "Brasil"}`; })()}</div></div>
                       </div>
                     </div>
                   </div>

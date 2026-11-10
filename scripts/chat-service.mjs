@@ -96,10 +96,10 @@ export function extractNormalizedGuestAddress(src = {}, fallbackDoc = "") {
   let rawNum = String(src?.streetNumber || src?.number || src?.numero || src?.guestStreetNumber || src?.tomadorNumero || "").trim();
   let rawComp = String(src?.complement || src?.complemento || src?.guestComplement || src?.tomadorComplemento || "").trim();
   let rawBairro = String(src?.neighborhood || src?.bairro || src?.guestNeighborhood || src?.tomadorBairro || "").trim();
-  let rawCidade = String(src?.city || src?.cidade || src?.guestCity || src?.tomadorCidade || "Campos dos Goytacazes").trim();
-  let rawUf = String(src?.state || src?.uf || src?.guestState || src?.tomadorUf || "RJ").trim().toUpperCase();
+  let rawCidade = String(src?.city || src?.cidade || src?.guestCity || src?.tomadorCidade || "").trim();
+  let rawUf = String(src?.state || src?.uf || src?.guestState || src?.tomadorUf || "").trim().toUpperCase();
   let rawCep = onlyDigits(src?.cep || src?.zipCode || src?.guestCep || src?.tomadorCep || "");
-  let rawIbge = onlyDigits(src?.ibgeCode || src?.codigoMunicipio || src?.tomadorCodigoMunicipio || "3301009") || "3301009";
+  let rawIbge = onlyDigits(src?.ibgeCode || src?.codigoMunicipio || src?.tomadorCodigoMunicipio || "");
 
   if (rawCidade.includes("/")) {
     const parts = rawCidade.split("/").map(s => s.trim()).filter(Boolean);
@@ -156,27 +156,41 @@ export function extractNormalizedGuestAddress(src = {}, fallbackDoc = "") {
     }
   }
 
+  if (isGenericPelinca && (!rawCep || rawCep === "28035000")) {
+    const hasRealNonCamposCity = Boolean(rawCidade && !/^campos(\s+dos\s+go[yi]tacazes)?$/i.test(rawCidade));
+    return {
+      logradouro: "",
+      numero: "",
+      complemento: rawComp || "",
+      bairro: "",
+      cidade: hasRealNonCamposCity ? rawCidade : "",
+      uf: hasRealNonCamposCity ? rawUf : "",
+      cep: "",
+      ibge: hasRealNonCamposCity ? rawIbge : ""
+    };
+  }
+
   const norm = normalizeTomadorAddressFields({
-    tomadorStreet: rawEnd || "Av. Pelinca",
-    tomadorEndereco: rawEnd || "Av. Pelinca",
-    tomadorNumero: rawNum || "100",
+    tomadorStreet: rawEnd,
+    tomadorEndereco: rawEnd,
+    tomadorNumero: rawNum,
     tomadorComplemento: rawComp,
-    tomadorBairro: rawBairro || "Pelinca",
-    tomadorCep: rawCep || "28035000",
-    tomadorCidade: rawCidade || "Campos dos Goytacazes",
-    tomadorUf: rawUf || "RJ",
+    tomadorBairro: rawBairro,
+    tomadorCep: rawCep,
+    tomadorCidade: rawCidade,
+    tomadorUf: rawUf,
     tomadorCodigoMunicipio: rawIbge
   });
 
   return {
-    logradouro: norm.logradouro || rawEnd || "Av. Pelinca",
-    numero: norm.numero || rawNum || "100",
+    logradouro: (!isGenericPelinca && rawEnd) ? (norm.logradouro || rawEnd) : "",
+    numero: (!isGenericPelinca && (rawNum || norm.numero !== "100")) ? (rawNum || norm.numero) : "",
     complemento: norm.complemento || rawComp || "",
-    bairro: norm.bairro || rawBairro || "Pelinca",
-    cidade: norm.cidade || rawCidade || "Campos dos Goytacazes",
-    uf: norm.uf || rawUf || "RJ",
-    cep: norm.cep || rawCep || "28035000",
-    ibge: norm.ibge || rawIbge || "3301009"
+    bairro: (!isGenericPelinca && (rawBairro || norm.bairro !== "Pelinca")) ? (rawBairro || norm.bairro) : "",
+    cidade: rawCidade || (rawCep && rawCep !== "28035000" ? norm.cidade : "") || "",
+    uf: rawUf || (rawCidade || (rawCep && rawCep !== "28035000") ? norm.uf : "") || "",
+    cep: (rawCep && rawCep !== "28035000") ? rawCep : ((!isGenericPelinca && norm.cep && norm.cep !== "28035000") ? norm.cep : ""),
+    ibge: rawIbge || (rawCidade || (rawCep && rawCep !== "28035000") ? norm.ibge : "") || ""
   };
 }
 
@@ -271,56 +285,77 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     return "";
   };
 
+  const isNonGenericStreet = (v) => {
+    const s = String(v || "").trim();
+    return Boolean(s && !/^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(s));
+  };
+  const isNonGenericBairro = (v) => {
+    const s = String(v || "").trim();
+    return Boolean(s && !/^pelinca$/i.test(s));
+  };
+  const isNonGenericCep = (v) => {
+    const s = onlyDigits(v || "");
+    return Boolean(s && s !== "28035000");
+  };
+  const pickNonGeneric = (pred, ...vals) => {
+    for (const v of vals) {
+      if (pred(v)) return String(v).trim();
+    }
+    return "";
+  };
+
   // Consolida objeto do Hóspede (idêntico a foundGuest em populateStayFromReservation no /notas)
+  const mergedStreet = pickNonGeneric(
+    isNonGenericStreet,
+    r?.street, r?.guestStreet, r?.guestAddress, r?.address, firstResSlot?.street, checkinInfo?.street, checkinInfo?.address,
+    ...matchingGuests.flatMap(g => [g.street, g.logradouro, g.address, g.endereco]),
+    ...matchingAccounts.flatMap(a => [a.street, a.logradouro, a.address, a.endereco]),
+    ...prevInvoices.map(i => i.tomadorEndereco)
+  );
+  const mergedCep = pickNonGeneric(
+    isNonGenericCep,
+    r?.cep, r?.guestCep, firstResSlot?.cep, checkinInfo?.cep,
+    ...matchingGuests.flatMap(g => [g.cep, g.zipCode]),
+    ...matchingAccounts.flatMap(a => [a.cep, a.zipCode]),
+    ...prevInvoices.map(i => i.tomadorCep)
+  );
   const mergedGuestSource = {
-    street: pickNonEmpty(
-      r?.street, r?.guestStreet, r?.guestAddress, r?.address, firstResSlot?.street, checkinInfo?.street, checkinInfo?.address,
-      ...matchingGuests.flatMap(g => [g.street, g.logradouro, g.address, g.endereco]),
-      ...matchingAccounts.flatMap(a => [a.street, a.logradouro, a.address, a.endereco]),
-      ...prevInvoices.map(i => i.tomadorEndereco)
-    ),
-    streetNumber: pickNonEmpty(
+    street: mergedStreet,
+    streetNumber: mergedStreet ? pickNonEmpty(
       r?.streetNumber, r?.guestStreetNumber, firstResSlot?.streetNumber, checkinInfo?.streetNumber,
       ...matchingGuests.flatMap(g => [g.streetNumber, g.number, g.numero]),
       ...matchingAccounts.flatMap(a => [a.streetNumber, a.number, a.numero]),
       ...prevInvoices.map(i => i.tomadorNumero)
-    ),
+    ) : "",
     complement: pickNonEmpty(
       r?.complement, r?.guestComplement, firstResSlot?.complement,
       ...matchingGuests.flatMap(g => [g.complement, g.complemento]),
       ...prevInvoices.map(i => i.tomadorComplemento)
     ),
-    neighborhood: pickNonEmpty(
+    neighborhood: pickNonGeneric(
+      isNonGenericBairro,
       r?.neighborhood, r?.guestNeighborhood, firstResSlot?.neighborhood, checkinInfo?.neighborhood,
       ...matchingGuests.flatMap(g => [g.neighborhood, g.bairro]),
       ...matchingAccounts.flatMap(a => [a.neighborhood, a.bairro]),
       ...prevInvoices.map(i => i.tomadorBairro)
     ),
-    cep: pickNonEmpty(
-      r?.cep, r?.guestCep, firstResSlot?.cep, checkinInfo?.cep,
-      ...matchingGuests.flatMap(g => [g.cep, g.zipCode]),
-      ...matchingAccounts.flatMap(a => [a.cep, a.zipCode]),
-      ...prevInvoices.map(i => i.tomadorCep)
-    ),
-    city: pickNonEmpty(
+    cep: mergedCep,
+    city: (mergedStreet || mergedCep) ? pickNonEmpty(
       r?.city, r?.guestCity, firstResSlot?.city, checkinInfo?.city,
       ...matchingGuests.flatMap(g => [g.city, g.cidade, g.municipio]),
       ...matchingAccounts.flatMap(a => [a.city, a.cidade]),
-      ...prevInvoices.map(i => i.tomadorCidade),
-      "Campos dos Goytacazes"
-    ),
-    state: pickNonEmpty(
+      ...prevInvoices.map(i => i.tomadorCidade)
+    ) : "",
+    state: (mergedStreet || mergedCep) ? pickNonEmpty(
       r?.state, r?.guestState, firstResSlot?.state, checkinInfo?.state,
       ...matchingGuests.flatMap(g => [g.state, g.uf]),
       ...matchingAccounts.flatMap(a => [a.state, a.uf]),
-      ...prevInvoices.map(i => i.tomadorUf),
-      "RJ"
-    ),
-    ibgeCode: pickNonEmpty(
+      ...prevInvoices.map(i => i.tomadorUf)
+    ) : "",
+    ibgeCode: (mergedStreet || mergedCep) ? pickNonEmpty(
       ...matchingGuests.flatMap(g => [g.ibgeCode, g.codigoMunicipio]),
-      ...prevInvoices.map(i => i.tomadorCodigoMunicipio),
-      "3301009"
-    )
+      ...prevInvoices.map(i => i.tomadorCodigoMunicipio)
+    ) : ""
   };
 
   let guestDoc = "";
@@ -514,14 +549,14 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     tomadorCpfCnpj: companyDoc,
     tomadorEmail: (crmComp?.financialEmail || crmComp?.email || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || guestEmail || "").trim().toLowerCase(),
     tomadorTelefone: onlyDigits(crmComp?.phone || knownCompFallback?.telefone || guestPhone || ""),
-    tomadorEndereco: String(compAddrSource?.address || compAddrSource?.logradouro || compAddrSource?.street || compAddrSource?.endereco || "Av. Pelinca").trim(),
-    tomadorNumero: String(compAddrSource?.number || compAddrSource?.numero || compAddrSource?.streetNumber || "100").trim(),
+    tomadorEndereco: String(compAddrSource?.address || compAddrSource?.logradouro || compAddrSource?.street || compAddrSource?.endereco || "").trim(),
+    tomadorNumero: String(compAddrSource?.number || compAddrSource?.numero || compAddrSource?.streetNumber || "").trim(),
     tomadorComplemento: String(compAddrSource?.complement || compAddrSource?.complemento || "").trim(),
-    tomadorBairro: String(compAddrSource?.neighborhood || compAddrSource?.bairro || "Pelinca").trim(),
-    tomadorCep: onlyDigits(compAddrSource?.cep || compAddrSource?.zipCode || "28035000") || "28035000",
-    tomadorCidade: String(compAddrSource?.city || compAddrSource?.cidade || "Campos dos Goytacazes").trim(),
-    tomadorUf: String(compAddrSource?.state || compAddrSource?.uf || "RJ").trim().toUpperCase(),
-    tomadorCodigoMunicipio: onlyDigits(compAddrSource?.ibgeCode || compAddrSource?.codigoMunicipio || "3301009") || "3301009"
+    tomadorBairro: String(compAddrSource?.neighborhood || compAddrSource?.bairro || "").trim(),
+    tomadorCep: onlyDigits(compAddrSource?.cep || compAddrSource?.zipCode || ""),
+    tomadorCidade: String(compAddrSource?.city || compAddrSource?.cidade || "").trim(),
+    tomadorUf: String(compAddrSource?.state || compAddrSource?.uf || "").trim().toUpperCase(),
+    tomadorCodigoMunicipio: onlyDigits(compAddrSource?.ibgeCode || compAddrSource?.codigoMunicipio || "")
   } : null;
 
   const agencyDoc = onlyDigits(crmAgency?.cnpj || r?.agencyCnpj || "");
@@ -549,14 +584,14 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     tomadorCpfCnpj: agencyDoc,
     tomadorEmail: (crmAgency?.financialEmail || crmAgency?.email || r?.agencyAgentEmail || (Array.isArray(r?.nfDeliveryEmails) ? r.nfDeliveryEmails[0] : "") || "").trim().toLowerCase(),
     tomadorTelefone: onlyDigits(crmAgency?.phone || r?.agencyAgentPhone || knownAgFallback?.telefone || guestPhone || ""),
-    tomadorEndereco: String(agAddrSource?.address || agAddrSource?.logradouro || agAddrSource?.endereco || "Av. Paulista").trim(),
-    tomadorNumero: String(agAddrSource?.number || agAddrSource?.numero || "100").trim(),
+    tomadorEndereco: String(agAddrSource?.address || agAddrSource?.logradouro || agAddrSource?.endereco || "").trim(),
+    tomadorNumero: String(agAddrSource?.number || agAddrSource?.numero || "").trim(),
     tomadorComplemento: String(agAddrSource?.complement || agAddrSource?.complemento || "").trim(),
-    tomadorBairro: String(agAddrSource?.neighborhood || agAddrSource?.bairro || "Centro").trim(),
-    tomadorCep: onlyDigits(agAddrSource?.cep || "01310100") || "01310100",
-    tomadorCidade: String(agAddrSource?.city || agAddrSource?.cidade || "São Paulo").trim(),
-    tomadorUf: String(agAddrSource?.state || agAddrSource?.uf || "SP").trim().toUpperCase(),
-    tomadorCodigoMunicipio: onlyDigits(agAddrSource?.ibgeCode || agAddrSource?.codigoMunicipio || "3550308") || "3550308"
+    tomadorBairro: String(agAddrSource?.neighborhood || agAddrSource?.bairro || "").trim(),
+    tomadorCep: onlyDigits(agAddrSource?.cep || ""),
+    tomadorCidade: String(agAddrSource?.city || agAddrSource?.cidade || "").trim(),
+    tomadorUf: String(agAddrSource?.state || agAddrSource?.uf || "").trim().toUpperCase(),
+    tomadorCodigoMunicipio: onlyDigits(agAddrSource?.ibgeCode || agAddrSource?.codigoMunicipio || "")
   } : null;
 
   // Seleção do Tomador Ativo (idêntica a recipientPref em populateStayFromReservation no /notas)
@@ -615,15 +650,15 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     const ovUf = customOverlay.tomadorUf || customOverlay.state;
     const ovCep = customOverlay.tomadorCep || customOverlay.cep;
     const ovIbge = customOverlay.tomadorCodigoMunicipio || customOverlay.ibgeCode;
-    const isOverlayGenericPelincaForPj =
-      (ovDoc.length === 14 || activeOption.tomadorTipo === "PJ") &&
+    const isOverlayGenericPelinca =
       isGenericPelincaCompanyAddress({
         address: ovAddr,
+        number: ovNum,
         cep: ovCep,
         neighborhood: ovBairro,
         city: ovCidade
       });
-    if (!isOverlayGenericPelincaForPj) {
+    if (!isOverlayGenericPelinca) {
       if (ovAddr) activeOption.tomadorEndereco = ovAddr;
       if (ovNum) activeOption.tomadorNumero = ovNum;
       if (ovComp !== undefined) activeOption.tomadorComplemento = ovComp;
@@ -1039,11 +1074,13 @@ export async function processChatConversation({
     } catch {}
   }
 
-  // Fallbacks apenas se continuarem vazios após a busca no banco de hóspedes
-  if (!data.tomadorEndereco) data.tomadorEndereco = "Av. Pelinca";
-  if (!data.tomadorNumero) data.tomadorNumero = "100";
-  if (!data.tomadorBairro) data.tomadorBairro = "Pelinca";
-  if (!data.tomadorCep) data.tomadorCep = "28035000";
+  // Não inventa endereço caso o hóspede/tomador não possua endereço cadastrado no banco
+  if (data.tomadorEndereco && /^(av\.?\s*pelinca|avenida\s*pelinca)$/i.test(String(data.tomadorEndereco).trim()) && (!data.tomadorNumero || data.tomadorNumero === "100")) {
+    data.tomadorEndereco = "";
+    if (data.tomadorNumero === "100") data.tomadorNumero = "";
+    if (/^pelinca$/i.test(String(data.tomadorBairro || "").trim())) data.tomadorBairro = "";
+    if (String(data.tomadorCep || "").replace(/\D/g, "") === "28035000") data.tomadorCep = "";
+  }
 
   // Atualiza descrição oficial usando o template dinâmico configurado
   data.descricaoServico = formatarDescricaoComTemplate({
