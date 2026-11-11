@@ -558,9 +558,7 @@ export default function AnserveRestockPage() {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (localToken) headers["x-anserve-token"] = localToken;
 
-      const isPostCheckout = Boolean(
-        semConsumoModalFlat.isCheckedOut || semConsumoModalFlat.status === "checkout_hoje"
-      );
+      const isPostCheckout = Boolean(semConsumoModalFlat.isCheckedOut);
 
       const res = await fetch("/api/minibar/inspections", {
         method: "POST",
@@ -649,9 +647,7 @@ export default function AnserveRestockPage() {
           isCourtesy: false
         }));
 
-      const isPostCheckout = Boolean(
-        launchModalFlat.isCheckedOut || launchModalFlat.status === "checkout_hoje"
-      );
+      const isPostCheckout = Boolean(launchModalFlat.isCheckedOut);
 
       const res = await fetch("/api/minibar/inspections", {
         method: "POST",

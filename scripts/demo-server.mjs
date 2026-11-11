@@ -74778,16 +74778,45 @@ function isMinibarStaff(user) {
   );
 }
 
+function getReservationActualCheckoutDateBr(r) {
+  if (!r?.actualCheckoutAt) return "";
+  const d = new Date(new Date(r.actualCheckoutAt).getTime() - 3 * 3600000);
+  return !isNaN(d.getTime()) ? d.toISOString().substring(0, 10) : "";
+}
+
+function isReservationCheckoutToday(r, todayStr) {
+  if (!r || !todayStr) return false;
+  if (r.checkoutDate === todayStr || r.earlyCheckoutDate === todayStr) return true;
+  return getReservationActualCheckoutDateBr(r) === todayStr;
+}
+
 // Helper: busca reserva ativa/recente para um flat
-function findActiveOrRecentReservationForFlat(flatNumber) {
+function findActiveOrRecentReservationForFlat(flatNumber, options = {}) {
   if (!Array.isArray(db.reservations)) return null;
   const flatStr = String(flatNumber).trim();
+  const canonicalFlats = typeof getCanonicalFlats === "function" ? getCanonicalFlats(db) : DEFAULT_FLATS;
+
+  const resolveResFlatNum = r => {
+    if (r?.flatNumber) return String(r.flatNumber).trim();
+    const matchedFlat = (canonicalFlats || []).find(fl => Number(fl.id) === Number(r?.flatId));
+    return matchedFlat ? String(matchedFlat.number).trim() : String(r?.flatId || "").trim();
+  };
+
   const validReservations = db.reservations.filter(r => {
     if (!r) return false;
-    const rFlat = String(r.flatNumber || r.flatId || "").trim();
-    if (rFlat !== flatStr) return false;
-    const status = (r.status || "").toLowerCase();
-    if (status === "cancelada" || status === "cancelled") return false;
+    if (resolveResFlatNum(r) !== flatStr) return false;
+    const st = String(r.status || "").toLowerCase().trim();
+    if (
+      st === "cancelada" ||
+      st === "cancelado" ||
+      st === "cancelled" ||
+      st === "no_show" ||
+      st === "pre_reserva" ||
+      st === "pendente" ||
+      st === "expirada"
+    ) {
+      return false;
+    }
     return true;
   });
 
@@ -74795,19 +74824,48 @@ function findActiveOrRecentReservationForFlat(flatNumber) {
 
   const todayStr = getBrasiliaNow().date;
 
-  // 1. Em andamento hoje com estadia além de hoje
-  const inHouseFuture = validReservations.find(r => r.checkinDate <= todayStr && r.checkoutDate > todayStr);
-  if (inHouseFuture) return inHouseFuture;
+  // 1. Hóspede em trânsito (entrou ANTES de hoje e sai DEPOIS de hoje, sem saída antecipada concluída)
+  const inHouseStayover = validReservations.find(r => {
+    if (!(r.checkinDate < todayStr && r.checkoutDate > todayStr)) return false;
+    if (isReservationCheckoutToday(r, todayStr)) return false;
+    if (r.earlyCheckoutDate && r.earlyCheckoutDate < todayStr) return false;
+    const actualDateBr = getReservationActualCheckoutDateBr(r);
+    if (actualDateBr && actualDateBr < todayStr) return false;
+    return true;
+  });
+  if (inHouseStayover) return inHouseStayover;
 
-  // 2. Checkout hoje (recém-saída prioritária para acerto pós-checkout)
-  const checkoutToday = validReservations.find(r => r.checkoutDate === todayStr);
-  if (checkoutToday) return checkoutToday;
+  const checkoutToday = validReservations.find(r => isReservationCheckoutToday(r, todayStr));
+  const checkinToday = validReservations.find(
+    r => r.checkinDate === todayStr && !isReservationCheckoutToday(r, todayStr)
+  );
 
-  // 3. Checkin hoje
-  const checkinToday = validReservations.find(r => r.checkinDate === todayStr);
-  if (checkinToday) return checkinToday;
+  // 2. No painel de reposição (forRestockerStatus), todo flat com check-out hoje mantém a reserva de saída
+  // para bater 100% com o resumo do dia e proteger o acerto pós-checkout em dias de dobradinha (turnover).
+  if (options.forRestockerStatus) {
+    if (checkoutToday) return checkoutToday;
+    if (checkinToday) return checkinToday;
+    if (options.onlyActiveToday) return null;
+  } else {
+    // No QR Code do quarto / autoatendimento, se o hóspede novo de hoje já fez check-in físico
+    // (e o anterior já liberou o flat), vincula imediatamente ao novo hóspede para compras no mesmo dia.
+    const incomingPhysicallyIn =
+      checkinToday && typeof hasGuestPhysicallyCheckedIn === "function"
+        ? hasGuestPhysicallyCheckedIn(db, checkinToday)
+        : false;
+    const departingAlreadyOut =
+      !checkoutToday ||
+      isReservationOrFlatCheckedOut(db, checkoutToday, checkoutToday.flatId, flatStr);
 
-  // 4. Reservas passadas recentes (checkout anterior a hoje, mais recente primeiro)
+    if (checkinToday && incomingPhysicallyIn && departingAlreadyOut) {
+      return checkinToday;
+    }
+    if (checkoutToday) return checkoutToday;
+    if (checkinToday) return checkinToday;
+    if (options.onlyActiveToday) return null;
+  }
+
+  // 4. Reservas passadas recentes (checkout anterior a hoje, mais recente primeiro — apenas fallback legado de pedidos órfãos)
   const pastReservations = validReservations
     .filter(r => r.checkoutDate && r.checkoutDate < todayStr)
     .sort((a, b) => String(b.checkoutDate || "").localeCompare(String(a.checkoutDate || "")));
@@ -78843,20 +78901,23 @@ app.post("/api/minibar/inspections", async (req, res) => {
     }
 
     const isFinalCheckoutInspection = Boolean(req.body?.isFinalCheckoutInspection);
-    const resCheckedOut = reservation
+    const actuallyCheckedOutInPms = reservation
       ? isReservationOrFlatCheckedOut(db, reservation, reservation.flatId, flatStr) ||
         Boolean(
           reservation.checkoutDone ||
           reservation.actualCheckoutAt ||
-          reservation.earlyCheckoutReleasedAt ||
-          reservation.finalMinibarInspectionAt ||
-          isFinalCheckoutInspection
+          reservation.earlyCheckoutReleasedAt
         )
       : false;
+    const resCheckedOut =
+      actuallyCheckedOutInPms ||
+      Boolean(reservation && (reservation.finalMinibarInspectionAt || isFinalCheckoutInspection));
 
     if (reservation && (isFinalCheckoutInspection || resCheckedOut || (!isDailyLaunch && status === "divergencia"))) {
       reservation.finalMinibarInspectionAt = new Date().toISOString();
-      reservation.checkoutDone = true;
+      if (actuallyCheckedOutInPms) {
+        reservation.checkoutDone = true;
+      }
     }
     const updatedStatement = reservation ? buildReservationMinibarStatement(reservation, flatStr) : null;
 
@@ -79263,24 +79324,39 @@ app.post("/api/minibar/inspections", async (req, res) => {
 app.get("/api/minibar/inspections/flats-status", (req, res) => {
   try {
     const todayStr = getBrasiliaNow().date;
-    const flats = getCanonicalFlats ? getCanonicalFlats() : DEFAULT_FLATS;
+    const flats = typeof getCanonicalFlats === "function" ? getCanonicalFlats(db) : DEFAULT_FLATS;
     const checkoutSummary = buildTodayCheckoutsSummaryForRestockers(db, todayStr);
 
     const list = flats.map(f => {
       const flatNum = String(f.number || f.flatNumber || f.id);
-      const resActive = findActiveOrRecentReservationForFlat(flatNum);
+      const resActive = findActiveOrRecentReservationForFlat(flatNum, {
+        onlyActiveToday: true,
+        forRestockerStatus: true
+      });
       const statement = resActive ? buildReservationMinibarStatement(resActive, flatNum) : null;
 
       let status = "livre";
       if (resActive) {
-        if (resActive.checkoutDate === todayStr || statement?.isCheckedOut) {
+        if (isReservationCheckoutToday(resActive, todayStr)) {
           status = "checkout_hoje";
-        } else if (resActive.checkinDate <= todayStr && resActive.checkoutDate >= todayStr) {
-          status = "ocupado";
         } else {
           status = "ocupado";
         }
       }
+
+      const doneSummaryEntry = Array.isArray(checkoutSummary?.doneCheckouts)
+        ? checkoutSummary.doneCheckouts.find(c => String(c.flatNumber) === flatNum)
+        : null;
+      const isCheckedOutToday =
+        status === "checkout_hoje" &&
+        Boolean(
+          doneSummaryEntry ||
+            (resActive && isReservationOrFlatCheckedOut(db, resActive, resActive.flatId, flatNum)) ||
+            statement?.isCheckedOut
+        );
+      const resolvedCheckoutTime = isCheckedOutToday
+        ? statement?.checkoutTime || doneSummaryEntry?.checkoutTime || null
+        : null;
 
       // Todos os pedidos da reserva atual (pagos e pendentes)
       const allResOrders = resActive
@@ -79345,8 +79421,8 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
         flatNumber: flatNum,
         colName: f.colName || `Flat ${flatNum}`,
         status,
-        isCheckedOut: statement ? statement.isCheckedOut : false,
-        checkoutTime: statement ? statement.checkoutTime : null,
+        isCheckedOut: isCheckedOutToday,
+        checkoutTime: resolvedCheckoutTime,
         dailyLaunches: statement ? statement.dailyLaunches : [],
         pendingBalance: statement ? statement.pendingBalance : 0,
         totalLaunchedAmount: statement ? statement.totalLaunchedAmount : 0,
@@ -79359,8 +79435,8 @@ app.get("/api/minibar/inspections/flats-status", (req, res) => {
           checkIn: resActive.checkinDate,
           checkOut: resActive.checkoutDate,
           phone: resActive.guestPhone,
-          isCheckedOut: statement ? statement.isCheckedOut : false,
-          checkoutTime: statement ? statement.checkoutTime : null,
+          isCheckedOut: isCheckedOutToday,
+          checkoutTime: resolvedCheckoutTime,
           numGuests: Math.max(Number(resActive.numGuests || 1), reservationGuests.length),
           guests: reservationGuests.map(g => ({
             index: g.index,
