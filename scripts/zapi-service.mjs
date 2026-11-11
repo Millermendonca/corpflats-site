@@ -202,6 +202,75 @@ export function normalizeReservationChannel(rawChannel) {
 }
 
 /**
+ * Retorna a quantidade real de hóspedes da reserva (1, 2, 3, etc.) com fallback seguro.
+ */
+export function resolveReservationGuestCount(reservation) {
+  if (!reservation || typeof reservation !== "object") return 1;
+  const raw =
+    Number(reservation.guestCount) ||
+    Number(reservation.guestsCount) ||
+    Number(reservation.numGuests) ||
+    Number(reservation.adults) ||
+    (typeof reservation.guests === "number" ? Number(reservation.guests) : 0) ||
+    (Array.isArray(reservation.guests) && reservation.guests.length > 0 ? reservation.guests.length : 0) ||
+    1;
+  return Math.max(1, Math.round(raw));
+}
+
+/**
+ * Formata o nome amigável do canal onde foi feita a reserva para exibição em mensagens e resumos.
+ */
+export function formatReservationChannelLabel(reservationOrChannel) {
+  if (reservationOrChannel && typeof reservationOrChannel === "object") {
+    if (reservationOrChannel.channelLabel && String(reservationOrChannel.channelLabel).trim()) {
+      return String(reservationOrChannel.channelLabel).trim();
+    }
+    const raw = String(reservationOrChannel.channel || reservationOrChannel.source || "").toLowerCase().trim();
+    if (
+      raw.includes("b2b") ||
+      raw.includes("corporat") ||
+      raw.includes("agenc") ||
+      raw.includes("agênc") ||
+      reservationOrChannel.isCorporate ||
+      reservationOrChannel.isB2B ||
+      reservationOrChannel.agencyId ||
+      reservationOrChannel.b2bReservationNumber ||
+      reservationOrChannel.b2bLocatorRloc
+    ) {
+      return "B2B / Corporativo";
+    }
+    if (raw.includes("booking")) return "Booking.com";
+    if (raw.includes("airbnb")) return "Airbnb";
+    if (raw.includes("expedia")) return "Expedia";
+    if (raw.includes("decolar")) return "Decolar";
+    if (raw.includes("whats") || raw.includes("wpp") || raw === "direta" || raw === "direto") return "WhatsApp";
+    if (raw.includes("site") || raw.includes("motor") || raw.includes("corpflats") || raw === "direct") return "Site CorpFlats";
+    if (raw.includes("balcao") || raw.includes("balcão") || raw.includes("presencial") || raw.includes("recepcao") || raw.includes("recepção")) {
+      return "Recepção / Balcão";
+    }
+    if (raw === "outros" || raw === "outro") return "Outros";
+    const orig = String(reservationOrChannel.channel || reservationOrChannel.source || "").trim();
+    return orig ? orig.charAt(0).toUpperCase() + orig.slice(1) : "Site CorpFlats";
+  }
+
+  const rawStr = String(reservationOrChannel || "").trim();
+  const c = rawStr.toLowerCase();
+  if (!c) return "Site CorpFlats";
+  if (c.includes("b2b") || c.includes("corporat") || c.includes("agenc") || c.includes("agênc")) return "B2B / Corporativo";
+  if (c.includes("booking")) return "Booking.com";
+  if (c.includes("airbnb")) return "Airbnb";
+  if (c.includes("expedia")) return "Expedia";
+  if (c.includes("decolar")) return "Decolar";
+  if (c.includes("whats") || c.includes("wpp") || c === "direta" || c === "direto") return "WhatsApp";
+  if (c.includes("site") || c.includes("motor") || c.includes("corpflats") || c === "direct") return "Site CorpFlats";
+  if (c.includes("balcao") || c.includes("balcão") || c.includes("presencial") || c.includes("recepcao") || c.includes("recepção")) {
+    return "Recepção / Balcão";
+  }
+  if (c === "outros" || c === "outro") return "Outros";
+  return rawStr.charAt(0).toUpperCase() + rawStr.slice(1);
+}
+
+/**
  * Verifica se um template automático está autorizado para o canal da reserva
  */
 export function isTemplateAllowedForChannel(template, rawChannel) {
@@ -399,6 +468,13 @@ Na recepção do prédio, você apenas se identifica para pegar a chave do flat 
 
 Confirmamos com muita satisfação a reserva *#{{numero_reserva_b2b}}* para o(a) hóspede *{{nome_hospede}}* no *Edifício Soho Residence Service* (*Flat {{quarto}}*), de *{{data_checkin}} a {{data_checkout}}*.
 
+📋 *Resumo da Reserva:*
+• Código: *#{{numero_reserva_b2b}}*
+• Acomodação: *Flat {{quarto}}*
+• Período: *{{data_checkin}} a {{data_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
+
 ⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*
 Como ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e E-mail*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:
 
@@ -435,6 +511,7 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Total de Noites: *{{num_diarias}}*
 • Total de Hóspedes: *{{num_hospedes}}*
 • Café da Manhã: *{{status_cafe}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 💰 *Situação Financeira:*
 • Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
@@ -462,7 +539,7 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
     fixedTime: "",
     message: `Olá, *{{nome_destinatario}}*! ⏰
 
-Passando para lembrar que a sua *Pré-Reserva ({{numero_reserva}})* no *{{nome_hotel}}* (*Flat {{quarto}}* • *{{data_checkin}} a {{data_checkout}}*) *expira em {{tempo_restante_pre_reserva}}* (limite: *{{validade_pre_reserva}}*).
+Passando para lembrar que a sua *Pré-Reserva ({{numero_reserva}})* no *{{nome_hotel}}* (*Flat {{quarto}}* • *{{data_checkin}} a {{data_checkout}}* • *{{num_hospedes}} hóspede(s)* • Canal: *{{canal_reserva}}*) *expira em {{tempo_restante_pre_reserva}}* (limite: *{{validade_pre_reserva}}*).
 
 💰 *Para garantir sua reserva agora:*
 • Com desconto no PIX (-5%): *{{quanto_falta}}*
@@ -493,7 +570,7 @@ Passando para lembrar que a sua *Pré-Reserva ({{numero_reserva}})* no *{{nome_h
     fixedTime: "",
     message: `Olá, *{{nome_destinatario}}*! ⏳
 
-Informamos que o prazo de validade da sua *Pré-Reserva ({{numero_reserva}})* no *{{nome_hotel}}* para o período de *{{data_checkin}} a {{data_checkout}}* (*Flat {{quarto}}*) *expirou* por falta de confirmação de pagamento dentro do tempo limite, e a acomodação voltou a ficar disponível em nosso calendário.
+Informamos que o prazo de validade da sua *Pré-Reserva ({{numero_reserva}})* no *{{nome_hotel}}* para o período de *{{data_checkin}} a {{data_checkout}}* (*Flat {{quarto}}* • *{{num_hospedes}} hóspede(s)* • Canal: *{{canal_reserva}}*) *expirou* por falta de confirmação de pagamento dentro do tempo limite, e a acomodação voltou a ficar disponível em nosso calendário.
 
 💬 *Ainda tem interesse nesta hospedagem?*
 Basta responder a esta mensagem aqui no WhatsApp para *consultarmos a disponibilidade e os valores novamente* e reativarmos a sua pré-reserva!`,
@@ -524,6 +601,7 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Total de Hóspedes: *{{num_hospedes}}*
 • Café da Manhã: *{{status_cafe}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 💰 *Situação Financeira:*
 • Valor Total: *{{valor_total}}*
@@ -568,6 +646,7 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Total de Hóspedes: *{{num_hospedes}}*
 • Café da Manhã: *{{status_cafe}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 💰 *Situação Financeira:*
 • Valor Total: *{{valor_total}}*
@@ -613,6 +692,7 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 • Entrada (Check-in): *{{data_checkin}} a partir das 14:00*
 • Saída (Check-out): *{{data_checkout}} até às 12:00*
 • Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 🔑 *Sobre o seu apartamento e liberação de entrada:*
 O número do seu flat e as instruções de chegada serão informados no dia da sua chegada *a partir das 12:00*, assim que o apartamento estiver 100% higienizado e preparado pela nossa governança.
@@ -817,6 +897,8 @@ Ao chegar no edifício, basta seguir estas orientações simples na recepção:
 • Acomodação: *Flat {{quarto}}*
 • Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 • Endereço: {{endereco_hotel}}
 • Localização no Maps: {{link_maps}}
 
@@ -1158,6 +1240,8 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) foi gerada há 1 hora e
 📋 *Detalhes da Estadia:*
 • Código: *{{numero_reserva}}*
 • Período: *{{data_checkin}} a {{data_checkout}}* ({{num_diarias}} diária(s))
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 • Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
 • Valor com Desconto no PIX (-5%): *{{quanto_falta}}*
 
@@ -1192,6 +1276,8 @@ Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_h
 • Código da Reserva: *{{numero_reserva}}*
 • Período: *{{data_checkin}} até {{data_checkout}}*
 • Total de Noites: *{{num_diarias}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 • Valor Total Atualizado: *{{valor_total}}*
 • Valor Já Pago: *{{valor_pago}}*
 • Situação do Pagamento: *{{status_pagamento}}*
@@ -1240,6 +1326,7 @@ Sua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Total de Hóspedes: *{{num_hospedes}}*
 • Café da Manhã: *{{status_cafe}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 💰 *Situação Financeira:*
 • Valor Total: *{{valor_total}}*
@@ -1285,7 +1372,9 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 • Acomodação: *Flat {{quarto}}*
 • Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
 • Café da Manhã: *{{status_cafe}}*
+• Canal da Reserva: *{{canal_reserva}}*
 • Pagamento: *{{status_pagamento}}*
 
 {{status_liberacao_flat_hoje}}
@@ -1384,6 +1473,8 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagame
 📋 *Resumo:*
 • Código: *{{numero_reserva}}*
 • Período: *{{data_checkin}} a {{data_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 • Valor no Cartão de Crédito: *{{quanto_falta_cartao}}*
 • Valor com Desconto no PIX (-5%): *{{quanto_falta}}*
 
@@ -1405,7 +1496,13 @@ Para garantir sua acomodação via PIX (com 5% de desconto) ou Cartão de Crédi
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! 💚🎉
 Confirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*.
-Sua reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) para *{{data_checkin}}* está confirmada!
+Sua reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está confirmada!
+
+📋 *Resumo da Reserva:*
+• Código: *{{numero_reserva}}*
+• Período: *{{data_checkin}} a {{data_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 Acesse seu portal para realizar o Pré-Check-in Digital:
 {{link_checkin_digital}}`,
@@ -1431,6 +1528,7 @@ Aqui está o resumo da sua estadia confirmada no *{{nome_hotel}}*:
 📅 Entrada: *{{data_checkin}}* a partir das *{{horario_checkin}}*
 📅 Saída: *{{data_checkout}}* até às *{{horario_checkout}}*
 👥 Hóspedes: *{{num_hospedes}}*
+📌 Canal da Reserva: *{{canal_reserva}}*
 
 Para agilizar sua entrada na portaria, preencha o *Pré-Check-in Digital*:
 {{link_checkin_digital}}`,
@@ -3376,7 +3474,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const checkinTime = db.settings?.checkinTime || "14:00";
   const checkoutTime = db.settings?.checkoutTime || "12:00";
   
-  const guestCount = reservation.guestCount || reservation.adults || 1;
+  const guestCount = resolveReservationGuestCount(reservation);
   const chanLower = String(reservation.channel || "").toLowerCase();
   const ratesSumInTags = Array.isArray(reservation.dailyRates) && reservation.dailyRates.length > 0
     ? reservation.dailyRates.reduce((acc, d) => acc + (Number(d.rate ?? d.amount) || 0), 0)
@@ -3429,7 +3527,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   } else if (hasPartialPendingExtension || (paidAmount > 0 && pendingAmount > 0)) {
     paymentStatus = "Pago Parcialmente (Saldo de diária adicional em aberto)";
   }
-  const channel = reservation.channel || "Site CorpFlats";
+  const channel = formatReservationChannelLabel(reservation);
 
   const rawMethod = String(reservation.paymentMethod || "").toLowerCase();
   let formaPagamento = "PIX";
@@ -3742,7 +3840,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   // Tag: {{mensagem_pendencia_hospedes}} (Lógica de 1 vs 2 hóspedes)
-  const isMultiGuest = (reservation.guestCount > 1 || reservation.adults > 1);
+  const isMultiGuest = guestCount > 1;
   const firstGuestDone = Boolean(reservation.guests?.[0]?.hasCompletedCheckin || reservation.guests?.[0]?.status === "CHECKED_IN");
   let mensagemPendenciaHospedes = "Para que a portaria do condomínio libere sua entrada imediatamente na chegada, pedimos que adiante o cadastro dos hóspedes pelo link abaixo:";
   if (companion) {
@@ -3962,6 +4060,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
         `• Acomodação: *Flat {{quarto}}*\n` +
         `• Período: *{{data_checkin}} a {{data_checkout}}* ({{num_diarias}} diária(s))\n` +
         `• Horário de Check-out: *até às {{horario_checkout}}*\n` +
+        `• Total de Hóspedes: *{{num_hospedes}}*\n` +
+        `• Canal da Reserva: *{{canal_reserva}}*\n` +
         `• Pagamento Confirmado Agora: *${extPaidFmt} (${extMethodLabel})*\n` +
         `• Valor Total Pago: *{{valor_pago}}*\n` +
         `• Situação Financeira: *Pago Integralmente (100% Quitada)*` +
@@ -3980,7 +4080,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
         `\n\n📋 *Resumo Atualizado da Hospedagem:*\n` +
         `• Acomodação: *Flat {{quarto}}*\n` +
         `• Período: *{{data_checkin}} a {{data_checkout}}* ({{num_diarias}} diária(s))\n` +
-        `• Horário de Check-out: *até às {{horario_checkout}}*` +
+        `• Horário de Check-out: *até às {{horario_checkout}}*\n` +
+        `• Total de Hóspedes: *{{num_hospedes}}*\n` +
+        `• Canal da Reserva: *{{canal_reserva}}*` +
         (needReSignNote
           ? `\n\n📝 *Assinatura da Ficha Atualizada:*\nComo o período da sua estadia foi prorrogado, clique no botão *"Assinar Ficha Atualizada"* abaixo para atualizar rapidamente sua ficha na recepção.`
           : "");
@@ -8011,7 +8113,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               tpl.message?.includes("parceria") ||
               tpl.message?.includes("{{nome_agencia}}") ||
               tpl.message?.includes("e Documento") ||
-              tpl.footer?.includes("B2B"))
+              tpl.footer?.includes("B2B") ||
+              !tpl.message?.includes("{{num_hospedes}}") ||
+              !tpl.message?.includes("{{canal_reserva}}"))
           ) {
             tpl.title = defCred.title;
             tpl.description = defCred.description;
@@ -8023,7 +8127,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || tpl.message.includes("Para agilizar sua estadia") || tpl.message.includes("sem filas") || !tpl.message.includes("status_cafe") || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || tpl.message.includes("Para agilizar sua estadia") || tpl.message.includes("sem filas") || !tpl.message.includes("status_cafe") || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
             const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
             if (defPre) {
               tpl.title = defPre.title;
@@ -8038,13 +8142,25 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             );
           }
         }
+        if (tpl.id === "tpl_pre_reserva_lembrete") {
+          const defRemPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva_lembrete");
+          if (defRemPre && (!tpl.message?.includes("{{num_hospedes}}") || !tpl.message?.includes("{{canal_reserva}}"))) {
+            tpl.message = defRemPre.message;
+          }
+        }
+        if (tpl.id === "tpl_pre_reserva_expirada") {
+          const defExpPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva_expirada");
+          if (defExpPre && (!tpl.message?.includes("{{num_hospedes}}") || !tpl.message?.includes("{{canal_reserva}}"))) {
+            tpl.message = defExpPre.message;
+          }
+        }
         if (tpl.id === "tpl_payment_pending") {
           tpl.recipientTarget = "requester";
           tpl.triggerTiming = "after_creation";
           tpl.offsetValue = 1;
           tpl.offsetUnit = "hours";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
             const defPend = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_pending");
             if (defPend) {
               tpl.title = defPend.title;
@@ -8056,7 +8172,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_additional_daily_pending") {
           tpl.recipientTarget = "requester";
-          if (!tpl.message.includes("{{status_pagamento}}") || tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{resumo_alteracoes}}")) {
+          if (!tpl.message.includes("{{status_pagamento}}") || tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{resumo_alteracoes}}") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
             const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
             if (defAdd) {
               tpl.title = defAdd.title;
@@ -8089,7 +8205,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             tpl.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || defPay.documentUrl;
             tpl.documentName = db?.zapiConfig?.guestGuidePdfName || defPay.documentName;
             tpl.documentCaption = tpl.documentCaption || defPay.documentCaption;
-            if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas")) {
+            if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
               tpl.message = defPay.message;
               tpl.buttons = defPay.buttons;
             }
@@ -8141,6 +8257,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             tpl.buttons = [];
           }
         }
+        if (tpl.id === "tpl_pre_checkin_completed") {
+          const defPreComp = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_completed");
+          if (defPreComp && (!tpl.message?.includes("{{num_hospedes}}") || !tpl.message?.includes("{{canal_reserva}}"))) {
+            tpl.message = defPreComp.message;
+          }
+        }
         if (tpl.id === "tpl_new_reservation_direct") {
           tpl.channels = ["site", "whatsapp", "outros"];
           const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
@@ -8149,7 +8271,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             tpl.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || defDir.documentUrl;
             tpl.documentName = db?.zapiConfig?.guestGuidePdfName || defDir.documentName;
             tpl.documentCaption = tpl.documentCaption || defDir.documentCaption;
-            if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas") || !tpl.message.includes("ESTRITAMENTE MEDIANTE DISPONIBILIDADE")) {
+            if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas") || !tpl.message.includes("ESTRITAMENTE MEDIANTE DISPONIBILIDADE") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
               tpl.message = defDir.message;
               tpl.description = defDir.description;
               tpl.buttons = defDir.buttons;
@@ -8177,7 +8299,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             tpl.documentUrl = db?.zapiConfig?.guestGuidePdfUrl || defOta.documentUrl;
             tpl.documentName = db?.zapiConfig?.guestGuidePdfName || defOta.documentName;
             tpl.documentCaption = tpl.documentCaption || defOta.documentCaption;
-            if (tpl.message.includes("{{valor_total}}") || !tpl.message.includes("12:00")) {
+            if (tpl.message.includes("{{valor_total}}") || !tpl.message.includes("12:00") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
               tpl.message = defOta.message;
               tpl.title = defOta.title;
               tpl.description = defOta.description;
@@ -8189,6 +8311,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.enabled = false;
           tpl.channels = ["outros"];
           tpl.title = "Nova Reserva • Confirmação & Resumo (Legado / Desativado)";
+          const defNewGen = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation");
+          if (defNewGen && (!tpl.message?.includes("{{num_hospedes}}") || !tpl.message?.includes("{{canal_reserva}}"))) {
+            tpl.message = defNewGen.message;
+          }
         }
         if (tpl.id === "tpl_post_checkout_review") {
           tpl.triggerEvent = "nps_approved";
@@ -8248,7 +8374,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               tpl.message.includes("Como sua reserva foi confirmada") ||
               !tpl.message.includes("status_pagamento") ||
               !tpl.message.includes("status_liberacao_flat_hoje") ||
-              tpl.message.includes("horario_liberacao_hoje")
+              tpl.message.includes("horario_liberacao_hoje") ||
+              !tpl.message.includes("{{num_hospedes}}") ||
+              !tpl.message.includes("{{canal_reserva}}")
             ) {
               tpl.title = defSame.title;
               tpl.description = defSame.description;
@@ -8327,8 +8455,20 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (qm.id === "qm_payment_pending") {
           const defPayQm = DEFAULT_WHATSAPP_QUICK_MESSAGES.find(q => q.id === "qm_payment_pending");
-          if (defPayQm && (!qm.message?.includes("quanto_falta_cartao") || qm.message?.includes("12x"))) {
+          if (defPayQm && (!qm.message?.includes("quanto_falta_cartao") || qm.message?.includes("12x") || !qm.message?.includes("{{num_hospedes}}") || !qm.message?.includes("{{canal_reserva}}"))) {
             qm.message = defPayQm.message;
+          }
+        }
+        if (qm.id === "qm_payment_confirmed") {
+          const defConfQm = DEFAULT_WHATSAPP_QUICK_MESSAGES.find(q => q.id === "qm_payment_confirmed");
+          if (defConfQm && (!qm.message?.includes("{{num_hospedes}}") || !qm.message?.includes("{{canal_reserva}}"))) {
+            qm.message = defConfQm.message;
+          }
+        }
+        if (qm.id === "qm_summary_checkin") {
+          const defSumQm = DEFAULT_WHATSAPP_QUICK_MESSAGES.find(q => q.id === "qm_summary_checkin");
+          if (defSumQm && (!qm.message?.includes("{{num_hospedes}}") || !qm.message?.includes("{{canal_reserva}}"))) {
+            qm.message = defSumQm.message;
           }
         }
         if (qm.id === "qm_breakfast") {
@@ -14164,10 +14304,14 @@ export async function sendEarlyCheckoutManagerWhatsAppAlert(db, saveDatabase, re
     const timeStr = info.timeStr || reservation.actualCheckoutTime || "";
     const reportedBy = info.reportedBy || reservation.earlyCheckoutReportedBy || "Sistema";
     const cancelledBfCount = Number(info.cancelledBreakfastCount || 0);
+    const earlyGuestsCount = resolveReservationGuestCount(reservation);
+    const earlyChanLabel = formatReservationChannelLabel(reservation);
 
     let msg = `⚡ *ALERTA DE CHECK-OUT ANTECIPADO — ${flatLabel}*\n\n`;
     msg += `👤 *Hóspede:* ${guestName} (${resCode})\n`;
     msg += `🏢 *Unidade:* ${flatLabel}\n`;
+    msg += `👥 *Total de Hóspedes:* ${earlyGuestsCount}\n`;
+    msg += `📌 *Canal da Reserva:* ${earlyChanLabel}\n`;
     msg += `📅 *Período Original:* ${checkinBr} a ${originalOutBr}\n`;
     msg += `🚪 *Saída Antecipada:* ${actualOutBr}${timeStr ? ` às ${timeStr}` : ""}\n`;
     msg += `📢 *Informado por:* ${reportedBy}\n\n`;
@@ -14219,7 +14363,8 @@ export async function sendOverbookingManagerWhatsAppAlert(db, saveDatabase, rese
     const resCode = reservation.code || reservation.reservationCode || `#${reservation.id}`;
     const checkinBr = formatDateBrSimple(reservation.checkinDate);
     const checkoutBr = formatDateBrSimple(reservation.checkoutDate);
-    const chanLabel = String(reservation.channel || "Direta").toUpperCase();
+    const chanLabel = formatReservationChannelLabel(reservation);
+    const resGuestsCount = resolveReservationGuestCount(reservation);
     const isForced = Boolean(options.isForced);
     const actorName = options.actorName || "Sistema / Recepção";
 
@@ -14228,8 +14373,9 @@ export async function sendOverbookingManagerWhatsAppAlert(db, saveDatabase, rese
       const cGuest = c.guestName || "Hóspede";
       const cIn = formatDateBrSimple(c.checkinDate);
       const cOut = formatDateBrSimple(c.checkoutDate);
-      const cChan = String(c.channel || "Direta").toUpperCase();
-      return `• *${cGuest}* (${cCode}) — ${cIn} a ${cOut} [${cChan}]`;
+      const cChan = formatReservationChannelLabel(c);
+      const cGuests = resolveReservationGuestCount(c);
+      return `• *${cGuest}* (${cCode}) — ${cIn} a ${cOut} • ${cGuests} hóspede(s) [${cChan}]`;
     }).join("\n");
 
     let msg = `🚨 *ALERTA DE OVERBOOKING / CONFLITO DE RESERVA — ${flatLabel}*\n\n`;
@@ -14237,6 +14383,7 @@ export async function sendOverbookingManagerWhatsAppAlert(db, saveDatabase, rese
     msg += `📌 *Reserva Salva:*\n`;
     msg += `• Hóspede: *${guestName}* (${resCode})\n`;
     msg += `• Período: *${checkinBr} a ${checkoutBr}*\n`;
+    msg += `• Total de Hóspedes: *${resGuestsCount}*\n`;
     msg += `• Canal: *${chanLabel}*\n\n`;
     msg += `💥 *Reserva(s) Conflitante(s) no Mesmo Flat:*\n${conflictLines}\n\n`;
     msg += `🔍 _No calendário do PMS, as reservas sobrepostas estão destacadas com transparência para visualização simultânea e remanejamento imediato._`;
@@ -14460,6 +14607,49 @@ export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, 
     });
   }
 
+  // Garante que o evento de check-out esteja registrado na Central de Notificações do sistema
+  try {
+    const flatNumVal = String(reservation.flatNumber || (typeof resolveFlatNum === "function" ? resolveFlatNum(reservation) : "") || "").trim();
+    if (flatNumVal) {
+      if (!Array.isArray(db.notifications)) db.notifications = [];
+      const alreadyNotified = db.notifications.some(n =>
+        n.category === "checkout" &&
+        String(n.metadata?.flatNumber || "").trim() === flatNumVal &&
+        Math.abs(new Date(n.createdAt).getTime() - new Date(nowIso).getTime()) < 30000
+      );
+      if (!alreadyNotified) {
+        const notifPayload = {
+          category: "checkout",
+          title: isEarlyCheckout ? `⚡ Check-out Antecipado - Apt ${flatNumVal}` : `🚪 Check-out Realizado - Apt ${flatNumVal}`,
+          message: `Check-out do flat ${flatNumVal} (${reservation.guestName || "Hóspede"}) registrado às ${timeStr}.`,
+          severity: isEarlyCheckout ? "warning" : "info",
+          metadata: {
+            flatNumber: flatNumVal,
+            flatId: reservation.flatId,
+            guestName: reservation.guestName,
+            code: reservation.code,
+            checkoutTime: timeStr,
+            actualCheckoutAt: nowIso,
+            isEarlyCheckout
+          },
+          targetUrl: "/dashboard",
+          read: false,
+          createdAt: nowIso
+        };
+        if (typeof globalThis.__corpflatsCreateNotification === "function") {
+          globalThis.__corpflatsCreateNotification(notifPayload);
+        } else {
+          const maxId = db.notifications.reduce((m, n) => Math.max(m, Number(n.id) || 0), 0);
+          notifPayload.id = maxId + 1;
+          db.notifications.unshift(notifPayload);
+          if (db.notifications.length > 250) db.notifications = db.notifications.slice(0, 250);
+        }
+      }
+    }
+  } catch (errNotif) {
+    console.warn("[Checkout Notification Sync Warning]:", errNotif?.message);
+  }
+
   return {
     isEarlyCheckout,
     reportedBy,
@@ -14517,8 +14707,10 @@ export function buildTodayCheckoutsSummaryForRestockers(db, todayOverride = null
     const checkedOut = isReservationOrFlatCheckedOut(db, r, r.flatId, flatNum);
     if (checkedOut) {
       checkedOutMap.set(flatNum, {
+        id: r.code || `RES-${r.id}`,
         flatNumber: flatNum,
         checkoutTime: extractedTime || nowBrl.timeStr || "hoje",
+        actualCheckoutAt: r.actualCheckoutAt || null,
         guestName: (r.guestName || "Hóspede").trim(),
         reservationCode: r.code || `RES-${r.id}`
       });

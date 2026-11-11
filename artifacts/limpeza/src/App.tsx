@@ -8,6 +8,7 @@ import { cancelGoogleOneTap } from '@/lib/auth-client';
 import { useGetMe, getGetMeQueryKey } from '@workspace/api-client-react';
 import { AccessDenied } from '@/components/access-denied';
 import { FloatingNewReservationButton } from '@/components/floating-new-reservation';
+import { RestockerVoiceNotifier } from '@/components/restocker-voice-notifier';
 import { CorpFlatsSplashScreen } from '@/components/brand-logo';
 import { hasModuleAccess } from '@/lib/permissions';
 
@@ -672,6 +673,7 @@ function App() {
         <VersionGuard>
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
             <Router />
+            <RestockerVoiceNotifier />
             <FloatingNewReservationButton />
             <Suspense fallback={null}>
               <AdminAiCopilot />

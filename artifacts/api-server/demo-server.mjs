@@ -699,9 +699,30 @@ app.get("/api/notifications/alerts", (req, res) => {
 });
 
 app.get("/api/notifications", (req, res) => {
-  const notifs = db.notifications || [];
-  const unreadCount = notifs.filter(n => !n.read).length;
-  res.json({ notifications: notifs, unreadCount });
+  if (!db.notifications) db.notifications = [];
+  const { category, severity, unreadOnly, since, limit } = req.query;
+  let items = [...db.notifications];
+  if (category && category !== "all") {
+    items = items.filter(n => n.category === category);
+  }
+  if (severity && severity !== "all") {
+    items = items.filter(n => n.severity === severity);
+  }
+  if (unreadOnly === "true") {
+    items = items.filter(n => !n.read);
+  }
+  if (since) {
+    const sinceDate = new Date(since);
+    if (!isNaN(sinceDate.getTime())) {
+      items = items.filter(n => new Date(n.createdAt || n.timestamp || 0) >= sinceDate);
+    }
+  }
+  const unreadCount = db.notifications.filter(n => !n.read).length;
+  const total = items.length;
+  if (limit && Number(limit) > 0) {
+    items = items.slice(0, Number(limit));
+  }
+  res.json({ notifications: items, unreadCount, total });
 });
 
 app.get("/api/system/db-status", async (req, res) => {
@@ -17844,6 +17865,7 @@ function createNotification(arg1, arg2, arg3) {
     return null;
   }
 }
+globalThis.__corpflatsCreateNotification = createNotification;
 
 // ── Centralized Check-in URL Resolver & Resilient Fallback Engine ─────────────
 /**
@@ -35690,11 +35712,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     "b2bRatePolicy", "b2bCommissionPct", "b2bCommissionAmount", "b2bNetRate", "b2bNetAmount",
     "b2bPaymentType", "b2bCardBrand", "b2bCardMasked", "b2bVcnToken", "b2bConciliationUrl", "voucherUrl", "b2bVoucherUrl", "b2bConciliationStatus", "b2bAuthorizedExpenses",
     "invoiceRecipientType", "nfRecipientType", "invoicingInstructions", "nfDeliveryEmails", "nfHideFromGuest",
-    "isFaturadoBoleto", "boletoTermDays", "boletoCustomDueDate", "boletoConsumptionMode", "boletoPayerType",
+    "isFaturadoBoleto", "boletoTermDays", "boletoCustomDueDate", "boletoConsumptionMode", "boletoPayerType", "boletoCustomPayer",
     "consumptionSamePayerAndDue", "consumptionPayerType", "consumptionTermDays", "consumptionCustomDueDate", "consumptionCustomPayer",
     "boletoFinePct", "boletoInterestPct", "boletoAutoWriteOffDays", "autoEmitBoletoOnCheckout", "autoReminderEnabled",
     "financialResponsible", "financialResponsibleName", "financialResponsibleEmail", "financialResponsiblePhone", "financialResponsibleDocument",
-    "billingRecipients",
+    "billingRecipients", "billingDeliveryRecipients",
     "docPhotoUrl", "hasMinor", "minorAge", "isCamposResident", "riskAttentionAlert", "riskAttentionReason",
     "isFlatLocked", "flatLocked", "flatLockReason",
     "earlyCheckout", "originalCheckoutDate", "earlyCheckoutDate", "earlyCheckoutTime", "earlyCheckoutReportedBy", "earlyCheckoutNote"
@@ -69170,12 +69192,14 @@ app.get("/api/finance/payments", (req, res) => {
       }
     }
 
+    const preBoletosForPayments = buildAwaitingEmissionPreBoletos(db);
     const enrichedBoletosForPayments = (db.boletos || []).map(b => enrichBoletoDynamicStatus(b));
 
     res.json({
       payments: filtered,
       boletos: enrichedBoletosForPayments,
-      boletosSummary: computeBoletosSummaryMetrics(enrichedBoletosForPayments),
+      preBoletos: preBoletosForPayments,
+      boletosSummary: computeBoletosSummaryMetrics(enrichedBoletosForPayments, preBoletosForPayments),
       summary: {
         totalGross: Number(totalGross.toFixed(2)),
         totalFees: Number(totalFees.toFixed(2)),
@@ -69459,19 +69483,22 @@ function enrichBoletoDynamicStatus(boleto) {
   };
 }
 
-function computeBoletosSummaryMetrics(boletosList = []) {
+function computeBoletosSummaryMetrics(boletosList = [], preBoletosList = []) {
   const enriched = boletosList.map(b => enrichBoletoDynamicStatus(b)).filter(Boolean);
   const open = enriched.filter(b => b.status === "aberto");
   const dueToday = enriched.filter(b => b.status === "aberto" && b.isDueToday);
   const overdue = enriched.filter(b => b.status === "vencido");
   const paid = enriched.filter(b => b.status === "pago");
   const cancelled = enriched.filter(b => b.status === "cancelado");
+  const awaiting = Array.isArray(preBoletosList) ? preBoletosList.filter(Boolean) : [];
 
   const sumAmt = (arr, field = "amount") =>
     Number(arr.reduce((s, x) => s + (Number(x[field] ?? x.amount ?? 0) || 0), 0).toFixed(2));
 
   return {
     totalCount: enriched.length,
+    awaitingCount: awaiting.length,
+    awaitingAmount: sumAmt(awaiting),
     openCount: open.length,
     openAmount: sumAmt(open),
     dueTodayCount: dueToday.length,
@@ -69486,6 +69513,134 @@ function computeBoletosSummaryMetrics(boletosList = []) {
     cancelledCount: cancelled.length,
     cancelledAmount: sumAmt(cancelled)
   };
+}
+
+function buildSinglePreBoletoFromReservation(r, targetDb = db) {
+  if (!r) return null;
+  const breakdown = computeReservationAccommodationAndConsumption(r, targetDb);
+  const { guest, company, agency } = resolveReservationCrmLinks(r);
+  const crmEntity = company || agency || guest || {};
+
+  const baseCheckoutDate = r.checkoutDate || getBrasiliaDateStr();
+  const mainTermDays = Number(r.boletoTermDays ?? crmEntity.defaultBoletoTermDays ?? 15);
+  const explicitDueDate = r.boletoCustomDueDate || null;
+  const predictedDueDate = explicitDueDate || addDaysToIsoDate(baseCheckoutDate, mainTermDays);
+
+  const finePct = Number(r.boletoFinePct ?? crmEntity.defaultBoletoFinePct ?? 2);
+  const interestPct = Number(r.boletoInterestPct ?? crmEntity.defaultBoletoInterestPct ?? 1);
+  const autoWriteOffDays = Number(r.boletoAutoWriteOffDays ?? crmEntity.defaultBoletoAutoWriteOffDays ?? 60);
+  const autoReminderEnabled = Boolean(r.autoReminderEnabled ?? crmEntity.defaultAutoReminderEnabled ?? true);
+
+  const consumptionMode = normalizeBoletoConsumptionMode(
+    r.boletoConsumptionMode || crmEntity.defaultBoletoConsumptionMode || "single"
+  );
+
+  const mainPayerType = String(
+    r.boletoPayerType ||
+    crmEntity.defaultBoletoPayerType ||
+    r.invoiceRecipientType ||
+    (company ? "company" : (agency ? "agency" : "guest"))
+  ).toLowerCase();
+
+  const mainPayer = resolveBoletoPayerData(r, mainPayerType, r.boletoCustomPayer || null);
+  const { flags: recFlags, financialResponsible } = resolveReservationBillingRecipientsList(r);
+  const existingInv = findExistingInvoiceForReservation(targetDb, {
+    reservation: r,
+    reservationId: r.id,
+    reservationCode: r.code
+  });
+
+  const predictedAmount = breakdown.netTotalBoletoAmount > 0
+    ? breakdown.netTotalBoletoAmount
+    : (breakdown.totalWithConsumption > 0 ? breakdown.totalWithConsumption : Number(r.totalAmount || 0));
+
+  return {
+    id: `pre_${r.id || r.code}`,
+    code: `PRE-${r.code || r.id}`,
+    isPreBoleto: true,
+    status: "aguardando_emissao",
+    reservationId: r.id,
+    reservationCode: r.code,
+    reservationStatus: r.status || "confirmada",
+    channel: r.channel || "direta",
+    flatId: r.flatId || null,
+    flatNumber: r.flatNumber || "—",
+    checkinDate: r.checkinDate || null,
+    checkoutDate: r.checkoutDate || null,
+    guestId: guest?.id || r.guestId || null,
+    guestName: r.guestName || guest?.fullName || "Hóspede",
+    guestDocument: r.guestDocument || guest?.documentNumber || "",
+    companyId: company?.id || r.companyId || null,
+    companyName: company?.corporateName || company?.tradeName || r.companyName || null,
+    companyCnpj: company?.cnpj || r.companyCnpj || "",
+    agencyId: agency?.id || r.agencyId || null,
+    agencyName: agency?.tradeName || agency?.corporateName || r.agencyName || null,
+    agencyCnpj: agency?.cnpj || r.agencyCnpj || "",
+    payerType: mainPayerType,
+    payer: mainPayer,
+    payerName: mainPayer.nome,
+    payerDoc: mainPayer.cpfCnpj,
+    payerDocument: mainPayer.cpfCnpj,
+    payerEmail: mainPayer.email || "",
+    hasValidPayerDoc: onlyDigits(mainPayer.cpfCnpj || "").length >= 11,
+    consumptionMode,
+    boletoKind: consumptionMode === "separate" && breakdown.consumptionAmount > 0 ? "separate_preview" : "single",
+    consumptionSamePayerAndDue: r.consumptionSamePayerAndDue !== false,
+    consumptionPayerType: r.consumptionPayerType || "guest",
+    consumptionTermDays: Number(r.consumptionTermDays ?? mainTermDays),
+    consumptionCustomDueDate: r.consumptionCustomDueDate || "",
+    consumptionCustomPayer: r.consumptionCustomPayer || null,
+    accommodationAmount: breakdown.accommodationAmount || Number(r.totalAmount || 0),
+    consumptionAmount: breakdown.consumptionAmount || 0,
+    priorPaidAmount: breakdown.priorPaidAmount || 0,
+    amount: Number(predictedAmount.toFixed(2)),
+    termDays: mainTermDays,
+    customDueDate: explicitDueDate || "",
+    dueDate: predictedDueDate,
+    isCustomDueDate: Boolean(explicitDueDate),
+    multaPct: finePct,
+    finePct,
+    jurosMonthlyPct: interestPct,
+    interestPct,
+    autoWriteOffDays,
+    autoEmitBoletoOnCheckout: r.autoEmitBoletoOnCheckout !== false,
+    autoReminderEnabled,
+    financialResponsible,
+    billingRecipients: recFlags,
+    billingDeliveryRecipients: recFlags,
+    invoiceId: existingInv?.id || r.invoiceId || null,
+    nfseNumber: existingInv?.numeroNfse || r.numeroNfse || null,
+    invoiceIssued: Boolean(existingInv || r.invoiceId),
+    notes: r.invoicingInstructions || ""
+  };
+}
+
+function buildAwaitingEmissionPreBoletos(targetDb = db) {
+  const preList = [];
+  const reservations = Array.isArray(targetDb?.reservations) ? targetDb.reservations : [];
+  const boletos = Array.isArray(targetDb?.boletos) ? targetDb.boletos : [];
+
+  for (const r of reservations) {
+    if (!r) continue;
+    const st = String(r.status || "").toLowerCase();
+    if (st === "cancelada" || st === "cancelado" || st === "cancelled" || st === "no_show" || st === "expirada") continue;
+    if (!isFaturadoBoletoReservation(r)) continue;
+    if (hasRealSettlementForFaturadoBoleto(r, targetDb) && (r.paymentStatus === "pago_total" || r.paymentStatus === "pago")) continue;
+
+    const hasActiveBoleto = boletos.some(b =>
+      b &&
+      b.status !== "cancelado" &&
+      ((b.reservationId && Number(b.reservationId) === Number(r.id)) ||
+       (r.code && b.reservationCode && String(b.reservationCode) === String(r.code)))
+    );
+    if (hasActiveBoleto) continue;
+
+    const pre = buildSinglePreBoletoFromReservation(r, targetDb);
+    if (pre) preList.push(pre);
+  }
+
+  preList.sort((a, b) => String(a.checkoutDate || "").localeCompare(String(b.checkoutDate || "")));
+  return preList;
 }
 
 /**
@@ -70006,7 +70161,7 @@ function markBoletoAsPaid(boleto, { paidAmount, paidAt, endToEndId, source = "Ma
     message: `Boleto Banco Inter #${boleto.code} de ${boleto.payer?.nome || boleto.guestName || "Cliente"} confirmado (${source}).`,
     severity: "success",
     metadata: { boletoId: boleto.id, boletoCode: boleto.code, reservationCode: boleto.reservationCode, amount: resolvedPaid },
-    targetUrl: `/notas`
+    targetUrl: `/pagamentos?tab=boletos`
   });
 
   return enrichBoletoDynamicStatus(boleto);
@@ -70506,7 +70661,7 @@ async function emitCheckoutFaturadoPackage(r, options = {}) {
           email: options.payerEmail,
           phone: options.payerPhone
         }
-      : null
+      : (r?.boletoCustomPayer || null)
   );
   const mainPayer = resolveBoletoPayerData(r, mainPayerType, customMainPayerInput);
 
@@ -70874,10 +71029,146 @@ app.get("/api/boletos", (req, res) => {
       );
     }
 
-    const summary = computeBoletosSummaryMetrics(db.boletos);
+    const preBoletos = buildAwaitingEmissionPreBoletos(db);
+    const summary = computeBoletosSummaryMetrics(db.boletos, preBoletos);
     res.json({
       boletos: list,
+      preBoletos,
       summary
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/boletos/pre/:reservationId", (req, res) => {
+  try {
+    const idParam = String(req.params.reservationId || "").replace(/^pre_/, "");
+    const r = (db.reservations || []).find(x =>
+      x && (String(x.id) === idParam || String(x.code) === idParam)
+    );
+    if (!r) return res.status(404).json({ error: "Reserva faturada não encontrada." });
+
+    const b = req.body || {};
+    r.isFaturadoBoleto = true;
+    if (!r.paymentMethod || r.paymentMethod === "pix") {
+      const isB2b = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
+      r.paymentMethod = isB2b ? "faturado_b2b" : "boleto_faturado";
+    }
+
+    if (b.payerType !== undefined) {
+      r.boletoPayerType = String(b.payerType).toLowerCase();
+    }
+    if (b.customPayer !== undefined) {
+      r.boletoCustomPayer = b.customPayer;
+    } else if (b.payerName !== undefined || b.payerDoc !== undefined || b.payerEmail !== undefined) {
+      const pName = String(b.payerName || "").trim();
+      const pDoc = String(b.payerDoc || "").trim();
+      const pEmail = String(b.payerEmail || "").trim();
+      if (pName || pDoc) {
+        r.boletoCustomPayer = {
+          ...(r.boletoCustomPayer || {}),
+          name: pName,
+          document: pDoc,
+          email: pEmail
+        };
+      } else {
+        r.boletoCustomPayer = null;
+      }
+    }
+
+    if (b.termDays !== undefined) {
+      r.boletoTermDays = Math.max(0, Number(b.termDays) || 0);
+    }
+    if (b.customDueDate !== undefined) {
+      r.boletoCustomDueDate = b.customDueDate ? String(b.customDueDate).slice(0, 10) : null;
+    }
+    if (b.consumptionMode !== undefined) {
+      r.boletoConsumptionMode = normalizeBoletoConsumptionMode(b.consumptionMode);
+    }
+    if (b.consumptionSamePayerAndDue !== undefined || b.consumptionPayerSame !== undefined) {
+      r.consumptionSamePayerAndDue = Boolean(b.consumptionSamePayerAndDue ?? b.consumptionPayerSame);
+    }
+    if (b.consumptionPayerType !== undefined) {
+      r.consumptionPayerType = String(b.consumptionPayerType).toLowerCase();
+    }
+    if (b.consumptionTermDays !== undefined) {
+      r.consumptionTermDays = Math.max(0, Number(b.consumptionTermDays) || 0);
+    }
+    if (b.consumptionCustomDueDate !== undefined || b.consumptionDueDate !== undefined) {
+      const cdd = b.consumptionCustomDueDate ?? b.consumptionDueDate;
+      r.consumptionCustomDueDate = cdd ? String(cdd).slice(0, 10) : null;
+    }
+    if (b.consumptionPayerName !== undefined || b.consumptionPayerDoc !== undefined) {
+      const cpName = String(b.consumptionPayerName || "").trim();
+      const cpDoc = String(b.consumptionPayerDoc || "").trim();
+      r.consumptionCustomPayer = (cpName || cpDoc) ? { name: cpName, document: cpDoc } : null;
+    }
+
+    if (b.multaPct !== undefined || b.finePct !== undefined) {
+      r.boletoFinePct = Number(b.multaPct ?? b.finePct ?? 2);
+    }
+    if (b.jurosMonthlyPct !== undefined || b.interestPct !== undefined) {
+      r.boletoInterestPct = Number(b.jurosMonthlyPct ?? b.interestPct ?? 1);
+    }
+    if (b.autoEmitBoletoOnCheckout !== undefined) {
+      r.autoEmitBoletoOnCheckout = Boolean(b.autoEmitBoletoOnCheckout);
+    }
+    if (b.autoReminderEnabled !== undefined) {
+      r.autoReminderEnabled = Boolean(b.autoReminderEnabled);
+    }
+    if (b.notes !== undefined || b.invoicingInstructions !== undefined) {
+      r.invoicingInstructions = String(b.notes ?? b.invoicingInstructions ?? "").trim();
+    }
+
+    if (b.financialResponsible !== undefined) {
+      r.financialResponsible = {
+        ...(r.financialResponsible || {}),
+        name: String(b.financialResponsible?.name || "").trim(),
+        email: String(b.financialResponsible?.email || "").trim(),
+        phone: String(b.financialResponsible?.phone || "").trim(),
+        document: String(b.financialResponsible?.document || "").trim()
+      };
+    }
+
+    const incomingRec = b.billingRecipients || b.billingDeliveryRecipients;
+    if (incomingRec !== undefined) {
+      const sendWa = (incomingRec.sendWhatsapp ?? incomingRec.sendWhatsApp ?? true) !== false;
+      const mergedRec = {
+        ...(r.billingRecipients || {}),
+        ...incomingRec,
+        sendEmail: incomingRec.sendEmail !== false,
+        sendWhatsapp: sendWa,
+        sendWhatsApp: sendWa
+      };
+      r.billingRecipients = mergedRec;
+      r.billingDeliveryRecipients = mergedRec;
+    }
+
+    if (b.saveToCrm) {
+      const { guest, company, agency } = resolveReservationCrmLinks(r);
+      const crmEntity = company || agency || guest;
+      if (crmEntity) {
+        applyCrmBillingConfigFields(crmEntity, {
+          defaultBoletoTermDays: r.boletoTermDays,
+          defaultBoletoConsumptionMode: r.boletoConsumptionMode,
+          defaultBoletoPayerType: r.boletoPayerType,
+          defaultBoletoFinePct: r.boletoFinePct,
+          defaultBoletoInterestPct: r.boletoInterestPct,
+          defaultAutoReminderEnabled: r.autoReminderEnabled,
+          financialResponsible: r.financialResponsible,
+          defaultBillingRecipients: r.billingRecipients
+        });
+      }
+    }
+
+    r.updatedAt = new Date().toISOString();
+    saveDatabase("pre_boleto_updated_" + r.id);
+
+    res.json({
+      success: true,
+      message: "Configurações do boleto atualizadas na reserva com sucesso!",
+      preBoleto: buildSinglePreBoletoFromReservation(r, db)
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

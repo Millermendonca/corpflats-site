@@ -20,8 +20,10 @@ import {
   X,
   Clock,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Volume2
 } from "lucide-react";
+import { testVoiceAnnouncement, unlockSpeechAudio, syncAndRecoverCheckouts } from "@/lib/restocker-voice-notifications";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -357,6 +359,8 @@ export default function AnserveRestockPage() {
           description: `Bem-vinda, ${data.user?.name || "Repositora"}!`
         });
         setPinInput("");
+        unlockSpeechAudio();
+        syncAndRecoverCheckouts(data.user);
         fetchData();
       } else {
         setPinError(data.error || "PIN de acesso inválido.");
@@ -889,6 +893,22 @@ export default function AnserveRestockPage() {
             >
               <Users className="w-3.5 h-3.5 mr-1.5" />
               Trocar Repositora / PIN
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                testVoiceAnnouncement("1004");
+                toast({
+                  title: "Voz de Check-out Ativa",
+                  description: 'Sintetizando: "Check-out flat 1004"'
+                });
+              }}
+              className="rounded-xl text-xs font-bold h-9 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+              title="Testar síntese de voz nativa Web Speech"
+            >
+              <Volume2 className="w-3.5 h-3.5 mr-1.5" />
+              Testar Voz
             </Button>
             <Button
               variant="outline"
