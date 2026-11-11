@@ -125,11 +125,17 @@ export function FloatingNewReservationButton() {
     };
   }, []);
 
-  // Exclusivo para login de Administrador / Dev em qualquer tela autenticada
+  // Exclusivo para login de Administrador / Dev em telas administrativas (oculto nos terminais públicos da portaria/recepção)
   const isAdminUser = !isLoading && user && (user.role === 'admin' || user.role === 'dev');
-  const isLoginScreen = location === '/login' || location.startsWith('/login');
+  const isHiddenRoute =
+    location === '/login' ||
+    location.startsWith('/login') ||
+    location.startsWith('/portaria') ||
+    location.startsWith('/tablet') ||
+    location.startsWith('/recepcao') ||
+    location.startsWith('/reception');
 
-  if (!isAdminUser || isLoginScreen) {
+  if (!isAdminUser || isHiddenRoute) {
     return null;
   }
 

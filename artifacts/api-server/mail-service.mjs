@@ -92,9 +92,15 @@ export function isOtaOrB2bReservation(reservation) {
     raw.includes("corporat") ||
     raw.includes("agenc") ||
     raw.includes("agênc") ||
+    raw.includes("empresa") ||
     reservation.isCorporate ||
     reservation.isB2B ||
+    reservation.isB2b ||
     reservation.agencyId ||
+    reservation.agencyName ||
+    reservation.companyId ||
+    reservation.companyName ||
+    reservation.requesterType === "company" ||
     reservation.b2bReservationNumber ||
     reservation.b2bLocatorRloc
   );
@@ -624,12 +630,40 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
   const stageInfo = evaluateReceptionCheckinStage(reservation);
   const { expectedGuests, completedGuests, stage, needsReSignature } = stageInfo;
 
-  // Monta lista de hóspedes (Titular + Acompanhantes)
+  // Monta lista de hóspedes ordenada por slot (1..expectedGuests), preservando titular no slot 1 mesmo se hóspede 2 assinar primeiro
+  const rawGuestsArr = Array.isArray(reservation?.guests) ? reservation.guests : [];
   let guests = [];
-  if (Array.isArray(reservation?.guests) && reservation.guests.length > 0) {
-    guests = [...reservation.guests];
+  if (rawGuestsArr.length > 0) {
+    for (let slot = 1; slot <= Math.max(expectedGuests, rawGuestsArr.length); slot++) {
+      const posFallback = rawGuestsArr[slot - 1] && (!rawGuestsArr[slot - 1].index || Number(rawGuestsArr[slot - 1].index) === slot)
+        ? rawGuestsArr[slot - 1]
+        : null;
+      const existing = rawGuestsArr.find(g => Number(g?.index || 0) === slot) || posFallback;
+      if (existing) {
+        guests.push(existing);
+      } else if (slot === 1) {
+        guests.push({
+          index: 1,
+          name: guestName,
+          cpf: reservation?.guestDocument || "",
+          phone: reservation?.guestPhone || "",
+          email: reservation?.guestEmail || "",
+          hasCompletedCheckin: false
+        });
+      } else {
+        guests.push({
+          index: slot,
+          name: `Hóspede ${slot} (Acompanhante)`,
+          cpf: "",
+          phone: "",
+          email: "",
+          hasCompletedCheckin: false
+        });
+      }
+    }
   } else {
     guests = [{
+      index: 1,
       name: guestName,
       cpf: reservation?.guestDocument || "",
       phone: reservation?.guestPhone || "",
@@ -639,15 +673,16 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
     if (Array.isArray(reservation?.additionalGuests) && reservation.additionalGuests.length > 0) {
       guests.push(...reservation.additionalGuests);
     }
-  }
-  while (guests.length < expectedGuests) {
-    guests.push({
-      name: `Hóspede ${guests.length + 1} (Acompanhante)`,
-      cpf: "",
-      phone: "",
-      email: "",
-      hasCompletedCheckin: false
-    });
+    while (guests.length < expectedGuests) {
+      guests.push({
+        index: guests.length + 1,
+        name: `Hóspede ${guests.length + 1} (Acompanhante)`,
+        cpf: "",
+        phone: "",
+        email: "",
+        hasCompletedCheckin: false
+      });
+    }
   }
 
   const isGuestCheckinCompleted = (g, idx) => {
@@ -698,6 +733,18 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
     .filter(Boolean)
     .join(", ") || guestName;
 
+  const firstPendingIdxZero = guests.findIndex((g, idx) => !isGuestCheckinCompleted(g, idx));
+  const firstPendingGuestSlot = firstPendingIdxZero >= 0 ? firstPendingIdxZero + 1 : 2;
+  const checkinUrlPendingGuest = firstPendingGuestSlot === 2
+    ? checkinUrlGuest2
+    : getCheckinUrlSync(reservation, firstPendingGuestSlot, hostBase, db || settings);
+
+  const guestsSectionTitle = stage === "completed"
+    ? `Hóspedes com Check-in Digital Concluído (${guests.length})`
+    : stage === "partial"
+      ? `Hóspedes na Reserva — Check-in Parcial (${completedGuests}/${expectedGuests})`
+      : `Hóspedes na Reserva — Aguardando Check-in Digital (${guests.length})`;
+
   const statusCalloutHtml = stage === "awaiting"
     ? `
       <!-- Alerta Vermelho: Check-in Digital Ainda Não Realizado -->
@@ -717,8 +764,8 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
           <strong>Apenas ${clearedGuestNames} preencheu a ficha digital e está com cadastro liberado</strong> (entrada sujeita ao horário permitido e limpeza do flat). <strong>O(s) demais hóspede(s) permanece(m) BLOQUEADO(S)</strong> na portaria até concluírem o Check-in Digital individual.
         </p>
         <div style="margin-top: 10px;">
-          <a href="${checkinUrlGuest2}" style="color: #B45309; font-weight: 700; font-size: 13px; text-decoration: underline;">
-            🔗 Link direto de Check-in para o 2º Hóspede
+          <a href="${checkinUrlPendingGuest}" style="color: #B45309; font-weight: 700; font-size: 13px; text-decoration: underline;">
+            🔗 Link direto de Check-in para o ${firstPendingGuestSlot}º Hóspede
           </a>
         </div>
       </div>
@@ -798,7 +845,7 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
       </table>
     </div>
 
-    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Hóspedes Autorizados (${guests.length})</div>
+    <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">${guestsSectionTitle}</div>
     <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
       ${guestsHtml}
     </div>
@@ -840,7 +887,7 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
 /**
  * Gatilho B: Template de Alteração de Reserva à Recepção/Portaria
  */
-export function renderReservationUpdateEmail({ reservation, flat, changes = [], changesSummary = [], actionType, settings, baseUrl = "", db = null }) {
+export function renderReservationUpdateEmail({ reservation, flat, changes = [], changesSummary = [], actionType, updateType, settings, baseUrl = "", db = null }) {
   const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
   const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
   const flatNumber = cleanFlat || "Não informado";
@@ -856,8 +903,10 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
   const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
   
   const allChanges = [...changes, ...changesSummary];
-  const isCancelled = actionType === "cancelled" || 
-    reservation?.status === "cancelada" || 
+  const isCancelled = actionType === "cancelled" ||
+    updateType === "cancelled" ||
+    reservation?.status === "cancelada" ||
+    reservation?.status === "cancelado" ||
     allChanges.some(c => (typeof c === "string" ? c.toLowerCase().includes("cancelad") : (c.field === "status" && String(c.newValue || "").toLowerCase().includes("cancelad"))));
 
   // Detecta se houve troca de Flat / Apartamento

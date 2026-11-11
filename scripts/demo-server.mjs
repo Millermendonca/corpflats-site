@@ -34051,8 +34051,10 @@ app.post("/api/pms/reservations", async (req, res) => {
 
   if (!db.reservations) db.reservations = [];
   const resId = db.reservations.length > 0 ? Math.max(...db.reservations.map(r => r.id)) + 1 : 1;
-  const autoEarlyForSite = db.settings.autoEarlyCheckinForSite !== false;
-  const isEarlyAuth = (channel === "site" && autoEarlyForSite) || Boolean(req.body.earlyCheckinAuthorized);
+  const isEarlyAuth = Boolean(req.body.earlyCheckinAuthorized);
+  const resolvedEarlyCheckinTime = (typeof req.body.earlyCheckinTime === "string" && /^\d{2}:\d{2}$/.test(req.body.earlyCheckinTime.trim()))
+    ? req.body.earlyCheckinTime.trim()
+    : null;
 
   const authUser = getAuthUser(req);
   const creatorName = authUser ? (authUser.username || authUser.name || "Administrador") : "Recepção / PMS";
@@ -34350,6 +34352,7 @@ app.post("/api/pms/reservations", async (req, res) => {
     children: Number(children),
     notes,
     earlyCheckinAuthorized: isEarlyAuth,
+    ...(resolvedEarlyCheckinTime ? { earlyCheckinTime: resolvedEarlyCheckinTime } : {}),
     receptionNotes: req.body.receptionNotes || "",
     prefersHighFloor: Boolean(prefersHighFloor),
     twinBeds: Boolean(twinBeds),
@@ -38302,17 +38305,26 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   });
   const isFirstTimeGuest = priorReservations.length === 0;
 
-  const isSiteBooking = r.channel === "site";
-  const isOtaBooking = r.channel === "airbnb" || r.channel === "booking" || r.channel === "decolar" || r.channel === "expedia" || r.channel === "b2b";
-  const isEarlyAuthorizedManual = Boolean(r.earlyCheckinAuthorized);
-  const hasEarlyCheckinBenefit = isEarlyAuthorizedManual || isSiteBooking || (isOtaBooking && isFirstTimeGuest);
+  const isOtaOrB2bPortal = isOtaOrB2bReservation(r);
+  const freeEarlyTimePortal = isOtaOrB2bPortal ? "12:00" : "10:00";
+  const isPaidEarlyPortal = Boolean(r.pendingEarlyCheckin && r.pendingEarlyCheckin.status === "paid");
+  const isEarlyAuthorizedManual = Boolean(r.earlyCheckinAuthorized || isPaidEarlyPortal);
+  const validAdminEarlyTime = (typeof r.earlyCheckinTime === "string" && /^\d{2}:\d{2}$/.test(r.earlyCheckinTime.trim()))
+    ? r.earlyCheckinTime.trim()
+    : null;
+  const effectiveEarlyTimePortal = isEarlyAuthorizedManual
+    ? ((validAdminEarlyTime || "00:00") < freeEarlyTimePortal ? (validAdminEarlyTime || "00:00") : freeEarlyTimePortal)
+    : freeEarlyTimePortal;
+  const currentHHMMPortal = bNow.timeStr || `${String(bNow.hour || 0).padStart(2, "0")}:${String(bNow.minute || 0).padStart(2, "0")}`;
+  const isSofiaEarlyTimeAllowed = currentHHMMPortal >= effectiveEarlyTimePortal;
+  const hasEarlyCheckinBenefit = Boolean(isEarlyAuthorizedManual || isSofiaEarlyTimeAllowed);
 
   const currentHour = bNow.hour;
   const isPastOrExact14h = currentHour >= 14;
   const isCheckinToday = (todayStr === r.checkinDate);
 
-  // Antecipação de Check-in: Quarto já limpo no dia da chegada E hóspede tem direito ao benefício (e não é pré-reserva bloqueada)
-  let canDoEarlyCheckin = !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && hasEarlyCheckinBenefit;
+  // Antecipação de Check-in (Regra Unificada da Sofia): Quarto limpo no dia da chegada + horário permitido (10:00 Site/Direto/WhatsApp, 12:00 OTA/Agência/B2B, ou autorizado pela Administração)
+  let canDoEarlyCheckin = !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && isSofiaEarlyTimeAllowed;
 
   const checkinTimeStr = db.settings.checkinTime || "14:00";
   const checkoutTimeStr = db.settings.checkoutTime || "12:00";
@@ -38492,7 +38504,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
 
   // Reservas B2B, Boleto Faturado a prazo e reservas já confirmadas com extensão parcial liberam check-in digital e senha da porta normalmente
   const isPortalUnlocked = Boolean(!isCancelledRes && !isExpiredPreRes && (isPaid || isB2b || isFaturadoPortal || (hasPartialPendingBalance && !isUnpaidPre)));
-  canDoEarlyCheckin = Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && hasEarlyCheckinBenefit);
+  canDoEarlyCheckin = Boolean(isPortalUnlocked && !isPreReservationBlocked(r) && isCheckinToday && isFlatClean && isSofiaEarlyTimeAllowed);
 
   // Se pendente com saldo a pagar e sem chave PIX ou com PIX de valor divergente (ex.: após alterar diárias), regenera cobrança PIX atualizada (exceto B2B e Boleto Faturado)
   if (!isCancelledRes && !isExpiredPreRes && !isPaid && !isB2b && !isFaturadoPortal && pendingAmount > 0 && (!r.pixCopiaECola || isPixPayloadStaleForAmount(r, pendingAmount))) {
@@ -38612,7 +38624,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       includeBreakfast: hasBreakfast,
       breakfastToken: (isPortalUnlocked && !isPreReservationBlocked(r)) ? breakfastToken : null,
       breakfastLink: (isPortalUnlocked && !isPreReservationBlocked(r)) ? breakfastLink : null,
-      earlyCheckinAuthorized: Boolean(r.earlyCheckinAuthorized || hasEarlyCheckinBenefit),
+      earlyCheckinAuthorized: Boolean(isEarlyAuthorizedManual),
       hasEarlyCheckinBenefit,
       flatNumber: r.flatNumber,
       roomCategory: "Flat Studio Executivo Completo",
@@ -38702,8 +38714,8 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
   const r = findReservationByLocatorOrContact(code);
-  if (!r) {
-    return res.status(404).json({ error: "Reserva não encontrada." });
+  if (!r || r.status === "cancelada" || r.status === "cancelado" || r.status === "cancelled" || r.status === "expirada") {
+    return res.status(404).json({ error: "Reserva ativa não encontrada." });
   }
   if (isPreReservationBlocked(r)) {
     return res.status(403).json({
@@ -38712,7 +38724,34 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
     });
   }
 
+  const sanitizedSnap = buildSanitizedReceptionItem(r);
+  const chk = sanitizedSnap.earlyCheckinChecklist;
+
+  if (chk.isCheckinDateFuture) {
+    return res.status(400).json({
+      error: `O Early Check-in só pode ser ativado na data de entrada da reserva (${String(r.checkinDate || "").split("-").reverse().join("/")}).`,
+      earlyCheckinBlocked: true
+    });
+  }
+
+  if (!chk.isTimeAllowed) {
+    return res.status(400).json({
+      error: `Early Check-in ainda não liberado neste horário: para reservas via ${chk.channelLabel}, a cortesia inicia às ${chk.freeEarlyTime}. Antes desse horário, somente mediante autorização da Administração.`,
+      earlyCheckinBlocked: true
+    });
+  }
+
+  if (!chk.isRoomReady) {
+    return res.status(400).json({
+      error: `O apartamento ainda está em preparação pela governança (${sanitizedSnap.cleaningLabel}). Aguarde a conclusão da limpeza para ativar o Early Check-in.`,
+      roomNotReady: true
+    });
+  }
+
   r.earlyCheckinAuthorized = true;
+  if (!r.earlyCheckinTime) {
+    r.earlyCheckinTime = chk.effectiveAllowedTime;
+  }
   r.notes = `${r.notes || ''} • [Early Check-in Gratuito Liberado Antecipadamente às ${new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}]`.trim();
   r.updatedAt = new Date().toISOString();
   saveDatabase();
@@ -39071,6 +39110,8 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
       });
     }
 
+    const realZapiSent = Boolean(sendResult?.success && !sendResult?.mock && !sendResult?.simulated);
+
     if (!db.whatsappHistory) db.whatsappHistory = [];
     db.whatsappHistory.unshift({
       id: `hist_chk_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -39080,8 +39121,8 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
       phone: cleanPhone,
       message: msgText,
       triggerEvent: "resend_checkin_link",
-      status: sendResult.success ? "sent" : "failed",
-      error: sendResult.error || null,
+      status: realZapiSent ? "sent" : "failed",
+      error: sendResult?.error || (!realZapiSent ? "Z-API em modo simulado ou credenciais ausentes" : null),
       method: "manual_reception",
       sentAt: new Date().toISOString()
     });
@@ -39099,7 +39140,7 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
           guestIndex: safeGuestIndex,
           guestName,
           phone: cleanPhone,
-          success: sendResult.success
+          success: realZapiSent
         }
       });
     }
@@ -39107,16 +39148,18 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
     saveDatabase();
 
     return res.json({
-      success: Boolean(sendResult.success),
+      success: realZapiSent,
+      sentViaZapi: realZapiSent,
       phone: cleanPhone,
       guestName,
       guestIndex: safeGuestIndex,
       checkinUrl: preCheckinUrl,
       qrCodeDataUrl,
       waWebUrl,
-      message: sendResult.success
+      error: realZapiSent ? undefined : (sendResult?.error || "Disparo automático indisponível no momento. Use o QR Code ao lado ou abra a conversa direta no WhatsApp."),
+      message: realZapiSent
         ? `Link de Check-in Digital enviado com sucesso via WhatsApp para ${guestName} (${cleanPhone})!`
-        : `Não foi possível enviar automaticamente via Z-API (${sendResult.error || "Falha no envio"}). Use o QR Code na tela ou abra no WhatsApp Web.`
+        : `Não foi possível enviar automaticamente via Z-API (${sendResult?.error || "Z-API offline"}). Use o QR Code na tela ou abra no WhatsApp Web.`
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -46663,7 +46706,7 @@ const receptionEarlyRequestCooldown = new Map();
 app.post("/api/reception/reservations/:id/request-early-checkin-analysis", async (req, res) => {
   try {
     const idOrCode = String(req.params.id || "").trim();
-    const { requestedTime = "", receptionNote = "" } = req.body || {};
+    const { requestedTime = "", receptionNote = "", note = "" } = req.body || {};
     const upperCode = idOrCode.toUpperCase();
     const r = (db.reservations || []).find(x =>
       String(x.id) === idOrCode ||
@@ -46699,7 +46742,7 @@ app.post("/api/reception/reservations/:id/request-early-checkin-analysis", async
       : rawAdminPhone.replace(/\D/g, "");
 
     const safeRequestedTime = String(requestedTime || "").trim().slice(0, 20);
-    const safeNote = String(receptionNote || "").trim().slice(0, 240);
+    const safeNote = String(receptionNote || note || "").trim().slice(0, 240);
 
     const adminMsg = [
       `⏰ *PORTARIA SOLICITA ANÁLISE DE EARLY CHECK-IN*`,
@@ -46735,16 +46778,19 @@ app.post("/api/reception/reservations/:id/request-early-checkin-analysis", async
       createNotification({
         category: "checkin",
         title: `⏰ Portaria pede análise de Early Check-in: Flat ${sanitizedItem.flatNumber}`,
-        message: `${sanitizedItem.guestName} (#${sanitizedItem.code || sanitizedItem.id}, ${sanitizedItem.channelLabel}) solicitou entrada às ${safeRequestedTime || checklist.currentTimeHHMM} (antes das ${checklist.freeEarlyTime}).`,
+        message: `${sanitizedItem.guestName} (#${sanitizedItem.code || sanitizedItem.id}, ${sanitizedItem.channelLabel}) solicitou entrada às ${safeRequestedTime || checklist.currentTimeHHMM} (antes das ${checklist.freeEarlyTime}).${safeNote ? ` Obs: ${safeNote}` : ""}`,
         severity: "warning",
         metadata: {
           reservationId: r.id,
           reservationCode: r.code,
           flatNumber: sanitizedItem.flatNumber,
-          requestedTime: safeRequestedTime || checklist.currentTimeHHMM
+          requestedTime: safeRequestedTime || checklist.currentTimeHHMM,
+          note: safeNote || null
         }
       });
     }
+
+    const realZapiSent = Boolean(sendResult?.success && !sendResult?.mock && !sendResult?.simulated);
 
     if (typeof logAuditEvent === "function") {
       await logAuditEvent({
@@ -46758,7 +46804,7 @@ app.post("/api/reception/reservations/:id/request-early-checkin-analysis", async
           flatNumber: sanitizedItem.flatNumber,
           channelLabel: sanitizedItem.channelLabel,
           requestedTime: safeRequestedTime || checklist.currentTimeHHMM,
-          sentViaZapi: Boolean(sendResult.success)
+          sentViaZapi: realZapiSent
         }
       });
     }
@@ -46766,15 +46812,15 @@ app.post("/api/reception/reservations/:id/request-early-checkin-analysis", async
     saveDatabase();
 
     const normalizedWaPhone = cleanAdminPhone.startsWith("55") ? cleanAdminPhone : `55${cleanAdminPhone}`;
-    const fallbackWaWebUrl = !sendResult.success && cleanAdminPhone
+    const fallbackWaWebUrl = !realZapiSent && cleanAdminPhone
       ? `https://wa.me/${normalizedWaPhone}?text=${encodeURIComponent(adminMsg)}`
       : null;
 
     return res.json({
       success: true,
-      sentViaZapi: Boolean(sendResult.success),
+      sentViaZapi: realZapiSent,
       fallbackWaWebUrl,
-      message: sendResult.success
+      message: realZapiSent
         ? "Solicitação enviada com sucesso para o WhatsApp da Administração! Assim que autorizarem no sistema, a liberação aparecerá automaticamente aqui na tela."
         : "Alerta registrado no painel da Administração. O disparo automático Z-API não pôde ser concluído agora — você pode abrir no WhatsApp Web se desejar."
     });
@@ -46784,12 +46830,19 @@ app.post("/api/reception/reservations/:id/request-early-checkin-analysis", async
 });
 
 app.patch("/api/pms/reservations/:id/early-checkin", (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) {
+    return res.status(401).json({ error: "Não autenticado. Somente a Administração pode autorizar Early Check-in manualmente." });
+  }
+  if (authUser.role !== "admin" && authUser.role !== "dev") {
+    return res.status(403).json({ error: "Acesso negado. Somente a Administração pode autorizar Early Check-in antes do horário." });
+  }
+
   const id = Number(req.params.id);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
   ensureReservationAuditLogs(r);
-  const authUser = getAuthUser(req);
   const newEarly = Boolean(req.body.earlyCheckinAuthorized);
   if (Boolean(r.earlyCheckinAuthorized) !== newEarly) {
     addReservationAuditLog(r, {
@@ -46824,12 +46877,19 @@ app.patch("/api/pms/reservations/:id/early-checkin", (req, res) => {
 });
 
 app.patch("/api/pms/reservations/:id/reception-notes", (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) {
+    return res.status(401).json({ error: "Não autenticado." });
+  }
+  if (authUser.role !== "admin" && authUser.role !== "dev" && authUser.role !== "recepcao" && authUser.role !== "reception") {
+    return res.status(403).json({ error: "Sem permissão para alterar avisos da recepção." });
+  }
+
   const id = Number(req.params.id);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
   ensureReservationAuditLogs(r);
-  const authUser = getAuthUser(req);
   const newNotes = String(req.body.receptionNotes || "");
   if (String(r.receptionNotes || "") !== newNotes) {
     addReservationAuditLog(r, {
@@ -47094,13 +47154,18 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
 });
 
 const handleCheckout = async (req, res) => {
+  const isReceptionPublicPath = String(req.path || "").startsWith("/api/reception/");
+  const authUser = getAuthUser(req);
+  if (!isReceptionPublicPath && !authUser) {
+    return res.status(401).json({ error: "Não autenticado." });
+  }
+
   const rawId = req.params.reservationId || req.params.id;
   const id = Number(rawId);
   const r = (db.reservations || []).find(x => x.id === id || String(x.id) === String(rawId));
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
   ensureReservationAuditLogs(r);
-  const authUser = getAuthUser(req);
   const previousStatus = r.status;
   r.previousStatus = previousStatus;
 
@@ -47313,7 +47378,6 @@ const handleCheckout = async (req, res) => {
     console.warn("[Reception Checkout WhatsApp Trigger Error]:", e.message);
   });
 
-  const isReceptionPublicPath = String(req.path || "").startsWith("/api/reception/");
   if (isReceptionPublicPath) {
     return res.json({
       success: true,
@@ -47346,6 +47410,8 @@ app.post("/api/reception/checkout/:reservationId", handleCheckout);
 app.post("/api/pms/reservations/:id/checkout", handleCheckout);
 
 app.patch("/api/pms/guests/:id/auto-invoice", (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: "Não autenticado." });
   const id = Number(req.params.id);
   const guest = (db.guests || []).find(g => g.id === id);
   if (!guest) return res.status(404).json({ error: "Hóspede não encontrado" });
@@ -47357,6 +47423,8 @@ app.patch("/api/pms/guests/:id/auto-invoice", (req, res) => {
 });
 
 app.patch("/api/pms/reservations/:id/auto-invoice", (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: "Não autenticado." });
   const id = Number(req.params.id);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
@@ -47368,13 +47436,18 @@ app.patch("/api/pms/reservations/:id/auto-invoice", (req, res) => {
 });
 
 const handleUndoCheckout = (req, res) => {
+  const isReceptionUndo = String(req.path || "").startsWith("/api/reception/");
+  const authUser = getAuthUser(req);
+  if (!isReceptionUndo && !authUser) {
+    return res.status(401).json({ error: "Não autenticado." });
+  }
+
   const rawId = req.params.reservationId || req.params.id;
   const id = Number(rawId);
   const r = (db.reservations || []).find(x => x.id === id || String(x.id) === String(rawId));
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
   ensureReservationAuditLogs(r);
-  const authUser = getAuthUser(req);
   const wasEarlyCheckout = Boolean(r.earlyCheckout && r.originalCheckoutDate);
   const restoredCheckoutDate = wasEarlyCheckout ? r.originalCheckoutDate : r.checkoutDate;
   const oldCheckoutDate = r.checkoutDate;
@@ -47460,7 +47533,6 @@ const handleUndoCheckout = (req, res) => {
   }
 
   saveDatabase();
-  const isReceptionUndo = String(req.path || "").startsWith("/api/reception/");
   res.json({
     success: true,
     message: `Check-out do Apt ${r.flatNumber} desfeito com sucesso!`,
@@ -50879,11 +50951,9 @@ function handleFnrhServe(isDownload) {
         if (!user.mustChangePassword && !user.passwordExpired) {
           isAuthorized = true;
           authContext = "RECEPCAO";
-        } else {
-          return res.status(403).json({
-            error: "Acesso bloqueado: A senha da recepção expirou ou precisa ser redefinida antes de acessar documentos de hóspedes."
-          });
         }
+        // Se houver cookie antigo de recepção expirado no navegador da portaria,
+        // permite prosseguir para validação pública via ?token= ou ?code= sem travar em 403.
       } else {
         isAuthorized = true;
         authContext = user.role.toUpperCase();
