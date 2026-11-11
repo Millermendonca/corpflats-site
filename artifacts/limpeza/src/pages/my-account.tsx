@@ -20,6 +20,7 @@ import {
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { useToast } from "@/hooks/use-toast"
 import { CorpFlatsIcon, CorpFlatsWordmark, CorpFlatsSplashScreen } from "@/components/brand-logo"
+import { formatSmartPhone, formatPassport, isPlausibleCpfOrPassport } from "@/lib/phone-mask"
 
 export default function MyAccount() {
   const [, setLocation] = useLocation()
@@ -140,13 +141,7 @@ export default function MyAccount() {
     return `${clean.slice(0, 3)}.${clean.slice(3, 6)}.${clean.slice(6, 9)}-${clean.slice(9)}`
   }
 
-  const maskPhone = (v: string) => {
-    const clean = v.replace(/\D/g, "").slice(0, 11)
-    if (clean.length <= 2) return clean
-    if (clean.length <= 6) return `(${clean.slice(0, 2)}) ${clean.slice(2)}`
-    if (clean.length <= 10) return `(${clean.slice(0, 2)}) ${clean.slice(2, 6)}-${clean.slice(6)}`
-    return `(${clean.slice(0, 2)}) ${clean.slice(2, 7)}-${clean.slice(7)}`
-  }
+  const maskPhone = (v: string) => formatSmartPhone(v)
 
   const maskCep = (v: string) => {
     const clean = v.replace(/\D/g, "").slice(0, 8)
@@ -194,9 +189,13 @@ export default function MyAccount() {
     setName(data.name || "")
     setEmail(data.email || "")
     setPhone(maskPhone(data.phone || ""))
-    const dType = data.docType || "CPF"
+    const rawDoc = String(data.document || "")
+    const hasDocLetters = /[a-zA-Z]/.test(rawDoc)
+    const dType = hasDocLetters && (!data.docType || data.docType === "CPF")
+      ? "Passaporte"
+      : (data.docType || (hasDocLetters ? "Passaporte" : "CPF"))
     setDocType(dType)
-    setDocument(dType === "CPF" ? maskCpf(data.document || "") : (data.document || ""))
+    setDocument(dType === "CPF" ? maskCpf(rawDoc) : (dType === "Passaporte" ? formatPassport(rawDoc) : rawDoc))
     setBirthDate(data.birthDate || "")
     setGender(data.gender || "")
     setNationality(data.nationality || "Brasileira")
@@ -238,6 +237,44 @@ export default function MyAccount() {
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    const trimmedPhone = phone.trim()
+    if (trimmedPhone) {
+      const cleanPhone = trimmedPhone.replace(/\D/g, "")
+      const isIntl = trimmedPhone.startsWith("+") && !cleanPhone.startsWith("55")
+      if (cleanPhone.length < (isIntl ? 8 : 10)) {
+        toast({
+          title: "Telefone inválido",
+          description: "Informe um WhatsApp / Celular válido com DDD (ou DDI internacional com +).",
+          variant: "destructive"
+        })
+        return
+      }
+    }
+
+    const trimmedDoc = document.trim()
+    const resolvedDocType = /[a-zA-Z]/.test(trimmedDoc) && docType === "CPF" ? "Passaporte" : docType
+    if (trimmedDoc) {
+      if (resolvedDocType === "CPF") {
+        const cpfDigits = trimmedDoc.replace(/\D/g, "")
+        if (cpfDigits.length !== 11 || /^(\d)\1{10}$/.test(cpfDigits)) {
+          toast({
+            title: "CPF inválido",
+            description: "Informe os 11 dígitos válidos do CPF (ou selecione Passaporte se for estrangeiro).",
+            variant: "destructive"
+          })
+          return
+        }
+      } else if (resolvedDocType === "Passaporte" && !isPlausibleCpfOrPassport(trimmedDoc)) {
+        toast({
+          title: "Passaporte inválido",
+          description: "Informe um número de Passaporte válido (mínimo de 5 caracteres).",
+          variant: "destructive"
+        })
+        return
+      }
+    }
+
     setSavingProfile(true)
     try {
       const composedAddress = [
@@ -255,7 +292,7 @@ export default function MyAccount() {
         email: email.trim(),
         newEmail: user?.email && email.trim().toLowerCase() !== user.email.toLowerCase() ? email.trim() : undefined,
         phone: phone.trim(),
-        docType,
+        docType: resolvedDocType,
         document: document.trim(),
         birthDate,
         gender,
@@ -572,6 +609,8 @@ export default function MyAccount() {
                     <div className="space-y-1.5">
                       <Label className="text-xs font-bold">WhatsApp / Celular *</Label>
                       <Input
+                        type="tel"
+                        inputMode="tel"
                         value={phone}
                         onChange={e => setPhone(maskPhone(e.target.value))}
                         placeholder="(22) 99999-9999"
@@ -588,6 +627,8 @@ export default function MyAccount() {
                           setDocType(nextType)
                           if (nextType === "CPF") {
                             setDocument(maskCpf(document))
+                          } else if (nextType === "Passaporte") {
+                            setDocument(formatPassport(document))
                           }
                         }}
                         className="w-full rounded-xl h-9 text-xs px-3 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
@@ -599,11 +640,27 @@ export default function MyAccount() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label className="text-xs font-bold">{docType === "CPF" ? "CPF *" : "Número do Documento *"}</Label>
+                      <Label className="text-xs font-bold">
+                        {docType === "CPF" ? "CPF *" : docType === "Passaporte" ? "Passaporte *" : "Número do Documento *"}
+                      </Label>
                       <Input
                         value={document}
-                        onChange={e => setDocument(docType === "CPF" ? maskCpf(e.target.value) : e.target.value)}
-                        placeholder={docType === "CPF" ? "000.000.000-00" : "Número do documento"}
+                        onChange={e => {
+                          const val = e.target.value
+                          if (docType === "CPF" && /[a-zA-Z]/.test(val)) {
+                            setDocType("Passaporte")
+                            setDocument(formatPassport(val))
+                            return
+                          }
+                          setDocument(
+                            docType === "CPF"
+                              ? maskCpf(val)
+                              : docType === "Passaporte"
+                                ? formatPassport(val)
+                                : val
+                          )
+                        }}
+                        placeholder={docType === "CPF" ? "000.000.000-00" : docType === "Passaporte" ? "Ex: AB123456" : "Número do documento"}
                         className="rounded-xl h-9 text-xs font-mono"
                       />
                     </div>
@@ -839,6 +896,8 @@ export default function MyAccount() {
                       <div className="space-y-1">
                         <Label className="text-[11px] font-bold">Telefone Comercial / Financeiro</Label>
                         <Input
+                          type="tel"
+                          inputMode="tel"
                           value={companyPhone}
                           onChange={e => setCompanyPhone(maskPhone(e.target.value))}
                           placeholder="(22) 99999-9999"

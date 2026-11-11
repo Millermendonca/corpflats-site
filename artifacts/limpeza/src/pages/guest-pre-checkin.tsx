@@ -17,6 +17,7 @@ import { getCurrentSession, saveSessionLocally } from "@/lib/auth-client"
 import { compressImage } from "@/lib/image-compression"
 import { isValidBrazilianCpf } from "./agency-guest-credential"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
+import { formatSmartPhone, formatCpfOrPassport, formatPhoneForWhatsAppCheck, isPlausibleCpfOrPassport } from "@/lib/phone-mask"
 
 const toDisplayDate = (val?: string | null): string => {
   if (!val) return ""
@@ -726,9 +727,9 @@ export default function GuestPreCheckin() {
       : (isTitular ? (res.guestDocument || res.document || guest.document || guest.documentNumber || "") : "")
 
     setFullName(gName)
-    setPhone(gPhone)
+    setPhone(formatSmartPhone(gPhone))
     setEmail(gEmail)
-    setDocument(gDoc)
+    setDocument(formatCpfOrPassport(gDoc))
 
     try {
       const activeCode = res.code || code
@@ -883,8 +884,8 @@ export default function GuestPreCheckin() {
 
         if (!gName && sessionUser.name) setFullName(sessionUser.name)
         if (!gEmail && sessionUser.email) setEmail(sessionUser.email)
-        if (!gPhone && sessionUser.phone) setPhone(sessionUser.phone)
-        if (!gDoc && sessionUser.document) setDocument(sessionUser.document)
+        if (!gPhone && sessionUser.phone) setPhone(formatSmartPhone(sessionUser.phone))
+        if (!gDoc && sessionUser.document) setDocument(formatCpfOrPassport(sessionUser.document))
         if (!currentG?.birthDate && !guest.birthDate && !res.birthDate && sessionUser.birthDate) {
           setBirthDate(toIsoDate(sessionUser.birthDate))
           setBirthDateInput(toDisplayDate(sessionUser.birthDate))
@@ -926,6 +927,7 @@ export default function GuestPreCheckin() {
     // Avaliação estritamente individual da necessidade de re-assinatura
     const stLowerPre = String(res.status || "").toLowerCase()
     const isStayClosedPre = Boolean(res.checkoutDone || res.earlyCheckout || ["completed", "checked_out", "checkout", "cancelada", "cancelled"].includes(stLowerPre))
+    const effectiveGuests = gList.length > 0 ? gList : (Array.isArray(res.guests) ? res.guests : [])
     const isBareB2bCredPre = Boolean(
       (res.b2bCredentialCompletedAt || res.credentialStatus === "completed") &&
       !res.previousCheckinSignedAt &&
@@ -933,7 +935,7 @@ export default function GuestPreCheckin() {
       !res.checkedInAt &&
       !res.fnrhDocumentUuid &&
       !res.fnrhPdfUrl &&
-      !(Array.isArray(guests) && guests.some((g: any) => g?.previousCheckinSignedAt || g?.fnrhSignedAt || g?.checkinCompletedAt || g?.fnrhDocumentUuid))
+      !effectiveGuests.some((g: any) => g?.previousCheckinSignedAt || g?.fnrhSignedAt || (g?.checkinCompletedAt && g?.signatureUrl) || g?.fnrhDocumentUuid)
     )
     const isGuestPendingReSign = !isStayClosedPre && !isBareB2bCredPre && (
       currentG?.needsReSignature !== undefined
@@ -1395,7 +1397,7 @@ export default function GuestPreCheckin() {
           }
         }
         if (data.extractedCpf && (!document || document.trim() === "")) {
-          setDocument(data.extractedCpf)
+          setDocument(formatCpfOrPassport(data.extractedCpf))
         }
         if (data.extractedBirthDate && (!birthDate || birthDate.trim() === "")) {
           setBirthDate(toIsoDate(data.extractedBirthDate))
@@ -3134,9 +3136,9 @@ export default function GuestPreCheckin() {
                     <Label className="text-xs font-bold text-slate-700">CPF ou Passaporte *</Label>
                     <Input 
                       value={document} 
-                      onChange={e => setDocument(e.target.value)} 
+                      onChange={e => setDocument(formatCpfOrPassport(e.target.value))} 
                       required 
-                      placeholder="000.000.000-00" 
+                      placeholder="000.000.000-00 ou Passaporte" 
                       className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-mono font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
                     />
                   </div>
@@ -3283,8 +3285,10 @@ export default function GuestPreCheckin() {
                   <div className="space-y-1.5">
                     <Label className="text-xs font-bold text-slate-700">WhatsApp / Celular</Label>
                     <Input 
+                      type="tel"
+                      inputMode="tel"
                       value={phone} 
-                      onChange={e => setPhone(e.target.value)} 
+                      onChange={e => setPhone(formatSmartPhone(e.target.value))} 
                       placeholder="(22) 99999-9999" 
                       className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
                     />
@@ -3621,21 +3625,29 @@ export default function GuestPreCheckin() {
                 <Button 
                   onClick={async () => {
                     if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim()) {
-                      alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF, Telefone e E-mail.")
+                      alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF ou Passaporte, Telefone e E-mail.")
                       return
                     }
-                    const cleanDocDigits = document.replace(/\D/g, "")
-                    if ((originCountry === "Brasil" || cleanDocDigits.length === 11) && !isValidBrazilianCpf(cleanDocDigits)) {
-                      alert("O CPF informado é inválido. Por favor, verifique os 11 dígitos do seu CPF.")
+                    const rawDocTrim = document.trim()
+                    const hasDocLetters = /[a-zA-Z]/.test(rawDocTrim)
+                    const cleanDocDigits = rawDocTrim.replace(/\D/g, "")
+                    const isForeignPassport = hasDocLetters || (originCountry !== "Brasil" && cleanDocDigits.length >= 6 && cleanDocDigits.length <= 9)
+                    if (isForeignPassport) {
+                      if (!isPlausibleCpfOrPassport(rawDocTrim)) {
+                        alert("O número do Passaporte informado é inválido (mínimo de 5 caracteres).")
+                        return
+                      }
+                    } else if (!isValidBrazilianCpf(cleanDocDigits)) {
+                      alert("O CPF informado é inválido. Por favor, verifique os 11 dígitos do seu CPF (ou informe o número do seu Passaporte se for estrangeiro).")
                       return
                     }
-                    const cleanPhoneDigits = phone.replace(/\D/g, "")
-                    if (cleanPhoneDigits.length < 10) {
-                      alert("Por favor, informe um telefone / WhatsApp válido com DDD.")
+                    const queryPhone = formatPhoneForWhatsAppCheck(phone)
+                    if (!queryPhone) {
+                      alert("Por favor, informe um telefone / WhatsApp válido com DDD (ou DDI internacional com +).")
                       return
                     }
                     try {
-                      const waRes = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(cleanPhoneDigits)}`)
+                      const waRes = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(queryPhone)}`)
                       const waData = await waRes.json()
                       if (waData && waData.checked && waData.exists === false) {
                         alert("O telefone informado não possui conta ativa no WhatsApp. Por favor, informe um número que tenha WhatsApp para receber o código e a senha da porta.")

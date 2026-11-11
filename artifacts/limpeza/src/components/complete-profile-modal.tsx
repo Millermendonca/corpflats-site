@@ -8,21 +8,14 @@ import { User, Phone, ShieldCheck, Check, Sparkles, Car, Building2, AlertCircle 
 import { updateAccountProfile, saveSessionLocally, UserProfile } from "@/lib/auth-client"
 import { useToast } from "@/hooks/use-toast"
 import { CorpFlatsIcon } from "@/components/brand-logo"
+import { formatSmartPhone, formatCpfOrPassport, isPlausibleCpfOrPassport } from "@/lib/phone-mask"
 
 export function maskPhone(val: string): string {
-  const digits = val.replace(/\D/g, "").slice(0, 11)
-  if (digits.length <= 2) return digits
-  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
-  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`
-  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`
+  return formatSmartPhone(val)
 }
 
 export function maskCpf(val: string): string {
-  const digits = val.replace(/\D/g, "").slice(0, 11)
-  if (digits.length <= 3) return digits
-  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`
-  if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`
-  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`
+  return formatCpfOrPassport(val)
 }
 
 interface CompleteProfileModalProps {
@@ -69,14 +62,14 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
     setErrorMsg("")
 
     const cleanPhone = phone.replace(/\D/g, "")
-    if (!cleanPhone || cleanPhone.length < 10) {
-      setErrorMsg("Por favor, insira um número de WhatsApp/Celular válido com DDD.")
+    const isIntlPhone = phone.trim().startsWith("+") && !cleanPhone.startsWith("55")
+    if (!cleanPhone || cleanPhone.length < (isIntlPhone ? 8 : 10)) {
+      setErrorMsg("Por favor, insira um número de WhatsApp/Celular válido com DDD (ou DDI internacional com +).")
       return
     }
 
-    const cleanDoc = document.replace(/\D/g, "")
-    if (!cleanDoc || (cleanDoc.length !== 11 && cleanDoc.length < 5)) {
-      setErrorMsg("Por favor, insira o número do CPF ou documento válido.")
+    if (!isPlausibleCpfOrPassport(document)) {
+      setErrorMsg("Por favor, insira um CPF válido (11 dígitos) ou número de Passaporte válido.")
       return
     }
 
@@ -85,6 +78,7 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
       const payload: any = {
         name: name.trim() || user?.name,
         phone: phone.trim(),
+        docType: /[a-zA-Z]/.test(document) ? "Passaporte" : "CPF",
         document: document.trim(),
         ...(hasVehicle && vehiclePlate
           ? {
@@ -140,7 +134,7 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
           <DialogDescription className="text-xs text-slate-500 dark:text-slate-400">
             {user?.email ? (
               <span>
-                Você se conectou via Google como <strong className="text-slate-800 dark:text-slate-200 break-all">{user.email}</strong>. Confirme seu WhatsApp e CPF para liberar o voucher de reserva e acesso à portaria 24h.
+                Você se conectou via Google como <strong className="text-slate-800 dark:text-slate-200 break-all">{user.email}</strong>. Confirme seu WhatsApp e CPF ou Passaporte para liberar o voucher de reserva e acesso à portaria 24h.
               </span>
             ) : (
               "Preencha seus dados de contato e documento para concluir seu cadastro e liberar suas reservas."
@@ -180,6 +174,8 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
                 WhatsApp / Celular com DDD *
               </Label>
               <Input
+                type="tel"
+                inputMode="tel"
                 value={phone}
                 onChange={e => setPhone(maskPhone(e.target.value))}
                 placeholder="(22) 99999-9999"
@@ -197,7 +193,7 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
               <Input
                 value={document}
                 onChange={e => setDocument(maskCpf(e.target.value))}
-                placeholder="000.000.000-00"
+                placeholder="000.000.000-00 ou Passaporte"
                 className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
                 required
               />

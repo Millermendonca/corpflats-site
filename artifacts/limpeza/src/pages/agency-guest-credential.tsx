@@ -26,6 +26,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo";
+import { formatSmartPhone, formatPassport, formatPhoneForWhatsAppCheck } from "@/lib/phone-mask";
 
 export function isValidBrazilianCpf(rawCpf: string): boolean {
   const cpf = String(rawCpf || "").replace(/\D/g, "");
@@ -57,13 +58,7 @@ function formatCpfMask(value: string): string {
 }
 
 function formatPhoneMask(value: string): string {
-  const digits = String(value || "").replace(/\D/g, "").slice(0, 13);
-  if (!digits) return "";
-  if (digits.length <= 2) return `(${digits}`;
-  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
-  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
-  if (digits.length === 11) return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
-  return `+${digits.slice(0, 2)} (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`;
+  return formatSmartPhone(value);
 }
 
 export default function AgencyGuestCredential() {
@@ -95,6 +90,7 @@ export default function AgencyGuestCredential() {
   const [completed, setCompleted] = useState(false);
 
   const [guestName, setGuestName] = useState("");
+  const [docType, setDocType] = useState<"cpf" | "passport">("cpf");
   const [guestDocument, setGuestDocument] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
   const [guestSecondaryPhone, setGuestSecondaryPhone] = useState("");
@@ -108,23 +104,25 @@ export default function AgencyGuestCredential() {
   const [whatsappCheckedPhone, setWhatsappCheckedPhone] = useState("");
 
   const cleanDocDigits = guestDocument.replace(/\D/g, "");
-  const cpfIsComplete = cleanDocDigits.length === 11;
+  const cpfIsComplete = docType === "cpf" && cleanDocDigits.length === 11;
   const cpfIsValid = cpfIsComplete && isValidBrazilianCpf(cleanDocDigits);
+  const cleanPassportAlnum = guestDocument.replace(/[^A-Za-z0-9]/g, "");
+  const passportIsComplete = docType === "passport" && cleanPassportAlnum.length >= 5;
 
   const verifyWhatsAppNumber = async (rawPhone: string): Promise<boolean> => {
-    const digits = String(rawPhone || "").replace(/\D/g, "");
-    if (digits.length < 10) {
+    const queryPhone = formatPhoneForWhatsAppCheck(rawPhone);
+    if (!queryPhone) {
       setWhatsappStatus("idle");
       return false;
     }
-    if (whatsappCheckedPhone === digits && (whatsappStatus === "valid" || whatsappStatus === "invalid")) {
+    if (whatsappCheckedPhone === queryPhone && (whatsappStatus === "valid" || whatsappStatus === "invalid")) {
       return whatsappStatus === "valid";
     }
     setWhatsappStatus("checking");
     try {
-      const res = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(digits)}`);
+      const res = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(queryPhone)}`);
       const data = await res.json();
-      setWhatsappCheckedPhone(digits);
+      setWhatsappCheckedPhone(queryPhone);
       if (data && data.checked && data.exists === false) {
         setWhatsappStatus("invalid");
         return false;
@@ -158,13 +156,24 @@ export default function AgencyGuestCredential() {
         const r = data.reservation;
         setReservation(r);
         setGuestName(r.guestName || "");
-        setGuestDocument(r.guestDocument ? formatCpfMask(r.guestDocument) : "");
+        const loadedDoc = String(r.guestDocument || "");
+        const isLoadedPassport =
+          String(r.guestDocType || "").toLowerCase().includes("pass") ||
+          /[a-zA-Z]/.test(loadedDoc);
+        setDocType(isLoadedPassport ? "passport" : "cpf");
+        setGuestDocument(
+          loadedDoc
+            ? isLoadedPassport
+              ? formatPassport(loadedDoc)
+              : formatCpfMask(loadedDoc)
+            : ""
+        );
         setGuestPhone(r.guestPhone ? formatPhoneMask(r.guestPhone) : "");
         setGuestSecondaryPhone(r.guestSecondaryPhone ? formatPhoneMask(r.guestSecondaryPhone) : "");
         setGuestEmail(r.guestEmail || "");
         setWhatsappStatus("idle");
         setWhatsappCheckedPhone("");
-        if (r.guestPhone && String(r.guestPhone).replace(/\D/g, "").length >= 10) {
+        if (r.guestPhone && String(r.guestPhone).replace(/\D/g, "").length >= 8) {
           verifyWhatsAppNumber(r.guestPhone);
         }
       }
@@ -217,7 +226,15 @@ export default function AgencyGuestCredential() {
 
     const nameParts = guestName.trim().split(/\s+/).filter(Boolean);
     const cleanDoc = guestDocument.replace(/\D/g, "");
-    const cleanPhone = guestPhone.replace(/\D/g, "");
+    const normalizedPassport = formatPassport(guestDocument);
+    const trimmedPhone = guestPhone.trim();
+    const cleanPhoneDigits = trimmedPhone.replace(/\D/g, "");
+    const isIntlPhone = trimmedPhone.startsWith("+") && !cleanPhoneDigits.startsWith("55");
+    const finalPhonePayload = isIntlPhone ? `+${cleanPhoneDigits}` : cleanPhoneDigits;
+    const trimmedSecPhone = guestSecondaryPhone.trim();
+    const cleanSecDigits = trimmedSecPhone.replace(/\D/g, "");
+    const isIntlSec = trimmedSecPhone.startsWith("+") && !cleanSecDigits.startsWith("55");
+    const finalSecPhonePayload = cleanSecDigits ? (isIntlSec ? `+${cleanSecDigits}` : cleanSecDigits) : "";
     const cleanEmail = guestEmail.trim();
 
     if (nameParts.length < 2) {
@@ -228,18 +245,27 @@ export default function AgencyGuestCredential() {
       });
       return;
     }
-    if (!isValidBrazilianCpf(cleanDoc)) {
+    if (docType === "passport") {
+      if (normalizedPassport.replace(/[^A-Z0-9]/g, "").length < 5) {
+        toast({
+          title: "Passaporte inválido",
+          description: "Informe um número de Passaporte válido (mínimo de 5 caracteres).",
+          variant: "destructive"
+        });
+        return;
+      }
+    } else if (!isValidBrazilianCpf(cleanDoc)) {
       toast({
         title: "CPF inválido",
-        description: "O CPF informado não é válido. Verifique os 11 dígitos do CPF.",
+        description: "O CPF informado não é válido. Verifique os 11 dígitos ou selecione 'Passaporte' caso seja estrangeiro.",
         variant: "destructive"
       });
       return;
     }
-    if (cleanPhone.length < 10) {
+    if (cleanPhoneDigits.length < (isIntlPhone ? 8 : 10)) {
       toast({
         title: "Telefone / WhatsApp obrigatório",
-        description: "Informe o telefone / WhatsApp com DDD para receber a confirmação e a senha do flat.",
+        description: "Informe o telefone / WhatsApp com DDD (ou DDI internacional com +) para receber a confirmação e a senha do flat.",
         variant: "destructive"
       });
       return;
@@ -247,7 +273,7 @@ export default function AgencyGuestCredential() {
 
     setSubmitting(true);
     try {
-      const hasWa = await verifyWhatsAppNumber(cleanPhone);
+      const hasWa = await verifyWhatsAppNumber(finalPhonePayload);
       if (!hasWa) {
         toast({
           title: "Número sem WhatsApp ativo",
@@ -273,9 +299,10 @@ export default function AgencyGuestCredential() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           guestName: guestName.trim(),
-          guestDocument: cleanDoc,
-          guestPhone: cleanPhone,
-          guestSecondaryPhone: guestSecondaryPhone.replace(/\D/g, ""),
+          guestDocument: docType === "passport" ? normalizedPassport : cleanDoc,
+          docType: docType === "passport" ? "Passaporte" : "CPF",
+          guestPhone: finalPhonePayload,
+          guestSecondaryPhone: finalSecPhonePayload,
           guestEmail: cleanEmail,
           docPhotoBase64,
           notes: notes.trim(),
@@ -498,7 +525,7 @@ export default function AgencyGuestCredential() {
                 {isGuestSelfIdentifyMode ? (
                   <>
                     O <strong>CorpFlats (Edifício Soho)</strong> opera com liberação antecipada na recepção 24h. Assim que você preencher seu{" "}
-                    <strong>Nome Completo, CPF, WhatsApp e E-mail</strong>, sua entrada estará liberada e enviaremos imediatamente para o seu{" "}
+                    <strong>Nome Completo, CPF ou Passaporte, WhatsApp e E-mail</strong>, sua entrada estará liberada e enviaremos imediatamente para o seu{" "}
                     <strong>WhatsApp</strong> a confirmação da sua estadia e as instruções de acesso ao flat.
                   </>
                 ) : (
@@ -536,11 +563,45 @@ export default function AgencyGuestCredential() {
                   />
                 </div>
 
-                {/* CPF com Validação Matemática de Dígitos Verificadores */}
+                {/* CPF ou Passaporte Estrangeiro */}
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-1">
-                    <Label className="text-xs text-slate-300">CPF do Hóspede *</Label>
-                    {cpfIsComplete && (
+                  <div className="flex items-center justify-between gap-1 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-xs text-slate-300">
+                        {docType === "passport" ? "Passaporte *" : "CPF ou Passaporte *"}
+                      </Label>
+                      <div className="inline-flex rounded-lg bg-slate-950 border border-slate-800 p-0.5 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDocType("cpf");
+                            setGuestDocument(formatCpfMask(guestDocument));
+                          }}
+                          className={`px-2 py-0.5 rounded-md font-bold transition-colors ${
+                            docType === "cpf"
+                              ? "bg-teal-600 text-white"
+                              : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          CPF
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDocType("passport");
+                            setGuestDocument(formatPassport(guestDocument));
+                          }}
+                          className={`px-2 py-0.5 rounded-md font-bold transition-colors ${
+                            docType === "passport"
+                              ? "bg-teal-600 text-white"
+                              : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          Passaporte
+                        </button>
+                      </div>
+                    </div>
+                    {docType === "cpf" && cpfIsComplete && (
                       <span
                         className={`text-[10px] font-bold ${
                           cpfIsValid ? "text-emerald-400" : "text-rose-400"
@@ -549,20 +610,43 @@ export default function AgencyGuestCredential() {
                         {cpfIsValid ? "✓ CPF válido" : "❌ CPF inválido"}
                       </span>
                     )}
+                    {docType === "passport" && guestDocument.trim().length > 0 && (
+                      <span
+                        className={`text-[10px] font-bold ${
+                          passportIsComplete ? "text-emerald-400" : "text-amber-400"
+                        }`}
+                      >
+                        {passportIsComplete ? "✓ Passaporte válido" : "Mín. 5 caracteres"}
+                      </span>
+                    )}
                   </div>
                   <Input
                     value={guestDocument}
-                    onChange={(e) => setGuestDocument(formatCpfMask(e.target.value))}
-                    placeholder="000.000.000-00"
-                    inputMode="numeric"
-                    maxLength={14}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (docType === "cpf" && /[a-zA-Z]/.test(raw)) {
+                        setDocType("passport");
+                        setGuestDocument(formatPassport(raw));
+                      } else if (docType === "passport") {
+                        setGuestDocument(formatPassport(raw));
+                      } else {
+                        setGuestDocument(formatCpfMask(raw));
+                      }
+                    }}
+                    placeholder={docType === "passport" ? "Ex: AB123456" : "000.000.000-00 ou Passaporte"}
+                    inputMode="text"
+                    maxLength={20}
                     required
-                    className={`bg-slate-950 text-white ${
-                      cpfIsComplete
-                        ? cpfIsValid
+                    className={`bg-slate-950 text-white font-mono ${
+                      docType === "passport"
+                        ? passportIsComplete
                           ? "border-emerald-500/60"
-                          : "border-rose-500/70"
-                        : "border-slate-700"
+                          : "border-slate-700"
+                        : cpfIsComplete
+                          ? cpfIsValid
+                            ? "border-emerald-500/60"
+                            : "border-rose-500/70"
+                          : "border-slate-700"
                     }`}
                   />
                 </div>
@@ -586,6 +670,7 @@ export default function AgencyGuestCredential() {
                     )}
                   </div>
                   <Input
+                    type="tel"
                     value={guestPhone}
                     onChange={(e) => {
                       const formatted = formatPhoneMask(e.target.value);
@@ -593,7 +678,7 @@ export default function AgencyGuestCredential() {
                       if (whatsappStatus !== "idle") setWhatsappStatus("idle");
                     }}
                     onBlur={() => {
-                      if (guestPhone.replace(/\D/g, "").length >= 10) {
+                      if (guestPhone.replace(/\D/g, "").length >= 8) {
                         verifyWhatsAppNumber(guestPhone);
                       }
                     }}
@@ -628,6 +713,7 @@ export default function AgencyGuestCredential() {
                 <div className="space-y-1.5">
                   <Label className="text-xs text-slate-300">Telefone Secundário (Opcional)</Label>
                   <Input
+                    type="tel"
                     value={guestSecondaryPhone}
                     onChange={(e) => setGuestSecondaryPhone(formatPhoneMask(e.target.value))}
                     placeholder="(11) 99999-9999"

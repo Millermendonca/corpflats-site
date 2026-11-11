@@ -26,6 +26,7 @@ import { AccessDenied } from "@/components/access-denied"
 import { PdfViewerDialog } from "@/components/pdf-preview"
 import { useToast } from "@/hooks/use-toast"
 import { sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildDirectWaWebUrl } from "@/hooks/use-quick-messages"
+import { formatSmartPhone } from "@/lib/phone-mask"
 
 export default function CrmGuests() {
   const [, setLocation] = useLocation()
@@ -3053,7 +3054,7 @@ export default function CrmGuests() {
                 </div>
                 <div className="space-y-1">
                   <Label className="font-bold">WhatsApp / Celular</Label>
-                  <Input value={formPhone} onChange={e => setFormPhone(e.target.value)} className="h-9 text-xs rounded-xl" />
+                  <Input type="tel" inputMode="tel" value={formPhone} onChange={e => setFormPhone(formatSmartPhone(e.target.value))} placeholder="(22) 99999-9999" className="h-9 text-xs rounded-xl" />
                 </div>
               </div>
 
@@ -3205,8 +3206,10 @@ export default function CrmGuests() {
                     className="h-8 text-xs rounded-xl"
                   />
                   <Input
+                    type="tel"
+                    inputMode="tel"
                     value={formFinRespPhone}
-                    onChange={e => setFormFinRespPhone(e.target.value)}
+                    onChange={e => setFormFinRespPhone(formatSmartPhone(e.target.value))}
                     placeholder="WhatsApp Resp. Fin."
                     className="h-8 text-xs rounded-xl font-mono"
                   />
@@ -3331,7 +3334,7 @@ export default function CrmGuests() {
                 </div>
                 <div className="space-y-1">
                   <Label className="font-bold">Telefone / WhatsApp</Label>
-                  <Input value={compPhone} onChange={e => setCompPhone(e.target.value)} placeholder="(00) 0000-0000" className="h-9 text-xs rounded-xl" />
+                  <Input type="tel" inputMode="tel" value={compPhone} onChange={e => setCompPhone(formatSmartPhone(e.target.value))} placeholder="(00) 0000-0000" className="h-9 text-xs rounded-xl" />
                 </div>
               </div>
 
@@ -3464,7 +3467,7 @@ export default function CrmGuests() {
                 <div className="grid grid-cols-3 gap-1.5">
                   <Input value={compFinRespName} onChange={e => setCompFinRespName(e.target.value)} placeholder="Nome Resp. Financeiro" className="h-8 text-xs rounded-xl" />
                   <Input value={compFinRespEmail} onChange={e => setCompFinRespEmail(e.target.value)} placeholder="E-mail Notas/Boletos" className="h-8 text-xs rounded-xl" />
-                  <Input value={compFinRespPhone} onChange={e => setCompFinRespPhone(e.target.value)} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
+                  <Input type="tel" inputMode="tel" value={compFinRespPhone} onChange={e => setCompFinRespPhone(formatSmartPhone(e.target.value))} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
                 </div>
                 <div className="flex flex-wrap gap-3 text-[11px] font-semibold pt-0.5">
                   <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={compRecGuest} onChange={e => setCompRecGuest(e.target.checked)} /> 👤 Hóspede</label>
@@ -3522,7 +3525,7 @@ export default function CrmGuests() {
                 </div>
                 <div className="space-y-1">
                   <Label className="font-bold">Telefone Geral / Plantão</Label>
-                  <Input value={agencyPhone} onChange={e => setAgencyPhone(e.target.value)} placeholder="(11) 0000-0000" className="h-9 text-xs rounded-xl" />
+                  <Input type="tel" inputMode="tel" value={agencyPhone} onChange={e => setAgencyPhone(formatSmartPhone(e.target.value))} placeholder="(11) 0000-0000" className="h-9 text-xs rounded-xl" />
                 </div>
               </div>
 
@@ -3628,7 +3631,7 @@ export default function CrmGuests() {
                 <div className="grid grid-cols-3 gap-2">
                   <Input value={agencyFinRespName} onChange={e => setAgencyFinRespName(e.target.value)} placeholder="Nome Resp. Financeiro" className="h-8 text-xs rounded-xl" />
                   <Input value={agencyFinRespEmail} onChange={e => setAgencyFinRespEmail(e.target.value)} placeholder="E-mail Notas/Boletos" className="h-8 text-xs rounded-xl" />
-                  <Input value={agencyFinRespPhone} onChange={e => setAgencyFinRespPhone(e.target.value)} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
+                  <Input type="tel" inputMode="tel" value={agencyFinRespPhone} onChange={e => setAgencyFinRespPhone(formatSmartPhone(e.target.value))} placeholder="WhatsApp Resp. Fin." className="h-8 text-xs rounded-xl font-mono" />
                 </div>
                 <div className="flex flex-wrap gap-3 text-[11px] font-semibold pt-0.5">
                   <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={agencyRecGuest} onChange={e => setAgencyRecGuest(e.target.checked)} /> 👤 Hóspede</label>
@@ -3680,9 +3683,11 @@ export default function CrmGuests() {
                           className="col-span-4 h-8 text-xs rounded-xl"
                         />
                         <Input
+                          type="tel"
+                          inputMode="tel"
                           value={pos.phone}
                           onChange={e => {
-                            const val = e.target.value
+                            const val = formatSmartPhone(e.target.value)
                             setAgencyPosUnits(prev => prev.map((item, i) => i === idx ? { ...item, phone: val } : item))
                           }}
                           placeholder="Telefone"
@@ -3745,9 +3750,11 @@ export default function CrmGuests() {
                           className="col-span-4 h-8 text-xs rounded-xl"
                         />
                         <Input
+                          type="tel"
+                          inputMode="tel"
                           value={agent.phone}
                           onChange={e => {
-                            const val = e.target.value
+                            const val = formatSmartPhone(e.target.value)
                             setAgencyAgents(prev => prev.map((item, i) => i === idx ? { ...item, phone: val } : item))
                           }}
                           placeholder="Telefone"
@@ -3889,7 +3896,10 @@ export default function CrmGuests() {
                       </Button>
                       <Button
                         size="sm"
-                        onClick={() => setLocation(`/notas?doc=${encodeURIComponent(activeAgencyDetail.cnpj || "")}&nome=${encodeURIComponent(activeAgencyDetail.corporateName || "")}&agencyId=${activeAgencyDetail.id}&recipientType=agency`)}
+                        onClick={() => {
+                          setAgencyDetailModalOpen(false)
+                          setLocation(`/notas?doc=${encodeURIComponent(activeAgencyDetail.cnpj || "")}&nome=${encodeURIComponent(activeAgencyDetail.corporateName || "")}&agencyId=${activeAgencyDetail.id}&recipientType=agency`)
+                        }}
                         className="h-8 px-3 text-xs font-bold rounded-xl gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
                       >
                         <FileText className="w-3.5 h-3.5" />
@@ -4068,7 +4078,7 @@ export default function CrmGuests() {
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        setAgency360Open(false)
+                        setAgencyDetailModalOpen(false)
                         setLocation(`/notas?doc=${encodeURIComponent(activeAgencyDetail.cnpj || "")}&nome=${encodeURIComponent(activeAgencyDetail.corporateName || activeAgencyDetail.tradeName || "")}&agencyId=${activeAgencyDetail.id}&recipientType=agency`)
                       }}
                       className="h-7 px-2.5 text-[10px] font-bold rounded-xl gap-1 text-violet-600 border-violet-300"

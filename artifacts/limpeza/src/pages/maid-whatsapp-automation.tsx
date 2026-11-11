@@ -1004,8 +1004,18 @@ export default function MaidWhatsappAutomation() {
                           type="number"
                           min={10}
                           max={180}
-                          value={overtimeTrigger.thresholdMinutes || 40}
-                          onChange={e => updateTriggerField(overtimeTrigger.id, "thresholdMinutes", Number(e.target.value) || 40)}
+                          value={overtimeTrigger.thresholdMinutes ?? ""}
+                          onChange={e => {
+                            const raw = e.target.value
+                            updateTriggerField(overtimeTrigger.id, "thresholdMinutes", raw === "" ? undefined : Number(raw))
+                          }}
+                          onBlur={() => {
+                            const num = Number(overtimeTrigger.thresholdMinutes)
+                            const clamped = !overtimeTrigger.thresholdMinutes || Number.isNaN(num) ? 40 : Math.min(180, Math.max(10, Math.round(num)))
+                            if (overtimeTrigger.thresholdMinutes !== clamped) {
+                              updateTriggerField(overtimeTrigger.id, "thresholdMinutes", clamped)
+                            }
+                          }}
                           className="text-xs font-bold rounded-xl h-9 w-28 font-mono"
                         />
                         <span className="text-xs text-muted-foreground font-medium">minutos (padrão: 40)</span>

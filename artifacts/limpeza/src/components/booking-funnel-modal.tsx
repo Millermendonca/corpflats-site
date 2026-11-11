@@ -18,6 +18,7 @@ import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { RoomConfig } from "@/pages/booking-engine"
 import { loginWithGooglePopup, updateAccountProfile, saveSessionLocally } from "@/lib/auth-client"
 import { maskPhone, maskCpf } from "@/components/complete-profile-modal"
+import { isPlausibleCpfOrPassport } from "@/lib/phone-mask"
 import { compressImage } from "@/lib/image-compression"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 
@@ -574,16 +575,20 @@ export function BookingFunnelModal({
         alert("Por favor, informe seu nome completo.")
         return
       }
-      if (!guestPhone.trim() || guestPhone.replace(/\D/g, "").length < 10) {
-        alert("Por favor, informe um WhatsApp válido com DDD.")
+      const cleanFunnelPhone = guestPhone.replace(/\D/g, "")
+      const isIntlFunnelPhone = guestPhone.trim().startsWith("+") && !cleanFunnelPhone.startsWith("55")
+      if (!guestPhone.trim() || cleanFunnelPhone.length < (isIntlFunnelPhone ? 8 : 10)) {
+        alert("Por favor, informe um WhatsApp válido com DDD (ou DDI internacional com +).")
         return
       }
       if (!guestEmail.trim() || !guestEmail.includes("@") || !guestEmail.includes(".")) {
         alert("Por favor, informe um e-mail válido para envio do voucher.")
         return
       }
-      if (!guestDocument.trim() || guestDocument.replace(/\D/g, "").length !== 11) {
-        alert("Por favor, informe um CPF válido com 11 dígitos para registro da reserva.")
+      const rawFunnelDoc = guestDocument.trim()
+      const isFunnelDocValid = isPlausibleCpfOrPassport(rawFunnelDoc)
+      if (!rawFunnelDoc || !isFunnelDocValid) {
+        alert("Por favor, informe um CPF válido (11 dígitos) ou número de Passaporte válido para registro da reserva.")
         return
       }
       if (!docFileBase64) {
@@ -619,6 +624,8 @@ export function BookingFunnelModal({
         return
       }
 
+      const resolvedFunnelDocType = /[a-zA-Z]/.test(rawFunnelDoc) ? "Passaporte" : "CPF"
+
       // Sincroniza dados (incluindo documento anexado) com o cache local e conta no servidor para nunca mais pedir novamente
       try {
         const currentProf = getCachedProfile() || {}
@@ -628,6 +635,7 @@ export function BookingFunnelModal({
           name: guestName.trim(),
           email: guestEmail.trim(),
           phone: guestPhone.trim(),
+          docType: resolvedFunnelDocType,
           document: guestDocument.trim(),
           address: guestAddress.trim(),
           city: guestCity.trim(),
@@ -637,10 +645,11 @@ export function BookingFunnelModal({
         })
       } catch {}
 
-      if (guestPhone.replace(/\D/g, "").length >= 10 || guestDocument.replace(/\D/g, "").length >= 5) {
+      if (cleanFunnelPhone.length >= (isIntlFunnelPhone ? 8 : 10) || isFunnelDocValid) {
         updateAccountProfile({
           name: guestName.trim(),
           phone: guestPhone.trim(),
+          docType: resolvedFunnelDocType,
           document: guestDocument.trim(),
           address: guestAddress.trim(),
           city: guestCity.trim(),
@@ -690,6 +699,7 @@ export function BookingFunnelModal({
         guestPhone: guestPhone.trim(),
         guestEmail: guestEmail.trim(),
         guestDocument: guestDocument.trim(),
+        guestDocType: /[a-zA-Z]/.test(guestDocument.trim()) ? "Passaporte" : "CPF",
         guestAddress: guestAddress.trim(),
         guestCity: guestCity.trim(),
         guestState: guestState.trim(),
@@ -1339,6 +1349,8 @@ export function BookingFunnelModal({
                   WhatsApp / Celular com DDD *
                 </Label>
                 <Input
+                  type="tel"
+                  inputMode="tel"
                   value={guestPhone}
                   onChange={e => setGuestPhone(maskPhone(e.target.value))}
                   placeholder="(22) 99999-9999"
@@ -1366,7 +1378,7 @@ export function BookingFunnelModal({
                 <Input
                   value={guestDocument}
                   onChange={e => setGuestDocument(maskCpf(e.target.value))}
-                  placeholder="000.000.000-00"
+                  placeholder="000.000.000-00 ou Passaporte"
                   className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
                 />
               </div>

@@ -19,6 +19,7 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
 import { compressImage } from "@/lib/image-compression";
+import { formatSmartPhone } from "@/lib/phone-mask";
 import {
   Wrench,
   CheckCircle2,
@@ -1284,9 +1285,11 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   <div>
                     <Label className="text-xs font-semibold">WhatsApp / Celular (para avisos de quartos liberados) *</Label>
                     <Input
-                      placeholder="Ex: 22999999999"
+                      type="tel"
+                      inputMode="tel"
+                      placeholder="(22) 99999-9999"
                       value={mainWorkerPhone}
-                      onChange={(e) => setMainWorkerPhone(e.target.value)}
+                      onChange={(e) => setMainWorkerPhone(formatSmartPhone(e.target.value))}
                       className="mt-1 text-sm bg-transparent"
                     />
                     <span className="text-[11px] text-muted-foreground block mt-1">
@@ -2071,9 +2074,11 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             <div>
               <Label className="text-xs font-semibold">WhatsApp / Telefone para Contato *</Label>
               <Input
+                type="tel"
+                inputMode="tel"
                 placeholder="(22) 99850-5276"
                 value={mainWorkerPhone}
-                onChange={(e) => setMainWorkerPhone(e.target.value)}
+                onChange={(e) => setMainWorkerPhone(formatSmartPhone(e.target.value))}
                 className="mt-1 text-sm"
               />
               <span className="text-[10px] text-muted-foreground block mt-0.5">

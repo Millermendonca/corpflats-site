@@ -71,18 +71,30 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
   const [weekendMarkup, setWeekendMarkup] = useState<number>(
     Math.round((settings.weekendMarkupPct ?? 0.15) * 100)
   );
+  const [rawInputs, setRawInputs] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   useEffect(() => {
     if (settings.seasonalityOverrides) {
       setMonths(buildMonthsFromOverrides(settings.seasonalityOverrides));
+      setRawInputs((prev) => {
+        const next: Record<string, string> = {};
+        if (prev.weekendMarkup !== undefined) next.weekendMarkup = prev.weekendMarkup;
+        return next;
+      });
     }
   }, [settings.seasonalityOverrides]);
 
   useEffect(() => {
     if (settings.weekendMarkupPct !== undefined) {
       setWeekendMarkup(Math.round(settings.weekendMarkupPct * 100));
+      setRawInputs((prev) => {
+        if (prev.weekendMarkup === undefined) return prev;
+        const next = { ...prev };
+        delete next.weekendMarkup;
+        return next;
+      });
     }
   }, [settings.weekendMarkupPct]);
 
@@ -113,6 +125,7 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
   };
 
   const handleResetDefaults = () => {
+    setRawInputs({});
     setMonths(DEFAULT_MONTHS);
     setWeekendMarkup(15);
     onUpdateSettings?.({ seasonalityOverrides: {}, resetSeasonalityOverrides: true, weekendMarkupPct: 0.15 });
@@ -124,7 +137,7 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
       const overridesMap: Record<number, { factor: number; season: "Alta" | "Média" | "Baixa" }> = {};
       months.forEach((m) => {
         if (m.isManualOverride || Math.abs(m.factor - DEFAULT_MONTHS[m.month].factor) > 0.001) {
-          overridesMap[m.month] = { factor: m.factor, season: m.season };
+          overridesMap[m.month] = { factor: itemFactorSafe(m.factor), season: m.season };
         }
       });
       const payload = {
@@ -150,6 +163,8 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
       setIsSaving(false);
     }
   };
+
+  const itemFactorSafe = (f: number) => (Number.isNaN(Number(f)) || Number(f) <= 0 ? 1 : Number(f));
 
   const getSeasonBadge = (season: string, factor: number) => {
     const diffPct = Math.round((factor - 1) * 100);
@@ -194,8 +209,28 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
                 type="number"
                 min="0"
                 max="50"
-                value={weekendMarkup}
-                onChange={(e) => handleWeekendChange(Number(e.target.value) || 0)}
+                value={rawInputs.weekendMarkup ?? weekendMarkup}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setRawInputs((prev) => ({ ...prev, weekendMarkup: raw }));
+                  if (raw.trim() === "") return;
+                  const parsed = Number(raw);
+                  if (!Number.isNaN(parsed)) {
+                    handleWeekendChange(Math.min(50, Math.max(0, parsed)));
+                  }
+                }}
+                onBlur={() => {
+                  const raw = rawInputs.weekendMarkup;
+                  if (raw !== undefined) {
+                    const parsed = raw.trim() === "" ? 0 : Number(raw);
+                    handleWeekendChange(Number.isNaN(parsed) ? 0 : Math.min(50, Math.max(0, parsed)));
+                    setRawInputs((prev) => {
+                      const next = { ...prev };
+                      delete next.weekendMarkup;
+                      return next;
+                    });
+                  }
+                }}
                 className="w-24 text-xs font-bold text-right"
               />
               <span className="text-xs font-semibold text-muted-foreground">%</span>
@@ -294,6 +329,7 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
                 {months.map((m, idx) => {
                   const monthBaseRate = Math.max(breakEvenFloor || 189.09, Math.round(baseRate * m.factor * 100) / 100);
                   const monthWeekendRate = monthBaseRate * (1 + weekendMarkup / 100);
+                  const factorKey = `factor_${idx}`;
                   return (
                     <tr key={m.month} className="hover:bg-muted/30 transition-colors">
                       <td className="py-2.5 px-4 text-left font-sans font-bold text-foreground">
@@ -312,8 +348,30 @@ export const SeasonalityTab: React.FC<SeasonalityTabProps> = ({
                             step="0.05"
                             min="0.5"
                             max="2.0"
-                            value={m.factor}
-                            onChange={(e) => handleFactorChange(idx, Number(e.target.value) || 1)}
+                            value={rawInputs[factorKey] ?? m.factor}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setRawInputs((prev) => ({ ...prev, [factorKey]: raw }));
+                              if (raw.trim() === "") return;
+                              const parsed = Number(raw);
+                              if (!Number.isNaN(parsed) && parsed >= 0.1) {
+                                handleFactorChange(idx, Math.min(2.0, parsed));
+                              }
+                            }}
+                            onBlur={() => {
+                              const raw = rawInputs[factorKey];
+                              if (raw !== undefined) {
+                                const fallback = DEFAULT_MONTHS[idx]?.factor ?? 1;
+                                const parsed = raw.trim() === "" ? fallback : Number(raw);
+                                const clamped = Number.isNaN(parsed) ? fallback : Math.min(2.0, Math.max(0.5, parsed));
+                                handleFactorChange(idx, clamped);
+                                setRawInputs((prev) => {
+                                  const next = { ...prev };
+                                  delete next[factorKey];
+                                  return next;
+                                });
+                              }
+                            }}
                             className="w-20 h-7 text-xs text-center font-bold"
                           />
                           {m.isManualOverride && (

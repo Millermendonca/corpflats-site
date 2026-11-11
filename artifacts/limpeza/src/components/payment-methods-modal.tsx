@@ -40,6 +40,7 @@ export function PaymentMethodsModal({
   const [saving, setSaving] = useState(false)
   const [successMsg, setSuccessMsg] = useState("")
   const [errorMsg, setErrorMsg] = useState("")
+  const [rawFeeInputs, setRawFeeInputs] = useState<Record<string, string>>({})
 
   // Novo método formulário rápido
   const [isAddingNew, setIsAddingNew] = useState(false)
@@ -71,6 +72,7 @@ export function PaymentMethodsModal({
 
   useEffect(() => {
     if (open) {
+      setRawFeeInputs({})
       fetchMethods()
       setSuccessMsg("")
       setErrorMsg("")
@@ -398,8 +400,30 @@ export function PaymentMethodsModal({
                         <Input
                           type="number"
                           step="0.01"
-                          value={m.gatewayFeeRate}
-                          onChange={e => handleUpdateMethod(m.id, "gatewayFeeRate", Number(e.target.value) || 0)}
+                          min="0"
+                          value={rawFeeInputs[`rate_${m.id}`] ?? m.gatewayFeeRate}
+                          onChange={e => {
+                            const raw = e.target.value
+                            setRawFeeInputs(prev => ({ ...prev, [`rate_${m.id}`]: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              handleUpdateMethod(m.id, "gatewayFeeRate", Math.max(0, parsed))
+                            }
+                          }}
+                          onBlur={() => {
+                            const key = `rate_${m.id}`
+                            const raw = rawFeeInputs[key]
+                            if (raw !== undefined) {
+                              const parsed = raw.trim() === "" ? 0 : Number(raw)
+                              handleUpdateMethod(m.id, "gatewayFeeRate", Number.isNaN(parsed) ? 0 : Math.max(0, parsed))
+                              setRawFeeInputs(prev => {
+                                const next = { ...prev }
+                                delete next[key]
+                                return next
+                              })
+                            }
+                          }}
                           className="h-7 text-xs font-bold text-amber-700 dark:text-amber-300"
                         />
                       </div>
@@ -409,8 +433,30 @@ export function PaymentMethodsModal({
                         <Input
                           type="number"
                           step="0.01"
-                          value={m.gatewayFeeFixed || 0}
-                          onChange={e => handleUpdateMethod(m.id, "gatewayFeeFixed", Number(e.target.value) || 0)}
+                          min="0"
+                          value={rawFeeInputs[`fixed_${m.id}`] ?? (m.gatewayFeeFixed ?? 0)}
+                          onChange={e => {
+                            const raw = e.target.value
+                            setRawFeeInputs(prev => ({ ...prev, [`fixed_${m.id}`]: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              handleUpdateMethod(m.id, "gatewayFeeFixed", Math.max(0, parsed))
+                            }
+                          }}
+                          onBlur={() => {
+                            const key = `fixed_${m.id}`
+                            const raw = rawFeeInputs[key]
+                            if (raw !== undefined) {
+                              const parsed = raw.trim() === "" ? 0 : Number(raw)
+                              handleUpdateMethod(m.id, "gatewayFeeFixed", Number.isNaN(parsed) ? 0 : Math.max(0, parsed))
+                              setRawFeeInputs(prev => {
+                                const next = { ...prev }
+                                delete next[key]
+                                return next
+                              })
+                            }
+                          }}
                           className="h-7 text-xs font-semibold"
                         />
                       </div>

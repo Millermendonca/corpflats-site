@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useListFlats } from "@workspace/api-client-react"
+import { cn } from "@/lib/utils"
 
 export interface SurveyQuestion {
   id: string

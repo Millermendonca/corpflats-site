@@ -894,6 +894,7 @@ export default function WhatsappAutomation() {
     knowledgeBase: {}
   })
   const [geminiStatus, setGeminiStatus] = useState<{ configured: boolean; model: string }>({ configured: false, model: "gemini-2.5-pro" })
+  const [rawAutomationNumInputs, setRawAutomationNumInputs] = useState<Record<string, string>>({})
   const [aiTestModeOnly, setAiTestModeOnly] = useState(true)
   const [aiTestAllowedPhones, setAiTestAllowedPhones] = useState("22998505276")
   const [loadingAiConfig, setLoadingAiConfig] = useState(false)
@@ -4071,8 +4072,25 @@ export default function WhatsappAutomation() {
                             type="number"
                             min="5"
                             max="120"
-                            value={botActionsSettings.preReservationHoldMinutes || 30}
-                            onChange={(e) => setBotActionsSettings(prev => ({ ...prev, preReservationHoldMinutes: Number(e.target.value) || 30 }))}
+                            value={rawAutomationNumInputs.holdMinutes ?? (botActionsSettings.preReservationHoldMinutes || 30)}
+                            onChange={(e) => {
+                              const raw = e.target.value
+                              setRawAutomationNumInputs(prev => ({ ...prev, holdMinutes: raw }))
+                              if (raw.trim() === "") return
+                              const parsed = Number(raw)
+                              if (!Number.isNaN(parsed)) {
+                                setBotActionsSettings(prev => ({ ...prev, preReservationHoldMinutes: Math.min(120, Math.max(1, Math.round(parsed))) }))
+                              }
+                            }}
+                            onBlur={() => {
+                              const raw = rawAutomationNumInputs.holdMinutes
+                              if (raw !== undefined) {
+                                const parsed = raw.trim() === "" ? 30 : Number(raw)
+                                const clamped = Number.isNaN(parsed) ? 30 : Math.min(120, Math.max(5, Math.round(parsed)))
+                                setBotActionsSettings(prev => ({ ...prev, preReservationHoldMinutes: clamped }))
+                                setRawAutomationNumInputs(prev => { const n = { ...prev }; delete n.holdMinutes; return n })
+                              }
+                            }}
                             className="h-9 text-xs"
                           />
                           <p className="text-[10px] text-muted-foreground">
@@ -4272,8 +4290,25 @@ export default function WhatsappAutomation() {
                           type="number"
                           min="1"
                           max="15"
-                          value={aiConfig.responseDelaySeconds || 3}
-                          onChange={e => setAiConfig((prev: any) => ({ ...prev, responseDelaySeconds: Number(e.target.value) || 3 }))}
+                          value={rawAutomationNumInputs.responseDelay ?? (aiConfig.responseDelaySeconds || 3)}
+                          onChange={e => {
+                            const raw = e.target.value
+                            setRawAutomationNumInputs(prev => ({ ...prev, responseDelay: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              setAiConfig((prev: any) => ({ ...prev, responseDelaySeconds: Math.min(15, Math.max(1, Math.round(parsed))) }))
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawAutomationNumInputs.responseDelay
+                            if (raw !== undefined) {
+                              const parsed = raw.trim() === "" ? 3 : Number(raw)
+                              const clamped = Number.isNaN(parsed) ? 3 : Math.min(15, Math.max(1, Math.round(parsed)))
+                              setAiConfig((prev: any) => ({ ...prev, responseDelaySeconds: clamped }))
+                              setRawAutomationNumInputs(prev => { const n = { ...prev }; delete n.responseDelay; return n })
+                            }
+                          }}
                           className="h-9 text-xs"
                         />
                         <p className="text-[10px] text-muted-foreground">Simula digitação natural para evitar respostas mecânicas.</p>
@@ -4853,8 +4888,25 @@ export default function WhatsappAutomation() {
                                 step="5"
                                 min="1"
                                 max="99"
-                                value={sundayUpsellDiscountPercent}
-                                onChange={(e) => setSundayUpsellDiscountPercent(Math.min(99, Math.max(1, Number(e.target.value) || 50)))}
+                                value={rawAutomationNumInputs.sundayDiscount ?? sundayUpsellDiscountPercent}
+                                onChange={(e) => {
+                                  const raw = e.target.value
+                                  setRawAutomationNumInputs(prev => ({ ...prev, sundayDiscount: raw }))
+                                  if (raw.trim() === "") return
+                                  const parsed = Number(raw)
+                                  if (!Number.isNaN(parsed)) {
+                                    setSundayUpsellDiscountPercent(Math.min(99, Math.max(1, Math.round(parsed))))
+                                  }
+                                }}
+                                onBlur={() => {
+                                  const raw = rawAutomationNumInputs.sundayDiscount
+                                  if (raw !== undefined) {
+                                    const parsed = raw.trim() === "" ? 50 : Number(raw)
+                                    const clamped = Number.isNaN(parsed) ? 50 : Math.min(99, Math.max(1, Math.round(parsed)))
+                                    setSundayUpsellDiscountPercent(clamped)
+                                    setRawAutomationNumInputs(prev => { const n = { ...prev }; delete n.sundayDiscount; return n })
+                                  }
+                                }}
                                 className="pr-8 h-9 font-mono font-bold text-sm bg-background border-border"
                               />
                               <span className="absolute right-3 top-2 text-xs font-bold text-muted-foreground">%</span>
@@ -4862,7 +4914,15 @@ export default function WhatsappAutomation() {
                             <Button
                               size="sm"
                               disabled={savingSundayUpsell}
-                              onClick={() => handleSaveSundayUpsellConfig({ discountPercent: sundayUpsellDiscountPercent })}
+                              onClick={() => {
+                                const raw = rawAutomationNumInputs.sundayDiscount
+                                const effectivePct = raw !== undefined
+                                  ? (raw.trim() === "" || Number.isNaN(Number(raw)) ? 50 : Math.min(99, Math.max(1, Math.round(Number(raw)))))
+                                  : sundayUpsellDiscountPercent
+                                setSundayUpsellDiscountPercent(effectivePct)
+                                setRawAutomationNumInputs(prev => { const n = { ...prev }; delete n.sundayDiscount; return n })
+                                handleSaveSundayUpsellConfig({ discountPercent: effectivePct })
+                              }}
                               className="h-9 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
                             >
                               {savingSundayUpsell ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}

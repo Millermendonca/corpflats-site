@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo";
+import { formatSmartPhone } from "@/lib/phone-mask";
 import {
   Refrigerator,
   Plus,
@@ -1874,10 +1875,12 @@ export default function GuestMinibar() {
                                 className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
                               />
                               <Input
+                                type="tel"
+                                inputMode="tel"
                                 placeholder="WhatsApp com DDD"
                                 value={guestEditForm.phone}
                                 onChange={(e) =>
-                                  setGuestEditForm((p) => ({ ...p, phone: e.target.value }))
+                                  setGuestEditForm((p) => ({ ...p, phone: formatSmartPhone(e.target.value) }))
                                 }
                                 className="h-9 bg-slate-950 border-slate-700 text-xs text-white rounded-lg"
                               />
@@ -1955,10 +1958,12 @@ export default function GuestMinibar() {
                           className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
                         />
                         <Input
+                          type="tel"
+                          inputMode="tel"
                           placeholder="WhatsApp com DDD"
                           value={guestEditForm.phone}
                           onChange={(e) =>
-                            setGuestEditForm((p) => ({ ...p, phone: e.target.value }))
+                            setGuestEditForm((p) => ({ ...p, phone: formatSmartPhone(e.target.value) }))
                           }
                           className="h-9 bg-slate-900 border-slate-700 text-xs text-white rounded-lg"
                         />
@@ -2559,9 +2564,11 @@ export default function GuestMinibar() {
                       />
                     )}
                     <Input
+                      type="tel"
+                      inputMode="tel"
                       placeholder="WhatsApp p/ receber NF"
                       value={invoicePhone}
-                      onChange={(e) => setInvoicePhone(e.target.value)}
+                      onChange={(e) => setInvoicePhone(formatSmartPhone(e.target.value))}
                       className="h-10 bg-slate-950 border-slate-800 text-white rounded-xl text-xs"
                     />
                     <Input

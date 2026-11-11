@@ -35,6 +35,7 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
   isSaving,
 }) => {
   const [localSettings, setLocalSettings] = useState<PricingSettings>(settings);
+  const [rawInputs, setRawInputs] = useState<Record<string, string>>({});
 
   React.useEffect(() => {
     setLocalSettings(settings);
@@ -78,6 +79,35 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
     onUpdateSettings(updated);
   };
 
+  const getRawOrVal = (key: string, val: number | string) =>
+    rawInputs[key] !== undefined ? rawInputs[key] : val;
+
+  const handleRawNumberChange = (
+    key: string,
+    raw: string,
+    applyValid: (num: number) => void
+  ) => {
+    setRawInputs((prev) => ({ ...prev, [key]: raw }));
+    if (raw.trim() === "" || raw === "-") return;
+    const parsed = Number(raw);
+    if (!Number.isNaN(parsed)) {
+      applyValid(parsed);
+    }
+  };
+
+  const handleRawBlur = (
+    key: string,
+    normalizeOnEmptyOrClamp: (raw: string | undefined) => void
+  ) => {
+    normalizeOnEmptyOrClamp(rawInputs[key]);
+    setRawInputs((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
   const handleResetDefaults = () => {
     const defaults: PricingSettings = {
       totalUHs: 19,
@@ -107,6 +137,7 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
       hasPlanCeiling: false,
       planCeilingCount: 12,
     };
+    setRawInputs({});
     setLocalSettings(defaults);
     onUpdateSettings(defaults);
   };
@@ -152,8 +183,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 <Input
                   type="number"
                   step="0.01"
-                  value={localSettings.fixedRent ?? 38506.61}
-                  onChange={(e) => handleInputChange("fixedRent", Number(e.target.value) || 0)}
+                  value={getRawOrVal("fixedRent", localSettings.fixedRent ?? 38506.61)}
+                  onChange={(e) => handleRawNumberChange("fixedRent", e.target.value, (n) => handleInputChange("fixedRent", Math.max(0, n)))}
+                  onBlur={() => handleRawBlur("fixedRent", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("fixedRent", 0); })}
                   className="w-28 h-7 text-xs font-bold text-right"
                 />
               </div>
@@ -162,8 +194,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 <Input
                   type="number"
                   step="0.01"
-                  value={localSettings.fixedSalaries ?? 0}
-                  onChange={(e) => handleInputChange("fixedSalaries", Number(e.target.value) || 0)}
+                  value={getRawOrVal("fixedSalaries", localSettings.fixedSalaries ?? 0)}
+                  onChange={(e) => handleRawNumberChange("fixedSalaries", e.target.value, (n) => handleInputChange("fixedSalaries", Math.max(0, n)))}
+                  onBlur={() => handleRawBlur("fixedSalaries", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("fixedSalaries", 0); })}
                   className="w-28 h-7 text-xs font-bold text-right"
                 />
               </div>
@@ -172,8 +205,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 <Input
                   type="number"
                   step="0.01"
-                  value={localSettings.fixedCondoIptu ?? 0}
-                  onChange={(e) => handleInputChange("fixedCondoIptu", Number(e.target.value) || 0)}
+                  value={getRawOrVal("fixedCondoIptu", localSettings.fixedCondoIptu ?? 0)}
+                  onChange={(e) => handleRawNumberChange("fixedCondoIptu", e.target.value, (n) => handleInputChange("fixedCondoIptu", Math.max(0, n)))}
+                  onBlur={() => handleRawBlur("fixedCondoIptu", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("fixedCondoIptu", 0); })}
                   className="w-28 h-7 text-xs font-bold text-right"
                 />
               </div>
@@ -182,8 +216,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 <Input
                   type="number"
                   step="0.01"
-                  value={localSettings.fixedSystems ?? localSettings.fixedSystemsMaintenance ?? 0}
-                  onChange={(e) => handleInputChange("fixedSystems", Number(e.target.value) || 0)}
+                  value={getRawOrVal("fixedSystems", localSettings.fixedSystems ?? localSettings.fixedSystemsMaintenance ?? 0)}
+                  onChange={(e) => handleRawNumberChange("fixedSystems", e.target.value, (n) => handleInputChange("fixedSystems", Math.max(0, n)))}
+                  onBlur={() => handleRawBlur("fixedSystems", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("fixedSystems", 0); })}
                   className="w-28 h-7 text-xs font-bold text-right"
                 />
               </div>
@@ -192,8 +227,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 <Input
                   type="number"
                   step="0.01"
-                  value={localSettings.fixedOther ?? 400.00}
-                  onChange={(e) => handleInputChange("fixedOther", Number(e.target.value) || 0)}
+                  value={getRawOrVal("fixedOther", localSettings.fixedOther ?? 400.00)}
+                  onChange={(e) => handleRawNumberChange("fixedOther", e.target.value, (n) => handleInputChange("fixedOther", Math.max(0, n)))}
+                  onBlur={() => handleRawBlur("fixedOther", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("fixedOther", 0); })}
                   className="w-28 h-7 text-xs font-bold text-right"
                 />
               </div>
@@ -209,13 +245,22 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                   <Input
                     type="number"
                     step="1"
-                    min="10"
+                    min="5"
                     max="100"
-                    value={Math.round(Number(localSettings.occupancyRate ?? 0.65) * 100)}
+                    value={getRawOrVal("occupancyRate", Math.round(Number(localSettings.occupancyRate ?? 0.65) * 100))}
                     onChange={(e) => {
-                      const pct = Math.min(100, Math.max(5, Number(e.target.value) || 65));
-                      handleInputChange("occupancyRate", pct / 100);
+                      handleRawNumberChange("occupancyRate", e.target.value, (n) => {
+                        const safePreviewPct = Math.min(100, Math.max(1, n));
+                        handleInputChange("occupancyRate", safePreviewPct / 100);
+                      });
                     }}
+                    onBlur={() =>
+                      handleRawBlur("occupancyRate", (r) => {
+                        const parsed = r !== undefined && r.trim() !== "" ? Number(r) : 65;
+                        const clamped = Number.isNaN(parsed) ? 65 : Math.min(100, Math.max(5, parsed));
+                        handleInputChange("occupancyRate", clamped / 100);
+                      })
+                    }
                     className="w-16 h-7 text-xs font-bold text-right"
                   />
                   <span className="text-[11px] text-muted-foreground">
@@ -241,8 +286,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 <Input
                   type="number"
                   step="0.01"
-                  value={localSettings.varCleaning ?? 23.25}
-                  onChange={(e) => handleInputChange("varCleaning", Number(e.target.value) || 0)}
+                  value={getRawOrVal("varCleaning", localSettings.varCleaning ?? 23.25)}
+                  onChange={(e) => handleRawNumberChange("varCleaning", e.target.value, (n) => handleInputChange("varCleaning", Math.max(0, n)))}
+                  onBlur={() => handleRawBlur("varCleaning", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("varCleaning", 0); })}
                   className="w-24 h-7 text-xs font-bold text-right"
                 />
               </div>
@@ -251,8 +297,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 <Input
                   type="number"
                   step="0.01"
-                  value={localSettings.varLinen ?? 15.51}
-                  onChange={(e) => handleInputChange("varLinen", Number(e.target.value) || 0)}
+                  value={getRawOrVal("varLinen", localSettings.varLinen ?? 15.51)}
+                  onChange={(e) => handleRawNumberChange("varLinen", e.target.value, (n) => handleInputChange("varLinen", Math.max(0, n)))}
+                  onBlur={() => handleRawBlur("varLinen", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("varLinen", 0); })}
                   className="w-24 h-7 text-xs font-bold text-right"
                 />
               </div>
@@ -261,8 +308,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 <Input
                   type="number"
                   step="0.01"
-                  value={localSettings.varUtilities ?? 9.00}
-                  onChange={(e) => handleInputChange("varUtilities", Number(e.target.value) || 0)}
+                  value={getRawOrVal("varUtilities", localSettings.varUtilities ?? 9.00)}
+                  onChange={(e) => handleRawNumberChange("varUtilities", e.target.value, (n) => handleInputChange("varUtilities", Math.max(0, n)))}
+                  onBlur={() => handleRawBlur("varUtilities", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("varUtilities", 0); })}
                   className="w-24 h-7 text-xs font-bold text-right"
                 />
               </div>
@@ -331,8 +379,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                   step="0.5"
                   min="0"
                   max="50"
-                  value={Math.round(Number(localSettings.channelCommissionPct ?? 0.15) * 1000) / 10}
-                  onChange={(e) => handleInputChange("channelCommissionPct", (Number(e.target.value) || 0) / 100)}
+                  value={getRawOrVal("channelCommissionPct", Math.round(Number(localSettings.channelCommissionPct ?? 0.15) * 1000) / 10)}
+                  onChange={(e) => handleRawNumberChange("channelCommissionPct", e.target.value, (n) => handleInputChange("channelCommissionPct", Math.min(50, Math.max(0, n)) / 100))}
+                  onBlur={() => handleRawBlur("channelCommissionPct", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("channelCommissionPct", 0); })}
                   className="h-7 text-xs font-bold mt-1 text-right"
                 />
               </div>
@@ -345,8 +394,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                   step="0.5"
                   min="0"
                   max="60"
-                  value={Math.round(Number(localSettings.targetMarginPct ?? 0.25) * 1000) / 10}
-                  onChange={(e) => handleInputChange("targetMarginPct", (Number(e.target.value) || 0) / 100)}
+                  value={getRawOrVal("targetMarginPct", Math.round(Number(localSettings.targetMarginPct ?? 0.25) * 1000) / 10)}
+                  onChange={(e) => handleRawNumberChange("targetMarginPct", e.target.value, (n) => handleInputChange("targetMarginPct", Math.min(60, Math.max(0, n)) / 100))}
+                  onBlur={() => handleRawBlur("targetMarginPct", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("targetMarginPct", 0); })}
                   className="h-7 text-xs font-bold mt-1 text-right"
                 />
               </div>
@@ -359,8 +409,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                   step="0.5"
                   min="0"
                   max="30"
-                  value={Math.round(Number(localSettings.taxRatePct ?? 0.06) * 1000) / 10}
-                  onChange={(e) => handleInputChange("taxRatePct", (Number(e.target.value) || 0) / 100)}
+                  value={getRawOrVal("taxRatePct", Math.round(Number(localSettings.taxRatePct ?? 0.06) * 1000) / 10)}
+                  onChange={(e) => handleRawNumberChange("taxRatePct", e.target.value, (n) => handleInputChange("taxRatePct", Math.min(30, Math.max(0, n)) / 100))}
+                  onBlur={() => handleRawBlur("taxRatePct", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("taxRatePct", 0); })}
                   className="h-7 text-xs font-bold mt-1 text-right"
                 />
               </div>
@@ -398,8 +449,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 <Input
                   type="number"
                   step="0.01"
-                  value={localSettings.manualFloor ?? 189.09}
-                  onChange={(e) => handleInputChange("manualFloor", Number(e.target.value) || 0)}
+                  value={getRawOrVal("manualFloor", localSettings.manualFloor ?? 189.09)}
+                  onChange={(e) => handleRawNumberChange("manualFloor", e.target.value, (n) => handleInputChange("manualFloor", Math.max(0, n)))}
+                  onBlur={() => handleRawBlur("manualFloor", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("manualFloor", 0); })}
                   className="h-7 text-xs font-bold mt-1 text-right"
                 />
               </div>
@@ -412,8 +464,19 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                   step="1"
                   min="5"
                   max="100"
-                  value={Math.round(Number(localSettings.variationLimitPct ?? 0.30) * 100)}
-                  onChange={(e) => handleInputChange("variationLimitPct", Math.max(0.05, (Number(e.target.value) || 30) / 100))}
+                  value={getRawOrVal("variationLimitPct", Math.round(Number(localSettings.variationLimitPct ?? 0.30) * 100))}
+                  onChange={(e) =>
+                    handleRawNumberChange("variationLimitPct", e.target.value, (n) =>
+                      handleInputChange("variationLimitPct", Math.min(100, Math.max(1, n)) / 100)
+                    )
+                  }
+                  onBlur={() =>
+                    handleRawBlur("variationLimitPct", (r) => {
+                      const parsed = r !== undefined && r.trim() !== "" ? Number(r) : 30;
+                      const clamped = Number.isNaN(parsed) ? 30 : Math.min(100, Math.max(5, parsed));
+                      handleInputChange("variationLimitPct", clamped / 100);
+                    })
+                  }
                   className="h-7 text-xs font-bold mt-1 text-right"
                 />
               </div>
@@ -552,8 +615,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                     type="number"
                     step="1"
                     min="0"
-                    value={breakfastSurcharge}
-                    onChange={(e) => handleInputChange("breakfastSurchargePerGuest", Number(e.target.value) || 0)}
+                    value={getRawOrVal("breakfastSurchargePerGuest", breakfastSurcharge)}
+                    onChange={(e) => handleRawNumberChange("breakfastSurchargePerGuest", e.target.value, (n) => handleInputChange("breakfastSurchargePerGuest", Math.max(0, n)))}
+                    onBlur={() => handleRawBlur("breakfastSurchargePerGuest", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("breakfastSurchargePerGuest", 0); })}
                     className="h-8 text-xs font-bold text-right"
                   />
                 </div>
@@ -569,8 +633,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                     type="number"
                     step="1"
                     min="0"
-                    value={extraBedFee}
-                    onChange={(e) => handleInputChange("extraBedFee", Number(e.target.value) || 0)}
+                    value={getRawOrVal("extraBedFee", extraBedFee)}
+                    onChange={(e) => handleRawNumberChange("extraBedFee", e.target.value, (n) => handleInputChange("extraBedFee", Math.max(0, n)))}
+                    onBlur={() => handleRawBlur("extraBedFee", (r) => { if (r !== undefined && r.trim() === "") handleInputChange("extraBedFee", 0); })}
                     className="h-8 text-xs font-bold text-right"
                   />
                 </div>
@@ -615,8 +680,15 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                     type="number"
                     min="1"
                     max="19"
-                    value={localSettings.planCeilingCount ?? 12}
-                    onChange={(e) => handleInputChange("planCeilingCount", Number(e.target.value) || 12)}
+                    value={getRawOrVal("planCeilingCount", localSettings.planCeilingCount ?? 12)}
+                    onChange={(e) => handleRawNumberChange("planCeilingCount", e.target.value, (n) => handleInputChange("planCeilingCount", Math.min(19, Math.max(1, Math.round(n)))))}
+                    onBlur={() =>
+                      handleRawBlur("planCeilingCount", (r) => {
+                        const parsed = r !== undefined && r.trim() !== "" ? Number(r) : 12;
+                        const clamped = Number.isNaN(parsed) ? 12 : Math.min(19, Math.max(1, Math.round(parsed)));
+                        handleInputChange("planCeilingCount", clamped);
+                      })
+                    }
                     className="w-20 h-7 text-xs text-right font-bold"
                   />
                 </div>

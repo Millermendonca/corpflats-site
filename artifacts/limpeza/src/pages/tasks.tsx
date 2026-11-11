@@ -43,7 +43,7 @@ function TaskFormDialog({
   const [name, setName] = useState(task?.name ?? "")
   const [description, setDescription] = useState(task?.description ?? "")
   const [firstDueDate, setFirstDueDate] = useState(task?.firstDueDate ? String(task.firstDueDate).substring(0, 10) : todayStr)
-  const [periodDays, setPeriodDays] = useState<number>(task?.periodDays ?? 30)
+  const [periodDays, setPeriodDays] = useState<number | "">(task?.periodDays ?? 30)
   const [periodType, setPeriodType] = useState<"occupied_days" | "calendar_days">(task?.periodType ?? "occupied_days")
   const [assignToHousekeeping, setAssignToHousekeeping] = useState<boolean>(task?.assignToHousekeeping !== false)
   const [selectedFlats, setSelectedFlats] = useState<number[]>(task?.flatIds ?? [])
@@ -205,7 +205,7 @@ function TaskFormDialog({
                 Intervalo de Repetição ({periodType === "occupied_days" ? "dias de locação" : "dias corridos"}) *
               </Label>
               <span className="text-xs font-bold text-primary">
-                A cada {periodDays} {periodType === "occupied_days" ? "dias ocupados" : "dias corridos"}
+                A cada {periodDays === "" ? "—" : periodDays} {periodType === "occupied_days" ? "dias ocupados" : "dias corridos"}
               </span>
             </div>
             
@@ -214,7 +214,22 @@ function TaskFormDialog({
               min={1} 
               max={730} 
               value={periodDays} 
-              onChange={e => setPeriodDays(parseInt(e.target.value) || 1)} 
+              onChange={e => {
+                const raw = e.target.value
+                if (raw === "") {
+                  setPeriodDays("")
+                  return
+                }
+                const parsed = parseInt(raw, 10)
+                if (!Number.isNaN(parsed)) {
+                  setPeriodDays(Math.min(730, Math.max(1, parsed)))
+                }
+              }}
+              onBlur={() => {
+                if (periodDays === "" || Number(periodDays) < 1) {
+                  setPeriodDays(30)
+                }
+              }}
               className="text-xs font-bold"
             />
 

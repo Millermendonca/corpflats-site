@@ -16,6 +16,7 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { getCheckinUrl } from "@/lib/checkin-url"
 import { useToast } from "@/hooks/use-toast"
+import { formatSmartPhone } from "@/lib/phone-mask"
 
 function buildWhatsAppWebUrl(rawPhone: string | undefined | null, text: string): string {
   const digits = String(rawPhone || "").replace(/\D/g, "")
@@ -1463,7 +1464,7 @@ export default function ReceptionTablet() {
                         type="tel"
                         inputMode="tel"
                         value={sendLinkPhone}
-                        onChange={(e) => setSendLinkPhone(e.target.value)}
+                        onChange={(e) => setSendLinkPhone(formatSmartPhone(e.target.value))}
                         placeholder="Ex: (22) 99999-9999"
                         className="bg-slate-900 border-slate-700 text-white h-11 text-base font-mono"
                       />

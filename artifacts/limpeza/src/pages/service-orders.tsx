@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { formatSmartPhone } from "@/lib/phone-mask";
 import {
   Wrench,
   Plus,
@@ -432,6 +433,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
   const [formAllowSimultaneousCleaning, setFormAllowSimultaneousCleaning] = useState<boolean>(false);
   const [formMaxSimultaneous, setFormMaxSimultaneous] = useState<number>(2);
   const [formMaxPerDay, setFormMaxPerDay] = useState<number>(4);
+  const [rawLimitInputs, setRawLimitInputs] = useState<Record<string, string>>({});
   const [formRequirePhotos, setFormRequirePhotos] = useState<boolean>(true);
   const [formEstimatedDurationHours, setFormEstimatedDurationHours] = useState<number | "">(3);
   const [formInstructionFormat, setFormInstructionFormat] = useState<InstructionFormat>("text");
@@ -555,6 +557,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
     setFormAllowSimultaneousCleaning(false);
     setFormMaxSimultaneous(2);
     setFormMaxPerDay(4);
+    setRawLimitInputs({});
     setFormRequirePhotos(true);
     setFormEstimatedDurationHours(3);
     setFormInstructionFormat("text");
@@ -574,7 +577,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
     setFormTitle(order.title || "");
     setFormWorkerName((order as any).workerName || "");
     setFormWorkerCpf(formatCpfInput((order as any).workerCpf || ""));
-    setFormWorkerPhone((order as any).workerPhone || "");
+    setFormWorkerPhone(formatSmartPhone((order as any).workerPhone || ""));
     const rawCollabs = Array.isArray((order as any).workerCollaborators) ? (order as any).workerCollaborators : [];
     setFormWorkerCollaborators(
       rawCollabs.map((c: any) => ({
@@ -597,6 +600,7 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
 
     setFormMaxSimultaneous(order.maxSimultaneousFlats || 2);
     setFormMaxPerDay(order.maxFlatsPerDay || 4);
+    setRawLimitInputs({});
     setFormRequirePhotos(order.requirePhotos ?? true);
     setFormEstimatedDurationHours(order.estimatedDurationHours ?? "");
     setFormInstructionFormat(order.instructionFormat || "text");
@@ -1665,9 +1669,11 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                         </Label>
                         <Input
                           id="worker-phone"
+                          type="tel"
+                          inputMode="tel"
                           placeholder="Ex: (22) 99850-5276"
                           value={formWorkerPhone}
-                          onChange={(e) => setFormWorkerPhone(e.target.value)}
+                          onChange={(e) => setFormWorkerPhone(formatSmartPhone(e.target.value))}
                           className="h-9 text-xs"
                         />
                       </div>
@@ -1957,8 +1963,28 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                         type="number"
                         min={1}
                         max={19}
-                        value={formMaxSimultaneous}
-                        onChange={(e) => setFormMaxSimultaneous(parseInt(e.target.value, 10) || 1)}
+                        value={rawLimitInputs.maxSimultaneous ?? formMaxSimultaneous}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setRawLimitInputs((prev) => ({ ...prev, maxSimultaneous: raw }));
+                          if (raw.trim() === "") return;
+                          const parsed = parseInt(raw, 10);
+                          if (!Number.isNaN(parsed)) {
+                            setFormMaxSimultaneous(Math.min(19, Math.max(1, parsed)));
+                          }
+                        }}
+                        onBlur={() => {
+                          const raw = rawLimitInputs.maxSimultaneous;
+                          if (raw !== undefined) {
+                            const parsed = raw.trim() === "" ? 2 : parseInt(raw, 10);
+                            setFormMaxSimultaneous(Number.isNaN(parsed) ? 2 : Math.min(19, Math.max(1, parsed)));
+                            setRawLimitInputs((prev) => {
+                              const next = { ...prev };
+                              delete next.maxSimultaneous;
+                              return next;
+                            });
+                          }
+                        }}
                         className="h-10 text-sm font-semibold"
                       />
                       <p className="text-[11px] text-muted-foreground">
@@ -1975,8 +2001,28 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                         type="number"
                         min={1}
                         max={19}
-                        value={formMaxPerDay}
-                        onChange={(e) => setFormMaxPerDay(parseInt(e.target.value, 10) || 1)}
+                        value={rawLimitInputs.maxPerDay ?? formMaxPerDay}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setRawLimitInputs((prev) => ({ ...prev, maxPerDay: raw }));
+                          if (raw.trim() === "") return;
+                          const parsed = parseInt(raw, 10);
+                          if (!Number.isNaN(parsed)) {
+                            setFormMaxPerDay(Math.min(19, Math.max(1, parsed)));
+                          }
+                        }}
+                        onBlur={() => {
+                          const raw = rawLimitInputs.maxPerDay;
+                          if (raw !== undefined) {
+                            const parsed = raw.trim() === "" ? 4 : parseInt(raw, 10);
+                            setFormMaxPerDay(Number.isNaN(parsed) ? 4 : Math.min(19, Math.max(1, parsed)));
+                            setRawLimitInputs((prev) => {
+                              const next = { ...prev };
+                              delete next.maxPerDay;
+                              return next;
+                            });
+                          }
+                        }}
                         className="h-10 text-sm font-semibold"
                       />
                       <p className="text-[11px] text-muted-foreground">
@@ -1995,12 +2041,37 @@ export default function ServiceOrders({ embedded = false }: { embedded?: boolean
                         min={0.5}
                         max={72}
                         placeholder="Ex: 3"
-                        value={formEstimatedDurationHours}
-                        onChange={(e) =>
-                          setFormEstimatedDurationHours(
-                            e.target.value === "" ? "" : parseFloat(e.target.value) || 0
-                          )
-                        }
+                        value={rawLimitInputs.estDuration ?? formEstimatedDurationHours}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          setRawLimitInputs((prev) => ({ ...prev, estDuration: raw }));
+                          if (raw.trim() === "") {
+                            setFormEstimatedDurationHours("");
+                            return;
+                          }
+                          const parsed = parseFloat(raw);
+                          if (!Number.isNaN(parsed)) {
+                            setFormEstimatedDurationHours(parsed);
+                          }
+                        }}
+                        onBlur={() => {
+                          const raw = rawLimitInputs.estDuration;
+                          if (raw !== undefined) {
+                            if (raw.trim() === "") {
+                              setFormEstimatedDurationHours("");
+                            } else {
+                              const parsed = parseFloat(raw);
+                              setFormEstimatedDurationHours(
+                                Number.isNaN(parsed) ? "" : Math.min(72, Math.max(0.5, parsed))
+                              );
+                            }
+                            setRawLimitInputs((prev) => {
+                              const next = { ...prev };
+                              delete next.estDuration;
+                              return next;
+                            });
+                          }
+                        }}
                         className="h-10 text-sm font-semibold"
                       />
                       <p className="text-[11px] text-muted-foreground">

@@ -14,6 +14,7 @@ import {
 } from "@/lib/auth-client"
 import { useToast } from "@/hooks/use-toast"
 import { CorpFlatsIcon } from "@/components/brand-logo"
+import { formatSmartPhone, formatCpfOrPassport, isPlausibleCpfOrPassport } from "@/lib/phone-mask"
 
 interface AuthModalProps {
   open: boolean
@@ -42,21 +43,9 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
   const [forgotEmail, setForgotEmail] = useState("")
   const [forgotSuccess, setForgotSuccess] = useState(false)
 
-  const formatCpfMask = (val: string) => {
-    const d = val.replace(/\D/g, "").slice(0, 11)
-    if (d.length <= 3) return d
-    if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
-    if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`
-    return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9, 11)}`
-  }
+  const formatCpfMask = (val: string) => formatCpfOrPassport(val)
 
-  const formatPhoneMask = (val: string) => {
-    const d = val.replace(/\D/g, "").slice(0, 11)
-    if (d.length <= 2) return d
-    if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`
-    if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`
-    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7, 11)}`
-  }
+  const formatPhoneMask = (val: string) => formatSmartPhone(val)
 
   // Reseta mensagens de erro quando o modal abre
   useEffect(() => {
@@ -112,15 +101,28 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
     setErrorMsg("")
+
+    const cleanPhone = regPhone.replace(/\D/g, "")
+    const isIntlPhone = regPhone.trim().startsWith("+") && !cleanPhone.startsWith("55")
+    if (!cleanPhone || cleanPhone.length < (isIntlPhone ? 8 : 10)) {
+      setErrorMsg("Por favor, informe um WhatsApp / Celular válido com DDD (ou DDI internacional com +).")
+      return
+    }
+    if (!isPlausibleCpfOrPassport(regDocument)) {
+      setErrorMsg("Por favor, informe um CPF válido (11 dígitos) ou número de Passaporte válido.")
+      return
+    }
+
+    setLoading(true)
     try {
+      const inferredDocType = /[a-zA-Z]/.test(regDocument) ? "Passaporte" : "CPF"
       const res = await registerAccount({
         name: regName.trim(),
         email: regEmail.trim(),
         password: regPassword,
         phone: regPhone.trim(),
-        docType: "CPF",
+        docType: inferredDocType,
         document: regDocument.trim()
       })
       if (res.success && res.user) {
@@ -350,18 +352,20 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-[11px] font-bold">CPF *</Label>
+                  <Label className="text-[11px] font-bold">CPF ou Passaporte *</Label>
                   <Input
                     required
                     value={regDocument}
                     onChange={e => setRegDocument(formatCpfMask(e.target.value))}
-                    placeholder="000.000.000-00"
+                    placeholder="000.000.000-00 ou Passaporte"
                     className="rounded-xl h-8 text-xs font-mono"
                   />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[11px] font-bold">WhatsApp *</Label>
                   <Input
+                    type="tel"
+                    inputMode="tel"
                     required
                     value={regPhone}
                     onChange={e => setRegPhone(formatPhoneMask(e.target.value))}

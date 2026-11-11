@@ -11986,7 +11986,15 @@ export function areGuestNamesCompatible(nameA, nameB, options = {}) {
 
 function normalizeDoc(doc) {
   if (!doc) return "";
-  return String(doc).replace(/\D/g, "");
+  const strippedLabel = String(doc)
+    .trim()
+    .replace(/^(?:cpf|cnpj|rg|passaporte|passport|doc(?:umento)?)[\s:.\-#]*/i, "")
+    .trim();
+  if (!strippedLabel) return "";
+  if (/[a-zA-Z]/.test(strippedLabel)) {
+    return strippedLabel.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  }
+  return strippedLabel.replace(/\D/g, "");
 }
 
 function normalizePhone(phone) {
@@ -31337,13 +31345,22 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       extras = null
     } = req.body;
 
-    const cleanDoc = String(guestDocument || "").replace(/\D/g, "");
-    const cleanPhone = String(guestPhone || "").replace(/\D/g, "");
+    const rawDocStr = String(guestDocument || "").trim();
+    const cleanDoc = normalizeDoc(rawDocStr);
+    const hasPassportLetters = /[a-zA-Z]/.test(rawDocStr);
+    const cleanDocDigits = rawDocStr.replace(/\D/g, "");
+    const isForeignPassport =
+      hasPassportLetters ||
+      String(req.body.guestDocType || "").toLowerCase().includes("pass") ||
+      (cleanDocDigits.length >= 6 && cleanDocDigits.length <= 9);
+    const rawPhoneStr = String(guestPhone || "").trim();
+    const cleanPhone = rawPhoneStr.replace(/\D/g, "");
+    const isIntlDirectPhone = rawPhoneStr.startsWith("+") && !cleanPhone.startsWith("55");
     const cleanEmailEarly = String(guestEmail || "").trim().toLowerCase();
     const existingGuestWithDoc = (db.guests || []).find(g =>
       (g.docPhotoUrl || g.documentPhotoUrl) &&
       areGuestNamesCompatible(guestName, g.fullName || g.name) && (
-        (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
+        (cleanDoc && normalizeDoc(g.documentNumber || g.document || "") === cleanDoc) ||
         (cleanPhone && cleanPhone.length >= 8 && (g.phone || "").replace(/\D/g, "") === cleanPhone) ||
         (cleanEmailEarly && (g.email || "").trim().toLowerCase() === cleanEmailEarly)
       )
@@ -31351,7 +31368,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     const existingAccWithDoc = (db.guestAccounts || []).find(a =>
       (a.docPhotoUrl || a.documentPhotoUrl) &&
       areGuestNamesCompatible(guestName, a.name) && (
-        (cleanDoc && (a.document || "").replace(/\D/g, "") === cleanDoc) ||
+        (cleanDoc && normalizeDoc(a.document || "") === cleanDoc) ||
         (cleanPhone && cleanPhone.length >= 8 && (a.phone || "").replace(/\D/g, "") === cleanPhone) ||
         (cleanEmailEarly && (a.email || "").trim().toLowerCase() === cleanEmailEarly)
       )
@@ -31362,14 +31379,17 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     if (!guestName || !String(guestName).trim()) {
       return res.status(400).json({ error: "Nome completo é obrigatório para finalizar a reserva." });
     }
-    if (!cleanDoc || cleanDoc.length !== 11) {
-      return res.status(400).json({ error: "CPF válido com 11 dígitos é obrigatório para finalizar a reserva." });
+    const isDocValid = isForeignPassport
+      ? cleanDoc.length >= 5
+      : (cleanDocDigits.length === 11 && !/^(\d)\1{10}$/.test(cleanDocDigits));
+    if (!isDocValid) {
+      return res.status(400).json({ error: "CPF válido (11 dígitos) ou número de Passaporte válido é obrigatório para finalizar a reserva." });
     }
     if (!guestEmail || !String(guestEmail).includes("@") || !String(guestEmail).includes(".")) {
       return res.status(400).json({ error: "E-mail válido é obrigatório para emissão do voucher da reserva." });
     }
-    if (!cleanPhone || cleanPhone.length < 10) {
-      return res.status(400).json({ error: "Telefone / WhatsApp válido com DDD é obrigatório para finalizar a reserva." });
+    if (!cleanPhone || cleanPhone.length < (isIntlDirectPhone ? 8 : 10)) {
+      return res.status(400).json({ error: "Telefone / WhatsApp válido com DDD (ou DDI internacional com +) é obrigatório para finalizar a reserva." });
     }
     if (!hasDocFile) {
       return res.status(400).json({ error: "O anexo do documento oficial com foto (RG, CNH ou Passaporte em PDF ou Imagem) é obrigatório para finalizar a reserva." });
@@ -31601,6 +31621,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       guestPhone: guestPhone.trim(),
       guestEmail: guestEmail.trim().toLowerCase(),
       guestDocument: (guestDocument || "").trim(),
+      guestDocType: isForeignPassport ? "Passaporte" : "CPF",
       guestAddress: (guestAddress || "").trim(),
       guestCity: (guestCity || "").trim(),
       guestState: (guestState || "").trim() || "RJ",
@@ -31687,12 +31708,13 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
     let guest = db.guests.find(g =>
       areGuestNamesCompatible(guestName, g.fullName || g.name) && (
-        (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
+        (cleanDoc && normalizeDoc(g.documentNumber || g.document || "") === cleanDoc) ||
         (cleanPhone && (g.phone || "").replace(/\D/g, "") === cleanPhone) ||
         (cleanEmail && (g.email || "").trim().toLowerCase() === cleanEmail)
       )
     );
 
+    const directDocType = isForeignPassport ? "Passaporte" : "CPF";
     if (!guest) {
       const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
       guest = {
@@ -31702,7 +31724,9 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         fullName: guestName.trim(),
         phone: guestPhone.trim(),
         email: cleanEmail,
+        docType: directDocType,
         document: (guestDocument || "").trim(),
+        documentNumber: (guestDocument || "").trim(),
         address: (guestAddress || "").trim(),
         city: (guestCity || "").trim(),
         state: (guestState || "").trim() || "RJ",
@@ -31712,7 +31736,11 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       db.guests.push(guest);
     } else {
       if (!guest.guestCode) guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
-      if (guestDocument && !guest.document) guest.document = guestDocument.trim();
+      if (guestDocument && !guest.document) {
+        guest.document = guestDocument.trim();
+        guest.documentNumber = guestDocument.trim();
+        guest.docType = directDocType;
+      }
       if (guestPhone) guest.phone = guestPhone.trim();
       if (guestEmail) guest.email = cleanEmail;
       if (guestName && (!guest.name || guestName.trim().length >= guest.name.length)) guest.name = guestName.trim();
@@ -39372,6 +39400,7 @@ app.get(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credential
       guestPending: pendingName,
       guestName: pendingName ? "" : rawGuestName,
       guestDocument: r.guestDocument || linkedGuest?.cpf || linkedGuest?.document || linkedGuest?.documentNumber || "",
+      guestDocType: r.guestDocType || linkedGuest?.docType || null,
       guestPhone: r.guestPhone || linkedGuest?.phone || linkedGuest?.whatsapp || "",
       guestSecondaryPhone: r.guestSecondaryPhone || linkedGuest?.secondaryPhone || "",
       guestEmail: r.guestEmail || linkedGuest?.email || "",
@@ -39395,6 +39424,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       guestName,
       guestDocument,
       cpf,
+      docType,
       guestPhone,
       whatsapp,
       guestSecondaryPhone,
@@ -39408,21 +39438,44 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     const fallbackExistingName = !isPendingGuestName(r.guestName) ? r.guestName : "";
     const cleanName = String(guestName !== undefined ? guestName : fallbackExistingName).trim();
     const rawDocInput = String(guestDocument || cpf || r.guestDocument || "").trim();
-    const cleanDoc = rawDocInput.replace(/\D/g, "");
-    let cleanPhone = String(guestPhone || whatsapp || r.guestPhone || "").replace(/\D/g, "");
-    const cleanSecPhone = String(guestSecondaryPhone || r.guestSecondaryPhone || "").replace(/\D/g, "");
+    const isPassportDoc =
+      String(docType || r.guestDocType || "").toLowerCase().includes("pass") ||
+      /[a-zA-Z]/.test(rawDocInput);
+    const cleanPassport = isPassportDoc
+      ? rawDocInput.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 20)
+      : "";
+    const cleanDoc = isPassportDoc ? cleanPassport : rawDocInput.replace(/\D/g, "");
+
+    const rawPhoneInput = String(guestPhone || whatsapp || r.guestPhone || "").trim();
+    const isIntlPhone = rawPhoneInput.startsWith("+") && !rawPhoneInput.slice(1).replace(/\D/g, "").startsWith("55");
+    let cleanPhone = isIntlPhone
+      ? `+${rawPhoneInput.slice(1).replace(/\D/g, "")}`
+      : rawPhoneInput.replace(/\D/g, "");
+    const cleanPhoneDigits = cleanPhone.replace(/\D/g, "");
+    const rawSecPhoneInput = String(guestSecondaryPhone || r.guestSecondaryPhone || "").trim();
+    const isIntlSecPhone = rawSecPhoneInput.startsWith("+") && !rawSecPhoneInput.slice(1).replace(/\D/g, "").startsWith("55");
+    const cleanSecPhone = isIntlSecPhone
+      ? `+${rawSecPhoneInput.slice(1).replace(/\D/g, "")}`
+      : rawSecPhoneInput.replace(/\D/g, "");
     const cleanEmail = String(guestEmail || r.guestEmail || "").trim();
 
     if (!cleanName || isPendingGuestName(cleanName) || cleanName.split(/\s+/).filter(Boolean).length < 2) {
       return res.status(400).json({ error: "O nome completo (nome e sobrenome) do hóspede é obrigatório." });
     }
-    if (!cleanDoc || !isValidBrazilianCpf(cleanDoc)) {
+    if (isPassportDoc) {
+      if (!cleanPassport || cleanPassport.replace(/[^A-Z0-9]/g, "").length < 5) {
+        return res.status(400).json({
+          error: "O número do Passaporte informado é inválido (mínimo de 5 caracteres).",
+          invalidPassport: true
+        });
+      }
+    } else if (!cleanDoc || !isValidBrazilianCpf(cleanDoc)) {
       return res.status(400).json({
-        error: "O CPF informado é inválido. Por favor, verifique os 11 dígitos do CPF do hóspede.",
+        error: "O CPF informado é inválido. Por favor, verifique os 11 dígitos do CPF do hóspede (ou selecione Passaporte se for estrangeiro).",
         invalidCpf: true
       });
     }
-    if (!cleanPhone || cleanPhone.length < 10) {
+    if (!cleanPhoneDigits || cleanPhoneDigits.length < (isIntlPhone ? 8 : 10)) {
       return res.status(400).json({ error: "O telefone / WhatsApp do hóspede com DDD é obrigatório." });
     }
 
@@ -39455,9 +39508,11 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       finalDocUrl = await uploadImageToStorage(normalizedDocBase64, `b2b_cred_${r.code}`, db, "guests");
     }
 
+    const resolvedDocType = isPassportDoc ? "Passaporte" : "CPF";
     r.guestName = cleanName;
     r.guestPending = false;
     r.guestDocument = cleanDoc;
+    r.guestDocType = resolvedDocType;
     r.guestPhone = cleanPhone;
     if (cleanSecPhone) r.guestSecondaryPhone = cleanSecPhone;
     r.guestEmail = cleanEmail;
@@ -39479,6 +39534,8 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
         isMain: true,
         name: cleanName,
         cpf: r.guestDocument,
+        document: r.guestDocument,
+        docType: resolvedDocType,
         phone: cleanPhone,
         email: cleanEmail,
         docPhotoUrl: finalDocUrl,
@@ -39489,6 +39546,8 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
         ...r.guests[0],
         name: cleanName,
         cpf: r.guestDocument,
+        document: r.guestDocument,
+        docType: resolvedDocType,
         phone: cleanPhone,
         email: cleanEmail || r.guests[0].email || "",
         docPhotoUrl: finalDocUrl || r.guests[0].docPhotoUrl || null,
@@ -39507,10 +39566,13 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       ? db.guests.find(g => String(g.id) === String(r.guestId) && areGuestNamesCompatible(cleanName, g.fullName || g.name))
       : null;
     if (!guestRecord) {
-      guestRecord = db.guests.find(g =>
-        areGuestNamesCompatible(cleanName, g.fullName || g.name) &&
-        cleanDoc && String(g.cpf || g.document || g.documentNumber || "").replace(/\D/g, "") === cleanDoc
-      );
+      guestRecord = db.guests.find(g => {
+        if (!areGuestNamesCompatible(cleanName, g.fullName || g.name) || !cleanDoc) return false;
+        const existingDoc = String(g.cpf || g.document || g.documentNumber || "").trim();
+        return isPassportDoc
+          ? existingDoc.toUpperCase().replace(/[^A-Z0-9-]/g, "") === cleanDoc
+          : existingDoc.replace(/\D/g, "") === cleanDoc;
+      });
     }
     if (guestRecord) {
       guestRecord.name = cleanName;
@@ -39518,6 +39580,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       guestRecord.cpf = r.guestDocument;
       guestRecord.document = r.guestDocument;
       guestRecord.documentNumber = r.guestDocument;
+      guestRecord.docType = resolvedDocType;
       guestRecord.phone = cleanPhone;
       guestRecord.whatsapp = cleanPhone;
       if (cleanSecPhone) guestRecord.secondaryPhone = cleanSecPhone;
@@ -39537,6 +39600,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
         cpf: r.guestDocument,
         document: r.guestDocument,
         documentNumber: r.guestDocument,
+        docType: resolvedDocType,
         phone: cleanPhone,
         whatsapp: cleanPhone,
         secondaryPhone: cleanSecPhone,
@@ -49011,9 +49075,10 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
   const prevName = String(updates.previousName || accountOrGuest?.fullName || accountOrGuest?.name || "").trim();
   const normName = normalizeName(cleanName);
 
+  const hasMatchableDoc = (d) => Boolean(d && d.length >= (/[A-Z]/.test(d) ? 5 : 8));
   const canMatchPrevPhone = Boolean(prevPhone && prevPhone.length >= 8 && (!hasExplicit("phone") || phonesMatch(cleanPhone, prevPhone)));
   const canMatchPrevEmail = Boolean(prevEmail && prevEmail.includes("@") && (!hasExplicit("email") || cleanEmail === prevEmail));
-  const canMatchPrevDoc = Boolean(prevDoc && prevDoc.length >= 8 && ((!hasExplicit("document") && !hasExplicit("documentNumber")) || cleanDoc === prevDoc));
+  const canMatchPrevDoc = Boolean(hasMatchableDoc(prevDoc) && ((!hasExplicit("document") && !hasExplicit("documentNumber")) || cleanDoc === prevDoc));
 
   const targetGuestId = Number(updates.guestId || accountOrGuest?.guestId || (db.guests.includes(accountOrGuest) ? accountOrGuest?.id : 0)) || null;
   const targetAccountId = Number(updates.accountId || accountOrGuest?.accountId || (db.guestAccounts.includes(accountOrGuest) ? accountOrGuest?.id : 0)) || null;
@@ -49023,7 +49088,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     if (targetGuestId && Number(g.id) === targetGuestId) return true;
     if (!areGuestNamesCompatible(g.fullName || g.name, cleanName || prevName)) return false;
     const gDoc = normalizeDoc(g.documentNumber || g.document);
-    if (cleanDoc && cleanDoc.length >= 8 && gDoc === cleanDoc) return true;
+    if (hasMatchableDoc(cleanDoc) && gDoc === cleanDoc) return true;
     if (canMatchPrevDoc && gDoc === prevDoc) return true;
     const gEmail = (g.email || "").trim().toLowerCase();
     if (cleanEmail && cleanEmail.includes("@") && gEmail === cleanEmail) return true;
@@ -49037,7 +49102,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
   matchingGuests.sort((a, b) => {
     const score = (g) => {
       const gDoc = normalizeDoc(g.documentNumber || g.document);
-      if (cleanDoc && cleanDoc.length >= 8 && gDoc === cleanDoc) return 100;
+      if (hasMatchableDoc(cleanDoc) && gDoc === cleanDoc) return 100;
       if (targetGuestId && Number(g.id) === targetGuestId) return 90;
       const gEmail = (g.email || "").trim().toLowerCase();
       if (cleanEmail && gEmail === cleanEmail) return 80;
@@ -49074,6 +49139,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
 
   if (!guest) {
     const nextId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+    const initialDocType = /[A-Z]/.test(cleanDoc) ? "Passaporte" : (updates.docType || accountOrGuest?.docType || "CPF");
     guest = {
       id: nextId,
       guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
@@ -49081,7 +49147,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
       fullName: cleanName || (cleanEmail ? cleanEmail.split("@")[0] : "Hóspede"),
       email: cleanEmail,
       phone: String(rawPhone || "").trim(),
-      docType: updates.docType || accountOrGuest?.docType || "CPF",
+      docType: initialDocType,
       document: cleanDoc || String(rawDoc || "").trim(),
       documentNumber: cleanDoc || String(rawDoc || "").trim(),
       createdAt: new Date().toISOString()
@@ -49095,7 +49161,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     if (!areGuestNamesCompatible(a.name, cleanName || prevName || guest?.fullName || guest?.name)) return false;
     if (guest && a.guestId && Number(a.guestId) === Number(guest.id)) return true;
     const aDoc = normalizeDoc(a.document);
-    if (cleanDoc && cleanDoc.length >= 8 && aDoc === cleanDoc) return true;
+    if (hasMatchableDoc(cleanDoc) && aDoc === cleanDoc) return true;
     if (canMatchPrevDoc && aDoc === prevDoc) return true;
     const aEmail = (a.email || "").trim().toLowerCase();
     if (cleanEmail && cleanEmail.includes("@") && aEmail === cleanEmail) return true;
@@ -49109,7 +49175,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     const score = (acc) => {
       if (targetAccountId && Number(acc.id) === targetAccountId) return 110;
       const aDoc = normalizeDoc(acc.document);
-      if (cleanDoc && cleanDoc.length >= 8 && aDoc === cleanDoc) return 100;
+      if (hasMatchableDoc(cleanDoc) && aDoc === cleanDoc) return 100;
       const aEmail = (acc.email || "").trim().toLowerCase();
       if (cleanEmail && aEmail === cleanEmail) return 90;
       if (cleanPhone && phonesMatch(acc.phone, cleanPhone)) return 80;
@@ -49180,9 +49246,12 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
   const finalName = pickVal(["fullName", "name"], guest.fullName || guest.name || account?.name || "Hóspede");
   const finalEmail = (cleanEmail || (guest.email || "").trim().toLowerCase() || (account?.email || "").trim().toLowerCase());
   const finalPhone = pickVal(["phone", "phoneNumber"], guest.phone || account?.phone || "");
-  const finalDocType = pickVal(["docType"], guest.docType || account?.docType || "CPF");
   const finalDocRaw = pickVal(["document", "documentNumber", "cpf"], guest.document || guest.documentNumber || account?.document || "");
   const finalDocClean = normalizeDoc(finalDocRaw) || finalDocRaw;
+  const rawPickedDocType = pickVal(["docType"], guest.docType || account?.docType || "CPF");
+  const finalDocType = /[A-Z]/.test(finalDocClean) && (!rawPickedDocType || rawPickedDocType === "CPF")
+    ? "Passaporte"
+    : rawPickedDocType;
   let finalBirthDate = pickVal(["birthDate"], guest.birthDate || account?.birthDate || "");
   const finalGender = pickVal(["gender"], guest.gender || account?.gender || "");
   const finalNationality = pickVal(["nationality"], guest.nationality || account?.nationality || "Brasileira");
@@ -49443,7 +49512,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     }
     if (guest && r.guestId && Number(r.guestId) === Number(guest.id)) return true;
     const rDoc = normalizeDoc(r.guestDocument || r.document);
-    if (finalDocClean && finalDocClean.length >= 8 && rDoc === finalDocClean) return true;
+    if (finalDocClean && finalDocClean.length >= (/[A-Z]/.test(finalDocClean) ? 5 : 8) && rDoc === finalDocClean) return true;
     if (canMatchPrevDoc && rDoc === prevDoc) return true;
     const rEmail = (r.guestEmail || r.email || "").trim().toLowerCase();
     if (finalEmail && finalEmail.includes("@") && rEmail === finalEmail) return true;
@@ -50470,7 +50539,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   if (/^l(ago|gor|uri|van|talo|lan|sabel|sabela|sadora|saac|smael|srael|ris|vone|caro|rene)\b/.test(validName)) {
     validName = validName.replace(/^l/, "I");
   }
-  const cleanDoc = (document || "").replace(/\D/g, "");
+  const cleanDoc = normalizeDoc(document || "");
   const cleanPhone = normalizePhone(phone || "");
   const cleanEmail = (email || "").trim().toLowerCase();
   const normName = normalizeName(validName);
@@ -50482,7 +50551,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
   if (!guest) {
     guest = db.guests.find(g =>
-      (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
+      (cleanDoc && cleanDoc.length >= (/[A-Z]/.test(cleanDoc) ? 5 : 8) && normalizeDoc(g.documentNumber || g.document || "") === cleanDoc) ||
       (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone) ||
       (cleanEmail && cleanEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanEmail) ||
       (normName && normName.length >= 5 && normalizeName(g.fullName || g.name || "") === normName)
@@ -56775,7 +56844,7 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
         matchedRes.nfRecipientType = "agency";
       }
       saveDatabase();
-      return res.json({ success: true, entityType: "agency", entity: ag, guest: linkedGuestRec || null });
+      return res.json({ success: true, entityType: "agency", entity: ag, guest: linkedGuestRec || null, reservation: matchedRes || null });
     }
 
     if (mode === "pj" || cleanDoc.length === 14) {
@@ -56871,7 +56940,7 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
         }
       }
       saveDatabase();
-      return res.json({ success: true, entityType: "company", entity: comp, guest: linkedGuestRec || null });
+      return res.json({ success: true, entityType: "company", entity: comp, guest: linkedGuestRec || null, reservation: matchedRes || null });
     }
 
     // Solicitante / Terceiro (PF separado do hóspede)
@@ -56945,7 +57014,7 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
         matchedRes.nfRecipientType = "requester";
       }
       saveDatabase();
-      return res.json({ success: true, entityType: "requester", entity: reqRec || null });
+      return res.json({ success: true, entityType: "requester", entity: reqRec || null, reservation: matchedRes || null });
     }
 
     // Hóspede (PF)
@@ -57079,6 +57148,7 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
           if (hasRealAddr) {
             if (rawEnd) { r.guests[0].street = rawEnd; r.guests[0].address = rawEnd; }
             if (rawNum) r.guests[0].streetNumber = rawNum;
+            if (rawComp !== undefined) r.guests[0].complement = rawComp;
             if (rawBairro) r.guests[0].neighborhood = rawBairro;
             if (rawCep) r.guests[0].cep = rawCep;
             if (rawCidade) r.guests[0].city = rawCidade;
@@ -57089,7 +57159,7 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
       saveDatabase();
     }
 
-    return res.json({ success: true, entityType: "guest", entity: guestRec || null });
+    return res.json({ success: true, entityType: "guest", entity: guestRec || null, reservation: matchedRes || null });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -63551,20 +63621,21 @@ function findGuestAccountByIdentifier(rawIdentifier) {
   const crmGuest = db.guests.find(g => {
     if (isEmail && (g.email || "").trim().toLowerCase() === cleanEmail) return true;
     const gDigits = String(g.document || g.documentNumber || "").replace(/\D/g, "");
-    if (!isEmail && cleanDigits.length >= 9 && gDigits === cleanDigits) return true;
+    const gAlnum = normalizeDoc(g.document || g.documentNumber || "");
+    if (!isEmail && ((cleanDigits.length >= 9 && gDigits === cleanDigits) || (cleanDoc.length >= 5 && gAlnum === cleanDoc))) return true;
     if (!isEmail && cleanDigits.length >= 8 && g.phone && phonesMatch(g.phone, cleanDigits)) return true;
     return false;
   });
 
   if (crmGuest) {
     const crmEmail = (crmGuest.email || "").trim().toLowerCase();
-    const crmDoc = String(crmGuest.document || crmGuest.documentNumber || "").replace(/\D/g, "");
+    const crmDoc = normalizeDoc(crmGuest.document || crmGuest.documentNumber || "");
     const crmPhone = normalizePhone(crmGuest.phone || "");
 
     const linkedAccount = db.guestAccounts.find(acc => {
       if (crmGuest.id && acc.guestId && Number(acc.guestId) === Number(crmGuest.id)) return true;
       if (crmEmail && (acc.email || "").trim().toLowerCase() === crmEmail) return true;
-      const accDoc = String(acc.document || "").replace(/\D/g, "");
+      const accDoc = normalizeDoc(acc.document || "");
       if (crmDoc && crmDoc.length >= 5 && accDoc === crmDoc) return true;
       if (crmPhone && crmPhone.length >= 8 && acc.phone && phonesMatch(acc.phone, crmPhone)) return true;
       return false;
@@ -63582,7 +63653,7 @@ function getGuestReservations(account) {
   if (!account) return [];
   const accId = account.id ? Number(account.id) : null;
   const accEmail = (account.email || "").trim().toLowerCase();
-  const accDoc = String(account.document || "").replace(/\D/g, "");
+  const accDoc = normalizeDoc(account.document || "");
   const accPhone = normalizePhone(account.phone || "");
   const accGuestId = account.guestId ? Number(account.guestId) : null;
   const accGuestCode = String(account.guestCode || "").trim().toUpperCase();
@@ -63595,9 +63666,9 @@ function getGuestReservations(account) {
       if (Array.isArray(r.guests) && r.guests.some(rg => String(rg.guestCode || "").trim().toUpperCase() === accGuestCode)) return true;
     }
     if (accDoc && accDoc.length >= 5) {
-      const rDoc = String(r.guestDocument || "").replace(/\D/g, "");
+      const rDoc = normalizeDoc(r.guestDocument || "");
       if (rDoc && rDoc === accDoc) return true;
-      if (Array.isArray(r.guests) && r.guests.some(rg => String(rg.cpf || rg.document || "").replace(/\D/g, "") === accDoc)) return true;
+      if (Array.isArray(r.guests) && r.guests.some(rg => normalizeDoc(rg.cpf || rg.document || "") === accDoc)) return true;
     }
     if (accEmail && accEmail.includes("@")) {
       if ((r.guestEmail || "").trim().toLowerCase() === accEmail) return true;
@@ -63623,14 +63694,14 @@ function resolveAndUnifyGuestRegistration(payload) {
 
   const cleanEmail = (payload.email || "").trim().toLowerCase();
   const rawDoc = (payload.document || "").trim();
-  const cleanDoc = rawDoc.replace(/\D/g, "");
+  const cleanDoc = normalizeDoc(rawDoc);
   const rawPhone = (payload.phone || "").trim();
   const cleanPhone = normalizePhone(rawPhone);
 
-  // Busca em db.guestAccounts seguindo a prioridade estrita: 1º CPF, 2º E-mail, 3º Telefone
+  // Busca em db.guestAccounts seguindo a prioridade estrita: 1º CPF/Passaporte, 2º E-mail, 3º Telefone
   let existingAccount = null;
   if (cleanDoc && cleanDoc.length >= 5) {
-    existingAccount = db.guestAccounts.find(g => String(g.document || "").replace(/\D/g, "") === cleanDoc);
+    existingAccount = db.guestAccounts.find(g => normalizeDoc(g.document || "") === cleanDoc);
   }
   if (!existingAccount && cleanEmail) {
     existingAccount = db.guestAccounts.find(g => (g.email || "").trim().toLowerCase() === cleanEmail);
@@ -64069,7 +64140,7 @@ function applyProfileUpdateToAccount(account, body) {
         const activeReservations = (db.reservations || []).filter(r =>
           ((cleanEmail && r.guestEmail && r.guestEmail.toLowerCase() === cleanEmail) ||
            (account.phone && r.guestPhone && phonesMatch(r.guestPhone, account.phone)) ||
-           (account.document && r.guestDocument && String(r.guestDocument).replace(/\D/g, "") === String(account.document).replace(/\D/g, ""))) &&
+           (account.document && r.guestDocument && normalizeDoc(r.guestDocument) && normalizeDoc(r.guestDocument) === normalizeDoc(account.document))) &&
           r.status !== "cancelada" &&
           r.checkoutDate >= today
         );

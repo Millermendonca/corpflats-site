@@ -47,6 +47,7 @@ import { ReservationHoverCard } from "@/components/reservation-hover-card"
 import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, buildDirectWaWebUrl, cleanWhatsAppPhone, formatReservationChannelLabel, resolveReservationGuestCount } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
+import { formatSmartPhone, formatPhoneForWhatsAppCheck } from "@/lib/phone-mask"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
   { id: "booking", name: "Booking.com", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
@@ -61,20 +62,7 @@ const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
 ]
 
 function formatBrazilPhone(value: string): string {
-  const digits = String(value || "").replace(/\D/g, "").slice(0, 13)
-  if (!digits) return ""
-  if (digits.length > 11 && digits.startsWith("55")) {
-    const local = digits.slice(2)
-    if (local.length <= 10) {
-      return `+55 (${local.slice(0, 2)}) ${local.slice(2, 6)}-${local.slice(6)}`
-    }
-    return `+55 (${local.slice(0, 2)}) ${local.slice(2, 7)}-${local.slice(7, 11)}`
-  }
-  const d = digits.slice(0, 11)
-  if (d.length <= 2) return d
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7, 11)}`
+  return formatSmartPhone(value)
 }
 
 function useStableCallback<T extends (...args: any[]) => any>(fn: T): T {
@@ -455,21 +443,22 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   } | null>(null);
 
   const verifyGuestPhoneWhatsApp = async (phoneToVerify: string) => {
-    const cleanDigits = cleanWhatsAppPhone(phoneToVerify);
-    if (cleanDigits.length < 10) {
+    const queryPhone = formatPhoneForWhatsAppCheck(phoneToVerify);
+    if (!queryPhone) {
       setPhoneVerification(null);
       return null;
     }
-    if (phoneVerification && phoneVerification.phone === cleanDigits && !phoneVerification.checking) {
+    const cacheKey = cleanWhatsAppPhone(queryPhone);
+    if (phoneVerification && phoneVerification.phone === cacheKey && !phoneVerification.checking) {
       return phoneVerification;
     }
-    setPhoneVerification({ phone: cleanDigits, checking: true });
+    setPhoneVerification({ phone: cacheKey, checking: true });
     try {
-      const res = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(cleanDigits)}`);
+      const res = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(queryPhone)}`);
       if (res.ok) {
         const data = await res.json();
         const verResult = {
-          phone: cleanDigits,
+          phone: cacheKey,
           checking: false,
           exists: data.exists !== false,
           checked: Boolean(data.checked),
@@ -481,7 +470,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     } catch (e: any) {
       console.warn("Erro ao validar telefone:", e);
     }
-    const fallbackResult = { phone: cleanDigits, checking: false, exists: true, checked: false };
+    const fallbackResult = { phone: cacheKey, checking: false, exists: true, checked: false };
     setPhoneVerification(fallbackResult);
     return fallbackResult;
   };
@@ -1250,6 +1239,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   }
 
   useEffect(() => {
+    setRawBoletoInputs({})
+  }, [resModalOpen, selectedRes?.id])
+
+  useEffect(() => {
     if (resModalOpen) {
       fetchCrmGuests()
       fetchCompanies()
@@ -1375,7 +1368,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [formB2bLocatorRloc, setFormB2bLocatorRloc] = useState("")
   const [formB2bOriginType, setFormB2bOriginType] = useState<"BOOKING_WS" | "OTA_WS">("BOOKING_WS")
   const [formB2bRatePolicy, setFormB2bRatePolicy] = useState<"COMISSIONADA" | "NET">("COMISSIONADA")
-  const [formB2bCommissionPct, setFormB2bCommissionPct] = useState<number>(12)
+  const [formB2bCommissionPct, setFormB2bCommissionPct] = useState<number | string>(12)
   const [formB2bPaymentType, setFormB2bPaymentType] = useState<"VIRTUAL_CARD" | "FATURADO">("VIRTUAL_CARD")
   const [formB2bCardBrand, setFormB2bCardBrand] = useState("Mastercard")
   const [formB2bCardMasked, setFormB2bCardMasked] = useState("")
@@ -1395,6 +1388,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   // Faturamento a Prazo / Boleto Banco Inter States
   const [formIsFaturadoBoleto, setFormIsFaturadoBoleto] = useState(false)
   const [formBoletoTermDays, setFormBoletoTermDays] = useState<number>(15)
+  const [rawBoletoInputs, setRawBoletoInputs] = useState<Record<string, string>>({})
   const [formBoletoCustomDueDate, setFormBoletoCustomDueDate] = useState("")
   const [formBoletoConsumptionMode, setFormBoletoConsumptionMode] = useState<"single_boleto" | "separate_boletos">("single_boleto")
   const [formBoletoPayerType, setFormBoletoPayerType] = useState<"company" | "agency" | "requester" | "financial_responsible" | "guest">("company")
@@ -9177,8 +9171,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                 className="h-7 text-xs bg-background"
                               />
                               <Input
+                                type="tel"
+                                inputMode="tel"
                                 value={newAgencyPhone}
-                                onChange={e => setNewAgencyPhone(e.target.value)}
+                                onChange={e => setNewAgencyPhone(formatBrazilPhone(e.target.value))}
                                 placeholder="Telefone da Agência"
                                 className="h-7 text-xs bg-background"
                               />
@@ -9232,8 +9228,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                             className="h-8 text-xs"
                           />
                           <Input
+                            type="tel"
+                            inputMode="tel"
                             value={formAgencyAgentPhone}
-                            onChange={e => setFormAgencyAgentPhone(e.target.value)}
+                            onChange={e => setFormAgencyAgentPhone(formatBrazilPhone(e.target.value))}
                             placeholder="Telefone da Agência"
                             className="h-8 text-xs"
                           />
@@ -9312,6 +9310,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               value={formB2bRatePolicy === "NET" ? "0" : formB2bCommissionPct}
                               disabled={formB2bRatePolicy === "NET"}
                               onChange={e => setFormB2bCommissionPct(e.target.value)}
+                              onBlur={() => {
+                                if (String(formB2bCommissionPct).trim() === "") {
+                                  setFormB2bCommissionPct("0")
+                                }
+                              }}
                               className="h-8 text-xs font-bold"
                             />
                           </div>
@@ -9812,8 +9815,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
                         <div className="grid grid-cols-2 gap-2">
                           <Input
+                            type="tel"
+                            inputMode="tel"
                             value={formRequesterPhone}
-                            onChange={e => setFormRequesterPhone(e.target.value)}
+                            onChange={e => setFormRequesterPhone(formatBrazilPhone(e.target.value))}
                             placeholder="WhatsApp / Celular"
                             className="text-xs h-8"
                           />
@@ -10034,15 +10039,20 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       <div className="space-y-1">
                         <div className="relative">
                           <Input 
+                            type="tel"
+                            inputMode="tel"
                             value={formGuestPhone} 
                             onChange={e => {
-                              setFormGuestPhone(e.target.value)
-                              if (phoneVerification && phoneVerification.phone !== e.target.value.replace(/\D/g, "")) {
+                              const formatted = formatBrazilPhone(e.target.value)
+                              setFormGuestPhone(formatted)
+                              if (phoneVerification && phoneVerification.phone !== formatted.replace(/\D/g, "")) {
                                 setPhoneVerification(null)
                               }
                             }} 
                             onBlur={() => {
-                              if (formGuestPhone.trim().replace(/\D/g, "").length >= 10) {
+                              const trimmed = formGuestPhone.trim()
+                              const digitsLen = trimmed.replace(/\D/g, "").length
+                              if (digitsLen >= 10 || (trimmed.startsWith("+") && digitsLen >= 8)) {
                                 verifyGuestPhoneWhatsApp(formGuestPhone)
                               }
                             }}
@@ -10417,7 +10427,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         <Input value={formGuest2Cpf} onChange={e => setFormGuest2Cpf(e.target.value)} placeholder="CPF do 2º Hóspede" className="text-xs h-8" />
                       </div>
                       <div className="grid grid-cols-2 gap-2">
-                        <Input value={formGuest2Phone} onChange={e => setFormGuest2Phone(e.target.value)} placeholder="WhatsApp do 2º Hóspede" className="text-xs h-8" />
+                        <Input type="tel" inputMode="tel" value={formGuest2Phone} onChange={e => setFormGuest2Phone(formatBrazilPhone(e.target.value))} placeholder="WhatsApp do 2º Hóspede" className="text-xs h-8" />
                         <Input type="email" value={formGuest2Email} onChange={e => setFormGuest2Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
                       </div>
                     </div>
@@ -10629,7 +10639,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         <Input value={formGuest3Cpf} onChange={e => setFormGuest3Cpf(e.target.value)} placeholder="CPF do 3º Hóspede" className="text-xs h-8" />
                       </div>
                       <div className="grid grid-cols-2 gap-2">
-                        <Input value={formGuest3Phone} onChange={e => setFormGuest3Phone(e.target.value)} placeholder="WhatsApp do 3º Hóspede" className="text-xs h-8" />
+                        <Input type="tel" inputMode="tel" value={formGuest3Phone} onChange={e => setFormGuest3Phone(formatBrazilPhone(e.target.value))} placeholder="WhatsApp do 3º Hóspede" className="text-xs h-8" />
                         <Input type="email" value={formGuest3Email} onChange={e => setFormGuest3Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
                       </div>
                     </div>
@@ -12095,6 +12105,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                     type="button"
                                     onClick={() => {
                                       setFormBoletoTermDays(d);
+                                      setRawBoletoInputs(prev => { const n = { ...prev }; delete n.boletoTermDays; return n });
                                       setFormBoletoCustomDueDate("");
                                     }}
                                     className={`px-2 py-1 rounded-lg text-[10px] font-black border transition-all cursor-pointer ${
@@ -12111,10 +12122,25 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                 type="number"
                                 min={1}
                                 max={180}
-                                value={formBoletoTermDays}
+                                value={rawBoletoInputs.boletoTermDays ?? formBoletoTermDays}
                                 onChange={e => {
-                                  setFormBoletoTermDays(Number(e.target.value) || 15);
+                                  const raw = e.target.value;
+                                  setRawBoletoInputs(prev => ({ ...prev, boletoTermDays: raw }));
                                   setFormBoletoCustomDueDate("");
+                                  if (raw.trim() === "") return;
+                                  const parsed = Number(raw);
+                                  if (!Number.isNaN(parsed) && parsed >= 1) {
+                                    setFormBoletoTermDays(Math.min(180, Math.round(parsed)));
+                                  }
+                                }}
+                                onBlur={() => {
+                                  const raw = rawBoletoInputs.boletoTermDays;
+                                  if (raw !== undefined) {
+                                    const parsed = raw.trim() === "" ? 15 : Number(raw);
+                                    const clamped = Number.isNaN(parsed) || parsed < 1 ? 15 : Math.min(180, Math.round(parsed));
+                                    setFormBoletoTermDays(clamped);
+                                    setRawBoletoInputs(prev => { const n = { ...prev }; delete n.boletoTermDays; return n });
+                                  }
                                 }}
                                 className="h-8 w-14 text-xs font-mono text-center px-1 bg-background"
                                 title="Prazo em dias após o check-out"
@@ -12170,8 +12196,25 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                     type="number"
                                     min={1}
                                     max={180}
-                                    value={formConsumptionTermDays}
-                                    onChange={e => setFormConsumptionTermDays(Number(e.target.value) || 15)}
+                                    value={rawBoletoInputs.consumptionTermDays ?? formConsumptionTermDays}
+                                    onChange={e => {
+                                      const raw = e.target.value;
+                                      setRawBoletoInputs(prev => ({ ...prev, consumptionTermDays: raw }));
+                                      if (raw.trim() === "") return;
+                                      const parsed = Number(raw);
+                                      if (!Number.isNaN(parsed) && parsed >= 1) {
+                                        setFormConsumptionTermDays(Math.min(180, Math.round(parsed)));
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      const raw = rawBoletoInputs.consumptionTermDays;
+                                      if (raw !== undefined) {
+                                        const parsed = raw.trim() === "" ? 15 : Number(raw);
+                                        const clamped = Number.isNaN(parsed) || parsed < 1 ? 15 : Math.min(180, Math.round(parsed));
+                                        setFormConsumptionTermDays(clamped);
+                                        setRawBoletoInputs(prev => { const n = { ...prev }; delete n.consumptionTermDays; return n });
+                                      }
+                                    }}
                                     className="h-8 text-xs font-mono"
                                   />
                                 </div>
@@ -12214,8 +12257,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               className="h-8 text-xs"
                             />
                             <Input
+                              type="tel"
+                              inputMode="tel"
                               value={formFinRespPhone}
-                              onChange={e => setFormFinRespPhone(e.target.value)}
+                              onChange={e => setFormFinRespPhone(formatBrazilPhone(e.target.value))}
                               placeholder="WhatsApp (DDD + Número)"
                               className="h-8 text-xs"
                             />
@@ -12318,8 +12363,27 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                 <Input
                                   type="number"
                                   step="0.1"
-                                  value={formBoletoFinePct}
-                                  onChange={e => setFormBoletoFinePct(Number(e.target.value) || 0)}
+                                  value={rawBoletoInputs.finePct ?? formBoletoFinePct}
+                                  onChange={e => {
+                                    const raw = e.target.value;
+                                    setRawBoletoInputs(prev => ({ ...prev, finePct: raw }));
+                                    if (raw.trim() === "") {
+                                      setFormBoletoFinePct(0);
+                                      return;
+                                    }
+                                    const parsed = Number(raw);
+                                    if (!Number.isNaN(parsed)) {
+                                      setFormBoletoFinePct(Math.max(0, parsed));
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    const raw = rawBoletoInputs.finePct;
+                                    if (raw !== undefined) {
+                                      const parsed = raw.trim() === "" ? 0 : Number(raw);
+                                      setFormBoletoFinePct(Number.isNaN(parsed) ? 0 : Math.max(0, parsed));
+                                      setRawBoletoInputs(prev => { const n = { ...prev }; delete n.finePct; return n });
+                                    }
+                                  }}
                                   className="h-7 text-xs font-mono"
                                 />
                               </div>
@@ -12328,8 +12392,27 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                 <Input
                                   type="number"
                                   step="0.1"
-                                  value={formBoletoInterestPct}
-                                  onChange={e => setFormBoletoInterestPct(Number(e.target.value) || 0)}
+                                  value={rawBoletoInputs.interestPct ?? formBoletoInterestPct}
+                                  onChange={e => {
+                                    const raw = e.target.value;
+                                    setRawBoletoInputs(prev => ({ ...prev, interestPct: raw }));
+                                    if (raw.trim() === "") {
+                                      setFormBoletoInterestPct(0);
+                                      return;
+                                    }
+                                    const parsed = Number(raw);
+                                    if (!Number.isNaN(parsed)) {
+                                      setFormBoletoInterestPct(Math.max(0, parsed));
+                                    }
+                                  }}
+                                  onBlur={() => {
+                                    const raw = rawBoletoInputs.interestPct;
+                                    if (raw !== undefined) {
+                                      const parsed = raw.trim() === "" ? 0 : Number(raw);
+                                      setFormBoletoInterestPct(Number.isNaN(parsed) ? 0 : Math.max(0, parsed));
+                                      setRawBoletoInputs(prev => { const n = { ...prev }; delete n.interestPct; return n });
+                                    }
+                                  }}
                                   className="h-7 text-xs font-mono"
                                 />
                               </div>
@@ -14949,8 +15032,10 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                 <div className="space-y-1">
                   <Label className="font-bold">Telefone / WhatsApp</Label>
                   <Input 
+                    type="tel"
+                    inputMode="tel"
                     value={newCompPhone} 
-                    onChange={e => setNewCompPhone(e.target.value)} 
+                    onChange={e => setNewCompPhone(formatBrazilPhone(e.target.value))} 
                     placeholder="(22) 99999-9999"
                     className="h-8 text-xs rounded-xl" 
                   />

@@ -148,6 +148,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   const [preview, setPreview] = useState<PreviewSummary>(INITIAL_PREVIEW)
   const [isPublishing, setIsPublishing] = useState<boolean>(false)
   const [publishSuccessBanner, setPublishSuccessBanner] = useState<string | null>(null)
+  const [rawChannelInputs, setRawChannelInputs] = useState<Record<string, string>>({})
 
   // Filtros do Calendário
   const now = new Date()
@@ -1634,10 +1635,23 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Label className="text-[11px] font-bold">Desc. Direto (%)</Label>
                         <Input
                           type="number"
-                          value={pricing.directDiscountPercent ?? 15}
+                          value={rawChannelInputs.directDiscount ?? (pricing.directDiscountPercent ?? 15)}
                           onChange={e => {
-                            const val = Number(e.target.value)
-                            setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, directDiscountPercent: val } })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, directDiscount: raw }))
+                            if (raw.trim() === "") return
+                            const val = Number(raw)
+                            if (!Number.isNaN(val)) {
+                              setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, directDiscountPercent: val } })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.directDiscount
+                            if (raw !== undefined) {
+                              const val = raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)
+                              setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, directDiscountPercent: val } })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.directDiscount; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1646,10 +1660,23 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Label className="text-[11px] font-bold">Desc. PIX (%)</Label>
                         <Input
                           type="number"
-                          value={pricing.pixDiscountPercent ?? 5}
+                          value={rawChannelInputs.pixDiscount ?? (pricing.pixDiscountPercent ?? 5)}
                           onChange={e => {
-                            const val = Number(e.target.value)
-                            setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, pixDiscountPercent: val } })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, pixDiscount: raw }))
+                            if (raw.trim() === "") return
+                            const val = Number(raw)
+                            if (!Number.isNaN(val)) {
+                              setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, pixDiscountPercent: val } })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.pixDiscount
+                            if (raw !== undefined) {
+                              const val = raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)
+                              setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, pixDiscountPercent: val } })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.pixDiscount; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1673,16 +1700,36 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Input
                           type="number"
                           step="1"
-                          value={bookingMarkupPct}
+                          value={rawChannelInputs.bookingMarkup ?? bookingMarkupPct}
                           onChange={e => {
-                            const val = Number(e.target.value) / 100
-                            setTariffSettings({
-                              ...tariffSettings,
-                              channelMarkups: {
-                                ...tariffSettings?.channelMarkups,
-                                booking: { ...tariffSettings?.channelMarkups?.booking, markupPct: val }
-                              }
-                            })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, bookingMarkup: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              const val = parsed / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  booking: { ...tariffSettings?.channelMarkups?.booking, markupPct: val }
+                                }
+                              })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.bookingMarkup
+                            if (raw !== undefined) {
+                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  booking: { ...tariffSettings?.channelMarkups?.booking, markupPct: val }
+                                }
+                              })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.bookingMarkup; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1692,17 +1739,38 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Input
                           type="number"
                           step="1"
-                          value={Math.round((tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15) * 100)}
+                          value={rawChannelInputs.bookingComm ?? Math.round((tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15) * 100)}
                           onChange={e => {
-                            const val = Number(e.target.value) / 100
-                            setTariffSettings({
-                              ...tariffSettings,
-                              channelMarkups: {
-                                ...tariffSettings?.channelMarkups,
-                                booking: { ...tariffSettings?.channelMarkups?.booking, commissionPct: val }
-                              }
-                            })
-                            handleUpdateSebraeSettings({ channelCommissionPct: val })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, bookingComm: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              const val = parsed / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  booking: { ...tariffSettings?.channelMarkups?.booking, commissionPct: val }
+                                }
+                              })
+                              handleUpdateSebraeSettings({ channelCommissionPct: val })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.bookingComm
+                            if (raw !== undefined) {
+                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  booking: { ...tariffSettings?.channelMarkups?.booking, commissionPct: val }
+                                }
+                              })
+                              handleUpdateSebraeSettings({ channelCommissionPct: val })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.bookingComm; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1728,16 +1796,36 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Input
                           type="number"
                           step="1"
-                          value={airbnbMarkupPct}
+                          value={rawChannelInputs.airbnbMarkup ?? airbnbMarkupPct}
                           onChange={e => {
-                            const val = Number(e.target.value) / 100
-                            setTariffSettings({
-                              ...tariffSettings,
-                              channelMarkups: {
-                                ...tariffSettings?.channelMarkups,
-                                airbnb: { ...tariffSettings?.channelMarkups?.airbnb, markupPct: val }
-                              }
-                            })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, airbnbMarkup: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              const val = parsed / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  airbnb: { ...tariffSettings?.channelMarkups?.airbnb, markupPct: val }
+                                }
+                              })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.airbnbMarkup
+                            if (raw !== undefined) {
+                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  airbnb: { ...tariffSettings?.channelMarkups?.airbnb, markupPct: val }
+                                }
+                              })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.airbnbMarkup; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1747,16 +1835,36 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Input
                           type="number"
                           step="1"
-                          value={Math.round((tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15) * 100)}
+                          value={rawChannelInputs.airbnbComm ?? Math.round((tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15) * 100)}
                           onChange={e => {
-                            const val = Number(e.target.value) / 100
-                            setTariffSettings({
-                              ...tariffSettings,
-                              channelMarkups: {
-                                ...tariffSettings?.channelMarkups,
-                                airbnb: { ...tariffSettings?.channelMarkups?.airbnb, commissionPct: val }
-                              }
-                            })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, airbnbComm: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              const val = parsed / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  airbnb: { ...tariffSettings?.channelMarkups?.airbnb, commissionPct: val }
+                                }
+                              })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.airbnbComm
+                            if (raw !== undefined) {
+                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  airbnb: { ...tariffSettings?.channelMarkups?.airbnb, commissionPct: val }
+                                }
+                              })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.airbnbComm; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1787,16 +1895,36 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Input
                           type="number"
                           step="1"
-                          value={expediaMarkupPct}
+                          value={rawChannelInputs.expediaMarkup ?? expediaMarkupPct}
                           onChange={e => {
-                            const val = Number(e.target.value) / 100
-                            setTariffSettings({
-                              ...tariffSettings,
-                              channelMarkups: {
-                                ...tariffSettings?.channelMarkups,
-                                expedia: { ...tariffSettings?.channelMarkups?.expedia, markupPct: val }
-                              }
-                            })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, expediaMarkup: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              const val = parsed / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  expedia: { ...tariffSettings?.channelMarkups?.expedia, markupPct: val }
+                                }
+                              })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.expediaMarkup
+                            if (raw !== undefined) {
+                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  expedia: { ...tariffSettings?.channelMarkups?.expedia, markupPct: val }
+                                }
+                              })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.expediaMarkup; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1806,17 +1934,37 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Input
                           type="number"
                           step="1"
-                          value={corporateDiscounts.singleDiscount ?? corporateDiscountPct}
+                          value={rawChannelInputs.singleDiscount ?? (corporateDiscounts.singleDiscount ?? corporateDiscountPct)}
                           onChange={e => {
-                            const pctVal = Number(e.target.value)
-                            setTariffSettings({
-                              ...tariffSettings,
-                              channelMarkups: {
-                                ...tariffSettings?.channelMarkups,
-                                corporate: { ...tariffSettings?.channelMarkups?.corporate, discountPct: pctVal / 100 }
-                              },
-                              corporateDiscounts: { ...corporateDiscounts, singleDiscount: pctVal }
-                            })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, singleDiscount: raw }))
+                            if (raw.trim() === "") return
+                            const pctVal = Number(raw)
+                            if (!Number.isNaN(pctVal)) {
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  corporate: { ...tariffSettings?.channelMarkups?.corporate, discountPct: pctVal / 100 }
+                                },
+                                corporateDiscounts: { ...corporateDiscounts, singleDiscount: pctVal }
+                              })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.singleDiscount
+                            if (raw !== undefined) {
+                              const pctVal = raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  corporate: { ...tariffSettings?.channelMarkups?.corporate, discountPct: pctVal / 100 }
+                                },
+                                corporateDiscounts: { ...corporateDiscounts, singleDiscount: pctVal }
+                              })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.singleDiscount; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1826,13 +1974,29 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Input
                           type="number"
                           step="1"
-                          value={corporateDiscounts.doubleDiscount ?? 15}
+                          value={rawChannelInputs.doubleDiscount ?? (corporateDiscounts.doubleDiscount ?? 15)}
                           onChange={e => {
-                            const pctVal = Number(e.target.value)
-                            setTariffSettings({
-                              ...tariffSettings,
-                              corporateDiscounts: { ...corporateDiscounts, doubleDiscount: pctVal }
-                            })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, doubleDiscount: raw }))
+                            if (raw.trim() === "") return
+                            const pctVal = Number(raw)
+                            if (!Number.isNaN(pctVal)) {
+                              setTariffSettings({
+                                ...tariffSettings,
+                                corporateDiscounts: { ...corporateDiscounts, doubleDiscount: pctVal }
+                              })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.doubleDiscount
+                            if (raw !== undefined) {
+                              const pctVal = raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)
+                              setTariffSettings({
+                                ...tariffSettings,
+                                corporateDiscounts: { ...corporateDiscounts, doubleDiscount: pctVal }
+                              })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.doubleDiscount; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />
@@ -1842,13 +2006,29 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <Input
                           type="number"
                           step="1"
-                          value={corporateDiscounts.conventionDiscount ?? 20}
+                          value={rawChannelInputs.conventionDiscount ?? (corporateDiscounts.conventionDiscount ?? 20)}
                           onChange={e => {
-                            const pctVal = Number(e.target.value)
-                            setTariffSettings({
-                              ...tariffSettings,
-                              corporateDiscounts: { ...corporateDiscounts, conventionDiscount: pctVal }
-                            })
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, conventionDiscount: raw }))
+                            if (raw.trim() === "") return
+                            const pctVal = Number(raw)
+                            if (!Number.isNaN(pctVal)) {
+                              setTariffSettings({
+                                ...tariffSettings,
+                                corporateDiscounts: { ...corporateDiscounts, conventionDiscount: pctVal }
+                              })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.conventionDiscount
+                            if (raw !== undefined) {
+                              const pctVal = raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)
+                              setTariffSettings({
+                                ...tariffSettings,
+                                corporateDiscounts: { ...corporateDiscounts, conventionDiscount: pctVal }
+                              })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.conventionDiscount; return n })
+                            }
                           }}
                           className="h-8 font-black text-xs"
                         />

@@ -557,8 +557,12 @@ export default function BookingEngine() {
       if (res.ok) {
         const data = await res.json()
         setAvailabilityData(data)
-        if (!data.allowTwinBeds && bedType === "twin") {
-          setBedType("queen")
+        if (!data.allowTwinBeds) {
+          setRooms((prev) =>
+            prev.some((r) => r.bedType === "twin")
+              ? prev.map((r) => (r.bedType === "twin" ? { ...r, bedType: "queen" } : r))
+              : prev
+          )
         }
       }
     } catch {

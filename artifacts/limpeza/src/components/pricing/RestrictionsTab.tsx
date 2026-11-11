@@ -25,6 +25,40 @@ export const RestrictionsTab: React.FC = () => {
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [rawInputs, setRawInputs] = useState<Record<string, string>>({});
+
+  const updateRestrictionNumber = (
+    field: "minStay" | "maxStay" | "minAdvanceDays" | "maxAdvanceDays",
+    raw: string,
+    min: number,
+    max: number
+  ) => {
+    setRawInputs((prev) => ({ ...prev, [field]: raw }));
+    if (raw.trim() === "") return;
+    const parsed = Number(raw);
+    if (!Number.isNaN(parsed)) {
+      setRestrictions((prev) => ({ ...prev, [field]: Math.min(max, Math.max(min, Math.round(parsed))) }));
+    }
+  };
+
+  const normalizeRestrictionOnBlur = (
+    field: "minStay" | "maxStay" | "minAdvanceDays" | "maxAdvanceDays",
+    min: number,
+    max: number,
+    fallback: number
+  ) => {
+    const raw = rawInputs[field];
+    if (raw !== undefined) {
+      const parsed = raw.trim() === "" ? fallback : Number(raw);
+      const clamped = Number.isNaN(parsed) ? fallback : Math.min(max, Math.max(min, Math.round(parsed)));
+      setRestrictions((prev) => ({ ...prev, [field]: clamped }));
+      setRawInputs((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    }
+  };
 
   useEffect(() => {
     fetch("/api/wbp/restrictions")
@@ -32,6 +66,7 @@ export const RestrictionsTab: React.FC = () => {
       .then((data) => {
         if (data?.restrictions?.defaults) {
           const def = data.restrictions.defaults;
+          setRawInputs({});
           setRestrictions((prev) => ({
             ...prev,
             minStay: Number(def.minStay ?? def.minNights ?? def.min_los_weekday ?? prev.minStay),
@@ -143,8 +178,9 @@ export const RestrictionsTab: React.FC = () => {
                   type="number"
                   min="1"
                   max="30"
-                  value={restrictions.minStay}
-                  onChange={(e) => setRestrictions(prev => ({ ...prev, minStay: Number(e.target.value) || 1 }))}
+                  value={rawInputs.minStay ?? restrictions.minStay}
+                  onChange={(e) => updateRestrictionNumber("minStay", e.target.value, 1, 30)}
+                  onBlur={() => normalizeRestrictionOnBlur("minStay", 1, 30, 1)}
                   className="h-8 text-xs font-bold text-right"
                 />
                 <span className="text-xs text-muted-foreground">noites</span>
@@ -166,8 +202,9 @@ export const RestrictionsTab: React.FC = () => {
                   type="number"
                   min="1"
                   max="90"
-                  value={restrictions.maxStay}
-                  onChange={(e) => setRestrictions(prev => ({ ...prev, maxStay: Number(e.target.value) || 30 }))}
+                  value={rawInputs.maxStay ?? restrictions.maxStay}
+                  onChange={(e) => updateRestrictionNumber("maxStay", e.target.value, 1, 90)}
+                  onBlur={() => normalizeRestrictionOnBlur("maxStay", 1, 90, 30)}
                   className="h-8 text-xs font-bold text-right"
                 />
                 <span className="text-xs text-muted-foreground">noites</span>
@@ -237,8 +274,9 @@ export const RestrictionsTab: React.FC = () => {
                   type="number"
                   min="0"
                   max="30"
-                  value={restrictions.minAdvanceDays}
-                  onChange={(e) => setRestrictions(prev => ({ ...prev, minAdvanceDays: Number(e.target.value) || 0 }))}
+                  value={rawInputs.minAdvanceDays ?? restrictions.minAdvanceDays}
+                  onChange={(e) => updateRestrictionNumber("minAdvanceDays", e.target.value, 0, 30)}
+                  onBlur={() => normalizeRestrictionOnBlur("minAdvanceDays", 0, 30, 0)}
                   className="w-16 h-8 text-xs font-bold text-right"
                   title="Antecedência Mínima (dias)"
                 />
@@ -247,8 +285,9 @@ export const RestrictionsTab: React.FC = () => {
                   type="number"
                   min="1"
                   max="365"
-                  value={restrictions.maxAdvanceDays}
-                  onChange={(e) => setRestrictions(prev => ({ ...prev, maxAdvanceDays: Number(e.target.value) || 365 }))}
+                  value={rawInputs.maxAdvanceDays ?? restrictions.maxAdvanceDays}
+                  onChange={(e) => updateRestrictionNumber("maxAdvanceDays", e.target.value, 1, 365)}
+                  onBlur={() => normalizeRestrictionOnBlur("maxAdvanceDays", 1, 365, 365)}
                   className="w-16 h-8 text-xs font-bold text-right"
                   title="Antecedência Máxima (dias)"
                 />

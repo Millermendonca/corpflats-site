@@ -19,6 +19,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { compressImage } from "@/lib/image-compression";
+import { formatSmartPhone } from "@/lib/phone-mask";
 import {
   Wrench,
   CheckCircle2,
@@ -510,7 +511,7 @@ export default function HandymanPortal({ params: propsParams }: { params?: { tok
     try {
       const results: string[] = [];
       for (const file of files) {
-        const comp = await compressImage(file, 1280, 0.78);
+        const comp = await compressImage(file, { maxWidth: 1280, quality: 0.78 });
         results.push(comp.base64);
       }
       setFinishPhotos((prev) => [...prev, ...results]);
@@ -1309,7 +1310,14 @@ export default function HandymanPortal({ params: propsParams }: { params?: { tok
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <Label className="text-xs font-bold">WhatsApp com DDD</Label>
-                <Input value={workerPhone} onChange={(e) => setWorkerPhone(e.target.value)} className="h-9 text-xs rounded-xl" />
+                <Input
+                  type="tel"
+                  inputMode="tel"
+                  value={workerPhone}
+                  onChange={(e) => setWorkerPhone(formatSmartPhone(e.target.value))}
+                  placeholder="(22) 99999-9999"
+                  className="h-9 text-xs rounded-xl"
+                />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-bold">CPF</Label>

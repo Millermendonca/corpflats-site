@@ -383,7 +383,7 @@ export default function FinancialDashboard() {
             <Button 
               variant="outline" 
               size="sm" 
-              onClick={fetchAllERPData}
+              onClick={() => fetchAllERPData()}
               className="text-xs font-semibold gap-1.5"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-primary' : ''}`} />
