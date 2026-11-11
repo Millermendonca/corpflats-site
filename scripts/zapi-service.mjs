@@ -4728,6 +4728,8 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   if (isFullyPaidVal || ((templateId === "tpl_pre_reserva_lembrete" || triggerEvent === "pre_reservation_expiring_soon") && isExplicitNonPixMethod)) {
     list = list.filter(b => {
       if (!b) return false;
+      const bUrl = String(b.url || "");
+      if (bUrl.includes("/copiar-boleto")) return true;
       const bId = String(b.id || "").toLowerCase();
       const bLabel = String(b.label || "").toLowerCase();
       if (bId === "btn_pix" || b.type === "COPY" || b.copyCode || /copiar\s*c[oó]digo\s*pix/i.test(bLabel)) {
@@ -4762,10 +4764,16 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     let finalUrl = b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined;
     const resolvedCopyCode = b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined;
     const isPixBtn = b.id === "btn_pix" || /pix/i.test(String(b.label || "")) || (resolvedCopyCode && String(resolvedCopyCode).startsWith("000201")) || (finalUrl && finalUrl.includes("000201"));
+    const cleanDigits = String(resolvedCopyCode || "").replace(/\D/g, "");
+    const isBoletoBtn = /boleto|linha\s*digit/i.test(String(b.label || "")) || (finalUrl && finalUrl.includes("/copiar-boleto")) || (cleanDigits.length >= 44 && cleanDigits.length <= 48);
     // Sanitização anti-falha: Se a URL apontar para o antigo link do whatsapp.com/otp/code/ em botão PIX ou for vazia com botão PIX, substitui pela URL oficial do portal/copiar-pix
-    if (isPixBtn && ((finalUrl && finalUrl.includes("whatsapp.com/otp")) || !finalUrl)) {
+    if (isPixBtn && !isBoletoBtn && ((finalUrl && finalUrl.includes("whatsapp.com/otp")) || !finalUrl)) {
       finalUrl = `${appOrigin}/copiar-pix/${resCode}`;
-    } else if (!isPixBtn && !finalUrl && (b.type === "COPY" || resolvedCopyCode)) {
+    } else if (isBoletoBtn && !finalUrl) {
+      finalUrl = resolvedCopyCode
+        ? `${appOrigin}/copiar-boleto?mode=boleto&linha=${encodeURIComponent(String(resolvedCopyCode).trim())}`
+        : `${appOrigin}/copiar-boleto`;
+    } else if (!isPixBtn && !isBoletoBtn && !finalUrl && (b.type === "COPY" || resolvedCopyCode) && String(resolvedCopyCode || "").trim().length <= 20) {
       finalUrl = `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(String(resolvedCopyCode || "").trim())}`;
     }
     return {
@@ -5252,14 +5260,28 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
           (codeToCopy && String(codeToCopy).startsWith("000201")) ||
           rawUrl.startsWith("000201") ||
           rawUrl.includes("code=000201");
+        const cleanCopyDigits = String(codeToCopy || "").replace(/\D/g, "");
+        const isBoletoBtn =
+          /boleto|linha\s*digit/i.test(String(b.label || "")) ||
+          rawUrl.includes("/copiar-boleto") ||
+          (cleanCopyDigits.length >= 44 && cleanCopyDigits.length <= 48);
+        const hasExplicitHttpUrl = /^https?:\/\//i.test(rawUrl) && !rawUrl.includes("whatsapp.com/otp") && !rawUrl.startsWith("000201");
+        const isShortOtpCode = Boolean(codeToCopy && String(codeToCopy).trim().length <= 20);
+        const hostBase = (typeof process !== "undefined" && process.env?.SERVER_BASE_URL ? process.env.SERVER_BASE_URL : "https://corpflats.com.br").replace(/\/+$/, "");
 
-        // Se for um código OTP de verificação (não-PIX), usa o link nativo de cópia em 1 toque do WhatsApp (otp_type=COPY_CODE)
-        if (!isPixBtn && (codeToCopy || rawUrl.includes("whatsapp.com/otp"))) {
+        // Preserva URLs explícitas (ex: /copiar-boleto/:code?mode=boleto|pix, /copiar-pix/:code, portais)
+        if (hasExplicitHttpUrl) {
+          // Mantém rawUrl intacta
+        } else if (!isPixBtn && !isBoletoBtn && (isShortOtpCode || rawUrl.includes("whatsapp.com/otp"))) {
+          // Apenas códigos curtos OTP (<= 20 caracteres) usam o link nativo whatsapp.com/otp/code
           rawUrl = rawUrl.includes("whatsapp.com/otp")
             ? rawUrl
             : `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(String(codeToCopy).trim())}`;
+        } else if (isBoletoBtn && !rawUrl) {
+          rawUrl = codeToCopy
+            ? `${hostBase}/copiar-boleto?mode=boleto&linha=${encodeURIComponent(String(codeToCopy).trim())}`
+            : `${hostBase}/copiar-boleto`;
         } else if (!rawUrl || (isPixBtn && (rawUrl.startsWith("000201") || rawUrl.includes("whatsapp.com/otp")))) {
-          const hostBase = (typeof process !== "undefined" && process.env?.SERVER_BASE_URL ? process.env.SERVER_BASE_URL : "https://corpflats.com.br").replace(/\/+$/, "");
           rawUrl = `${hostBase}/copiar-pix`;
         } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
           rawUrl = "https://" + rawUrl;
@@ -5539,9 +5561,10 @@ export async function sendZapiOtpButton(config, {
   const cleanCode = String(code || "").trim();
   const cleanLabel = String(buttonText || "📋 Copiar Código").trim().substring(0, 25);
 
-  // 1. Tenta via /send-button-actions com parâmetro nativo COPY_CODE do WhatsApp (suporta texto rico multi-linha e renderiza botão nativo de cópia + 1-toque opcional)
+  // 1. Tenta via /send-button-actions com parâmetro nativo COPY_CODE do WhatsApp apenas para códigos OTP curtos (<= 20 caracteres; códigos longos como PIX e Boleto 47 dígitos usam /send-button-otp)
   const isPixCode = cleanCode.startsWith("000201");
-  if (!isPixCode && cleanCode) {
+  const isShortOtp = !isPixCode && cleanCode && cleanCode.length <= 20;
+  if (isShortOtp) {
     const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
     const copyAction = {
       id: "btn_otp_copy",

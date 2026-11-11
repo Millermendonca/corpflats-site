@@ -70967,6 +70967,8 @@ async function dispatchFaturadoBillingPackage({
           : `⏰ Lembrete: Boleto Vence Hoje — CorpFlats (${firstBoleto.reservationCode || firstBoleto.code})`)
       : `🏦 Faturamento Emitido: Boleto(s) Banco Inter${linkedInvoice ? ` + NFS-e #${linkedInvoice.numeroNfse}` : ""} — CorpFlats`;
 
+    const hostBase = (process.env.SERVER_BASE_URL || "https://corpflats.com.br").replace(/\/+$/, "");
+
     // 1. Disparo por E-mail com PDFs anexados
     const cleanRecEmail = String(rec.email || "").trim().toLowerCase();
     if (flags.sendEmail !== false && cleanRecEmail && cleanRecEmail.includes("@") && !sentEmailsSet.has(cleanRecEmail)) {
@@ -70978,6 +70980,10 @@ async function dispatchFaturadoBillingPackage({
             : b.billingScope === "consumption_only"
             ? "Consumo / Extras"
             : "Unificado (Hospedagem + Consumo)";
+          const bolRef = encodeURIComponent(b.code || b.id);
+          const copyBoletoUrl = `${hostBase}/copiar-boleto/${bolRef}?mode=boleto`;
+          const copyPixUrl = `${hostBase}/copiar-boleto/${bolRef}?mode=pix`;
+          const pdfUrl = `${hostBase}/api/boletos/${bolRef}/pdf`;
           return `
             <div style="background:#FFF7ED;border:1px solid #FDBA74;border-radius:10px;padding:14px;margin-bottom:12px;">
               <div style="font-weight:700;color:#9A3412;font-size:14px;margin-bottom:6px;">
@@ -70992,8 +70998,15 @@ async function dispatchFaturadoBillingPackage({
               <div style="margin-top:10px;padding:10px;background:#FFFFFF;border:1px dashed #FB923C;border-radius:6px;">
                 <div style="font-size:11px;font-weight:700;color:#64748B;">LINHA DIGITÁVEL (COPIE E COLE NO BANCO):</div>
                 <div style="font-family:monospace;font-size:13px;font-weight:700;color:#EA580C;word-break:break-all;margin-top:3px;">${b.linhaDigitavel || "—"}</div>
+                ${b.pixCopiaECola ? `
                 <div style="font-size:11px;font-weight:700;color:#64748B;margin-top:8px;">PIX COPIA E COLA (LIQUIDAÇÃO IMEDIATA):</div>
-                <div style="font-family:monospace;font-size:11px;color:#334155;word-break:break-all;margin-top:3px;">${b.pixCopiaECola || "—"}</div>
+                <div style="font-family:monospace;font-size:11px;color:#334155;word-break:break-all;margin-top:3px;">${b.pixCopiaECola}</div>
+                ` : ""}
+              </div>
+              <div style="margin-top:12px;">
+                ${b.linhaDigitavel ? `<a href="${copyBoletoUrl}" target="_blank" style="display:inline-block;background:#EA580C;color:#FFFFFF;font-size:12px;font-weight:700;text-decoration:none;padding:9px 14px;border-radius:8px;margin-right:8px;margin-bottom:6px;">📋 Copiar Código do Boleto</a>` : ""}
+                ${b.pixCopiaECola ? `<a href="${copyPixUrl}" target="_blank" style="display:inline-block;background:#059669;color:#FFFFFF;font-size:12px;font-weight:700;text-decoration:none;padding:9px 14px;border-radius:8px;margin-right:8px;margin-bottom:6px;">⚡ Copiar Código PIX</a>` : ""}
+                <a href="${pdfUrl}" target="_blank" style="display:inline-block;background:#334155;color:#FFFFFF;font-size:12px;font-weight:700;text-decoration:none;padding:9px 14px;border-radius:8px;margin-bottom:6px;">📄 Baixar PDF</a>
               </div>
             </div>
           `;
@@ -71044,57 +71057,84 @@ async function dispatchFaturadoBillingPackage({
       }
     }
 
-    // 2. Disparo por WhatsApp (Mensagem + Linha Digitável + PDFs via Z-API)
+    // 2. Disparo por WhatsApp (Mensagem com Botões de Copiar Boleto e PIX + PDFs via Z-API)
     const cleanRecPhone = cleanPhone(rec.phone || "");
     if (flags.sendWhatsapp !== false && cleanRecPhone && cleanRecPhone.length >= 10 && !sentPhonesSet.has(cleanRecPhone)) {
       sentPhonesSet.add(cleanRecPhone);
       try {
-        const bolLines = validBoletos.map((b, idx) => {
-          const scopeLabel = b.billingScope === "accommodation_only"
-            ? "Hospedagem"
-            : b.billingScope === "consumption_only"
-            ? "Consumo/Frigobar"
-            : "Hospedagem + Consumo";
-          return (
-            `🏦 *Boleto ${validBoletos.length > 1 ? `${idx + 1}/${validBoletos.length} ` : ""}#${b.code} (${scopeLabel})*\n` +
-            `• *Pagador:* ${b.payer?.nome || "—"}\n` +
-            `• *Valor:* R$ ${formatBrl(b.amount)}${b.daysOverdue > 0 ? ` (Atualizado c/ encargos: R$ ${formatBrl(b.updatedTotalWithCharges)})` : ""}\n` +
-            `• *Vencimento:* ${formatBrDate(b.dueDate)}\n` +
-            `• *Linha Digitável:*\n\`${b.linhaDigitavel || ""}\`\n` +
-            `• *PIX Copia e Cola:*\n\`${b.pixCopiaECola || ""}\``
-          );
-        }).join("\n\n");
-
         const nfLine = linkedInvoice
           ? `🧾 *NFS-e Hospedagem:* Nº ${linkedInvoice.numeroNfse} — R$ ${formatBrl(linkedInvoice.valorServico)}\n\n`
           : "";
 
-        const waMsg =
-          `${headerTitle}\n\n` +
-          `Olá, *${rec.name}* (${rec.roleLabel})!\n` +
-          `${isReminder
-            ? (reminderType === "overdue"
-                ? `Identificamos que o boleto referente à reserva *${firstBoleto.reservationCode || firstBoleto.code}* encontra-se vencido. Seguem os dados para quitação:`
-                : `Lembramos que seu boleto referente à reserva *${firstBoleto.reservationCode || firstBoleto.code}* vence *hoje (${formatBrDate(firstBoleto.dueDate)})*:`)
-            : `Seguem os dados de faturamento da estadia (Reserva *${firstBoleto.reservationCode || "Avulso"}* - Flat *${firstBoleto.flatNumber || "—"}*):`}\n\n` +
-          nfLine +
-          bolLines +
-          `\n\n📎 *Os arquivos PDF do Boleto e da Nota Fiscal estão sendo enviados logo abaixo.*`;
+        for (let idx = 0; idx < validBoletos.length; idx++) {
+          const bol = validBoletos[idx];
+          const scopeLabel = bol.billingScope === "accommodation_only"
+            ? "Hospedagem"
+            : bol.billingScope === "consumption_only"
+            ? "Consumo/Frigobar"
+            : "Hospedagem + Consumo";
+          const bolRef = encodeURIComponent(bol.code || bol.id);
 
-        if (typeof sendZapiMessage === "function") {
-          await sendZapiMessage(db.zapiConfig, {
-            phone: cleanRecPhone,
-            message: waMsg,
-            channelId: "ai_agent",
-            recipientRole: rec.role === "guest" ? "guest" : "company",
-            triggerEvent: isReminder ? "boleto_reminder_whatsapp" : "boleto_faturado_whatsapp",
-            bypassTestMode: true,
-            db
-          }).catch(() => {});
-        }
+          const introBlock = idx === 0
+            ? `${headerTitle}\n\n` +
+              `Olá, *${rec.name}* (${rec.roleLabel})!\n` +
+              `${isReminder
+                ? (reminderType === "overdue"
+                    ? `Identificamos que o boleto referente à reserva *${firstBoleto.reservationCode || firstBoleto.code}* encontra-se vencido. Seguem os dados para quitação:`
+                    : `Lembramos que seu boleto referente à reserva *${firstBoleto.reservationCode || firstBoleto.code}* vence *hoje (${formatBrDate(bol.dueDate)})*:`)
+                : `Seguem os dados de faturamento da estadia (Reserva *${firstBoleto.reservationCode || "Avulso"}* - Flat *${firstBoleto.flatNumber || "—"}*):`}\n\n` +
+              nfLine
+            : "";
 
-        if (typeof sendZapiDocument === "function") {
-          for (const bol of validBoletos) {
+          const bolCardText =
+            `🏦 *Boleto ${validBoletos.length > 1 ? `${idx + 1}/${validBoletos.length} ` : ""}#${bol.code} (${scopeLabel})*\n` +
+            `• *Pagador:* ${bol.payer?.nome || "—"}\n` +
+            `• *Valor:* R$ ${formatBrl(bol.amount)}${bol.daysOverdue > 0 ? ` (Atualizado c/ encargos: R$ ${formatBrl(bol.updatedTotalWithCharges)})` : ""}\n` +
+            `• *Vencimento:* ${formatBrDate(bol.dueDate)}` +
+            (bol.linhaDigitavel ? `\n• *Cód. do Boleto (Linha Digitável):*\n\`${bol.linhaDigitavel}\`` : "") +
+            (bol.pixCopiaECola ? `\n• *PIX Copia e Cola (QR Code):*\n\`${bol.pixCopiaECola}\`` : "");
+
+          const boletoButtons = [];
+          if (bol.linhaDigitavel) {
+            boletoButtons.push({
+              id: `btn_copy_boleto_${bol.id || idx + 1}`,
+              type: "URL",
+              label: "📋 Copiar Cód. Boleto",
+              url: `${hostBase}/copiar-boleto/${bolRef}?mode=boleto`
+            });
+          }
+          if (bol.pixCopiaECola) {
+            boletoButtons.push({
+              id: `btn_copy_pix_${bol.id || idx + 1}`,
+              type: "URL",
+              label: "⚡ Copiar Código PIX",
+              url: `${hostBase}/copiar-boleto/${bolRef}?mode=pix`
+            });
+          }
+
+          const footerHint = boletoButtons.length > 0
+            ? `\n\n👇 *Toque nos botões abaixo para copiar o código do boleto${bol.pixCopiaECola ? " ou o código PIX" : ""} com 1 clique.*\n📎 _O arquivo PDF segue logo abaixo._`
+            : `\n\n📎 *Os arquivos PDF do Boleto e da Nota Fiscal estão sendo enviados logo abaixo.*`;
+
+          const waMsg = introBlock + bolCardText + footerHint;
+
+          if (typeof sendZapiMessage === "function") {
+            await sendZapiMessage(db.zapiConfig, {
+              phone: cleanRecPhone,
+              message: waMsg,
+              buttons: boletoButtons,
+              sendMode: boletoButtons.length > 0 ? "buttons" : "text",
+              fallbackToText: true,
+              skipPixCompanion: true,
+              channelId: "ai_agent",
+              recipientRole: rec.role === "guest" ? "guest" : "company",
+              triggerEvent: isReminder ? "boleto_reminder_whatsapp" : "boleto_faturado_whatsapp",
+              bypassTestMode: true,
+              db
+            }).catch(() => {});
+          }
+
+          if (typeof sendZapiDocument === "function") {
             const pdfBuf = boletoPdfBuffersMap.get(bol.id);
             if (pdfBuf) {
               const b64Doc = `data:application/pdf;base64,${pdfBuf.toString("base64")}`;
@@ -71108,17 +71148,18 @@ async function dispatchFaturadoBillingPackage({
               }).catch(() => {});
             }
           }
-          if (nfsePdfBuf && linkedInvoice && !isReminder) {
-            const b64Nf = `data:application/pdf;base64,${nfsePdfBuf.toString("base64")}`;
-            await sendZapiDocument(db.zapiConfig, {
-              phone: cleanRecPhone,
-              document: b64Nf,
-              fileName: `NFSe-${linkedInvoice.numeroNfse}.pdf`,
-              caption: `🧾 NFS-e Hospedagem Nº ${linkedInvoice.numeroNfse} (R$ ${formatBrl(linkedInvoice.valorServico)})`,
-              bypassTestMode: true,
-              db
-            }).catch(() => {});
-          }
+        }
+
+        if (typeof sendZapiDocument === "function" && nfsePdfBuf && linkedInvoice && !isReminder) {
+          const b64Nf = `data:application/pdf;base64,${nfsePdfBuf.toString("base64")}`;
+          await sendZapiDocument(db.zapiConfig, {
+            phone: cleanRecPhone,
+            document: b64Nf,
+            fileName: `NFSe-${linkedInvoice.numeroNfse}.pdf`,
+            caption: `🧾 NFS-e Hospedagem Nº ${linkedInvoice.numeroNfse} (R$ ${formatBrl(linkedInvoice.valorServico)})`,
+            bypassTestMode: true,
+            db
+          }).catch(() => {});
         }
 
         recResult.whatsappSent = true;
@@ -73145,6 +73186,318 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
               const el = document.getElementById('pix-code');
               if (el && el.value && el.value !== data.pixCopiaECola) {
                 window.location.reload();
+              }
+            }
+          } catch (_) {}
+        }, 5000);
+      }
+    });
+  </script>
+</body>
+</html>`;
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  return res.send(pageHtml);
+});
+
+// ── Status Público para Monitoramento de Liquidação de Boleto (/api/boletos/public-status/:code) ──
+app.get("/api/boletos/public-status/:code", (req, res) => {
+  const rawCode = String(req.params.code || "").trim();
+  const bol = (db.boletos || []).find(b =>
+    b && (
+      (b.code && String(b.code).toUpperCase() === rawCode.toUpperCase()) ||
+      String(b.id) === rawCode ||
+      (b.nossoNumero && String(b.nossoNumero) === rawCode)
+    )
+  );
+  if (!bol) {
+    return res.status(404).json({ found: false, paid: false });
+  }
+  const enriched = enrichBoletoDynamicStatus(bol);
+  return res.json({
+    found: true,
+    code: enriched.code,
+    status: enriched.status,
+    paid: enriched.status === "pago",
+    cancelled: enriched.status === "cancelado",
+    dueDate: enriched.dueDate,
+    amount: enriched.amount,
+    updatedTotalWithCharges: enriched.updatedTotalWithCharges,
+    daysOverdue: enriched.daysOverdue || 0,
+    linhaDigitavel: enriched.linhaDigitavel || "",
+    pixCopiaECola: enriched.pixCopiaECola || ""
+  });
+});
+
+// ── Página Oficial de Cópia em 1 Toque de Boleto + PIX (/copiar-boleto/:code) ─────────────────
+app.get(["/copiar-boleto/:code", "/copiar-boleto", "/boleto/:code"], (req, res) => {
+  const rawCode = String(req.params.code || req.query.code || req.query.id || "").trim();
+  const bolRaw = rawCode
+    ? (db.boletos || []).find(b =>
+        b && (
+          (b.code && String(b.code).toUpperCase() === rawCode.toUpperCase()) ||
+          String(b.id) === rawCode ||
+          (b.nossoNumero && String(b.nossoNumero) === rawCode)
+        )
+      )
+    : null;
+  const bol = bolRaw ? enrichBoletoDynamicStatus(bolRaw) : null;
+
+  const escapeHtml = (val) =>
+    String(val ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const isPaid = Boolean(bol && bol.status === "pago");
+  const isCancelled = Boolean(bol && bol.status === "cancelado");
+
+  const rawLinha = (!isPaid && !isCancelled)
+    ? String(bol?.linhaDigitavel || req.query.linha || "").trim()
+    : "";
+  const cleanLinhaDigits = rawLinha.replace(/\D/g, "");
+  // 47 dígitos puros evita corte em internet banking corporativo com maxlength=47 e funciona em 100% dos apps bancários
+  const copyableLinha = (cleanLinhaDigits.length >= 44 && cleanLinhaDigits.length <= 48) ? cleanLinhaDigits : rawLinha;
+
+  const pixCode = (!isPaid && !isCancelled)
+    ? String(bol?.pixCopiaECola || req.query.pix || "").trim()
+    : "";
+
+  const requestedMode = String(req.query.mode || "").toLowerCase();
+  const activeMode =
+    requestedMode === "pix" && pixCode
+      ? "pix"
+      : copyableLinha
+      ? "boleto"
+      : pixCode
+      ? "pix"
+      : "boleto";
+
+  const payerName = String(bol?.payer?.nome || bol?.payerName || bol?.guestName || "Cliente Corporativo").trim();
+  const reservationCode = String(bol?.reservationCode || "").trim();
+  const flatNumber = String(bol?.flatNumber || "").trim();
+  const dueDateRaw = String(bol?.dueDate || "").slice(0, 10);
+  const formattedDueDate = /^\d{4}-\d{2}-\d{2}$/.test(dueDateRaw)
+    ? dueDateRaw.split("-").reverse().join("/")
+    : (dueDateRaw || "—");
+
+  const baseAmount = Number(bol?.amount || 0);
+  const effectiveAmount = (bol?.daysOverdue > 0 && Number(bol?.updatedTotalWithCharges) > 0)
+    ? Number(bol.updatedTotalWithCharges)
+    : baseAmount;
+  const formattedAmount = effectiveAmount > 0
+    ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(effectiveAmount)
+    : "—";
+  const formattedNominalAmount = baseAmount > 0
+    ? new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(baseAmount)
+    : "";
+
+  const qrCodeUrl = pixCode
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(pixCode)}`
+    : "";
+  const pdfUrl = bol ? `/api/boletos/${encodeURIComponent(bol.code || bol.id)}/pdf` : "";
+  const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
+  const whatsappUrl = `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou com uma dúvida sobre o boleto ${bol?.code || rawCode || ""} no CorpFlats.`)}`;
+
+  const pageHtml = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>${activeMode === "pix" ? "⚡ Copiar PIX do Boleto • CorpFlats" : "📋 Copiar Código do Boleto • CorpFlats"}</title>
+  <meta name="theme-color" content="#0f172a">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: #0f172a; color: #f8fafc; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+    .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 20px; width: 100%; max-width: 460px; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); text-align: center; }
+    .brand { font-size: 12px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #fb923c; margin-bottom: 8px; }
+    .title { font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 6px; }
+    .subtitle { font-size: 13px; color: #94a3b8; margin-bottom: 18px; line-height: 1.45; }
+    .badge-copied { background: rgba(16, 185, 129, 0.16); border: 1px solid #10b981; color: #34d399; font-size: 13px; font-weight: 700; padding: 10px 14px; border-radius: 12px; margin-bottom: 18px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .details { background-color: #0f172a; border: 1px solid #334155; border-radius: 14px; padding: 14px 16px; margin-bottom: 18px; text-align: left; }
+    .detail-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; padding: 4px 0; }
+    .detail-label { color: #94a3b8; flex-shrink: 0; }
+    .detail-val { color: #ffffff; font-weight: 600; text-align: right; word-break: break-word; }
+    .detail-val.price { color: #fb923c; font-size: 15px; font-weight: 800; }
+    .section-box { background: #0f172a; border: 1px solid #334155; border-radius: 14px; padding: 14px; margin-bottom: 14px; text-align: left; }
+    .section-box.active-boleto { border-color: #fb923c; box-shadow: 0 0 0 1px rgba(251, 146, 60, 0.25); }
+    .section-box.active-pix { border-color: #10b981; box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25); }
+    .section-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+    .code-input { width: 100%; background: #1e293b; border: 1px dashed #475569; border-radius: 10px; color: #e2e8f0; font-family: monospace; font-size: 11.5px; padding: 9px 10px; resize: none; outline: none; margin-bottom: 10px; }
+    .btn-boleto { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: #ea580c; color: #ffffff; font-size: 14.5px; font-weight: 700; padding: 13px; border-radius: 11px; border: none; cursor: pointer; text-decoration: none; transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(234, 88, 12, 0.3); }
+    .btn-boleto:active { transform: scale(0.98); }
+    .btn-pix { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: #10b981; color: #ffffff; font-size: 14.5px; font-weight: 700; padding: 13px; border-radius: 11px; border: none; cursor: pointer; text-decoration: none; transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); }
+    .btn-pix:active { transform: scale(0.98); }
+    .btn-sec { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: #334155; color: #f8fafc; font-size: 13.5px; font-weight: 600; padding: 12px; border-radius: 12px; border: none; cursor: pointer; text-decoration: none; margin-bottom: 10px; transition: background 0.2s; }
+    .btn-sec:hover { background: #475569; }
+    .qr-container { background: #ffffff; border-radius: 12px; padding: 10px; display: inline-block; margin-top: 12px; }
+    .qr-img { width: 168px; height: 168px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">CORPFLATS • BOLETO BANCO INTER</div>
+    <div class="title">${bol ? `Boleto #${escapeHtml(bol.code)}` : "Pagamento de Boleto"}</div>
+    <div class="subtitle">
+      ${activeMode === "pix"
+        ? "Abra o app do seu banco em <strong>PIX Copia e Cola</strong> para liquidar o boleto instantaneamente."
+        : "Abra o app ou internet banking em <strong>Pagar Boleto</strong> e cole a Linha Digitável copiada."}
+    </div>
+
+    <div id="status-badge" class="badge-copied" style="${(isPaid || isCancelled || (!copyableLinha && !pixCode)) ? "display:none;" : ""}">
+      <span>${activeMode === "pix" ? "✅ Código PIX do Boleto Copiado!" : "✅ Código do Boleto Copiado!"}</span>
+    </div>
+
+    ${bol ? `
+    <div class="details">
+      <div class="detail-row">
+        <span class="detail-label">Pagador:</span>
+        <span class="detail-val">${escapeHtml(payerName)}</span>
+      </div>
+      ${reservationCode ? `
+      <div class="detail-row">
+        <span class="detail-label">Reserva:</span>
+        <span class="detail-val">${escapeHtml(reservationCode)}${flatNumber ? ` • Flat ${escapeHtml(flatNumber)}` : ""}</span>
+      </div>` : ""}
+      <div class="detail-row">
+        <span class="detail-label">Vencimento:</span>
+        <span class="detail-val" style="${bol.daysOverdue > 0 && !isPaid ? "color:#f87171;" : ""}">${escapeHtml(formattedDueDate)}${bol.daysOverdue > 0 && !isPaid ? ` (${bol.daysOverdue}d em atraso)` : ""}</span>
+      </div>
+      ${bol.daysOverdue > 0 && !isPaid && formattedNominalAmount ? `
+      <div class="detail-row" style="border-top: 1px solid #334155; margin-top: 6px; padding-top: 8px;">
+        <span class="detail-label">Valor Nominal:</span>
+        <span class="detail-val" style="color:#94a3b8;">${escapeHtml(formattedNominalAmount)}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Total Atualizado c/ Encargos:</span>
+        <span class="detail-val price">${escapeHtml(formattedAmount)}</span>
+      </div>` : `
+      <div class="detail-row" style="border-top: 1px solid #334155; margin-top: 6px; padding-top: 8px;">
+        <span class="detail-label">Valor do Boleto:</span>
+        <span class="detail-val price">${escapeHtml(formattedAmount)}</span>
+      </div>`}
+    </div>` : ""}
+
+    ${isPaid ? `
+    <div style="background: rgba(16, 185, 129, 0.14); border: 1px solid #10b981; border-radius: 14px; padding: 18px; margin-bottom: 18px; color: #a7f3d0; font-size: 13.5px; line-height: 1.5;">
+      <div style="font-size: 16px; font-weight: 800; color: #34d399; margin-bottom: 6px;">✅ Boleto Já Liquidado!</div>
+      Este boleto já consta como pago e conciliado no sistema financeiro da CorpFlats. Obrigado!
+    </div>
+    ` : isCancelled ? `
+    <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid #ef4444; border-radius: 14px; padding: 18px; margin-bottom: 18px; color: #fecaca; font-size: 13.5px; line-height: 1.5;">
+      <div style="font-size: 16px; font-weight: 800; color: #f87171; margin-bottom: 6px;">🚫 Boleto Cancelado / Baixado</div>
+      Este boleto foi baixado. Caso precise de uma 2ª via atualizada, fale conosco pelo WhatsApp abaixo.
+    </div>
+    ` : ""}
+
+    ${copyableLinha ? `
+    <div class="section-box ${activeMode === "boleto" ? "active-boleto" : ""}">
+      <div class="section-title" style="color: #fb923c;">
+        <span>🏦 Linha Digitável do Boleto</span>
+        <span style="font-size: 10px; color: #94a3b8;">FEBRABAN 077-9</span>
+      </div>
+      ${rawLinha !== copyableLinha ? `<div style="font-family:monospace;font-size:11px;color:#cbd5e1;margin-bottom:6px;word-break:break-all;">${escapeHtml(rawLinha)}</div>` : ""}
+      <textarea id="boleto-code" class="code-input" rows="2" readonly onclick="this.select()">${escapeHtml(copyableLinha)}</textarea>
+      <button id="btn-copy-boleto" class="btn-boleto" onclick="copyTarget('boleto')">
+        <span>📋 Copiar Código do Boleto</span>
+      </button>
+    </div>` : ""}
+
+    ${pixCode ? `
+    <div class="section-box ${activeMode === "pix" ? "active-pix" : ""}">
+      <div class="section-title" style="color: #34d399;">
+        <span>⚡ PIX Copia e Cola do Boleto</span>
+        <span style="font-size: 10px; color: #94a3b8;">Baixa Imediata</span>
+      </div>
+      <textarea id="pix-code" class="code-input" rows="3" readonly onclick="this.select()">${escapeHtml(pixCode)}</textarea>
+      <button id="btn-copy-pix" class="btn-pix" onclick="copyTarget('pix')">
+        <span>⚡ Copiar Código PIX</span>
+      </button>
+      ${qrCodeUrl ? `
+      <div style="text-align: center;">
+        <div class="qr-container">
+          <img src="${qrCodeUrl}" alt="QR Code PIX do Boleto" class="qr-img">
+        </div>
+      </div>` : ""}
+    </div>` : ""}
+
+    ${!isPaid && !isCancelled && !copyableLinha && !pixCode ? `
+    <div style="padding: 18px; color: #f87171; font-size: 13px; margin-bottom: 12px;">
+      Não localizamos um boleto em aberto para este código. Solicite auxílio pelo WhatsApp abaixo.
+    </div>` : ""}
+
+    ${pdfUrl ? `
+    <a href="${pdfUrl}" target="_blank" class="btn-sec">
+      📄 Abrir / Baixar PDF Oficial do Boleto
+    </a>` : ""}
+
+    <a href="${whatsappUrl}" class="btn-sec" style="background: #1e3a2b; border: 1px solid #065f46; color: #6ee7b7;">
+      💬 Falar no WhatsApp CorpFlats
+    </a>
+  </div>
+
+  <script>
+    function copyTarget(kind) {
+      const elId = kind === 'pix' ? 'pix-code' : 'boleto-code';
+      const el = document.getElementById(elId);
+      if (!el || !el.value) return;
+      const text = el.value;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => notifyCopied(kind)).catch(() => fallbackCopy(el, kind));
+      } else {
+        fallbackCopy(el, kind);
+      }
+    }
+
+    function fallbackCopy(el, kind) {
+      el.select();
+      el.setSelectionRange(0, 99999);
+      try {
+        document.execCommand('copy');
+        notifyCopied(kind);
+      } catch (e) {}
+    }
+
+    function notifyCopied(kind) {
+      const badge = document.getElementById('status-badge');
+      const btnBol = document.getElementById('btn-copy-boleto');
+      const btnPix = document.getElementById('btn-copy-pix');
+      if (badge) {
+        badge.innerHTML = kind === 'pix'
+          ? '<span>✅ Código PIX do Boleto Copiado com Sucesso!</span>'
+          : '<span>✅ Código do Boleto Copiado com Sucesso!</span>';
+        badge.style.display = 'flex';
+      }
+      if (kind === 'pix' && btnPix) {
+        btnPix.innerHTML = '<span>✅ Código PIX Copiado!</span>';
+        setTimeout(() => { btnPix.innerHTML = '<span>⚡ Copiar Código PIX</span>'; }, 3000);
+      } else if (kind === 'boleto' && btnBol) {
+        btnBol.innerHTML = '<span>✅ Código do Boleto Copiado!</span>';
+        setTimeout(() => { btnBol.innerHTML = '<span>📋 Copiar Código do Boleto</span>'; }, 3000);
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const initialMode = ${JSON.stringify(activeMode)};
+      copyTarget(initialMode);
+
+      const bolCode = ${JSON.stringify(bol?.code || rawCode || "")};
+      if (bolCode) {
+        const pollTimer = setInterval(async () => {
+          try {
+            const resp = await fetch('/api/boletos/public-status/' + encodeURIComponent(bolCode));
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (data && data.paid) {
+              clearInterval(pollTimer);
+              const badge = document.getElementById('status-badge');
+              if (badge) {
+                badge.style.display = 'flex';
+                badge.style.background = 'rgba(16, 185, 129, 0.28)';
+                badge.style.borderColor = '#10b981';
+                badge.innerHTML = '<span>🎉 Pagamento do Boleto Confirmado Automaticamente!</span>';
               }
             }
           } catch (_) {}

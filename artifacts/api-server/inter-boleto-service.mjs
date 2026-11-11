@@ -382,23 +382,41 @@ export async function issueInterBoleto({
           const codigoSolicitacao = postRes.body.codigoSolicitacao || null;
           let details = postRes.body || {};
 
-          if (codigoSolicitacao && (!details.linhaDigitavel || !details.codigoBarras)) {
-            try {
-              const getRes = await httpsRequest(
-                `${BASE_URL}/cobranca/v3/cobrancas/${encodeURIComponent(codigoSolicitacao)}`,
-                {
-                  method: "GET",
-                  headers: { Authorization: `Bearer ${token}` },
-                  agent,
-                }
-              );
-              if (getRes.status === 200 && getRes.body) {
-                details = { ...details, ...(getRes.body.cobranca || {}), ...(getRes.body.boleto || {}), ...(getRes.body.pix || {}), ...getRes.body };
+          const extractLinha = (d) => d?.linhaDigitavel || d?.boleto?.linhaDigitavel || "";
+          const extractBarras = (d) => d?.codigoBarras || d?.boleto?.codigoBarras || "";
+          const extractNosso = (d) => d?.nossoNumero || d?.boleto?.nossoNumero || "";
+          const extractPix = (d) => d?.pixCopiaECola || d?.pix?.pixCopiaECola || d?.pix?.emv || d?.emv || "";
+
+          // Banco Inter v3 materializa boleto.linhaDigitavel e pix.pixCopiaECola na consulta GET por codigoSolicitacao
+          if (codigoSolicitacao && (!extractLinha(details) || !extractBarras(details) || !extractPix(details))) {
+            for (let attempt = 0; attempt < 2; attempt++) {
+              if (attempt > 0) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
               }
-            } catch (_) {}
+              try {
+                const getRes = await httpsRequest(
+                  `${BASE_URL}/cobranca/v3/cobrancas/${encodeURIComponent(codigoSolicitacao)}`,
+                  {
+                    method: "GET",
+                    headers: { Authorization: `Bearer ${token}` },
+                    agent,
+                  }
+                );
+                if (getRes.status === 200 && getRes.body) {
+                  details = {
+                    ...details,
+                    ...(getRes.body.cobranca || {}),
+                    ...(getRes.body.boleto || {}),
+                    ...(getRes.body.pix || {}),
+                    ...getRes.body,
+                  };
+                  if (extractLinha(details) && extractPix(details)) break;
+                }
+              } catch (_) {}
+            }
           }
 
-          const seedNosso = details.nossoNumero || String(Date.now()).slice(-11);
+          const seedNosso = extractNosso(details) || String(Date.now()).slice(-11);
           const fallbackCodes = buildInterFebrabanCodes({
             amount: valorNominal,
             dueDate: dataVencimento,
@@ -406,8 +424,7 @@ export async function issueInterBoleto({
           });
 
           const pixCopiaECola =
-            details.pixCopiaECola ||
-            details.pix?.pixCopiaECola ||
+            extractPix(details) ||
             buildEmvPixPayload({
               pixKey,
               amount: valorNominal,
@@ -421,9 +438,9 @@ export async function issueInterBoleto({
             interLastSyncedAt: new Date().toISOString(),
             codigoSolicitacao: codigoSolicitacao || crypto.randomUUID(),
             seuNumero: cleanSeuNumero,
-            nossoNumero: details.nossoNumero || fallbackCodes.nossoNumero,
-            codigoBarras: details.codigoBarras || fallbackCodes.codigoBarras,
-            linhaDigitavel: details.linhaDigitavel || fallbackCodes.linhaDigitavel,
+            nossoNumero: extractNosso(details) || fallbackCodes.nossoNumero,
+            codigoBarras: extractBarras(details) || fallbackCodes.codigoBarras,
+            linhaDigitavel: extractLinha(details) || fallbackCodes.linhaDigitavel,
             pixCopiaECola,
             txId: details.txid || details.pix?.txid || cleanSeuNumero,
             valorNominal,
@@ -535,7 +552,27 @@ export async function updateInterBoleto(existingBoleto, updates = {}, pixKey = "
         );
         if (res.status >= 200 && res.status < 300) {
           remoteUpdated = true;
-          remoteResponse = res.body;
+          remoteResponse = res.body || {};
+          // Após PATCH no Inter v3, busca os códigos atualizados (boleto.linhaDigitavel e pix.pixCopiaECola)
+          try {
+            const getRes = await httpsRequest(
+              `${BASE_URL}/cobranca/v3/cobrancas/${encodeURIComponent(existingBoleto.codigoSolicitacao)}`,
+              {
+                method: "GET",
+                headers: { Authorization: `Bearer ${token}` },
+                agent,
+              }
+            );
+            if (getRes.status === 200 && getRes.body) {
+              remoteResponse = {
+                ...remoteResponse,
+                ...(getRes.body.cobranca || {}),
+                ...(getRes.body.boleto || {}),
+                ...(getRes.body.pix || {}),
+                ...getRes.body,
+              };
+            }
+          } catch (_) {}
         }
       }
     } catch (err) {
@@ -576,10 +613,15 @@ export async function updateInterBoleto(existingBoleto, updates = {}, pixKey = "
     interestPct: nextInterestPct,
     autoWriteOffDays: nextWriteOffDays,
     payer: nextPayer,
-    codigoBarras: remoteResponse?.codigoBarras || febraban.codigoBarras,
-    linhaDigitavel: remoteResponse?.linhaDigitavel || febraban.linhaDigitavel,
-    nossoNumero: remoteResponse?.nossoNumero || febraban.nossoNumero,
-    pixCopiaECola: remoteResponse?.pixCopiaECola || nextPixCopiaECola,
+    codigoBarras: remoteResponse?.codigoBarras || remoteResponse?.boleto?.codigoBarras || febraban.codigoBarras,
+    linhaDigitavel: remoteResponse?.linhaDigitavel || remoteResponse?.boleto?.linhaDigitavel || febraban.linhaDigitavel,
+    nossoNumero: remoteResponse?.nossoNumero || remoteResponse?.boleto?.nossoNumero || febraban.nossoNumero,
+    pixCopiaECola:
+      remoteResponse?.pixCopiaECola ||
+      remoteResponse?.pix?.pixCopiaECola ||
+      remoteResponse?.pix?.emv ||
+      remoteResponse?.emv ||
+      nextPixCopiaECola,
     interSynced: true,
     remoteUpdated,
     interLastSyncedAt: new Date().toISOString(),
