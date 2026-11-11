@@ -213,6 +213,18 @@ export function injectSessionContext(
       senha_fechadura: sourceRes.doorCode || sourceRes.lockPassword || undefined,
       wifi_rede: `apto ${flatNum}`,
       wifi_senha: wifiPassword,
+      email_cadastrado: sourceRes.guestEmail || matchedGuest?.email || null,
+      alerta_email_incorreto:
+        sourceRes.emailCorrectionRequest?.status === 'awaiting_reply' || sourceRes.guestEmailInvalid
+          ? {
+              status: 'AGUARDANDO_CORRECAO',
+              email_invalido: String(
+                sourceRes.emailCorrectionRequest?.invalidEmail || sourceRes.guestEmail || ''
+              ),
+              email_sugerido: sourceRes.emailCorrectionRequest?.suggestedEmail || null,
+              solicitado_em: sourceRes.emailCorrectionRequest?.notifiedAt || null,
+            }
+          : null,
     };
 
     if (sourceRes.pendingSundayUpsell || sourceRes.sundayUpsellOffer) {

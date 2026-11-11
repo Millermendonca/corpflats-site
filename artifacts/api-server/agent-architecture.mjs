@@ -22,6 +22,7 @@
  */
 
 import { triggerImmediateWhatsApp, generateStaticPixPayload, formatReservationChannelLabel, resolveReservationGuestCount } from './zapi-service.mjs';
+import { validateGuestEmailAddress, updateGuestEmailAndResendRecentPending } from './mail-service.mjs';
 
 function normalizePhoneDigits(phone) {
   return String(phone || '').replace(/\D+/g, '');
@@ -253,6 +254,18 @@ export function injectSessionContext(params = {}) {
       acesso_imovel: 'Cartão NFC retirado na recepção 24h',
       wifi_rede: `apto ${flatNum}`,
       wifi_senha: wifiPassword,
+      email_cadastrado: sourceRes.guestEmail || matchedGuest?.email || null,
+      alerta_email_incorreto:
+        sourceRes.emailCorrectionRequest?.status === 'awaiting_reply' || sourceRes.guestEmailInvalid
+          ? {
+              status: 'AGUARDANDO_CORRECAO',
+              email_invalido: String(
+                sourceRes.emailCorrectionRequest?.invalidEmail || sourceRes.guestEmail || ''
+              ),
+              email_sugerido: sourceRes.emailCorrectionRequest?.suggestedEmail || null,
+              solicitado_em: sourceRes.emailCorrectionRequest?.notifiedAt || null,
+            }
+          : null,
       veiculo: sourceRes.vehicle || null,
       link_pre_checkin: isUnconfirmedPreRes ? null : `${baseUrl}/pre-checkin/${resCode}`,
       link_comprovante_pagamento: `${baseUrl}/minha-reserva/${resCode}`,
@@ -1502,14 +1515,19 @@ export const atualizarDadosHospedeTool = {
   name: 'atualizar_dados_hospede',
   description:
     'Atualiza os dados cadastrais e operacionais do hóspede ou lead (CPF/CNPJ, e-mail, horário previsto de chegada, ' +
-    'placa/marca/modelo/cor do veículo para garagem e nomes de acompanhantes). Caso o cliente envie os dados do veículo antes de ter reserva criada, ' +
-    'grava vinculado ao WhatsApp dele para anexar automaticamente assim que a reserva for criada. Para FNRH e documento, envia sempre o link /pre-checkin/:code.',
-  allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
+    'placa/marca/modelo/cor do veículo para garagem e nomes de acompanhantes). Quando o hóspede informar ou confirmar um novo e-mail ' +
+    '(especialmente após aviso de e-mail incorreto no check-in), valida o endereço, atualiza no sistema e reenvia automaticamente os e-mails pendentes recentes (não antigos). ' +
+    'Caso o cliente envie os dados do veículo antes de ter reserva criada, grava vinculado ao WhatsApp dele para anexar automaticamente assim que a reserva for criada. Para FNRH e documento, envia sempre o link /pre-checkin/:code.',
+  allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN', 'IN_STAY_CONCIERGE', 'POS_CHECKOUT'],
   parametersSchema: {
     type: 'OBJECT',
     properties: {
       cpf_cnpj: { type: 'STRING', description: 'CPF ou CNPJ informado pelo hóspede.' },
-      email: { type: 'STRING', description: 'Endereço de e-mail do hóspede.' },
+      email: {
+        type: 'STRING',
+        description:
+          'Endereço de e-mail correto informado ou confirmado pelo hóspede (se ele confirmar a sugestão em alerta_email_incorreto.email_sugerido dizendo "sim", passe esse e-mail sugerido aqui).',
+      },
       horario_previsto_chegada: { type: 'STRING', description: 'Horário previsto de chegada para o check-in no formato HH:MM.' },
       placa_veiculo: { type: 'STRING', description: 'Placa do veículo caso o hóspede vá utilizar a garagem (ex: ABC1D23).' },
       marca_veiculo: { type: 'STRING', description: 'Marca do veículo (ex: Toyota, Honda, VW).' },
@@ -1529,13 +1547,41 @@ export const atualizarDadosHospedeTool = {
       const db = context.runtime?.db;
       const camposAtualizados = [];
 
+      let validatedEmail = '';
+      if (args.email !== undefined && String(args.email).trim() !== '') {
+        const emailValidation = await validateGuestEmailAddress(args.email, {
+          checkDns: true,
+          stripTrailingPunctuation: true,
+        });
+        if (!emailValidation.valid) {
+          const sugestaoMsg = emailValidation.suggestedEmail
+            ? ` Pergunte gentilmente se o endereço correto seria *${emailValidation.suggestedEmail}*.`
+            : ' Peça com cordialidade que ele confira a digitação e envie o endereço de e-mail correto novamente.';
+          const msgInvalido =
+            `Explique educadamente ao hóspede que o sistema verificou o endereço "${String(args.email).trim()}" e identificou que ele continua inválido (${emailValidation.message}). ` +
+            `Por segurança, a alteração ainda não foi salva.${sugestaoMsg}`;
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: 'EMAIL_INVALIDO',
+            dados: {
+              email_informado: String(args.email).trim(),
+              motivo: emailValidation.message,
+              email_sugerido: emailValidation.suggestedEmail || null,
+            },
+            instrucao_para_ia: msgInvalido,
+            instrucao_resposta_ia: msgInvalido,
+          };
+        }
+        validatedEmail = emailValidation.normalizedEmail;
+      }
+
       const cleanPlate = args.placa_veiculo ? String(args.placa_veiculo).toUpperCase().replace(/[^A-Z0-9-]/g, '').trim() : '';
       const cleanBrand = args.marca_veiculo ? String(args.marca_veiculo).trim() : '';
       const cleanModel = args.modelo_veiculo ? String(args.modelo_veiculo).trim() : '';
       const cleanColor = args.cor_veiculo ? String(args.cor_veiculo).trim() : '';
 
       if (args.cpf_cnpj) camposAtualizados.push(`CPF/CNPJ: ${args.cpf_cnpj}`);
-      if (args.email) camposAtualizados.push(`E-mail: ${args.email}`);
+      if (validatedEmail) camposAtualizados.push(`E-mail: ${validatedEmail}`);
       if (args.horario_previsto_chegada)
         camposAtualizados.push(`Horário previsto de chegada: ${args.horario_previsto_chegada}`);
       if (cleanPlate) {
@@ -1546,7 +1592,7 @@ export const atualizarDadosHospedeTool = {
         camposAtualizados.push(`Acompanhantes: ${args.nomes_acompanhantes.join(', ')}`);
       }
 
-      // CENÁRIO 1: Cliente enviou dados (ex: placa/carro) ANTES de ter uma reserva criada para ele
+      // CENÁRIO 1: Cliente enviou dados (ex: placa/carro/e-mail) ANTES de ter uma reserva criada para ele
       if (!reserva) {
         if (camposAtualizados.length === 0) {
           const msg =
@@ -1583,7 +1629,7 @@ export const atualizarDadosHospedeTool = {
               name: context.hospede?.nome || 'Cliente WhatsApp',
               fullName: context.hospede?.nome || 'Cliente WhatsApp',
               phone: cleanPhone,
-              email: args.email ? String(args.email).trim().toLowerCase() : '',
+              email: validatedEmail || '',
               document: args.cpf_cnpj ? String(args.cpf_cnpj).replace(/\D+/g, '') : '',
               createdAt: new Date().toISOString(),
             };
@@ -1595,7 +1641,7 @@ export const atualizarDadosHospedeTool = {
               guestRec.vehicle = vehiclePayload;
             }
             if (args.cpf_cnpj) guestRec.document = String(args.cpf_cnpj).replace(/\D+/g, '');
-            if (args.email) guestRec.email = String(args.email).trim().toLowerCase();
+            if (validatedEmail) guestRec.email = validatedEmail;
           }
 
           if (vehiclePayload && Array.isArray(db.pendingPreReservationProposals)) {
@@ -1613,7 +1659,7 @@ export const atualizarDadosHospedeTool = {
 
         const msg =
           `Confirme com cordialidade que os dados informados (${camposAtualizados.join(' | ')}) já foram salvos e vinculados ao seu número de WhatsApp. ` +
-          `Explique que, assim que a reserva dele for criada no sistema, esses dados do veículo/cadastro serão anexados automaticamente à reserva e à liberação da garagem!`;
+          `Explique que, assim que a reserva dele for criada no sistema, esses dados serão anexados automaticamente!`;
 
         return {
           status: 'SUCESSO_EXECUTADO',
@@ -1630,7 +1676,7 @@ export const atualizarDadosHospedeTool = {
 
       if (camposAtualizados.length === 0) {
         const msg =
-          'Pergunte educadamente ao hóspede qual informação ele gostaria de cadastrar ou atualizar na reserva (ex: placa/modelo/cor do veículo, horário de chegada, CPF, e-mail ou nome de acompanhante).';
+          'Pergunte educadamente ao hóspede qual informação ele gostaria de cadastrar ou atualizar na reserva (ex: e-mail, placa/modelo/cor do veículo, horário de chegada, CPF ou nome de acompanhante).';
         return {
           status: 'BLOQUEADO_PELA_REGRA',
           codigo_regra_bloqueio: 'NENHUM_CAMPO_INFORMADO',
@@ -1639,8 +1685,15 @@ export const atualizarDadosHospedeTool = {
         };
       }
 
+      const baseUrl =
+        db?.settings?.baseUrl ||
+        (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
+        'https://corpflats.com.br';
+      const linkPreCheckin = `${baseUrl}/pre-checkin/${reserva.id}`;
+
       let garageDispatchResult = null;
       let jaTinhaDisparadoGatilhos = false;
+      let emailResendSummary = null;
 
       if (Array.isArray(db?.reservations)) {
         const targetRes = db.reservations.find((r) => matchesSessionReservation(r, reserva));
@@ -1656,7 +1709,6 @@ export const atualizarDadosHospedeTool = {
             targetRes.guestCpf = docClean;
             targetRes.guestDocument = docClean;
           }
-          if (args.email) targetRes.guestEmail = String(args.email).trim().toLowerCase();
           if (args.horario_previsto_chegada)
             targetRes.estimatedArrivalTime = args.horario_previsto_chegada;
           if (Array.isArray(args.nomes_acompanhantes) && args.nomes_acompanhantes.length > 0) {
@@ -1695,18 +1747,25 @@ export const atualizarDadosHospedeTool = {
             }
           }
 
-          targetRes.updatedAt = new Date().toISOString();
-          if (typeof context.runtime?.saveDatabase === 'function') {
-            await context.runtime.saveDatabase();
+          if (validatedEmail) {
+            const guestIdx = Number(targetRes.emailCorrectionRequest?.guestIndex) || 1;
+            emailResendSummary = await updateGuestEmailAndResendRecentPending({
+              db,
+              saveDatabase: context.runtime?.saveDatabase,
+              reservation: targetRes,
+              guestIndex: guestIdx,
+              newEmail: validatedEmail,
+              maxAgeHours: 72,
+              baseUrl,
+            });
+          } else {
+            targetRes.updatedAt = new Date().toISOString();
+            if (typeof context.runtime?.saveDatabase === 'function') {
+              await context.runtime.saveDatabase();
+            }
           }
         }
       }
-
-      const baseUrl =
-        db?.settings?.baseUrl ||
-        (typeof process !== 'undefined' && process.env?.SERVER_BASE_URL) ||
-        'https://corpflats.com.br';
-      const linkPreCheckin = `${baseUrl}/pre-checkin/${reserva.id}`;
 
       let detalheGaragem = '';
       if (cleanPlate) {
@@ -1723,16 +1782,43 @@ export const atualizarDadosHospedeTool = {
         }
       }
 
+      let detalheEmail = '';
+      if (validatedEmail && emailResendSummary) {
+        if (emailResendSummary.resentCount > 0) {
+          detalheEmail =
+            ` Informe com cordialidade que o e-mail já foi alterado no sistema para *${validatedEmail}* e que ` +
+            `${emailResendSummary.resentCount} e-mail(s) pendente(s) recente(s) (${emailResendSummary.resentSubjects.join(', ')}) já foram reenviados agora mesmo!`;
+        } else if (emailResendSummary.skippedTooOldCount > 0) {
+          detalheEmail =
+            ` Informe que o e-mail já foi alterado no sistema para *${validatedEmail}* para os próximos envios (mensagens antigas anteriores não foram reenviadas por já não serem recentes).`;
+        } else if (emailResendSummary.updatedScheduledCount > 0) {
+          detalheEmail =
+            ` Informe que o e-mail já foi alterado no sistema para *${validatedEmail}* e que os próximos envios programados da estadia já seguirão para este novo endereço.`;
+        } else {
+          detalheEmail =
+            ` Informe que o e-mail já foi alterado com sucesso no sistema para *${validatedEmail}*.`;
+        }
+      }
+
+      const preCheckinSuffix =
+        reserva.status_pre_checkin_fnrh === 'CONCLUIDO'
+          ? ''
+          : ` Caso o hóspede ainda precise preencher a FNRH e enviar a foto do documento/assinatura digital do pré-check-in, o link oficial é: ${linkPreCheckin}.`;
+
       const msg =
         `Confirme com cordialidade que os dados da reserva *${reserva.id}* (${reserva.nome_imovel}) foram atualizados no sistema: ` +
-        `${camposAtualizados.join(' | ')}.${detalheGaragem} ` +
-        `Caso o hóspede precise preencher a FNRH e enviar a foto do documento/assinatura digital do pré-check-in, envie sempre o link oficial: ${linkPreCheckin}.`;
+        `${camposAtualizados.join(' | ')}.${detalheGaragem}${detalheEmail}${preCheckinSuffix}`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
         dados: {
           reserva_id: reserva.id,
           campos_atualizados: camposAtualizados,
+          email_atualizado: validatedEmail || undefined,
+          emails_pendentes_reenviados: emailResendSummary?.resentCount ?? 0,
+          assuntos_reenviados: emailResendSummary?.resentSubjects ?? [],
+          agendamentos_atualizados: emailResendSummary?.updatedScheduledCount ?? 0,
+          antigos_ignorados: emailResendSummary?.skippedTooOldCount ?? 0,
           garagem_reenviada: Boolean(cleanPlate && jaTinhaDisparadoGatilhos),
           garagem_status: garageDispatchResult || null,
           link_pre_checkin: linkPreCheckin,
@@ -4855,8 +4941,8 @@ export function buildStateRoutedPrompt(context, manualImovel = '') {
     jsonContext,
     ``,
     `# DIRETRIZES OBRIGATÓRIAS DE EXECUÇÃO E USO DE FERRAMENTAS (TOOL CALLING)`,
-    `1. **Intenção -> Ferramenta:** Sempre que o hóspede pedir algo que envolva datas (\`alterar_datas_reserva\`, \`estender_estadia\`), horários (\`solicitar_early_checkin\`, \`solicitar_late_checkout\`), disponibilidade (\`consultar_disponibilidade\`), valores/descontos (\`calcular_orcamento\`), fotos (\`enviar_midia_unidade\`), reserva (\`gerar_link_reserva\`), veículo/cadastro (\`atualizar_dados_hospede\`), cartão NFC/acesso (\`resolver_problema_cartao_nfc\`), visitas (\`autorizar_visita_temporaria\`), cancelamento (\`processar_cancelamento\`), governança (\`solicitar_limpeza_extra\`), manutenção (\`abrir_chamado_manutencao\`), achados e perdidos (\`consultar_achados_e_perdidos\`) ou nota fiscal/recibo (\`gerenciar_nota_fiscal_nfse\`), chame a ferramenta adequada antes de responder.`,
-    `2. **Continuidade Multi-Turn (Respostas Curtas do Hóspede):** Quando o hóspede responder a uma pergunta anterior sua na conversa (ex: você perguntou "até que data gostaria de ficar?" e ele respondeu "até amanhã só" ou "mais 1 dia"), mantenha 100% do contexto, converta a expressão relativa usando a data de Hoje (${todayIso}) -> Amanhã (${tomorrowIso}) e acione IMEDIATAMENTE a ferramenta correspondente (ex: \`estender_estadia\` com \`nova_data_checkout: "${tomorrowIso}"\` e \`confirmacao_hospede: false\`).`,
+    `1. **Intenção -> Ferramenta:** Sempre que o hóspede pedir algo que envolva datas (\`alterar_datas_reserva\`, \`estender_estadia\`), horários (\`solicitar_early_checkin\`, \`solicitar_late_checkout\`), disponibilidade (\`consultar_disponibilidade\`), valores/descontos (\`calcular_orcamento\`), fotos (\`enviar_midia_unidade\`), reserva (\`gerar_link_reserva\`), veículo/cadastro/correção de e-mail (\`atualizar_dados_hospede\`), cartão NFC/acesso (\`resolver_problema_cartao_nfc\`), visitas (\`autorizar_visita_temporaria\`), cancelamento (\`processar_cancelamento\`), governança (\`solicitar_limpeza_extra\`), manutenção (\`abrir_chamado_manutencao\`), achados e perdidos (\`consultar_achados_e_perdidos\`) ou nota fiscal/recibo (\`gerenciar_nota_fiscal_nfse\`), chame a ferramenta adequada antes de responder.`,
+    `2. **Continuidade Multi-Turn (Respostas Curtas do Hóspede):** Quando o hóspede responder a uma pergunta anterior sua na conversa (ex: você perguntou "até que data gostaria de ficar?" e ele respondeu "até amanhã só", ou o sistema avisou sobre \`alerta_email_incorreto\` e o hóspede enviou o e-mail correto ou confirmou \`email_sugerido\` dizendo "sim, é esse mesmo"), mantenha 100% do contexto e acione IMEDIATAMENTE a ferramenta correspondente (\`estender_estadia\` ou \`atualizar_dados_hospede\` passando \`email\`).`,
     `3. **Proibição de Repetir "Olá, [Nome]!" e Apresentação em Conversa em Andamento:** Se já houver mensagens recentes trocadas no histórico da conversa, NUNCA repita "Olá, [Nome]!", "Bom dia, [Nome]!" e NUNCA se apresente novamente dizendo "Sou a Sofia, concierge virtual da CorpFlats". Continue o diálogo diretamente do ponto onde parou, como uma pessoa real no WhatsApp.`,
     `4. **Acesso via Cartão NFC (Zero Senha de Porta):** Na CorpFlats (Soho Residence) o acesso aos flats é feito exclusivamente por **Cartão NFC** retirado na recepção 24h. NUNCA mencione "senha da porta" ou "senha da fechadura eletrônica".`,
     `5. **Simulação antes da Efetivação:** Para alterações que envolvam custos ou mudanças de data, chame a ferramenta primeiro em modo de simulação/consulta (\`confirmacao_hospede: false\` ou \`efetivar_alteracao: false\`), informe as condições ao hóspede e só efetive após o "sim" explícito dele.`,

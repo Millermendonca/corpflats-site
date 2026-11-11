@@ -48,6 +48,13 @@ export interface ReservaAtivaSessao {
   senha_fechadura?: string;
   wifi_rede?: string;
   wifi_senha?: string;
+  email_cadastrado?: string | null;
+  alerta_email_incorreto?: {
+    status: 'AGUARDANDO_CORRECAO';
+    email_invalido: string;
+    email_sugerido?: string | null;
+    solicitado_em?: string | null;
+  } | null;
   oferta_domingo_sem_pressa?: OfertaDomingoSemPressaSessao;
 }
 
@@ -68,6 +75,7 @@ export interface ContextoSessaoInjetado {
     saveDatabase?: () => void | Promise<void>;
     sendZapiMessage?: (phone: string, text: string, options?: any) => Promise<any>;
     createNotification?: (notif: any) => void | Promise<void>;
+    triggerImmediateWhatsApp?: (...args: any[]) => Promise<any>;
     conversation?: any;
   };
 }

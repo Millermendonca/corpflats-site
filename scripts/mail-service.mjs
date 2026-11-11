@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import dns from "dns";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -1973,23 +1974,47 @@ export function sendEmailAsync({
 
   // Insere no início do histórico da reserva
   db.reservationCommunications.unshift(logEntry);
+
+  // Se o e-mail já foi identificado como inválido no check-in, registra como falha pendente de correção sem disparar SMTP (protege reputação do domínio)
+  if (metadata?.awaitingEmailCorrection === true) {
+    logEntry.status = "failed";
+    logEntry.metadata.error = metadata.invalidEmailReason || "E-mail inválido informado no check-in (aguardando correção do hóspede via WhatsApp).";
+    logEntry.metadata.failedAt = now;
+    if (typeof saveDatabase === "function") saveDatabase();
+    if (typeof onDeliveryResult === "function") {
+      setImmediate(() => {
+        try {
+          onDeliveryResult({
+            success: false,
+            status: "failed",
+            error: logEntry.metadata.error,
+            failedAt: now,
+            communicationId: logEntry.id
+          });
+        } catch (_) {}
+      });
+    }
+    return logEntry;
+  }
+
   if (typeof saveDatabase === "function") saveDatabase();
 
   // Execução assíncrona não bloqueante
   setImmediate(async () => {
     try {
       const config = getSmtpConfig(db, overrides);
-      if (!config.user || !config.pass) {
+      const customTransporter = overrides?.transporter || null;
+      if (!customTransporter && (!config.user || !config.pass)) {
         throw new Error("SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).");
       }
 
-      const transporter = createTransporter(db, overrides);
+      const transporter = customTransporter || createTransporter(db, overrides);
       if (!transporter) {
         throw new Error("Não foi possível criar transporte SMTP.");
       }
 
       const mailOptions = {
-        from: `"${config.fromName}" <${config.fromEmail}>`,
+        from: `"${config.fromName || "CorpFlats"}" <${config.fromEmail || config.user || "contato@corpflats.com.br"}>`,
         to: recipient.trim(),
         ...(cc ? { cc: String(cc).trim() } : {}),
         ...(bcc ? { bcc: String(bcc).trim() } : {}),
@@ -2032,6 +2057,28 @@ export function sendEmailAsync({
             communicationId: logEntry.id
           });
         } catch (_) {}
+      }
+      // Se a rejeição SMTP indicar endereço/domínio de destinatário inexistente em e-mail de hóspede, avisa via WhatsApp
+      if (isRecipientDeliverySmtpError(err) && db && reservationId && String(reservationId) !== "0") {
+        try {
+          const resKeyUpper = String(reservationId).trim().toUpperCase();
+          const matchedRes = (db.reservations || []).find(
+            r => r && (String(r.id) === String(reservationId) || String(r.code || "").trim().toUpperCase() === resKeyUpper)
+          );
+          if (matchedRes && !isInternalOrThirdPartyOperationalEmail(logEntry, matchedRes, db)) {
+            await notifyGuestInvalidEmailViaWhatsApp({
+              db,
+              saveDatabase,
+              reservation: matchedRes,
+              invalidEmail: String(recipient || "").trim().toLowerCase(),
+              reason: err.message || String(err),
+              source: "smtp_rejection",
+              overrides
+            });
+          }
+        } catch (alertErr) {
+          console.warn("[MailService] Falha ao notificar hóspede sobre erro de e-mail via WhatsApp:", alertErr?.message || alertErr);
+        }
       }
     } finally {
       if (typeof saveDatabase === "function") saveDatabase();
@@ -2480,4 +2527,1241 @@ export async function ensureReservationAttachmentsReady({ reservation, guest = n
 
   return resolveReservationAttachments({ reservation, guest, db });
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VALIDAÇÃO DE E-MAIL DE HÓSPEDE, AVISO VIA WHATSAPP E REENVIO DE PENDENTES
+// ══════════════════════════════════════════════════════════════════════════════
+
+const COMMON_EMAIL_DOMAIN_TYPOS = {
+  "gamil.com": "gmail.com",
+  "gmial.com": "gmail.com",
+  "gnail.com": "gmail.com",
+  "gmal.com": "gmail.com",
+  "gmai.com": "gmail.com",
+  "gmail.con": "gmail.com",
+  "gmail.co": "gmail.com",
+  "gmail.cm": "gmail.com",
+  "gmail.om": "gmail.com",
+  "gmail.cmo": "gmail.com",
+  "gmail.cim": "gmail.com",
+  "gmail.vom": "gmail.com",
+  "gmail.xom": "gmail.com",
+  "gmail.comm": "gmail.com",
+  "gmail.com.br": "gmail.com",
+  "gmaill.com": "gmail.com",
+  "gimail.com": "gmail.com",
+  "gemail.com": "gmail.com",
+  "gmailcom": "gmail.com",
+  "hotmal.com": "hotmail.com",
+  "hotmai.com": "hotmail.com",
+  "hotnail.com": "hotmail.com",
+  "hotmial.com": "hotmail.com",
+  "homtail.com": "hotmail.com",
+  "htmail.com": "hotmail.com",
+  "hotmail.con": "hotmail.com",
+  "hotmail.cm": "hotmail.com",
+  "hotmail.comm": "hotmail.com",
+  "hotmailcom": "hotmail.com",
+  "hotmal.com.br": "hotmail.com.br",
+  "hotmai.com.br": "hotmail.com.br",
+  "hotnail.com.br": "hotmail.com.br",
+  "hotmail.con.br": "hotmail.com.br",
+  "outlok.com": "outlook.com",
+  "oulook.com": "outlook.com",
+  "outllok.com": "outlook.com",
+  "outloook.com": "outlook.com",
+  "outlook.con": "outlook.com",
+  "outlook.cm": "outlook.com",
+  "outlook.comm": "outlook.com",
+  "outlookcom": "outlook.com",
+  "outlok.com.br": "outlook.com.br",
+  "oulook.com.br": "outlook.com.br",
+  "outlook.con.br": "outlook.com.br",
+  "yaho.com": "yahoo.com",
+  "yahooo.com": "yahoo.com",
+  "yhoo.com": "yahoo.com",
+  "yahoo.con": "yahoo.com",
+  "yahoo.cm": "yahoo.com",
+  "yahoo.comm": "yahoo.com",
+  "yaho.com.br": "yahoo.com.br",
+  "yahooo.com.br": "yahoo.com.br",
+  "yahoo.con.br": "yahoo.com.br",
+  "iclod.com": "icloud.com",
+  "icoud.com": "icloud.com",
+  "iclould.com": "icloud.com",
+  "icloud.con": "icloud.com",
+  "icloud.cm": "icloud.com",
+  "icloud.com.br": "icloud.com",
+  "uol.con.br": "uol.com.br",
+  "uoll.com.br": "uol.com.br",
+  "bol.con.br": "bol.com.br",
+  "boll.com.br": "bol.com.br",
+  "terra.con.br": "terra.com.br",
+  "globo.con": "globo.com"
+};
+
+const KNOWN_VALID_EMAIL_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "hotmail.com",
+  "hotmail.com.br",
+  "outlook.com",
+  "outlook.com.br",
+  "live.com",
+  "msn.com",
+  "yahoo.com",
+  "yahoo.com.br",
+  "ymail.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "uol.com.br",
+  "bol.com.br",
+  "terra.com.br",
+  "globo.com",
+  "ig.com.br",
+  "r7.com",
+  "proton.me",
+  "protonmail.com",
+  "zoho.com",
+  "corpflats.com.br"
+]);
+
+const domainDnsCache = new Map();
+const inFlightInvalidEmailAlerts = new Set();
+
+function withTimeout(promise, ms) {
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error("DNS_TIMEOUT");
+      err.code = "ETIMEOUT";
+      reject(err);
+    }, ms);
+    if (timer && typeof timer.unref === "function") timer.unref();
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+/**
+ * Valida sintaxe, erros comuns de digitação de domínio e registros DNS (MX / A / AAAA)
+ * do endereço de e-mail informado pelo hóspede.
+ */
+export async function validateGuestEmailAddress(rawEmail, options = {}) {
+  const {
+    checkDns = true,
+    timeoutMs = 2500,
+    stripTrailingPunctuation = false,
+    dnsResolver = null
+  } = options;
+
+  let cleaned = String(rawEmail ?? "")
+    .trim()
+    .replace(/^[\s"'<>]+|[\s"'<>]+$/g, "");
+  if (stripTrailingPunctuation) {
+    cleaned = cleaned.replace(/[.,;:!?]+$/g, "").trim();
+  }
+  const normalizedEmail = cleaned.toLowerCase();
+
+  if (!normalizedEmail) {
+    return {
+      valid: false,
+      isEmpty: true,
+      normalizedEmail: "",
+      reason: "empty",
+      message: "Nenhum endereço de e-mail foi informado.",
+      suggestedEmail: null
+    };
+  }
+
+  if (/\s/.test(normalizedEmail)) {
+    const compact = normalizedEmail.replace(/\s+/g, "");
+    const compactCheck = compact.includes("@") ? await validateGuestEmailAddress(compact, { ...options, checkDns: false }) : null;
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: "contains_spaces",
+      message: "O endereço de e-mail contém espaços em branco.",
+      suggestedEmail: compactCheck?.valid ? compactCheck.normalizedEmail : (compactCheck?.suggestedEmail || null)
+    };
+  }
+
+  const atParts = normalizedEmail.split("@");
+  if (atParts.length !== 2) {
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: atParts.length < 2 ? "missing_at" : "multiple_at",
+      message: "Formato de e-mail inválido (verifique o símbolo '@').",
+      suggestedEmail: null
+    };
+  }
+
+  const [localPart, rawDomain] = atParts;
+
+  if (
+    !localPart ||
+    localPart.length > 64 ||
+    localPart.startsWith(".") ||
+    localPart.endsWith(".") ||
+    localPart.includes("..") ||
+    !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/i.test(localPart)
+  ) {
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: "invalid_local_part",
+      message: "A parte antes do '@' no e-mail possui caracteres ou formato inválido.",
+      suggestedEmail: null
+    };
+  }
+
+  if (!rawDomain || rawDomain.length > 253) {
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: "invalid_domain",
+      message: "O domínio após o '@' no e-mail está ausente ou inválido.",
+      suggestedEmail: null
+    };
+  }
+
+  // Checa erros conhecidos de digitação de domínio antes mesmo da checagem estrita de ponto
+  if (COMMON_EMAIL_DOMAIN_TYPOS[rawDomain]) {
+    const fixedDomain = COMMON_EMAIL_DOMAIN_TYPOS[rawDomain];
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: "domain_typo",
+      message: `O domínio '@${rawDomain}' parece conter um erro de digitação.`,
+      suggestedEmail: `${localPart}@${fixedDomain}`
+    };
+  }
+
+  if (rawDomain.endsWith(".") && rawDomain.length > 4) {
+    const trimmedDomain = rawDomain.replace(/\.+$/g, "");
+    const fixedDomain = COMMON_EMAIL_DOMAIN_TYPOS[trimmedDomain] || trimmedDomain;
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: "trailing_dot",
+      message: "O endereço de e-mail termina com um ponto indevido.",
+      suggestedEmail: trimmedDomain.includes(".") ? `${localPart}@${fixedDomain}` : null
+    };
+  }
+
+  if (
+    rawDomain.startsWith(".") ||
+    rawDomain.includes("..") ||
+    !rawDomain.includes(".")
+  ) {
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: "invalid_domain_format",
+      message: `O domínio '@${rawDomain}' está incompleto ou mal formatado.`,
+      suggestedEmail: null
+    };
+  }
+
+  // Checa sufixos de digitação comuns (.con, .con.br, .comm, .cmo)
+  if (/\.con\.br$/i.test(rawDomain)) {
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: "domain_typo",
+      message: `O domínio '@${rawDomain}' parece conter erro na terminação (.con.br).`,
+      suggestedEmail: `${localPart}@${rawDomain.replace(/\.con\.br$/i, ".com.br")}`
+    };
+  }
+  if (/\.(?:con|comm|cmo)$/i.test(rawDomain)) {
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: "domain_typo",
+      message: `O domínio '@${rawDomain}' parece conter erro na terminação.`,
+      suggestedEmail: `${localPart}@${rawDomain.replace(/\.(?:con|comm|cmo)$/i, ".com")}`
+    };
+  }
+
+  const domainLabels = rawDomain.split(".");
+  const tld = domainLabels[domainLabels.length - 1];
+  const allLabelsValid = domainLabels.every(lbl => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(lbl));
+  const tldValid = /^[a-z]{2,24}$/i.test(tld);
+
+  if (!allLabelsValid || !tldValid) {
+    return {
+      valid: false,
+      isEmpty: false,
+      normalizedEmail,
+      reason: "invalid_domain_syntax",
+      message: `O domínio '@${rawDomain}' possui formato inválido.`,
+      suggestedEmail: null
+    };
+  }
+
+  if (!checkDns) {
+    return {
+      valid: true,
+      isEmpty: false,
+      normalizedEmail,
+      reason: null,
+      message: null,
+      suggestedEmail: null
+    };
+  }
+
+  if (KNOWN_VALID_EMAIL_DOMAINS.has(rawDomain) && !dnsResolver) {
+    return {
+      valid: true,
+      isEmpty: false,
+      normalizedEmail,
+      reason: null,
+      message: null,
+      suggestedEmail: null
+    };
+  }
+
+  const nowMs = Date.now();
+  if (!dnsResolver && domainDnsCache.has(rawDomain)) {
+    const cached = domainDnsCache.get(rawDomain);
+    if (cached.expiresAt > nowMs) {
+      return cached.valid
+        ? { valid: true, isEmpty: false, normalizedEmail, reason: null, message: null, suggestedEmail: null }
+        : {
+            valid: false,
+            isEmpty: false,
+            normalizedEmail,
+            reason: cached.reason || "domain_not_found",
+            message: cached.message || `O domínio '@${rawDomain}' não existe ou não recebe e-mails.`,
+            suggestedEmail: null
+          };
+    }
+    domainDnsCache.delete(rawDomain);
+  }
+
+  const resolver = dnsResolver || dns.promises;
+
+  try {
+    const mxRecords = await withTimeout(resolver.resolveMx(rawDomain), timeoutMs);
+    if (Array.isArray(mxRecords)) {
+      const validMx = mxRecords.filter(r => r && typeof r.exchange === "string" && r.exchange.trim() && r.exchange.trim() !== ".");
+      if (validMx.length > 0) {
+        if (!dnsResolver) {
+          domainDnsCache.set(rawDomain, { valid: true, expiresAt: nowMs + 30 * 60 * 1000 });
+        }
+        return { valid: true, isEmpty: false, normalizedEmail, reason: null, message: null, suggestedEmail: null };
+      }
+      if (mxRecords.length > 0 && validMx.length === 0) {
+        const msg = `O domínio '@${rawDomain}' está configurado para não receber e-mails.`;
+        if (!dnsResolver) {
+          domainDnsCache.set(rawDomain, { valid: false, reason: "domain_null_mx", message: msg, expiresAt: nowMs + 10 * 60 * 1000 });
+        }
+        return { valid: false, isEmpty: false, normalizedEmail, reason: "domain_null_mx", message: msg, suggestedEmail: null };
+      }
+    }
+  } catch (mxErr) {
+    const code = String(mxErr?.code || "").toUpperCase();
+    if (code === "ENOTFOUND") {
+      const msg = `O domínio '@${rawDomain}' não existe.`;
+      if (!dnsResolver) {
+        domainDnsCache.set(rawDomain, { valid: false, reason: "domain_not_found", message: msg, expiresAt: nowMs + 10 * 60 * 1000 });
+      }
+      return { valid: false, isEmpty: false, normalizedEmail, reason: "domain_not_found", message: msg, suggestedEmail: null };
+    }
+    if (code === "ENODATA" || code === "ESERVFAIL") {
+      try {
+        const resolveAddrPromises = [];
+        if (typeof resolver.resolve4 === "function") resolveAddrPromises.push(resolver.resolve4(rawDomain));
+        if (typeof resolver.resolve6 === "function") resolveAddrPromises.push(resolver.resolve6(rawDomain));
+        if (resolveAddrPromises.length > 0) {
+          const ips = await withTimeout(Promise.any(resolveAddrPromises), timeoutMs);
+          if (Array.isArray(ips) && ips.length > 0) {
+            if (!dnsResolver) {
+              domainDnsCache.set(rawDomain, { valid: true, expiresAt: nowMs + 30 * 60 * 1000 });
+            }
+            return { valid: true, isEmpty: false, normalizedEmail, reason: null, message: null, suggestedEmail: null };
+          }
+        }
+        const msg = `O domínio '@${rawDomain}' não possui servidor de e-mail válido.`;
+        if (!dnsResolver) {
+          domainDnsCache.set(rawDomain, { valid: false, reason: "domain_no_mail_server", message: msg, expiresAt: nowMs + 10 * 60 * 1000 });
+        }
+        return { valid: false, isEmpty: false, normalizedEmail, reason: "domain_no_mail_server", message: msg, suggestedEmail: null };
+      } catch (addrErr) {
+        const subErrors = Array.isArray(addrErr?.errors) ? addrErr.errors : [addrErr];
+        const allDefinitiveNotFound = subErrors.length > 0 && subErrors.every(e => {
+          const c = String(e?.code || "").toUpperCase();
+          return c === "ENOTFOUND" || c === "ENODATA";
+        });
+        if (allDefinitiveNotFound) {
+          const msg = `O domínio '@${rawDomain}' não existe ou não possui servidor de e-mail.`;
+          if (!dnsResolver) {
+            domainDnsCache.set(rawDomain, { valid: false, reason: "domain_no_mail_server", message: msg, expiresAt: nowMs + 10 * 60 * 1000 });
+          }
+          return { valid: false, isEmpty: false, normalizedEmail, reason: "domain_no_mail_server", message: msg, suggestedEmail: null };
+        }
+      }
+    }
+    // Em falhas transitórias de rede/timeout DNS, opera em fail-open para nunca acusar falso positivo
+    return { valid: true, isEmpty: false, normalizedEmail, reason: null, message: null, suggestedEmail: null, dnsSkipped: true };
+  }
+
+  return { valid: true, isEmpty: false, normalizedEmail, reason: null, message: null, suggestedEmail: null };
+}
+
+/**
+ * Identifica se um erro retornado pelo servidor SMTP refere-se a destinatário/domínio inválido
+ * (ignorando erros internos de autenticação/conexão do servidor de envio).
+ */
+export function isRecipientDeliverySmtpError(err) {
+  if (!err) return false;
+  const rawMsg = `${err.message || ""} ${err.response || ""} ${err.code || ""}`;
+  if (/SMTP n[aã]o configurado|Credenciais de SMTP|535\b|Authentication Failed|Access Restricted|ECONNREFUSED|ETIMEDOUT|ESOCKET/i.test(rawMsg)) {
+    return false;
+  }
+  const respCode = Number(err.responseCode || 0);
+  if ([501, 510, 511, 512, 513, 550, 551, 553].includes(respCode)) {
+    return true;
+  }
+  return /\b(?:550|551|553|501|511|5\.1\.1|5\.1\.2|5\.1\.3|5\.1\.10)\b|user unknown|invalid recipient|bad recipient|recipient address rejected|no such user|mailbox unavailable|address syntax|domain not found|does not exist|invalid mailbox|unrouteable address|ENOTFOUND/i.test(rawMsg);
+}
+
+/**
+ * Garante que comunicações internas (portaria, garagem, agências B2B) nunca sejam tratadas como e-mail pessoal do hóspede.
+ */
+export function isInternalOrThirdPartyOperationalEmail(commOrRecipient, reservation = null, db = null) {
+  const comm = typeof commOrRecipient === "object" && commOrRecipient !== null ? commOrRecipient : null;
+  const recipient = String(comm ? comm.recipient : commOrRecipient || "").trim().toLowerCase();
+  const trigger = String(comm?.metadata?.trigger || comm?.triggerEvent || "").trim().toLowerCase();
+  const recipientType = String(comm?.metadata?.recipientType || "").trim().toLowerCase();
+
+  if (recipientType === "reception" || recipientType === "garage" || recipientType === "agency" || recipientType === "requester") {
+    return true;
+  }
+
+  const internalTriggers = new Set([
+    "morning_checkin_07h",
+    "pre_checkin",
+    "re_signature_checkin",
+    "checkin_confirmed",
+    "self_checkin_arrival_fallback",
+    "reception_manual_checkin_fallback",
+    "pre_checkin_vehicle",
+    "sofia_whatsapp_vehicle",
+    "sofia_whatsapp_vehicle_retrigger",
+    "b2b_agency_credential_request",
+    "reservation_created_reception",
+    "pms_reservation_created",
+    "sameday_pms_created",
+    "sameday_direct_booking",
+    "pms_pre_reservation_confirmed",
+    "bot_commit_reservation",
+    "reservation_update",
+    "guest_portal_modify",
+    "portal_modify_settled"
+  ]);
+
+  if (internalTriggers.has(trigger) && comm?.metadata?.channel !== "whatsapp_mirror") {
+    return true;
+  }
+
+  const receptionEmail = String(
+    db?.settings?.receptionEmail ||
+    db?.settings?.buildingEmail ||
+    (typeof process !== "undefined" && process.env?.RECEPTION_EMAIL) ||
+    "soho@promenade.com.br"
+  ).trim().toLowerCase();
+
+  const garageEmail = String(
+    db?.settings?.garageEmail ||
+    (typeof process !== "undefined" && process.env?.GARAGE_EMAIL) ||
+    "promenadesoho@pfbestacionamentos.com.br"
+  ).trim().toLowerCase();
+
+  if (!recipient) return false;
+  if (recipient === receptionEmail || recipient === garageEmail) return true;
+  if (recipient.includes("promenade.com.br") || recipient.includes("pfbestacionamentos") || recipient.includes("b2breservas")) {
+    return true;
+  }
+
+  if (reservation) {
+    const agencyEmail = String(reservation.agencyEmail || reservation.b2bAgencyEmail || "").trim().toLowerCase();
+    if (agencyEmail && recipient === agencyEmail) return true;
+    const reqEmail = String(reservation.requesterInfo?.email || reservation.requesterEmail || "").trim().toLowerCase();
+    const guestEmail = String(reservation.guestEmail || "").trim().toLowerCase();
+    if (reqEmail && recipient === reqEmail && reqEmail !== guestEmail) return true;
+  }
+
+  return false;
+}
+
+function normalizePhoneSimple(phone) {
+  return String(phone || "").replace(/\D/g, "");
+}
+
+/**
+ * Envia um aviso amigável via WhatsApp ao hóspede informando que o e-mail preenchido no check-in/reserva
+ * está incorreto ou retornou erro, pedindo o e-mail correto para atualizar no sistema e reenviar pendentes.
+ */
+export async function notifyGuestInvalidEmailViaWhatsApp({
+  db = null,
+  saveDatabase = null,
+  sendZapiMessage: sendZapiMessageParam = null,
+  evaluateZapiChannelPolicy: evaluatePolicyParam = null,
+  appendMessageToConversation: appendConvParam = null,
+  createNotification: createNotificationParam = null,
+  reservation = null,
+  guestIndex = 1,
+  invalidEmail = "",
+  reason = "",
+  suggestedEmail = null,
+  source = "checkin",
+  overrides = {}
+} = {}) {
+  if (!db || !reservation) {
+    return { notified: false, reason: "missing_context" };
+  }
+
+  const normInvalid = String(invalidEmail || "").trim().toLowerCase();
+  if (!normInvalid) {
+    return { notified: false, reason: "empty_email" };
+  }
+
+  if (isInternalOrThirdPartyOperationalEmail(normInvalid, reservation, db)) {
+    return { notified: false, reason: "internal_email_ignored" };
+  }
+
+  const rawStatus = String(reservation.status || "").toLowerCase();
+  if (rawStatus === "cancelada" || rawStatus === "cancelled" || rawStatus === "expirada") {
+    return { notified: false, reason: "reservation_inactive" };
+  }
+
+  // Não notifica estadias encerradas há mais de 48h
+  const nowMs = Date.now();
+  const isCheckedOut = Boolean(
+    reservation.checkoutDone ||
+    reservation.checkoutCompleted ||
+    rawStatus === "concluida" ||
+    rawStatus === "checked_out" ||
+    rawStatus === "completed"
+  );
+  if (isCheckedOut) {
+    const coMs = new Date(
+      reservation.actualCheckoutAt ||
+      reservation.checkoutCompletedAt ||
+      (reservation.checkoutDate ? `${String(reservation.checkoutDate).slice(0, 10)}T15:00:00-03:00` : 0)
+    ).getTime();
+    if (!coMs || nowMs - coMs > 48 * 3600 * 1000) {
+      return { notified: false, reason: "reservation_checked_out_too_old" };
+    }
+  }
+
+  const safeIdx = Math.max(1, Number(guestIndex) || 1);
+  const targetGuest = Array.isArray(reservation.guests)
+    ? (reservation.guests.find(g => Number(g?.index) === safeIdx) || reservation.guests[safeIdx - 1] || null)
+    : null;
+
+  const currentGuestEmail = String(
+    (safeIdx === 1 ? reservation.guestEmail : targetGuest?.email) ||
+    targetGuest?.email ||
+    reservation.guestEmail ||
+    ""
+  ).trim().toLowerCase();
+
+  // Se o hóspede já atualizou o e-mail para outro endereço válido, ignora bounces atrasados do e-mail antigo
+  if (currentGuestEmail && currentGuestEmail !== normInvalid && !reservation.guestEmailInvalid) {
+    return { notified: false, reason: "email_already_corrected" };
+  }
+
+  // Se não veio sugestão pronta, verifica se há erro conhecido de digitação para sugerir
+  let finalSuggested = suggestedEmail || null;
+  if (!finalSuggested) {
+    try {
+      const quickCheck = await validateGuestEmailAddress(normInvalid, { checkDns: false });
+      if (quickCheck?.suggestedEmail) finalSuggested = quickCheck.suggestedEmail;
+    } catch (_) {}
+  }
+
+  const resCode = String(
+    reservation.code ||
+    reservation.reservationCode ||
+    (reservation.id != null ? `RES-${reservation.flatNumber || "00"}-${String(reservation.id).padStart(4, "0")}` : "RES")
+  );
+  const dedupKey = `${resCode.toUpperCase()}:${normInvalid}`;
+
+  if (inFlightInvalidEmailAlerts.has(dedupKey)) {
+    return { notified: false, reason: "in_flight_dedup" };
+  }
+
+  if (!Array.isArray(reservation.notifiedInvalidEmails)) {
+    reservation.notifiedInvalidEmails = [];
+  }
+  const alreadyNotified =
+    reservation.notifiedInvalidEmails.some(item => String(item?.email || "").toLowerCase() === normInvalid) ||
+    (
+      reservation.emailCorrectionRequest?.status === "awaiting_reply" &&
+      String(reservation.emailCorrectionRequest?.invalidEmail || "").toLowerCase() === normInvalid &&
+      Boolean(reservation.emailCorrectionRequest?.whatsappSent)
+    );
+
+  if (alreadyNotified) {
+    return { notified: false, reason: "already_notified" };
+  }
+
+  const rawPhone =
+    targetGuest?.whatsappPhone ||
+    targetGuest?.phone ||
+    targetGuest?.whatsapp ||
+    reservation.whatsappPhone ||
+    reservation.guestPhone ||
+    reservation.phone ||
+    "";
+  const cleanPhone = normalizePhoneSimple(rawPhone);
+  const nowIso = new Date().toISOString();
+
+  reservation.guestEmailInvalid = true;
+  reservation.emailCorrectionRequest = {
+    status: "awaiting_reply",
+    invalidEmail: normInvalid,
+    suggestedEmail: finalSuggested,
+    guestIndex: safeIdx,
+    reason: reason || "E-mail inválido ou com falha de entrega",
+    source,
+    notifiedAt: nowIso,
+    phone: cleanPhone || null,
+    whatsappSent: false
+  };
+
+  const notifyPanelFn = createNotificationParam || globalThis.__corpflatsCreateNotification;
+  const guestFullName = String(targetGuest?.name || reservation.guestName || "Hóspede").trim();
+  const primeiroNome = guestFullName.split(/\s+/)[0] || "Hóspede";
+  const flatNum = reservation.flatNumber || "S/N";
+
+  if (!cleanPhone || cleanPhone.length < 8) {
+    if (typeof notifyPanelFn === "function") {
+      try {
+        notifyPanelFn({
+          category: "pre_checkin",
+          title: `⚠️ E-mail Inválido no Check-in - Flat ${flatNum}`,
+          message: `${guestFullName} informou um e-mail inválido (${normInvalid}) e não possui telefone WhatsApp válido para solicitação automática.`,
+          severity: "warning",
+          metadata: { reservationId: reservation.id, reservationCode: resCode, invalidEmail: normInvalid },
+          targetUrl: "/reservas"
+        });
+      } catch (_) {}
+    }
+    if (typeof saveDatabase === "function") saveDatabase();
+    return { notified: false, reason: "missing_guest_phone" };
+  }
+
+  const sendZapiFn = sendZapiMessageParam || globalThis.__corpflatsSendZapiMessage;
+  const evalPolicyFn = evaluatePolicyParam || globalThis.__corpflatsEvaluateZapiChannelPolicy;
+  const appendConvFn = appendConvParam || globalThis.__corpflatsAppendMessageToConversation;
+
+  const hasCheckinDone = Boolean(
+    source === "checkin" ||
+    reservation.hasPreCheckin ||
+    reservation.preCheckinCompleted ||
+    reservation.fnhrCompleted ||
+    targetGuest?.hasCompletedCheckin
+  );
+
+  const sugestaoTrecho = finalSuggested ? ` Você quis dizer *${finalSuggested}*?` : "";
+  const messageText = hasCheckinDone
+    ? `Olá, ${primeiroNome}! Seu check-in digital do *Flat ${flatNum}* já está confirmado! ✅\n\n` +
+      `Notamos apenas que o e-mail preenchido no cadastro (*${normInvalid}*) está incorreto ou não pôde receber nossas mensagens.${sugestaoTrecho}\n\n` +
+      `Por favor, envie aqui mesmo o seu *e-mail correto* para já alterarmos no sistema e reenviarmos seus e-mails pendentes!`
+    : `Olá, ${primeiroNome}! Notamos que o e-mail informado na sua reserva do *Flat ${flatNum}* (*${normInvalid}*) está incorreto ou retornou erro de entrega.${sugestaoTrecho}\n\n` +
+      `Por favor, responda aqui mesmo com o seu *e-mail correto* para já atualizarmos no sistema e reenviarmos seus e-mails pendentes!`;
+
+  if (typeof evalPolicyFn === "function") {
+    try {
+      const policy = evalPolicyFn({
+        channelId: "guest_schedule",
+        phone: rawPhone,
+        message: messageText,
+        recipientRole: "guest",
+        triggerEvent: "invalid_email_correction"
+      });
+      if (policy && policy.allowed === false) {
+        console.warn(`[EmailCorrection] Disparo WhatsApp bloqueado pela política de canal para ${rawPhone}: ${policy.reason || policy.error}`);
+        if (typeof saveDatabase === "function") saveDatabase();
+        return { notified: false, reason: "channel_policy_blocked" };
+      }
+    } catch (_) {}
+  }
+
+  if (typeof sendZapiFn !== "function") {
+    if (typeof saveDatabase === "function") saveDatabase();
+    return { notified: false, reason: "zapi_sender_unavailable" };
+  }
+
+  inFlightInvalidEmailAlerts.add(dedupKey);
+  try {
+    const waResult = await sendZapiFn(rawPhone, messageText, {
+      channelId: "guest_schedule",
+      recipientRole: "guest",
+      triggerEvent: "invalid_email_correction",
+      title: "Confirmação de E-mail"
+    });
+
+    const sentOk = Boolean(waResult?.success !== false);
+    if (sentOk) {
+      reservation.emailCorrectionRequest.whatsappSent = true;
+      reservation.notifiedInvalidEmails.push({
+        email: normInvalid,
+        suggestedEmail: finalSuggested,
+        source,
+        reason: reason || "invalid_email",
+        notifiedAt: nowIso
+      });
+    }
+
+    if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];
+    db.whatsappHistory.push({
+      id: `auto_emailfix_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      reservationCode: resCode,
+      reservationId: reservation.id || null,
+      title: "Solicitação de Correção de E-mail",
+      guestName: guestFullName,
+      guestPhone: rawPhone,
+      recipientType: "guest",
+      recipientName: guestFullName,
+      triggerEvent: "invalid_email_correction",
+      message: messageText,
+      status: sentOk ? "sent" : "failed",
+      method: waResult?.method || "auto_invalid_email_check",
+      error: waResult?.error || null,
+      sentAt: nowIso
+    });
+
+    if (typeof appendConvFn === "function") {
+      try {
+        appendConvFn({
+          phone: rawPhone,
+          senderName: "Sofia • CorpFlats",
+          fromMe: true,
+          text: messageText,
+          type: "text",
+          triggerEvent: "invalid_email_correction",
+          reservationCode: resCode,
+          status: sentOk ? "delivered" : "failed",
+          timestamp: nowIso,
+          messageId: waResult?.messageId || `msg_emailfix_${Date.now()}`
+        });
+      } catch (_) {}
+    }
+
+    if (typeof notifyPanelFn === "function") {
+      try {
+        notifyPanelFn({
+          category: "pre_checkin",
+          title: `📧 E-mail Incorreto Detectado - Flat ${flatNum} (${primeiroNome})`,
+          message: `O e-mail '${normInvalid}' apresentou erro. Aviso enviado automaticamente via WhatsApp solicitando o e-mail correto.`,
+          severity: "info",
+          metadata: {
+            reservationId: reservation.id,
+            reservationCode: resCode,
+            flatNumber: flatNum,
+            invalidEmail: normInvalid,
+            suggestedEmail: finalSuggested,
+            source
+          },
+          targetUrl: "/whatsapp-chat"
+        });
+      } catch (_) {}
+    }
+
+    if (typeof saveDatabase === "function") saveDatabase();
+    return {
+      notified: sentOk,
+      phone: rawPhone,
+      message: messageText,
+      invalidEmail: normInvalid,
+      suggestedEmail: finalSuggested
+    };
+  } finally {
+    inFlightInvalidEmailAlerts.delete(dedupKey);
+  }
+}
+
+/**
+ * Atualiza o e-mail do hóspede em todas as entidades do sistema (reserva, ficha de hóspedes,
+ * CRM, portal do hóspede, frigobar, fila agendada) e reenvia automaticamente os e-mails pendentes
+ * ou com falha que não sejam antigos (janela padrão: até 72 horas).
+ */
+export async function updateGuestEmailAndResendRecentPending({
+  db = null,
+  saveDatabase = null,
+  reservation = null,
+  guestIndex = 1,
+  newEmail = "",
+  maxAgeHours = 72,
+  syncProfileFn = null,
+  ensureScheduledEmailsFn = null,
+  sendCheckinMirrorFn = null,
+  baseUrl = "",
+  skipPreCheckinMirrorSynthesis = false,
+  overrides = {}
+} = {}) {
+  const cleanNewEmail = String(newEmail || "").trim().toLowerCase();
+  if (!cleanNewEmail || !db) {
+    return {
+      ok: false,
+      error: "Dados insuficientes para atualizar o e-mail.",
+      resentCount: 0,
+      resentSubjects: [],
+      updatedScheduledCount: 0,
+      skippedTooOldCount: 0
+    };
+  }
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const nowMs = now.getTime();
+  const maxAgeMs = (Number(maxAgeHours) > 0 ? Number(maxAgeHours) : 72) * 3600 * 1000;
+  const safeIdx = Math.max(1, Number(guestIndex) || 1);
+
+  const previousInvalidEmails = new Set();
+  const collectOld = (val) => {
+    const v = String(val || "").trim().toLowerCase();
+    if (v && v !== cleanNewEmail) previousInvalidEmails.add(v);
+  };
+
+  if (reservation) {
+    collectOld(reservation.emailCorrectionRequest?.invalidEmail);
+    if (Array.isArray(reservation.notifiedInvalidEmails)) {
+      for (const item of reservation.notifiedInvalidEmails) collectOld(item?.email);
+    }
+    if (safeIdx === 1) collectOld(reservation.guestEmail);
+
+    if (Array.isArray(reservation.guests)) {
+      const targetG = reservation.guests.find(g => Number(g?.index) === safeIdx) || reservation.guests[safeIdx - 1];
+      if (targetG) {
+        collectOld(targetG.email);
+        targetG.email = cleanNewEmail;
+      } else if (safeIdx === 1 && reservation.guests[0]) {
+        collectOld(reservation.guests[0].email);
+        reservation.guests[0].email = cleanNewEmail;
+      }
+    }
+
+    if (safeIdx === 1 || !reservation.guestEmail || previousInvalidEmails.has(String(reservation.guestEmail || "").trim().toLowerCase())) {
+      collectOld(reservation.guestEmail);
+      reservation.guestEmail = cleanNewEmail;
+    }
+
+    // Atualiza e-mail fiscal/NFS-e na reserva apenas se era o próprio e-mail inválido anterior (preserva e-mail corporativo B2B distinto)
+    if (reservation.fiscalData?.email && previousInvalidEmails.has(String(reservation.fiscalData.email).trim().toLowerCase())) {
+      reservation.fiscalData.email = cleanNewEmail;
+    }
+    if (reservation.nfseRecipientEmail && previousInvalidEmails.has(String(reservation.nfseRecipientEmail).trim().toLowerCase())) {
+      reservation.nfseRecipientEmail = cleanNewEmail;
+    }
+
+    reservation.guestEmailInvalid = false;
+    if (reservation.emailCorrectionRequest) {
+      reservation.emailCorrectionRequest = {
+        ...reservation.emailCorrectionRequest,
+        status: "resolved",
+        correctedEmail: cleanNewEmail,
+        resolvedAt: nowIso
+      };
+    }
+
+    if (Array.isArray(reservation.auditLogs)) {
+      reservation.auditLogs.unshift({
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        action: "guest_email_corrected",
+        timestamp: nowIso,
+        actor: { name: "Sofia IA / Autoatendimento", role: "system", type: "ai" },
+        source: "WhatsApp / Check-in",
+        description: `E-mail do hóspede atualizado para ${cleanNewEmail}`,
+        changes: [
+          {
+            field: "guestEmail",
+            label: "E-mail do Hóspede",
+            oldValue: Array.from(previousInvalidEmails)[0] || "",
+            newValue: cleanNewEmail
+          }
+        ]
+      });
+    }
+
+    reservation.updatedAt = nowIso;
+  }
+
+  // Sincroniza CRM (db.guests) e Contas do Portal (db.guestAccounts)
+  const cleanDoc = String(reservation?.guestDocument || reservation?.guestCpf || "").replace(/\D+/g, "");
+  const cleanPhone = normalizePhoneSimple(reservation?.guestPhone || reservation?.whatsappPhone || "");
+
+  if (Array.isArray(db.guests)) {
+    for (const g of db.guests) {
+      if (!g) continue;
+      const gDoc = String(g.documentNumber || g.document || "").replace(/\D+/g, "");
+      const gPhone = normalizePhoneSimple(g.phone || g.whatsapp || "");
+      const gEmail = String(g.email || "").trim().toLowerCase();
+      const isSameGuest =
+        (reservation?.guestId && Number(g.id) === Number(reservation.guestId)) ||
+        (cleanDoc && cleanDoc.length >= 11 && gDoc === cleanDoc) ||
+        (cleanPhone && cleanPhone.length >= 8 && gPhone && (gPhone.endsWith(cleanPhone.slice(-8)) || cleanPhone.endsWith(gPhone.slice(-8)))) ||
+        (gEmail && previousInvalidEmails.has(gEmail));
+      if (isSameGuest && safeIdx === 1) {
+        g.email = cleanNewEmail;
+        g.updatedAt = nowIso;
+      }
+    }
+  }
+
+  if (Array.isArray(db.guestAccounts) && safeIdx === 1) {
+    const emailAlreadyTakenByOther = db.guestAccounts.some(acc => {
+      if (!acc || String(acc.email || "").trim().toLowerCase() !== cleanNewEmail) return false;
+      const accDoc = String(acc.cpf || acc.document || "").replace(/\D+/g, "");
+      if (cleanDoc && accDoc && accDoc !== cleanDoc) return true;
+      if (reservation?.guestId && acc.guestId && Number(acc.guestId) !== Number(reservation.guestId)) return true;
+      return false;
+    });
+    if (!emailAlreadyTakenByOther) {
+      for (const acc of db.guestAccounts) {
+        if (!acc) continue;
+        const accDoc = String(acc.cpf || acc.document || "").replace(/\D+/g, "");
+        const accPhone = normalizePhoneSimple(acc.phone || "");
+        const accEmail = String(acc.email || "").trim().toLowerCase();
+        const isSameAcc =
+          (reservation?.guestId && Number(acc.guestId) === Number(reservation.guestId)) ||
+          (cleanDoc && cleanDoc.length >= 11 && accDoc === cleanDoc) ||
+          (cleanPhone && cleanPhone.length >= 8 && accPhone && (accPhone.endsWith(cleanPhone.slice(-8)) || cleanPhone.endsWith(accPhone.slice(-8)))) ||
+          (accEmail && previousInvalidEmails.has(accEmail));
+        if (isSameAcc) {
+          acc.email = cleanNewEmail;
+          acc.updatedAt = nowIso;
+        }
+      }
+    }
+  }
+
+  // Invoca sincronizador bidirecional oficial do PMS quando disponível (propaga para reservas futuras ativas do mesmo titular)
+  const syncFn = syncProfileFn || globalThis.__corpflatsSyncBidirectionalGuestProfile;
+  if (typeof syncFn === "function" && reservation && safeIdx === 1) {
+    try {
+      syncFn({
+        guestId: reservation.guestId || null,
+        cpf: cleanDoc || undefined,
+        phone: reservation.guestPhone || undefined,
+        email: cleanNewEmail,
+        name: reservation.guestName || undefined,
+        sourceReservationId: reservation.id
+      });
+    } catch (_) {}
+  }
+
+  // Atualiza pedidos de frigobar vinculados à reserva que tinham o e-mail incorreto
+  if (reservation && Array.isArray(db.minibarOrders)) {
+    const resCodeUpper = String(reservation.code || "").trim().toUpperCase();
+    for (const order of db.minibarOrders) {
+      if (!order) continue;
+      const sameRes =
+        (reservation.id != null && String(order.reservationId) === String(reservation.id)) ||
+        (resCodeUpper && String(order.reservationCode || "").trim().toUpperCase() === resCodeUpper);
+      if (sameRes && previousInvalidEmails.has(String(order.customerEmail || "").trim().toLowerCase())) {
+        order.customerEmail = cleanNewEmail;
+      }
+    }
+  }
+
+  let resentCount = 0;
+  const resentSubjects = [];
+  let updatedScheduledCount = 0;
+  let skippedTooOldCount = 0;
+
+  if (!reservation) {
+    if (typeof saveDatabase === "function") await saveDatabase();
+    return {
+      ok: true,
+      newEmail: cleanNewEmail,
+      previousInvalidEmails: Array.from(previousInvalidEmails),
+      resentCount,
+      resentSubjects,
+      updatedScheduledCount,
+      skippedTooOldCount
+    };
+  }
+
+  const resIdStr = reservation.id != null ? String(reservation.id) : "";
+  const resCode = String(
+    reservation.code ||
+    reservation.reservationCode ||
+    (resIdStr ? `RES-${reservation.flatNumber || "00"}-${resIdStr}` : "")
+  );
+  const resCodeUpper = resCode.toUpperCase();
+
+  const rawStatus = String(reservation.status || "").toLowerCase();
+  const isCancelled = rawStatus === "cancelada" || rawStatus === "cancelled" || rawStatus === "expirada";
+  const isCheckedOut = Boolean(
+    reservation.checkoutDone ||
+    reservation.checkoutCompleted ||
+    rawStatus === "concluida" ||
+    rawStatus === "checked_out" ||
+    rawStatus === "completed"
+  );
+  const checkoutRefMs = isCheckedOut
+    ? new Date(
+        reservation.actualCheckoutAt ||
+        reservation.checkoutCompletedAt ||
+        (reservation.checkoutDate ? `${String(reservation.checkoutDate).slice(0, 10)}T15:00:00-03:00` : 0)
+      ).getTime()
+    : 0;
+
+  const ensureSchedFn = ensureScheduledEmailsFn || globalThis.__corpflatsEnsureScheduledEmails;
+  if (typeof ensureSchedFn === "function" && !isCancelled && !isCheckedOut && safeIdx === 1) {
+    try {
+      ensureSchedFn(reservation);
+    } catch (_) {}
+  }
+
+  const resentDedupKeys = new Set();
+  const skippedTooOldDedupKeys = new Set();
+
+  const isTriggerIrrelevantAfterCheckout = (trig = "", subj = "") => {
+    if (!isCheckedOut) return false;
+    if (checkoutRefMs && nowMs - checkoutRefMs > 48 * 3600 * 1000) return true;
+    const t = String(trig || "").toLowerCase();
+    const s = String(subj || "").toLowerCase();
+    if (
+      t === "checkin_welcome" ||
+      t === "pre_checkin_completed" ||
+      t === "room_ready" ||
+      t === "breakfast_reminder" ||
+      t === "reservation_created" ||
+      t === "sameday_reservation" ||
+      s.includes("instruções de chegada") ||
+      s.includes("check-in online concluído")
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  // 1. Fila de E-mails Agendados (db.emailQueue)
+  if (Array.isArray(db.emailQueue) && !isCancelled) {
+    for (const q of db.emailQueue) {
+      if (!q || q.status === "cancelled" || q.status === "sent" || q.status === "expired") continue;
+      const qCode = String(q.reservationCode || "").trim().toUpperCase();
+      const qId = q.reservationId != null ? String(q.reservationId) : "";
+      const isMatch = (resCodeUpper && (qCode === resCodeUpper || qId.toUpperCase() === resCodeUpper)) || (resIdStr && qId === resIdStr);
+      if (!isMatch) continue;
+
+      const schedMs = q.scheduledFor ? new Date(q.scheduledFor).getTime() : NaN;
+      if (!Number.isNaN(schedMs) && schedMs > nowMs) {
+        if (String(q.recipient || "").trim().toLowerCase() !== cleanNewEmail || q.status === "failed") {
+          q.recipient = cleanNewEmail;
+          q.status = "pending";
+          q.error = null;
+          q.updatedAt = nowIso;
+          updatedScheduledCount++;
+        }
+      } else {
+        const refMs = !Number.isNaN(schedMs) ? schedMs : new Date(q.createdAt || 0).getTime();
+        const dedupKey = String(q.triggerEvent || q.subject || "").trim().toLowerCase();
+        if (isTriggerIrrelevantAfterCheckout(q.triggerEvent, q.subject)) {
+          q.status = "cancelled";
+          q.error = "Cancelado: estadia já encerrada";
+          continue;
+        }
+        if (refMs > 0 && nowMs - refMs <= maxAgeMs) {
+          q.recipient = cleanNewEmail;
+          q.status = "sent";
+          q.sentAt = nowIso;
+          q.error = null;
+          sendEmailAsync({
+            db,
+            saveDatabase,
+            reservationId: resCode || resIdStr,
+            recipient: cleanNewEmail,
+            subject: q.subject,
+            bodyHtml: q.bodyHtml,
+            bodyText: q.bodyText || "",
+            metadata: {
+              isAutomated: true,
+              trigger: q.triggerEvent || "scheduled_queue_resend",
+              resentAfterEmailCorrection: true
+            },
+            overrides
+          });
+          if (dedupKey) resentDedupKeys.add(dedupKey);
+          resentCount++;
+          resentSubjects.push(q.subject);
+        } else {
+          q.status = "expired";
+          q.error = "Não reenviado após correção de e-mail: agendamento antigo";
+          if (dedupKey && !skippedTooOldDedupKeys.has(dedupKey)) {
+            skippedTooOldDedupKeys.add(dedupKey);
+            skippedTooOldCount++;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Histórico de Comunicações Pendentes / Com Falha / Devolvidas (db.reservationCommunications)
+  if (Array.isArray(db.reservationCommunications) && !isCancelled) {
+    const alreadySentKeysToNewEmail = new Set();
+    const candidates = [];
+
+    for (const c of db.reservationCommunications) {
+      if (!c || (c.direction && c.direction !== "outbound")) continue;
+      const cResUpper = String(c.reservation_id || "").trim().toUpperCase();
+      const sameRes = (resCodeUpper && cResUpper === resCodeUpper) || (resIdStr && String(c.reservation_id) === resIdStr);
+      if (!sameRes) continue;
+      if (isInternalOrThirdPartyOperationalEmail(c, reservation, db)) continue;
+
+      const dedupKey = String(c.metadata?.trigger || c.subject || "").trim().toLowerCase();
+      const cRecipient = String(c.recipient || "").trim().toLowerCase();
+
+      if (c.status === "sent" && cRecipient === cleanNewEmail && dedupKey) {
+        alreadySentKeysToNewEmail.add(dedupKey);
+        continue;
+      }
+
+      if (c.metadata?.supersededByResend) continue;
+
+      const createdMs = new Date(c.created_at || c.createdAt || c.metadata?.queuedAt || 0).getTime();
+      const isFailedOrPending =
+        c.status === "failed" ||
+        c.status === "bounced" ||
+        (c.status === "pending" && (c.metadata?.awaitingEmailCorrection || (createdMs > 0 && nowMs - createdMs > 15000)));
+
+      if (!isFailedOrPending) continue;
+
+      const belongsToGuestTarget =
+        previousInvalidEmails.has(cRecipient) ||
+        c.metadata?.awaitingEmailCorrection === true ||
+        (c.metadata?.channel === "whatsapp_mirror" && (c.metadata?.recipientType || "guest") === "guest");
+
+      if (belongsToGuestTarget) {
+        candidates.push({ comm: c, createdMs, dedupKey });
+      }
+    }
+
+    // Ordena do mais recente para o mais antigo para reenviar apenas a versão mais atual de cada assunto/gatilho
+    candidates.sort((a, b) => (b.createdMs || 0) - (a.createdMs || 0));
+
+    for (const { comm, createdMs, dedupKey } of candidates) {
+      if (dedupKey && (alreadySentKeysToNewEmail.has(dedupKey) || resentDedupKeys.has(dedupKey))) {
+        comm.metadata = { ...(comm.metadata || {}), supersededByResend: true };
+        continue;
+      }
+
+      if (isTriggerIrrelevantAfterCheckout(comm.metadata?.trigger, comm.subject)) {
+        comm.metadata = { ...(comm.metadata || {}), skippedResendReason: "post_checkout_irrelevant", skippedAt: nowIso };
+        continue;
+      }
+
+      if (!createdMs || Number.isNaN(createdMs) || nowMs - createdMs > maxAgeMs) {
+        comm.metadata = { ...(comm.metadata || {}), skippedResendReason: "too_old", skippedAt: nowIso };
+        if (!dedupKey || !skippedTooOldDedupKeys.has(dedupKey)) {
+          if (dedupKey) skippedTooOldDedupKeys.add(dedupKey);
+          skippedTooOldCount++;
+        }
+        continue;
+      }
+
+      const cleanMeta = { ...(comm.metadata || {}) };
+      delete cleanMeta.awaitingEmailCorrection;
+      delete cleanMeta.invalidEmailReason;
+      delete cleanMeta.error;
+      delete cleanMeta.failedAt;
+      delete cleanMeta.bouncedAt;
+      delete cleanMeta.supersededByResend;
+
+      comm.metadata = {
+        ...(comm.metadata || {}),
+        supersededByResend: true,
+        resentTo: cleanNewEmail,
+        resentAt: nowIso
+      };
+
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: resCode || resIdStr,
+        recipient: cleanNewEmail,
+        subject: comm.subject,
+        bodyHtml: comm.body,
+        metadata: {
+          ...cleanMeta,
+          resentAfterEmailCorrection: true,
+          resentFromCommunicationId: comm.id,
+          previousRecipient: comm.recipient
+        },
+        overrides
+      });
+
+      if (dedupKey) resentDedupKeys.add(dedupKey);
+      resentCount++;
+      resentSubjects.push(comm.subject);
+    }
+
+    // 3. Caso o check-in tenha sido concluído recentemente e ainda não exista e-mail de confirmação enviado/reenviado
+    if (
+      !skipPreCheckinMirrorSynthesis &&
+      !isCheckedOut &&
+      !resentDedupKeys.has("pre_checkin_completed") &&
+      !alreadySentKeysToNewEmail.has("pre_checkin_completed")
+    ) {
+      const hasCheckinDone = Boolean(
+        reservation.hasPreCheckin ||
+        reservation.preCheckinCompleted ||
+        reservation.fnhrCompleted
+      );
+      const checkinDoneMs = new Date(
+        reservation.checkedInAt ||
+        reservation.fnrhSignedAt ||
+        reservation.preCheckinCompletedAt ||
+        0
+      ).getTime();
+
+      if (hasCheckinDone && checkinDoneMs > 0 && nowMs - checkinDoneMs <= maxAgeMs) {
+        const sendMirrorFn = sendCheckinMirrorFn || globalThis.__corpflatsSendPreCheckinMirrorEmail;
+        if (typeof sendMirrorFn === "function") {
+          try {
+            const mirrorLog = sendMirrorFn(reservation, cleanNewEmail, safeIdx, baseUrl);
+            if (mirrorLog) {
+              resentDedupKeys.add("pre_checkin_completed");
+              resentCount++;
+              resentSubjects.push(mirrorLog.subject || "Confirmação de Check-in Online");
+            }
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
+  if (typeof saveDatabase === "function") {
+    await saveDatabase();
+  }
+
+  return {
+    ok: true,
+    newEmail: cleanNewEmail,
+    previousInvalidEmails: Array.from(previousInvalidEmails),
+    resentCount,
+    resentSubjects,
+    updatedScheduledCount,
+    skippedTooOldCount
+  };
+}
+
 
