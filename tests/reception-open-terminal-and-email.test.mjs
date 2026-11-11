@@ -813,6 +813,215 @@ describe("3. Endpoints Públicos /api/reception/* (Sem Login, Zero Vazamento Fin
     assertNoSensitiveLeak(pubCoBody, "POST /api/public/checkout");
   });
 
+  it("Regressões críticas: bloqueio de PUT/POST sem login para earlyCheckinAuthorized, claim-early-checkin sem forjar Admin, e-mail de alteração, redução de hóspedes (2->1) e nome editado no template", async () => {
+    // 1. PUT /api/pms/reservations/:id tentando auto-autorizar earlyCheckinAuthorized sem login DEVE falhar com 401
+    const unauthPutEarly = await fetch(`${BASE_URL}/api/pms/reservations/9002`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ earlyCheckinAuthorized: true, earlyCheckinTime: "08:00" })
+    });
+    assert.equal(unauthPutEarly.status, 401, "PUT /api/pms/reservations/:id alterando earlyCheckinAuthorized sem login deve retornar 401!");
+    assert.equal(Boolean(db.reservations.find(x => x.id === 9002)?.earlyCheckinAuthorized), false);
+
+    // 2. POST /api/pms/reservations tentando criar reserva já com earlyCheckinAuthorized: true sem login DEVE falhar com 401 (mesmo em datas livres) sem criar hóspede nem reserva
+    const resCountBefore = db.reservations.length;
+    const unauthPostEarly = await fetch(`${BASE_URL}/api/pms/reservations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        flatId: 101,
+        guestName: "Tentativa Bypass",
+        checkinDate: "2027-06-10",
+        checkoutDate: "2027-06-12",
+        channel: "site",
+        earlyCheckinAuthorized: true
+      })
+    });
+    assert.equal(unauthPostEarly.status, 401, "POST /api/pms/reservations com earlyCheckinAuthorized=true sem sessão Admin deve retornar 401!");
+    assert.equal(db.reservations.length, resCountBefore, "Nenhuma reserva deve ser criada em tentativa bloqueada");
+
+    // 3. E-mail de reserva alterada (troca de apartamento) com 0/1 ou needsReSignature NÃO pode mandar liberar entrada
+    const pendingTransferEmail = renderReservationUpdateEmail({
+      reservation: {
+        id: 9091,
+        code: "RES-TRFPEND",
+        flatNumber: "704",
+        channel: "booking",
+        guestName: "Roberto Troca",
+        guestCount: 1,
+        checkinDate: todayStr,
+        checkoutDate: tomorrowStr,
+        status: "confirmada",
+        fnhrCompleted: false,
+        needsReSignature: true
+      },
+      flat: { number: "704" },
+      changes: [{ field: "Apartamento", oldValue: "Flat 509", newValue: "Flat 704" }],
+      settings: db.settings
+    });
+    assert.equal(pendingTransferEmail.checkinStage, "awaiting");
+    assert.ok(pendingTransferEmail.html.includes("Aguardando check-in"));
+    assert.ok(pendingTransferEmail.html.includes("NOVO APARTAMENTO DA RESERVA (AGUARDANDO CHECK-IN DIGITAL)"));
+    assert.equal(pendingTransferEmail.html.includes("LIBERAR ENTRADA / NOVO APARTAMENTO AUTORIZADO"), false);
+
+    // 4. Horário agendado pela Administração (earlyCheckinAuthorized: true + earlyCheckinTime: "09:00") respeita a trava antes das 09:00 e libera às 09:05
+    const schedRes = {
+      id: 9092,
+      code: "RES-SCHED",
+      flatId: 101,
+      flatNumber: "509",
+      channel: "booking",
+      checkinDate: todayStr,
+      checkoutDate: tomorrowStr,
+      earlyCheckinAuthorized: true,
+      earlyCheckinTime: "09:00"
+    };
+    const bAt0830 = { date: todayStr, timeStr: "08:30", hour: 8, minute: 30 };
+    const eval0830 = evaluateReceptionEarlyCheckin(schedRes, {
+      bNow: bAt0830,
+      isRoomReady: true,
+      allCheckinDone: true,
+      someCheckinDone: true,
+      completedCount: 1,
+      totalCount: 1
+    });
+    assert.equal(eval0830.isTimeAllowed, false);
+    assert.equal(eval0830.effectiveAllowedTime, "09:00");
+    assert.ok(eval0830.earlyCheckinReason.includes("09:00"));
+
+    const bAt0905 = { date: todayStr, timeStr: "09:05", hour: 9, minute: 5 };
+    const eval0905 = evaluateReceptionEarlyCheckin(schedRes, {
+      bNow: bAt0905,
+      isRoomReady: true,
+      allCheckinDone: true,
+      someCheckinDone: true,
+      completedCount: 1,
+      totalCount: 1
+    });
+    assert.equal(eval0905.isTimeAllowed, true);
+    assert.equal(eval0905.canAuthorizeEntry, true);
+
+    // 5. Redução de quantidade de hóspedes (2 -> 1 viajante solo) com slot 2 residual pendente:
+    // E-mail, GET /api/reception/today e POST /api/reception/checkin/:id devem tratar como 1/1 concluído!
+    const soloResObj = {
+      id: 99010,
+      code: "RES-SOLO10",
+      flatId: 101,
+      flatNumber: "509",
+      channel: "site",
+      status: "confirmada",
+      guestName: "Helena Solo",
+      guestPhone: "5522997766554",
+      guestCount: 1,
+      adults: 1,
+      checkinDate: todayStr,
+      checkoutDate: tomorrowStr,
+      earlyCheckinAuthorized: true,
+      fnhrCompleted: true,
+      dailyRate: 489.97,
+      doorPassword: "DOOR-PASS-849201",
+      guests: [
+        {
+          index: 1,
+          name: "Helena Solo",
+          cpf: "111.222.333-44",
+          phone: "5522997766554",
+          hasCompletedCheckin: true,
+          fnrhDocumentUuid: "uuid-helena-solo"
+        },
+        {
+          index: 2,
+          name: "Hóspede 2",
+          cpf: "",
+          phone: "",
+          hasCompletedCheckin: false
+        }
+      ]
+    };
+    db.reservations.push(soloResObj);
+
+    const soloEmail = renderCheckinConfirmedEmail({
+      reservation: soloResObj,
+      flat: { number: "509" },
+      settings: db.settings
+    });
+    assert.equal(soloEmail.checkinStage, "completed");
+    assert.equal(soloEmail.completedGuests, 1);
+    assert.equal(soloEmail.expectedGuests, 1);
+    assert.equal(soloEmail.html.includes("Hóspede 2"), false);
+
+    const todayListRes = await fetch(`${BASE_URL}/api/reception/today`);
+    const todayList = await todayListRes.json();
+    const soloItem = todayList.arrivals.find(x => x.code === "RES-SOLO10");
+    assert.ok(soloItem, "RES-SOLO10 deve aparecer em arrivals");
+    assert.equal(soloItem.allCheckinDone, true);
+    assert.equal(soloItem.guests.length, 1);
+
+    const soloCheckinRes = await fetch(`${BASE_URL}/api/reception/checkin/99010`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    assert.equal(soloCheckinRes.status, 200, "Reserva solo (2->1) deve liberar check-in integral sem exigir confirmação parcial");
+    const soloCheckinBody = await soloCheckinRes.json();
+    assert.equal(soloCheckinBody.isPartialCheckin, false);
+    assertNoSensitiveLeak(soloCheckinBody, "POST /api/reception/checkin solo");
+
+    // 6. claim-early-checkin no Portal do Hóspede NUNCA deve forjar earlyCheckinAuthorized = true
+    db.reservations.push({
+      id: 99011,
+      code: "RES-COURTESY11",
+      flatId: 101,
+      flatNumber: "509",
+      channel: "site",
+      status: "confirmada",
+      guestName: "Lucas Cortesia",
+      guestCount: 1,
+      checkinDate: todayStr,
+      checkoutDate: tomorrowStr,
+      earlyCheckinAuthorized: false,
+      fnhrCompleted: true
+    });
+    const claimCourtesyRes = await fetch(`${BASE_URL}/api/pms/guest-portal/RES-COURTESY11/claim-early-checkin`, { method: "POST" });
+    const courtesyRecord = db.reservations.find(x => x.code === "RES-COURTESY11");
+    assert.equal(Boolean(courtesyRecord?.earlyCheckinAuthorized), false, "claim-early-checkin NUNCA deve gravar earlyCheckinAuthorized = true!");
+    if (claimCourtesyRes.status === 200) {
+      assert.equal(Boolean(courtesyRecord?.earlyCheckin), true);
+    }
+
+    // 7. resend-checkin-link com template ativo usa o nome editado no modal mesmo para Hóspede 1 e inclui o link no waWebUrl
+    const resendEditedRes = await fetch(`${BASE_URL}/api/reception/reservations/9002/resend-checkin-link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        guestIndex: 1,
+        phone: "22988112233",
+        guestName: "Marina Nome Editado"
+      })
+    });
+    assert.equal(resendEditedRes.status, 200);
+    const resendEditedBody = await resendEditedRes.json();
+    const decodedWaMsg = decodeURIComponent(resendEditedBody.waWebUrl);
+    assert.ok(
+      decodedWaMsg.includes("Marina"),
+      "Mensagem do WhatsApp deve saudar o primeiro nome editado na portaria (Marina) mesmo para Hóspede 1 com template ativo"
+    );
+    assert.equal(
+      decodedWaMsg.includes("Fernanda"),
+      false,
+      "Mensagem do WhatsApp não deve manter o nome antigo antes da edição no modal"
+    );
+    assert.ok(
+      decodedWaMsg.includes("/pre-checkin/RES-ZERO02?guest=1"),
+      "waWebUrl fallback deve conter a URL clicável do check-in digital mesmo quando o template Z-API usa botões"
+    );
+    assert.equal(
+      db.reservations.find(x => x.id === 9002)?.guests?.[0]?.name,
+      "Marina Nome Editado",
+      "Nome editado deve ser salvo no slot do hóspede"
+    );
+  });
+
   it("Rotas públicas SPA (/portaria, /tablet, /recepcao, /reception) respondem 200 sem login e paridade twin-server está 100% íntegra", async () => {
     for (const spaRoute of [
       "/portaria",

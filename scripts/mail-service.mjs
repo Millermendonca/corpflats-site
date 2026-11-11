@@ -108,8 +108,17 @@ export function isOtaOrB2bReservation(reservation) {
 
 export function evaluateReceptionCheckinStage(reservation) {
   const expectedGuests = Math.max(1, resolveEmailGuestCount(reservation));
+  const hasExplicitCount = Boolean(
+    Number(reservation?.guestCount) > 0 ||
+    Number(reservation?.guestsCount) > 0 ||
+    Number(reservation?.numGuests) > 0 ||
+    Number(reservation?.adults) > 0
+  );
   const needsReSignature = Boolean(reservation?.needsReSignature);
-  const rawGuests = Array.isArray(reservation?.guests) ? reservation.guests : [];
+  const rawGuestsAll = Array.isArray(reservation?.guests) ? reservation.guests : [];
+  const rawGuests = hasExplicitCount
+    ? rawGuestsAll.filter((g, idx) => (Number(g?.index) || idx + 1) <= expectedGuests)
+    : rawGuestsAll;
 
   let completedGuests = 0;
   if (rawGuests.length > 0) {
@@ -634,7 +643,7 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
   const rawGuestsArr = Array.isArray(reservation?.guests) ? reservation.guests : [];
   let guests = [];
   if (rawGuestsArr.length > 0) {
-    for (let slot = 1; slot <= Math.max(expectedGuests, rawGuestsArr.length); slot++) {
+    for (let slot = 1; slot <= expectedGuests; slot++) {
       const posFallback = rawGuestsArr[slot - 1] && (!rawGuestsArr[slot - 1].index || Number(rawGuestsArr[slot - 1].index) === slot)
         ? rawGuestsArr[slot - 1]
         : null;
@@ -914,7 +923,7 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
     c && typeof c === "object" && (
       c.field === "flatNumber" ||
       c.field === "flatId" ||
-      /apartamento|acomoda[cç][aã]o|quarto|flat/i.test(String(c.label || ""))
+      /apartamento|acomoda[cç][aã]o|quarto|flat/i.test(`${c.label || ""} ${c.field || ""}`)
     )
   );
 
@@ -949,7 +958,7 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
     if (typeof c === "string") {
       return `<li style="margin-bottom: 10px;">${c}</li>`;
     }
-    const isFlatItem = c.field === "flatNumber" || c.field === "flatId" || /apartamento|acomoda[cç][aã]o|quarto|flat/i.test(String(c.label || ""));
+    const isFlatItem = c.field === "flatNumber" || c.field === "flatId" || /apartamento|acomoda[cç][aã]o|quarto|flat/i.test(`${c.label || ""} ${c.field || ""}`);
     const oldValFormatted = formatChangeValue(c.oldValue) || "Anterior";
     const newValFormatted = formatChangeValue(c.newValue) || "Novo";
     const itemLabel = isFlatItem ? "Acomodação / Quarto" : (c.label || c.field);
@@ -966,6 +975,13 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
       </li>
     `;
   }).join("");
+
+  const updateStageInfo = evaluateReceptionCheckinStage(reservation);
+  const newFlatBoxHeader = updateStageInfo.stage === "completed"
+    ? "✅ NOVO APARTAMENTO DA RESERVA (CADASTRO DIGITAL CONCLUÍDO):"
+    : updateStageInfo.stage === "partial"
+      ? `⚠️ NOVO APARTAMENTO DA RESERVA (CHECK-IN PARCIAL ${updateStageInfo.completedGuests}/${updateStageInfo.expectedGuests}):`
+      : "🏠 NOVO APARTAMENTO DA RESERVA (AGUARDANDO CHECK-IN DIGITAL):";
 
   const flatChangeBannerHtml = hasFlatChange ? `
     <!-- Banner de Alerta Máximo de Troca de Apartamento -->
@@ -984,10 +1000,10 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
         </div>
       </div>
 
-      <!-- Caixa 2: Novo Flat Autorizado (Verde Gigante) -->
+      <!-- Caixa 2: Novo Flat Designado -->
       <div style="background-color: #ECFDF5; border: 2px solid #059669; border-radius: 8px; padding: 16px; margin-bottom: 14px;">
         <div style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.6px; color: #047857; margin-bottom: 4px;">
-          ✅ LIBERAR ENTRADA / NOVO APARTAMENTO AUTORIZADO:
+          ${newFlatBoxHeader}
         </div>
         <div style="font-size: 26px; font-weight: 900; color: #065F46; letter-spacing: -0.3px;">
           ${newFlatDisplay.toUpperCase()} 🔑
@@ -996,10 +1012,32 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
 
       <!-- Aviso Operacional Expresso -->
       <div style="background-color: #FEE2E2; border-left: 4px solid #B91C1C; padding: 12px 14px; border-radius: 4px; color: #7F1D1D; font-size: 14px; line-height: 1.5; font-weight: 600;">
-        ⚠️ <strong>IMPORTANTE:</strong> NÃO entregue a chave nem libere o acesso ao <strong><span style="text-decoration: line-through;">${oldFlatDisplay}</span></strong> (pode estar ocupado por outro hóspede). Direcione o(a) hóspede <strong>${guestName}</strong> exclusivamente ao <strong>${newFlatDisplay}</strong>.
+        ⚠️ <strong>IMPORTANTE:</strong> NÃO entregue a chave nem libere o acesso ao <strong><span style="text-decoration: line-through;">${oldFlatDisplay}</span></strong> (pode estar ocupado por outro hóspede). A acomodação correta de <strong>${guestName}</strong> passa a ser o <strong>${newFlatDisplay}</strong>${updateStageInfo.stage !== "completed" ? ` — <strong>atenção: a entrada presencial ainda aguarda conclusão do Check-in Digital${updateStageInfo.needsReSignature ? " (re-assinatura de termo obrigatória)" : ""}</strong>` : " (sujeito ao horário permitido e limpeza no Terminal da Portaria)"}.
       </div>
     </div>
   ` : "";
+
+  const updateCheckinCalloutHtml = isCancelled
+    ? ""
+    : updateStageInfo.stage === "awaiting"
+      ? `
+      <div style="background-color: #FEF2F2; border: 1px solid #FECACA; border-left: 4px solid #DC2626; border-radius: 6px; padding: 14px 16px; margin-bottom: 16px;">
+        <strong style="color: #B91C1C; font-size: 13px;">🚫 ATENÇÃO PORTARIA: CHECK-IN AINDA NÃO LIBERADO (AGUARDANDO CHECK-IN DIGITAL)</strong>
+        <p style="color: #7F1D1D; font-size: 13px; margin: 5px 0 0 0; line-height: 1.5;">
+          O check-in presencial desta reserva <strong>ainda NÃO está liberado</strong>, pois aguarda o preenchimento do Check-in Digital${updateStageInfo.needsReSignature ? " (re-assinatura de termo pendente após alteração da reserva)" : ""}.
+        </p>
+      </div>
+      `
+      : updateStageInfo.stage === "partial"
+        ? `
+      <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-left: 4px solid #D97706; border-radius: 6px; padding: 14px 16px; margin-bottom: 16px;">
+        <strong style="color: #92400E; font-size: 13px;">⚠️ ATENÇÃO PORTARIA: CHECK-IN PARCIAL (${updateStageInfo.completedGuests}/${updateStageInfo.expectedGuests})</strong>
+        <p style="color: #78350F; font-size: 13px; margin: 5px 0 0 0; line-height: 1.5;">
+          Apenas ${updateStageInfo.completedGuests} de ${updateStageInfo.expectedGuests} hóspede(s) concluiu o Check-in Digital. O(s) demais hóspede(s) permanece(m) bloqueado(s) até preencherem a ficha individual.
+        </p>
+      </div>
+      `
+        : "";
 
   const contentHtml = `
     <div style="margin-bottom: 20px;">
@@ -1014,6 +1052,7 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
     </div>
 
     ${flatChangeBannerHtml}
+    ${updateCheckinCalloutHtml}
 
     ${isCancelled ? `
       <div class="callout-cancel" style="background-color: #FEF2F2; border: 1px solid #FECACA; border-left: 3px solid #DC2626; padding: 16px; border-radius: 6px; margin-bottom: 16px;">
@@ -1044,23 +1083,34 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Hóspede Titular:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${guestName}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkoutDateBr}</td></tr>
-        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Total de Hóspedes:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${resolveEmailGuestCount(reservation)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Total de Hóspedes:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${updateStageInfo.expectedGuests}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Canal da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatEmailChannelLabel(reservation)}</td></tr>
-        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Status Atual:</td><td class="val" style="padding: 5px 0; font-size: 14px; text-transform: uppercase; color: ${isCancelled ? '#DC2626' : '#059669'}; font-weight: 600; width: 62%;">${reservation?.status || "Confirmada"}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Status da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 14px; text-transform: uppercase; color: ${isCancelled ? '#DC2626' : '#059669'}; font-weight: 600; width: 62%;">${reservation?.status || "Confirmada"}</td></tr>
+        ${!isCancelled ? `<tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Status Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; font-weight: 700; color: ${updateStageInfo.stage === "completed" ? "#047857" : updateStageInfo.stage === "partial" ? "#B45309" : "#B91C1C"}; width: 62%;">${updateStageInfo.stage === "completed" ? `Concluído (${updateStageInfo.completedGuests}/${updateStageInfo.expectedGuests})` : updateStageInfo.stage === "partial" ? `Parcial (${updateStageInfo.completedGuests}/${updateStageInfo.expectedGuests})` : `Aguardando check-in (0/${updateStageInfo.expectedGuests})`}</td></tr>` : ""}
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; width: 62%;"><a href="${checkinUrl}" style="color: #111827; font-weight: 600; text-decoration: underline;">Acessar Ficha de Check-in</a></td></tr>
       </table>
     </div>
-    ${!isCancelled ? buildPortariaAdaptiveButtonsHtml({ reservation, hostBase, stageInfo: evaluateReceptionCheckinStage(reservation) }) : ""}
+    ${!isCancelled ? buildPortariaAdaptiveButtonsHtml({ reservation, hostBase, stageInfo: updateStageInfo }) : ""}
   `;
 
   const badge = isCancelled 
     ? `<span class="badge badge-cancel" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA;">Reserva Cancelada</span>` 
     : hasFlatChange
       ? `<span class="badge badge-flat-change" style="display: inline-block; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 800; background-color: #DC2626; color: #FFFFFF; border: 1px solid #B91C1C;">TROCA DE FLAT: ${oldFlatNumClean} ➔ ${newFlatNumClean}</span>`
-      : `<span class="badge badge-update" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">Reserva Alterada</span>`;
+      : updateStageInfo.stage === "awaiting"
+        ? `<span class="badge badge-awaiting" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA;">Aguardando check-in</span>`
+        : updateStageInfo.stage === "partial"
+          ? `<span class="badge badge-partial" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">Check-in Parcial (${updateStageInfo.completedGuests}/${updateStageInfo.expectedGuests})</span>`
+          : `<span class="badge badge-update" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">Check-in Digital Concluído</span>`;
 
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
-  return { subject, bodyHtml, html: bodyHtml, checkinUrl };
+  return {
+    subject,
+    bodyHtml,
+    html: bodyHtml,
+    checkinUrl,
+    checkinStage: isCancelled ? "cancelled" : updateStageInfo.stage
+  };
 }
 
 /**

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
-import { PdfPreview } from "@/components/pdf-preview"
+import { PdfPreview, openPdfInNewTab } from "@/components/pdf-preview"
 import {
   Building2, User, CheckCircle2, AlertTriangle, Lock, Unlock,
   LogOut, Clock, RefreshCw, FileText, ShieldCheck, Undo2,
@@ -16,6 +16,25 @@ import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { getCheckinUrl } from "@/lib/checkin-url"
 import { useToast } from "@/hooks/use-toast"
+
+function buildWhatsAppWebUrl(rawPhone: string | undefined | null, text: string): string {
+  const digits = String(rawPhone || "").replace(/\D/g, "")
+  if (!digits) return "#"
+  const normalized = digits.startsWith("55") && digits.length >= 12 ? digits : `55${digits}`
+  return `https://wa.me/${normalized}?text=${encodeURIComponent(text)}`
+}
+
+function isPdfAssetUrl(url: string | undefined | null, failedAsPdf?: Record<string, boolean>): boolean {
+  if (!url || typeof url !== "string") return false
+  const trimmed = url.trim()
+  if (!trimmed) return false
+  if (failedAsPdf && failedAsPdf[trimmed]) return true
+  if (/^data:application\/pdf/i.test(trimmed)) return true
+  const withoutQuery = trimmed.split("?")[0].split("#")[0].toLowerCase()
+  if (withoutQuery.endsWith(".pdf")) return true
+  if (/[?&]mime=application%2Fpdf/i.test(trimmed) || /[?&]mime=application\/pdf/i.test(trimmed)) return true
+  return false
+}
 
 interface CheckinLinkSlot {
   index: number
@@ -29,6 +48,7 @@ interface CheckinLinkSlot {
 export default function ReceptionTablet() {
   const { toast } = useToast()
   const [copiedCheckinKey, setCopiedCheckinKey] = useState<string | null>(null)
+  const [failedImgAsPdf, setFailedImgAsPdf] = useState<Record<string, boolean>>({})
   const [focusedResQuery, setFocusedResQuery] = useState<string>(() => {
     if (typeof window === "undefined") return ""
     return new URLSearchParams(window.location.search).get("res")?.trim() || ""
@@ -219,11 +239,11 @@ export default function ReceptionTablet() {
   // Tratamento de Deep-Link vindo dos botões dos e-mails da recepção (?res=CODE&action=...)
   useEffect(() => {
     if (loading || deepLinkHandledRef.current || typeof window === "undefined") return
+    deepLinkHandledRef.current = true
     const params = new URLSearchParams(window.location.search)
     const resParam = (params.get("res") || "").trim()
     const actionParam = (params.get("action") || "").trim()
     if (!resParam && !actionParam) {
-      deepLinkHandledRef.current = true
       return
     }
 
@@ -243,22 +263,21 @@ export default function ReceptionTablet() {
       setActiveTab("inHouse")
     } else if (inCompleted && !inArrivals && !inHotel) {
       setActiveTab("completed")
-    } else {
+    } else if (targetItem) {
       setActiveTab("arrivals")
     }
 
+    if (actionParam) {
+      const cleanUrl = new URL(window.location.href)
+      cleanUrl.searchParams.delete("action")
+      window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}`)
+    }
+
     if (targetItem) {
-      deepLinkHandledRef.current = true
       if (actionParam === "send-checkin-link") {
         openSendLinkModal(targetItem)
       } else if (actionParam === "verify-early-checkin") {
         openEarlyCheckinModal(targetItem)
-      }
-
-      if (actionParam) {
-        const cleanUrl = new URL(window.location.href)
-        cleanUrl.searchParams.delete("action")
-        window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}`)
       }
 
       setTimeout(() => {
@@ -556,7 +575,10 @@ export default function ReceptionTablet() {
             {item.guestPhone ? (
               <div className="text-xs text-slate-400 flex items-center gap-1.5">
                 <a
-                  href={`https://wa.me/55${(item.guestPhone || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${item.guestName}! Falamos da portaria/recepção referente à sua reserva no Flat ${item.flatNumber}.`)}`}
+                  href={buildWhatsAppWebUrl(
+                    item.guestPhone,
+                    `Olá, ${item.guestName}! Falamos da portaria/recepção referente à sua reserva no Flat ${item.flatNumber}.`
+                  )}
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
@@ -640,7 +662,7 @@ export default function ReceptionTablet() {
                 onClick={() => openEarlyCheckinModal(item)}
                 className="font-bold text-rose-300 bg-rose-950/80 hover:bg-rose-900/80 px-2 py-0.5 rounded-md border border-rose-800 text-[10px] transition-colors"
               >
-                🔒 Libera às {checklist.freeEarlyTime || "10:00"}
+                🔒 Libera às {checklist.effectiveAllowedTime || checklist.freeEarlyTime || "10:00"}
               </button>
             )}
           </div>
@@ -819,7 +841,7 @@ export default function ReceptionTablet() {
                 className="font-bold text-xs h-auto min-h-12 py-2.5 px-3 rounded-xl gap-2 shadow-md transition-all bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-amber-200"
               >
                 <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                <span className="leading-snug">Bloqueado até {checklist.freeEarlyTime || "10:00"}</span>
+                <span className="leading-snug">Bloqueado até {checklist.effectiveAllowedTime || checklist.freeEarlyTime || "10:00"}</span>
               </Button>
             ) : !isClean && !checklist.isRegularCheckinWindow ? (
               <Button
@@ -1499,10 +1521,9 @@ export default function ReceptionTablet() {
                         size="sm"
                         onClick={() => {
                           const targetUrl = activeSendSlot?.checkinUrl || getCheckinUrl(liveSendLinkItem, sendLinkGuestIndex)
-                          const digits = sendLinkPhone.replace(/\D/g, "")
-                          const fullPhone = digits.startsWith("55") ? digits : `55${digits}`
                           const msg = `Olá, ${sendLinkGuestName || "Hóspede"}! Segue seu link oficial de Check-in Digital para liberação de entrada no Apt ${liveSendLinkItem.flatNumber}:\n${targetUrl}`
-                          window.open(`https://wa.me/${fullPhone}?text=${encodeURIComponent(msg)}`, "_blank")
+                          const waUrl = buildWhatsAppWebUrl(sendLinkPhone, msg)
+                          if (waUrl) window.open(waUrl, "_blank")
                         }}
                         className="w-full bg-slate-900 border-slate-700 hover:bg-slate-800 text-slate-300 font-semibold text-xs gap-1.5"
                       >
@@ -1667,7 +1688,7 @@ export default function ReceptionTablet() {
                     </span>
                     {liveEarlyChecklist.isEarlyAuthorizedByAdmin && (
                       <Badge className="bg-emerald-900 text-emerald-200 border-emerald-700 text-[10px] font-bold">
-                        ✓ Autorizado pela Administração
+                        ✓ Autorizado pela Administração{liveEarlyChecklist.earlyCheckinTime ? ` (${liveEarlyChecklist.earlyCheckinTime})` : ""}
                       </Badge>
                     )}
                   </div>
@@ -1679,10 +1700,10 @@ export default function ReceptionTablet() {
                 <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-800/80 space-y-2.5">
                   <div className="font-bold text-amber-200 flex items-center gap-1.5">
                     <MessageCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Hóspede deseja entrar antes das {liveEarlyChecklist.freeEarlyTime}?</span>
+                    <span>Hóspede deseja entrar antes das {liveEarlyChecklist.effectiveAllowedTime || liveEarlyChecklist.freeEarlyTime}?</span>
                   </div>
                   <p className="text-[11px] text-slate-300 leading-relaxed">
-                    Antes do horário de cortesia ({liveEarlyChecklist.freeEarlyTime}), a entrada só é permitida mediante autorização ou pagamento de taxa junto à Administração. Clique abaixo para avisar a Administração no WhatsApp.
+                    Antes do horário liberado ({liveEarlyChecklist.effectiveAllowedTime || liveEarlyChecklist.freeEarlyTime}), a entrada só é permitida mediante autorização ou pagamento de taxa junto à Administração. Clique abaixo para avisar a Administração no WhatsApp.
                   </p>
                   <Input
                     value={earlyRequestNote}
@@ -2029,7 +2050,7 @@ export default function ReceptionTablet() {
                             if (activeDoc) {
                               setZoomedPhoto({
                                 url: activeDoc,
-                                title: `Foto do Documento - ${currentGuest.name || liveSelected.guestName} (Apt ${liveSelected.flatNumber})`
+                                title: `Documento Oficial - ${currentGuest.name || liveSelected.guestName} (Apt ${liveSelected.flatNumber})`
                               })
                             }
                           }}
@@ -2038,12 +2059,25 @@ export default function ReceptionTablet() {
                           }`}
                         >
                           {activeDoc ? (
-                            <>
-                              <img src={activeDoc} alt="Documento" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold gap-1 transition-opacity">
-                                <ZoomIn className="w-4 h-4" /> <span>Ampliar</span>
+                            isPdfAssetUrl(activeDoc, failedImgAsPdf) ? (
+                              <div className="flex flex-col items-center justify-center gap-1.5 text-sky-300 p-3 text-center">
+                                <FileText className="w-9 h-9 text-sky-400" />
+                                <span className="text-[11px] font-bold">Documento em PDF</span>
+                                <span className="text-[10px] text-slate-400">Toque para abrir e conferir</span>
                               </div>
-                            </>
+                            ) : (
+                              <>
+                                <img
+                                  src={activeDoc}
+                                  alt="Documento"
+                                  onError={() => setFailedImgAsPdf((prev) => ({ ...prev, [activeDoc]: true }))}
+                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                />
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold gap-1 transition-opacity">
+                                  <ZoomIn className="w-4 h-4" /> <span>Ampliar</span>
+                                </div>
+                              </>
+                            )
                           ) : (
                             <span className="text-slate-600 text-center px-2">Doc não enviado</span>
                           )}
@@ -2060,19 +2094,28 @@ export default function ReceptionTablet() {
                         </div>
                         <div>
                           <span className="text-slate-500 block text-[10px] uppercase font-bold">Telefone / WhatsApp</span>
-                          {(currentGuest.phone || liveSelected.guestPhone) ? (
-                            <a
-                              href={`https://wa.me/55${((currentGuest.phone || liveSelected.guestPhone) || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${currentGuest.name || liveSelected.guestName}! Falamos da portaria/recepção referente à sua reserva no Flat ${liveSelected.flatNumber}.`)}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 font-bold text-emerald-400 hover:text-emerald-300 hover:underline"
-                            >
-                              <MessageCircle className="w-3.5 h-3.5 shrink-0" />
-                              <span>{currentGuest.phone || liveSelected.guestPhone}</span>
-                            </a>
-                          ) : (
-                            <span className="font-semibold text-slate-400">Não informado</span>
-                          )}
+                          {(() => {
+                            const guestPhoneVal = currentGuest.phone || liveSelected.guestPhone || ""
+                            const guestWaUrl = buildWhatsAppWebUrl(
+                              guestPhoneVal,
+                              `Olá, ${currentGuest.name || liveSelected.guestName}! Falamos da portaria/recepção referente à sua reserva no Flat ${liveSelected.flatNumber}.`
+                            )
+                            return guestPhoneVal && guestWaUrl ? (
+                              <a
+                                href={guestWaUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 font-bold text-emerald-400 hover:text-emerald-300 hover:underline"
+                              >
+                                <MessageCircle className="w-3.5 h-3.5 shrink-0" />
+                                <span>{guestPhoneVal}</span>
+                              </a>
+                            ) : guestPhoneVal ? (
+                              <span className="font-semibold text-slate-200">{guestPhoneVal}</span>
+                            ) : (
+                              <span className="font-semibold text-slate-400">Não informado</span>
+                            )
+                          })()}
                         </div>
                       </div>
 
@@ -2290,26 +2333,33 @@ export default function ReceptionTablet() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Visualizador Ampliado de Fotos (Zoom / Lightbox) */}
+      {/* Modal: Visualizador Ampliado de Fotos e Documentos (Zoom / Lightbox / PDF) */}
       <Dialog open={Boolean(zoomedPhoto)} onOpenChange={(open) => !open && setZoomedPhoto(null)}>
         <DialogContent className="sm:max-w-2xl max-h-[92vh] p-4 bg-slate-950/95 border-slate-800 text-white flex flex-col justify-between">
           <DialogHeader className="pb-2 border-b border-slate-800">
             <div className="flex items-center justify-between">
               <DialogTitle className="flex items-center gap-2 text-sm font-bold text-slate-200">
                 <Eye className="w-4 h-4 text-primary shrink-0" />
-                <span>{zoomedPhoto?.title || "Visualização da Foto"}</span>
+                <span>{zoomedPhoto?.title || "Visualização da Foto / Documento"}</span>
               </DialogTitle>
             </div>
           </DialogHeader>
 
           {zoomedPhoto?.url && (
-            <div className="my-3 flex items-center justify-center overflow-hidden max-h-[65vh] bg-black/60 rounded-2xl border border-slate-800/80 p-2">
-              <img
-                src={zoomedPhoto.url}
-                alt={zoomedPhoto.title}
-                className="max-h-[60vh] max-w-full object-contain rounded-xl shadow-2xl"
-              />
-            </div>
+            isPdfAssetUrl(zoomedPhoto.url, failedImgAsPdf) ? (
+              <div className="my-3 overflow-y-auto max-h-[68vh]">
+                <PdfPreview url={zoomedPhoto.url} title={zoomedPhoto.title} dark />
+              </div>
+            ) : (
+              <div className="my-3 flex items-center justify-center overflow-hidden max-h-[65vh] bg-black/60 rounded-2xl border border-slate-800/80 p-2">
+                <img
+                  src={zoomedPhoto.url}
+                  alt={zoomedPhoto.title}
+                  onError={() => setFailedImgAsPdf((prev) => ({ ...prev, [zoomedPhoto.url]: true }))}
+                  className="max-h-[60vh] max-w-full object-contain rounded-xl shadow-2xl"
+                />
+              </div>
+            )
           )}
 
           <DialogFooter className="gap-2 sm:justify-between pt-2 border-t border-slate-800">
@@ -2319,8 +2369,12 @@ export default function ReceptionTablet() {
               size="sm"
               onClick={() => {
                 if (zoomedPhoto?.url) {
-                  const w = window.open("")
-                  w?.document.write(`<img src="${zoomedPhoto.url}" style="max-width:100%;height:auto;display:block;margin:auto;background:#111;padding:20px;" />`)
+                  if (isPdfAssetUrl(zoomedPhoto.url, failedImgAsPdf)) {
+                    openPdfInNewTab(zoomedPhoto.url)
+                  } else {
+                    const w = window.open("")
+                    w?.document.write(`<img src="${zoomedPhoto.url}" style="max-width:100%;height:auto;display:block;margin:auto;background:#111;padding:20px;" />`)
+                  }
                 }
               }}
               className="w-full sm:w-auto text-xs bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800 gap-1.5"

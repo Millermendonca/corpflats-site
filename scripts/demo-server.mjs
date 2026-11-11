@@ -33521,6 +33521,16 @@ app.post("/api/pms/reservations", async (req, res) => {
     autoEmitInvoice = false
   } = req.body;
 
+  if (Boolean(req.body.earlyCheckinAuthorized)) {
+    const createAuthUser = getAuthUser(req);
+    if (!createAuthUser) {
+      return res.status(401).json({ error: "Não autenticado. Somente a Administração pode autorizar Early Check-in manualmente." });
+    }
+    if (createAuthUser.role !== "admin" && createAuthUser.role !== "dev") {
+      return res.status(403).json({ error: "Acesso negado. Somente a Administração pode autorizar Early Check-in manualmente." });
+    }
+  }
+
   const hasSeparateRequester = Boolean(
     (requesterType && requesterType !== "guest") ||
     (requesterInfo && (requesterInfo.name || requesterInfo.phone || requesterInfo.email)) ||
@@ -34051,12 +34061,20 @@ app.post("/api/pms/reservations", async (req, res) => {
 
   if (!db.reservations) db.reservations = [];
   const resId = db.reservations.length > 0 ? Math.max(...db.reservations.map(r => r.id)) + 1 : 1;
-  const isEarlyAuth = Boolean(req.body.earlyCheckinAuthorized);
-  const resolvedEarlyCheckinTime = (typeof req.body.earlyCheckinTime === "string" && /^\d{2}:\d{2}$/.test(req.body.earlyCheckinTime.trim()))
+  const authUser = getAuthUser(req);
+  if (req.body.earlyCheckinAuthorized === true) {
+    if (!authUser) {
+      return res.status(401).json({ error: "Não autenticado. Somente a Administração pode autorizar Early Check-in manualmente." });
+    }
+    if (authUser.role !== "admin" && authUser.role !== "dev") {
+      return res.status(403).json({ error: "Acesso negado. Somente a Administração pode autorizar Early Check-in manualmente." });
+    }
+  }
+  const isEarlyAuth = Boolean(req.body.earlyCheckinAuthorized && authUser && (authUser.role === "admin" || authUser.role === "dev"));
+  const resolvedEarlyCheckinTime = (isEarlyAuth && typeof req.body.earlyCheckinTime === "string" && /^\d{2}:\d{2}$/.test(req.body.earlyCheckinTime.trim()))
     ? req.body.earlyCheckinTime.trim()
     : null;
 
-  const authUser = getAuthUser(req);
   const creatorName = authUser ? (authUser.username || authUser.name || "Administrador") : "Recepção / PMS";
   const creatorRole = authUser ? authUser.role : "admin";
   const reqSource = req.body.source || "PMS Calendário";
@@ -35608,6 +35626,19 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
+  const wantsEarlyAuthMutation =
+    (req.body.earlyCheckinAuthorized !== undefined && Boolean(req.body.earlyCheckinAuthorized) !== Boolean(r.earlyCheckinAuthorized)) ||
+    (req.body.earlyCheckinTime !== undefined && (req.body.earlyCheckinTime || null) !== (r.earlyCheckinTime || null));
+  if (wantsEarlyAuthMutation) {
+    const putAuthUser = getAuthUser(req);
+    if (!putAuthUser) {
+      return res.status(401).json({ error: "Não autenticado. Somente a Administração pode autorizar ou alterar Early Check-in manualmente." });
+    }
+    if (putAuthUser.role !== "admin" && putAuthUser.role !== "dev") {
+      return res.status(403).json({ error: "Acesso negado. Somente a Administração pode autorizar ou alterar Early Check-in manualmente." });
+    }
+  }
+
   ensureReservationAuditLogs(r);
 
   const oldCheckin = r.checkinDate;
@@ -36788,6 +36819,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
   if (req.body.earlyCheckinAuthorized !== undefined) {
     r.earlyCheckinAuthorized = Boolean(req.body.earlyCheckinAuthorized);
+  }
+  if (req.body.earlyCheckinTime !== undefined) {
+    r.earlyCheckinTime = req.body.earlyCheckinTime ? String(req.body.earlyCheckinTime).trim() : null;
   }
   if (req.body.receptionNotes !== undefined) {
     r.receptionNotes = String(req.body.receptionNotes || "");
@@ -38748,10 +38782,8 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
     });
   }
 
-  r.earlyCheckinAuthorized = true;
-  if (!r.earlyCheckinTime) {
-    r.earlyCheckinTime = chk.effectiveAllowedTime;
-  }
+  r.earlyCheckin = true;
+  r.earlyCheckinClaimedAt = new Date().toISOString();
   r.notes = `${r.notes || ''} • [Early Check-in Gratuito Liberado Antecipadamente às ${new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}]`.trim();
   r.updatedAt = new Date().toISOString();
   saveDatabase();
@@ -39034,11 +39066,16 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
   }
 
   const targetGuest = reservation.guests.find(g => Number(g?.index || 1) === safeGuestIndex) || reservation.guests[0];
-  if (overrideGuestName && String(overrideGuestName).trim() && (!targetGuest.name || /^H[oó]spede\s*\d+/i.test(targetGuest.name))) {
-    targetGuest.name = String(overrideGuestName).trim();
+  const cleanOverrideName = overrideGuestName ? String(overrideGuestName).trim() : "";
+  if (cleanOverrideName && !/^H[oó]spede\s*\d+$/i.test(cleanOverrideName)) {
+    targetGuest.name = cleanOverrideName;
+    if (safeGuestIndex === 1 && (!reservation.guestName || isPendingGuestName(reservation.guestName))) {
+      reservation.guestName = cleanOverrideName;
+      reservation.guestPending = false;
+    }
   }
 
-  const guestName = (overrideGuestName || targetGuest?.name || (safeGuestIndex === 1 ? reservation.guestName : `Hóspede ${safeGuestIndex}`) || "Hóspede").trim();
+  const guestName = (cleanOverrideName || targetGuest?.name || (safeGuestIndex === 1 ? reservation.guestName : `Hóspede ${safeGuestIndex}`) || "Hóspede").trim();
   const rawPhone = (overridePhone || targetGuest?.phone || (safeGuestIndex === 1 ? reservation.guestPhone : "") || "").trim();
   const cleanPhone = typeof cleanWhatsAppPhone === "function" ? cleanWhatsAppPhone(rawPhone) : rawPhone.replace(/\D/g, "");
 
@@ -39080,10 +39117,11 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
   ];
 
   if (safeGuestIndex === 1 && template && template.enabled && typeof resolveWhatsAppTags === "function") {
-    msgText = resolveWhatsAppTags(template.message, reservation, db, baseUrl, "guest");
+    const resForTemplate = { ...reservation, guestName };
+    msgText = resolveWhatsAppTags(template.message, resForTemplate, db, baseUrl, "guest");
     buttons = (template.buttons || []).map(b => ({
       ...b,
-      url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, "guest") : preCheckinUrl
+      url: b.url ? resolveWhatsAppTags(b.url, resForTemplate, db, baseUrl, "guest") : preCheckinUrl
     }));
   } else {
     const firstName = guestName.split(" ")[0];
@@ -39091,8 +39129,9 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
     msgText = `Olá, *${firstName}*! Tudo bem? ⏳\n\nIdentificamos que seu *Check-in Digital* para o *Flat ${flatNum}* no CorpFlats ainda está pendente.\n\nPara agilizar a liberação da sua entrada na portaria do Edifício Soho, por favor preencha seus dados pelo link:\n${preCheckinUrl}\n\nAguardamos você e desejamos uma excelente estadia!`;
   }
 
+  const waWebText = msgText.includes(preCheckinUrl) ? msgText : `${msgText}\n${preCheckinUrl}`;
   const normalizedWaPhone = cleanPhone.startsWith("55") ? cleanPhone : `55${cleanPhone}`;
-  const waWebUrl = `https://wa.me/${normalizedWaPhone}?text=${encodeURIComponent(msgText)}`;
+  const waWebUrl = `https://wa.me/${normalizedWaPhone}?text=${encodeURIComponent(waWebText)}`;
 
   try {
     let sendResult = { success: false };
@@ -46211,9 +46250,13 @@ export function evaluateReceptionEarlyCheckin(r, {
     earlyCheckinReason = `Entrada prevista para ${formattedCheckinBr} (cortesia a partir das ${freeEarlyTime} no dia da chegada)`;
   } else if (!isTimeAllowed) {
     earlyCheckinStatus = "Não liberado";
-    earlyCheckinReason = isOtaOrB2b
-      ? `${channelLabel}: liberado grátis somente a partir das 12:00 (antes das 12:00 exige autorização da Administração)`
-      : `${channelLabel}: liberado grátis a partir das 10:00 (antes das 10:00 exige autorização da Administração)`;
+    if (isEarlyAuthorizedByAdmin && validAuthorizedTime) {
+      earlyCheckinReason = `Autorizado pela Administração a partir das ${validAuthorizedTime} (horário atual: ${currentTimeHHMM})`;
+    } else {
+      earlyCheckinReason = isOtaOrB2b
+        ? `${channelLabel}: liberado grátis somente a partir das 12:00 (antes das 12:00 exige autorização da Administração)`
+        : `${channelLabel}: liberado grátis a partir das 10:00 (antes das 10:00 exige autorização da Administração)`;
+    }
   } else if (!isRoomReady) {
     earlyCheckinStatus = "Aguardando limpeza";
     earlyCheckinReason = `Horário permitido (a partir das ${effectiveAllowedTime}), aguardando limpeza do flat`;
@@ -46240,7 +46283,7 @@ export function evaluateReceptionEarlyCheckin(r, {
     blockedReasons.push(`Check-in Digital pendente (0/${totalCount} concluído)`);
   }
   if (!isCheckinDateFuture && !isTimeAllowed) {
-    blockedReasons.push(`Horário atual (${currentTimeHHMM}) anterior às ${effectiveAllowedTime} sem autorização da Administração`);
+    blockedReasons.push(`Horário atual (${currentTimeHHMM}) anterior às ${effectiveAllowedTime}${isEarlyAuthorizedByAdmin ? " (horário autorizado pela Administração)" : " sem autorização da Administração"}`);
   }
   if (!isRoomReady) {
     blockedReasons.push(`Apartamento ainda não está limpo (${cleaningLabel})`);
@@ -46260,7 +46303,9 @@ export function evaluateReceptionEarlyCheckin(r, {
     entryMessage = `Check-in Digital Pendente (0/${totalCount} concluído)`;
     entryBadgeType = "error";
   } else if (!isTimeAllowed) {
-    entryMessage = `Aguardando Horário (${effectiveAllowedTime}) ou Autorização da Administração`;
+    entryMessage = isEarlyAuthorizedByAdmin && validAuthorizedTime
+      ? `Aguardando Horário Autorizado pela Administração (${effectiveAllowedTime})`
+      : `Aguardando Horário (${effectiveAllowedTime}) ou Autorização da Administração`;
     entryBadgeType = "warning";
   } else if (!isRoomReady) {
     entryMessage = `Quarto não está pronto (${cleaningLabel})`;
@@ -46419,7 +46464,7 @@ export function buildSanitizedReceptionItem(r, { now = null, bNow = null, todayC
       });
     }
   } else {
-    for (let i = 1; i <= Math.max(count, rawGuests.length); i++) {
+    for (let i = 1; i <= count; i++) {
       const posFallback = rawGuests[i - 1] && (!rawGuests[i - 1].index || Number(rawGuests[i - 1].index) === i)
         ? rawGuests[i - 1]
         : null;
@@ -46477,6 +46522,18 @@ export function buildSanitizedReceptionItem(r, { now = null, bNow = null, todayC
     safeDownloadUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/download?token=${tkn}`;
   }
 
+  const annotateMediaBlobMimeHint = (rawUrl) => {
+    if (!rawUrl || typeof rawUrl !== "string") return rawUrl || null;
+    const blobMatch = rawUrl.match(/^\/api\/media\/blob\/([a-zA-Z0-9_\-]+)$/);
+    if (blobMatch) {
+      const cached = mediaBlobMemoryCache.get(blobMatch[1]);
+      if (cached?.mimeType === "application/pdf") {
+        return `${rawUrl}?mime=application/pdf`;
+      }
+    }
+    return rawUrl;
+  };
+
   // Sanitização estrita por allowlist de cada hóspede (sem valores financeiros nem senhas)
   const sanitizedGuests = guestList.map((g, idx) => {
     let gPdfUrl = g.fnrhPdfUrl || null;
@@ -46505,14 +46562,14 @@ export function buildSanitizedReceptionItem(r, { now = null, bNow = null, todayC
       entryAuthorized: Boolean(g.entryAuthorized),
       entryAuthorizedAt: g.entryAuthorizedAt || null,
       selfieUrl: g.selfieUrl || null,
-      docPhotoUrl: g.docPhotoUrl || null,
+      docPhotoUrl: annotateMediaBlobMimeHint(g.docPhotoUrl),
       signatureUrl: g.signatureUrl || null,
       fnrhDocumentUuid: g.fnrhDocumentUuid || null,
       fnrhPdfUrl: gPdfUrl,
       fnrhDownloadUrl: gDownloadUrl,
       isMinor: Boolean(g.isMinor),
       minorKinship: g.minorKinship || null,
-      minorAuthDocUrl: g.minorAuthDocUrl || null,
+      minorAuthDocUrl: annotateMediaBlobMimeHint(g.minorAuthDocUrl),
       aiVerification: g.aiVerification ? { facesMatch: Boolean(g.aiVerification.facesMatch) } : null
     };
   });
@@ -46946,8 +47003,9 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
     });
   }
 
-  // Garante array de hóspedes consistente
-  const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || (Array.isArray(r.guests) ? r.guests.length : 1) || 1, 1), 4);
+  // Garante array de hóspedes consistente (respeitando eventual redução explícita de guestCount/adults, ex: 2 -> 1)
+  const explicitCount = Number(r.guestCount) || Number(r.adults) || 0;
+  const count = Math.min(Math.max(explicitCount || (Array.isArray(r.guests) ? r.guests.length : 1) || 1, 1), 4);
   if (!r.guests || r.guests.length === 0) {
     const titularCompleted = Boolean(!r.needsReSignature && (r.fnhrCompleted || r.preCheckinCompleted || r.fnrhDocumentUuid || r.fnrhSignedAt));
     r.guests = [{
@@ -46987,6 +47045,12 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
         });
       }
     }
+    if (explicitCount > 0 && r.guests.length > count) {
+      r.guests = r.guests.filter((g, idx) => {
+        const slot = Number(g?.index) || idx + 1;
+        return slot <= count || Boolean(g?.entryAuthorized);
+      });
+    }
   }
 
   const isGuestCheckinValid = (g) => Boolean(
@@ -47018,8 +47082,12 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   }
 
   if (!earlyChecklist.isTimeAllowed && !isVerifiedAdminOverride) {
+    const allowedTimeDisplay = earlyChecklist.effectiveAllowedTime || earlyChecklist.freeEarlyTime;
+    const blockedMsg = (earlyChecklist.isEarlyAuthorizedByAdmin && earlyChecklist.earlyCheckinTime)
+      ? `Entrada ainda não liberada pelo horário: a Administração agendou o Early Check-in a partir das ${allowedTimeDisplay}.`
+      : `Entrada ainda não liberada pelo horário: para reservas via ${earlyChecklist.channelLabel}, a cortesia de Early Check-in inicia às ${allowedTimeDisplay}. Antes desse horário, somente com autorização registrada pela Administração.`;
     return res.status(400).json({
-      error: `Entrada ainda não liberada pelo horário: para reservas via ${earlyChecklist.channelLabel}, a cortesia de Early Check-in inicia às ${earlyChecklist.freeEarlyTime}. Antes desse horário, somente com autorização registrada pela Administração.`,
+      error: blockedMsg,
       earlyCheckinBlocked: true,
       earlyCheckinChecklist: earlyChecklist
     });
