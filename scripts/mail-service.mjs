@@ -1001,6 +1001,7 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; width: 62%;"><a href="${checkinUrl}" style="color: #111827; font-weight: 600; text-decoration: underline;">Acessar Ficha de Check-in</a></td></tr>
       </table>
     </div>
+    ${!isCancelled ? buildPortariaAdaptiveButtonsHtml({ reservation, hostBase, stageInfo: evaluateReceptionCheckinStage(reservation) }) : ""}
   `;
 
   const badge = isCancelled 
@@ -1689,10 +1690,8 @@ export function hasReceptionEmailInComms(reservation, db = {}, options = {}) {
   const flat = (db?.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber));
   const receptionEmail = (flat?.receptionEmail || db?.settings?.receptionEmail || db?.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br").toLowerCase().trim();
 
-  const hasGuestFnrhCompleted = Boolean(
-    reservation.fnhrCompleted ||
-    (Array.isArray(reservation.guests) && reservation.guests.some(g => g && g.hasCompletedCheckin))
-  );
+  const stageInfo = evaluateReceptionCheckinStage(reservation);
+  const hasGuestFnrhCompleted = stageInfo.completedGuests > 0;
 
   const comms = Array.isArray(db?.reservationCommunications) ? db.reservationCommunications : [];
   return comms.some(c => {
@@ -1747,10 +1746,12 @@ export function hasReceptionEmailInComms(reservation, db = {}, options = {}) {
         Boolean(c.metadata?.hasPdfAttached) ||
         trigger === "pre_checkin" ||
         trigger === "re_signature_checkin" ||
-        trigger === "morning_checkin_07h" ||
         trigger === "self_checkin_arrival_fallback" ||
         trigger === "reception_manual_checkin_fallback";
       if (!hasFnrhAttachment) return false;
+      if (stageInfo.stage === "completed" && c.metadata?.checkinStage && c.metadata.checkinStage !== "completed") {
+        return false;
+      }
     }
 
     return true;
