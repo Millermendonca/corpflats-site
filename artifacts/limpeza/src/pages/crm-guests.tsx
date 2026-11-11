@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
 import { useGetMe } from "@workspace/api-client-react"
 import { compressImage } from "@/lib/image-compression"
+import { FrozenSlot } from "@/lib/render-freeze"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -1251,63 +1252,67 @@ export default function CrmGuests() {
   }
 
   // Filtragem de Hóspedes
-  const filteredGuests = guests.filter(g => {
+  const filteredGuests = useMemo(() => {
     const term = search.toLowerCase()
-    const matchesSearch = (
-      (g.fullName || g.name || "").toLowerCase().includes(term) ||
-      (g.phone || "").toLowerCase().includes(term) ||
-      (g.email || "").toLowerCase().includes(term) ||
-      (g.documentNumber || g.document || "").includes(term) ||
-      (g.city || "").toLowerCase().includes(term) ||
-      (g.companyName || "").toLowerCase().includes(term)
-    )
+    return guests.filter(g => {
+      const matchesSearch = (
+        (g.fullName || g.name || "").toLowerCase().includes(term) ||
+        (g.phone || "").toLowerCase().includes(term) ||
+        (g.email || "").toLowerCase().includes(term) ||
+        (g.documentNumber || g.document || "").includes(term) ||
+        (g.city || "").toLowerCase().includes(term) ||
+        (g.companyName || "").toLowerCase().includes(term)
+      )
 
-    if (!matchesSearch) return false
+      if (!matchesSearch) return false
 
-    if (selectedTagFilter === "all") return true
-    if (selectedTagFilter === "vip") return (g.tags || []).includes("VIP")
-    if (selectedTagFilter === "recurrent") return (g.tags || []).includes("Recorrente")
-    if (selectedTagFilter === "corporate") return Boolean(g.companyId || (g.tags || []).includes("Corporativo"))
-    if (selectedTagFilter === "pet") return Boolean(g.hasPet || (g.tags || []).includes("Pet"))
-    if (selectedTagFilter === "nespresso") return (g.tags || []).includes("Consumidor Nespresso")
-    if (selectedTagFilter === "cerveja") return (g.tags || []).includes("Apreciador Cerveja")
-    if (selectedTagFilter === "snacks") return (g.tags || []).includes("Prefere Snacks")
-    if (selectedTagFilter === "alto_consumo") return (g.tags || []).includes("Consumo Alto")
+      if (selectedTagFilter === "all") return true
+      if (selectedTagFilter === "vip") return (g.tags || []).includes("VIP")
+      if (selectedTagFilter === "recurrent") return (g.tags || []).includes("Recorrente")
+      if (selectedTagFilter === "corporate") return Boolean(g.companyId || (g.tags || []).includes("Corporativo"))
+      if (selectedTagFilter === "pet") return Boolean(g.hasPet || (g.tags || []).includes("Pet"))
+      if (selectedTagFilter === "nespresso") return (g.tags || []).includes("Consumidor Nespresso")
+      if (selectedTagFilter === "cerveja") return (g.tags || []).includes("Apreciador Cerveja")
+      if (selectedTagFilter === "snacks") return (g.tags || []).includes("Prefere Snacks")
+      if (selectedTagFilter === "alto_consumo") return (g.tags || []).includes("Consumo Alto")
 
-    return true
-  })
+      return true
+    })
+  }, [guests, search, selectedTagFilter])
 
   // Filtragem de Empresas
-  const filteredCompanies = companies.filter(c => {
+  const filteredCompanies = useMemo(() => {
     const term = search.toLowerCase()
-    return (
+    return companies.filter(c => (
       (c.corporateName || "").toLowerCase().includes(term) ||
       (c.tradeName || "").toLowerCase().includes(term) ||
       (c.cnpj || "").includes(term) ||
       (c.contactPerson || "").toLowerCase().includes(term)
-    )
-  })
+    ))
+  }, [companies, search])
 
   // Filtragem de Agências B2B
-  const filteredAgencies = agencies.filter(a => {
+  const filteredAgencies = useMemo(() => {
     const term = search.toLowerCase()
-    const posStr = (a.posUnits || []).map((u: any) => `${u.name || ""} ${u.email || ""}`).join(" ").toLowerCase()
-    const agentsStr = (a.agents || []).map((ag: any) => `${ag.name || ""} ${ag.email || ""}`).join(" ").toLowerCase()
-    return (
-      (a.corporateName || "").toLowerCase().includes(term) ||
-      (a.tradeName || "").toLowerCase().includes(term) ||
-      (a.cnpj || "").includes(term) ||
-      (a.financialEmail || "").toLowerCase().includes(term) ||
-      (a.contactPerson || "").toLowerCase().includes(term) ||
-      posStr.includes(term) ||
-      agentsStr.includes(term)
-    )
-  })
+    return agencies.filter(a => {
+      const posStr = (a.posUnits || []).map((u: any) => `${u.name || ""} ${u.email || ""}`).join(" ").toLowerCase()
+      const agentsStr = (a.agents || []).map((ag: any) => `${ag.name || ""} ${ag.email || ""}`).join(" ").toLowerCase()
+      return (
+        (a.corporateName || "").toLowerCase().includes(term) ||
+        (a.tradeName || "").toLowerCase().includes(term) ||
+        (a.cnpj || "").includes(term) ||
+        (a.financialEmail || "").toLowerCase().includes(term) ||
+        (a.contactPerson || "").toLowerCase().includes(term) ||
+        posStr.includes(term) ||
+        agentsStr.includes(term)
+      )
+    })
+  }, [agencies, search])
 
   // Estatísticas do CRM
   const totalGuests = guests.length
-  const totalLtv = guests.reduce((acc, g) => acc + (g.totalSpent || 0), 0)
-  const vipCount = guests.filter(g => (g.tags || []).includes("VIP")).length
+  const totalLtv = useMemo(() => guests.reduce((acc, g) => acc + (g.totalSpent || 0), 0), [guests])
+  const vipCount = useMemo(() => guests.filter(g => (g.tags || []).includes("VIP")).length, [guests])
   const totalCompanies = companies.length
   const totalAgencies = agencies.length
 
@@ -1315,9 +1320,44 @@ export default function CrmGuests() {
     return <Shell><AccessDenied /></Shell>
   }
 
+  const isCrmModalOpen =
+    detailModalOpen ||
+    guestModalOpen ||
+    companyModalOpen ||
+    agencyModalOpen ||
+    companyDetailModalOpen ||
+    agencyDetailModalOpen ||
+    Boolean(lightboxMedia) ||
+    Boolean(pdfViewer) ||
+    deleteDialogOpen ||
+    googleContactsModalOpen
+
   return (
     <Shell>
       <div className="space-y-6 pb-20 max-w-7xl mx-auto w-full">
+        <FrozenSlot
+          freeze={isCrmModalOpen}
+          deps={[
+            activeTab,
+            loading,
+            loadingAnalytics,
+            analyticsData,
+            search,
+            selectedTagFilter,
+            guests,
+            companies,
+            agencies,
+            filteredGuests,
+            filteredCompanies,
+            filteredAgencies,
+            totalLtv,
+            vipCount,
+            googleStatus,
+            syncingAllGoogle,
+            syncingGuestId,
+          ]}
+          render={() => (
+            <>
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border border-border p-5 rounded-3xl shadow-sm">
           <div className="flex items-center gap-3">
@@ -2276,6 +2316,9 @@ export default function CrmGuests() {
             )}
           </div>
         )}
+            </>
+          )}
+        />
         {/* ── MODAL FICHA 360º DO HÓSPEDE COM MÍDIAS E FNHR UNIFICADA ── */}
         <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
           <DialogContent className="sm:max-w-4xl bg-card border border-border rounded-3xl max-h-[88vh] overflow-y-auto p-6">

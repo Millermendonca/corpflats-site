@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react"
+import { memo, useState, useEffect, useRef, useMemo } from "react"
 import { useRoute, useLocation } from "wouter"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ import { compressImage } from "@/lib/image-compression"
 import { isValidBrazilianCpf } from "./agency-guest-credential"
 import { CorpFlatsIcon, CorpFlatsWordmark } from "@/components/brand-logo"
 import { formatSmartPhone, formatCpfOrPassport, formatPhoneForWhatsAppCheck, isPlausibleCpfOrPassport } from "@/lib/phone-mask"
+import { useStableCallback } from "@/lib/render-freeze"
 
 const toDisplayDate = (val?: string | null): string => {
   if (!val) return ""
@@ -55,6 +56,136 @@ const isValidBirthDate = (day: number, month: number, year: number): boolean => 
   const d = new Date(year, month - 1, day)
   return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day
 }
+
+const formatRemainingTime = (totalSeconds: number | null) => {
+  if (totalSeconds === null) return "--:--"
+  if (totalSeconds <= 0) return "00:00 (Expirado)"
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) {
+    return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`
+  }
+  return `${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`
+}
+
+const SignatureTokenCountdownBadge = memo(function SignatureTokenCountdownBadge({
+  expiresAt,
+  onExpire,
+}: {
+  expiresAt: string | null
+  onExpire: () => void
+}) {
+  const [secondsRemaining, setSecondsRemaining] = useState<number | null>(() => {
+    if (!expiresAt) return null
+    const diff = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000)
+    return diff > 0 ? diff : 0
+  })
+  const expiredNotifiedRef = useRef(false)
+
+  useEffect(() => {
+    expiredNotifiedRef.current = false
+    if (!expiresAt) {
+      setSecondsRemaining(null)
+      return
+    }
+    const tick = () => {
+      const diff = Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000)
+      if (diff <= 0) {
+        setSecondsRemaining(0)
+        if (!expiredNotifiedRef.current) {
+          expiredNotifiedRef.current = true
+          onExpire()
+        }
+      } else {
+        setSecondsRemaining(diff)
+      }
+    }
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => clearInterval(timer)
+  }, [expiresAt, onExpire])
+
+  return (
+    <Badge className={`text-xs font-mono font-bold py-1 px-2.5 flex items-center gap-1.5 shadow-none ${
+      secondsRemaining !== null && secondsRemaining <= 900
+        ? "bg-amber-100 text-amber-900 border-amber-300 animate-pulse"
+        : "bg-emerald-100 text-emerald-800 border-emerald-300"
+    }`}>
+      <Clock className="w-3.5 h-3.5" />
+      <span>Validade: {formatRemainingTime(secondsRemaining)}</span>
+    </Badge>
+  )
+})
+
+const OtpResendButton = memo(function OtpResendButton({
+  cooldownUntilMs,
+  otpSent,
+  otpLoading,
+  onResend,
+}: {
+  cooldownUntilMs: number
+  otpSent: boolean
+  otpLoading: boolean
+  onResend: () => void
+}) {
+  const [secondsLeft, setSecondsLeft] = useState(() => {
+    if (!cooldownUntilMs) return 0
+    const diff = Math.ceil((cooldownUntilMs - Date.now()) / 1000)
+    return diff > 0 ? diff : 0
+  })
+
+  useEffect(() => {
+    if (!cooldownUntilMs) {
+      setSecondsLeft(0)
+      return
+    }
+    const initialDiff = Math.ceil((cooldownUntilMs - Date.now()) / 1000)
+    setSecondsLeft(initialDiff > 0 ? initialDiff : 0)
+    if (initialDiff <= 0) return
+
+    const timer = setInterval(() => {
+      const diff = Math.ceil((cooldownUntilMs - Date.now()) / 1000)
+      if (diff <= 0) {
+        setSecondsLeft(0)
+        clearInterval(timer)
+      } else {
+        setSecondsLeft(diff)
+      }
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [cooldownUntilMs])
+
+  return (
+    <Button
+      type="button"
+      variant={otpSent ? "outline" : "default"}
+      size="sm"
+      disabled={secondsLeft > 0 || otpLoading}
+      onClick={onResend}
+      className={
+        otpSent
+          ? "text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border-slate-200 rounded-xl h-auto min-h-12 py-2 px-3 whitespace-normal leading-tight gap-1.5 flex-1 sm:flex-none"
+          : "text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 border-emerald-600 rounded-xl h-auto min-h-12 py-2 px-4 whitespace-normal leading-tight gap-1.5 flex-1 sm:flex-none shadow-sm"
+      }
+    >
+      {otpSent ? (
+        <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${otpLoading ? "animate-spin" : ""}`} />
+      ) : (
+        <MessageCircle className={`w-4 h-4 shrink-0 ${otpLoading ? "animate-pulse" : ""}`} />
+      )}
+      <span>
+        {otpLoading
+          ? "Enviando..."
+          : secondsLeft > 0
+          ? `Reenviar (${secondsLeft}s)`
+          : otpSent
+          ? "Reenviar no WhatsApp"
+          : "📲 Enviar Código no WhatsApp"}
+      </span>
+    </Button>
+  )
+})
 
 export default function GuestPreCheckin() {
   const [, params] = useRoute("/pre-checkin/:code")
@@ -232,11 +363,44 @@ export default function GuestPreCheckin() {
   // Token temporário de assinatura de 2 horas (MP 2.200-2/2001 e Lei 14.063/2020)
   const [signatureToken, setSignatureToken] = useState<string>("")
   const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null)
-  const [tokenSecondsRemaining, setTokenSecondsRemaining] = useState<number | null>(null)
+  const [isTokenClockExpired, setIsTokenClockExpired] = useState<boolean>(false)
   const isTokenSessionExpired = Boolean(
-    (tokenSecondsRemaining !== null && tokenSecondsRemaining <= 0) ||
+    isTokenClockExpired ||
     (tokenInfo && !tokenInfo.valid)
   )
+  const handleSignatureTokenExpire = useStableCallback(() => {
+    setIsTokenClockExpired(true)
+    setTokenInfo({
+      valid: false,
+      message: "Sua sessão de assinatura de 2 horas expirou por motivos de segurança jurídica."
+    })
+  })
+  const draftDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingTextDraftRef = useRef<{ key: string; payload: Record<string, any> } | null>(null)
+  const prevDraftStepRef = useRef<{ key: string; step: number } | null>(null)
+  const flushPendingTextDraft = useStableCallback(() => {
+    if (draftDebounceTimerRef.current !== null) {
+      clearTimeout(draftDebounceTimerRef.current)
+      draftDebounceTimerRef.current = null
+    }
+    const pending = pendingTextDraftRef.current
+    if (pending && typeof window !== "undefined") {
+      pendingTextDraftRef.current = null
+      try {
+        localStorage.setItem(
+          pending.key,
+          JSON.stringify({ ...pending.payload, updatedAt: Date.now() })
+        )
+      } catch {}
+    }
+  })
+  const cancelPendingTextDraft = useStableCallback(() => {
+    if (draftDebounceTimerRef.current !== null) {
+      clearTimeout(draftDebounceTimerRef.current)
+      draftDebounceTimerRef.current = null
+    }
+    pendingTextDraftRef.current = null
+  })
   const [isRefreshingToken, setIsRefreshingToken] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [termsModalOpen, setTermsModalOpen] = useState(false)
@@ -255,7 +419,11 @@ export default function GuestPreCheckin() {
   const [whatsappOtpInput, setWhatsappOtpInput] = useState("")
   const [otpSent, setOtpSent] = useState(false)
   const [otpLoading, setOtpLoading] = useState(false)
-  const [otpCooldown, setOtpCooldown] = useState(0)
+  const [otpCooldownUntilMs, setOtpCooldownUntilMs] = useState(0)
+  const startOtpCooldown = (seconds: number) => {
+    const secs = Number(seconds) || 0
+    setOtpCooldownUntilMs(secs > 0 ? Date.now() + secs * 1000 : 0)
+  }
   const [otpMaskedPhone, setOtpMaskedPhone] = useState("")
   const [otpMaskedEmail, setOtpMaskedEmail] = useState("")
   const [otpChannel, setOtpChannel] = useState<"whatsapp" | "email">("whatsapp")
@@ -337,14 +505,6 @@ export default function GuestPreCheckin() {
     }
   }
 
-  // Temporizador regressivo de reenvio do OTP (60s)
-  useEffect(() => {
-    if (otpCooldown > 0) {
-      const timer = setTimeout(() => setOtpCooldown(c => c - 1), 1000)
-      return () => clearTimeout(timer)
-    }
-  }, [otpCooldown])
-
   const handleSendOtp = async (channel: "whatsapp" | "email" = "whatsapp", forceNew = false) => {
     setOtpLoading(true)
     setOtpError(null)
@@ -387,13 +547,13 @@ export default function GuestPreCheckin() {
         setOtpSent(true)
         setOtpVerified(false)
         setOtpChannel(channel)
-        setOtpCooldown(data.cooldownSeconds || 60)
+        startOtpCooldown(data.cooldownSeconds || 60)
         if (data.maskedPhone) setOtpMaskedPhone(data.maskedPhone)
         if (data.maskedEmail) setOtpMaskedEmail(data.maskedEmail)
         setOtpSuccessMessage(data.message || (channel === "whatsapp" ? "Código enviado no WhatsApp!" : "Código enviado por e-mail!"))
       } else {
         if (data.cooldownRemaining) {
-          setOtpCooldown(data.cooldownRemaining)
+          startOtpCooldown(data.cooldownRemaining)
         }
         setOtpError(data.error || "Não foi possível enviar o código agora.")
       }
@@ -403,6 +563,10 @@ export default function GuestPreCheckin() {
       setOtpLoading(false)
     }
   }
+
+  const handleResendWhatsappOtp = useStableCallback(() => {
+    handleSendOtp("whatsapp", otpSent)
+  })
 
   // Opção A: Polling em tempo real para detectar confirmação 1-toque ou resposta direto no WhatsApp
   useEffect(() => {
@@ -671,6 +835,7 @@ export default function GuestPreCheckin() {
   }
 
   const loadGuestData = (resData: any, gIdx: number) => {
+    flushPendingTextDraft()
     const gList = resData.guests || []
     setGuestList(gList)
     const currentG = gList.find((g: any) => g.index === gIdx) || gList[0]
@@ -697,7 +862,7 @@ export default function GuestPreCheckin() {
     setWhatsappOtpInput(initialOtp)
     setOtpSent(Boolean(activeOtp?.hasActiveOtp || initialOtp))
     setOtpLoading(false)
-    setOtpCooldown(activeOtp?.cooldownRemaining || 0)
+    startOtpCooldown(activeOtp?.cooldownRemaining || 0)
     setOtpMaskedPhone(activeOtp?.maskedPhone || "")
     setOtpMaskedEmail(activeOtp?.maskedEmail || "")
     setOtpChannel(activeOtp?.channel === "email" ? "email" : "whatsapp")
@@ -970,55 +1135,126 @@ export default function GuestPreCheckin() {
         const activeCode = String(res.code || code || "").trim().toUpperCase()
         if (activeCode) {
           const rawDraft = localStorage.getItem(`cf_precheckin_draft_${activeCode}_g${gIdx}`)
+          const rawMediaDraft = localStorage.getItem(`cf_precheckin_draft_media_${activeCode}_g${gIdx}`)
+          let validTextDraft: any = null
           if (rawDraft) {
-            const draft = JSON.parse(rawDraft)
-            const draftAgeMs = draft?.updatedAt ? (Date.now() - Number(draft.updatedAt)) : 0
-            if (draft && draftAgeMs < 24 * 3600 * 1000) {
-              if (draft.fullName) setFullName(draft.fullName)
-              if (draft.phone) setPhone(draft.phone)
-              if (draft.email) setEmail(draft.email)
-              if (draft.document) setDocument(draft.document)
-              if (draft.birthDate && !(isMillerSlot && (draft.birthDate === "1970-01-19" || draft.birthDate === "19/01/1970"))) {
-                setBirthDate(draft.birthDate)
-                setBirthDateInput(draft.birthDateInput || toDisplayDate(draft.birthDate))
-              } else if (draft.birthDateInput && !(isMillerSlot && (draft.birthDateInput === "19/01/1970" || draft.birthDateInput === "1970-01-19"))) {
-                setBirthDateInput(draft.birthDateInput)
+            try {
+              const draft = JSON.parse(rawDraft)
+              const draftAgeMs = draft?.updatedAt ? (Date.now() - Number(draft.updatedAt)) : 0
+              if (draft && draftAgeMs < 24 * 3600 * 1000) {
+                validTextDraft = draft
               }
-              if (draft.gender) setGender(draft.gender)
-              if (draft.cep) setCep(draft.cep)
-              if (draft.street) setStreet(draft.street)
-              if (draft.streetNumber) setStreetNumber(draft.streetNumber)
-              if (draft.complement) setComplement(draft.complement)
-              if (draft.neighborhood) setNeighborhood(draft.neighborhood)
-              if (draft.city) setCity(draft.city)
-              if (draft.state) setState(draft.state)
-              if (draft.address) setAddress(draft.address)
-              if (draft.travelReason) setTravelReason(draft.travelReason)
-              if (draft.transportMethod) setTransportMethod(draft.transportMethod)
-              if (draft.estimatedArrivalTime) setEstimatedArrivalTime(draft.estimatedArrivalTime)
-              if (draft.originCity) setOriginCity(draft.originCity)
-              if (draft.originState) setOriginState(draft.originState)
-              if (draft.destinationCity) setDestinationCity(draft.destinationCity)
-              if (draft.destinationState) setDestinationState(draft.destinationState)
-              if (draft.vehiclePlate) setVehiclePlate(draft.vehiclePlate)
-              if (draft.vehicleModel) setVehicleModel(draft.vehicleModel)
-              if (draft.vehicleBrand) setVehicleBrand(draft.vehicleBrand)
-              if (draft.vehicleColor) setVehicleColor(draft.vehicleColor)
-              if (!doc && draft.docPhoto && !isForeignContaminatedDocUrl(draft.docPhoto)) {
-                setDocPhoto(draft.docPhoto)
-                hasRestoredDoc = true
-                if (draft.aiDocResult) setAiDocResult(draft.aiDocResult)
+            } catch {}
+          }
+          let validMediaDraft: any = null
+          if (rawMediaDraft) {
+            try {
+              const mediaDraft = JSON.parse(rawMediaDraft)
+              const mediaAgeMs = mediaDraft?.updatedAt ? (Date.now() - Number(mediaDraft.updatedAt)) : 0
+              if (mediaDraft && mediaAgeMs < 24 * 3600 * 1000) {
+                validMediaDraft = mediaDraft
               }
-              if (!sig && draft.signatureData) {
-                setSignatureData(draft.signatureData)
-              }
-              if (draft.acceptedHouseRules) setAcceptedHouseRules(true)
-              if (draft.acceptedContract) setAcceptedContract(true)
-              if (draft.legalDeclarationAccepted) setLegalDeclarationAccepted(true)
-              if (typeof draft.step === "number" && draft.step >= 1 && draft.step <= 3) {
-                restoredDraftStep = draft.step
-              }
+            } catch {}
+          }
+
+          if (validTextDraft) {
+            const draft = validTextDraft
+            if (draft.fullName) setFullName(draft.fullName)
+            if (draft.phone) setPhone(draft.phone)
+            if (draft.email) setEmail(draft.email)
+            if (draft.document) setDocument(draft.document)
+            if (draft.birthDate && !(isMillerSlot && (draft.birthDate === "1970-01-19" || draft.birthDate === "19/01/1970"))) {
+              setBirthDate(draft.birthDate)
+              setBirthDateInput(draft.birthDateInput || toDisplayDate(draft.birthDate))
+            } else if (draft.birthDateInput && !(isMillerSlot && (draft.birthDateInput === "19/01/1970" || draft.birthDateInput === "1970-01-19"))) {
+              setBirthDateInput(draft.birthDateInput)
             }
+            if (draft.gender) setGender(draft.gender)
+            if (draft.cep) setCep(draft.cep)
+            if (draft.street) setStreet(draft.street)
+            if (draft.streetNumber) setStreetNumber(draft.streetNumber)
+            if (draft.complement) setComplement(draft.complement)
+            if (draft.neighborhood) setNeighborhood(draft.neighborhood)
+            if (draft.city) setCity(draft.city)
+            if (draft.state) setState(draft.state)
+            if (draft.address) setAddress(draft.address)
+            if (draft.travelReason) setTravelReason(draft.travelReason)
+            if (draft.transportMethod) setTransportMethod(draft.transportMethod)
+            if (draft.estimatedArrivalTime) setEstimatedArrivalTime(draft.estimatedArrivalTime)
+            if (draft.originCity) setOriginCity(draft.originCity)
+            if (draft.originState) setOriginState(draft.originState)
+            if (draft.destinationCity) setDestinationCity(draft.destinationCity)
+            if (draft.destinationState) setDestinationState(draft.destinationState)
+            if (draft.vehiclePlate) setVehiclePlate(draft.vehiclePlate)
+            if (draft.vehicleModel) setVehicleModel(draft.vehicleModel)
+            if (draft.vehicleBrand) setVehicleBrand(draft.vehicleBrand)
+            if (draft.vehicleColor) setVehicleColor(draft.vehicleColor)
+            if (draft.acceptedHouseRules) setAcceptedHouseRules(true)
+            if (draft.acceptedContract) setAcceptedContract(true)
+            if (draft.legalDeclarationAccepted) setLegalDeclarationAccepted(true)
+            if (typeof draft.step === "number" && draft.step >= 1 && draft.step <= 3) {
+              restoredDraftStep = draft.step
+            }
+          }
+
+          // Migra mídia inline legada (se presente no rascunho de texto) para a chave dedicada e evita ressuscitar fotos removidas quando validMediaDraft existe com docPhoto: null
+          const hasLegacyInlineMedia = Boolean(
+            validTextDraft &&
+              ("docPhoto" in validTextDraft ||
+                "aiDocResult" in validTextDraft ||
+                "signatureData" in validTextDraft)
+          )
+          if (hasLegacyInlineMedia && validTextDraft) {
+            const legacyDoc =
+              validTextDraft.docPhoto && String(validTextDraft.docPhoto).length < 2_500_000
+                ? validTextDraft.docPhoto
+                : null
+            const legacySig =
+              validTextDraft.signatureData && String(validTextDraft.signatureData).length < 500_000
+                ? validTextDraft.signatureData
+                : null
+            const legacyAi = validTextDraft.aiDocResult ?? null
+            if (!validMediaDraft && (legacyDoc || legacyAi || legacySig)) {
+              validMediaDraft = {
+                updatedAt: validTextDraft.updatedAt || Date.now(),
+                docPhoto: legacyDoc,
+                aiDocResult: legacyAi,
+                signatureData: legacySig
+              }
+              try {
+                localStorage.setItem(
+                  `cf_precheckin_draft_media_${activeCode}_g${gIdx}`,
+                  JSON.stringify(validMediaDraft)
+                )
+              } catch {}
+            }
+            const { docPhoto: _dp, aiDocResult: _ai, signatureData: _sg, ...cleanTextDraft } = validTextDraft
+            validTextDraft = cleanTextDraft
+            try {
+              localStorage.setItem(
+                `cf_precheckin_draft_${activeCode}_g${gIdx}`,
+                JSON.stringify(cleanTextDraft)
+              )
+            } catch {}
+          }
+
+          const hasMediaDraft = validMediaDraft !== null
+          const restoredDocPhoto = hasMediaDraft
+            ? (validMediaDraft.docPhoto ?? null)
+            : (validTextDraft?.docPhoto ?? null)
+          const restoredAiDocResult = hasMediaDraft
+            ? (validMediaDraft.aiDocResult ?? null)
+            : (validTextDraft?.aiDocResult ?? null)
+          const restoredSigData = hasMediaDraft
+            ? (validMediaDraft.signatureData ?? null)
+            : (validTextDraft?.signatureData ?? null)
+          if (!doc && restoredDocPhoto && !isForeignContaminatedDocUrl(restoredDocPhoto)) {
+            setDocPhoto(restoredDocPhoto)
+            hasRestoredDoc = true
+            if (restoredAiDocResult) setAiDocResult(restoredAiDocResult)
+          }
+          if (!sig && restoredSigData) {
+            setSignatureData(restoredSigData)
           }
         }
       } catch {}
@@ -1078,14 +1314,41 @@ export default function GuestPreCheckin() {
     }
   }
 
-  // Auto-save do rascunho em andamento no localStorage para não perder preenchimento ao alternar hóspedes ou abrir link do OTP no WhatsApp
+  // Flush imediato ao ocultar aba (ex: alternar para o WhatsApp no celular para copiar o OTP) ou desmontar a página
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const handleVisibilityChange = () => {
+      if (window.document.visibilityState === "hidden") {
+        flushPendingTextDraft()
+      }
+    }
+    const handlePageHide = () => flushPendingTextDraft()
+    window.document.addEventListener("visibilitychange", handleVisibilityChange)
+    window.addEventListener("pagehide", handlePageHide)
+    return () => {
+      window.document.removeEventListener("visibilitychange", handleVisibilityChange)
+      window.removeEventListener("pagehide", handlePageHide)
+      flushPendingTextDraft()
+    }
+  }, [flushPendingTextDraft])
+
+  // Auto-save leve (texto/campos cadastrais) com debounce de 380ms — evita bloquear a thread principal mobile a cada tecla
   useEffect(() => {
     if (loading || isCompleted || !isEditing || typeof window === "undefined") return
     const activeCode = String(reservation?.code || code || "").trim().toUpperCase()
     if (!activeCode || !selectedGuestIndex) return
-    try {
-      const draftPayload = {
-        updatedAt: Date.now(),
+
+    const draftKey = `cf_precheckin_draft_${activeCode}_g${selectedGuestIndex}`
+    const prevStepInfo = prevDraftStepRef.current
+    if (!prevStepInfo || prevStepInfo.key !== draftKey) {
+      // Primeira renderização deste hóspede após hidratação/troca de aba: registra a etapa inicial sem gravar rascunho não editado
+      prevDraftStepRef.current = { key: draftKey, step }
+      return
+    }
+
+    pendingTextDraftRef.current = {
+      key: draftKey,
+      payload: {
         step,
         fullName,
         phone,
@@ -1113,26 +1376,65 @@ export default function GuestPreCheckin() {
         vehicleModel,
         vehicleBrand,
         vehicleColor,
-        docPhoto: docPhoto && docPhoto.length < 2_500_000 ? docPhoto : null,
-        aiDocResult,
-        signatureData: signatureData && signatureData.length < 500_000 ? signatureData : null,
         acceptedHouseRules,
         acceptedContract,
         legalDeclarationAccepted
       }
-      localStorage.setItem(`cf_precheckin_draft_${activeCode}_g${selectedGuestIndex}`, JSON.stringify(draftPayload))
-    } catch {}
+    }
+
+    if (prevStepInfo.step !== step) {
+      prevDraftStepRef.current = { key: draftKey, step }
+      flushPendingTextDraft()
+      return
+    }
+
+    if (draftDebounceTimerRef.current !== null) {
+      clearTimeout(draftDebounceTimerRef.current)
+    }
+    draftDebounceTimerRef.current = setTimeout(() => {
+      flushPendingTextDraft()
+    }, 380)
   }, [
     loading, isCompleted, isEditing, reservation?.code, code, selectedGuestIndex, step,
     fullName, phone, email, document, birthDate, birthDateInput, gender,
     cep, street, streetNumber, complement, neighborhood, city, state, address,
     travelReason, transportMethod, estimatedArrivalTime, originCity, originState,
     destinationCity, destinationState, vehiclePlate, vehicleModel, vehicleBrand, vehicleColor,
-    docPhoto, aiDocResult, signatureData, acceptedHouseRules, acceptedContract, legalDeclarationAccepted
+    acceptedHouseRules, acceptedContract, legalDeclarationAccepted, flushPendingTextDraft
+  ])
+
+  // Auto-save isolado de mídia pesada (foto do documento até 2.5MB e assinatura até 500KB) APENAS quando a mídia muda
+  useEffect(() => {
+    if (loading || isCompleted || !isEditing || typeof window === "undefined") return
+    const activeCode = String(reservation?.code || code || "").trim().toUpperCase()
+    if (!activeCode || !selectedGuestIndex) return
+    const mediaKey = `cf_precheckin_draft_media_${activeCode}_g${selectedGuestIndex}`
+    try {
+      const safeDocPhoto = docPhoto && docPhoto.length < 2_500_000 ? docPhoto : null
+      const safeSigData = signatureData && signatureData.length < 500_000 ? signatureData : null
+      if (!safeDocPhoto && !aiDocResult && !safeSigData) {
+        localStorage.removeItem(mediaKey)
+      } else {
+        localStorage.setItem(
+          mediaKey,
+          JSON.stringify({
+            updatedAt: Date.now(),
+            docPhoto: safeDocPhoto,
+            aiDocResult,
+            signatureData: safeSigData
+          })
+        )
+      }
+    } catch {}
+  }, [
+    loading, isCompleted, isEditing, reservation?.code, code, selectedGuestIndex,
+    docPhoto, aiDocResult, signatureData
   ])
 
   useEffect(() => {
+    let cancelled = false
     if (code) {
+      const targetGuestIndex = selectedGuestIndex
       const sp = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams()
       const queryToken = sp.get("token") || ""
       const url = `/api/pms/pre-checkin/${code}${queryToken ? `?token=${encodeURIComponent(queryToken)}` : ""}`
@@ -1142,14 +1444,15 @@ export default function GuestPreCheckin() {
       fetch(url)
         .then(r => r.json())
         .then(data => {
+          if (cancelled) return
           if (data.tokenStatus) {
             setTokenInfo(data.tokenStatus)
             if (data.tokenStatus.valid && data.tokenStatus.expiresAt) {
               setTokenExpiresAt(data.tokenStatus.expiresAt)
               const diff = Math.floor((new Date(data.tokenStatus.expiresAt).getTime() - Date.now()) / 1000)
-              setTokenSecondsRemaining(diff > 0 ? diff : 0)
+              setIsTokenClockExpired(diff <= 0)
             } else if (!data.tokenStatus.valid) {
-              setTokenSecondsRemaining(0)
+              setIsTokenClockExpired(true)
             }
           }
           if (data.checkinProvider) {
@@ -1160,7 +1463,7 @@ export default function GuestPreCheckin() {
           }
           if (data.reservation) {
             setReservation(data.reservation)
-            loadGuestData(data, selectedGuestIndex)
+            loadGuestData(data, targetGuestIndex)
           }
         })
         .catch(() => {})
@@ -1168,33 +1471,57 @@ export default function GuestPreCheckin() {
 
     fetch("/api/settings")
       .then(r => r.json())
-      .then(data => setSettings(data))
+      .then(data => { if (!cancelled) setSettings(data) })
       .catch(() => {})
 
     fetch("/api/site-content")
       .then(r => r.json())
-      .then(data => setSiteConfig(data))
+      .then(data => { if (!cancelled) setSiteConfig(data) })
       .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
   }, [code, selectedGuestIndex])
 
-  // Temporizador regressivo da sessão de assinatura (2 horas)
+  // Expiração determinística da sessão de assinatura (sem re-renderizar a página inteira a cada 1s)
   useEffect(() => {
-    if (!tokenExpiresAt) return
+    if (!tokenExpiresAt) {
+      setIsTokenClockExpired(false)
+      return
+    }
 
-    const tick = () => {
-      const diff = Math.floor((new Date(tokenExpiresAt).getTime() - Date.now()) / 1000)
-      if (diff <= 0) {
-        setTokenSecondsRemaining(0)
-        setTokenInfo({ valid: false, message: "Sua sessão de assinatura de 2 horas expirou por motivos de segurança jurídica." })
+    let expireTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleOrExpire = () => {
+      if (expireTimer !== null) {
+        clearTimeout(expireTimer)
+        expireTimer = null
+      }
+      const msRemaining = new Date(tokenExpiresAt).getTime() - Date.now()
+      if (msRemaining <= 0) {
+        handleSignatureTokenExpire()
       } else {
-        setTokenSecondsRemaining(diff)
+        setIsTokenClockExpired(false)
+        expireTimer = setTimeout(handleSignatureTokenExpire, Math.min(msRemaining + 50, 2_147_483_647))
       }
     }
 
-    tick()
-    const timer = setInterval(tick, 1000)
-    return () => clearInterval(timer)
-  }, [tokenExpiresAt])
+    scheduleOrExpire()
+    const onVisibility = () => {
+      if (typeof window !== "undefined" && window.document.visibilityState === "visible") {
+        scheduleOrExpire()
+      }
+    }
+    if (typeof window !== "undefined") {
+      window.document.addEventListener("visibilitychange", onVisibility)
+    }
+    return () => {
+      if (expireTimer !== null) clearTimeout(expireTimer)
+      if (typeof window !== "undefined") {
+        window.document.removeEventListener("visibilitychange", onVisibility)
+      }
+    }
+  }, [tokenExpiresAt, handleSignatureTokenExpire])
 
   // Função para garantir ou renovar o token temporário de 2 horas
   const ensureOrRefreshToken = async (forceNew = false) => {
@@ -1225,8 +1552,7 @@ export default function GuestPreCheckin() {
           setSignatureToken(data.token)
           setTokenExpiresAt(data.expiresAt)
           setTokenInfo({ valid: true })
-          const diff = Math.floor((new Date(data.expiresAt).getTime() - Date.now()) / 1000)
-          setTokenSecondsRemaining(diff > 0 ? diff : 7200)
+          setIsTokenClockExpired(false)
 
           if (typeof window !== "undefined") {
             const currentUrl = new URL(window.location.href)
@@ -1247,23 +1573,12 @@ export default function GuestPreCheckin() {
   // Ao entrar no Passo 3, se não houver token ativo ou se expirado, assegura novo token de 2h
   useEffect(() => {
     if (step === 3 && !isCompleted) {
-      if (!signatureToken || (tokenSecondsRemaining !== null && tokenSecondsRemaining <= 0)) {
+      const expiredByClock = tokenExpiresAt ? new Date(tokenExpiresAt).getTime() <= Date.now() : false
+      if (!signatureToken || isTokenClockExpired || expiredByClock || (tokenInfo && !tokenInfo.valid)) {
         ensureOrRefreshToken()
       }
     }
   }, [step, isCompleted])
-
-  const formatRemainingTime = (totalSeconds: number | null) => {
-    if (totalSeconds === null) return "--:--"
-    if (totalSeconds <= 0) return "00:00 (Expirado)"
-    const hours = Math.floor(totalSeconds / 3600)
-    const minutes = Math.floor((totalSeconds % 3600) / 60)
-    const seconds = totalSeconds % 60
-    if (hours > 0) {
-      return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`
-    }
-    return `${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`
-  }
 
   const handleCopyLink = () => {
     if (typeof window !== "undefined") {
@@ -1665,11 +1980,14 @@ export default function GuestPreCheckin() {
           }
         } catch {}
         try {
+          cancelPendingTextDraft()
           const activeCode = resData.reservation?.code || code
           if (activeCode && selectedGuestIndex) {
+            const cleanDraftCode = String(activeCode).trim().toUpperCase()
             sessionStorage.setItem(`cf_active_guest_${activeCode}`, String(selectedGuestIndex))
             localStorage.setItem(`cf_active_guest_${activeCode}`, String(selectedGuestIndex))
-            localStorage.removeItem(`cf_precheckin_draft_${String(activeCode).trim().toUpperCase()}_g${selectedGuestIndex}`)
+            localStorage.removeItem(`cf_precheckin_draft_${cleanDraftCode}_g${selectedGuestIndex}`)
+            localStorage.removeItem(`cf_precheckin_draft_media_${cleanDraftCode}_g${selectedGuestIndex}`)
             if (fullName) localStorage.setItem("corpflats_guest_name", fullName)
           }
         } catch {}
@@ -4178,14 +4496,10 @@ export default function GuestPreCheckin() {
                     </div>
 
                     <div className="flex items-center gap-1.5">
-                      <Badge className={`text-xs font-mono font-bold py-1 px-2.5 flex items-center gap-1.5 shadow-none ${
-                        tokenSecondsRemaining !== null && tokenSecondsRemaining <= 900
-                          ? "bg-amber-100 text-amber-900 border-amber-300 animate-pulse"
-                          : "bg-emerald-100 text-emerald-800 border-emerald-300"
-                      }`}>
-                        <Clock className="w-3.5 h-3.5" />
-                        <span>Validade: {formatRemainingTime(tokenSecondsRemaining)}</span>
-                      </Badge>
+                      <SignatureTokenCountdownBadge
+                        expiresAt={tokenExpiresAt}
+                        onExpire={handleSignatureTokenExpire}
+                      />
                     </div>
                   </div>
 
@@ -4383,33 +4697,12 @@ export default function GuestPreCheckin() {
                       <span>📋 Colar</span>
                     </Button>
 
-                    <Button
-                      type="button"
-                      variant={otpSent ? "outline" : "default"}
-                      size="sm"
-                      disabled={otpCooldown > 0 || otpLoading}
-                      onClick={() => handleSendOtp("whatsapp", otpSent)}
-                      className={
-                        otpSent
-                          ? "text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border-slate-200 rounded-xl h-auto min-h-12 py-2 px-3 whitespace-normal leading-tight gap-1.5 flex-1 sm:flex-none"
-                          : "text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 border-emerald-600 rounded-xl h-auto min-h-12 py-2 px-4 whitespace-normal leading-tight gap-1.5 flex-1 sm:flex-none shadow-sm"
-                      }
-                    >
-                      {otpSent ? (
-                        <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${otpLoading ? "animate-spin" : ""}`} />
-                      ) : (
-                        <MessageCircle className={`w-4 h-4 shrink-0 ${otpLoading ? "animate-pulse" : ""}`} />
-                      )}
-                      <span>
-                        {otpLoading
-                          ? "Enviando..."
-                          : otpCooldown > 0
-                          ? `Reenviar (${otpCooldown}s)`
-                          : otpSent
-                          ? "Reenviar no WhatsApp"
-                          : "📲 Enviar Código no WhatsApp"}
-                      </span>
-                    </Button>
+                    <OtpResendButton
+                      cooldownUntilMs={otpCooldownUntilMs}
+                      otpSent={otpSent}
+                      otpLoading={otpLoading}
+                      onResend={handleResendWhatsappOtp}
+                    />
                   </div>
                 </div>
 

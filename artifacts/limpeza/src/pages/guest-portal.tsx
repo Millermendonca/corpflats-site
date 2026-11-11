@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react"
+import { memo, useState, useEffect, useMemo, useRef } from "react"
 import { useRoute, useLocation } from "wouter"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -23,6 +23,54 @@ import { AddToCalendar } from "@/components/add-to-calendar"
 import { CorpFlatsIcon, CorpFlatsWordmark, CorpFlatsSplashScreen } from "@/components/brand-logo"
 import { generateLodgingJsonLd } from "@/lib/calendar-helper"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
+import { FrozenSlot, useStableCallback } from "@/lib/render-freeze"
+
+const HoldCountdownBadge = memo(function HoldCountdownBadge({
+  expiresAt,
+  onExpire,
+}: {
+  expiresAt: string
+  onExpire: () => void
+}) {
+  const computeLabel = () => {
+    const diff = new Date(expiresAt).getTime() - Date.now()
+    if (diff <= 0) return "00:00"
+    const totalSecs = Math.floor(diff / 1000)
+    const mins = Math.floor(totalSecs / 60)
+    const secs = totalSecs % 60
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+  }
+  const [timeStr, setTimeStr] = useState<string>(computeLabel)
+  const expiredNotifiedRef = useRef(false)
+
+  useEffect(() => {
+    expiredNotifiedRef.current = false
+    const tick = () => {
+      const diff = new Date(expiresAt).getTime() - Date.now()
+      if (diff <= 0) {
+        setTimeStr("00:00")
+        if (!expiredNotifiedRef.current) {
+          expiredNotifiedRef.current = true
+          onExpire()
+        }
+      } else {
+        const totalSecs = Math.floor(diff / 1000)
+        const mins = Math.floor(totalSecs / 60)
+        const secs = totalSecs % 60
+        setTimeStr(`${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`)
+      }
+    }
+    tick()
+    const interval = setInterval(tick, 1000)
+    return () => clearInterval(interval)
+  }, [expiresAt, onExpire])
+
+  return (
+    <Badge variant="outline" className="bg-white border-sky-300 font-mono font-bold text-sm px-2.5 py-1 text-sky-700 shrink-0">
+      ⏳ {timeStr}
+    </Badge>
+  )
+})
 
 function formatDate(dateStr?: string): string {
   if (!dateStr) return "—"
@@ -430,7 +478,6 @@ export default function GuestPortal() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
   const [modPaymentMethod, setModPaymentMethod] = useState<"pix" | "card">("pix")
   const [modCopiedPix, setModCopiedPix] = useState(false)
-  const [modTimeRemaining, setModTimeRemaining] = useState("30:00")
   const [modPollingActive, setModPollingActive] = useState(false)
   const [cancellingHold, setCancellingHold] = useState(false)
 
@@ -444,28 +491,10 @@ export default function GuestPortal() {
     reSignatureUrl: string
   } | null>(null)
 
-  // Contagem regressiva do Hold Provisório de 30 minutos
-  useEffect(() => {
-    if (modStep !== "checkout" || !checkoutData?.expiresAt || !modifyModalOpen) return
-
-    const updateTimer = () => {
-      const diff = new Date(checkoutData.expiresAt).getTime() - Date.now()
-      if (diff <= 0) {
-        setModTimeRemaining("00:00")
-        setCheckoutError("O prazo de 30 minutos para pagamento desta alteração expirou. Por favor, reinicie a simulação.")
-        setModPollingActive(false)
-      } else {
-        const totalSecs = Math.floor(diff / 1000)
-        const mins = Math.floor(totalSecs / 60)
-        const secs = totalSecs % 60
-        setModTimeRemaining(`${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`)
-      }
-    }
-
-    updateTimer()
-    const interval = setInterval(updateTimer, 1000)
-    return () => clearInterval(interval)
-  }, [modStep, checkoutData?.expiresAt, modifyModalOpen])
+  const handleHoldExpire = useStableCallback(() => {
+    setCheckoutError("O prazo de 30 minutos para pagamento desta alteração expirou. Por favor, reinicie a simulação.")
+    setModPollingActive(false)
+  })
 
   // Polling em segundo plano para detecção automática de pagamento (/modify-status)
   useEffect(() => {
@@ -1160,6 +1189,99 @@ export default function GuestPortal() {
     return guestsList.filter((g: any) => Number(g.index) !== Number(activeGuestIndex) && Boolean(g.needsReSignature))
   }, [guestsList, activeGuestIndex, isPreReservaUnpaid, isStayAlreadyClosed, hasEverDoneCheckin])
 
+  const activeMinibarOrders = useMemo(() => {
+    if (!Array.isArray(data?.minibarOrders)) return []
+    return data.minibarOrders.filter((o: any) => o && o.paymentStatus !== "cancelado")
+  }, [data?.minibarOrders])
+
+  const portalFinancialSummary = useMemo(() => {
+    const isRequesterView =
+      typeof window !== "undefined" &&
+      (new URLSearchParams(window.location.search).get("requester") === "1" ||
+        new URLSearchParams(window.location.search).get("view") === "requester")
+    const hideFinancial = Boolean(
+      isB2b ||
+      (!isRequesterView &&
+        (data?.hideFinancialForGuest ||
+          reservation?.hideFinancialForGuest ||
+          reservation?.nfHideFromGuest))
+    )
+    const dailyRatesArr = (reservation as any)?.dailyRates
+    const ratesSub = Array.isArray(dailyRatesArr) && dailyRatesArr.length > 0
+      ? dailyRatesArr.reduce((acc: number, d: any) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
+      : 0
+    const chargesArr = (reservation as any)?.charges
+    const chargesSub = Array.isArray(chargesArr) && chargesArr.length > 0
+      ? chargesArr.reduce((acc: number, c: any) => acc + (Number(c?.amount) || 0), 0)
+      : (Number((reservation as any)?.cleaningFee) || 0)
+    const rawTot = Number(reservation?.totalAmount) || 0
+    const resolvedTot = (!(reservation as any)?.earlyCheckout && chargesSub > 0 && ratesSub > 0 && Math.abs(rawTot - ratesSub) < 0.05)
+      ? Math.round((ratesSub + chargesSub) * 100) / 100
+      : rawTot
+    const totAmt = hideFinancial ? 0 : resolvedTot
+    const rawPaid = hideFinancial ? 0 : (Number(reservation?.paidAmount) || 0)
+    const hasAmt = totAmt > 0 || (!isOta && rawPaid > 0)
+    const paidAmt = isPaid ? (totAmt > 0 ? totAmt : (isOta ? 0 : rawPaid)) : rawPaid
+    const pendingAmt = Math.max(0, totAmt - paidAmt)
+    const calcCard = (pixAmt: number) => Math.round((Number(pixAmt) || 0) * 1.05 * 100) / 100
+    const cardTot = hideFinancial
+      ? 0
+      : (totAmt !== rawTot ? calcCard(totAmt) : (Number(reservation?.cardTotalAmount) || calcCard(totAmt)))
+    const cardPend = hideFinancial
+      ? 0
+      : (totAmt !== rawTot ? calcCard(pendingAmt) : (Number(reservation?.cardPendingAmount) || calcCard(pendingAmt)))
+
+    const packages = reservation
+      ? computeStayPackages(
+          dailyRatesArr,
+          chargesArr,
+          (reservation as any)?.cleaningFee,
+          reservation?.channel,
+          reservation?.checkinDate,
+          reservation?.checkoutDate,
+          totAmt
+        )
+      : []
+
+    const rawPayments = (reservation as any)?.payments
+    const payments = Array.isArray(rawPayments) && rawPayments.length > 0
+      ? rawPayments
+      : (() => {
+          const fallbackMethod = String(reservation?.paymentMethod || reservation?.channel || "").toLowerCase()
+          const isFallbackOta = fallbackMethod === "booking" || fallbackMethod === "airbnb"
+          return [
+            {
+              id: "pay_fallback",
+              amount: paidAmt,
+              method: reservation?.paymentMethod || reservation?.channel,
+              date: reservation?.paidAt || "",
+              endToEndId: isFallbackOta ? undefined : reservation?.pixEndToEndId,
+              txId: isFallbackOta ? undefined : reservation?.pixTxId,
+              mpPaymentId: isFallbackOta ? undefined : reservation?.mpPaymentId,
+              notes: "Pagamento integral"
+            }
+          ]
+        })()
+
+    return {
+      isRequesterPortalView: isRequesterView,
+      hideFinancialForGuest: hideFinancial,
+      ratesSubtotalInPortal: ratesSub,
+      chargesSubtotalInPortal: chargesSub,
+      rawTotalInPortal: rawTot,
+      resolvedTotalInPortal: resolvedTot,
+      totalAmount: totAmt,
+      rawPaidAmount: rawPaid,
+      hasAmount: hasAmt,
+      paidAmount: paidAmt,
+      pendingAmount: pendingAmt,
+      cardTotalAmount: cardTot,
+      cardPendingAmount: cardPend,
+      stayPackages: packages,
+      resolvedPayments: payments,
+    }
+  }, [data?.hideFinancialForGuest, reservation, isB2b, isOta, isPaid])
+
   // Preserva needsReSignature apontando para a obrigação do hóspede atual
   const needsReSignature = currentGuestNeedsReSignature
 
@@ -1461,58 +1583,25 @@ export default function GuestPortal() {
     setTimeout(() => setCopiedSsid(false), 2500)
   }
 
-  const isRequesterPortalView = typeof window !== "undefined" && (new URLSearchParams(window.location.search).get("requester") === "1" || new URLSearchParams(window.location.search).get("view") === "requester")
-  const hideFinancialForGuest = Boolean(isB2b || (!isRequesterPortalView && (data?.hideFinancialForGuest || reservation?.hideFinancialForGuest || reservation?.nfHideFromGuest)))
   const requesterName = data?.requesterName || reservation?.requesterName || null
-  const ratesSubtotalInPortal = Array.isArray((reservation as any).dailyRates) && (reservation as any).dailyRates.length > 0
-    ? (reservation as any).dailyRates.reduce((acc: number, d: any) => acc + (Number(d?.rate ?? d?.amount) || 0), 0)
-    : 0
-  const chargesSubtotalInPortal = Array.isArray((reservation as any).charges) && (reservation as any).charges.length > 0
-    ? (reservation as any).charges.reduce((acc: number, c: any) => acc + (Number(c?.amount) || 0), 0)
-    : (Number((reservation as any).cleaningFee) || 0)
-  const rawTotalInPortal = Number(reservation.totalAmount) || 0
-  const resolvedTotalInPortal = (!(reservation as any).earlyCheckout && chargesSubtotalInPortal > 0 && ratesSubtotalInPortal > 0 && Math.abs(rawTotalInPortal - ratesSubtotalInPortal) < 0.05)
-    ? Math.round((ratesSubtotalInPortal + chargesSubtotalInPortal) * 100) / 100
-    : rawTotalInPortal
-  const totalAmount = hideFinancialForGuest ? 0 : resolvedTotalInPortal
-  const rawPaidAmount = hideFinancialForGuest ? 0 : (Number(reservation.paidAmount) || 0)
-  const hasAmount = totalAmount > 0 || (!isOta && rawPaidAmount > 0)
-  const paidAmount = isPaid ? (totalAmount > 0 ? totalAmount : (isOta ? 0 : rawPaidAmount)) : rawPaidAmount
-  const pendingAmount = Math.max(0, totalAmount - paidAmount)
   const computeCardAmount = (pixAmt: number) => Math.round((Number(pixAmt) || 0) * 1.05 * 100) / 100
-  const cardTotalAmount = hideFinancialForGuest ? 0 : (totalAmount !== rawTotalInPortal ? computeCardAmount(totalAmount) : (Number(reservation.cardTotalAmount) || computeCardAmount(totalAmount)))
-  const cardPendingAmount = hideFinancialForGuest ? 0 : (totalAmount !== rawTotalInPortal ? computeCardAmount(pendingAmount) : (Number(reservation.cardPendingAmount) || computeCardAmount(pendingAmount)))
-
-  const stayPackages = computeStayPackages(
-    (reservation as any)?.dailyRates,
-    (reservation as any)?.charges,
-    (reservation as any)?.cleaningFee,
-    reservation?.channel,
-    reservation?.checkinDate,
-    reservation?.checkoutDate,
-    totalAmount
-  )
-
-  const resolvedPayments = (() => {
-    const rawPayments = (reservation as any)?.payments
-    if (Array.isArray(rawPayments) && rawPayments.length > 0) {
-      return rawPayments
-    }
-    const fallbackMethod = String(reservation?.paymentMethod || reservation?.channel || "").toLowerCase()
-    const isFallbackOta = fallbackMethod === "booking" || fallbackMethod === "airbnb"
-    return [
-      {
-        id: "pay_fallback",
-        amount: paidAmount,
-        method: reservation?.paymentMethod || reservation?.channel,
-        date: reservation?.paidAt || "",
-        endToEndId: isFallbackOta ? undefined : reservation?.pixEndToEndId,
-        txId: isFallbackOta ? undefined : reservation?.pixTxId,
-        mpPaymentId: isFallbackOta ? undefined : reservation?.mpPaymentId,
-        notes: "Pagamento integral"
-      }
-    ]
-  })()
+  const {
+    isRequesterPortalView,
+    hideFinancialForGuest,
+    ratesSubtotalInPortal,
+    chargesSubtotalInPortal,
+    rawTotalInPortal,
+    resolvedTotalInPortal,
+    totalAmount,
+    rawPaidAmount,
+    hasAmount,
+    paidAmount,
+    pendingAmount,
+    cardTotalAmount,
+    cardPendingAmount,
+    stayPackages,
+    resolvedPayments,
+  } = portalFinancialSummary
 
   const handleCopyPix = () => {
     if (!reservation.pixCopiaECola) return
@@ -2296,8 +2385,48 @@ export default function GuestPortal() {
     }
   }
 
+  const isPortalModalOpen = modifyModalOpen || cancelModalOpen || receiptModalOpen || termsModalOpen
+
   return (
     <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white pb-20 w-full max-w-full overflow-x-hidden">
+      <FrozenSlot
+        freeze={isPortalModalOpen}
+        deps={[
+          data,
+          activeGuestIndex,
+          copiedKey,
+          copiedWifi,
+          copiedSsid,
+          copiedPix,
+          copiedCafeLink,
+          checkingPayment,
+          paymentMethodTab,
+          changingMethod,
+          paymentSuccessNotice,
+          paymentPendingFeedback,
+          sendingWaVoucher,
+          waVoucherSent,
+          claimingEarly,
+          reminderSaved,
+          dndLoading,
+          linenRequestType,
+          linenRequestNotes,
+          requestingLinen,
+          cancellingLinenId,
+          dndSuccessNotice,
+          linenSuccessNotice,
+          favoriteTogglingId,
+          selectedArrivalTime,
+          customArrivalTime,
+          savingArrival,
+          editingArrival,
+          arrivalSuccessNotice,
+          selfCheckinNotice,
+          confirmingSelfCheckin,
+          copiedGuestLinkIndex,
+        ]}
+        render={() => (
+          <>
       {/* ── Top Navigation Bar (Header Clean, Sofisticado & 100% Responsivo) ──────────────── */}
       <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-3 sm:px-8 py-2.5 sm:py-3 shadow-2xs w-full max-w-full">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
@@ -4460,11 +4589,9 @@ export default function GuestPortal() {
             );
           })()}
 
-          {Array.isArray(data?.minibarOrders) && data.minibarOrders.filter((o: any) => o && o.paymentStatus !== "cancelado").length > 0 && (
+          {activeMinibarOrders.length > 0 && (
             <div className="space-y-2 pt-1">
-              {data.minibarOrders
-                .filter((o: any) => o && o.paymentStatus !== "cancelado")
-                .map((ord: any) => {
+              {activeMinibarOrders.map((ord: any) => {
                   const invUrl = ord.invoice?.invoiceFileUrl || ord.invoice?.fileUrl || ord.invoiceFileUrl || "";
                   const invName = ord.invoice?.invoiceFileName || ord.invoiceFileName || "Nota_Fiscal_Frigobar.pdf";
                   const invNum = ord.invoice?.invoiceNumber || ord.invoiceNumber || "";
@@ -4974,6 +5101,9 @@ export default function GuestPortal() {
         </div>
 
       </main>
+          </>
+        )}
+      />
 
       {/* ── Modal Multi-Etapas: Modificar Reserva (Milestone 3) ──────────── */}
       <Dialog 
@@ -5266,9 +5396,10 @@ export default function GuestPortal() {
                     <span className="text-[11px] text-sky-800">Suas datas estão reservadas enquanto conclui o pagamento.</span>
                   </div>
                 </div>
-                <Badge variant="outline" className="bg-white border-sky-300 font-mono font-bold text-sm px-2.5 py-1 text-sky-700 shrink-0">
-                  ⏳ {modTimeRemaining}
-                </Badge>
+                <HoldCountdownBadge
+                  expiresAt={checkoutData.expiresAt}
+                  onExpire={handleHoldExpire}
+                />
               </div>
 
               {/* Caixa de Valor Adicional */}

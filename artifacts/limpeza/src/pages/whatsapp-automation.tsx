@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
 import { useGetMe } from "@workspace/api-client-react"
+import { FrozenSlot } from "@/lib/render-freeze"
 import { Shell } from "@/components/layout"
 import { CorpFlatsIcon } from "@/components/brand-logo"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -2628,20 +2629,84 @@ export default function WhatsappAutomation() {
       })
   }
 
+  const filteredQueue = useMemo(() => {
+    const qLower = queueSearch.trim().toLowerCase()
+    if (!qLower) return queue
+    return queue.filter(q =>
+      q.guestName.toLowerCase().includes(qLower) ||
+      q.reservationCode.toLowerCase().includes(qLower) ||
+      q.triggerEvent.toLowerCase().includes(qLower)
+    )
+  }, [queue, queueSearch])
+
+  const enabledQuickMessagesCount = useMemo(
+    () => quickMessages.filter(m => m.enabled !== false).length,
+    [quickMessages]
+  )
+
+  const scheduledQueueCount = useMemo(
+    () => queue.filter(q => q.status === "scheduled").length,
+    [queue]
+  )
+
+  const activeGuidelinesCount = useMemo(
+    () => developerGuidelines.filter((g: any) => g.enabled !== false && g.active !== false).length,
+    [developerGuidelines]
+  )
+
+  const filteredDeveloperGuidelines = useMemo(
+    () =>
+      developerGuidelines.filter((g: any) => {
+        if (guidelineFilterCategory === "all") return true
+        const normCat = g.category === "tone" ? "persona_treatment" : (g.category || "factual")
+        return normCat === guidelineFilterCategory
+      }),
+    [developerGuidelines, guidelineFilterCategory]
+  )
+
+  const regularTemplates = useMemo(
+    () => templates.filter(tpl => tpl.id !== "tpl_sunday_upsell" && tpl.triggerEvent !== "sunday_upsell_offer"),
+    [templates]
+  )
+
   if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     return <AccessDenied moduleName="Automação de WhatsApp" />
   }
 
-  const filteredQueue = queue.filter(q => 
-    !queueSearch.trim() || 
-    q.guestName.toLowerCase().includes(queueSearch.toLowerCase()) ||
-    q.reservationCode.toLowerCase().includes(queueSearch.toLowerCase()) ||
-    q.triggerEvent.toLowerCase().includes(queueSearch.toLowerCase())
-  )
+  const isWaAutomationModalOpen =
+    testModalOpen ||
+    previewModalOpen ||
+    qmModalOpen ||
+    addGuidelineModalOpen
 
   return (
     <Shell>
       <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
+        <FrozenSlot
+          freeze={isWaAutomationModalOpen}
+          deps={[
+            activeTab,
+            aiSubTab,
+            queue,
+            filteredQueue,
+            history,
+            templates,
+            regularTemplates,
+            quickMessages,
+            enabledQuickMessagesCount,
+            scheduledQueueCount,
+            developerGuidelines,
+            activeGuidelinesCount,
+            filteredDeveloperGuidelines,
+            statusInfo,
+            config,
+            aiConfig,
+            zapiChannels,
+            botActionsSettings,
+            pendingDemandsCount,
+          ]}
+          render={() => (
+            <>
         
         {/* Header Superior */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-5">
@@ -2976,15 +3041,15 @@ export default function WhatsappAutomation() {
               <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
               💬 Mensagens Rápidas
               <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-emerald-600 text-white font-black">
-                {quickMessages.filter(m => m.enabled !== false).length}
+                {enabledQuickMessagesCount}
               </span>
             </TabsTrigger>
             <TabsTrigger value="queue" className="rounded-lg text-xs font-bold gap-1.5 relative">
               <Clock className="w-3.5 h-3.5 text-purple-500" />
               🕒 Fila de Envios
-              {queue.filter(q => q.status === "scheduled").length > 0 && (
+              {scheduledQueueCount > 0 && (
                 <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-purple-600 text-white font-black">
-                  {queue.filter(q => q.status === "scheduled").length}
+                  {scheduledQueueCount}
                 </span>
               )}
             </TabsTrigger>
@@ -4414,7 +4479,7 @@ export default function WhatsappAutomation() {
                             Central de Diretrizes da IA (Estilo WhatsApp Business AI)
                           </CardTitle>
                           <Badge variant="outline" className="bg-purple-100 text-purple-800 dark:bg-purple-950 border-purple-200 text-[10px] font-bold">
-                            {developerGuidelines.filter((g: any) => g.enabled !== false && g.active !== false).length} Ativas de {developerGuidelines.length}
+                            {activeGuidelinesCount} Ativas de {developerGuidelines.length}
                           </Badge>
                         </div>
                         <CardDescription className="text-xs text-purple-900/70 dark:text-purple-300/70">
@@ -4484,13 +4549,7 @@ export default function WhatsappAutomation() {
                       </div>
                     ) : (
                       <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-                        {developerGuidelines
-                          .filter((g: any) => {
-                            if (guidelineFilterCategory === "all") return true
-                            const normCat = g.category === "tone" ? "persona_treatment" : (g.category || "factual")
-                            return normCat === guidelineFilterCategory
-                          })
-                          .map((guide: any, idx: number) => {
+                        {filteredDeveloperGuidelines.map((guide: any, idx: number) => {
                             const guideId = guide.id || String(idx)
                             const ruleText = guide.rule || guide.text || ""
                             const isGuideActive = guide.enabled !== false && guide.active !== false
@@ -5477,7 +5536,7 @@ export default function WhatsappAutomation() {
             })()}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {templates.filter(tpl => tpl.id !== "tpl_sunday_upsell" && tpl.triggerEvent !== "sunday_upsell_offer").map(tpl => {
+              {regularTemplates.map(tpl => {
                 const isImmediate = tpl.triggerTiming === "immediate"
                 const isBefore = tpl.triggerTiming === "before_event"
                 const isAfter = tpl.triggerTiming === "after_event"
@@ -7360,6 +7419,9 @@ export default function WhatsappAutomation() {
           </TabsContent>
 
         </Tabs>
+            </>
+          )}
+        />
 
         {/* ════════════════════════════════════════════════════════════════════
             MODAL DE DISPARO DE TESTE RÁPIDO

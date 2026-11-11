@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
+import { FrozenSlot } from "@/lib/render-freeze"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -3552,12 +3553,72 @@ export default function FiscalInvoicesPage() {
     formTomadorNome ? buildStandardDescription(formTomadorNome, formFlatNumber, formCheckin, formCheckout, formDiarias) : "Discriminação dos serviços de hospedagem..."
   )
 
+  const selectedB2BTotal = useMemo(
+    () => selectedB2BItems.reduce((acc, i) => acc + Number(i.totalAmount || 0), 0),
+    [selectedB2BItems]
+  )
+  const selectedConsolidatedAgencyHasCnpj = useMemo(
+    () =>
+      Boolean(consolidatedAgencyId) &&
+      String(agencies.find(a => String(a.id) === String(consolidatedAgencyId))?.cnpj || "").replace(/\D/g, "").length === 14,
+    [agencies, consolidatedAgencyId]
+  )
+  const selectedConsolidatedCompanyHasCnpj = useMemo(
+    () =>
+      Boolean(consolidatedCompanyId) &&
+      String(companies.find(c => String(c.id) === String(consolidatedCompanyId))?.cnpj || "").replace(/\D/g, "").length === 14,
+    [companies, consolidatedCompanyId]
+  )
+
+  const isFiscalModalOpen =
+    emitBoletoModalOpen ||
+    cancelModalOpen ||
+    consolidatedModalOpen ||
+    certModalOpen ||
+    Boolean(emissionSuccessData) ||
+    Boolean(emissionErrorData)
+
   return (
     <Shell>
       <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-6 pb-20">
+        <FrozenSlot
+          freeze={isFiscalModalOpen}
+          deps={[
+            isSidebarPinned,
+            activeTab,
+            invoices,
+            filteredInvoices,
+            livroSubtotais,
+            retryQueue,
+            pendingReservationsList,
+            filteredPendingReservations,
+            pendingScopeCounts,
+            selectedCompetencia,
+            uniqueCompetencias,
+            certStatus,
+            lastEmittedInvoice,
+            fiscalSettings,
+            savingSettings,
+            channelRules,
+            savingChannelRules,
+          ]}
+          render={() => (
+            <>
         {/* ══════════════════════════════════════════════════════════════════════
             R1: COCKPIT EXECUTIVO DE KPIS & MONITORAMENTO NO TOPO
            ══════════════════════════════════════════════════════════════════════ */}
+        <FrozenSlot
+          freeze={true}
+          deps={[
+            isSidebarPinned,
+            selectedCompetencia,
+            uniqueCompetencias,
+            certStatus,
+            livroSubtotais,
+            pendingScopeCounts,
+            retryQueue,
+          ]}
+          render={() => (
         <div className="bg-card border border-border p-5 rounded-3xl shadow-sm space-y-4">
           <div className={`flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all ${!isSidebarPinned ? "md:pl-20" : ""}`}>
             <div className="space-y-1">
@@ -3725,6 +3786,8 @@ export default function FiscalInvoicesPage() {
             </button>
           </div>
         </div>
+          )}
+        />
 
         {/* ── NAVEGAÇÃO DO HUB FISCAL (4 ABAS LIMPAS E SEM REDUNDÂNCIA) ── */}
         <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="space-y-5">
@@ -5802,6 +5865,9 @@ export default function FiscalInvoicesPage() {
             </Card>
           </TabsContent>
         </Tabs>
+            </>
+          )}
+        />
 
         {/* ══════════════════════════════════════════════════════════════════════
             MODAL DE EMISSÃO CONJUNTA: NFS-E + BOLETO(S) BANCO INTER
@@ -6162,7 +6228,7 @@ export default function FiscalInvoicesPage() {
                       )
                     })}
                   </select>
-                  {consolidatedAgencyId && String(agencies.find(a => String(a.id) === String(consolidatedAgencyId))?.cnpj || "").replace(/\D/g, "").length !== 14 && (
+                  {consolidatedAgencyId && !selectedConsolidatedAgencyHasCnpj && (
                     <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] font-bold text-amber-700 dark:text-amber-300">
                       ⚠️ Falta Doc: A agência selecionada ainda não possui CNPJ de 14 dígitos cadastrado no CRM de Agências B2B. Cadastre o CNPJ antes de emitir a NFS-e.
                     </div>
@@ -6186,7 +6252,7 @@ export default function FiscalInvoicesPage() {
                       )
                     })}
                   </select>
-                  {consolidatedCompanyId && String(companies.find(c => String(c.id) === String(consolidatedCompanyId))?.cnpj || "").replace(/\D/g, "").length !== 14 && (
+                  {consolidatedCompanyId && !selectedConsolidatedCompanyHasCnpj && (
                     <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] font-bold text-amber-700 dark:text-amber-300">
                       ⚠️ Falta Doc: A empresa selecionada ainda não possui CNPJ de 14 dígitos cadastrado no CRM.
                     </div>
@@ -6218,7 +6284,7 @@ export default function FiscalInvoicesPage() {
                 <div className="pt-2 border-t border-border flex justify-between items-center text-xs font-black">
                   <span>Valor Total Consolidado:</span>
                   <span className="text-emerald-600 font-mono text-sm">
-                    R$ {selectedB2BItems.reduce((acc, i) => acc + Number(i.totalAmount || 0), 0).toFixed(2)}
+                    R$ {selectedB2BTotal.toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -6237,8 +6303,8 @@ export default function FiscalInvoicesPage() {
                 disabled={
                   consolidatedEmitting ||
                   (consolidatedTargetType === "agency"
-                    ? !consolidatedAgencyId || String(agencies.find(a => String(a.id) === String(consolidatedAgencyId))?.cnpj || "").replace(/\D/g, "").length !== 14
-                    : !consolidatedCompanyId || String(companies.find(c => String(c.id) === String(consolidatedCompanyId))?.cnpj || "").replace(/\D/g, "").length !== 14)
+                    ? !selectedConsolidatedAgencyHasCnpj
+                    : !selectedConsolidatedCompanyHasCnpj)
                 }
                 className={`${consolidatedTargetType === "agency" ? "bg-violet-600 hover:bg-violet-700" : "bg-indigo-600 hover:bg-indigo-700"} text-white font-bold text-xs rounded-xl h-9.5 gap-1.5`}
               >

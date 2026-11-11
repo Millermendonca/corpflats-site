@@ -169,6 +169,38 @@ const DEFAULT_CLT_FALLBACK: HrEmployee[] = [
   }
 ];
 
+const PontoLiveClockCard = React.memo(function PontoLiveClockCard() {
+  const [now, setNow] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const clockTimer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(clockTimer);
+  }, []);
+
+  const formattedTimeStr = now.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+  const formattedDateStr = now.toLocaleDateString("pt-BR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric"
+  });
+
+  return (
+    <div className="text-center py-2 bg-slate-950/60 border border-slate-800/80 rounded-2xl shadow-inner backdrop-blur-xs">
+      <div className="text-3xl sm:text-4xl font-extrabold tracking-wider text-emerald-400 font-mono">
+        {formattedTimeStr}
+      </div>
+      <div className="text-[11px] text-slate-400 capitalize mt-0.5">
+        {formattedDateStr}
+      </div>
+    </div>
+  );
+});
+
 export default function PontoMobilePage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -199,9 +231,6 @@ export default function PontoMobilePage() {
   const [isWhitelistActive, setIsWhitelistActive] = useState<boolean>(false);
   const [deviceLabel, setDeviceLabel] = useState<string>("Terminal Oficial");
 
-  // ── Relógio Digital em Tempo Real ──────────────────────────────────────────
-  const [currentTime, setCurrentTime] = useState<Date>(new Date());
-
   // ── Ações de Envio e Modais ────────────────────────────────────────────────
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submittingType, setSubmittingType] = useState<string | null>(null);
@@ -226,11 +255,8 @@ export default function PontoMobilePage() {
   const [hardBlockModalOpen, setHardBlockModalOpen] = useState<boolean>(false);
   const [hardBlockMessage, setHardBlockMessage] = useState<string>("");
 
-  // ── 1. Inicialização de Token e Relógio ─────────────────────────────────────
+  // ── 1. Inicialização de Token do Aparelho ───────────────────────────────────
   useEffect(() => {
-    // Relógio ao vivo atualizado a cada 1 segundo
-    const clockTimer = setInterval(() => setCurrentTime(new Date()), 1000);
-
     // Identificação do Aparelho (gfm_device_token)
     let token = localStorage.getItem("gfm_device_token");
     if (!token) {
@@ -259,8 +285,6 @@ export default function PontoMobilePage() {
       .catch(() => {
         setIsDeviceAuthorized(true);
       });
-
-    return () => clearInterval(clockTimer);
   }, []);
 
   // ── 2. Carregamento de Colaboradores CLT (Blindagem de Cris e Grazi) ────────
@@ -649,10 +673,6 @@ export default function PontoMobilePage() {
     }
   };
 
-  // ── Formatação de Hora Atual ───────────────────────────────────────────────
-  const formattedTimeStr = currentTime.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const formattedDateStr = currentTime.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
-
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col justify-between p-3 sm:p-4 select-none">
       {/* ── Top Bar / Kiosk Header ────────────────────────────────────────── */}
@@ -695,15 +715,8 @@ export default function PontoMobilePage() {
       {/* ── Container Central ──────────────────────────────────────────────── */}
       <main className="max-w-md w-full mx-auto my-auto py-3 space-y-3.5">
         
-        {/* Relógio Digital Centralizado */}
-        <div className="text-center py-2 bg-slate-950/60 border border-slate-800/80 rounded-2xl shadow-inner backdrop-blur-xs">
-          <div className="text-3xl sm:text-4xl font-extrabold tracking-wider text-emerald-400 font-mono">
-            {formattedTimeStr}
-          </div>
-          <div className="text-[11px] text-slate-400 capitalize mt-0.5">
-            {formattedDateStr}
-          </div>
-        </div>
+        {/* Relógio Digital Centralizado (isolado da árvore principal) */}
+        <PontoLiveClockCard />
 
         {/* Card de Identificação do Colaborador */}
         <Card className="bg-slate-800/80 border-slate-700/80 text-white shadow-lg">

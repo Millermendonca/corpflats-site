@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from "react"
+import React, { memo, useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
+import { FrozenSlot, useStableCallback } from "@/lib/render-freeze"
 import { Shell } from "@/components/layout"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -24,6 +25,37 @@ import {
   SelectValue
 } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
+
+const MemoComposerReservationSelect = memo(function MemoComposerReservationSelect({
+  value,
+  onValueChange,
+  reservations,
+}: {
+  value: string
+  onValueChange: (val: string) => void
+  reservations: any[]
+}) {
+  const items = useMemo(
+    () =>
+      reservations.map((r: any) => (
+        <SelectItem key={r.id} value={String(r.id)}>
+          Flat {r.flatNumber} - {r.guestName} (#{r.code})
+        </SelectItem>
+      )),
+    [reservations]
+  )
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className="h-7 text-[11px] rounded-lg w-full sm:w-[250px] bg-background">
+        <SelectValue placeholder="Vincular Reserva / Flat (Opcional)" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="none">Sem reserva vinculada (E-mail livre)</SelectItem>
+        {items}
+      </SelectContent>
+    </Select>
+  )
+})
 import {
   Mail,
   Send,
@@ -433,7 +465,7 @@ export default function EmailHub() {
     }
   }
 
-  const fetchMessages = async (syncRemote = false, silentBackground = false) => {
+  const fetchMessages = useStableCallback(async (syncRemote = false, silentBackground = false) => {
     if (syncRemote) setSyncingRemote(true)
     else if (!silentBackground) setLoadingMessages(true)
 
@@ -471,9 +503,9 @@ export default function EmailHub() {
       setLoadingMessages(false)
       setSyncingRemote(false)
     }
-  }
+  })
 
-  const openMessageDetail = async (id: string, markReadOptimistic = true, switchToMobileDetail = false) => {
+  const openMessageDetail = useStableCallback(async (id: string, markReadOptimistic = true, switchToMobileDetail = false) => {
     setActiveMessageId(id)
     setQuickReplyOpen(false)
     setQuickReplyText("")
@@ -502,7 +534,7 @@ export default function EmailHub() {
     } finally {
       setLoadingDetail(false)
     }
-  }
+  })
 
   // Navegação rápida para mensagem anterior / próxima na lista atual
   const activeMessageIndex = useMemo(() => {
@@ -510,13 +542,13 @@ export default function EmailHub() {
     return messages.findIndex(m => m.id === activeMessageId)
   }, [messages, activeMessageId])
 
-  const navigateAdjacentMessage = (delta: -1 | 1) => {
+  const navigateAdjacentMessage = useStableCallback((delta: -1 | 1) => {
     if (activeMessageIndex < 0) return
     const nextIdx = activeMessageIndex + delta
     if (nextIdx >= 0 && nextIdx < messages.length) {
       openMessageDetail(messages[nextIdx].id, true, true)
     }
-  }
+  })
 
   // ── Auto-Save de Rascunho com Debounce (1.4s) ────────────────────────────
   useEffect(() => {
@@ -583,7 +615,7 @@ export default function EmailHub() {
   ])
 
   // ── Controles do Motor Automático ─────────────────────────────────────────
-  const handleToggleEngine = async (newState: boolean) => {
+  const handleToggleEngine = useStableCallback(async (newState: boolean) => {
     setTogglingEngine(true)
     try {
       const res = await fetch("/api/emails/config", {
@@ -606,10 +638,10 @@ export default function EmailHub() {
     } finally {
       setTogglingEngine(false)
     }
-  }
+  })
 
   // ── Ações Otimistas em Massa e Individuais ────────────────────────────────
-  const executeBulkAction = async (
+  const executeBulkAction = useStableCallback(async (
     ids: string[],
     action: string,
     extra: { targetFolderId?: string; labelId?: string; toastMsg?: string } = {}
@@ -706,10 +738,10 @@ export default function EmailHub() {
       toast({ title: "Erro ao sincronizar ação", description: err.message, variant: "destructive" })
       fetchMessages(false)
     }
-  }
+  })
 
   // ── Ações da Fila Agendada ("Enviar Agora" e "Cancelar") & Reenvio de Falhas ──
-  const handleQueueSendNow = async (queueId: string, e?: React.MouseEvent) => {
+  const handleQueueSendNow = useStableCallback(async (queueId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     setDispatchingQueueId(queueId)
     try {
@@ -733,9 +765,9 @@ export default function EmailHub() {
     } finally {
       setDispatchingQueueId(null)
     }
-  }
+  })
 
-  const handleCancelQueueItem = async (queueId: string, e?: React.MouseEvent) => {
+  const handleCancelQueueItem = useStableCallback(async (queueId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     try {
       const res = await fetch(`/api/emails/queue/${queueId}`, { method: "DELETE" })
@@ -746,9 +778,9 @@ export default function EmailHub() {
     } catch (err: any) {
       toast({ title: "Erro ao cancelar", description: err.message, variant: "destructive" })
     }
-  }
+  })
 
-  const handleResendFailed = async (commId: string, e?: React.MouseEvent) => {
+  const handleResendFailed = useStableCallback(async (commId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     setResendingCommId(commId)
     try {
@@ -766,10 +798,10 @@ export default function EmailHub() {
     } finally {
       setResendingCommId(null)
     }
-  }
+  })
 
   // ── Abertura e Controle da Janela Flutuante de Composição (Docked Compose) ──
-  const openComposer = (opts: {
+  const openComposer = useStableCallback((opts: {
     mode?: "new" | "reply" | "replyall" | "forward" | "draft"
     sourceMessage?: any
     reservationId?: string
@@ -868,7 +900,7 @@ export default function EmailHub() {
     if (initialResId !== "none" || initialTpl !== "custom") {
       applyComposerTemplate(initialTpl, initialResId)
     }
-  }
+  })
 
   const applyComposerTemplate = async (tplKey: string, resId: string = composeReservationId) => {
     setComposeTemplateKey(tplKey)
@@ -1019,7 +1051,7 @@ export default function EmailHub() {
   }
 
   // Envio pelo Quick Reply no rodapé da mensagem aberta
-  const handleSendQuickReply = async () => {
+  const handleSendQuickReply = useStableCallback(async () => {
     if (!messageDetail || !quickReplyText.trim()) return
     setSendingQuickReply(true)
     try {
@@ -1056,7 +1088,7 @@ export default function EmailHub() {
     } finally {
       setSendingQuickReply(false)
     }
-  }
+  })
 
   // ── Criação de Pastas e Etiquetas Customizadas ────────────────────────────
   const handleCreateFolder = async (e: React.FormEvent) => {
@@ -1278,15 +1310,15 @@ export default function EmailHub() {
 
   const allSelected = messages.length > 0 && selectedIds.length === messages.length
 
-  const toggleSelectAll = () => {
+  const toggleSelectAll = useStableCallback(() => {
     if (allSelected) setSelectedIds([])
     else setSelectedIds(messages.map(m => m.id))
-  }
+  })
 
-  const toggleSelectOne = (id: string, e: React.MouseEvent) => {
+  const toggleSelectOne = useStableCallback((id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]))
-  }
+  })
 
   // Reserva selecionada no compositor flutuante
   const selectedComposeReservation = useMemo(() => {
@@ -1319,6 +1351,22 @@ export default function EmailHub() {
     )
   }, [selectedLabelId, labelsById, systemFolders, customFolders, selectedFolder])
 
+  const handleSelectComposeReservation = useStableCallback((val: string) => {
+    setComposeReservationId(val)
+    if (composeTemplateKey !== "custom") {
+      applyComposerTemplate(composeTemplateKey, val)
+    } else if (val !== "none") {
+      applyComposerTemplate("portaria", val)
+    }
+  })
+
+  const isEmailOverlayOpen =
+    composeOpen ||
+    configModalOpen ||
+    newFolderModalOpen ||
+    newLabelModalOpen ||
+    testModalOpen
+
   return (
     <Shell>
       <div
@@ -1328,6 +1376,44 @@ export default function EmailHub() {
             : "-mb-20 md:mb-0 h-[calc(100dvh-7.5rem)] md:h-[100dvh] min-h-[420px] md:min-h-[560px]"
         }`}
       >
+        <FrozenSlot
+          freeze={isEmailOverlayOpen}
+          deps={[
+            mobileView,
+            mobileDrawerOpen,
+            sidebarCollapsed,
+            readingMaximized,
+            isFullscreenApp,
+            shellSidebarPinned,
+            webmailStatus,
+            togglingEngine,
+            systemFolders,
+            customFolders,
+            labels,
+            selectedFolder,
+            selectedLabelId,
+            quickFilter,
+            searchQuery,
+            messages,
+            loadingMessages,
+            syncingRemote,
+            selectedIds,
+            activeMessageId,
+            messageDetail,
+            threadMessages,
+            expandedThreadIds,
+            loadingDetail,
+            quickReplyOpen,
+            quickReplyText,
+            sendingQuickReply,
+            dispatchingQueueId,
+            resendingCommId,
+            counts,
+            activeFolderLabel,
+            composeOpen,
+          ]}
+          render={() => (
+            <>
         {/* ════════════════════════════════════════════════════════════════════
             TOPBAR INTEGRADA (WEB & MOBILE): STATUS DO MOTOR, ZOHO API & AÇÕES
            ════════════════════════════════════════════════════════════════════ */}
@@ -3397,6 +3483,9 @@ export default function EmailHub() {
             </button>
           )}
         </div>
+            </>
+          )}
+        />
 
         {/* ════════════════════════════════════════════════════════════════════
             JANELA DE COMPOSIÇÃO (FULL-SCREEN NO MOBILE / DOCKED GMAIL NA WEB)
@@ -3486,29 +3575,11 @@ export default function EmailHub() {
                       <span>Contexto da Reserva & Templates:</span>
                     </div>
 
-                    <Select
+                    <MemoComposerReservationSelect
                       value={composeReservationId}
-                      onValueChange={val => {
-                        setComposeReservationId(val)
-                        if (composeTemplateKey !== "custom") {
-                          applyComposerTemplate(composeTemplateKey, val)
-                        } else if (val !== "none") {
-                          applyComposerTemplate("portaria", val)
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-7 text-[11px] rounded-lg w-full sm:w-[250px] bg-background">
-                        <SelectValue placeholder="Vincular Reserva / Flat (Opcional)" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Sem reserva vinculada (E-mail livre)</SelectItem>
-                        {activeReservations.map(r => (
-                          <SelectItem key={r.id} value={String(r.id)}>
-                            Flat {r.flatNumber} - {r.guestName} (#{r.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      onValueChange={handleSelectComposeReservation}
+                      reservations={activeReservations}
+                    />
                   </div>
 
                   {/* Botões de Templates Rápidos */}

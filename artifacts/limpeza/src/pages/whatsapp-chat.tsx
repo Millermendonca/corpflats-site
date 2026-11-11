@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useLocation } from 'wouter'
 import { useGetMe } from '@workspace/api-client-react'
+import { FrozenSlot, useStableCallback } from '@/lib/render-freeze'
 import { Shell } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -402,6 +403,8 @@ export default function WhatsappChat() {
   // Refs for tracking incoming messages and scrolling
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const inputMessageRef = useRef<string>(inputMessage)
+  inputMessageRef.current = inputMessage
   const lastSeenMsgMapRef = useRef<Record<string, string>>({})
   const initialConversationsLoadedRef = useRef<boolean>(false)
   const lastSofiaGuestMsgKeyRef = useRef<string>('')
@@ -462,7 +465,7 @@ export default function WhatsappChat() {
   }
 
   // Trigger Native Install or Open Install Guide Modal
-  const handleInstallAppClick = async () => {
+  const handleInstallAppClick = useStableCallback(async () => {
     if (deferredInstallPrompt) {
       try {
         deferredInstallPrompt.prompt()
@@ -476,10 +479,10 @@ export default function WhatsappChat() {
       } catch {}
     }
     setInstallModalOpen(true)
-  }
+  })
 
   // Toggle Sound & Request Notification Permission
-  const handleToggleSoundAndNotif = async () => {
+  const handleToggleSoundAndNotif = useStableCallback(async () => {
     if ( canUsePushNotifications() && Notification.permission === 'default') {
       const perm = await requestPushNotificationPermission()
       setNotifPermission(perm)
@@ -498,7 +501,7 @@ export default function WhatsappChat() {
     if (nextSound) {
       playWhatsAppIncomingSound(true)
     }
-  }
+  })
 
   // Update App Badge and Document Title whenever unread count changes
   useEffect(() => {
@@ -766,7 +769,7 @@ export default function WhatsappChat() {
   }
 
   // Pin / Unpin conversation
-  const togglePin = async (e: React.MouseEvent, phone: string) => {
+  const togglePin = useStableCallback(async (e: React.MouseEvent, phone: string) => {
     e.stopPropagation()
     try {
       const res = await fetch(`/api/whatsapp/chat/${phone}/pin`, { method: 'POST' })
@@ -776,13 +779,13 @@ export default function WhatsappChat() {
         toast({ title: data.pinned ? 'Conversa fixada no topo' : 'Conversa desafixada' })
       }
     } catch {}
-  }
+  })
 
   const [loadingAiSuggestion, setLoadingAiSuggestion] = useState(false)
   const [togglingAi, setTogglingAi] = useState(false)
 
   // Alternar IA Ativa / Pausada na conversa ativa
-  const handleToggleAi = async () => {
+  const handleToggleAi = useStableCallback(async () => {
     if (!activePhone) return
     try {
       setTogglingAi(true)
@@ -808,7 +811,7 @@ export default function WhatsappChat() {
     } finally {
       setTogglingAi(false)
     }
-  }
+  })
 
   // Copiloto: Sugerir Resposta com IA (ou refinar rascunho atual)
   const handleSuggestWithAi = async () => {
@@ -839,7 +842,7 @@ export default function WhatsappChat() {
   }
 
   // Execute a 1-click System Action recommended by Sofia
-  const handleExecuteSofiaAction = async (action: SofiaSuggestedAction, sendConfirmReply: boolean) => {
+  const handleExecuteSofiaAction = useStableCallback(async (action: SofiaSuggestedAction, sendConfirmReply: boolean) => {
     if (!activePhone) return
     if (action.actionType === 'calculate_quote_or_prereserve') {
       setLocation('/reservas')
@@ -889,7 +892,7 @@ export default function WhatsappChat() {
     } finally {
       setExecutingActionId(null)
     }
-  }
+  })
 
   // Initial Load + Global Background Polling for Conversations (every 3.5 seconds)
   useEffect(() => {
@@ -898,7 +901,9 @@ export default function WhatsappChat() {
     const convInterval = setInterval(() => {
       fetchConversations(true)
     }, 3500)
-    const statusInterval = setInterval(fetchZapiStatus, 20000)
+    const statusInterval = setInterval(() => {
+      fetchZapiStatus()
+    }, 20000)
     return () => {
       clearInterval(convInterval)
       clearInterval(statusInterval)
@@ -927,7 +932,7 @@ export default function WhatsappChat() {
   }, [messages.length])
 
   // Select conversation
-  const handleSelectConversation = (conv: ChatConversation) => {
+  const handleSelectConversation = useStableCallback((conv: ChatConversation) => {
     setSelectedResCode(null)
     setActivePhone(conv.phone)
     setActiveConversation(conv)
@@ -938,10 +943,10 @@ export default function WhatsappChat() {
       setFloatingBanner(null)
     }
     markAsRead(conv.phone)
-  }
+  })
 
   // Send Direct Text or Quick Button Message
-  const sendTextOrMediaMessage = async (opts: {
+  const sendTextOrMediaMessage = useStableCallback(async (opts: {
     text: string
     mediaType?: 'text' | 'image' | 'document' | 'audio'
     mediaUrl?: string
@@ -1015,7 +1020,7 @@ export default function WhatsappChat() {
         textareaRef.current.focus()
       }
     }
-  }
+  })
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -1184,7 +1189,7 @@ export default function WhatsappChat() {
   }
 
   // Open Message Rectification Dialog for Sofia's messages
-  const handleOpenCorrectionModal = (msg: ChatMessage) => {
+  const handleOpenCorrectionModal = useStableCallback((msg: ChatMessage) => {
     setSelectedMsgForCorrection(msg)
     setCorrectionGuideline('')
     setRectificationText(
@@ -1194,7 +1199,7 @@ export default function WhatsappChat() {
     )
     setSendToGuest(true)
     setCorrectModalOpen(true)
-  }
+  })
 
   // Save Guideline & Optionally Send Rectification Message
   const handleSaveCorrection = async () => {
@@ -1291,7 +1296,7 @@ export default function WhatsappChat() {
   }
 
   // Load PMS reservations for new chat modal
-  const openNewChatDialog = async () => {
+  const openNewChatDialog = useStableCallback(async () => {
     setNewChatModalOpen(true)
     setLoadingPmsRes(true)
     try {
@@ -1303,7 +1308,7 @@ export default function WhatsappChat() {
     } catch {} finally {
       setLoadingPmsRes(false)
     }
-  }
+  })
 
   // Filtered conversation list
   const filteredConversations = useMemo(() => {
@@ -1334,6 +1339,11 @@ export default function WhatsappChat() {
       return true
     })
   }, [conversations, filterTab, searchQuery])
+
+  const unreadConversationsCount = useMemo(
+    () => conversations.filter(c => c.unreadCount > 0).length,
+    [conversations]
+  )
 
   // Filtered PMS reservations in dialog
   const filteredPmsRes = useMemo(() => {
@@ -1541,6 +1551,25 @@ export default function WhatsappChat() {
       )}
 
       {/* COLUNA 1: LISTA DE CONVERSAS (Redimensionável) */}
+      <FrozenSlot
+        freeze={true}
+        deps={[
+          conversations,
+          filteredConversations,
+          unreadConversationsCount,
+          activePhone,
+          searchQuery,
+          filterTab,
+          loadingConversations,
+          isMobileListOpen,
+          contactsWidth,
+          isStandaloneApp,
+          zapiStatus,
+          soundEnabled,
+          notifPermission,
+          deferredInstallPrompt,
+        ]}
+        render={() => (
       <div
         style={{ width: isMobileListOpen ? undefined : `${contactsWidth}px` }}
         className={`${isMobileListOpen ? 'flex w-full' : 'hidden md:flex'} flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shrink-0 h-full overflow-hidden transition-[width] duration-75`}
@@ -1701,9 +1730,9 @@ export default function WhatsappChat() {
               }`}
             >
               <span>Não Lidas</span>
-              {conversations.filter(c => c.unreadCount > 0).length > 0 && (
+              {unreadConversationsCount > 0 && (
                 <span className="w-4 h-4 rounded-full bg-emerald-500 text-white text-[9px] font-bold flex items-center justify-center">
-                  {conversations.filter(c => c.unreadCount > 0).length}
+                  {unreadConversationsCount}
                 </span>
               )}
             </button>
@@ -1871,6 +1900,8 @@ export default function WhatsappChat() {
           )}
         </div>
       </div>
+        )}
+      />
 
       {/* DIVISOR REDIMENSIONÁVEL: LISTA DE CONTATOS / CHAT */}
       <div
@@ -1893,6 +1924,22 @@ export default function WhatsappChat() {
       <div className={`${!isMobileListOpen ? 'flex' : 'hidden md:flex'} flex-col flex-1 h-full min-w-[320px] sm:min-w-[360px] bg-[#efeae2] dark:bg-slate-950 relative overflow-hidden`}>
         {activeConversation ? (
           <>
+            <FrozenSlot
+              freeze={true}
+              deps={[
+                activeConversation,
+                messages,
+                loadingMessages,
+                loadingSofiaAssist,
+                sofiaAssist,
+                activeStageStyle,
+                togglingAi,
+                showDossier,
+                isStandaloneApp,
+                selectedResCode,
+              ]}
+              render={() => (
+                <>
             {/* Header do Chat Ativo */}
             <div className={`h-15 px-3 sm:px-4 ${isStandaloneApp ? 'bg-[#008069] text-white' : 'bg-white dark:bg-slate-900'} border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0 z-10 shadow-2xs gap-2`}>
               <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
@@ -2160,11 +2207,29 @@ export default function WhatsappChat() {
               )}
               <div ref={messagesEndRef} />
             </div>
+                </>
+              )}
+            />
 
             {/* =====================================================================
                 PAINEL DA SOFIA ASSISTENTE ATIVA EM TEMPO REAL
                 (Ações no Sistema em 1 Clique + Sugestões de Resposta + Botões Dinâmicos)
                ===================================================================== */}
+            <FrozenSlot
+              freeze={true}
+              deps={[
+                sofiaAssist,
+                loadingSofiaAssist,
+                sofiaPanelExpanded,
+                completedActionIds,
+                executingActionId,
+                quickButtonsToRender,
+                sending,
+                activePhone,
+                selectedResCode,
+                activeStageStyle,
+              ]}
+              render={() => (
             <div className="bg-gradient-to-b from-purple-50/95 via-white to-slate-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900 border-t border-purple-200/80 dark:border-purple-900/50 shrink-0 shadow-sm">
               
               {/* Cabeçalho Compacto da Sofia Assistente */}
@@ -2195,7 +2260,7 @@ export default function WhatsappChat() {
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
-                    onClick={() => activePhone && fetchSofiaAssistance(activePhone, { draftText: inputMessage, resCode: selectedResCode })}
+                    onClick={() => activePhone && fetchSofiaAssistance(activePhone, { draftText: inputMessageRef.current, resCode: selectedResCode })}
                     className="px-2 py-0.5 rounded-md text-[10.5px] font-bold text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-950/60 flex items-center gap-1 transition-colors"
                     title="Gerar novas sugestões com a Sofia"
                   >
@@ -2392,6 +2457,8 @@ export default function WhatsappChat() {
                 ))}
               </div>
             </div>
+              )}
+            />
 
             {/* Rodapé de Envio (Área de Digitação + Gravação de Áudio) */}
             <div className="p-2 sm:p-2.5 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0 transition-all">
@@ -2696,6 +2763,11 @@ export default function WhatsappChat() {
       )}
 
       {/* COLUNA 3: DOSSIÊ LATERAL DA RESERVA / HÓSPEDE */}
+      <FrozenSlot
+        freeze={true}
+        deps={[activeConversation, showDossier, dossierWidth, activePhone, selectedResCode]}
+        render={() => (
+          <>
       {activeConversation && showDossier && (
         <div
           style={{ width: `${dossierWidth}px` }}
@@ -2912,6 +2984,9 @@ export default function WhatsappChat() {
           )}
         </div>
       )}
+          </>
+        )}
+      />
 
       {/* MODAL: PREVIEW DE UPLOAD DIRETO / PRINT COLADO */}
       <Dialog open={Boolean(pendingUpload)} onOpenChange={(o) => !o && setPendingUpload(null)}>

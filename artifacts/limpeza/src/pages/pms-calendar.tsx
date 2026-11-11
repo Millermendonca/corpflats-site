@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fra
 import { useLocation } from "wouter"
 import { useGetMe, useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
+import { FrozenSlot } from "@/lib/render-freeze"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -201,6 +202,34 @@ const MemoAgencySelect = memo(function MemoAgencySelect({
         </SelectItem>
         {items}
       </SelectContent>
+    </Select>
+  )
+})
+
+const MemoBlockFlatSelect = memo(function MemoBlockFlatSelect({
+  value,
+  onValueChange,
+  flats,
+}: {
+  value: string
+  onValueChange: (val: string) => void
+  flats: Array<{ id: number | string; number: string }>
+}) {
+  const items = useMemo(
+    () =>
+      flats.map((f) => (
+        <SelectItem key={f.id} value={String(f.id)}>
+          Apt {f.number}
+        </SelectItem>
+      )),
+    [flats]
+  )
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className="text-xs">
+        <SelectValue placeholder="Selecione o Quarto" />
+      </SelectTrigger>
+      <SelectContent>{items}</SelectContent>
     </Select>
   )
 })
@@ -6115,70 +6144,130 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const tomorrowDate = addDays(todayDate, 1)
   const tomorrowStr = format(tomorrowDate, "yyyy-MM-dd")
 
-  // 1. Ocupação do Mês (apenas até o dia atual / Month-to-date)
-  const monthStartDate = startOfMonth(todayDate)
-  const monthDaysElapsed = eachDayOfInterval({ start: monthStartDate, end: todayDate })
-  let occupiedNightsMtd = 0
-  monthDaysElapsed.forEach(day => {
-    const dStr = format(day, "yyyy-MM-dd")
-    const occupiedOnDay = data.reservations.filter(r => 
-      r.status !== "cancelada" && r.checkinDate <= dStr && r.checkoutDate > dStr
+  const {
+    occupiedNightsMtd,
+    totalCapacityMtd,
+    mtdOccupancyRate,
+    occupiedFlatIdsToday,
+    blockedFlatIdsToday,
+    freeFlatsTodayCount,
+    checkinsToday,
+    checkinsTodayCount,
+    incomingGuestsTodayCount,
+    checkoutsToday,
+    checkoutsTodayCount,
+    checkedOutTodayDoneCount,
+    stayoversToday,
+    stayoversTodayCount,
+  } = useMemo(() => {
+    if (modalOnly) {
+      return {
+        occupiedNightsMtd: 0,
+        totalCapacityMtd: 0,
+        mtdOccupancyRate: 0,
+        occupiedFlatIdsToday: new Set<string>(),
+        blockedFlatIdsToday: new Set<string>(),
+        freeFlatsTodayCount: 0,
+        checkinsToday: [] as typeof data.reservations,
+        checkinsTodayCount: 0,
+        incomingGuestsTodayCount: 0,
+        checkoutsToday: [] as typeof data.reservations,
+        checkoutsTodayCount: 0,
+        checkedOutTodayDoneCount: 0,
+        stayoversToday: [] as typeof data.reservations,
+        stayoversTodayCount: 0,
+      }
+    }
+
+    const parsedToday = parseISO(todayStr)
+    const monthStartDate = startOfMonth(parsedToday)
+    const monthDaysElapsed = eachDayOfInterval({ start: monthStartDate, end: parsedToday })
+    const activeReservations = data.reservations.filter(r => r.status !== "cancelada")
+
+    let occNightsMtd = 0
+    monthDaysElapsed.forEach(day => {
+      const dStr = format(day, "yyyy-MM-dd")
+      let occupiedOnDay = 0
+      for (let i = 0; i < activeReservations.length; i++) {
+        const r = activeReservations[i]
+        if (r.checkinDate <= dStr && r.checkoutDate > dStr) occupiedOnDay++
+      }
+      occNightsMtd += occupiedOnDay
+    })
+    const capMtd = data.flats.length * monthDaysElapsed.length
+    const computedMtdOccupancyRate =
+      capMtd > 0 ? Math.round((occNightsMtd / capMtd) * 100) : 0
+
+    const occSet = new Set<string>()
+    const checkins: typeof data.reservations = []
+    const checkouts: typeof data.reservations = []
+    const stayovers: typeof data.reservations = []
+
+    for (let i = 0; i < activeReservations.length; i++) {
+      const r = activeReservations[i]
+      if (r.checkinDate <= todayStr && r.checkoutDate > todayStr) {
+        occSet.add(String(r.flatId))
+      }
+      if (r.checkinDate === todayStr) {
+        checkins.push(r)
+      }
+      if (r.checkoutDate === todayStr) {
+        checkouts.push(r)
+      }
+      if (r.checkinDate < todayStr && r.checkoutDate > todayStr) {
+        stayovers.push(r)
+      }
+    }
+
+    const blkSet = new Set<string>()
+    for (let i = 0; i < data.blocks.length; i++) {
+      const b = data.blocks[i]
+      if (b.startDate <= todayStr && b.endDate >= todayStr) {
+        blkSet.add(String(b.flatId))
+      }
+    }
+
+    const freeCount = data.flats.filter(
+      f => !occSet.has(String(f.id)) && !blkSet.has(String(f.id))
     ).length
-    occupiedNightsMtd += occupiedOnDay
-  })
-  const totalCapacityMtd = data.flats.length * monthDaysElapsed.length
-  const mtdOccupancyRate = totalCapacityMtd > 0 ? Math.round((occupiedNightsMtd / totalCapacityMtd) * 100) : 0
 
-  // 2. Quartos Livres no Dia (sem reserva dormindo hoje e sem bloqueio ativo)
-  const isFlatOccupiedToday = (flatId: number | string) => {
-    return data.reservations.some(r => 
-      r.status !== "cancelada" &&
-      String(r.flatId) === String(flatId) &&
-      r.checkinDate <= todayStr &&
-      r.checkoutDate > todayStr
-    )
-  }
-  const isFlatBlockedToday = (flatId: number | string) => {
-    return data.blocks.some(b => 
-      String(b.flatId) === String(flatId) &&
-      b.startDate <= todayStr &&
-      b.endDate >= todayStr
-    )
-  }
-  const freeFlatsTodayCount = data.flats.filter(f => !isFlatOccupiedToday(f.id) && !isFlatBlockedToday(f.id)).length
+    const incomingGuests = checkins.reduce((acc, r) => {
+      const count =
+        Number(r.guestCount) ||
+        (Array.isArray(r.guests) && r.guests.length > 0 ? r.guests.length : 1)
+      return acc + count
+    }, 0)
 
-  // 3. Check-ins no Dia
-  const checkinsToday = data.reservations.filter(r => 
-    r.status !== "cancelada" && r.checkinDate === todayStr
-  )
-  const checkinsTodayCount = checkinsToday.length
+    const checkedOutDone = checkouts.filter(r =>
+      Boolean(
+        (r as any).isCheckedOutToday ||
+          (r as any).checkoutDone ||
+          r.status === "completed" ||
+          r.status === "checked_out" ||
+          (r as any).actualCheckoutAt
+      )
+    ).length
 
-  // 4. Pessoas Entrando no Dia
-  const incomingGuestsTodayCount = checkinsToday.reduce((acc, r) => {
-    const count = Number(r.guestCount) || (Array.isArray(r.guests) && r.guests.length > 0 ? r.guests.length : 1)
-    return acc + count
-  }, 0)
+    return {
+      occupiedNightsMtd: occNightsMtd,
+      totalCapacityMtd: capMtd,
+      mtdOccupancyRate: computedMtdOccupancyRate,
+      occupiedFlatIdsToday: occSet,
+      blockedFlatIdsToday: blkSet,
+      freeFlatsTodayCount: freeCount,
+      checkinsToday: checkins,
+      checkinsTodayCount: checkins.length,
+      incomingGuestsTodayCount: incomingGuests,
+      checkoutsToday: checkouts,
+      checkoutsTodayCount: checkouts.length,
+      checkedOutTodayDoneCount: checkedOutDone,
+      stayoversToday: stayovers,
+      stayoversTodayCount: stayovers.length,
+    }
+  }, [modalOnly, data.reservations, data.flats, data.blocks, todayStr])
 
-  // 5. Check-outs no Dia
-  const checkoutsToday = data.reservations.filter(r => 
-    r.status !== "cancelada" && r.checkoutDate === todayStr
-  )
-  const checkoutsTodayCount = checkoutsToday.length
-  const checkedOutTodayDoneCount = checkoutsToday.filter(r =>
-    Boolean(
-      (r as any).isCheckedOutToday ||
-      (r as any).checkoutDone ||
-      r.status === "completed" ||
-      r.status === "checked_out" ||
-      (r as any).actualCheckoutAt
-    )
-  ).length
-
-  // 6. Stayovers no Dia (entraram antes de hoje e saem após hoje)
-  const stayoversToday = data.reservations.filter(r => 
-    r.status !== "cancelada" && r.checkinDate < todayStr && r.checkoutDate > todayStr
-  )
-  const stayoversTodayCount = stayoversToday.length
+  const isFlatOccupiedToday = (flatId: number | string) => occupiedFlatIdsToday.has(String(flatId))
+  const isFlatBlockedToday = (flatId: number | string) => blockedFlatIdsToday.has(String(flatId))
 
   // 7. Pedidos com Café da Manhã (Hoje e Amanhã)
   const reservationsTodayWithBf = useMemo(() => {
@@ -8009,6 +8098,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         {/* Modal: New / Edit Reservation */}
         <Dialog open={resModalOpen} onOpenChange={setResModalOpen}>
           <DialogContent className="w-full max-w-[100vw] sm:max-w-2xl max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overflow-x-hidden p-3.5 sm:p-6">
+            <FrozenSlot
+              freeze={newCompanyModalOpen}
+              deps={[companies, formCompanyId, formCompanyName, formRequesterType, selectedRes?.id]}
+              render={() => (
+                <>
             <DialogHeader>
               <div className="flex items-center justify-between gap-2 pr-6 sm:pr-0">
                 <DialogTitle className="flex items-center gap-2 text-base sm:text-lg min-w-0">
@@ -14426,6 +14520,9 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                 </div>
               )
             })()}
+                </>
+              )}
+            />
           </DialogContent>
         </Dialog>
 
@@ -15111,16 +15208,11 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
               <div className="py-3 space-y-3">
                 <div className="space-y-1">
                   <Label className="text-xs font-semibold">Apartamento</Label>
-                  <Select value={blockFlatId} onValueChange={setBlockFlatId}>
-                    <SelectTrigger className="text-xs">
-                      <SelectValue placeholder="Selecione o Quarto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {data.flats.map(f => (
-                        <SelectItem key={f.id} value={String(f.id)}>Apt {f.number}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MemoBlockFlatSelect
+                    value={blockFlatId}
+                    onValueChange={setBlockFlatId}
+                    flats={data.flats}
+                  />
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">

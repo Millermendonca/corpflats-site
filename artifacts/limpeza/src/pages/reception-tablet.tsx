@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+import { memo, useState, useEffect, useRef, useCallback } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,6 +17,36 @@ import { ptBR } from "date-fns/locale"
 import { getCheckinUrl } from "@/lib/checkin-url"
 import { useToast } from "@/hooks/use-toast"
 import { formatSmartPhone } from "@/lib/phone-mask"
+import { FrozenSlot } from "@/lib/render-freeze"
+
+const ReceptionHeaderDate = memo(function ReceptionHeaderDate() {
+  const [dateLabel, setDateLabel] = useState(() =>
+    format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })
+  )
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const next = format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })
+      setDateLabel(prev => (prev === next ? prev : next))
+    }, 30_000)
+    return () => clearInterval(timer)
+  }, [])
+  return <p className="text-xs text-slate-400 font-medium">{dateLabel}</p>
+})
+
+const ReceptionLiveClock = memo(function ReceptionLiveClock() {
+  const [timeStr, setTimeStr] = useState(() => format(new Date(), "HH:mm:ss"))
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeStr(format(new Date(), "HH:mm:ss"))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
+  return (
+    <div className="text-xl sm:text-2xl font-black text-primary font-mono tracking-wider">
+      {timeStr}
+    </div>
+  )
+})
 
 function buildWhatsAppWebUrl(rawPhone: string | undefined | null, text: string): string {
   const digits = String(rawPhone || "").replace(/\D/g, "")
@@ -75,7 +105,6 @@ export default function ReceptionTablet() {
 
   const [activeTab, setActiveTab] = useState<"arrivals" | "inHouse" | "completed">("arrivals")
   const [loading, setLoading] = useState(true)
-  const [currentTime, setCurrentTime] = useState(new Date())
   const deepLinkHandledRef = useRef(false)
 
   // Modal Ficha FNRH / Check-in Digital
@@ -120,12 +149,6 @@ export default function ReceptionTablet() {
     message: string
     fallbackWaWebUrl?: string | null
   } | null>(null)
-
-  // Clock interval
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000)
-    return () => clearInterval(timer)
-  }, [])
 
   const fetchToday = useCallback(async (overrideResQuery?: string) => {
     setLoading(true)
@@ -908,9 +931,22 @@ export default function ReceptionTablet() {
   const activeSendSlot = sendLinkSlots.find(s => Number(s.index) === Number(sendLinkGuestIndex)) || sendLinkSlots[0] || null
   const liveEarlyItem = resolveLiveItem(earlyCheckinModalItem)
   const liveEarlyChecklist = liveEarlyItem?.earlyCheckinChecklist || null
+  const isReceptionModalOpen = Boolean(
+    sendLinkModalItem ||
+    earlyCheckinModalItem ||
+    fnhrModalOpen ||
+    zoomedPhoto ||
+    forceCheckinItem ||
+    partialCheckinItem
+  )
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans select-none pb-16">
+      <FrozenSlot
+        freeze={isReceptionModalOpen}
+        deps={[data, activeTab, loading, focusedResQuery, copiedCheckinKey, failedImgAsPdf]}
+        render={() => (
+          <>
       {/* Top Tablet Header */}
       <header className="bg-slate-950/80 backdrop-blur border-b border-slate-800 px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-20">
         <div className="flex items-center gap-3">
@@ -924,18 +960,14 @@ export default function ReceptionTablet() {
                 Ao Vivo
               </Badge>
             </div>
-            <p className="text-xs text-slate-400 font-medium">
-              {format(currentTime, "EEEE, d 'de' MMMM", { locale: ptBR })}
-            </p>
+            <ReceptionHeaderDate />
           </div>
         </div>
 
         {/* Big Live Digital Clock */}
         <div className="flex items-center gap-4">
           <div className="text-right">
-            <div className="text-xl sm:text-2xl font-black text-primary font-mono tracking-wider">
-              {format(currentTime, "HH:mm:ss")}
-            </div>
+            <ReceptionLiveClock />
             <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Horário de Brasília</div>
           </div>
 
@@ -1295,6 +1327,9 @@ export default function ReceptionTablet() {
           </div>
         )}
       </main>
+          </>
+        )}
+      />
 
       {/* Modal 1: Enviar Link para Check-in Digital + QR Code (Balcão & Remoto) */}
       <Dialog open={Boolean(sendLinkModalItem)} onOpenChange={(open) => !open && setSendLinkModalItem(null)}>
