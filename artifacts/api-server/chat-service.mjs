@@ -537,7 +537,7 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
   const confFiscal = r?.confirmedFiscalData || null;
   const invDetails = r?.invoiceDetails || null;
 
-  const valorOriginal = Number(r?.totalAmount || r?.valorTotal || r?.totalPrice || r?.price || (Number(r?.dailyRate || 0) * diarias) || options?.valorServico || 600);
+  const valorOriginal = Number(r?.totalAmount || r?.valorTotal || r?.totalPrice || r?.price || (Number(r?.dailyRate || 0) * diarias) || options?.valorServico || 0);
   const valorServico = (confFiscal?.managerApprovedValue && Number(confFiscal.valorServico) > 0)
     ? Number(confFiscal.valorServico)
     : valorOriginal;

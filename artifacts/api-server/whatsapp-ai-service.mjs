@@ -10631,13 +10631,22 @@ export async function executeWhatsAppFiscalEmission({
   if (typeof globalThis.executeNfseEmissionInternal === "function") {
     try {
       const res = await globalThis.executeNfseEmissionInternal({ ...payload, skipAutoWhatsapp: true }, db);
-      if (res && res.success) {
-        if (typeof saveDatabase === "function") {
-          try { await saveDatabase(); } catch (_) {}
-        }
+      if (typeof saveDatabase === "function") {
+        try { await saveDatabase(); } catch (_) {}
+      }
+      if (res && typeof res === "object") {
         return res;
       }
-    } catch (_) {}
+      return {
+        success: false,
+        error: "Retorno inválido do motor oficial de emissão fiscal."
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: err?.message || "Falha de comunicação com o motor oficial da SEFIN Nacional (Gov.br)."
+      };
+    }
   }
 
   const tomadorNome = payload.tomadorNome || "Hóspede";
@@ -10700,14 +10709,56 @@ export async function executeWhatsAppFiscalEmission({
     }
   });
 
-  const emissionResult = await processNationalInvoiceEmission({
-    invoiceData: {
-      ...dpsData,
-      tomador: { ...dpsData.tomador, cpfCnpj: cleanDoc },
-      valorServico: valor,
-      discriminacao: resolvedDiscriminacao
+  let emissionResult;
+  try {
+    emissionResult = await processNationalInvoiceEmission({
+      invoiceData: {
+        ...dpsData,
+        tomador: { ...dpsData.tomador, cpfCnpj: cleanDoc },
+        valorServico: valor,
+        discriminacao: resolvedDiscriminacao
+      }
+    });
+  } catch (sefinErr) {
+    emissionResult = {
+      success: false,
+      status: "erro_comunicacao",
+      error: sefinErr?.message || "Falha de comunicação com a SEFIN Nacional (Gov.br)."
+    };
+  }
+
+  if (!emissionResult || !emissionResult.success) {
+    const errMsg = emissionResult?.error || "Falha na autorização pela SEFIN Nacional (Gov.br).";
+    if (db && typeof db === "object") {
+      if (!Array.isArray(db.nfseRetryQueue)) db.nfseRetryQueue = [];
+      const alreadyQueued = db.nfseRetryQueue.some(q =>
+        (payload.reservationId && Number(q.payload?.reservationId) === Number(payload.reservationId)) ||
+        (payload.reservationCode && q.payload?.reservationCode === payload.reservationCode) ||
+        (onlyDigits(q.payload?.tomadorCpfCnpj || "") === cleanDoc && Number(q.payload?.valorServico) === valor)
+      );
+      if (!alreadyQueued) {
+        db.nfseRetryQueue.push({
+          id: `nfse_retry_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          payload: { ...payload },
+          error: errMsg,
+          motor: "padrao_nacional",
+          attempts: 1,
+          status: "pending",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+      if (typeof saveDatabase === "function") {
+        try { saveDatabase("whatsapp_nfse_retry_queued"); } catch (_) {}
+      }
     }
-  });
+    return {
+      success: false,
+      status: emissionResult?.status || "erro_sefin",
+      error: errMsg,
+      retryQueued: true
+    };
+  }
 
   const numeroNfse = emissionResult.numeroNfse || String(nextDpsNumber);
   const codigoVerificacao = emissionResult.codigoVerificacao || crypto.randomBytes(4).toString("hex").toUpperCase();
@@ -10850,12 +10901,26 @@ export async function handleManagerFiscalApprovalReply({
   const managerPhone = cleanWhatsAppPhone(cleanTarget) || getManagerWhatsAppPhone(db);
   const requesterPhone = targetApproval.requesterPhone || targetApproval.conversationPhone;
 
+  const isUnpaidApproval = targetApproval.approvalType === "unpaid_reservation";
+  const effectiveApprovedValue = Number(
+    targetApproval.requestedValue ||
+    targetApproval.originalValue ||
+    targetApproval.pendingFiscalInvoice?.valorServico ||
+    0
+  );
+
   if (isReject) {
     targetApproval.status = "rejected";
     targetApproval.rejectedAt = new Date().toISOString();
     targetApproval.rejectedBy = cleanTarget;
 
-    const managerReply = `❌ *Solicitação de Alteração de Valor Rejeitada*\n\nA solicitação #${targetApproval.id} para ${targetApproval.requesterName} (Reserva #${targetApproval.reservationCode || targetApproval.reservationId}) foi marcada como recusada. A nota não será emitida com o valor de R$ ${formatMoneyBr(targetApproval.requestedValue)}.`;
+    const managerReply = isUnpaidApproval
+      ? `❌ *Emissão com Pendência Financeira Recusada*\n\nA solicitação #${targetApproval.id} para ${targetApproval.requesterName} (Reserva #${targetApproval.reservationCode || targetApproval.reservationId}) foi recusada. A nota aguardará a baixa financeira da reserva.`
+      : `❌ *Solicitação de Alteração de Valor Rejeitada*\n\nA solicitação #${targetApproval.id} para ${targetApproval.requesterName} (Reserva #${targetApproval.reservationCode || targetApproval.reservationId}) foi marcada como recusada. A nota não será emitida com o valor de R$ ${formatMoneyBr(effectiveApprovedValue)}.`;
+
+    const guestRejectReply = isUnpaidApproval
+      ? `Olá! Informamos que a emissão da Nota Fiscal (NFS-e) referente à reserva #${targetApproval.reservationCode || targetApproval.reservationId} aguarda a confirmação da baixa financeira no sistema. Assim que o pagamento for conciliado, basta nos avisar por aqui para emitirmos imediatamente! 🏨✨`
+      : `Olá! Informamos que a solicitação de alteração do valor da sua nota fiscal para R$ ${formatMoneyBr(effectiveApprovedValue)} não foi aprovada pela gerência. Permanecemos à disposição caso deseje a emissão no valor original da hospedagem (R$ ${formatMoneyBr(targetApproval.originalValue)}).`;
 
     if (typeof sendZapiMessage === "function") {
       await sendZapiMessage(db.zapiConfig, {
@@ -10870,7 +10935,7 @@ export async function handleManagerFiscalApprovalReply({
       if (requesterPhone && requesterPhone !== managerPhone) {
         await sendZapiMessage(db.zapiConfig, {
           phone: requesterPhone,
-          message: `Olá! Informamos que a solicitação de alteração do valor da sua nota fiscal para R$ ${formatMoneyBr(targetApproval.requestedValue)} não foi aprovada pela gerência. Permanecemos à disposição caso deseje a emissão no valor original da hospedagem (R$ ${formatMoneyBr(targetApproval.originalValue)}).`,
+          message: guestRejectReply,
           channelId: "ai_agent",
           recipientRole: "guest",
           db
@@ -10897,7 +10962,7 @@ export async function handleManagerFiscalApprovalReply({
 
   const invoicePayload = {
     ...targetApproval.pendingFiscalInvoice,
-    valorServico: targetApproval.requestedValue
+    valorServico: effectiveApprovedValue
   };
 
   const resForApproval = Array.isArray(db.reservations)
@@ -10909,14 +10974,25 @@ export async function handleManagerFiscalApprovalReply({
       )
     : null;
 
+  if (resForApproval && isUnpaidApproval) {
+    resForApproval.confirmedFiscalData = {
+      ...(resForApproval.confirmedFiscalData || {}),
+      ...invoicePayload,
+      managerApprovedUnpaid: true,
+      approvalId: targetApproval.id,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
   const isCheckedOutApproval = isReservationCheckedOutForFiscal(resForApproval, db);
-  const valFmt = formatMoneyBr(targetApproval.requestedValue);
+  const valFmt = formatMoneyBr(effectiveApprovedValue);
 
   if (!isCheckedOutApproval && resForApproval) {
     resForApproval.confirmedFiscalData = {
       ...invoicePayload,
-      valorServico: targetApproval.requestedValue,
-      managerApprovedValue: true,
+      valorServico: effectiveApprovedValue,
+      managerApprovedValue: !isUnpaidApproval ? true : Boolean(resForApproval.confirmedFiscalData?.managerApprovedValue),
+      managerApprovedUnpaid: isUnpaidApproval ? true : Boolean(resForApproval.confirmedFiscalData?.managerApprovedUnpaid),
       approvalId: targetApproval.id,
       confirmedAt: new Date().toISOString()
     };
@@ -10930,9 +11006,9 @@ export async function handleManagerFiscalApprovalReply({
       saveDatabase: null
     });
 
-    const guestScheduledReply = `✅ *Alteração de Valor Aprovada e Dados Confirmados!*\n\nA gerência aprovou a emissão da sua nota fiscal no valor de *R$ ${valFmt}*:\n• *Tomador:* ${invoicePayload.tomadorNome || "Tomador"}\n• *Valor Confirmado:* R$ ${valFmt}\n\n📌 *Sua nota fiscal será emitida e enviada automaticamente aqui no WhatsApp assim que o seu check-out for realizado!* 🏨✨`;
+    const guestScheduledReply = `✅ *Solicitação Aprovada e Dados Confirmados!*\n\nA gerência aprovou a emissão da sua nota fiscal no valor de *R$ ${valFmt}*:\n• *Tomador:* ${invoicePayload.tomadorNome || "Tomador"}\n• *Valor Confirmado:* R$ ${valFmt}\n\n📌 *Sua nota fiscal será emitida e enviada automaticamente aqui no WhatsApp assim que o seu check-out for realizado!* 🏨✨`;
 
-    const managerScheduledReply = `✅ *Aprovação Confirmada (Agendada para o Check-out)!*\n\nO novo valor de R$ ${valFmt} foi autorizado para ${targetApproval.requesterName} (${requesterPhone}). Como o hóspede ainda não realizou o check-out, os dados foram salvos e a nota fiscal será emitida automaticamente no check-out.`;
+    const managerScheduledReply = `✅ *Aprovação Confirmada (Agendada para o Check-out)!*\n\nO valor de R$ ${valFmt} foi autorizado para ${targetApproval.requesterName} (${requesterPhone}). Como o hóspede ainda não realizou o check-out, os dados foram salvos e a nota fiscal será emitida automaticamente no check-out.`;
 
     if (typeof sendZapiMessage === "function") {
       await sendZapiMessage(db.zapiConfig, {
@@ -10974,7 +11050,7 @@ export async function handleManagerFiscalApprovalReply({
       });
       if (reqConv && reqConv.fiscalConferenceState) {
         reqConv.fiscalConferenceState.status = "scheduled_for_checkout";
-        reqConv.fiscalConferenceState.valorServico = targetApproval.requestedValue;
+        reqConv.fiscalConferenceState.valorServico = effectiveApprovedValue;
         reqConv.fiscalConferenceState.confirmedAt = new Date().toISOString();
       }
     }
@@ -10998,6 +11074,48 @@ export async function handleManagerFiscalApprovalReply({
     saveDatabase,
     createNotification
   });
+
+  if (!emissionResult || !emissionResult.success) {
+    targetApproval.status = "approved_pending_sefin";
+    targetApproval.sefinError = emissionResult?.error || "Falha temporária na SEFIN Nacional (Gov.br)";
+    const managerFailReply = `⚠️ *Aprovação Registrada, mas SEFIN Nacional Retornou Pendência*\n\n` +
+      `A solicitação #${targetApproval.id} de ${targetApproval.requesterName} (R$ ${valFmt}) foi aprovada, porém o Portal Nacional (Gov.br) não autorizou de imediato:\n` +
+      `• *Motivo:* ${targetApproval.sefinError}\n\n` +
+      `📌 A nota já foi incluída na Fila de Retentativa na tela */notas*.`;
+    const guestQueuedReply = `⏳ *Solicitação Aprovada — Nota Fiscal em Processamento!*\n\n` +
+      `A gerência autorizou a emissão da sua NFS-e no valor de *R$ ${valFmt}*. No momento o Portal Nacional da Nota Fiscal (Gov.br) está processando a autorização e enviaremos o PDF oficial aqui mesmo no seu WhatsApp em instantes! 📄✨`;
+
+    if (typeof sendZapiMessage === "function") {
+      await sendZapiMessage(db.zapiConfig, {
+        phone: managerPhone,
+        message: managerFailReply,
+        channelId: "ai_agent",
+        recipientRole: "developer",
+        bypassTestMode: true,
+        db
+      });
+      if (requesterPhone && requesterPhone !== managerPhone) {
+        await sendZapiMessage(db.zapiConfig, {
+          phone: requesterPhone,
+          message: guestQueuedReply,
+          channelId: "ai_agent",
+          recipientRole: "guest",
+          db
+        });
+      }
+    }
+    if (typeof saveDatabase === "function") {
+      try { saveDatabase("fiscal_approval_sefin_queued"); } catch (_) {}
+    }
+    return {
+      handled: true,
+      action: "manager_approved_fiscal_queued_retry",
+      retryQueued: true,
+      error: targetApproval.sefinError,
+      approval: targetApproval,
+      replyText: managerFailReply
+    };
+  }
 
   const numNfse = emissionResult.numeroNfse;
   const linkNfse = emissionResult.linkPrefeitura || emissionResult.danfseUrl;
@@ -11057,7 +11175,7 @@ export async function handleManagerFiscalApprovalReply({
     if (reqConv && reqConv.fiscalConferenceState) {
       reqConv.fiscalConferenceState.status = "emitted";
       reqConv.fiscalConferenceState.numeroNfse = numNfse;
-      reqConv.fiscalConferenceState.valorServico = targetApproval.requestedValue;
+      reqConv.fiscalConferenceState.valorServico = effectiveApprovedValue;
     }
   }
 
@@ -11074,6 +11192,251 @@ export async function handleManagerFiscalApprovalReply({
     invoice: emissionResult.invoice,
     replyText: managerReply
   };
+}
+
+const INVALID_FISCAL_RES_STATUSES = new Set([
+  "cancelada",
+  "cancelled",
+  "cancelado",
+  "no_show",
+  "noshow",
+  "expirada",
+  "expired",
+  "bloqueado",
+  "blocked",
+  "manutencao",
+  "maintenance"
+]);
+
+/**
+ * Identifica se uma reserva ainda é apenas uma pré-reserva (hold não efetivado / aguardando pagamento).
+ */
+export function isPreReservationHoldStatus(reservation) {
+  if (!reservation || typeof reservation !== "object") return false;
+  const st = String(reservation.status || "").trim().toLowerCase();
+  if (st === "pre_reserva" || st === "pre-reserva" || st === "aguardando_pagamento" || st === "pending_payment") {
+    return true;
+  }
+  const confirmedStatuses = new Set([
+    "confirmada",
+    "confirmed",
+    "checked_in",
+    "checkin",
+    "in_house",
+    "hospedado",
+    "completed",
+    "checked_out",
+    "checkout",
+    "finalizada"
+  ]);
+  if (Boolean(reservation.isPreReservation) && !confirmedStatuses.has(st)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Verifica se uma reserva direta (não faturada / não B2B) possui saldo explícito em aberto
+ * que exija conciliação financeira ou autorização do gestor antes da emissão autônoma da NFS-e.
+ */
+export function isUnpaidDirectReservationForEmission(reservation, db = null, conf = null) {
+  if (!reservation || typeof reservation !== "object") return false;
+  if (reservation.confirmedFiscalData?.managerApprovedUnpaid || reservation.confirmedFiscalData?.managerApprovedValue || conf?.managerApprovedUnpaid) {
+    return false;
+  }
+
+  const chan = String(reservation.channel || "").trim().toLowerCase();
+  const payMethod = String(reservation.paymentMethod || "").trim().toLowerCase();
+  const isCorporateOrFaturado = Boolean(
+    reservation.isFaturadoBoleto ||
+    payMethod === "faturado_boleto" ||
+    payMethod === "faturado" ||
+    payMethod === "boleto_faturado" ||
+    chan.includes("b2b") ||
+    reservation.agencyId ||
+    reservation.companyId ||
+    reservation.b2bReservationNumber ||
+    reservation.invoiceRecipientType === "agency"
+  );
+  if (isCorporateOrFaturado) return false;
+
+  const paySt = String(reservation.paymentStatus || "").trim().toLowerCase();
+  if (!paySt || paySt === "pago" || paySt === "pago_total" || paySt === "paid") {
+    return false;
+  }
+
+  const totalAmt = Number(reservation.totalAmount || reservation.valorTotal || reservation.totalPrice || 0);
+  const paidAmt = Number(reservation.paidAmount || 0);
+  if (totalAmt > 0 && paidAmt >= totalAmt - 0.01) {
+    return false;
+  }
+
+  const unpaidSet = new Set([
+    "pendente",
+    "pendente_pix",
+    "aguardando_pagamento",
+    "sinal_pago",
+    "parcial",
+    "pago_parcial",
+    "pending",
+    "unpaid",
+    "inadimplente",
+    "atrasado"
+  ]);
+  return unpaidSet.has(paySt);
+}
+
+/**
+ * Localiza reserva explicitamente mencionada na mensagem (por código RES-..., CPF/CNPJ,
+ * Nome Completo do hóspede ou Primeiro Nome + Número do Flat) ou previamente vinculada na conversa.
+ */
+export function resolveReservationFromMessageContext(db, messageText = "", conv = null, { allowNameFlatOverride = true } = {}) {
+  if (!db || !Array.isArray(db.reservations)) return { reservation: null, explicitMatch: false };
+
+  const validReservations = db.reservations.filter(r =>
+    r && !INVALID_FISCAL_RES_STATUSES.has(String(r.status || "").trim().toLowerCase())
+  );
+  if (validReservations.length === 0) return { reservation: null, explicitMatch: false };
+
+  const text = String(messageText || "").trim();
+  const normStr = (v = "") =>
+    String(v || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+  const normText = normStr(text);
+
+  const now = new Date();
+  const brasiliaDateStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(now);
+
+  const pickBestRes = (list) => {
+    if (!Array.isArray(list) || list.length === 0) return null;
+    const confirmed = list.filter(r => !isPreReservationHoldStatus(r));
+    const pool = confirmed.length > 0 ? confirmed : list;
+    const active = pool.find(r =>
+      r.checkinDate === brasiliaDateStr || r.checkoutDate === brasiliaDateStr ||
+      (r.checkinDate <= brasiliaDateStr && r.checkoutDate >= brasiliaDateStr)
+    );
+    if (active) return active;
+    const past = pool
+      .filter(r => (r.checkoutDate || r.checkinDate || "") <= brasiliaDateStr)
+      .sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""));
+    if (past.length > 0) return past[0];
+    return pool.slice().sort((a, b) => (a.checkinDate || "").localeCompare(b.checkinDate || ""))[0];
+  };
+
+  // 1. Código explícito de reserva (ex.: RES-204-88, #RES-1234 ou código B2B)
+  const codeCandidates = [];
+  const resCodeMatches = text.match(/\bRES-[A-Za-z0-9-]+\b/gi) || [];
+  for (const m of resCodeMatches) codeCandidates.push(m.toUpperCase());
+  const taggedCodeMatch = text.match(/\b(?:reserva|c[oó]digo|localizador)\s*(?:n[º°o]?|#|:)?\s*#?([A-Za-z0-9-]{3,25})\b/i);
+  if (taggedCodeMatch && /\d/.test(taggedCodeMatch[1])) {
+    codeCandidates.push(taggedCodeMatch[1].toUpperCase());
+  }
+  const pureCodeMatch = conv?.awaitingReservationLookup && text.match(/^\s*#?([A-Za-z0-9-]{4,25})\s*$/);
+  if (pureCodeMatch && /\d/.test(pureCodeMatch[1])) {
+    codeCandidates.push(pureCodeMatch[1].toUpperCase());
+  }
+
+  for (const candCode of codeCandidates) {
+    const byCode = validReservations.filter(r => {
+      const rCode = String(r.code || "").trim().toUpperCase();
+      const b2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim().toUpperCase();
+      const rloc = String(r.b2bLocatorRloc || "").trim().toUpperCase();
+      return (rCode && rCode === candCode) || (b2bNum && b2bNum === candCode) || (rloc && rloc === candCode) ||
+        (candCode.replace(/^RES-?/i, "") && String(r.id) === candCode.replace(/^RES-?/i, ""));
+    });
+    if (byCode.length > 0) {
+      return { reservation: pickBestRes(byCode), explicitMatch: true, matchedBy: "code" };
+    }
+  }
+
+  if (allowNameFlatOverride) {
+    // 2. CPF ou CNPJ na mensagem que já pertença a uma reserva ou hóspede/empresa com reserva
+    const msgCpf = extractCpf(text);
+    const msgCnpj = extractCnpj(text);
+    const msgDoc = onlyDigits(msgCnpj || msgCpf || "");
+    if (msgDoc.length === 11 || msgDoc.length === 14) {
+      const matchingGuestIds = new Set(
+        (db.guests || [])
+          .filter(g => g && onlyDigits(g.document || g.documentNumber || g.cpf || g.cnpj || "") === msgDoc)
+          .map(g => String(g.id))
+      );
+      const matchingCompIds = new Set(
+        (db.companies || [])
+          .filter(c => c && onlyDigits(c.cnpj || "") === msgDoc)
+          .map(c => String(c.id))
+      );
+      const matchingAgencyIds = new Set(
+        (db.agencies || [])
+          .filter(a => a && onlyDigits(a.cnpj || "") === msgDoc)
+          .map(a => String(a.id))
+      );
+      const byDoc = validReservations.filter(r => {
+        const rGuestDoc = onlyDigits(r.guestDocument || r.guestCpf || r.document || r.cpf || r.guests?.[0]?.cpf || "");
+        const rReqDoc = onlyDigits(r.requesterInfo?.cpf || "");
+        const rCompDoc = onlyDigits(r.companyCnpj || "");
+        const rAgDoc = onlyDigits(r.agencyCnpj || "");
+        if (rGuestDoc === msgDoc || rReqDoc === msgDoc || rCompDoc === msgDoc || rAgDoc === msgDoc) return true;
+        if (r.guestId && matchingGuestIds.has(String(r.guestId))) return true;
+        if (r.companyId && matchingCompIds.has(String(r.companyId))) return true;
+        if (r.agencyId && matchingAgencyIds.has(String(r.agencyId))) return true;
+        return false;
+      });
+      if (byDoc.length > 0) {
+        return { reservation: pickBestRes(byDoc), explicitMatch: true, matchedBy: "document" };
+      }
+    }
+
+    // 3. Nome Completo do Hóspede (>= 2 palavras significativas) OU Primeiro Nome + Número do Flat
+    const flatTagged = text.match(/\b(?:flat|apto|apartamento|quarto|uh)\s*#?\s*(\d{1,4}[a-z]?)\b/i);
+    const flatPureInLookup = !flatTagged && conv?.awaitingReservationLookup
+      ? text.match(/\b(\d{3}[a-z]?)\b/i)
+      : null;
+    const explicitFlat = (flatTagged ? flatTagged[1] : (flatPureInLookup ? flatPureInLookup[1] : "")).trim().toLowerCase();
+
+    const byNameOrFlat = validReservations.filter(r => {
+      const rawGName = String(r.guestName || "").trim();
+      if (!rawGName || /^(h[oó]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(rawGName)) {
+        return false;
+      }
+      const gNorm = normStr(rawGName);
+      const gTokens = gNorm.split(" ").filter(t => t.length >= 2 && !ALLOWED_NAME_CONNECTORS.has(t));
+      if (gTokens.length === 0) return false;
+
+      const rFlat = String(r.flatNumber || "").trim().toLowerCase();
+      if (gTokens.length >= 2 && normText.includes(gNorm)) {
+        return !explicitFlat || rFlat === explicitFlat;
+      }
+      if (explicitFlat && rFlat === explicitFlat) {
+        const firstToken = gTokens[0];
+        if (firstToken.length >= 3 && new RegExp(`\\b${firstToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(normText)) {
+          return true;
+        }
+      }
+      return false;
+    });
+    if (byNameOrFlat.length > 0) {
+      return { reservation: pickBestRes(byNameOrFlat), explicitMatch: true, matchedBy: "guest_name_flat" };
+    }
+  }
+
+  // 4. Reserva já vinculada na sessão fiscal atual desta conversa
+  const lockedId = conv?.fiscalLockedReservationId || conv?.fiscalConferenceState?.reservationId || null;
+  const lockedCode = conv?.fiscalLockedReservationCode || conv?.fiscalConferenceState?.reservationCode || null;
+  if (lockedId || lockedCode) {
+    const lockedRes = validReservations.find(r =>
+      (lockedId && Number(r.id) === Number(lockedId)) ||
+      (lockedCode && String(r.code) === String(lockedCode))
+    );
+    if (lockedRes) {
+      return { reservation: lockedRes, explicitMatch: false, matchedBy: "session_lock" };
+    }
+  }
+
+  return { reservation: null, explicitMatch: false };
 }
 
 /**
@@ -11117,7 +11480,12 @@ export function findContactAndReservation(db, cleanTarget) {
     return pList.some(phoneMatches);
   });
 
-  const nonCancelled = matchedReservations.filter(r => r.status !== "cancelada" && r.status !== "cancelled");
+  const nonCancelled = matchedReservations.filter(
+    r => !INVALID_FISCAL_RES_STATUSES.has(String(r.status || "").trim().toLowerCase())
+  );
+  const confirmedOnly = nonCancelled.filter(r => !isPreReservationHoldStatus(r));
+  const candidatePool = confirmedOnly.length > 0 ? confirmedOnly : nonCancelled;
+
   const now = new Date();
   const brasiliaDateStr = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo",
@@ -11126,26 +11494,24 @@ export function findContactAndReservation(db, cleanTarget) {
     day: "2-digit"
   }).format(now);
 
-  // Priorização da melhor reserva:
+  // Priorização da melhor reserva elegível:
   // 1) Ativa hoje
-  let matchedReservation = nonCancelled.find(r =>
+  let matchedReservation = candidatePool.find(r =>
     (r.checkinDate === brasiliaDateStr || r.checkoutDate === brasiliaDateStr || (r.checkinDate <= brasiliaDateStr && r.checkoutDate >= brasiliaDateStr))
-  );
+  ) || null;
   // 2) Futura mais próxima
   if (!matchedReservation) {
-    const future = nonCancelled
+    const future = candidatePool
       .filter(r => (r.checkinDate || "") >= brasiliaDateStr)
       .sort((a, b) => (a.checkinDate || "").localeCompare(b.checkinDate || ""));
     if (future.length > 0) matchedReservation = future[0];
   }
   // 3) Passada mais recente
-  if (!matchedReservation && nonCancelled.length > 0) {
-    const past = nonCancelled
+  if (!matchedReservation && candidatePool.length > 0) {
+    const past = candidatePool
+      .slice()
       .sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""));
     matchedReservation = past[0];
-  }
-  if (!matchedReservation && matchedReservations.length > 0) {
-    matchedReservation = matchedReservations[0];
   }
 
   // Identifica o papel exato de quem está falando no WhatsApp (Hóspede vs Solicitante Terceiro vs Empresa vs Agência)
@@ -11269,15 +11635,17 @@ export function findContactAndReservation(db, cleanTarget) {
   if (!matchedReservation && matchedGuest) {
     const gDoc = onlyDigits(matchedGuest.document || matchedGuest.documentNumber || matchedGuest.cpf || "");
     const byGuestRes = reservations.filter(r => {
-      if (!r || r.status === "cancelada" || r.status === "cancelled") return false;
+      if (!r || INVALID_FISCAL_RES_STATUSES.has(String(r.status || "").trim().toLowerCase())) return false;
       if (matchedGuest.id && r.guestId && String(r.guestId) === String(matchedGuest.id)) return true;
       const rDoc = onlyDigits(r.guestDocument || r.guestCpf || r.document || r.cpf || "");
       return Boolean(gDoc && gDoc.length >= 11 && rDoc === gDoc);
     });
     if (byGuestRes.length > 0) {
-      matchedReservation = byGuestRes.find(r =>
+      const confirmedByGuest = byGuestRes.filter(r => !isPreReservationHoldStatus(r));
+      const guestResPool = confirmedByGuest.length > 0 ? confirmedByGuest : byGuestRes;
+      matchedReservation = guestResPool.find(r =>
         (r.checkinDate === brasiliaDateStr || r.checkoutDate === brasiliaDateStr || (r.checkinDate <= brasiliaDateStr && r.checkoutDate >= brasiliaDateStr))
-      ) || byGuestRes.sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""))[0];
+      ) || guestResPool.slice().sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""))[0];
     }
   }
 
@@ -11957,7 +12325,7 @@ function checkDeterministicValueChange(messageText = "", conf = {}) {
 function isFiscalBotHistoryMessage(m) {
   if (!m || !m.text) return true;
   if (m.senderName && /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(m.senderName).trim())) return true;
-  if (/^(?:📋\s*\*Confer[eê]ncia|Com certeza!\s*Por favor,\s*me informe|N[aã]o consegui identificar o nome|Claro!\s*Qual altera[cç][aã]o|Dados cadastrais atualizados|✅\s*\*Dados da Nota|✅\s*\*Nota Fiscal Emitida|ℹ️\s*\*Nota Fiscal J[aá] Emitida|Entendido!\s*Cancelei a emiss[aã]o|Ol[aá].*?Com certeza podemos emitir|Perfeito!\s*Por gentileza,\s*nos\s*(?:envie|informe)|Identificamos\s+(?:a\s+tentativa|o\s+CPF)|⚠️\s*Identifiquei a solicita[cç][aã]o|🔔\s*\*Solicita[cç][aã]o de Altera[cç][aã]o)/i.test(String(m.text).trim())) {
+  if (/^(?:📋\s*\*Confer[eê]ncia|📋\s*\*Dados da Nota Fiscal Registrados|⏳\s*\*Dados Confirmados|⏳\s*\*Solicita[cç][aã]o Aprovada|Com certeza!\s*Por favor,\s*me informe|N[aã]o consegui identificar o nome|Claro!\s*Qual altera[cç][aã]o|Dados cadastrais atualizados|✅\s*\*Dados da Nota|✅\s*\*Nota Fiscal Emitida|ℹ️\s*\*Nota Fiscal J[aá] Emitida|Entendido!\s*Cancelei a emiss[aã]o|Ol[aá].*?Com certeza podemos (?:emitir|cuidar)|Ainda n[aã]o consegui localizar uma reserva|Ol[aá]!\s*Localizamos a pr[eé]-reserva|Perfeito!\s*Por gentileza,\s*nos\s*(?:envie|informe)|Identificamos\s+(?:a\s+tentativa|o\s+CPF)|⚠️\s*Identifiquei a solicita[cç][aã]o|🔔\s*\*Solicita[cç][aã]o de Altera[cç][aã]o|🔔\s*\*Libera[cç][aã]o de NFS-e)/i.test(String(m.text).trim())) {
     return true;
   }
   return false;
@@ -12743,7 +13111,16 @@ export async function handleWhatsAppFiscalFlow({
     referenceMessageId
   );
 
-  const isAwaitingConferenceConfirmation = Boolean(
+  const explicitCodeLookupCheck = resolveReservationFromMessageContext(db, messageText, conv, { allowNameFlatOverride: false });
+  const isExplicitReservationSwitch = Boolean(
+    explicitCodeLookupCheck.explicitMatch &&
+    explicitCodeLookupCheck.matchedBy === "code" &&
+    conf &&
+    explicitCodeLookupCheck.reservation &&
+    String(conf.reservationId) !== String(explicitCodeLookupCheck.reservation.id)
+  );
+
+  const isAwaitingConferenceConfirmation = !isExplicitReservationSwitch && Boolean(
     conf && (
       conf.status === "awaiting_confirmation" ||
       Boolean(conf.pendingFieldEdit) ||
@@ -12753,13 +13130,14 @@ export async function handleWhatsAppFiscalFlow({
   );
   const isFiscalRequest = isFiscalIntentMessage(messageText) || isAlterationRequest;
   const isAwaitingFiscal = Boolean(conv?.awaitingFiscalData === true);
+  const isAwaitingLookup = Boolean(conv?.awaitingReservationLookup === true);
 
-  // Se não é pedido fiscal, nem aguardando dados, nem aguardando confirmação da conferência, ignora
-  if (!isFiscalRequest && !isAwaitingFiscal && !isAwaitingConferenceConfirmation) {
+  // Se não é pedido fiscal, nem aguardando dados/localização, nem aguardando confirmação da conferência, ignora
+  if (!isFiscalRequest && !isAwaitingFiscal && !isAwaitingConferenceConfirmation && !isAwaitingLookup) {
     return { handled: false };
   }
 
-  const {
+  let {
     matchedReservation,
     matchedGuest,
     companyId,
@@ -12767,7 +13145,125 @@ export async function handleWhatsAppFiscalFlow({
     callerRole,
     callerCrmGuest
   } = findContactAndReservation(db, cleanTarget);
+
+  // Permite localizar reserva pelo código/CPF/CNPJ/Nome+Flat caso o telefone não conste na reserva (ou se trocou explicitamente de reserva por código)
+  if (!matchedReservation || isExplicitReservationSwitch || (isFiscalRequest && explicitCodeLookupCheck.explicitMatch)) {
+    const contextResMatch = (!matchedReservation)
+      ? resolveReservationFromMessageContext(db, messageText, conv, { allowNameFlatOverride: true })
+      : explicitCodeLookupCheck;
+    if (contextResMatch.reservation) {
+      matchedReservation = contextResMatch.reservation;
+      if (conv) {
+        conv.fiscalLockedReservationId = matchedReservation.id;
+        conv.fiscalLockedReservationCode = matchedReservation.code || null;
+        conv.awaitingReservationLookup = false;
+        conv.reservationLookupAttempts = 0;
+      }
+      const resGuestDoc = onlyDigits(matchedReservation.guestDocument || matchedReservation.guestCpf || matchedReservation.document || "");
+      const resRealGName = String(matchedReservation.guestName || "").trim().toLowerCase();
+      matchedGuest = (db.guests || []).find(g =>
+        g && (
+          (matchedReservation.guestId && String(g.id) === String(matchedReservation.guestId)) ||
+          (resGuestDoc.length >= 11 && onlyDigits(g.documentNumber || g.document || g.cpf || "") === resGuestDoc) ||
+          (resRealGName.length >= 4 && String(g.fullName || g.name || "").trim().toLowerCase() === resRealGName)
+        )
+      ) || matchedGuest;
+
+      companyId = matchedReservation.companyId || matchedGuest?.companyId || null;
+      if (Array.isArray(db.companies)) {
+        linkedCompany = (companyId
+          ? db.companies.find(c => c && String(c.id) === String(companyId))
+          : (matchedReservation.companyCnpj
+              ? db.companies.find(c => c && onlyDigits(c.cnpj) === onlyDigits(matchedReservation.companyCnpj))
+              : null)) || linkedCompany;
+      }
+
+      const msgCnpjLookup = onlyDigits(extractCnpj(messageText) || "");
+      if (msgCnpjLookup.length === 14) {
+        const agCnpj = onlyDigits(matchedReservation.agencyCnpj || "");
+        const compCnpj = onlyDigits(linkedCompany?.cnpj || matchedReservation.companyCnpj || "");
+        if (agCnpj && msgCnpjLookup === agCnpj) callerRole = "agency";
+        else if (compCnpj && msgCnpjLookup === compCnpj) callerRole = "company";
+      }
+    }
+  } else if (conv && conv.awaitingReservationLookup) {
+    conv.awaitingReservationLookup = false;
+    conv.reservationLookupAttempts = 0;
+  }
+
   const explicitPrefType = detectExplicitTomadorTypePreference(messageText);
+
+  // Blindagem de Produção #2: Se não há reserva localizada e não há conferência ativa com reserva, NUNCA inventa rascunho genérico!
+  if (!matchedReservation && !(isAwaitingConferenceConfirmation && conf?.reservationId)) {
+    if (isAwaitingLookup && !isFiscalRequest && !extractCpf(messageText) && !extractCnpj(messageText)) {
+      const nonFiscalType = analyzeGuestQuery(messageText, null, db)?.type || "";
+      if (/^(?:GREETING_ONLY|GENERIC_FAQ|PRICING_QUOTE|RESERVATION_REQUEST|FLAT_READY_STATUS)$/.test(nonFiscalType)) {
+        conv.awaitingReservationLookup = false;
+        return { handled: false };
+      }
+      if (/\b(?:cancelar|cancela|deixa\s*pra\s*l[aá]|n[aã]o\s*precisa)\b/i.test(messageText)) {
+        conv.awaitingReservationLookup = false;
+        conv.reservationLookupAttempts = 0;
+        return await respond("Entendido! Caso precise emitir sua nota fiscal depois, é só nos chamar por aqui. 🏨✨", {
+          action: "cancelled_reservation_lookup"
+        });
+      }
+    }
+
+    const attempts = Number(conv?.reservationLookupAttempts || 0) + 1;
+    if (conv) {
+      conv.awaitingReservationLookup = true;
+      conv.awaitingReservationLookupAt = new Date().toISOString();
+      conv.reservationLookupAttempts = attempts;
+      conv.awaitingFiscalData = false;
+    }
+
+    if (attempts >= 2) {
+      if (typeof createNotification === "function") {
+        createNotification({
+          category: "fiscal",
+          title: `🔍 Pedido de NFS-e sem Reserva Vinculada (${cleanTarget})`,
+          message: `${senderName || "Contato"} solicitou nota fiscal de um número sem reserva localizada: "${messageText}".`,
+          type: "fiscal_unmatched_phone",
+          targetUrl: "/whatsapp-chat",
+          link: "/whatsapp-chat"
+        });
+      }
+      if (typeof sendZapiMessage === "function" && !isDeveloperPhone(cleanTarget, db)) {
+        const managerPhone = getManagerWhatsAppPhone(db);
+        await sendZapiMessage(db.zapiConfig, {
+          phone: managerPhone,
+          message: `🔍 *Solicitação de NFS-e sem Reserva Localizada*\n\n• *Contato:* ${senderName || "Desconhecido"} (${cleanTarget})\n• *Mensagem:* "${messageText}"\n\nO sistema solicitou os dados da reserva e notificou a recepção.`,
+          channelId: "ai_agent",
+          recipientRole: "developer",
+          bypassTestMode: true,
+          db
+        });
+      }
+      const retryLookupMsg = `Ainda não consegui localizar uma estadia com esses dados no nosso sistema. 😕\n\n` +
+        `Por favor, confira e me envie um dos dados abaixo:\n` +
+        `• **Código da reserva** (ex.: RES-...)\n` +
+        `• **CPF do hóspede titular** (ou CNPJ da empresa contratante)\n` +
+        `• **Nome completo do hóspede + número do flat**\n\n` +
+        `*(Já avisei também nossa recepção caso precise de apoio manual!)* 🏨✨`;
+      return await respond(retryLookupMsg, {
+        action: "prompted_reservation_lookup_retry",
+        awaitingReservationLookup: true,
+        attempts
+      });
+    }
+
+    const lookupMsg = `Olá! Com certeza podemos cuidar da sua Nota Fiscal de Serviços (NFS-e)! 📄✨\n\n` +
+      `Como não localizei uma reserva vinculada diretamente a este número de WhatsApp, por gentileza me informe **um** dos dados abaixo para eu localizar a estadia:\n\n` +
+      `• **Código da reserva** (ex.: *RES-...*)\n` +
+      `• **CPF do hóspede titular** (ou **CNPJ** da empresa contratante)\n` +
+      `• **Nome completo do hóspede + número do flat** (ex.: *João da Silva, Flat 204*)`;
+    return await respond(lookupMsg, {
+      action: "prompted_reservation_lookup",
+      awaitingReservationLookup: true,
+      attempts: 1
+    });
+  }
 
   // Trava de Sigilo Tarifário Corporativo / Agência B2B (nfHideFromGuest):
   // Se a reserva oculta tarifas/NFS-e do hóspede e quem chama é o próprio hóspede, orienta sem expor valores.
@@ -12786,6 +13282,17 @@ export async function handleWhatsAppFiscalFlow({
       action: "blocked_nf_hide_from_guest",
       nfHideFromGuest: true,
       reservationId: matchedReservation.id
+    });
+  }
+
+  // Blindagem de Produção #3a: Bloqueia emissão ou conferência fiscal sobre pré-reserva não efetivada
+  if (matchedReservation && isPreReservationHoldStatus(matchedReservation)) {
+    const preResMsg = `Olá! Localizamos a pré-reserva *#${matchedReservation.code || matchedReservation.id}*${matchedReservation.flatNumber ? ` (Flat ${matchedReservation.flatNumber})` : ""}, porém ela ainda aguarda a confirmação do pagamento para ser efetivada. 🏨✨\n\n` +
+      `Assim que a reserva estiver confirmada, já poderemos registrar os dados e emitir a sua Nota Fiscal (NFS-e) normalmente!`;
+    return await respond(preResMsg, {
+      action: "blocked_pre_reservation",
+      reservationId: matchedReservation.id,
+      status: matchedReservation.status
     });
   }
 
@@ -13231,6 +13738,85 @@ export async function handleWhatsAppFiscalFlow({
         });
       }
 
+      // Blindagem de Produção #3b: Reserva direta com check-out feito, mas com pagamento explícito pendente no PMS
+      if (resForConf && isUnpaidDirectReservationForEmission(resForConf, db, conf)) {
+        resForConf.confirmedFiscalData = {
+          ...conf,
+          confirmedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        resForConf.autoEmitInvoice = true;
+
+        if (!Array.isArray(db.pendingFiscalApprovals)) db.pendingFiscalApprovals = [];
+        const approvalId = `NFSE-PAY-${Date.now().toString(36).toUpperCase()}`;
+        const pendingApproval = {
+          id: approvalId,
+          approvalType: "unpaid_reservation",
+          status: "pending_manager",
+          requesterPhone: cleanTarget,
+          requesterName: senderName || conv?.name || conf.tomadorNome || "Hóspede",
+          reservationId: resForConf.id,
+          reservationCode: resForConf.code,
+          flatNumber: resForConf.flatNumber,
+          originalValue: Number(conf.valorServico || 0),
+          requestedValue: Number(conf.valorServico || 0),
+          reason: `Pagamento consta como "${resForConf.paymentStatus}" no PMS`,
+          pendingFiscalInvoice: {
+            ...conf,
+            valorServico: Number(conf.valorServico || 0)
+          },
+          createdAt: new Date().toISOString()
+        };
+        db.pendingFiscalApprovals.push(pendingApproval);
+
+        conf.status = "pending_manager_approval";
+        conf.pendingApprovalId = approvalId;
+        conf.updatedAt = new Date().toISOString();
+
+        const managerPhone = getManagerWhatsAppPhone(db);
+        const managerPayAlert = `🔔 *Liberação de NFS-e com Pagamento Pendente no PMS*\n\n` +
+          `O cliente confirmou os dados da nota fiscal, porém a reserva consta com saldo em aberto:\n` +
+          `• *Solicitante:* ${pendingApproval.requesterName} (${cleanTarget})\n` +
+          `• *Reserva:* #${resForConf.code || resForConf.id} (Flat ${resForConf.flatNumber || "S/N"})\n` +
+          `• *Status Financeiro:* ${resForConf.paymentStatus}\n` +
+          `• *Tomador:* ${conf.tomadorNome} (${formatCpfOrCnpj(conf.tomadorCpfCnpj)})\n` +
+          `• *Valor:* R$ ${valFmt}\n\n` +
+          `Caso o pagamento já tenha sido recebido, responda:\n` +
+          `*Aprovar #${approvalId}* para emitir e enviar o PDF agora.`;
+
+        if (typeof sendZapiMessage === "function") {
+          await sendZapiMessage(db.zapiConfig, {
+            phone: managerPhone,
+            message: managerPayAlert,
+            channelId: "ai_agent",
+            recipientRole: "developer",
+            bypassTestMode: true,
+            db
+          });
+        }
+        if (typeof createNotification === "function") {
+          createNotification({
+            category: "fiscal",
+            title: `⚠️ NFS-e Aguardando Baixa Financeira: Reserva #${resForConf.code || resForConf.id}`,
+            message: `${pendingApproval.requesterName} confirmou NFS-e de R$ ${valFmt}, mas a reserva consta como "${resForConf.paymentStatus}".`,
+            type: "fiscal_unpaid_reservation_hold",
+            targetUrl: "/notas",
+            link: "/notas"
+          });
+        }
+
+        const pendingPayMsg = `📋 *Dados da Nota Fiscal Registrados!*\n\n` +
+          `Conferimos e salvamos todos os dados da sua NFS-e (*${conf.tomadorNome}* — *R$ ${valFmt}*).\n\n` +
+          `Identificamos no sistema que a conciliação financeira da reserva *#${resForConf.code || resForConf.id}* ainda consta pendente de baixa. Já avisei nossa equipe financeira/recepção para validar o pagamento e disparar o PDF oficial da sua nota fiscal aqui mesmo no seu WhatsApp em instantes! 🏨✨`;
+
+        return await respond(pendingPayMsg, {
+          action: "unpaid_reservation_hold",
+          pendingApprovalId: approvalId,
+          paymentStatus: resForConf.paymentStatus,
+          conference: conf
+        });
+      }
+
       // Se a reserva JÁ realizou check-out: emite e envia na hora!
       const emissionResult = await executeWhatsAppFiscalEmission({
         db,
@@ -13259,6 +13845,62 @@ export async function handleWhatsAppFiscalFlow({
         saveDatabase,
         createNotification
       });
+
+      // Blindagem de Produção #1: Se a SEFIN Nacional (Gov.br) oscilar ou rejeitar, NUNCA afirma emissão falsa!
+      if (!emissionResult || !emissionResult.success) {
+        conf.status = "queued_retry";
+        conf.lastSefinError = emissionResult?.error || "Falha temporária na SEFIN Nacional (Gov.br)";
+        conf.updatedAt = new Date().toISOString();
+        if (resForConf) {
+          resForConf.confirmedFiscalData = {
+            ...(resForConf.confirmedFiscalData || {}),
+            ...conf,
+            updatedAt: conf.updatedAt
+          };
+          resForConf.autoEmitInvoice = true;
+        }
+
+        const managerPhone = getManagerWhatsAppPhone(db);
+        const sefinAlertMsg = `⚠️ *Alerta Fiscal — Fila de Retentativa SEFIN (Gov.br)*\n\n` +
+          `A emissão solicitada via WhatsApp encontrou instabilidade/rejeição no Portal Nacional:\n` +
+          `• *Tomador:* ${conf.tomadorNome} (${formatCpfOrCnpj(conf.tomadorCpfCnpj)})\n` +
+          `• *Reserva:* #${conf.reservationCode || conf.reservationId || "S/N"} (Flat ${conf.flatNumber || "S/N"})\n` +
+          `• *Valor:* R$ ${valFmt}\n` +
+          `• *Retorno SEFIN:* ${conf.lastSefinError}\n\n` +
+          `📌 A nota já foi salva na *Fila de Retentativa* na tela */notas* (sem enviar número falso ao cliente).`;
+
+        if (typeof sendZapiMessage === "function") {
+          await sendZapiMessage(db.zapiConfig, {
+            phone: managerPhone,
+            message: sefinAlertMsg,
+            channelId: "ai_agent",
+            recipientRole: "developer",
+            bypassTestMode: true,
+            db
+          });
+        }
+        if (typeof createNotification === "function") {
+          createNotification({
+            category: "fiscal",
+            title: `⚠️ Falha SEFIN Gov.br na Emissão via WhatsApp`,
+            message: `NFS-e de ${conf.tomadorNome} (R$ ${valFmt}) entrou na fila de retentativa: ${conf.lastSefinError}`,
+            type: "nfse_sefin_retry_queued",
+            targetUrl: "/notas",
+            link: "/notas"
+          });
+        }
+
+        const queuedReplyMsg = `⏳ *Dados Confirmados — Nota Fiscal em Processamento!*\n\n` +
+          `Recebemos sua confirmação para emissão da NFS-e no valor de *R$ ${valFmt}* (*${conf.tomadorNome}*).\n\n` +
+          `No momento, o Portal Nacional da Nota Fiscal (Gov.br) apresentou uma oscilação temporária na autorização e sua nota já entrou automaticamente na nossa fila prioritária. Assim que for autorizada em instantes, enviaremos o PDF oficial aqui mesmo no seu WhatsApp! 📄✨`;
+
+        return await respond(queuedReplyMsg, {
+          action: "nfse_queued_retry",
+          retryQueued: true,
+          error: conf.lastSefinError,
+          conference: conf
+        });
+      }
 
       conf.status = "emitted";
       conf.numeroNfse = emissionResult.numeroNfse;
@@ -13408,6 +14050,27 @@ export async function handleWhatsAppFiscalFlow({
   const contactDisplayName = senderName || matchedReservation?.guestName || matchedGuest?.name || "Hóspede";
   const firstName = contactDisplayName ? toTitleCase(contactDisplayName).split(" ")[0] : "";
 
+  const baseDraftAmount = matchedReservation
+    ? Number(buildOfficialNfseDraftForReservation(db, { reservation: matchedReservation })?.valorServico || matchedReservation.totalAmount || matchedReservation.valorTotal || 0)
+    : 0;
+  if (!baseDraftAmount || baseDraftAmount <= 0) {
+    if (typeof createNotification === "function") {
+      createNotification({
+        category: "fiscal",
+        title: `⚠️ Reserva sem Valor Definido para NFS-e (#${matchedReservation?.code || matchedReservation?.id || "S/N"})`,
+        message: `${contactDisplayName} solicitou nota fiscal via WhatsApp, mas a reserva não possui valor de hospedagem maior que zero registrado.`,
+        type: "fiscal_zero_amount_hold",
+        targetUrl: "/notas",
+        link: "/notas"
+      });
+    }
+    const zeroValMsg = `Olá${firstName ? `, ${firstName}` : ""}! Localizamos a estadia referente à reserva *#${matchedReservation?.code || matchedReservation?.id || "S/N"}*, porém o demonstrativo financeiro da hospedagem está sendo finalizado pela nossa recepção. 🏨✨\n\nJá acionei nossa equipe para concluir o fechamento e liberar a emissão da sua Nota Fiscal em instantes!`;
+    return await respond(zeroValMsg, {
+      action: "blocked_zero_amount_reservation",
+      reservationId: matchedReservation?.id
+    });
+  }
+
   // Cenário A: Cliente enviou CNPJ
   if (rawCnpj) {
     if (!isValidCnpj(rawCnpj)) {
@@ -13490,7 +14153,7 @@ export async function handleWhatsAppFiscalFlow({
       senderName: contactDisplayName,
       preferType: "PJ"
     });
-    const valTotal = Number(officialDraft.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+    const valTotal = Number(officialDraft.valorServico || baseDraftAmount);
     const desc = officialDraft.descricaoServico;
     const finalCompanyIbge = resolvedIbge || onlyDigits(officialDraft.tomadorCodigoMunicipio || company.ibgeCode || "") || "3301009";
 
@@ -13606,7 +14269,7 @@ export async function handleWhatsAppFiscalFlow({
       cleanTarget,
       preferType: "PF"
     });
-    const valTotal = Number(officialDraftPf.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+    const valTotal = Number(officialDraftPf.valorServico || baseDraftAmount);
     const desc = officialDraftPf.descricaoServico;
 
     conv.fiscalConferenceState = {
@@ -13666,7 +14329,7 @@ export async function handleWhatsAppFiscalFlow({
         preferType: "PJ"
       });
       if (crmPj && crmPj.tomadorTipo === "PJ" && crmPj.tomadorCpfCnpj) {
-        const valTotal = Number(crmPj.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+        const valTotal = Number(crmPj.valorServico || baseDraftAmount);
         const desc = crmPj.descricaoServico;
         conv.fiscalConferenceState = {
           status: "awaiting_confirmation",
@@ -13710,7 +14373,7 @@ export async function handleWhatsAppFiscalFlow({
         preferType: "PF"
       });
       if (crmPf && crmPf.tomadorCpfCnpj) {
-        const valTotal = Number(crmPf.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+        const valTotal = Number(crmPf.valorServico || baseDraftAmount);
         const desc = crmPf.descricaoServico;
         conv.fiscalConferenceState = {
           status: "awaiting_confirmation",
@@ -13760,7 +14423,7 @@ export async function handleWhatsAppFiscalFlow({
   });
 
   if (crmTomador && crmTomador.tomadorCpfCnpj) {
-    const valTotal = Number(crmTomador.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
+    const valTotal = Number(crmTomador.valorServico || baseDraftAmount);
     let desc = crmTomador.descricaoServico;
 
     const guestDescOnOpen = extractGuestAdditionForDescription(messageText);
