@@ -52,10 +52,13 @@ export const consultarDetalhesReservaTool: AgentToolDefinition<ConsultarDetalhes
         context.estado_atual === 'PRE_CHECKIN'
           ? `${baseUrl}/pre-checkin/${reserva.id}`
           : null;
+      const qtdHospedes = Number(reserva.quantidade_hospedes || 1);
+      const canalLabel = reserva.canal_reserva_nome || reserva.canal_reserva || 'Site CorpFlats';
 
       const msg =
-        `Apresente ao hóspede com clareza os detalhes da reserva *${reserva.id}* no *${reserva.nome_imovel}*: ` +
+        `Apresente ao hóspede com clareza o resumo completo da reserva *${reserva.id}* no *${reserva.nome_imovel}*, informando obrigatoriamente: ` +
         `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, ` +
+        `Total de Hóspedes: *${qtdHospedes}*, Canal da Reserva: *${canalLabel}*, ` +
         `Status de pagamento: ${reserva.status_pagamento}, Wi-Fi rede "${reserva.wifi_rede}" (senha: "${reserva.wifi_senha}")` +
         (linkPreCheckin ? `, Link do Pré-Check-in Digital: ${linkPreCheckin}` : '') +
         `.`;
@@ -68,7 +71,8 @@ export const consultarDetalhesReservaTool: AgentToolDefinition<ConsultarDetalhes
           data_checkin: reserva.data_checkin,
           data_checkout: reserva.data_checkout,
           status_pagamento: reserva.status_pagamento,
-          quantidade_hospedes: reserva.quantidade_hospedes || 1,
+          quantidade_hospedes: qtdHospedes,
+          canal_reserva: canalLabel,
           wifi_rede: reserva.wifi_rede,
           wifi_senha: reserva.wifi_senha,
           link_pre_checkin: linkPreCheckin,

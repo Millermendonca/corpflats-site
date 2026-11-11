@@ -21,7 +21,7 @@
  *  13. `notificar_administrador`
  */
 
-import { triggerImmediateWhatsApp, generateStaticPixPayload } from './zapi-service.mjs';
+import { triggerImmediateWhatsApp, generateStaticPixPayload, formatReservationChannelLabel, resolveReservationGuestCount } from './zapi-service.mjs';
 
 function normalizePhoneDigits(phone) {
   return String(phone || '').replace(/\D+/g, '');
@@ -246,9 +246,10 @@ export function injectSessionContext(params = {}) {
       cafe_incluso: includeBreakfast,
       status_pre_checkin_fnrh: preCheckinDone ? 'CONCLUIDO' : 'PENDENTE',
       canal_reserva: String(sourceRes.channel || 'whatsapp').toLowerCase(),
+      canal_reserva_nome: formatReservationChannelLabel(sourceRes),
       valor_diaria: Number(sourceRes.dailyRate || 237),
       valor_total: Number(sourceRes.totalAmount || 0),
-      quantidade_hospedes: Number(sourceRes.guestCount || sourceRes.guestsCount || sourceRes.adults || 1),
+      quantidade_hospedes: resolveReservationGuestCount(sourceRes),
       acesso_imovel: 'Cartão NFC retirado na recepção 24h',
       wifi_rede: `apto ${flatNum}`,
       wifi_senha: wifiPassword,
@@ -1085,8 +1086,9 @@ export const gerarLinkReservaTool = {
           ? 'Peça também o *nome completo* do titular para vincular à pré-reserva.'
           : `Confirme se a reserva pode ser emitida em nome de *${nomeTitular}*.`;
         const msg =
-          `Informe ao cliente o resumo para bloqueio da reserva: período de ${checkin} a ${checkout} (${diarias} diária(s)), ` +
-          `${hospedes} hóspede(s), plano ${comCafe ? 'COM café da manhã (isento de taxa de limpeza)' : 'Somente Hospedagem'}, ` +
+          `Informe ao cliente o resumo para bloqueio da pré-reserva: período de ${checkin} a ${checkout} (${diarias} diária(s)), ` +
+          `total de hóspedes: *${hospedes}* (${hospedes === 1 ? '1 pessoa' : `${hospedes} pessoas`}), canal da reserva: *WhatsApp*, ` +
+          `plano ${comCafe ? 'COM café da manhã (isento de taxa de limpeza)' : 'Somente Hospedagem'}, ` +
           `no valor total de *R$ ${valorTotal.toFixed(2)}*. ${faltaNome}`;
         return {
           status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
@@ -1095,6 +1097,7 @@ export const gerarLinkReservaTool = {
             data_checkout: checkout,
             diarias,
             quantidade_hospedes: hospedes,
+            canal_reserva: 'WhatsApp',
             incluir_cafe: comCafe,
             valor_total: valorTotal,
             nome_hospede: nomeTitular || null,
@@ -1355,7 +1358,8 @@ export const gerarLinkReservaTool = {
         ? ` Informe também que o veículo placa *${veiculoVinculado.plate}* informado anteriormente já foi vinculado automaticamente à reserva.`
         : '';
       const msg =
-        `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* (Flat ${selectedFlat.number || selectedFlat.id}) foi bloqueada por 30 minutos para *${nomeTitular}* (${checkin} a ${checkout}) ` +
+        `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* (Flat ${selectedFlat.number || selectedFlat.id}) foi bloqueada por 30 minutos para *${nomeTitular}* (${checkin} a ${checkout}), ` +
+        `incluindo obrigatoriamente no resumo o *Total de Hóspedes: ${hospedes}* e o *Canal da Reserva: WhatsApp*, ` +
         `no valor de *R$ ${valorTotal.toFixed(2)}* no PIX (ou *R$ ${cardTotalAmount.toFixed(2)}* no Cartão de Crédito). ` +
         `A mensagem oficial da reserva com botões interativos, código PIX Copia e Cola (\`${chavePix}\`) e link de pagamento por Cartão (${linkPagamento}) já foi enviada.${infoVeiculo}`;
 
@@ -1367,6 +1371,8 @@ export const gerarLinkReservaTool = {
           nome_hospede: nomeTitular,
           data_checkin: checkin,
           data_checkout: checkout,
+          quantidade_hospedes: hospedes,
+          canal_reserva: 'WhatsApp',
           valor_total: valorTotal,
           valor_cartao: cardTotalAmount,
           link_reserva: linkPagamento,
@@ -1437,14 +1443,18 @@ export const consultarDetalhesReservaTool = {
       const linkPreCheckin = isPreResUnpaid ? null : `${baseUrl}/pre-checkin/${reserva.id}`;
       const linkPortalReserva = `${baseUrl}/minha-reserva/${reserva.id}`;
       const linkCafe = (!isPreResUnpaid && reserva.cafe_incluso !== false) ? `${baseUrl}/minha-reserva/${reserva.id}/cafe` : null;
+      const qtdHospedes = Number(reserva.quantidade_hospedes || 1);
+      const canalLabel = reserva.canal_reserva_nome || formatReservationChannelLabel(reserva.canal_reserva || 'whatsapp');
 
       const msg = isPreResUnpaid
-        ? `Apresente ao cliente os detalhes da pré-reserva *${reserva.id}* no *${reserva.nome_imovel}*: ` +
+        ? `Apresente ao cliente o resumo completo da pré-reserva *${reserva.id}* no *${reserva.nome_imovel}*, informando obrigatoriamente: ` +
           `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, ` +
+          `Total de Hóspedes: *${qtdHospedes}*, Canal da Reserva: *${canalLabel}*, ` +
           `Status: Pré-Reserva aguardando confirmação do pagamento. ` +
           `Informe o link do Portal da Reserva para pagamento (${linkPortalReserva}) e explique que o pré-check-in digital e o agendamento do café da manhã serão liberados assim que o pagamento for confirmado.`
-        : `Apresente ao hóspede com clareza os detalhes da reserva *${reserva.id}* no *${reserva.nome_imovel}*: ` +
+        : `Apresente ao hóspede com clareza o resumo completo da reserva *${reserva.id}* no *${reserva.nome_imovel}*, informando obrigatoriamente: ` +
           `Check-in em ${reserva.data_checkin}, Check-out em ${reserva.data_checkout}, ` +
+          `Total de Hóspedes: *${qtdHospedes}*, Canal da Reserva: *${canalLabel}*, ` +
           `Status de pagamento: ${reserva.status_pagamento}, Wi-Fi rede "${reserva.wifi_rede}" (senha: "${reserva.wifi_senha}"), ` +
           `Link oficial para Pré-Check-in Digital (FNRH, foto do documento e assinatura): ${linkPreCheckin}, ` +
           `Link do Portal do Hóspede / Comprovante de Pagamento (Recibo): ${linkPortalReserva}.`;
@@ -1457,7 +1467,8 @@ export const consultarDetalhesReservaTool = {
           data_checkin: reserva.data_checkin,
           data_checkout: reserva.data_checkout,
           status_pagamento: reserva.status_pagamento,
-          quantidade_hospedes: reserva.quantidade_hospedes || 1,
+          quantidade_hospedes: qtdHospedes,
+          canal_reserva: canalLabel,
           wifi_rede: isPreResUnpaid ? null : reserva.wifi_rede,
           wifi_senha: isPreResUnpaid ? null : reserva.wifi_senha,
           link_pre_checkin: linkPreCheckin,
@@ -2449,8 +2460,11 @@ export const alterarDatasReservaTool = {
         }
       }
 
+      const qtdHospedesAlt = Number(reserva.quantidade_hospedes || 1);
+      const canalLabelAlt = reserva.canal_reserva_nome || formatReservationChannelLabel(reserva.canal_reserva || 'whatsapp');
       const msg =
-        `Confirme com cordialidade que a reserva ${reserva.id} no ${reserva.nome_imovel} já foi atualizada no sistema para o novo período de ${novaEntrada} a ${novaSaida} (${novasDiarias} diária(s)).`;
+        `Confirme com cordialidade que a reserva ${reserva.id} no ${reserva.nome_imovel} já foi atualizada no sistema para o novo período de ${novaEntrada} a ${novaSaida} (${novasDiarias} diária(s)), ` +
+        `mantendo no resumo o Total de Hóspedes (*${qtdHospedesAlt}*) e o Canal da Reserva (*${canalLabelAlt}*).`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -2459,6 +2473,8 @@ export const alterarDatasReservaTool = {
           nova_data_checkin: novaEntrada,
           nova_data_checkout: novaSaida,
           novas_diarias: novasDiarias,
+          quantidade_hospedes: qtdHospedesAlt,
+          canal_reserva: canalLabelAlt,
           diferenca_valor: diferencaValor,
         },
         instrucao_para_ia: msg,

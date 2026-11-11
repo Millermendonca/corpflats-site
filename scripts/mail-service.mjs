@@ -34,6 +34,52 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
   return internalCheckinUrl;
 }
 
+function resolveEmailGuestCount(reservation) {
+  if (!reservation || typeof reservation !== "object") return 1;
+  const raw =
+    Number(reservation.guestCount) ||
+    Number(reservation.guestsCount) ||
+    Number(reservation.numGuests) ||
+    Number(reservation.adults) ||
+    (typeof reservation.guests === "number" ? Number(reservation.guests) : 0) ||
+    (Array.isArray(reservation.guests) && reservation.guests.length > 0 ? reservation.guests.length : 0) ||
+    1;
+  return Math.max(1, Math.round(raw));
+}
+
+function formatEmailChannelLabel(reservation) {
+  if (!reservation || typeof reservation !== "object") return "Site CorpFlats";
+  if (reservation.channelLabel && String(reservation.channelLabel).trim()) {
+    return String(reservation.channelLabel).trim();
+  }
+  const raw = String(reservation.channel || reservation.source || "").toLowerCase().trim();
+  if (
+    raw.includes("b2b") ||
+    raw.includes("corporat") ||
+    raw.includes("agenc") ||
+    raw.includes("agênc") ||
+    reservation.isCorporate ||
+    reservation.isB2B ||
+    reservation.agencyId ||
+    reservation.b2bReservationNumber ||
+    reservation.b2bLocatorRloc
+  ) {
+    return "B2B / Corporativo";
+  }
+  if (raw.includes("booking")) return "Booking.com";
+  if (raw.includes("airbnb")) return "Airbnb";
+  if (raw.includes("expedia")) return "Expedia";
+  if (raw.includes("decolar")) return "Decolar";
+  if (raw.includes("whats") || raw.includes("wpp") || raw === "direta" || raw === "direto") return "WhatsApp";
+  if (raw.includes("site") || raw.includes("motor") || raw.includes("corpflats") || raw === "direct") return "Site CorpFlats";
+  if (raw.includes("balcao") || raw.includes("balcão") || raw.includes("presencial") || raw.includes("recepcao") || raw.includes("recepção")) {
+    return "Recepção / Balcão";
+  }
+  if (raw === "outros" || raw === "outro") return "Outros";
+  const orig = String(reservation.channel || reservation.source || "").trim();
+  return orig ? orig.charAt(0).toUpperCase() + orig.slice(1) : "Site CorpFlats";
+}
+
 export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   if (typeof globalThis.getCheckinUrl === "function") {
     return globalThis.getCheckinUrl(reservation, guestIndex, baseUrl, dbInstance);
@@ -562,6 +608,8 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Edifício:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${buildingName}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Apartamento:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">Flat ${flatNumber}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${reservation?.code || reservation?.id}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Total de Hóspedes:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${expectedGuests}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Canal da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatEmailChannelLabel(reservation)}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; width: 62%;"><a href="${checkinUrl}" style="color: #111827; font-weight: 600; text-decoration: underline;">Abrir Ficha de Check-in</a></td></tr>
       </table>
     </div>
@@ -769,6 +817,8 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Hóspede Titular:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${guestName}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkoutDateBr}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Total de Hóspedes:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${resolveEmailGuestCount(reservation)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Canal da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatEmailChannelLabel(reservation)}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Status Atual:</td><td class="val" style="padding: 5px 0; font-size: 14px; text-transform: uppercase; color: ${isCancelled ? '#DC2626' : '#059669'}; font-weight: 600; width: 62%;">${reservation?.status || "Confirmada"}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; width: 62%;"><a href="${checkinUrl}" style="color: #111827; font-weight: 600; text-decoration: underline;">Acessar Ficha de Check-in</a></td></tr>
       </table>
@@ -1087,6 +1137,8 @@ export function renderReservationConfirmationEmail({ reservation, flat, settings
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Edifício:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${buildingName}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Acomodação:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${flatDisplay}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${resCode}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Total de Hóspedes:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${resolveEmailGuestCount(reservation)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Canal da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatEmailChannelLabel(reservation)}</td></tr>
       </table>
     </div>
 
@@ -1169,6 +1221,8 @@ export function renderPreCheckinReminderEmail({ reservation, flat, settings, bas
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Apartamento:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${flatDisplay} (${buildingName})</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${resCode}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Data de Entrada:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Total de Hóspedes:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${resolveEmailGuestCount(reservation)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Canal da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatEmailChannelLabel(reservation)}</td></tr>
       </table>
     </div>
   `;
@@ -1236,6 +1290,8 @@ export function renderAccessInstructionsEmail({ reservation, flat, settings, bas
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Acomodação:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${flatDisplay} (${buildingName})</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${resCode}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Horário de Entrada:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} a partir das ${checkinTime}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Total de Hóspedes:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${resolveEmailGuestCount(reservation)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Canal da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatEmailChannelLabel(reservation)}</td></tr>
       </table>
     </div>
   `;
@@ -1356,6 +1412,8 @@ export function renderB2bAgencyCredentialRequestEmail({
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Edifício / Acomodação:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${escapeHtml(flatDisplay)} — ${escapeHtml(buildingName)}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkoutDateBr} (até às ${checkoutTime})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Total de Hóspedes:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${resolveEmailGuestCount(reservation)}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Canal da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${escapeHtml(formatEmailChannelLabel(reservation))}</td></tr>
       </table>
     </div>
 
@@ -1368,7 +1426,7 @@ export function renderB2bAgencyCredentialRequestEmail({
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
   const bodyText = [
     `Olá, ${agentName || agencyName}!`,
-    `Confirmamos a reserva ${refLabel} para o(a) hóspede ${guestName} no ${buildingName} (${flatDisplay}), período de ${checkinDateBr} a ${checkoutDateBr}.`,
+    `Confirmamos a reserva ${refLabel} para o(a) hóspede ${guestName} no ${buildingName} (${flatDisplay}), período de ${checkinDateBr} a ${checkoutDateBr} • Total de Hóspedes: ${resolveEmailGuestCount(reservation)} • Canal: ${formatEmailChannelLabel(reservation)}.`,
     `IMPORTANTE: Para gerar a liberação de entrada na recepção/portaria do prédio, é obrigatório o preenchimento antecipado dos dados do hóspede (Nome Completo, CPF, WhatsApp e E-mail) através do nosso link seguro abaixo. Não é possível informar apenas na hora no balcão, pois sem o cadastro prévio pelo link a portaria não conseguirá localizar a reserva nem autorizar a entrada.`,
     `Link Seguro para Preenchimento dos Dados do Hóspede (sem exibição de valores financeiros): ${finalCredentialUrl}`,
     `Muito obrigado pela atenção! Equipe CorpFlats`

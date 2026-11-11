@@ -11,7 +11,7 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp, formatReservationChannelLabel, resolveReservationGuestCount } from "./zapi-service.mjs";
 import { buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
 
 export function isNonRequesterGuestForReservation(reservation, senderPhone = "", db = {}) {
@@ -6483,6 +6483,7 @@ export function executeConversationalBookingStep({
               `• *Período:* ${convState.displayCheckIn} a ${convState.displayCheckOut} (${convState.nights} ${convState.nights === 1 ? "noite" : "noites"})\n` +
               `• *Hóspedes:* ${convState.guests} ${convState.guests === 1 ? "pessoa" : "pessoas"}\n` +
               `• *Plano:* ${planLabel}\n` +
+              `• *Canal da Reserva:* ${formatReservationChannelLabel(preRes?.channel || "whatsapp")}\n` +
               `• *Valor no PIX:* *R$ ${totalFormatted}*\n` +
               `• *Valor no Cartão de Crédito (+5%):* R$ ${cardFormatted}\n\n` +
               `⏳ A unidade fica reservada para você por *${preRes.holdMinutes || 30} minutos*. Para confirmar definitivamente, pague pelo link da sua reserva (PIX ou Cartão) ou use o *PIX Copia e Cola* abaixo:\n\n` +
@@ -7537,24 +7538,26 @@ export function validateAndRefineResponse({
         const hideFinGuest = Boolean(guestContext?.hideFinancialForGuest || r.hideFinancialForGuest);
         const paymentStr = (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") ? "Pagamento Quitado" : "Pagamento Pendente";
         const statusSuffix = hideFinGuest ? "" : ` (${paymentStr})`;
+        const resGuestCount = resolveReservationGuestCount(r);
+        const resChannelLabel = formatReservationChannelLabel(r);
         const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.com.br";
         const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
 
         if (isCheckoutDone) {
-          replyText = ret(`Olá${name}! Consta em nosso sistema que a sua hospedagem no *Flat ${flatStr}* (${checkinFmt} a ${checkoutFmt}) já teve o *check-out concluído* ✅.\n\nAgradecemos imensamente pela sua estadia conosco na CorpFlats! Se precisar de *Nota Fiscal (NFS-e)*, tiver esquecido algum pertence no apartamento ou desejar fazer uma *nova reserva*, estou à sua inteira disposição! 🏨✨`);
+          replyText = ret(`Olá${name}! Consta em nosso sistema que a sua hospedagem no *Flat ${flatStr}* (${checkinFmt} a ${checkoutFmt} • ${resGuestCount} ${resGuestCount === 1 ? "hóspede" : "hóspedes"} • Canal: ${resChannelLabel}) já teve o *check-out concluído* ✅.\n\nAgradecemos imensamente pela sua estadia conosco na CorpFlats! Se precisar de *Nota Fiscal (NFS-e)*, tiver esquecido algum pertence no apartamento ou desejar fazer uma *nova reserva*, estou à sua inteira disposição! 🏨✨`);
         } else if (guestContext.stayStatus === "checkout_hoje") {
           const checkoutLinkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
-          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Total de Hóspedes:* ${resGuestCount}\n• *Canal da Reserva:* ${resChannelLabel}\n• *Status:* Confirmada${statusSuffix}\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
         } else if (guestContext.stayStatus === "em_estadia") {
-          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Total de Hóspedes:* ${resGuestCount}\n• *Canal da Reserva:* ${resChannelLabel}\n• *Status:* Confirmada${statusSuffix}\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
         } else if (guestContext.stayStatus === "checkin_hoje") {
           const linkUrl = r.checkinUrl || guestContext.checkinUrl;
           const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Total de Hóspedes:* ${resGuestCount}\n• *Canal da Reserva:* ${resChannelLabel}\n• *Status:* Confirmada${statusSuffix}\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
         } else {
           const linkUrl = r.checkinUrl || guestContext.checkinUrl;
           const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
+          replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Total de Hóspedes:* ${resGuestCount}\n• *Canal da Reserva:* ${resChannelLabel}\n• *Status:* Confirmada${statusSuffix}\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
         }
       } else {
         replyText = ret(`Olá${name}! Não localizei nenhuma reserva confirmada para este número de WhatsApp no sistema. Se a reserva foi realizada em outro nome ou plataforma, me informe o *nome completo do titular* ou o *código da reserva* que consulto para você! 🛎️✨`);
@@ -8131,36 +8134,38 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       const hideFinGuest = Boolean(guestContext?.hideFinancialForGuest || r.hideFinancialForGuest);
       const paymentStr = (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") ? "Pagamento Quitado" : "Pagamento Pendente";
       const statusSuffix = hideFinGuest ? "" : ` (${paymentStr})`;
+      const resGuestCount = resolveReservationGuestCount(r);
+      const resChannelLabel = formatReservationChannelLabel(r);
       const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.com.br";
       const checkoutUrl = guestContext.checkoutUrl || (r.code ? `${appOrigin}/checkout/${r.code}` : "");
 
       // 0. Check-out já concluído (estadia encerrada)
       if (guestContext.stayStatus === "checkout_concluido" || guestContext.isCheckoutCompleted) {
-        return ret(`Olá${name}! Consta em nosso sistema que a sua hospedagem no *Flat ${flatStr}* (${checkinFmt} a ${checkoutFmt}) já teve o *check-out concluído* ✅.\n\nAgradecemos imensamente pela sua estadia conosco na CorpFlats! Se precisar de *Nota Fiscal (NFS-e)*, tiver esquecido algum pertence no apartamento ou desejar fazer uma *nova reserva*, estou à sua inteira disposição! 🏨✨`);
+        return ret(`Olá${name}! Consta em nosso sistema que a sua hospedagem no *Flat ${flatStr}* (${checkinFmt} a ${checkoutFmt} • ${resGuestCount} ${resGuestCount === 1 ? "hóspede" : "hóspedes"} • Canal: ${resChannelLabel}) já teve o *check-out concluído* ✅.\n\nAgradecemos imensamente pela sua estadia conosco na CorpFlats! Se precisar de *Nota Fiscal (NFS-e)*, tiver esquecido algum pertence no apartamento ou desejar fazer uma *nova reserva*, estou à sua inteira disposição! 🏨✨`);
       }
 
       // 1. Check-out hoje (Hóspede já hospedado, hoje é a data de saída até 12:00h - NUNCA mandar pré-check-in)
       if (guestContext.stayStatus === "checkout_hoje") {
         const checkoutLinkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
-        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
+        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Total de Hóspedes:* ${resGuestCount}\n• *Canal da Reserva:* ${resChannelLabel}\n• *Status:* Confirmada${statusSuffix}\n\nLembramos que *hoje é o dia do seu check-out*, com horário limite de desocupação até as *12:00h*.${checkoutLinkMsg}\n\nCaso deseje solicitar prorrogação da estadia (late check-out) mediante disponibilidade ou se já tiver desocupado o flat, por favor me avise por aqui! Como posso te ajudar na sua saída hoje? ✨`);
       }
 
       // 2. Em estadia (Hóspede já hospedado, saída em data futura - NUNCA mandar pré-check-in)
       if (guestContext.stayStatus === "em_estadia") {
-        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
+        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Total de Hóspedes:* ${resGuestCount}\n• *Canal da Reserva:* ${resChannelLabel}\n• *Status:* Confirmada${statusSuffix}\n\nVocê já está acomodado(a) no *Flat ${flatStr}* com estadia prevista até *${checkoutFmt}*. Não é necessário preencher pré-check-in novamente!\n\nSe precisar de toalhas extras, orientações de Wi-Fi, agendamento de café ou qualquer outro suporte durante a sua permanência, estou à sua total disposição! ✨`);
       }
 
       // 3. Check-in hoje (Chegada hoje a partir das 14:00h)
       if (guestContext.stayStatus === "checkin_hoje") {
         const linkUrl = r.checkinUrl || guestContext.checkinUrl;
         const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
+        return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Total de Hóspedes:* ${resGuestCount}\n• *Canal da Reserva:* ${resChannelLabel}\n• *Status:* Confirmada${statusSuffix}\n\nO seu check-in é *hoje (${checkinFmt})* a partir das 14:00h! Lembramos que para reservas diretas temos o benefício de early check-in a partir das 10h (mediante disponibilidade de higienização pela governança).${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua chegada, estou à total disposição!`);
       }
 
       // 4. Reserva futura
       const linkUrl = r.checkinUrl || guestContext.checkinUrl;
       const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
-      return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${statusSuffix}\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
+      return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Total de Hóspedes:* ${resGuestCount}\n• *Canal da Reserva:* ${resChannelLabel}\n• *Status:* Confirmada${statusSuffix}\n\nSua estadia está confirmada e programada para início em *${checkinFmt}*! Para agilizar sua liberação na portaria 24h, realize o seu cadastro antecipado:${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
     } else {
       const displayPhone = clientPhone ? ` (*${formatPhoneDisplay ? formatPhoneDisplay(clientPhone) : clientPhone}*)` : "";
       return ret(`Olá${name}! Não localizei nenhuma reserva ativa ou futura confirmada para este número de WhatsApp${displayPhone} no nosso sistema.\n\nSe a sua reserva foi realizada em outro nome, com outro telefone ou por plataformas como Booking.com ou Airbnb, por favor me informe o seu *nome completo* ou o *código da reserva* para que eu possa verificar com a nossa equipe! 🛎️✨`);
@@ -16495,6 +16500,7 @@ export function formatActivePreReservationManagerSummary(proposal, db = null, op
 📱 *WhatsApp:* ${phoneFmt}
 📅 *Período:* ${inDisp} a ${outDisp} (*${nights} ${nights === 1 ? "diária" : "diárias"}*)
 👥 *Hóspedes:* ${guests} ${guests === 1 ? "pessoa" : "pessoas"}
+📌 *Canal da Reserva:* ${formatReservationChannelLabel(proposal?.channel || "whatsapp")}
 ☕ *Café da Manhã:* ${proposal.includeBreakfast ? "Incluso" : "Não incluso"}
 💰 *Valor Total:* R$ ${totalFmt} (Diária: R$ ${dailyFmt}${cleaningFmt})
 🏢 *Flat Sugerido (Flat da Vez):* *Flat ${proposal.flatNumber}*
@@ -17529,6 +17535,8 @@ export async function handleManagerPreReservationReply({
   const dailyFmt = Number(createdRes.dailyRate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const cleaningVal = Number(createdRes.cleaningFee || 0);
   const cleaningFmt = cleaningVal > 0 ? ` + Limpeza: R$ ${cleaningVal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "";
+  const createdGuestsCount = Math.max(1, Number(resolveReservationGuestCount(createdRes) || targetProposal.guests || 1));
+  const createdChannelLabel = formatReservationChannelLabel(createdRes);
   const confirmReply = `✅ *Pré-Reserva Criada com Sucesso no Sistema!*
 
 🔖 *Código:* *${createdRes.code}*
@@ -17537,6 +17545,8 @@ export async function handleManagerPreReservationReply({
 🪪 *CPF:* ${formatCpf(createdRes.guestCpf)}
 📧 *E-mail:* ${createdRes.guestEmail}
 📅 *Período:* ${createdRes.checkinDate.split("-").reverse().join("/")} a ${createdRes.checkoutDate.split("-").reverse().join("/")} (*${targetProposal.nights} ${targetProposal.nights === 1 ? "diária" : "diárias"}*)
+👥 *Hóspedes:* ${createdGuestsCount} ${createdGuestsCount === 1 ? "pessoa" : "pessoas"}
+📌 *Canal da Reserva:* ${createdChannelLabel}
 ☕ *Café da Manhã:* ${createdRes.includeBreakfast ? "Incluso" : "Não incluso"}
 💰 *Valor Total:* R$ ${totalFmt} (Diária: R$ ${dailyFmt}${cleaningFmt})
 📊 *Status:* Pré-Reserva (régua padrão do sistema acionada)`;

@@ -43,6 +43,8 @@ export interface ReservaAtivaSessao {
   check_out?: string;
   status_pagamento: 'PENDENTE' | 'PAGO_INTEGRALMENTE';
   quantidade_hospedes?: number;
+  canal_reserva?: string;
+  canal_reserva_nome?: string;
   senha_fechadura?: string;
   wifi_rede?: string;
   wifi_senha?: string;

@@ -170,6 +170,33 @@ export function injectSessionContext(
     const wifiPassword =
       db?.whatsappAiSettings?.knowledgeBase?.wifiPassword || '1234567890123';
 
+    const rawChan = String(sourceRes.channel || sourceRes.source || 'whatsapp').toLowerCase().trim();
+    const canalReservaNome = (() => {
+      if (sourceRes.channelLabel) return String(sourceRes.channelLabel).trim();
+      if (rawChan.includes('b2b') || rawChan.includes('corporat') || rawChan.includes('agenc') || sourceRes.isB2B || sourceRes.agencyId || sourceRes.b2bReservationNumber) return 'B2B / Corporativo';
+      if (rawChan.includes('booking')) return 'Booking.com';
+      if (rawChan.includes('airbnb')) return 'Airbnb';
+      if (rawChan.includes('expedia')) return 'Expedia';
+      if (rawChan.includes('decolar')) return 'Decolar';
+      if (rawChan.includes('whats') || rawChan.includes('wpp') || rawChan === 'direta') return 'WhatsApp';
+      if (rawChan.includes('site') || rawChan.includes('motor') || rawChan.includes('corpflats') || rawChan === 'direct') return 'Site CorpFlats';
+      if (rawChan.includes('balcao') || rawChan.includes('balcão') || rawChan.includes('presencial')) return 'Recepção / Balcão';
+      return rawChan ? rawChan.charAt(0).toUpperCase() + rawChan.slice(1) : 'WhatsApp';
+    })();
+
+    const qtdHospedes = Math.max(
+      1,
+      Math.round(
+        Number(sourceRes.guestCount) ||
+          Number(sourceRes.guestsCount) ||
+          Number(sourceRes.numGuests) ||
+          Number(sourceRes.adults) ||
+          (typeof sourceRes.guests === 'number' ? Number(sourceRes.guests) : 0) ||
+          (Array.isArray(sourceRes.guests) && sourceRes.guests.length > 0 ? sourceRes.guests.length : 0) ||
+          1
+      )
+    );
+
     reservaSessao = {
       id: resCode,
       reserva_id: resCode,
@@ -180,7 +207,9 @@ export function injectSessionContext(
       check_in: `${checkinDate}T${sourceRes.checkinTime || '14:00'}:00`,
       check_out: `${checkoutDate}T${sourceRes.lateCheckoutTime || sourceRes.checkoutTime || '12:00'}:00`,
       status_pagamento: isPaid ? 'PAGO_INTEGRALMENTE' : 'PENDENTE',
-      quantidade_hospedes: Number(sourceRes.guestsCount || sourceRes.guests || 1),
+      quantidade_hospedes: qtdHospedes,
+      canal_reserva: rawChan,
+      canal_reserva_nome: canalReservaNome,
       senha_fechadura: sourceRes.doorCode || sourceRes.lockPassword || undefined,
       wifi_rede: `apto ${flatNum}`,
       wifi_senha: wifiPassword,

@@ -94,8 +94,9 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
           ? 'Peça também o *nome completo* do titular para vincular à pré-reserva.'
           : `Confirme se a reserva pode ser emitida em nome de *${nomeTitular}*.`;
         const msg =
-          `Informe ao cliente o resumo para bloqueio da reserva: período de ${checkin} a ${checkout} (${diarias} diária(s)), ` +
-          `${hospedes} hóspede(s), plano ${comCafe ? 'COM café da manhã (isento de taxa de limpeza)' : 'Somente Hospedagem'}, ` +
+          `Informe ao cliente o resumo para bloqueio da pré-reserva: período de ${checkin} a ${checkout} (${diarias} diária(s)), ` +
+          `total de hóspedes: *${hospedes}* (${hospedes === 1 ? '1 pessoa' : `${hospedes} pessoas`}), canal da reserva: *WhatsApp*, ` +
+          `plano ${comCafe ? 'COM café da manhã (isento de taxa de limpeza)' : 'Somente Hospedagem'}, ` +
           `no valor total de *R$ ${valorTotal.toFixed(2)}*. ${faltaNome}`;
         return {
           status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
@@ -104,6 +105,7 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
             data_checkout: checkout,
             diarias,
             quantidade_hospedes: hospedes,
+            canal_reserva: 'WhatsApp',
             incluir_cafe: comCafe,
             valor_total: valorTotal,
             nome_hospede: nomeTitular || null,
@@ -257,8 +259,10 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
       }
 
       const msg =
-        `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* foi bloqueada por 30 minutos para *${nomeTitular}* (${checkin} a ${checkout}) ` +
+        `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* foi bloqueada por 30 minutos para *${nomeTitular}* ` +
+        `(${checkin} a ${checkout}, *${hospedes} ${hospedes === 1 ? 'hóspede' : 'hóspedes'}*, Canal da Reserva: *WhatsApp*) ` +
         `no valor de *R$ ${valorTotal.toFixed(2)}* no PIX (ou *R$ ${cardTotalAmount.toFixed(2)}* no Cartão de Crédito). ` +
+        `Inclua no resumo da confirmação a quantidade de hóspedes (*${hospedes}*) e o canal da reserva (*WhatsApp*). ` +
         `A mensagem oficial da reserva com botões interativos, código PIX Copia e Cola (\`${chavePix}\`) e link de pagamento por Cartão (${linkPagamento}) já foi enviada.`;
 
       return {
@@ -268,6 +272,8 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
           nome_hospede: nomeTitular,
           data_checkin: checkin,
           data_checkout: checkout,
+          quantidade_hospedes: hospedes,
+          canal_reserva: 'WhatsApp',
           valor_total: valorTotal,
           valor_cartao: cardTotalAmount,
           link_reserva: linkPagamento,

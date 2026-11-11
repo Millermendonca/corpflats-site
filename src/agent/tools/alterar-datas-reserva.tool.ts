@@ -168,8 +168,11 @@ export const alterarDatasReservaTool: AgentToolDefinition<AlterarDatasReservaArg
         }
       }
 
+      const qtdHospedes = Number(reserva.quantidade_hospedes || 1);
+      const canalLabel = reserva.canal_reserva_nome || reserva.canal_reserva || 'Site CorpFlats';
       const msg =
-        `Confirme com cordialidade que a reserva ${reserva.id} no ${reserva.nome_imovel} já foi atualizada no sistema para o novo período de ${novaEntrada} a ${novaSaida} (${novasDiarias} diária(s)).`;
+        `Confirme com cordialidade que a reserva ${reserva.id} no ${reserva.nome_imovel} já foi atualizada no sistema para o novo período de ${novaEntrada} a ${novaSaida} (${novasDiarias} diária(s)), ` +
+        `mantendo no resumo o Total de Hóspedes (*${qtdHospedes}*) e o Canal da Reserva (*${canalLabel}*).`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -178,6 +181,8 @@ export const alterarDatasReservaTool: AgentToolDefinition<AlterarDatasReservaArg
           nova_data_checkin: novaEntrada,
           nova_data_checkout: novaSaida,
           novas_diarias: novasDiarias,
+          quantidade_hospedes: qtdHospedes,
+          canal_reserva: canalLabel,
           diferenca_valor: diferencaValor,
         },
         instrucao_para_ia: msg,

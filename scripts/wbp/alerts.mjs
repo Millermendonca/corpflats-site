@@ -287,6 +287,7 @@ export class WbpAlertsManager {
     const channel = String(quarantineRecord.channel || "OTA").toUpperCase();
     const bookingId = quarantineRecord.bookingId || quarantineRecord.externalOrderId || "N/A";
     const guestName = quarantineRecord.guestName || "Hóspede";
+    const guestsCount = Math.max(1, Number(quarantineRecord.guestCount || quarantineRecord.guestsCount || quarantineRecord.adults || 1));
     const checkin = quarantineRecord.checkinDate || "";
     const checkout = quarantineRecord.checkoutDate || "";
     const nights = quarantineRecord.nights || 1;
@@ -301,6 +302,7 @@ export class WbpAlertsManager {
 ⚠️ *Motivo*: ${reason}
 📌 *Canal*: ${channel} | *ID*: ${bookingId}
 👤 *Hóspede*: ${guestName}
+👥 *Total de Hóspedes*: ${guestsCount}
 📅 *Período*: ${checkin} a ${checkout} (${nights} noites)
 💰 *Valor*: R$ ${totalPrice} (${paymentCollect})
 

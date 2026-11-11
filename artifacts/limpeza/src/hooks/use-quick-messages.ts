@@ -271,6 +271,58 @@ export function getReservationRecipients(resItem: any, companies: any[] = []): R
   }
 }
 
+export function resolveReservationGuestCount(resItem: any): number {
+  if (!resItem || typeof resItem !== "object") return 1
+  const explicit =
+    Number(resItem.guestCount) ||
+    Number(resItem.guestsCount) ||
+    Number(resItem.numGuests) ||
+    Number(resItem.adults) ||
+    0
+  const fromArray = Array.isArray(resItem.guests) ? resItem.guests.filter(Boolean).length : 0
+  const count = explicit > 0 ? explicit : (fromArray > 0 ? fromArray : 1)
+  return Math.max(1, Math.round(count))
+}
+
+export function formatReservationChannelLabel(reservationOrChannel: any): string {
+  const isObj = reservationOrChannel && typeof reservationOrChannel === "object"
+  const rawChannel = isObj
+    ? String(reservationOrChannel.channel || reservationOrChannel.source || reservationOrChannel.origin || "").trim()
+    : String(reservationOrChannel || "").trim()
+
+  if (
+    isObj &&
+    (reservationOrChannel.agencyId ||
+      reservationOrChannel.b2bReservationNumber ||
+      reservationOrChannel.b2bLocatorRloc ||
+      reservationOrChannel.requesterType === "agency" ||
+      reservationOrChannel.requesterType === "agency_b2b" ||
+      String(rawChannel).toLowerCase() === "b2b")
+  ) {
+    return "B2B / Corporativo"
+  }
+
+  const lower = rawChannel.toLowerCase()
+  if (!lower || lower === "site" || lower === "website" || lower === "motor" || lower === "corpflats" || lower === "site_proprio" || lower === "site próprio") {
+    return "Site CorpFlats"
+  }
+  if (lower === "whatsapp" || lower === "direta" || lower === "direct" || lower === "zapi" || lower === "whats") {
+    return "WhatsApp"
+  }
+  if (lower.includes("booking")) return "Booking.com"
+  if (lower.includes("airbnb")) return "Airbnb"
+  if (lower === "b2b" || lower.includes("corporat") || lower.includes("agencia") || lower.includes("agência")) {
+    return "B2B / Corporativo"
+  }
+  if (lower.includes("expedia")) return "Expedia"
+  if (lower.includes("decolar")) return "Decolar"
+  if (lower === "balcao" || lower === "balcão" || lower === "recepcao" || lower === "recepção" || lower === "walkin" || lower === "walk-in") {
+    return "Recepção / Balcão"
+  }
+  if (lower === "outros" || lower === "other") return "Outros"
+  return rawChannel
+}
+
 export const DEFAULT_QUICK_MESSAGES: WhatsAppQuickMessage[] = [
   {
     id: "qm_payment_pending",
@@ -287,6 +339,8 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagame
 📋 *Resumo:*
 • Código: *{{numero_reserva}}*
 • Período: *{{data_checkin}} a {{data_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 • Valor no Cartão de Crédito: *{{valor_cartao}}*
 • Valor com Desconto no PIX (-5%): *{{valor_pix}}*
 
@@ -295,6 +349,36 @@ Para garantir sua acomodação via PIX ou Cartão de Crédito, acesse o link seg
     footer: "CorpFlats • Pagamento Seguro",
     buttons: [
       { id: "btn_pagar", type: "URL", label: "💳 Pagar e Confirmar", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "qm_payment_confirmed",
+    title: "Confirmação de Pagamento",
+    shortLabel: "Pgto Confirmado",
+    icon: "✅",
+    description: "Confirmação de pagamento recebido e reserva garantida.",
+    category: "Financeiro",
+    recipientTarget: "requester",
+    enabled: true,
+    message: `Olá, *{{primeiro_nome_destinatario}}*! 💚🎉
+Confirmamos o recebimento do pagamento da sua reserva no *{{nome_hotel}}*!
+
+Sua estadia agora está *100% Confirmada & Garantida*!
+
+📋 *Resumo da Reserva:*
+• Código: *{{numero_reserva}}*
+• Acomodação: *Flat {{quarto}}*
+• Período: *{{data_checkin}} a {{data_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
+• Valor Pago: *{{valor_pago}}*
+
+Você pode acompanhar todos os detalhes e fazer o Pré-Check-in Digital pelo link:
+{{link_portal_hospede}}`,
+    footer: "CorpFlats • Reserva Confirmada",
+    buttons: [
+      { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" }
     ]
   },
   {
@@ -313,6 +397,7 @@ Aqui está o resumo da sua estadia confirmada no *{{nome_hotel}}*:
 📅 Entrada: *{{data_checkin}}* a partir das *{{horario_checkin}}*
 📅 Saída: *{{data_checkout}}* até às *{{horario_checkout}}*
 👥 Hóspedes: *{{num_hospedes}}*
+📌 Canal da Reserva: *{{canal_reserva}}*
 
 Para agilizar sua entrada na portaria sem filas, preencha o *Pré-Check-in Digital*:
 {{link_checkin_digital}}`,
@@ -514,7 +599,7 @@ export function renderQuickMessage(
     }
   } catch {}
 
-  const guestCount = resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)
+  const guestCount = resolveReservationGuestCount(resItem)
   const totalAmount = Number(resItem.totalAmount || resItem.amount || 0)
   const paidAmount = Number(resItem.paidAmount ?? (resItem.paymentStatus === "pago" || resItem.paymentStatus === "pago_total" ? totalAmount : 0))
   const pendingAmount = Math.max(0, totalAmount - paidAmount)
@@ -574,7 +659,7 @@ export function renderQuickMessage(
     "{{titular_pix}}": hideFinancialForGuest ? "" : "CorpFlats Hospedagem",
     "{{instrucao_saldo}}": hideFinancialForGuest ? "" : (pendingAmount > 0 ? `Saldo restante de ${formattedPending} a acertar no check-in.` : "Reserva quitada."),
     "{{instrucao_pagamento}}": hideFinancialForGuest ? "" : (pendingAmount > 0 ? `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou Cartão de Crédito pelo portal do hóspede:\n👉 ${linkPortal}` : "Reserva 100% quitada! Nenhuma pendência financeira."),
-    "{{canal_reserva}}": resItem.channel || "Site CorpFlats",
+    "{{canal_reserva}}": formatReservationChannelLabel(resItem),
     "{{nome_hotel}}": "CorpFlats",
     "{{endereco_hotel}}": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
     "{{link_maps}}": linkMaps,
@@ -678,10 +763,40 @@ function normalizeQuickMessagesList(list: any[]): WhatsAppQuickMessage[] {
     }
     if (next.id === "qm_payment_pending") {
       const defPay = DEFAULT_QUICK_MESSAGES.find(q => q.id === "qm_payment_pending")
-      if (defPay && (next.message?.includes("12x") || !next.message?.includes("{{valor_cartao}}"))) {
+      if (
+        defPay &&
+        (next.message?.includes("12x") ||
+          !next.message?.includes("{{valor_cartao}}") ||
+          !next.message?.includes("{{num_hospedes}}") ||
+          !next.message?.includes("{{canal_reserva}}"))
+      ) {
         next = {
           ...next,
           message: defPay.message
+        }
+      }
+    }
+    if (next.id === "qm_payment_confirmed") {
+      const defConf = DEFAULT_QUICK_MESSAGES.find(q => q.id === "qm_payment_confirmed")
+      if (
+        defConf &&
+        (!next.message?.includes("{{num_hospedes}}") || !next.message?.includes("{{canal_reserva}}"))
+      ) {
+        next = {
+          ...next,
+          message: defConf.message
+        }
+      }
+    }
+    if (next.id === "qm_summary_checkin") {
+      const defSum = DEFAULT_QUICK_MESSAGES.find(q => q.id === "qm_summary_checkin")
+      if (
+        defSum &&
+        (!next.message?.includes("{{num_hospedes}}") || !next.message?.includes("{{canal_reserva}}"))
+      ) {
+        next = {
+          ...next,
+          message: defSum.message
         }
       }
     }

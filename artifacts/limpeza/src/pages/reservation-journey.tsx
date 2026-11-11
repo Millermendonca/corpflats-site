@@ -99,6 +99,8 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Acomodação: *Flat {{quarto}}*
 • Entrada (Check-in): *{{data_checkin}} a partir das 14:00*
 • Saída (Check-out): *{{data_checkout}} até às 12:00*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 💰 *Situação Financeira:*
 • Valor no Cartão de Crédito: *{{valor_cartao}}*
@@ -132,6 +134,8 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) foi gerada há 1 hora e
 📋 *Detalhes da Estadia:*
 • Código: *{{numero_reserva}}*
 • Período: *{{data_checkin}} a {{data_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 • Valor no Cartão de Crédito: *{{valor_cartao}}*
 • Valor com Desconto no PIX (-5%): *{{valor_pix}}*
 
@@ -167,6 +171,8 @@ Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_h
 • Código da Reserva: *{{numero_reserva}}*
 • Período: *{{data_checkin}} até {{data_checkout}}*
 • Total de Noites: *{{num_diarias}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 💰 *Saldo Pendente da Alteração:*
 • Valor a Quitar: *{{quanto_falta}}*
@@ -205,6 +211,8 @@ Sua pré-reserva no *{{nome_hotel}}* agora está *Confirmada & Garantida*!
 • Código da Reserva: *{{numero_reserva}}*
 • Acomodação: *Flat {{quarto}}*
 • Entrada: *{{data_checkin}}* • Saída: *{{data_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 Realize agora seu pré-checkin digital para liberação rápida na portaria:`,
     buttons: [
@@ -240,6 +248,7 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 • Saída (Check-out): *{{data_checkout}} até às 12:00*
 • Total de Hóspedes: *{{num_hospedes}}*
 • Café da Manhã: *{{status_cafe}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 💰 *Situação Financeira:*
 • Valor Total: *{{valor_total}}*
@@ -283,6 +292,8 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 • Código da Reserva: *{{numero_reserva}}*
 • Entrada (Check-in): *{{data_checkin}} a partir das 14:00*
 • Saída (Check-out): *{{data_checkout}} até às 12:00*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 🔑 *Sobre o seu apartamento e liberação de entrada:*
 O número do seu flat e instruções de acesso serão enviados no dia da sua chegada *a partir das 12:00*, assim que preparado pela nossa governança.
@@ -318,7 +329,9 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 • Acomodação: *Flat {{quarto}}*
 • Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
 • Café da Manhã: *{{status_cafe}}*
+• Canal da Reserva: *{{canal_reserva}}*
 
 📍 *Endereço:* {{endereco_hotel}}
 🗺️ *Localização no Maps:* {{link_maps}}
@@ -394,6 +407,8 @@ Ao chegar no edifício, basta seguir estas orientações simples na recepção:
 • Acomodação: *Flat {{quarto}}*
 • Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Canal da Reserva: *{{canal_reserva}}*
 • Endereço: {{endereco_hotel}}
 • Localização no Maps: {{link_maps}}
 
@@ -457,7 +472,8 @@ Consulte detalhes no Terminal da Portaria: https://corpflats.com.br/portaria
 
 Olá, Equipe de Recepção & Portaria e Garagem!
 Segue o informativo cadastral da reserva referente ao Flat {{quarto}}:
-• Hóspedes Autorizados: Titular + Acompanhantes
+• Total de Hóspedes: {{num_hospedes}} (Titular + Acompanhantes)
+• Canal da Reserva: {{canal_reserva}}
 • Veículo Cadastrado: Placa {{placa}} • {{modelo}}
 • Documento Anexo: FNRH_{{codigo}}_Assinada.pdf com assinatura digital e auditoria forense.`,
     editUrl: "/emails",

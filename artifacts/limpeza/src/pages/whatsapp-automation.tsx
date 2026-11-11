@@ -64,7 +64,7 @@ import {
   ChevronUp
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
-import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
+import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage, formatReservationChannelLabel, resolveReservationGuestCount } from "@/hooks/use-quick-messages"
 import { FaqKnowledgeBase } from "@/components/faq-knowledge-base"
 import { BotDemandsBacklog } from "@/components/bot-demands-backlog"
 import { useBotDemands } from "@/hooks/use-bot-demands"
@@ -2558,7 +2558,7 @@ export default function WhatsappAutomation() {
       "{{data_checkout}}": targetRes.checkoutDate ? targetRes.checkoutDate.split("-").reverse().join("/") : "05/09/2026",
       "{{horario_checkin}}": "14:00",
       "{{horario_checkout}}": "12:00",
-      "{{num_hospedes}}": String(targetRes.guestCount || 2),
+      "{{num_hospedes}}": String(targetRes.id ? resolveReservationGuestCount(targetRes) : 2),
       "{{num_diarias}}": "2",
       "{{valor_total}}": fmtTotal,
       "{{valor_pago}}": fmtPaid,
@@ -2570,7 +2570,7 @@ export default function WhatsappAutomation() {
       "{{titular_pix}}": "CorpFlats Hospedagem",
       "{{instrucao_saldo}}": pendingAmount > 0 ? `ℹ️ *Aviso de Pagamento:* Resta o saldo de ${fmtPending} a acertar no check-in.` : "",
       "{{instrucao_pagamento}}": `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou cartão pelo portal do hóspede:\n👉 https://corpflats.com.br/minha-reserva/${code}`,
-      "{{canal_reserva}}": targetRes.channel || "Site CorpFlats",
+      "{{canal_reserva}}": formatReservationChannelLabel(targetRes),
       "{{nome_hotel}}": "CorpFlats - Soho Residence",
       "{{endereco_hotel}}": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
       "{{link_maps}}": mapsUrl,

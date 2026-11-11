@@ -45,7 +45,7 @@ import { PdfViewerDialog } from "@/components/pdf-preview"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
 import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
-import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, buildDirectWaWebUrl, cleanWhatsAppPhone } from "@/hooks/use-quick-messages"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, sendDirectZapiWithFallback, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, buildDirectWaWebUrl, cleanWhatsAppPhone, formatReservationChannelLabel, resolveReservationGuestCount } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
@@ -13322,7 +13322,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               const url = `${window.location.origin}/credenciamento/${encodeURIComponent(String(code))}`;
                               const agName = selectedRes.requesterInfo?.name || selectedRes.requesterName || selectedRes.agencyTradeName || selectedRes.agencyName || formAgencyName || "Solicitante";
                               const b2bNum = selectedRes.b2bReservationNumber || formB2bReservationNumber || code;
-                              const msg = `Olá, *${agName}*! Tudo bem? 👋\n\nConfirmamos com muita satisfação a reserva *#${b2bNum}* para o(a) hóspede *${selectedRes.guestName}* no *Edifício Soho Residence Service* (*Flat ${selectedRes.flatNumber}*).\n\n⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*\nComo ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e E-mail*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:\n\n👉 ${url}\n\nRessaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o cadastro prévio pelo link a recepção não conseguirá localizar a reserva nem liberar a entrada.`;
+                              const checkinBr = selectedRes.checkinDate ? String(selectedRes.checkinDate).substring(0, 10).split("-").reverse().join("/") : "";
+                              const checkoutBr = selectedRes.checkoutDate ? String(selectedRes.checkoutDate).substring(0, 10).split("-").reverse().join("/") : "";
+                              const guestsNum = resolveReservationGuestCount(selectedRes);
+                              const channelLbl = formatReservationChannelLabel(selectedRes);
+                              const msg = `Olá, *${agName}*! Tudo bem? 👋\n\nConfirmamos com muita satisfação a reserva *#${b2bNum}* para o(a) hóspede *${selectedRes.guestName}* no *Edifício Soho Residence Service* (*Flat ${selectedRes.flatNumber}*).\n\n📋 *Resumo da Reserva:*\n• Código: *#${b2bNum}*\n• Acomodação: *Flat ${selectedRes.flatNumber}*\n• Período: *${checkinBr} a ${checkoutBr}*\n• Total de Hóspedes: *${guestsNum}*\n• Canal da Reserva: *${channelLbl}*\n\n⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*\nComo ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e E-mail*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:\n\n👉 ${url}\n\nRessaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o cadastro prévio pelo link a recepção não conseguirá localizar a reserva nem liberar a entrada.`;
                               const rawPhone = String(selectedRes.requesterInfo?.phone || selectedRes.requesterPhone || selectedRes.agencyAgentPhone || formAgencyAgentPhone || "");
                               const parts = rawPhone.split(/[\/;|,]+/).map(s => s.trim()).filter(Boolean);
                               const mobile = parts.find(p => p.replace(/\D/g, "").replace(/^55/, "").length === 11) || parts[0] || "";
@@ -13333,7 +13337,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                             }}
                             className="h-7 px-2.5 text-[10.5px] font-bold border-emerald-400 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 gap-1"
                           >
-                            <MessageSquare className="w-3 h-3" />
+                            <MessageCircle className="w-3 h-3" />
                             WhatsApp Agência
                           </Button>
                           <Button
@@ -13345,7 +13349,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               const url = `${window.location.origin}/credenciamento/${encodeURIComponent(String(code))}`;
                               const agName = selectedRes.requesterInfo?.name || selectedRes.requesterName || selectedRes.agencyTradeName || selectedRes.agencyName || formAgencyName || "Solicitante";
                               const b2bNum = selectedRes.b2bReservationNumber || formB2bReservationNumber || code;
-                              const msg = `Olá, *${agName}*! Tudo bem? 👋\n\nConfirmamos com muita satisfação a reserva *#${b2bNum}* para o(a) hóspede *${selectedRes.guestName}* no *Edifício Soho Residence Service* (*Flat ${selectedRes.flatNumber}*).\n\n⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*\nComo ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e E-mail*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:\n\n👉 ${url}\n\nRessaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o cadastro prévio pelo link a recepção não conseguirá localizar a reserva nem liberar a entrada.`;
+                              const checkinBr = selectedRes.checkinDate ? String(selectedRes.checkinDate).substring(0, 10).split("-").reverse().join("/") : "";
+                              const checkoutBr = selectedRes.checkoutDate ? String(selectedRes.checkoutDate).substring(0, 10).split("-").reverse().join("/") : "";
+                              const guestsNum = resolveReservationGuestCount(selectedRes);
+                              const channelLbl = formatReservationChannelLabel(selectedRes);
+                              const msg = `Olá, *${agName}*! Tudo bem? 👋\n\nConfirmamos com muita satisfação a reserva *#${b2bNum}* para o(a) hóspede *${selectedRes.guestName}* no *Edifício Soho Residence Service* (*Flat ${selectedRes.flatNumber}*).\n\n📋 *Resumo da Reserva:*\n• Código: *#${b2bNum}*\n• Acomodação: *Flat ${selectedRes.flatNumber}*\n• Período: *${checkinBr} a ${checkoutBr}*\n• Total de Hóspedes: *${guestsNum}*\n• Canal da Reserva: *${channelLbl}*\n\n⚠️ *Importante — Dados do Hóspede para Liberação na Recepção:*\nComo ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (*Nome Completo, CPF, WhatsApp e E-mail*) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:\n\n👉 ${url}\n\nRessaltamos gentilmente que *não é possível informar esses dados apenas na hora no balcão*, pois sem o cadastro prévio pelo link a recepção não conseguirá localizar a reserva nem liberar a entrada.`;
                               navigator.clipboard.writeText(msg);
                               toast({ title: "Mensagem + Link Copiados!", description: url });
                             }}
@@ -13372,6 +13380,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         <div className="whitespace-pre-wrap leading-relaxed font-sans text-[11px] text-foreground/90 bg-muted/30 p-2 rounded-lg border">
 {`Olá, ${selectedRes.requesterInfo?.name || selectedRes.requesterName || selectedRes.agencyTradeName || selectedRes.agencyName || "Solicitante"}! Tudo bem? 👋
 Confirmamos com muita satisfação a reserva #${selectedRes.b2bReservationNumber || selectedRes.code} para o(a) hóspede ${selectedRes.guestName} no Edifício Soho Residence Service (Flat ${selectedRes.flatNumber}).
+
+📋 Resumo da Reserva:
+• Código: #${selectedRes.b2bReservationNumber || selectedRes.code}
+• Acomodação: Flat ${selectedRes.flatNumber}
+• Período: ${selectedRes.checkinDate ? String(selectedRes.checkinDate).substring(0, 10).split("-").reverse().join("/") : ""} a ${selectedRes.checkoutDate ? String(selectedRes.checkoutDate).substring(0, 10).split("-").reverse().join("/") : ""}
+• Total de Hóspedes: ${resolveReservationGuestCount(selectedRes)}
+• Canal da Reserva: ${formatReservationChannelLabel(selectedRes)}
 
 ⚠️ IMPORTANTE — LIBERAÇÃO ANTECIPADA NA RECEPÇÃO:
 Como ainda não temos o contato direto do hóspede na reserva, pedimos que preencha antecipadamente os dados dele(a) (Nome Completo, CPF, WhatsApp e E-mail) pelo nosso link seguro para gerarmos a liberação na recepção e enviarmos as instruções de acesso:
@@ -13985,7 +14000,12 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
               }
 
               const handleCopyAllFormatted = () => {
-                const text = `🏨 *CorpFlats - Links da sua Estadia*\n🔑 *Reserva:* #${resCode}${flatNum ? ` (Flat ${flatNum})` : ""}\n👤 *Hóspede:* ${guestName}\n\n` +
+                const guestsNum = resolveReservationGuestCount(selectedRes)
+                const channelLbl = formatReservationChannelLabel(selectedRes)
+                const checkinBr = selectedRes.checkinDate ? String(selectedRes.checkinDate).substring(0, 10).split("-").reverse().join("/") : ""
+                const checkoutBr = selectedRes.checkoutDate ? String(selectedRes.checkoutDate).substring(0, 10).split("-").reverse().join("/") : ""
+                const periodLine = checkinBr && checkoutBr ? `📅 *Período:* ${checkinBr} a ${checkoutBr}\n` : ""
+                const text = `🏨 *CorpFlats - Resumo & Links da sua Estadia*\n🔑 *Reserva:* #${resCode}${flatNum ? ` (Flat ${flatNum})` : ""}\n👤 *Hóspede:* ${guestName}\n${periodLine}👥 *Total de Hóspedes:* ${guestsNum}\n📌 *Canal da Reserva:* ${channelLbl}\n\n` +
                   `🌐 *Portal Minha Reserva:*\n${origin}/minha-reserva/${resCode}\n\n` +
                   `📝 *Pré Check-in Digital:*\n${checkinUrl}\n\n` +
                   `☕ *Cardápio de Café da Manhã:*\n${origin}/cafe/${resCode}\n\n` +
