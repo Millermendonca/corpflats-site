@@ -38,7 +38,8 @@ import {
   Phone,
   Lock,
   Check,
-  X
+  X,
+  Gift
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -100,6 +101,24 @@ export interface SettlementData {
   totalFees: number;
   commissionCorpFlats: number;
   courtesyRestockCost: number;
+  courtesyWaterCupsTotal?: number;
+  courtesyWaterUnitCost?: number;
+  courtesyWaterTotalCost?: number;
+  courtesyMendoratoPeanutsTotal?: number;
+  courtesyMendoratoTotalCost?: number;
+  totalCourtesyReimbursement?: number;
+  courtesySummary?: {
+    totalCourtesyWaterCups: number;
+    courtesyWaterUnitCost: number;
+    courtesyWaterTotalCost: number;
+    totalCourtesyMendoratoPeanuts: number;
+    courtesyMendoratoUnitCost: number;
+    courtesyMendoratoTotalCost: number;
+    waterSupplier: string;
+    mendoratoSupplier: string;
+    legacyCourtesyRestockCost: number;
+    totalCourtesyReimbursement: number;
+  };
   netPayableToAnserve: number;
   ordersCount: number;
   inspectionsCount: number;
@@ -1105,12 +1124,12 @@ export default function AnserveDashboardPage() {
                   </div>
 
                   <div className="p-3 rounded-2xl bg-card border border-border">
-                    <span className="text-[10px] text-muted-foreground block">3. Crédito de Cortesias</span>
+                    <span className="text-[10px] text-muted-foreground block">3. Reembolso Água Boas-Vindas</span>
                     <strong className="text-sm font-black text-sky-600">
-                      + R$ {Number(settlement.courtesyRestockCost || 0).toFixed(2)}
+                      + R$ {Number(settlement.courtesyWaterTotalCost ?? settlement.courtesySummary?.courtesyWaterTotalCost ?? settlement.courtesyRestockCost ?? 0).toFixed(2)}
                     </strong>
                     <span className="text-[10px] text-muted-foreground block mt-0.5">
-                      Nespresso + Boas-vindas
+                      {settlement.courtesyWaterCupsTotal ?? settlement.courtesySummary?.totalCourtesyWaterCups ?? 0} copos × R$ 2,00 (Estoque Anserve)
                     </span>
                   </div>
 
@@ -1124,6 +1143,57 @@ export default function AnserveDashboardPage() {
                     <span className="text-[10px] text-emerald-700/80 dark:text-emerald-300/80 block mt-0.5">
                       Valor final a transferir
                     </span>
+                  </div>
+                </div>
+
+                {/* R6: Apuração Detalhada de Fornecimento do Kit de Boas-Vindas */}
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-sky-500/10 via-amber-500/10 to-transparent border border-sky-500/20 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Gift className="w-4 h-4 text-sky-600" />
+                      <span className="text-xs font-black text-foreground">
+                        Apuração do Kit de Boas-Vindas (Fornecimento & Repasse)
+                      </span>
+                    </div>
+                    <Badge variant="outline" className="bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30 text-[10px] font-bold">
+                      Reembolso Anserve: R$ {Number(settlement.courtesyWaterTotalCost ?? settlement.courtesySummary?.courtesyWaterTotalCost ?? 0).toFixed(2)}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between">
+                      <div>
+                        <span className="font-bold text-foreground block">💧 Copos d'Água Mineral 200ml</span>
+                        <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold block">
+                          Estoque Anserve • Custo R$ 2,00 / un.
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs font-bold text-foreground block">
+                          {settlement.courtesyWaterCupsTotal ?? settlement.courtesySummary?.totalCourtesyWaterCups ?? 0} consumidos
+                        </span>
+                        <strong className="text-xs font-mono font-black text-sky-600">
+                          + R$ {Number(settlement.courtesyWaterTotalCost ?? settlement.courtesySummary?.courtesyWaterTotalCost ?? 0).toFixed(2)}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between">
+                      <div>
+                        <span className="font-bold text-foreground block">🥜 Amendoim Mendorato 27g</span>
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
+                          Fornecimento Próprio Hotel • R$ 0,00 Repasse
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs font-bold text-foreground block">
+                          {settlement.courtesyMendoratoPeanutsTotal ?? settlement.courtesySummary?.totalCourtesyMendoratoPeanuts ?? 0} consumidos
+                        </span>
+                        <strong className="text-xs font-mono font-bold text-muted-foreground">
+                          R$ 0,00 (Hotel)
+                        </strong>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </Card>

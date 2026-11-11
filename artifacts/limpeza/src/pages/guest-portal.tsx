@@ -13,8 +13,8 @@ import {
   MessageCircle, FileText, Ban, AlertTriangle, ChevronRight,
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
   MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search,
-  CreditCard, QrCode, RefreshCw, AlertCircle, DoorOpen, MoreVertical,
-  Download, Printer, PenTool, Refrigerator, BedDouble, Bell, BellOff
+  Download, Printer, PenTool, Refrigerator, BedDouble, Bell, BellOff,
+  Gift
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -4423,6 +4423,44 @@ export default function GuestPortal() {
               </div>
             </div>
           </div>
+
+          {/* Sub-bloco Segregado: Kit de Boas-Vindas Consumido (Cortesia R$ 0,00) */}
+          {(() => {
+            const welcomeKit = reservation?.welcomeKitConsumption || data?.welcomeKitConsumption || (data as any)?.minibarStatement?.welcomeKitSummary;
+            const courtesyWater = Number(welcomeKit?.waterCups ?? welcomeKit?.waterCupsConsumed) || 0;
+            const courtesyPeanuts = Number(welcomeKit?.mendoratoPeanuts ?? welcomeKit?.peanutsConsumed) || 0;
+            if (courtesyWater <= 0 && courtesyPeanuts <= 0) return null;
+            return (
+              <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-800">
+                    <Gift className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Kit de Boas-Vindas Consumido (Cortesia da Casa)</span>
+                  </div>
+                  <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-300 text-[10px] font-bold">
+                    Cortesia • R$ 0,00
+                  </Badge>
+                </div>
+                <div className="space-y-1 text-emerald-900 font-medium text-[11px]">
+                  {courtesyWater > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span>💧 {courtesyWater}x Copo d'Água Mineral 200ml</span>
+                      <span className="font-bold text-emerald-700 font-mono">R$ 0,00</span>
+                    </div>
+                  )}
+                  {courtesyPeanuts > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span>🥜 {courtesyPeanuts}x Amendoim Mendorato 27g</span>
+                      <span className="font-bold text-emerald-700 font-mono">R$ 0,00</span>
+                    </div>
+                  )}
+                </div>
+                <p className="text-[10px] text-emerald-700/80 italic">
+                  * Itens de cortesia da hospedagem sem acréscimo no saldo da estadia.
+                </p>
+              </div>
+            );
+          })()}
 
           {Array.isArray(data?.minibarOrders) && data.minibarOrders.filter((o: any) => o && o.paymentStatus !== "cancelado").length > 0 && (
             <div className="space-y-2 pt-1">

@@ -79225,6 +79225,7 @@ app.post("/api/minibar/inspections", async (req, res) => {
       restockedPaidItemsTotalCost,
       photos: Array.isArray(photos) ? photos : [],
       notes: notes || "",
+      welcomeKitConsumption: welcomeKitRecord,
       chargeOrderId: chargeOrderId || updatedStatement?.primaryPendingOrder?.id || null,
       autoSplitOrderIds: autoSplitOrders.map(o => o.id),
       whatsappSofiaAlertSent,
@@ -79724,12 +79725,25 @@ app.get("/api/minibar/settlement", (req, res) => {
 
     // Compensação de reposição de cortesias gratuitas (reembolsadas pela CorpFlats)
     let courtesyRestockCost = 0;
+    let totalCourtesyWaterCups = 0;
+    let totalCourtesyMendoratoPeanuts = 0;
+    const courtesyWaterUnitCost = Number((db.minibarProducts || []).find(p => p.id === "prod_agua_mineral_copo")?.cost ?? 2.00);
+
     for (const insp of filteredInspections) {
       courtesyRestockCost += Number(insp.restockedCourtesyTotalCost) || 0;
+      if (insp.welcomeKitConsumption) {
+        totalCourtesyWaterCups += Number(insp.welcomeKitConsumption.waterCups ?? insp.welcomeKitConsumption.waterCupsConsumed) || 0;
+        totalCourtesyMendoratoPeanuts += Number(insp.welcomeKitConsumption.mendoratoPeanuts ?? insp.welcomeKitConsumption.peanutsConsumed) || 0;
+      }
     }
 
+    // R6: Copos d'Água são fornecidos pela Anserve (reembolso ao custo contratual de R$ 2,00/un)
+    // Amendoim Mendorato é de fornecimento próprio CorpFlats/Hotel (repasse R$ 0,00 à Anserve)
+    const courtesyWaterTotalCost = Number((totalCourtesyWaterCups * courtesyWaterUnitCost).toFixed(2));
+    const totalCourtesyReimbursement = Number((courtesyRestockCost + courtesyWaterTotalCost).toFixed(2));
+
     const courtesyReimbursementEnabled = db.minibarSettings?.courtesyReimbursementEnabled !== false;
-    const netCourtesyCredit = courtesyReimbursementEnabled ? courtesyRestockCost : 0;
+    const netCourtesyCredit = courtesyReimbursementEnabled ? totalCourtesyReimbursement : 0;
 
     // Líquido a Repassar para a Anserve
     const netPayableToAnserve = totalOrdersAmount - cardFees - pixFees - commissionCorpFlats + netCourtesyCredit;
@@ -79746,6 +79760,24 @@ app.get("/api/minibar/settlement", (req, res) => {
       totalFees: Number((cardFees + pixFees).toFixed(2)),
       commissionCorpFlats: Number(commissionCorpFlats.toFixed(2)),
       courtesyRestockCost: Number(courtesyRestockCost.toFixed(2)),
+      courtesyWaterCupsTotal: totalCourtesyWaterCups,
+      courtesyWaterUnitCost,
+      courtesyWaterTotalCost,
+      courtesyMendoratoPeanutsTotal: totalCourtesyMendoratoPeanuts,
+      courtesyMendoratoTotalCost: 0.00,
+      totalCourtesyReimbursement,
+      courtesySummary: {
+        totalCourtesyWaterCups,
+        courtesyWaterUnitCost,
+        courtesyWaterTotalCost,
+        totalCourtesyMendoratoPeanuts,
+        courtesyMendoratoUnitCost: 0.00,
+        courtesyMendoratoTotalCost: 0.00,
+        waterSupplier: "anserve",
+        mendoratoSupplier: "hotel_proprio",
+        legacyCourtesyRestockCost: Number(courtesyRestockCost.toFixed(2)),
+        totalCourtesyReimbursement
+      },
       netPayableToAnserve: Number(netPayableToAnserve.toFixed(2)),
       inspectionsCount: filteredInspections.length,
       breakdowns: {
@@ -80865,9 +80897,32 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
     const totalDiscrepancies = filteredInspections.filter(i => i.hasDiscrepancy || i.status === "divergencia").length;
     const totalConforme = totalInspections - totalDiscrepancies;
 
+    let totalCourtesyWaterCups = 0;
+    let totalCourtesyMendoratoPeanuts = 0;
+    const courtesyWaterUnitCost = Number(productsCatalog.find(p => p.id === "prod_agua_mineral_copo")?.cost ?? 2.00);
+
+    for (const insp of filteredInspections) {
+      if (insp.welcomeKitConsumption) {
+        totalCourtesyWaterCups += Number(insp.welcomeKitConsumption.waterCups ?? insp.welcomeKitConsumption.waterCupsConsumed) || 0;
+        totalCourtesyMendoratoPeanuts += Number(insp.welcomeKitConsumption.mendoratoPeanuts ?? insp.welcomeKitConsumption.peanutsConsumed) || 0;
+      }
+    }
+    const courtesyWaterTotalCost = Number((totalCourtesyWaterCups * courtesyWaterUnitCost).toFixed(2));
+    const courtesySummary = {
+      totalCourtesyWaterCups,
+      courtesyWaterUnitCost,
+      courtesyWaterTotalCost,
+      totalCourtesyMendoratoPeanuts,
+      courtesyMendoratoUnitCost: 0.00,
+      courtesyMendoratoTotalCost: 0.00,
+      waterSupplier: "anserve",
+      mendoratoSupplier: "hotel_proprio"
+    };
+
     res.json({
       success: true,
       period: { startDate: startDate || null, endDate: endDate || null },
+      courtesySummary,
       salesSummary: {
         totalPaidRevenue: Number(totalPaidRevenue.toFixed(2)),
         totalPaidCost: Number(totalPaidCost.toFixed(2)),
@@ -80881,6 +80936,7 @@ app.get("/api/minibar/anserve-reports", (req, res) => {
           credit_card: Number(byPaymentMethod.credit_card.toFixed(2)),
           pendente: Number(byPaymentMethod.pendente.toFixed(2))
         },
+        courtesySummary,
         byProduct: Object.values(byProductMap)
           .map(p => ({
             ...p,

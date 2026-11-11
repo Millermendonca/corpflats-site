@@ -38,7 +38,14 @@ import {
   Phone,
   Send,
   ShoppingBag,
-  Briefcase
+  Briefcase,
+  Camera,
+  ZoomIn,
+  ArrowRight,
+  CheckCheck,
+  RotateCcw,
+  FileCheck,
+  Gift
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -94,6 +101,537 @@ const CATEGORIES = [
   "Cafés & Especiais"
 ];
 
+export interface BrandHomologationItem {
+  id: string;
+  productName: string;
+  category: "Bebidas" | "Petiscos" | "Kit Boas-Vindas";
+  currentImageUrl: string;
+  currentDiagnosis: string;
+  proposedBrand: {
+    brandName: string;
+    imageUrl: string;
+    manufacturer: string;
+    volumeOrWeight: string;
+    packageType: string;
+  };
+  alternatives: Array<{
+    brandName: string;
+    imageUrl: string;
+    manufacturer: string;
+    volumeOrWeight: string;
+    packageType: string;
+  }>;
+  status: "approved" | "pending" | "swap_requested";
+  selectedBrandIndex: number;
+  notes?: string;
+  isCourtesy?: boolean;
+}
+
+export const INITIAL_HOMOLOGATION_CATALOG: BrandHomologationItem[] = [
+  {
+    id: "prod_refrigerante",
+    productName: "Refrigerante",
+    category: "Bebidas",
+    currentImageUrl: "/images/frigobar/refrigerante.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('REFRIGERANTE SODA')",
+    proposedBrand: {
+      brandName: "Coca-Cola Original 350ml",
+      imageUrl: "/images/frigobar/proposta_coca_cola_350ml.png",
+      manufacturer: "The Coca-Cola Company",
+      volumeOrWeight: "Lata 350ml",
+      packageType: "Lata de alumínio tradicional com anel prata"
+    },
+    alternatives: [
+      {
+        brandName: "Coca-Cola Sem Açúcar 350ml",
+        imageUrl: "/images/frigobar/proposta_coca_cola_zero_350ml.png",
+        manufacturer: "The Coca-Cola Company",
+        volumeOrWeight: "Lata 350ml",
+        packageType: "Lata sleek preta com logo vermelho"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_achocolatado",
+    productName: "Achocolatado",
+    category: "Bebidas",
+    currentImageUrl: "/images/frigobar/achocolatado.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('DELÍCIA CHOCO')",
+    proposedBrand: {
+      brandName: "Toddynho Tradicional 200ml",
+      imageUrl: "/images/frigobar/proposta_toddynho_200ml.png",
+      manufacturer: "PepsiCo do Brasil",
+      volumeOrWeight: "Tetra Pak 200ml",
+      packageType: "Caixa cartonada com canudo acoplado"
+    },
+    alternatives: [
+      {
+        brandName: "Nescau Prontinho 200ml",
+        imageUrl: "/images/frigobar/proposta_toddynho_200ml.png",
+        manufacturer: "Nestlé Brasil",
+        volumeOrWeight: "Tetra Pak 200ml",
+        packageType: "Caixa cartonada com canudo"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_agua_mineral_copo",
+    productName: "Água Mineral Copo",
+    category: "Bebidas",
+    currentImageUrl: "/images/frigobar/agua_mineral_copo.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('Fonte Pureza')",
+    proposedBrand: {
+      brandName: "Água Mineral Crystal Copo 200ml",
+      imageUrl: "/images/frigobar/proposta_agua_mineral_copo_200ml.png",
+      manufacturer: "Coca-Cola FEMSA / Anserve",
+      volumeOrWeight: "Copo 200ml",
+      packageType: "Copo plástico selado com tampa metálica"
+    },
+    alternatives: [
+      {
+        brandName: "Água Mineral Levity Copo 200ml",
+        imageUrl: "/images/frigobar/proposta_agua_mineral_copo_200ml.png",
+        manufacturer: "Levity / Anserve",
+        volumeOrWeight: "Copo 200ml",
+        packageType: "Copo plástico selado"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_agua_mineral_garrafa",
+    productName: "Água Mineral Garrafa",
+    category: "Bebidas",
+    currentImageUrl: "/images/frigobar/agua_mineral_garrafa.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('Fonte Natural 500ml')",
+    proposedBrand: {
+      brandName: "Água Mineral Crystal Sem Gás 500ml",
+      imageUrl: "/images/frigobar/proposta_agua_mineral_garrafa_500ml.png",
+      manufacturer: "Coca-Cola FEMSA",
+      volumeOrWeight: "Garrafa PET 500ml",
+      packageType: "Garrafa PET cristalina com tampa azul"
+    },
+    alternatives: [
+      {
+        brandName: "Água Mineral Minalba 510ml",
+        imageUrl: "/images/frigobar/proposta_agua_mineral_garrafa_500ml.png",
+        manufacturer: "Minalba Brasil",
+        volumeOrWeight: "Garrafa PET 510ml",
+        packageType: "Garrafa PET cristalina tampa azul"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_cerveja_long_neck",
+    productName: "Cerveja Long Neck",
+    category: "Bebidas",
+    currentImageUrl: "/images/frigobar/cerveja_long_neck.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('Brewery 330ml')",
+    proposedBrand: {
+      brandName: "Cerveja Heineken Puro Malte 330ml",
+      imageUrl: "/images/frigobar/proposta_cerveja_heineken_330ml.png",
+      manufacturer: "Heineken Brasil",
+      volumeOrWeight: "Long Neck 330ml",
+      packageType: "Garrafa de vidro verde com estrela vermelha"
+    },
+    alternatives: [
+      {
+        brandName: "Cerveja Stella Artois 330ml",
+        imageUrl: "/images/frigobar/proposta_cerveja_stella_artois_330ml.png",
+        manufacturer: "Ambev / AB InBev",
+        volumeOrWeight: "Long Neck 330ml",
+        packageType: "Garrafa de vidro com rótulo dourado e branco"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_energetico",
+    productName: "Energético",
+    category: "Bebidas",
+    currentImageUrl: "/images/frigobar/energetico.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('ENERGÉTICO 250ml')",
+    proposedBrand: {
+      brandName: "Red Bull Energy Drink 250ml",
+      imageUrl: "/images/frigobar/proposta_energetico_red_bull_250ml.png",
+      manufacturer: "Red Bull GmbH",
+      volumeOrWeight: "Lata Slim 250ml",
+      packageType: "Lata sleek de alumínio azul e prata"
+    },
+    alternatives: [
+      {
+        brandName: "Monster Energy Original 473ml",
+        imageUrl: "/images/frigobar/proposta_energetico_red_bull_250ml.png",
+        manufacturer: "Monster Beverage Corp",
+        volumeOrWeight: "Lata 473ml",
+        packageType: "Lata de alumínio preta com garra verde"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_smirnoff_ice",
+    productName: "Smirnoff Ice",
+    category: "Bebidas",
+    currentImageUrl: "/images/frigobar/smirnoff_ice.png",
+    currentDiagnosis: "Recreação genérica sem precisão fotográfica",
+    proposedBrand: {
+      brandName: "Smirnoff Ice Original 275ml",
+      imageUrl: "/images/frigobar/proposta_smirnoff_ice_275ml.png",
+      manufacturer: "Diageo",
+      volumeOrWeight: "Long Neck 275ml",
+      packageType: "Garrafa de vidro transparente com tampa prata"
+    },
+    alternatives: [
+      {
+        brandName: "Smirnoff Ice Red 275ml",
+        imageUrl: "/images/frigobar/proposta_smirnoff_ice_275ml.png",
+        manufacturer: "Diageo",
+        volumeOrWeight: "Long Neck 275ml",
+        packageType: "Garrafa de vidro com rótulo vermelho"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_suco_fruta",
+    productName: "Suco de Fruta",
+    category: "Bebidas",
+    currentImageUrl: "/images/frigobar/suco_fruta.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('SUCO DE FRUTA Néctar')",
+    proposedBrand: {
+      brandName: "Suco Del Valle Néctar Laranja 290ml",
+      imageUrl: "/images/frigobar/proposta_suco_del_valle_290ml.png",
+      manufacturer: "The Coca-Cola Company",
+      volumeOrWeight: "Garrafa 290ml",
+      packageType: "Garrafa de vidro com tampa de metal lacrada"
+    },
+    alternatives: [
+      {
+        brandName: "Suco Del Valle Néctar Pêssego 290ml",
+        imageUrl: "/images/frigobar/proposta_suco_del_valle_290ml.png",
+        manufacturer: "The Coca-Cola Company",
+        volumeOrWeight: "Garrafa 290ml",
+        packageType: "Garrafa de vidro com tampa lacrada"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_suco_uva_integral",
+    productName: "Suco de Uva Integral",
+    category: "Bebidas",
+    currentImageUrl: "/images/frigobar/suco_uva_integral.png",
+    currentDiagnosis: "Mismatch: Rótulo exibe garrafa de 1L ('Vinhedo Puro'), mas o produto é 300ml",
+    proposedBrand: {
+      brandName: "Suco de Uva 100% Integral Aurora 300ml",
+      imageUrl: "/images/frigobar/proposta_suco_uva_aurora_300ml.png",
+      manufacturer: "Vinícola Aurora",
+      volumeOrWeight: "Garrafa 300ml",
+      packageType: "Garrafa de vidro escura com tampa de rosca"
+    },
+    alternatives: [
+      {
+        brandName: "Suco de Uva Casa Madeira 250ml",
+        imageUrl: "/images/frigobar/proposta_suco_uva_aurora_300ml.png",
+        manufacturer: "Famiglia Valduga",
+        volumeOrWeight: "Garrafa 250ml",
+        packageType: "Garrafa de vidro escura"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_barra_cereal",
+    productName: "Barra de Cereal",
+    category: "Petiscos",
+    currentImageUrl: "/images/frigobar/barra_cereal.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('NATURAL HARVEST')",
+    proposedBrand: {
+      brandName: "Barra de Cereal Nutry Aveia, Castanhas e Mel 22g",
+      imageUrl: "/images/frigobar/proposta_barra_nutry_22g.png",
+      manufacturer: "Nutrimental",
+      volumeOrWeight: "Barra 22g",
+      packageType: "Flow-pack metalizado individual"
+    },
+    alternatives: [
+      {
+        brandName: "Barra Trio Castanha e Chocolate 25g",
+        imageUrl: "/images/frigobar/proposta_barra_nutry_22g.png",
+        manufacturer: "Trio Alimentos",
+        volumeOrWeight: "Barra 25g",
+        packageType: "Flow-pack metalizado"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_batata",
+    productName: "Batata",
+    category: "Petiscos",
+    currentImageUrl: "/images/frigobar/batata.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('BATATA ORIGINAL')",
+    proposedBrand: {
+      brandName: "Batata Pringles Original 114g",
+      imageUrl: "/images/frigobar/proposta_batata_pringles_114g.png",
+      manufacturer: "Kellogg Company",
+      volumeOrWeight: "Tubo 114g",
+      packageType: "Tubo cilíndrico vermelho com tampa plástica"
+    },
+    alternatives: [
+      {
+        brandName: "Batata Ruffles Original 76g",
+        imageUrl: "/images/frigobar/proposta_batata_pringles_114g.png",
+        manufacturer: "PepsiCo do Brasil",
+        volumeOrWeight: "Pacote 76g",
+        packageType: "Pacote metalizado azul"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_biscoito_salgado",
+    productName: "Biscoito Salgado",
+    category: "Petiscos",
+    currentImageUrl: "/images/frigobar/biscoito_salgado.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('FORNO DO BRASIL')",
+    proposedBrand: {
+      brandName: "Biscoito Salgado Club Social Original 24g",
+      imageUrl: "/images/frigobar/proposta_biscoito_club_social_24g.png",
+      manufacturer: "Mondelez International",
+      volumeOrWeight: "Pacote 24g",
+      packageType: "Flow-pack vermelho com crackers crocantes"
+    },
+    alternatives: [
+      {
+        brandName: "Biscoito Pit Stop Marilan 27g",
+        imageUrl: "/images/frigobar/proposta_biscoito_club_social_24g.png",
+        manufacturer: "Marilan Alimentos",
+        volumeOrWeight: "Pacote 27g",
+        packageType: "Pacote individual"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_castanha_caju",
+    productName: "Castanha de Caju",
+    category: "Petiscos",
+    currentImageUrl: "/images/frigobar/castanha_caju.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('NATURÉL')",
+    proposedBrand: {
+      brandName: "Castanha de Caju Torrada e Salgada DaColônia 50g",
+      imageUrl: "/images/frigobar/proposta_castanha_dacolonia_50g.png",
+      manufacturer: "DaColônia Alimentos",
+      volumeOrWeight: "Pouch 50g",
+      packageType: "Stand-up pouch preto e dourado com zíper e visor"
+    },
+    alternatives: [
+      {
+        brandName: "Castanha de Caju Yoki 50g",
+        imageUrl: "/images/frigobar/proposta_castanha_dacolonia_50g.png",
+        manufacturer: "General Mills / Yoki",
+        volumeOrWeight: "Pacote 50g",
+        packageType: "Pouch metalizado"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_chiclete",
+    productName: "Chiclete",
+    category: "Petiscos",
+    currentImageUrl: "/images/frigobar/chiclete.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('CHICLETE MENTHA')",
+    proposedBrand: {
+      brandName: "Goma de Mascar Trident Hortelã 8g (5 un)",
+      imageUrl: "/images/frigobar/proposta_chiclete_trident_8g.png",
+      manufacturer: "Mondelez International",
+      volumeOrWeight: "Envelope 8g",
+      packageType: "Envelope verde sem açúcar lacrado"
+    },
+    alternatives: [
+      {
+        brandName: "Trident Menta Intensa 8g",
+        imageUrl: "/images/frigobar/proposta_chiclete_trident_8g.png",
+        manufacturer: "Mondelez International",
+        volumeOrWeight: "Envelope 8g",
+        packageType: "Envelope azul sem açúcar"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_chocolate",
+    productName: "Chocolate",
+    category: "Petiscos",
+    currentImageUrl: "/images/frigobar/chocolate.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('DELIGHTS MILK CHOCOLATE')",
+    proposedBrand: {
+      brandName: "Chocolate Nestlé Classic Ao Leite 80g",
+      imageUrl: "/images/frigobar/proposta_chocolate_nestle_80g.png",
+      manufacturer: "Nestlé Brasil",
+      volumeOrWeight: "Tablete 80g",
+      packageType: "Embalagem lacrada vermelha clássica"
+    },
+    alternatives: [
+      {
+        brandName: "Chocolate Lacta Ao Leite 80g",
+        imageUrl: "/images/frigobar/proposta_chocolate_nestle_80g.png",
+        manufacturer: "Mondelez International",
+        volumeOrWeight: "Tablete 80g",
+        packageType: "Embalagem azul clássica"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_chocolate_kinder_bueno",
+    productName: "Chocolate Kinder Bueno",
+    category: "Petiscos",
+    currentImageUrl: "/images/frigobar/chocolate_kinder_bueno.png",
+    currentDiagnosis: "DEFEITUOSA: Imagem exibe wafer quebrado na mesa, sem embalagem",
+    proposedBrand: {
+      brandName: "Chocolate Kinder Bueno Tradicional Duplo 43g",
+      imageUrl: "/images/frigobar/proposta_chocolate_kinder_bueno_43g.png",
+      manufacturer: "Ferrero",
+      volumeOrWeight: "Pacote Duplo 43g",
+      packageType: "Flow-pack lacrado branco e vermelho com 2 barras"
+    },
+    alternatives: [
+      {
+        brandName: "Kinder Bueno White 39g",
+        imageUrl: "/images/frigobar/proposta_chocolate_kinder_bueno_43g.png",
+        manufacturer: "Ferrero",
+        volumeOrWeight: "Pacote 39g",
+        packageType: "Flow-pack branco"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_chocolate_kitkat_snickers",
+    productName: "Chocolate Kit Kat / Snickers",
+    category: "Petiscos",
+    currentImageUrl: "/images/frigobar/chocolate_kitkat_snickers.png",
+    currentDiagnosis: "Montagem confusa misturando duas marcas rivais soltas",
+    proposedBrand: {
+      brandName: "Chocolate KitKat 4-Finger Milk 41.5g",
+      imageUrl: "/images/frigobar/proposta_chocolate_kitkat_41g.png",
+      manufacturer: "Nestlé Brasil",
+      volumeOrWeight: "Flow-pack 41.5g",
+      packageType: "Flow-pack vermelho oficial com 4 fingers crocantes"
+    },
+    alternatives: [
+      {
+        brandName: "Chocolate Snickers Tradicional 45g",
+        imageUrl: "/images/frigobar/proposta_chocolate_kitkat_41g.png",
+        manufacturer: "Mars Brasil",
+        volumeOrWeight: "Barra 45g",
+        packageType: "Embalagem marrom clássica com amendoim e caramelo"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_cookies",
+    productName: "Cookies",
+    category: "Petiscos",
+    currentImageUrl: "/images/frigobar/cookies.png",
+    currentDiagnosis: "Marca fictícia gerada por IA ('GRANDMA'S OWN')",
+    proposedBrand: {
+      brandName: "Cookies Bauducco Tradicional Gotas de Chocolate 100g",
+      imageUrl: "/images/frigobar/proposta_cookies_bauducco_100g.png",
+      manufacturer: "Bauducco",
+      volumeOrWeight: "Pacote 100g",
+      packageType: "Pacote amarelo brilhante com gotas de chocolate"
+    },
+    alternatives: [
+      {
+        brandName: "Cookies Toddy Gotas de Chocolate 60g",
+        imageUrl: "/images/frigobar/proposta_cookies_bauducco_100g.png",
+        manufacturer: "PepsiCo do Brasil",
+        volumeOrWeight: "Pacote 60g",
+        packageType: "Pacote individual"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0
+  },
+  {
+    id: "prod_cortesia_amendoim_mendorato",
+    productName: "Amendoim Mendorato (Cortesia)",
+    category: "Kit Boas-Vindas",
+    currentImageUrl: "/images/frigobar/proposta_amendoim_mendorato_27g.png",
+    currentDiagnosis: "Novo item de cortesia exigido no Kit Boas-Vindas (fornecimento próprio hotel)",
+    proposedBrand: {
+      brandName: "Amendoim Dourado Japonês Mendorato 27g",
+      imageUrl: "/images/frigobar/proposta_amendoim_mendorato_27g.png",
+      manufacturer: "Santa Helena Alimentos",
+      volumeOrWeight: "Pacote 27g",
+      packageType: "Pacote metalizado dourado e verde lacrado"
+    },
+    alternatives: [
+      {
+        brandName: "Amendoim Japonês Pettiz 24g",
+        imageUrl: "/images/frigobar/proposta_amendoim_mendorato_27g.png",
+        manufacturer: "Dori Alimentos",
+        volumeOrWeight: "Pacote 24g",
+        packageType: "Pacote metalizado"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0,
+    isCourtesy: true
+  },
+  {
+    id: "prod_cortesia_agua_copo",
+    productName: "Água Mineral Copo (Cortesia)",
+    category: "Kit Boas-Vindas",
+    currentImageUrl: "/images/frigobar/proposta_agua_mineral_copo_200ml.png",
+    currentDiagnosis: "Item de cortesia do Kit Boas-Vindas (estoque e repasse Anserve)",
+    proposedBrand: {
+      brandName: "Água Mineral Copo Selado Crystal 200ml",
+      imageUrl: "/images/frigobar/proposta_agua_mineral_copo_200ml.png",
+      manufacturer: "Coca-Cola FEMSA / Anserve",
+      volumeOrWeight: "Copo 200ml",
+      packageType: "Copo plástico selado com tampa metálica"
+    },
+    alternatives: [
+      {
+        brandName: "Água Mineral Copo Levity 200ml",
+        imageUrl: "/images/frigobar/proposta_agua_mineral_copo_200ml.png",
+        manufacturer: "Levity / Anserve",
+        volumeOrWeight: "Copo 200ml",
+        packageType: "Copo plástico selado"
+      }
+    ],
+    status: "pending",
+    selectedBrandIndex: 0,
+    isCourtesy: true
+  }
+];
+
 function downloadCsvFile(filename: string, headers: string[], rows: Array<Array<string | number>>) {
   const escapeCsvCell = (val: string | number) => {
     const str = String(val ?? "").replace(/"/g, '""');
@@ -124,7 +662,160 @@ export default function MinibarAdminPage() {
   const [insightsSubView, setInsightsSubView] = useState<
     "visao_geral" | "produtos_flats" | "perfil_hospedes"
   >("visao_geral");
-  const [catalogSubView, setCatalogSubView] = useState<"produtos" | "gabarito">("produtos");
+  const [catalogSubView, setCatalogSubView] = useState<"produtos" | "gabarito" | "galeria_marcas">("produtos");
+
+  // Homologation Gallery State (R1 & R2)
+  const [homologationItems, setHomologationItems] = useState<BrandHomologationItem[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("corpflats_minibar_homologation_v1");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {
+        console.warn("Erro ao ler homologação local:", e);
+      }
+    }
+    return INITIAL_HOMOLOGATION_CATALOG;
+  });
+  const [homologationCategory, setHomologationCategory] = useState<string>("todas");
+  const [homologationStatusFilter, setHomologationStatusFilter] = useState<string>("todos");
+  const [homologationSearch, setHomologationSearch] = useState<string>("");
+  const [zoomModalItem, setZoomModalItem] = useState<BrandHomologationItem | null>(null);
+  const [swapModalItem, setSwapModalItem] = useState<BrandHomologationItem | null>(null);
+  const [customSwapNotes, setCustomSwapNotes] = useState<string>("");
+  const [applyingApprovedPhotos, setApplyingApprovedPhotos] = useState(false);
+
+  const saveHomologation = (items: BrandHomologationItem[]) => {
+    setHomologationItems(items);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("corpflats_minibar_homologation_v1", JSON.stringify(items));
+      } catch (e) {
+        console.warn("Erro ao salvar homologação local:", e);
+      }
+    }
+  };
+
+  const handleApprovePhoto = (id: string) => {
+    const updated = homologationItems.map(item => {
+      if (item.id === id) {
+        const newStatus = item.status === "approved" ? "pending" : "approved";
+        return { ...item, status: newStatus as any };
+      }
+      return item;
+    });
+    saveHomologation(updated);
+    toast({
+      title: "Homologação de Foto Atualizada! 📸",
+      description: "A decisão foi gravada com sucesso."
+    });
+  };
+
+  const handleApproveAllPhotos = () => {
+    const updated = homologationItems.map(item => ({ ...item, status: "approved" as const }));
+    saveHomologation(updated);
+    toast({
+      title: "Todas as Fotos Foram Homologadas! ✅",
+      description: "Todas as 20 fotos comerciais de marcas reais foram aprovadas para o cardápio."
+    });
+  };
+
+  const handleResetHomologation = () => {
+    saveHomologation(INITIAL_HOMOLOGATION_CATALOG);
+    toast({
+      title: "Homologação Reiniciada",
+      description: "Todos os status retornaram para pendente de conferência."
+    });
+  };
+
+  const handleSelectBrandAlternative = (productId: string, altIndex: number) => {
+    const updated = homologationItems.map(item => {
+      if (item.id === productId) {
+        return {
+          ...item,
+          selectedBrandIndex: altIndex,
+          status: "pending" as const
+        };
+      }
+      return item;
+    });
+    saveHomologation(updated);
+    setSwapModalItem(null);
+    toast({
+      title: "Marca Alternativa Selecionada! 🔄",
+      description: "A marca e foto foram atualizadas para conferência."
+    });
+  };
+
+  const handleRequestCustomSwap = (productId: string, notes: string) => {
+    const updated = homologationItems.map(item => {
+      if (item.id === productId) {
+        return {
+          ...item,
+          status: "swap_requested" as const,
+          notes: notes.trim()
+        };
+      }
+      return item;
+    });
+    saveHomologation(updated);
+    setSwapModalItem(null);
+    setCustomSwapNotes("");
+    toast({
+      title: "Troca Solicitada! 📝",
+      description: "A observação foi registrada para alinhamento com a fornecedora."
+    });
+  };
+
+  const handleApplyApprovedToCatalog = async () => {
+    const approved = homologationItems.filter(i => i.status === "approved");
+    if (approved.length === 0) {
+      toast({
+        title: "Nenhuma foto aprovada",
+        description: "Aprove ao menos uma foto antes de aplicar ao catálogo.",
+        variant: "destructive"
+      });
+      return;
+    }
+    setApplyingApprovedPhotos(true);
+    try {
+      let appliedCount = 0;
+      for (const item of approved) {
+        const matchingProduct = products.find(p => p.id === item.id);
+        if (matchingProduct) {
+          const activeBrand = item.selectedBrandIndex === 0
+            ? item.proposedBrand
+            : item.alternatives[item.selectedBrandIndex - 1] || item.proposedBrand;
+
+          await fetch(`/api/minibar/products/${item.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              imageUrl: activeBrand.imageUrl,
+              description: `${item.productName} • ${activeBrand.brandName} (${activeBrand.volumeOrWeight})`
+            })
+          });
+          appliedCount++;
+        }
+      }
+      await fetchProducts();
+      toast({
+        title: "Fotos de Marcas Reais Aplicadas! 🚀",
+        description: `${appliedCount} produtos do frigobar foram atualizados com sucesso em produção.`
+      });
+    } catch (err: any) {
+      toast({
+        title: "Erro ao aplicar fotos",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setApplyingApprovedPhotos(false);
+    }
+  };
 
   // Catalog State
   const [products, setProducts] = useState<MinibarProduct[]>([]);
@@ -1728,7 +2419,7 @@ export default function MinibarAdminPage() {
           <TabsContent value="catalogo" className="w-full min-w-0 space-y-5">
             {/* Seletor de Sub-visão: Produtos & Preços vs Quantidade Padrão no Flat */}
             <div className="bg-card border border-border p-3 sm:p-4 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setCatalogSubView("produtos")}
@@ -1753,6 +2444,23 @@ export default function MinibarAdminPage() {
                   <Sliders className="w-4 h-4" />
                   <span>Quantidade Padrão por Flat (Gabarito)</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setCatalogSubView("galeria_marcas")}
+                  className={`px-4 py-2 rounded-2xl text-xs font-black transition-all flex items-center gap-2 ${
+                    catalogSubView === "galeria_marcas"
+                      ? "bg-amber-600 text-white shadow-sm"
+                      : "bg-muted/60 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Camera className="w-4 h-4" />
+                  <span>Validação & Homologação de Marcas ({homologationItems.filter(i => i.status === "approved").length}/{homologationItems.length})</span>
+                  {homologationItems.some(i => i.status === "pending") && (
+                    <Badge className="bg-amber-400 text-slate-950 font-black text-[9px] px-1.5 py-0.5 rounded-full ml-1">
+                      {homologationItems.filter(i => i.status === "pending").length} pendentes
+                    </Badge>
+                  )}
+                </button>
               </div>
 
               {catalogSubView === "produtos" && (
@@ -1764,6 +2472,29 @@ export default function MinibarAdminPage() {
                   <Plus className="w-3.5 h-3.5 mr-1.5" />
                   Novo Produto no Cardápio
                 </Button>
+              )}
+
+              {catalogSubView === "galeria_marcas" && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleApproveAllPhotos}
+                    className="rounded-xl text-xs font-bold border-emerald-600/40 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-9"
+                  >
+                    <CheckCheck className="w-3.5 h-3.5 mr-1.5" />
+                    Aprovar Todas as Fotos
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleApplyApprovedToCatalog}
+                    disabled={applyingApprovedPhotos || homologationItems.filter(i => i.status === "approved").length === 0}
+                    className="rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white h-9"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                    {applyingApprovedPhotos ? "Aplicando..." : "Aplicar Fotos ao Cardápio"}
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -1864,7 +2595,7 @@ export default function MinibarAdminPage() {
                   })}
                 </div>
               </div>
-            ) : (
+            ) : catalogSubView === "gabarito" ? (
               <div className="space-y-4">
                 <div className="bg-card border border-border p-4 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full min-w-0">
                   <div className="space-y-0.5 min-w-0">
@@ -1957,6 +2688,395 @@ export default function MinibarAdminPage() {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            ) : (
+              /* SUB-VISÃO 3: GALERIA DE VALIDAÇÃO E HOMOLOGAÇÃO DE MARCAS REAIS (R1 & R2) */
+              <div className="space-y-5 w-full min-w-0">
+                {/* Banner de Controle e Status */}
+                <div className="bg-gradient-to-r from-slate-900 via-amber-950/40 to-slate-900 border border-amber-500/30 p-5 rounded-3xl shadow-sm text-foreground space-y-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge className="bg-amber-400 text-slate-950 font-black text-[10px]">
+                          📸 REQUISITOS R1 & R2 • PADRONIZAÇÃO VISUAL
+                        </Badge>
+                        <Badge variant="outline" className="text-amber-500 border-amber-500/40 font-bold text-[10px]">
+                          Padrão #FFFFFF Puro • 1:1 Quadrado • Estúdio 5500K
+                        </Badge>
+                      </div>
+                      <h3 className="text-base sm:text-lg font-black tracking-tight text-foreground">
+                        Galeria de Homologação e Pré-Aprovação de Marcas Comerciais Reais
+                      </h3>
+                      <p className="text-xs text-muted-foreground max-w-3xl">
+                        Todas as fotos do frigobar foram padronizadas e mapeadas para marcas comerciais reais e consagradas.
+                        Valide lado a lado cada foto com seu modelo legado, selecione marcas alternativas caso necessário e aprove individualmente ou em lote antes da publicação definitiva no cardápio do hóspede.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleResetHomologation}
+                        className="rounded-xl text-xs font-bold h-9"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                        Restaurar Padrões
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleApproveAllPhotos}
+                        className="rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white h-9"
+                      >
+                        <CheckCheck className="w-3.5 h-3.5 mr-1.5" />
+                        Aprovar Todas as Fotos ({homologationItems.length})
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Barra de Progresso e Métricas */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-border/60">
+                    <div className="bg-card/70 border border-border p-3 rounded-2xl">
+                      <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Total Mapeado</span>
+                      <strong className="text-lg font-black text-foreground">{homologationItems.length} itens</strong>
+                    </div>
+                    <div className="bg-emerald-500/10 border border-emerald-500/30 p-3 rounded-2xl">
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider block">Aprovadas</span>
+                      <strong className="text-lg font-black text-emerald-600 dark:text-emerald-400">
+                        {homologationItems.filter(i => i.status === "approved").length} itens
+                      </strong>
+                    </div>
+                    <div className="bg-amber-500/10 border border-amber-500/30 p-3 rounded-2xl">
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold uppercase tracking-wider block">Pendentes</span>
+                      <strong className="text-lg font-black text-amber-600 dark:text-amber-400">
+                        {homologationItems.filter(i => i.status === "pending").length} itens
+                      </strong>
+                    </div>
+                    <div className="bg-sky-500/10 border border-sky-500/30 p-3 rounded-2xl">
+                      <span className="text-[10px] text-sky-600 dark:text-sky-400 font-bold uppercase tracking-wider block">Troca Solicitada</span>
+                      <strong className="text-lg font-black text-sky-600 dark:text-sky-400">
+                        {homologationItems.filter(i => i.status === "swap_requested").length} itens
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filtros e Busca */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant={homologationCategory === "todas" ? "default" : "outline"}
+                      onClick={() => setHomologationCategory("todas")}
+                      className="h-8 rounded-xl text-xs font-bold"
+                    >
+                      Todas as Categorias ({homologationItems.length})
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={homologationCategory === "Bebidas" ? "default" : "outline"}
+                      onClick={() => setHomologationCategory("Bebidas")}
+                      className="h-8 rounded-xl text-xs font-bold"
+                    >
+                      Bebidas ({homologationItems.filter(i => i.category === "Bebidas").length})
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={homologationCategory === "Petiscos" ? "default" : "outline"}
+                      onClick={() => setHomologationCategory("Petiscos")}
+                      className="h-8 rounded-xl text-xs font-bold"
+                    >
+                      Petiscos ({homologationItems.filter(i => i.category === "Petiscos").length})
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={homologationCategory === "Kit Boas-Vindas" ? "default" : "outline"}
+                      onClick={() => setHomologationCategory("Kit Boas-Vindas")}
+                      className="h-8 rounded-xl text-xs font-bold"
+                    >
+                      Kit Boas-Vindas ({homologationItems.filter(i => i.category === "Kit Boas-Vindas").length})
+                    </Button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={homologationStatusFilter}
+                      onChange={e => setHomologationStatusFilter(e.target.value)}
+                      className="h-8 text-xs rounded-xl border border-input bg-background px-2.5 font-bold"
+                    >
+                      <option value="todos">Todos os Status</option>
+                      <option value="approved">✅ Aprovados</option>
+                      <option value="pending">⏳ Pendentes</option>
+                      <option value="swap_requested">🔄 Troca Solicitada</option>
+                    </select>
+
+                    <div className="relative w-full sm:w-56">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        placeholder="Buscar marca ou produto..."
+                        value={homologationSearch}
+                        onChange={e => setHomologationSearch(e.target.value)}
+                        className="h-8 pl-9 text-xs rounded-xl"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Grid Comparativo dos Produtos (Lado a Lado) */}
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 w-full min-w-0">
+                  {homologationItems
+                    .filter(item => {
+                      if (homologationCategory !== "todas" && item.category !== homologationCategory) return false;
+                      if (homologationStatusFilter !== "todos" && item.status !== homologationStatusFilter) return false;
+                      if (homologationSearch.trim()) {
+                        const term = homologationSearch.toLowerCase();
+                        const activeBrand = item.selectedBrandIndex === 0 ? item.proposedBrand : item.alternatives[item.selectedBrandIndex - 1] || item.proposedBrand;
+                        const matchName = item.productName.toLowerCase().includes(term);
+                        const matchBrand = activeBrand.brandName.toLowerCase().includes(term);
+                        const matchMfr = activeBrand.manufacturer.toLowerCase().includes(term);
+                        return matchName || matchBrand || matchMfr;
+                      }
+                      return true;
+                    })
+                    .map(item => {
+                      const activeBrand = item.selectedBrandIndex === 0
+                        ? item.proposedBrand
+                        : item.alternatives[item.selectedBrandIndex - 1] || item.proposedBrand;
+                      const isApproved = item.status === "approved";
+                      const isSwap = item.status === "swap_requested";
+
+                      return (
+                        <Card
+                          key={item.id}
+                          className={`rounded-3xl border transition-all p-4 space-y-4 shadow-sm w-full min-w-0 ${
+                            isApproved
+                              ? "border-emerald-500/40 bg-card hover:border-emerald-500/60"
+                              : isSwap
+                              ? "border-sky-500/40 bg-card hover:border-sky-500/60"
+                              : "border-border bg-card hover:border-border/80"
+                          }`}
+                        >
+                          {/* Cabeçalho do Card */}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <strong className="text-sm sm:text-base font-black text-foreground">
+                                  {item.productName}
+                                </strong>
+                                <Badge variant="outline" className="text-[10px] font-bold">
+                                  {item.category}
+                                </Badge>
+                                {item.isCourtesy && (
+                                  <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 text-[9px] font-bold">
+                                    Cortesia Kit Boas-Vindas
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-xs text-muted-foreground block truncate">
+                                SKU: <code className="font-mono text-[11px]">{item.id}</code>
+                              </span>
+                            </div>
+
+                            {/* Badge de Status */}
+                            {isApproved ? (
+                              <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] font-bold shrink-0">
+                                <Check className="w-3 h-3 mr-1" /> Aprovado para Produção
+                              </Badge>
+                            ) : isSwap ? (
+                              <Badge className="bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30 text-[10px] font-bold shrink-0">
+                                <RotateCcw className="w-3 h-3 mr-1" /> Troca Solicitada
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 text-[10px] font-bold shrink-0">
+                                <Clock className="w-3 h-3 mr-1" /> Aguardando Homologação
+                              </Badge>
+                            )}
+                          </div>
+
+                          {/* Comparação Lado a Lado (Legado vs Proposta Real) */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-stretch">
+                            {/* Coluna Esquerda: Foto Legada */}
+                            <div className="bg-muted/30 border border-border/80 rounded-2xl p-3 flex flex-col justify-between space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                                  <span className="text-rose-500">❌</span> Foto Atual (Legado)
+                                </span>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => setZoomModalItem(item)}
+                                  className="h-6 w-6 rounded-lg text-muted-foreground hover:text-foreground"
+                                  title="Ver em tela cheia"
+                                >
+                                  <ZoomIn className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+
+                              <div className="w-full aspect-square rounded-xl bg-white border border-border/50 flex items-center justify-center p-2 overflow-hidden shadow-inner">
+                                <img
+                                  src={item.currentImageUrl}
+                                  alt={`Legado ${item.productName}`}
+                                  className="w-full h-full object-contain"
+                                />
+                              </div>
+
+                              <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-700 dark:text-rose-300">
+                                <strong>Diagnóstico:</strong> {item.currentDiagnosis}
+                              </div>
+                            </div>
+
+                            {/* Coluna Direita: Foto Proposta (Marca Real) */}
+                            <div className="bg-emerald-500/5 border-2 border-emerald-500/30 rounded-2xl p-3 flex flex-col justify-between space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                  <span className="text-emerald-500">✨</span> Proposta (Marca Real)
+                                </span>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={() => setZoomModalItem(item)}
+                                  className="h-6 w-6 rounded-lg text-emerald-600 hover:text-emerald-700"
+                                  title="Inspecionar 1024x1024"
+                                >
+                                  <ZoomIn className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+
+                              <div
+                                className="w-full aspect-square rounded-xl bg-white border border-emerald-500/20 flex items-center justify-center p-2 overflow-hidden shadow-xs relative group cursor-pointer"
+                                onClick={() => setZoomModalItem(item)}
+                              >
+                                <img
+                                  src={activeBrand.imageUrl}
+                                  alt={activeBrand.brandName}
+                                  className="w-full h-full object-contain"
+                                />
+                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
+                                  <span className="bg-slate-900/90 text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1">
+                                    <ZoomIn className="w-3 h-3" /> Ampliar 1024x1024
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="p-2.5 rounded-xl bg-card border border-border space-y-1 text-xs">
+                                <div className="font-black text-foreground text-xs leading-tight">
+                                  {activeBrand.brandName}
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  Fabricante: <strong className="text-foreground">{activeBrand.manufacturer}</strong>
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  Embalagem: <span>{activeBrand.packageType} ({activeBrand.volumeOrWeight})</span>
+                                </div>
+                                <div className="pt-1 flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
+                                  <span>✓ Fundo #FFFFFF</span>
+                                  <span>• 1:1 Estúdio 5500K</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Seletor de Alternativas de Marca */}
+                          {item.alternatives.length > 0 && (
+                            <div className="flex items-center justify-between gap-2 p-2.5 rounded-2xl bg-muted/40 border border-border text-xs">
+                              <span className="text-[11px] text-muted-foreground font-semibold">
+                                Alternativas de Fornecedor:
+                              </span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectBrandAlternative(item.id, 0)}
+                                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all ${
+                                    item.selectedBrandIndex === 0
+                                      ? "bg-primary text-primary-foreground shadow-xs"
+                                      : "bg-background border border-border text-muted-foreground hover:text-foreground"
+                                  }`}
+                                >
+                                  {item.proposedBrand.brandName.split(" ")[0]} (Padrão)
+                                </button>
+                                {item.alternatives.map((alt, idx) => (
+                                  <button
+                                    key={alt.brandName}
+                                    type="button"
+                                    onClick={() => handleSelectBrandAlternative(item.id, idx + 1)}
+                                    className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all ${
+                                      item.selectedBrandIndex === idx + 1
+                                        ? "bg-primary text-primary-foreground shadow-xs"
+                                        : "bg-background border border-border text-muted-foreground hover:text-foreground"
+                                    }`}
+                                  >
+                                    {alt.brandName.split(" ")[0]}
+                                  </button>
+                                ))}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setSwapModalItem(item)}
+                                  className="h-6 text-[10px] font-bold text-muted-foreground hover:text-foreground px-2 rounded-lg"
+                                >
+                                  Mais...
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Observações de Troca */}
+                          {item.notes && (
+                            <div className="p-2.5 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-xs text-sky-700 dark:text-sky-300">
+                              <strong>Observação de Troca:</strong> {item.notes}
+                            </div>
+                          )}
+
+                          {/* Rodapé com Botões de Ação */}
+                          <div className="flex items-center justify-between pt-2 border-t border-border gap-2">
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => handleApprovePhoto(item.id)}
+                                className={`rounded-xl text-xs font-bold h-9 transition-all ${
+                                  isApproved
+                                    ? "bg-muted text-muted-foreground hover:text-foreground border border-border"
+                                    : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                                }`}
+                              >
+                                {isApproved ? (
+                                  <>
+                                    <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                                    Desfazer Aprovação
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 mr-1.5" />
+                                    Aprovar Foto
+                                  </>
+                                )}
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setSwapModalItem(item)}
+                                className="rounded-xl text-xs font-bold h-9"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                                Trocar Marca...
+                              </Button>
+                            </div>
+
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setZoomModalItem(item)}
+                              className="rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground h-9"
+                            >
+                              <ZoomIn className="w-3.5 h-3.5 mr-1.5" />
+                              Zoom HD
+                            </Button>
+                          </div>
+                        </Card>
+                      );
+                    })}
                 </div>
               </div>
             )}
@@ -2238,9 +3358,44 @@ export default function MinibarAdminPage() {
                       R$ {Number(settlementData.netPayableToAnserve || 0).toFixed(2)}
                     </div>
                     <span className="text-[10px] text-emerald-800/80 dark:text-emerald-300/80 block">
-                      + R$ {Number(settlementData.courtesyRestockCost || 0).toFixed(2)} reembolsados em cortesias
+                      + R$ {Number(settlementData.courtesyWaterTotalCost ?? settlementData.courtesySummary?.courtesyWaterTotalCost ?? settlementData.courtesyRestockCost ?? 0).toFixed(2)} reembolsados em águas Anserve
                     </span>
                   </Card>
+                </div>
+
+                {/* R6: Apuração de Fornecedores do Kit de Boas-Vindas */}
+                <div className="p-3.5 rounded-2xl bg-muted/40 border border-border text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-foreground flex items-center gap-1.5">
+                      <Gift className="w-3.5 h-3.5 text-sky-600" />
+                      <span>Kit de Boas-Vindas (Origem dos Fornecedores & Repasse)</span>
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30">
+                      Reembolso Água Anserve: R$ {Number(settlementData.courtesyWaterTotalCost ?? settlementData.courtesySummary?.courtesyWaterTotalCost ?? 0).toFixed(2)}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between">
+                      <div>
+                        <span className="font-bold text-foreground block">💧 Copos d'Água Mineral 200ml</span>
+                        <span className="text-muted-foreground block text-[10px]">Fornecedor: Anserve • Custo unitário R$ 2,00</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-bold block text-foreground">{settlementData.courtesyWaterCupsTotal ?? settlementData.courtesySummary?.totalCourtesyWaterCups ?? 0} un. consumidas</span>
+                        <strong className="text-sky-600 font-mono">+ R$ {Number(settlementData.courtesyWaterTotalCost ?? settlementData.courtesySummary?.courtesyWaterTotalCost ?? 0).toFixed(2)}</strong>
+                      </div>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between">
+                      <div>
+                        <span className="font-bold text-foreground block">🥜 Amendoim Mendorato 27g</span>
+                        <span className="text-amber-600 dark:text-amber-400 font-semibold block text-[10px]">Fornecedor: Hotel Próprio (CorpFlats)</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-bold block text-foreground">{settlementData.courtesyMendoratoPeanutsTotal ?? settlementData.courtesySummary?.totalCourtesyMendoratoPeanuts ?? 0} un. consumidas</span>
+                        <strong className="text-muted-foreground font-mono">R$ 0,00 (Isento de Repasse)</strong>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -2683,6 +3838,291 @@ export default function MinibarAdminPage() {
                 {retryingInvoice ? "Reenviando..." : "Salvar Contato e Reenviar NF"}
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* MODAL DE ZOOM E INSPEÇÃO HD DE FOTOS (R1 & R2) */}
+        <Dialog open={!!zoomModalItem} onOpenChange={() => setZoomModalItem(null)}>
+          <DialogContent className="max-w-4xl p-6 rounded-3xl">
+            <DialogHeader>
+              <div className="flex items-center gap-2">
+                <Badge className="bg-amber-400 text-slate-950 font-black text-[10px]">
+                  🔍 INSPEÇÃO DE PADRONIZAÇÃO VISUAL (1024x1024)
+                </Badge>
+                {zoomModalItem?.isCourtesy && (
+                  <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30 text-[10px] font-bold">
+                    Cortesia Kit Boas-Vindas
+                  </Badge>
+                )}
+              </div>
+              <DialogTitle className="text-lg font-black text-foreground flex items-center justify-between">
+                <span>{zoomModalItem?.productName} • Comparação Lado a Lado</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Audite a qualidade fotográfica, acabamento de estúdio e nitidez da embalagem comercial real.
+              </DialogDescription>
+            </DialogHeader>
+
+            {zoomModalItem && (() => {
+              const activeBrand = zoomModalItem.selectedBrandIndex === 0
+                ? zoomModalItem.proposedBrand
+                : zoomModalItem.alternatives[zoomModalItem.selectedBrandIndex - 1] || zoomModalItem.proposedBrand;
+              const isApproved = zoomModalItem.status === "approved";
+
+              return (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Legado */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-rose-500 flex items-center gap-1">
+                          ❌ Foto Legada (IA / Genérica)
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">Resolução 1024x1024</span>
+                      </div>
+                      <div className="w-full aspect-square rounded-2xl bg-white border border-border p-3 flex items-center justify-center shadow-inner">
+                        <img
+                          src={zoomModalItem.currentImageUrl}
+                          alt="Legado"
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-300">
+                        <strong>Problema Detectado:</strong> {zoomModalItem.currentDiagnosis}
+                      </div>
+                    </div>
+
+                    {/* Proposta Marca Real */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                          ✨ Nova Foto Comercial (Marca Real)
+                        </span>
+                        <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[9px] font-bold">
+                          Fundo #FFFFFF Puro
+                        </Badge>
+                      </div>
+                      <div className="w-full aspect-square rounded-2xl bg-white border-2 border-emerald-500/30 p-3 flex items-center justify-center shadow-sm">
+                        <img
+                          src={activeBrand.imageUrl}
+                          alt={activeBrand.brandName}
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-card border border-border text-xs space-y-1">
+                        <div className="font-black text-sm text-foreground">{activeBrand.brandName}</div>
+                        <div className="text-muted-foreground">
+                          Fabricante: <strong className="text-foreground">{activeBrand.manufacturer}</strong> • Embalagem: {activeBrand.packageType} ({activeBrand.volumeOrWeight})
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Checklist de Validação Visual */}
+                  <div className="p-3.5 rounded-2xl bg-muted/40 border border-border space-y-2">
+                    <span className="text-xs font-black text-foreground uppercase tracking-wider block">
+                      Checklist Técnico de Padronização CorpFlats
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                        <Check className="w-4 h-4 shrink-0" />
+                        <span>Fundo Branco Puro (#FFFFFF)</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                        <Check className="w-4 h-4 shrink-0" />
+                        <span>Proporção 1:1 Quadrada</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                        <Check className="w-4 h-4 shrink-0" />
+                        <span>Iluminação Balanceada 5500K</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                        <Check className="w-4 h-4 shrink-0" />
+                        <span>Ângulo Frontal Superior 10°-15°</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                        <Check className="w-4 h-4 shrink-0" />
+                        <span>Sombra de Contato Suave</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                        <Check className="w-4 h-4 shrink-0" />
+                        <span>Marca Comercial Autêntica</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <DialogFooter className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => setZoomModalItem(null)}
+                      className="rounded-xl text-xs font-bold"
+                    >
+                      Fechar
+                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          const item = zoomModalItem;
+                          setZoomModalItem(null);
+                          setSwapModalItem(item);
+                        }}
+                        className="rounded-xl text-xs font-bold"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                        Trocar Marca...
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          handleApprovePhoto(zoomModalItem.id);
+                          setZoomModalItem(null);
+                        }}
+                        className={`rounded-xl text-xs font-bold ${
+                          isApproved
+                            ? "bg-muted text-muted-foreground hover:text-foreground"
+                            : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                        }`}
+                      >
+                        {isApproved ? (
+                          <>
+                            <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                            Desfazer Aprovação
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-3.5 h-3.5 mr-1.5" />
+                            Aprovar Esta Foto
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </DialogFooter>
+                </div>
+              );
+            })()}
+          </DialogContent>
+        </Dialog>
+
+        {/* MODAL DE TROCA DE MARCA / FORNECEDOR ALTERNATIVO (R2) */}
+        <Dialog open={!!swapModalItem} onOpenChange={() => setSwapModalItem(null)}>
+          <DialogContent className="max-w-lg p-5 rounded-3xl">
+            <DialogHeader>
+              <div className="flex items-center gap-2">
+                <Badge className="bg-sky-500/15 text-sky-600 border-sky-500/30 font-bold text-[10px]">
+                  🔄 SELETOR DE MARCA & FORNECEDOR
+                </Badge>
+              </div>
+              <DialogTitle className="text-base font-black text-foreground">
+                Trocar Marca de: {swapModalItem?.productName}
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Selecione uma marca alternativa homologada ou solicite uma marca personalizada para alinhamento com a fornecedora.
+              </DialogDescription>
+            </DialogHeader>
+
+            {swapModalItem && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <span className="text-xs font-bold text-foreground">Marcas Comerciais Disponíveis:</span>
+                  <div className="space-y-2">
+                    {/* Opção Padrão */}
+                    <div
+                      onClick={() => handleSelectBrandAlternative(swapModalItem.id, 0)}
+                      className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                        swapModalItem.selectedBrandIndex === 0
+                          ? "border-primary bg-primary/5 shadow-xs"
+                          : "border-border hover:border-border/80 bg-card"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={swapModalItem.proposedBrand.imageUrl}
+                          alt={swapModalItem.proposedBrand.brandName}
+                          className="w-10 h-10 rounded-xl bg-white object-contain border p-1"
+                        />
+                        <div>
+                          <div className="font-bold text-xs text-foreground">
+                            {swapModalItem.proposedBrand.brandName} (Padrão)
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">
+                            {swapModalItem.proposedBrand.manufacturer} • {swapModalItem.proposedBrand.volumeOrWeight}
+                          </span>
+                        </div>
+                      </div>
+                      {swapModalItem.selectedBrandIndex === 0 && (
+                        <Check className="w-4 h-4 text-primary shrink-0" />
+                      )}
+                    </div>
+
+                    {/* Alternativas Cadastradas */}
+                    {swapModalItem.alternatives.map((alt, idx) => (
+                      <div
+                        key={alt.brandName}
+                        onClick={() => handleSelectBrandAlternative(swapModalItem.id, idx + 1)}
+                        className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                          swapModalItem.selectedBrandIndex === idx + 1
+                            ? "border-primary bg-primary/5 shadow-xs"
+                            : "border-border hover:border-border/80 bg-card"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={alt.imageUrl}
+                            alt={alt.brandName}
+                            className="w-10 h-10 rounded-xl bg-white object-contain border p-1"
+                          />
+                          <div>
+                            <div className="font-bold text-xs text-foreground">{alt.brandName}</div>
+                            <span className="text-[11px] text-muted-foreground">
+                              {alt.manufacturer} • {alt.volumeOrWeight}
+                            </span>
+                          </div>
+                        </div>
+                        {swapModalItem.selectedBrandIndex === idx + 1 && (
+                          <Check className="w-4 h-4 text-primary shrink-0" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 pt-2 border-t border-border">
+                  <Label className="text-xs font-bold text-foreground">
+                    Ou Solicite Outra Marca Específica:
+                  </Label>
+                  <Input
+                    placeholder="Ex: Preferimos Heineken 0.0 sem álcool ou Stella Pure Gold..."
+                    value={customSwapNotes}
+                    onChange={e => setCustomSwapNotes(e.target.value)}
+                    className="h-9 text-xs rounded-xl"
+                  />
+                  <span className="text-[10px] text-muted-foreground block">
+                    Ao registrar observação, o status mudará para "Troca Solicitada".
+                  </span>
+                </div>
+
+                <DialogFooter className="pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSwapModalItem(null);
+                      setCustomSwapNotes("");
+                    }}
+                    className="rounded-xl text-xs font-bold"
+                  >
+                    Fechar
+                  </Button>
+                  {customSwapNotes.trim() && (
+                    <Button
+                      onClick={() => handleRequestCustomSwap(swapModalItem.id, customSwapNotes)}
+                      className="rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white"
+                    >
+                      Gravar Solicitação de Troca
+                    </Button>
+                  )}
+                </DialogFooter>
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       </div>

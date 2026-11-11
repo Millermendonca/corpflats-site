@@ -19,7 +19,7 @@ import {
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
   LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
-  Download, Upload, FileSpreadsheet, Wrench, Camera, Refrigerator, Bell
+  Download, Upload, FileSpreadsheet, Wrench, Camera, Refrigerator, Bell, Gift
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 import { useToast } from "@/hooks/use-toast"
@@ -10960,6 +10960,34 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         </Button>
                       </div>
                     </div>
+
+                    {/* Sub-bloco Segregado de Cortesias Consumidas (R$ 0,00) */}
+                    {(() => {
+                      const liveRes = (data?.reservations || []).find((r: any) => Number(r.id) === Number(selectedRes.id)) || selectedRes
+                      const welcomeKit = (liveRes as any)?.welcomeKitConsumption
+                      const courtesyWater = Number(welcomeKit?.waterCups ?? welcomeKit?.waterCupsConsumed) || 0
+                      const courtesyPeanuts = Number(welcomeKit?.mendoratoPeanuts ?? welcomeKit?.peanutsConsumed) || 0
+                      if (courtesyWater <= 0 && courtesyPeanuts <= 0) return null
+                      return (
+                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                              <Gift className="w-3.5 h-3.5" />
+                              <span>Kit de Boas-Vindas Consumido (Cortesia)</span>
+                            </span>
+                            <Badge variant="outline" className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px]">
+                              R$ 0,00
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            {[
+                              courtesyWater > 0 ? `${courtesyWater}x Copo d'Água 200ml` : null,
+                              courtesyPeanuts > 0 ? `${courtesyPeanuts}x Amendoim Mendorato 27g` : null
+                            ].filter(Boolean).join(" • ")}
+                          </p>
+                        </div>
+                      )
+                    })()}
 
                     {(() => {
                       const liveRes = (data?.reservations || []).find((r: any) => Number(r.id) === Number(selectedRes.id))

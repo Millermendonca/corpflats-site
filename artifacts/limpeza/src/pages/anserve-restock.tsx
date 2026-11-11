@@ -196,11 +196,15 @@ export default function AnserveRestockPage() {
   const [inspectorName, setInspectorName] = useState("");
   const [semConsumoNotes, setSemConsumoNotes] = useState("");
   const [semConsumoCourtesyRestock, setSemConsumoCourtesyRestock] = useState(true);
+  const [semConsumoWaterConsumed, setSemConsumoWaterConsumed] = useState<number>(0);
+  const [semConsumoPeanutsConsumed, setSemConsumoPeanutsConsumed] = useState<number>(0);
 
   // "Lançar Consumo do Dia" form state
   const [launchDateYmd, setLaunchDateYmd] = useState<string>(getTodayYmdBr());
   const [launchedQuantities, setLaunchedQuantities] = useState<Record<string, number>>({});
   const [launchCourtesyRestock, setLaunchCourtesyRestock] = useState<boolean>(true);
+  const [welcomeKitWaterConsumed, setWelcomeKitWaterConsumed] = useState<number>(0);
+  const [welcomeKitPeanutsConsumed, setWelcomeKitPeanutsConsumed] = useState<number>(0);
   const [launchNotes, setLaunchNotes] = useState("");
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -504,7 +508,8 @@ export default function AnserveRestockPage() {
   const handleOpenSemConsumo = (flat: FlatStatusItem) => {
     setSemConsumoModalFlat(flat);
     setSemConsumoNotes("");
-    setSemConsumoCourtesyRestock(true);
+    setSemConsumoWaterConsumed(0);
+    setSemConsumoPeanutsConsumed(0);
   };
 
   // Open "Lançar Consumo do Dia" modal
@@ -512,7 +517,8 @@ export default function AnserveRestockPage() {
     setLaunchModalFlat(flat);
     setLaunchDateYmd(getTodayYmdBr());
     setLaunchedQuantities({});
-    setLaunchCourtesyRestock(true);
+    setWelcomeKitWaterConsumed(0);
+    setWelcomeKitPeanutsConsumed(0);
     setLaunchNotes("");
     setCapturedPhotos([]);
   };
@@ -552,23 +558,6 @@ export default function AnserveRestockPage() {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (localToken) headers["x-anserve-token"] = localToken;
 
-      const restockedItems: Array<{ productId: string; quantity: number; isCourtesy?: boolean }> = [];
-
-      if (semConsumoCourtesyRestock) {
-        const nespresso = products.find((p) => p.id.includes("nespresso") || p.name.toLowerCase().includes("nespresso"));
-        if (nespresso) {
-          restockedItems.push({ productId: nespresso.id, quantity: 2, isCourtesy: true });
-        }
-        const balas = products.find((p) => p.id.includes("bala") || p.name.toLowerCase().includes("bala"));
-        if (balas) {
-          restockedItems.push({ productId: balas.id, quantity: 4, isCourtesy: true });
-        }
-        const amendoim = products.find((p) => p.id.includes("amendoim") || p.name.toLowerCase().includes("amendoim"));
-        if (amendoim) {
-          restockedItems.push({ productId: amendoim.id, quantity: 1, isCourtesy: true });
-        }
-      }
-
       const isPostCheckout = Boolean(
         semConsumoModalFlat.isCheckedOut || semConsumoModalFlat.status === "checkout_hoje"
       );
@@ -586,8 +575,12 @@ export default function AnserveRestockPage() {
           isDailyLaunch: false,
           isFinalCheckoutInspection: isPostCheckout,
           launchDate: getTodayYmdBr(),
+          welcomeKitConsumption: {
+            waterCups: semConsumoWaterConsumed,
+            mendoratoPeanuts: semConsumoPeanutsConsumed
+          },
           notes: semConsumoNotes,
-          restockedItems
+          restockedItems: []
         })
       });
 
@@ -632,10 +625,11 @@ export default function AnserveRestockPage() {
         quantity: r.qty
       }));
 
-    if (consumedItemsList.length === 0) {
+    const hasCourtesyConsumed = welcomeKitWaterConsumed > 0 || welcomeKitPeanutsConsumed > 0;
+    if (consumedItemsList.length === 0 && !hasCourtesyConsumed) {
       toast({
-        title: "Nenhum item selecionado",
-        description: "Selecione a quantidade de ao menos 1 produto consumido hoje para lançar no flat.",
+        title: "Nenhum consumo informado",
+        description: "Selecione ao menos 1 produto pago consumido ou registre o consumo das cortesias do Kit de Boas-Vindas.",
         variant: "destructive"
       });
       return;
@@ -647,19 +641,13 @@ export default function AnserveRestockPage() {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (localToken) headers["x-anserve-token"] = localToken;
 
+      // R4: Reposição da repositora apenas para itens pagos repostos. Cortesias do kit são montadas no turnover pelas camareiras.
       const restockedItems: Array<{ productId: string; quantity: number; isCourtesy?: boolean }> =
         consumedItemsList.map((it) => ({
           productId: it.productId,
           quantity: it.quantity,
           isCourtesy: false
         }));
-
-      if (launchCourtesyRestock) {
-        const nespresso = products.find((p) => p.id.includes("nespresso") || p.name.toLowerCase().includes("nespresso"));
-        if (nespresso) {
-          restockedItems.push({ productId: nespresso.id, quantity: 2, isCourtesy: true });
-        }
-      }
 
       const isPostCheckout = Boolean(
         launchModalFlat.isCheckedOut || launchModalFlat.status === "checkout_hoje"
@@ -678,6 +666,10 @@ export default function AnserveRestockPage() {
           isDailyLaunch: true,
           isFinalCheckoutInspection: isPostCheckout,
           launchDate: launchDateYmd || getTodayYmdBr(),
+          welcomeKitConsumption: {
+            waterCups: welcomeKitWaterConsumed,
+            mendoratoPeanuts: welcomeKitPeanutsConsumed
+          },
           consumedItems: consumedItemsList,
           photos: capturedPhotos,
           notes: launchNotes,
@@ -1307,19 +1299,80 @@ export default function AnserveRestockPage() {
                 />
               </div>
 
-              <div className="flex items-center justify-between p-3 rounded-2xl bg-muted/40 border border-border">
-                <div className="space-y-0.5">
-                  <span className="font-bold text-foreground">Repor Kit de Cortesias de Boas-Vindas</span>
-                  <p className="text-[11px] text-muted-foreground">
-                    2 Cápsulas Nespresso + Balas + Amendoim (Crédito CorpFlats ↔ Anserve).
-                  </p>
+              {/* Bloco R4: Kit de Boas-Vindas (Cortesia da Casa) */}
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-sky-500/10 to-transparent border border-amber-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🎁</span>
+                    <div>
+                      <h4 className="text-xs font-black text-foreground">Kit de Boas-Vindas (Cortesia da Casa)</h4>
+                      <p className="text-[10px] text-muted-foreground">
+                        Conferência de consumo • Limite de até 2 unidades de cada por estadia
+                      </p>
+                    </div>
+                  </div>
+                  <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] font-black">
+                    Cortesia R$ 0,00
+                  </Badge>
                 </div>
-                <input
-                  type="checkbox"
-                  checked={semConsumoCourtesyRestock}
-                  onChange={(e) => setSemConsumoCourtesyRestock(e.target.checked)}
-                  className="w-4 h-4 accent-primary rounded"
-                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Copo d'Água Mineral 200ml */}
+                  <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="font-bold text-xs text-foreground block truncate">💧 Copo d'Água (200ml)</span>
+                      <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold block">
+                        Estoque Anserve • R$ 0,00
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {[0, 1, 2].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => setSemConsumoWaterConsumed(num)}
+                          className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
+                            semConsumoWaterConsumed === num
+                              ? "bg-sky-600 text-white shadow-xs"
+                              : "bg-muted/70 text-foreground hover:bg-muted"
+                          }`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Amendoim Mendorato 27g */}
+                  <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="font-bold text-xs text-foreground block truncate">🥜 Amendoim Mendorato</span>
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
+                        Hotel Próprio • R$ 0,00
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {[0, 1, 2].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => setSemConsumoPeanutsConsumed(num)}
+                          className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
+                            semConsumoPeanutsConsumed === num
+                              ? "bg-amber-600 text-white shadow-xs"
+                              : "bg-muted/70 text-foreground hover:bg-muted"
+                          }`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-muted-foreground italic">
+                  * A reposição do kit é realizada exclusivamente pela camareira na virada de hóspede.
+                </p>
               </div>
 
               <div className="space-y-1.5">
@@ -1380,6 +1433,82 @@ export default function AnserveRestockPage() {
                   </div>
                 </div>
               )}
+
+              {/* Bloco R4: Kit de Boas-Vindas (Cortesia da Casa) */}
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-sky-500/10 to-transparent border border-amber-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🎁</span>
+                    <div>
+                      <h4 className="text-xs font-black text-foreground">Kit de Boas-Vindas (Cortesia da Casa)</h4>
+                      <p className="text-[10px] text-muted-foreground">
+                        Conferência de consumo • Limite de até 2 unidades de cada por estadia
+                      </p>
+                    </div>
+                  </div>
+                  <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[9px] font-black">
+                    Cortesia R$ 0,00
+                  </Badge>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Copo d'Água Mineral 200ml */}
+                  <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="font-bold text-xs text-foreground block truncate">💧 Copo d'Água (200ml)</span>
+                      <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold block">
+                        Estoque Anserve • R$ 0,00
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {[0, 1, 2].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => setWelcomeKitWaterConsumed(num)}
+                          className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
+                            welcomeKitWaterConsumed === num
+                              ? "bg-sky-600 text-white shadow-xs"
+                              : "bg-muted/70 text-foreground hover:bg-muted"
+                          }`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Amendoim Mendorato 27g */}
+                  <div className="p-2.5 rounded-xl bg-card border border-border flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="font-bold text-xs text-foreground block truncate">🥜 Amendoim Mendorato</span>
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold block">
+                        Hotel Próprio • R$ 0,00
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {[0, 1, 2].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => setWelcomeKitPeanutsConsumed(num)}
+                          className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
+                            welcomeKitPeanutsConsumed === num
+                              ? "bg-amber-600 text-white shadow-xs"
+                              : "bg-muted/70 text-foreground hover:bg-muted"
+                          }`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-muted-foreground italic">
+                  * A reposição do kit é realizada exclusivamente pela camareira na virada de hóspede.
+                </p>
+              </div>
 
               {/* Seletor de Data do Lançamento (Dia) */}
               <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-muted/50 border border-border">
@@ -1477,22 +1606,6 @@ export default function AnserveRestockPage() {
                     </span>
                   </div>
                 </div>
-              </div>
-
-              {/* Repor Cortesias & Foto Opcional */}
-              <div className="flex items-center justify-between p-3 rounded-2xl bg-muted/40 border border-border text-xs">
-                <div>
-                  <span className="font-bold text-foreground block">Repor Cortesias Consumidas</span>
-                  <span className="text-[11px] text-muted-foreground">
-                    Registrar reposição de cápsulas Nespresso / cortesias gratuitas
-                  </span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={launchCourtesyRestock}
-                  onChange={(e) => setLaunchCourtesyRestock(e.target.checked)}
-                  className="w-4 h-4 accent-primary rounded"
-                />
               </div>
 
               <div className="space-y-2">
