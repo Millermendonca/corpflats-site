@@ -96,7 +96,7 @@ export function getSpokenCheckoutsMap(): Record<string, SpokenCheckoutRecord> {
     const raw = localStorage.getItem(STORAGE_KEY_SPOKEN);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed;
     }
   } catch {}
@@ -112,6 +112,7 @@ function saveSpokenCheckoutsMap(map: Record<string, SpokenCheckoutRecord>): void
     const now = Date.now();
     const cleanMap: Record<string, SpokenCheckoutRecord> = {};
     for (const [key, item] of Object.entries(map)) {
+      if (!item) continue;
       const ts = new Date(item.spokenAt || item.occurredAt || 0).getTime();
       // Mantém últimos 2 dias (48h)
       if (now - ts < 48 * 60 * 60 * 1000) {
@@ -131,7 +132,10 @@ export function buildCheckoutDedupeKey(item: {
   reservationCode?: string;
   todayYmd?: string;
 }): string {
-  const flat = String(item.flatNumber || "").trim().toLowerCase();
+  const flat = String(item.flatNumber || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:apt|apto|flat)\s*/i, "");
   const today = item.todayYmd || getBrasiliaTodayYmd();
   if (item.id) {
     return `notif_${item.id}`;
@@ -151,16 +155,30 @@ export function isCheckoutAlreadySpoken(item: {
   reservationCode?: string;
   todayYmd?: string;
 }): boolean {
+  const isTest = String(item.id || "").startsWith("test_");
   const map = getSpokenCheckoutsMap();
   const directKey = item.id ? `notif_${item.id}` : "";
-  const codeKey = item.reservationCode
-    ? `code_${item.reservationCode}_${String(item.flatNumber).trim().toLowerCase()}_${item.todayYmd || getBrasiliaTodayYmd()}`
-    : "";
-  const flatKey = `flat_${String(item.flatNumber).trim().toLowerCase()}_${item.todayYmd || getBrasiliaTodayYmd()}`;
-
   if (directKey && map[directKey]) return true;
-  if (codeKey && map[codeKey]) return true;
-  if (map[flatKey]) return true;
+
+  // Se for teste de som manual, não é bloqueado por anúncios de saídas reais
+  if (isTest) return false;
+
+  const flatClean = String(item.flatNumber || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:apt|apto|flat)\s*/i, "");
+  const today = item.todayYmd || getBrasiliaTodayYmd();
+
+  if (item.reservationCode) {
+    const codeKey = `code_${item.reservationCode}_${flatClean}_${today}`;
+    if (map[codeKey]) return true;
+  }
+
+  if (flatClean) {
+    const flatKey = `flat_${flatClean}_${today}`;
+    if (map[flatKey]) return true;
+  }
+
   return false;
 }
 
@@ -168,11 +186,16 @@ export function isCheckoutAlreadySpoken(item: {
  * Registra check-out como anunciado com persistência local à prova de reload
  */
 export function markCheckoutAsSpoken(item: CheckoutAnnouncementItem): void {
+  const isTest = String(item.id || "").startsWith("test_");
   const map = getSpokenCheckoutsMap();
   const nowIso = new Date().toISOString();
+  const flatClean = String(item.flatNumber || "")
+    .trim()
+    .replace(/^(?:apt|apto|flat)\s*/i, "");
+
   const record: SpokenCheckoutRecord = {
     id: String(item.id),
-    flatNumber: item.flatNumber,
+    flatNumber: flatClean,
     spokenAt: nowIso,
     occurredAt: item.occurredAt
   };
@@ -180,13 +203,16 @@ export function markCheckoutAsSpoken(item: CheckoutAnnouncementItem): void {
   const primaryKey = item.id ? `notif_${item.id}` : buildCheckoutDedupeKey(item);
   map[primaryKey] = record;
 
-  // Chaves secundárias para blindar contra repetição em rotas e endpoints diferentes
-  const flatKey = `flat_${String(item.flatNumber).trim().toLowerCase()}_${getBrasiliaTodayYmd()}`;
-  map[flatKey] = record;
+  // Não polui chaves reais de flat do dia para cliques de teste
+  if (!isTest && flatClean) {
+    const today = getBrasiliaTodayYmd();
+    const flatKey = `flat_${flatClean.toLowerCase()}_${today}`;
+    map[flatKey] = record;
 
-  if (item.reservationCode) {
-    const codeKey = `code_${item.reservationCode}_${String(item.flatNumber).trim().toLowerCase()}_${getBrasiliaTodayYmd()}`;
-    map[codeKey] = record;
+    if (item.reservationCode) {
+      const codeKey = `code_${item.reservationCode}_${flatClean.toLowerCase()}_${today}`;
+      map[codeKey] = record;
+    }
   }
 
   saveSpokenCheckoutsMap(map);
@@ -194,7 +220,7 @@ export function markCheckoutAsSpoken(item: CheckoutAnnouncementItem): void {
 
 /**
  * Valida a janela de tolerância: check-out deve ser de HOJE e ter ocorrido
- * nos últimos 240 minutos (4 horas). Eventos mais antigos são descartados.
+ * nos últimos 240 minutos (4 horas). Eventos mais antigos são rigorosamente descartados.
  */
 export function isCheckoutWithinTolerance(
   occurredAt?: string | null,
@@ -237,42 +263,61 @@ export function isCheckoutWithinTolerance(
 
       return true;
     }
+    // Timestamp fornecido mas inválido (ex: "invalid-date") -> descarta
+    return false;
   }
 
-  // Se só tiver horário no formato HH:MM (ex: "11:30")
-  if (checkoutTimeStr && /^\d{1,2}:\d{2}$/.test(checkoutTimeStr.trim())) {
-    const [h, m] = checkoutTimeStr.trim().split(":").map(Number);
-    const now = new Date(referenceNowMs);
-    const checkoutDate = new Date(now);
-    checkoutDate.setHours(h, m, 0, 0);
+  // Se só tiver horário no formato HH:MM, HH:MM:SS ou 11h30 (fuso de Brasília)
+  if (checkoutTimeStr) {
+    const match = checkoutTimeStr.trim().match(/^(\d{1,2})[:h](\d{2})(?::(\d{2}))?$/i);
+    if (match) {
+      const h = Number(match[1]);
+      const m = Number(match[2]);
+      const s = Number(match[3] || 0);
 
-    const diffMs = referenceNowMs - checkoutDate.getTime();
-    if (diffMs > TOLERANCE_WINDOW_MS) {
-      return false;
+      if (h >= 0 && h <= 23 && m >= 0 && m <= 59 && s >= 0 && s <= 59) {
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const checkoutIso = `${todayYmd}T${pad(h)}:${pad(m)}:${pad(s)}-03:00`;
+        const checkoutTs = new Date(checkoutIso).getTime();
+
+        if (!isNaN(checkoutTs)) {
+          const diffMs = referenceNowMs - checkoutTs;
+          if (diffMs > TOLERANCE_WINDOW_MS) {
+            return false;
+          }
+          if (diffMs < -5 * 60 * 1000) {
+            return false;
+          }
+          return true;
+        }
+      }
     }
-    if (diffMs < -5 * 60 * 1000) {
-      return false;
-    }
-    return true;
+    // Formato de hora não reconhecido (ex: "hoje", etc.)
+    return false;
   }
 
-  // Sem timestamp confiável recente: permite se for evento em tempo real
-  return true;
+  // Sem timestamp ou horário válido: descarta para garantir regra de 4h (R2)
+  return false;
 }
 
 /**
  * Desbloqueia o áudio da Web Speech API na primeira interação do usuário (touch/click/key)
+ * com disparo de utterance silenciosa para conformidade estrita com políticas do WebKit / Safari iOS.
  */
 export function unlockSpeechAudio(): void {
-  if (audioUnlocked || typeof window === "undefined") return;
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
   try {
-    if ("speechSynthesis" in window) {
-      // Pequeno comando de inicialização sem volume audível para conceder autoplay
+    if (!audioUnlocked) {
+      const silent = new SpeechSynthesisUtterance("");
+      silent.volume = 0;
+      silent.rate = 10;
+      window.speechSynthesis.speak(silent);
       window.speechSynthesis.resume();
       audioUnlocked = true;
-      // Dispara fila pendente se houver
-      processNextInQueue();
+    } else if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
     }
+    processNextInQueue();
   } catch {}
 }
 
@@ -282,20 +327,38 @@ export function unlockSpeechAudio(): void {
 export function enqueueCheckoutAnnouncement(item: CheckoutAnnouncementItem): boolean {
   if (!item || !item.flatNumber) return false;
 
+  const cleanFlat = String(item.flatNumber || "")
+    .trim()
+    .replace(/^(?:apt|apto|flat)\s*/i, "");
+  if (!cleanFlat || cleanFlat.toLowerCase() === "undefined" || cleanFlat.toLowerCase() === "null") {
+    return false;
+  }
+  item.flatNumber = cleanFlat;
+
   // Deduplicação imediata
   if (isCheckoutAlreadySpoken(item)) {
     return false;
   }
 
   // Evita duplicatas na própria fila em espera
-  const alreadyInQueue = speechQueue.some(
-    q =>
-      (q.id && q.id === item.id) ||
-      (String(q.flatNumber).trim() === String(item.flatNumber).trim())
-  );
+  const isTest = String(item.id || "").startsWith("test_");
+  const alreadyInQueue = speechQueue.some(q => {
+    const qIsTest = String(q.id || "").startsWith("test_");
+    if (isTest && qIsTest) return true; // Já existe teste na fila
+    if (!isTest && !qIsTest) {
+      return (
+        (q.id && q.id === item.id) ||
+        (String(q.flatNumber).trim().toLowerCase() === cleanFlat.toLowerCase())
+      );
+    }
+    return false;
+  });
   if (alreadyInQueue) {
     return false;
   }
+
+  // Reserva imediata no localStorage para impedir que outra aba ou ciclo paralelo duplique
+  markCheckoutAsSpoken(item);
 
   speechQueue.push(item);
   processNextInQueue();
@@ -322,13 +385,6 @@ function processNextInQueue(): void {
   const currentItem = speechQueue[0];
   if (!currentItem) return;
 
-  // Dupla conferência contra repetições
-  if (isCheckoutAlreadySpoken(currentItem)) {
-    speechQueue.shift();
-    setTimeout(processNextInQueue, 50);
-    return;
-  }
-
   isSpeaking = true;
 
   try {
@@ -343,8 +399,9 @@ function processNextInQueue(): void {
     // Seleciona voz em português se disponível no navegador
     const voices = window.speechSynthesis.getVoices?.() || [];
     const ptVoice = voices.find(
-      v => (v.lang && (v.lang.toLowerCase().startsWith("pt-br") || v.lang.toLowerCase().startsWith("pt_br"))) ||
-           (v.name && v.name.toLowerCase().includes("brazil") || v.name.toLowerCase().includes("portuguese"))
+      v =>
+        (v.lang && (v.lang.toLowerCase().startsWith("pt-br") || v.lang.toLowerCase().startsWith("pt_br"))) ||
+        (v.name && (v.name.toLowerCase().includes("brazil") || v.name.toLowerCase().includes("portuguese")))
     );
     if (ptVoice) {
       utterance.voice = ptVoice;
@@ -375,11 +432,11 @@ function processNextInQueue(): void {
       cleanup();
     };
 
-    // Watchdog de 8 segundos caso o navegador trave silenciosamente
+    // Watchdog de 8 segundos com cancelamento explícito do motor em caso de congelamento
     watchdogTimer = setTimeout(() => {
       try {
-        if (window.speechSynthesis.speaking) {
-          window.speechSynthesis.resume();
+        if (typeof window !== "undefined" && "speechSynthesis" in window) {
+          window.speechSynthesis.cancel();
         }
       } catch {}
       cleanup();
@@ -398,6 +455,25 @@ function processNextInQueue(): void {
     isSpeaking = false;
     setTimeout(processNextInQueue, 100);
   }
+}
+
+// Sincronização entre abas via evento storage
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key === STORAGE_KEY_SPOKEN && e.newValue) {
+      try {
+        // Remove itens da fila local que foram processados por outra aba
+        for (let i = speechQueue.length - 1; i >= 0; i--) {
+          const it = speechQueue[i];
+          if (it && isCheckoutAlreadySpoken(it)) {
+            if (!(i === 0 && isSpeaking)) {
+              speechQueue.splice(i, 1);
+            }
+          }
+        }
+      } catch {}
+    }
+  });
 }
 
 /**
@@ -440,7 +516,9 @@ export async function syncAndRecoverCheckouts(user?: { role?: string } | null): 
       const candidates = notifs
         .filter(n => {
           if (!n || n.category !== "checkout") return false;
-          const flatNum = n.metadata?.flatNumber || (n.title?.match(/(?:Apt|Flat)\s*(\d+)/i)?.[1]);
+          const flatNum =
+            n.metadata?.flatNumber ||
+            (n.title?.match(/(?:Apt|Flat|Apto)\s*([A-Za-z0-9\-]+)/i)?.[1]);
           if (!flatNum) return false;
 
           // Deduplicação prévia
@@ -460,7 +538,10 @@ export async function syncAndRecoverCheckouts(user?: { role?: string } | null): 
         });
 
       for (const c of candidates) {
-        const flatNum = String(c.metadata?.flatNumber || (c.title?.match(/(?:Apt|Flat)\s*(\d+)/i)?.[1])).trim();
+        const flatNum = String(
+          c.metadata?.flatNumber ||
+          (c.title?.match(/(?:Apt|Flat|Apto)\s*([A-Za-z0-9\-]+)/i)?.[1] || "")
+        ).trim();
         const enqueued = enqueueCheckoutAnnouncement({
           id: String(c.id),
           flatNumber: flatNum,
@@ -538,4 +619,18 @@ export function getVoiceNotifierState() {
     spokenCount: Object.keys(getSpokenCheckoutsMap()).length,
     isOnline: typeof navigator !== "undefined" ? navigator.onLine : true
   };
+}
+
+/**
+ * Reinicialização do estado em memória (utilizado em testes)
+ */
+export function resetVoiceNotifierForTesting(): void {
+  isSpeaking = false;
+  audioUnlocked = false;
+  activeUtterance = null;
+  if (watchdogTimer) {
+    clearTimeout(watchdogTimer);
+    watchdogTimer = null;
+  }
+  speechQueue.length = 0;
 }

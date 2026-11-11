@@ -1541,6 +1541,7 @@ export function getDefaultMinibarProducts() {
       description: "Água mineral natural em copo selado 200ml",
       active: true,
       isCourtesy: false,
+      supplierOrigin: "anserve",
       sortOrder: 2,
       createdAt: "2026-11-02T05:00:00.000Z",
       updatedAt: "2026-11-02T05:00:00.000Z"
@@ -1784,6 +1785,23 @@ export function getDefaultMinibarProducts() {
       sortOrder: 18,
       createdAt: "2026-11-02T05:00:00.000Z",
       updatedAt: "2026-11-02T05:00:00.000Z"
+    },
+    {
+      id: "prod_amendoim_mendorato",
+      name: "Amendoim Mendorato 27g",
+      category: "Kit de Boas-Vindas",
+      price: 0.00,
+      cost: 0.00,
+      defaultQuantity: 2,
+      imageUrl: "/images/frigobar/amendoim_mendorato.png",
+      description: "Amendoim crocante sabor japonês Mendorato 27g - Cortesia de Boas-Vindas",
+      active: true,
+      isCourtesy: true,
+      courtesyLimitPerStay: 2,
+      supplierOrigin: "hotel_proprio",
+      sortOrder: 19,
+      createdAt: "2026-11-11T00:00:00.000Z",
+      updatedAt: "2026-11-11T00:00:00.000Z"
     }
   ];
 }
@@ -11187,8 +11205,20 @@ async function _loadDatabaseImpl() {
       if (!db.botActionsSettings) db.botActionsSettings = getBotActionsSettings();
       if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
       if (!db.smartFlats || typeof db.smartFlats !== "object" || Array.isArray(db.smartFlats)) db.smartFlats = {};
-      if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0 || db.minibarProducts.length !== 18 || !db.minibarProducts.some(p => p.id === "prod_achocolatado")) db.minibarProducts = getDefaultMinibarProducts();
-      if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length !== 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
+      if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0 || db.minibarProducts.length < 18 || !db.minibarProducts.some(p => p.id === "prod_achocolatado")) {
+        db.minibarProducts = getDefaultMinibarProducts();
+      } else {
+        if (!db.minibarProducts.some(p => p.id === "prod_amendoim_mendorato")) {
+          const defMendorato = getDefaultMinibarProducts().find(p => p.id === "prod_amendoim_mendorato");
+          if (defMendorato) db.minibarProducts.push(defMendorato);
+        }
+        const aguaProd = db.minibarProducts.find(p => p.id === "prod_agua_mineral_copo");
+        if (aguaProd) {
+          aguaProd.supplierOrigin = "anserve";
+          if (!aguaProd.cost || Number(aguaProd.cost) === 0) aguaProd.cost = 2.00;
+        }
+      }
+      if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length < 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
       if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
       if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
       if (!Array.isArray(db.boletos)) db.boletos = [];
@@ -11452,8 +11482,20 @@ async function _loadDatabaseImpl() {
     if (!db.reservationCommunications) db.reservationCommunications = [];
     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
-    if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0 || db.minibarProducts.length !== 18 || !db.minibarProducts.some(p => p.id === "prod_achocolatado")) db.minibarProducts = getDefaultMinibarProducts();
-    if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length !== 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
+    if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0 || db.minibarProducts.length < 18 || !db.minibarProducts.some(p => p.id === "prod_achocolatado")) {
+      db.minibarProducts = getDefaultMinibarProducts();
+    } else {
+      if (!db.minibarProducts.some(p => p.id === "prod_amendoim_mendorato")) {
+        const defMendorato = getDefaultMinibarProducts().find(p => p.id === "prod_amendoim_mendorato");
+        if (defMendorato) db.minibarProducts.push(defMendorato);
+      }
+      const aguaProd = db.minibarProducts.find(p => p.id === "prod_agua_mineral_copo");
+      if (aguaProd) {
+        aguaProd.supplierOrigin = "anserve";
+        if (!aguaProd.cost || Number(aguaProd.cost) === 0) aguaProd.cost = 2.00;
+      }
+    }
+    if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length < 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
     if (!Array.isArray(db.minibarOrders)) db.minibarOrders = [];
     if (!Array.isArray(db.minibarInspections)) db.minibarInspections = [];
     if (!db.minibarSettings) db.minibarSettings = getDefaultMinibarSettings();
@@ -76107,6 +76149,67 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
     }
   }
 
+  // 5. R5: Apuração Segregada dos Itens Consumidos do Kit de Boas-Vindas (Cortesia da Casa — Valor R$ 0,00)
+  const resCandidateCodes = new Set(
+    [
+      resCode,
+      reservation?.code,
+      reservation?.id ? `RES-${reservation.id}` : "",
+      flatStr && reservation?.id ? `RES-${flatStr}-${String(reservation.id).padStart(3, "0")}` : ""
+    ].filter(Boolean)
+  );
+
+  const resInspections = (db.minibarInspections || []).filter(i => {
+    if (!i) return false;
+    if (resCode && i.reservationCode && resCandidateCodes.has(String(i.reservationCode).trim())) return true;
+    if (reservation?.id && String(i.reservationId) === String(reservation.id)) return true;
+    if (flatStr && String(i.flatNumber).trim() === flatStr) {
+      if (reservation?.checkinDate && reservation?.checkoutDate) {
+        const inspDate = String(i.launchDate || i.inspectedAt || "").slice(0, 10);
+        if (inspDate >= reservation.checkinDate && inspDate <= reservation.checkoutDate) {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
+
+  let waterCups = Number(reservation?.welcomeKitConsumption?.waterCups ?? reservation?.welcomeKitConsumption?.waterCupsConsumed) || 0;
+  let peanuts = Number(reservation?.welcomeKitConsumption?.mendoratoPeanuts ?? reservation?.welcomeKitConsumption?.peanutsConsumed) || 0;
+
+  for (const insp of resInspections) {
+    if (insp.welcomeKitConsumption) {
+      const w = Number(insp.welcomeKitConsumption.waterCups ?? insp.welcomeKitConsumption.waterCupsConsumed) || 0;
+      const p = Number(insp.welcomeKitConsumption.mendoratoPeanuts ?? insp.welcomeKitConsumption.peanutsConsumed) || 0;
+      waterCups = Math.max(waterCups, w);
+      peanuts = Math.max(peanuts, p);
+    }
+  }
+
+  const consumedCourtesyItems = [];
+  if (waterCups > 0) {
+    consumedCourtesyItems.push({
+      productId: "prod_agua_mineral_copo",
+      productName: "Copo d'Água Mineral 200ml",
+      quantity: Math.min(2, waterCups),
+      unitPrice: 0.00,
+      totalPrice: 0.00,
+      isCourtesy: true,
+      supplierOrigin: "anserve"
+    });
+  }
+  if (peanuts > 0) {
+    consumedCourtesyItems.push({
+      productId: "prod_amendoim_mendorato",
+      productName: "Amendoim Mendorato 27g",
+      quantity: Math.min(2, peanuts),
+      unitPrice: 0.00,
+      totalPrice: 0.00,
+      isCourtesy: true,
+      supplierOrigin: "hotel_proprio"
+    });
+  }
+
   return {
     isCheckedOut,
     hasFinalCheckoutInspection,
@@ -76116,6 +76219,12 @@ function buildReservationMinibarStatement(reservation, flatStrOverride = "") {
     pendingBalance,
     totalLaunchedAmount: Number(totalLaunchedAmount.toFixed(2)),
     totalPaidAmount,
+    consumedCourtesyItems,
+    welcomeKitSummary: {
+      waterCupsConsumed: waterCups,
+      peanutsConsumed: peanuts,
+      totalCourtesyValue: 0.00
+    },
     primaryPendingOrder,
     reservationGuests: splitBreakdown.guests || reservationGuests,
     splitConfig: {
@@ -78499,7 +78608,9 @@ app.post("/api/minibar/inspections", async (req, res) => {
       countedItems,
       photos,
       notes,
-      restockedItems
+      restockedItems,
+      welcomeKitConsumption,
+      consumedCourtesyItems
     } = req.body || {};
 
     const flatStr = String(flatNumber || "").trim();
@@ -78535,6 +78646,51 @@ app.post("/api/minibar/inspections", async (req, res) => {
     const resolvedInspectorName =
       inspectedBy || resolvedInspectorUser?.name || resolvedInspectorUser?.username || "Repositora Anserve";
 
+    // R4: Conferência do Kit de Boas-Vindas (Cortesia da Casa)
+    let waterCupsConsumed = 0;
+    let mendoratoPeanutsConsumed = 0;
+
+    if (welcomeKitConsumption && typeof welcomeKitConsumption === "object") {
+      waterCupsConsumed = Math.min(2, Math.max(0, Number(welcomeKitConsumption.waterCups ?? welcomeKitConsumption.waterCupsConsumed) || 0));
+      mendoratoPeanutsConsumed = Math.min(2, Math.max(0, Number(welcomeKitConsumption.mendoratoPeanuts ?? welcomeKitConsumption.peanutsConsumed) || 0));
+    }
+
+    if (Array.isArray(consumedCourtesyItems)) {
+      for (const cit of consumedCourtesyItems) {
+        const pid = String(cit.productId || cit.id || "").toLowerCase();
+        const q = Number(cit.quantity || cit.qty) || 0;
+        if (pid.includes("agua") || pid.includes("água") || pid.includes("copo")) {
+          waterCupsConsumed = Math.min(2, Math.max(waterCupsConsumed, q));
+        } else if (pid.includes("amendoim") || pid.includes("mendorato")) {
+          mendoratoPeanutsConsumed = Math.min(2, Math.max(mendoratoPeanutsConsumed, q));
+        }
+      }
+    }
+
+    const waterUnitCost = Number((db.minibarProducts || []).find(p => p.id === "prod_agua_mineral_copo")?.cost ?? 2.00);
+    const welcomeKitRecord = (welcomeKitConsumption || Array.isArray(consumedCourtesyItems) || waterCupsConsumed > 0 || mendoratoPeanutsConsumed > 0) ? {
+      waterCups: waterCupsConsumed,
+      mendoratoPeanuts: mendoratoPeanutsConsumed,
+      waterUnitCost,
+      waterTotalCost: Number((waterCupsConsumed * waterUnitCost).toFixed(2)),
+      mendoratoUnitCost: 0.00,
+      mendoratoTotalCost: 0.00,
+      waterSupplier: "anserve",
+      mendoratoSupplier: "hotel_proprio"
+    } : null;
+
+    if (reservation && welcomeKitRecord) {
+      if (!reservation.welcomeKitConsumption) reservation.welcomeKitConsumption = {};
+      reservation.welcomeKitConsumption = {
+        waterCups: Math.max(Number(reservation.welcomeKitConsumption.waterCups) || 0, waterCupsConsumed),
+        mendoratoPeanuts: Math.max(Number(reservation.welcomeKitConsumption.mendoratoPeanuts) || 0, mendoratoPeanutsConsumed),
+        waterCupsConsumed: Math.max(Number(reservation.welcomeKitConsumption.waterCups) || 0, waterCupsConsumed),
+        peanutsConsumed: Math.max(Number(reservation.welcomeKitConsumption.mendoratoPeanuts) || 0, mendoratoPeanutsConsumed),
+        inspectedAt: new Date().toISOString(),
+        inspectorName: resolvedInspectorName
+      };
+    }
+
     // Cálculo do custo de reposição
     let restockedCourtesyTotalCost = 0;
     let restockedPaidItemsTotalCost = 0;
@@ -78542,6 +78698,12 @@ app.post("/api/minibar/inspections", async (req, res) => {
 
     if (Array.isArray(restockedItems)) {
       for (const item of restockedItems) {
+        // R4: Reposição do kit de cortesia é feita pela camareira no turnover, nunca pela repositora
+        const isKitCourtesy = item.productId === "prod_amendoim_mendorato" ||
+          String(item.productId || "").includes("mendorato") ||
+          (item.productId === "prod_agua_mineral_copo" && item.isCourtesy);
+        if (isKitCourtesy) continue;
+
         const prod = (db.minibarProducts || []).find(p => p.id === item.productId);
         const qty = Number(item.quantity) || 0;
         if (qty <= 0) continue;
