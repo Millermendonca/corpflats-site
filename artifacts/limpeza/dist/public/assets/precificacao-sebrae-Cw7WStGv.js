@@ -1,1 +1,0 @@
-import{j as r}from"./vendor-react-QB-A-H5M.js";import i from"./tarifas-CjSg-ERO.js";import"./index.js";import"./tabs-B4q8mkzS.js";import"./switch-DFsYJyDJ.js";import"./select-DMtjeJxC.js";import"./table-_9Jc7UlE.js";function n(){return r.jsx(i,{initialTab:"sebrae"})}export{n as default};

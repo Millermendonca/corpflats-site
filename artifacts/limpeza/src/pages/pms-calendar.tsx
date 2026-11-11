@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fragment } from "react"
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fragment, memo } from "react"
 import { useLocation } from "wouter"
 import { useGetMe, useGetSettings } from "@workspace/api-client-react"
 import { getCheckinUrl } from "@/lib/checkin-url"
@@ -76,6 +76,146 @@ function formatBrazilPhone(value: string): string {
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7, 11)}`
 }
+
+function useStableCallback<T extends (...args: any[]) => any>(fn: T): T {
+  const ref = useRef(fn)
+  ref.current = fn
+  return useCallback(((...args: any[]) => ref.current(...args)) as T, [])
+}
+
+const MemoizedSlot = memo(function MemoizedSlot({ node }: { node: React.ReactNode }) {
+  return <>{node}</>
+})
+
+const MemoCrmGuestSelect = memo(function MemoCrmGuestSelect({
+  value,
+  onValueChange,
+  guests,
+  placeholder,
+  manualLabel,
+  triggerClassName = "text-xs h-8",
+  contentClassName = "max-h-64",
+  compact = false,
+}: {
+  value: string
+  onValueChange: (val: string) => void
+  guests: any[]
+  placeholder: string
+  manualLabel: string
+  triggerClassName?: string
+  contentClassName?: string
+  compact?: boolean
+}) {
+  const items = useMemo(
+    () =>
+      guests.map((g: any) =>
+        compact ? (
+          <SelectItem key={g.id} value={String(g.id)} className="text-xs">
+            {g.name || g.fullName}
+            {g.phone ? ` • ${g.phone}` : ""}
+          </SelectItem>
+        ) : (
+          <SelectItem key={g.id} value={String(g.id)}>
+            <span className="font-semibold">{g.name || g.fullName}</span>
+            {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
+            {g.phone ? ` • Tel: ${g.phone}` : ""}
+            {g.companyName ? ` • (${g.companyName})` : ""}
+          </SelectItem>
+        )
+      ),
+    [guests, compact]
+  )
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className={triggerClassName}>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent className={contentClassName}>
+        <SelectItem value="manual" className={compact ? "text-primary font-bold text-xs" : "text-primary font-bold"}>
+          {manualLabel}
+        </SelectItem>
+        {items}
+      </SelectContent>
+    </Select>
+  )
+})
+
+const MemoCompanySelect = memo(function MemoCompanySelect({
+  value,
+  onValueChange,
+  companies,
+  placeholder,
+  newLabel,
+  newItemClassName = "text-indigo-600 dark:text-indigo-400 font-bold cursor-pointer bg-indigo-50/60 dark:bg-indigo-950/40",
+  skipInformadoCnpj = false,
+}: {
+  value: string
+  onValueChange: (val: string) => void
+  companies: any[]
+  placeholder: string
+  newLabel: string
+  newItemClassName?: string
+  skipInformadoCnpj?: boolean
+}) {
+  const items = useMemo(
+    () =>
+      companies.map((c: any) => (
+        <SelectItem key={c.id} value={String(c.id)}>
+          <span className="font-semibold">{c.tradeName || c.corporateName}</span>
+          {c.cnpj && (!skipInformadoCnpj || !String(c.cnpj).includes("Informado")) ? ` • CNPJ: ${c.cnpj}` : ""}
+        </SelectItem>
+      )),
+    [companies, skipInformadoCnpj]
+  )
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className="text-xs h-8">
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent className="max-h-64">
+        <SelectItem value="__NEW_COMPANY__" className={newItemClassName}>
+          {newLabel}
+        </SelectItem>
+        {items}
+      </SelectContent>
+    </Select>
+  )
+})
+
+const MemoAgencySelect = memo(function MemoAgencySelect({
+  value,
+  onValueChange,
+  agencies,
+}: {
+  value: string
+  onValueChange: (val: string) => void
+  agencies: any[]
+}) {
+  const items = useMemo(
+    () =>
+      agencies.map((ag: any) => (
+        <SelectItem key={ag.id} value={String(ag.id)}>
+          <span className="font-semibold">{ag.tradeName || ag.corporateName}</span>
+          {ag.cnpj ? ` • CNPJ: ${ag.cnpj}` : ""}
+          {ag.defaultRatePolicy ? ` • [${ag.defaultRatePolicy}]` : ""}
+        </SelectItem>
+      )),
+    [agencies]
+  )
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger className="h-8 text-xs">
+        <SelectValue placeholder="Selecione a Agência B2B cadastrada..." />
+      </SelectTrigger>
+      <SelectContent className="max-h-64">
+        <SelectItem value="__NEW_AGENCY__" className="text-purple-600 font-bold">
+          ➕ Cadastrar Nova Agência B2B...
+        </SelectItem>
+        {items}
+      </SelectContent>
+    </Select>
+  )
+})
 
 export interface DailyRateItem {
   date: string;
@@ -4412,29 +4552,51 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     }
   }
 
-  const filteredGuests = crmGuests.filter(g => {
-    if (!guestSearchFilter.trim()) return true
-    const q = guestSearchFilter.toLowerCase().trim()
-    const name = (g.name || g.fullName || "").toLowerCase()
-    const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
-    const phone = (g.phone || "").replace(/\D/g, "")
-    const cleanQ = q.replace(/\D/g, "")
-    return name.includes(q) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ))
-  })
+  const indexedCrmGuests = useMemo(
+    () =>
+      crmGuests.map(g => ({
+        raw: g,
+        nameLower: String(g.name || g.fullName || "").toLowerCase(),
+        docDigits: String(g.documentNumber || g.document || "").replace(/\D/g, ""),
+        phoneDigits: String(g.phone || "").replace(/\D/g, ""),
+        compLower: String(g.companyName || "").toLowerCase(),
+      })),
+    [crmGuests]
+  )
+
+  const searchIndexedCrm = useCallback(
+    (rawQuery: string, includeCompany: boolean, limit?: number) => {
+      const q = (rawQuery || "").toLowerCase().trim()
+      if (!q) return []
+      const cleanQ = q.replace(/\D/g, "")
+      const out: any[] = []
+      for (let i = 0; i < indexedCrmGuests.length; i++) {
+        const item = indexedCrmGuests[i]
+        if (
+          item.nameLower.includes(q) ||
+          (cleanQ && item.docDigits.includes(cleanQ)) ||
+          (cleanQ && item.phoneDigits.includes(cleanQ)) ||
+          (includeCompany && item.compLower.includes(q))
+        ) {
+          out.push(item.raw)
+          if (limit && out.length >= limit) break
+        }
+      }
+      return out
+    },
+    [indexedCrmGuests]
+  )
+
+  const filteredGuests = useMemo(() => {
+    if (!guestSearchFilter.trim()) return crmGuests
+    return searchIndexedCrm(guestSearchFilter, false)
+  }, [crmGuests, guestSearchFilter, searchIndexedCrm])
 
   // Live real-time filtered matches as the user types guest name
-  const liveGuestMatches = useMemo(() => {
-    const query = (formGuestName || "").toLowerCase().trim()
-    if (!query) return []
-    const cleanQ = query.replace(/\D/g, "")
-    return crmGuests.filter(g => {
-      const name = (g.name || g.fullName || "").toLowerCase()
-      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
-      const phone = (g.phone || "").replace(/\D/g, "")
-      const comp = (g.companyName || "").toLowerCase()
-      return name.includes(query) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ)) || comp.includes(query)
-    }).slice(0, 8)
-  }, [crmGuests, formGuestName])
+  const liveGuestMatches = useMemo(
+    () => searchIndexedCrm(formGuestName, true, 8),
+    [formGuestName, searchIndexedCrm]
+  )
 
   // Close live guest suggestions when clicking outside
   useEffect(() => {
@@ -4466,30 +4628,15 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     }
   }
 
-  const filteredRequesters = useMemo(() => {
-    if (!requesterSearchFilter.trim()) return []
-    const q = requesterSearchFilter.toLowerCase().trim()
-    const cleanQ = q.replace(/\D/g, "")
-    return crmGuests.filter(g => {
-      const name = (g.name || g.fullName || "").toLowerCase()
-      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
-      const phone = (g.phone || "").replace(/\D/g, "")
-      return name.includes(q) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ))
-    })
-  }, [crmGuests, requesterSearchFilter])
+  const filteredRequesters = useMemo(
+    () => searchIndexedCrm(requesterSearchFilter, false),
+    [requesterSearchFilter, searchIndexedCrm]
+  )
 
-  const liveRequesterMatches = useMemo(() => {
-    const query = (formRequesterName || "").toLowerCase().trim()
-    if (!query) return []
-    const cleanQ = query.replace(/\D/g, "")
-    return crmGuests.filter(g => {
-      const name = (g.name || g.fullName || "").toLowerCase()
-      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
-      const phone = (g.phone || "").replace(/\D/g, "")
-      const comp = (g.companyName || "").toLowerCase()
-      return name.includes(query) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ)) || comp.includes(query)
-    }).slice(0, 8)
-  }, [crmGuests, formRequesterName])
+  const liveRequesterMatches = useMemo(
+    () => searchIndexedCrm(formRequesterName, true, 8),
+    [formRequesterName, searchIndexedCrm]
+  )
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -4584,55 +4731,25 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     }
   }
 
-  const filteredGuests2 = useMemo(() => {
-    if (!guest2SearchFilter.trim()) return []
-    const q = guest2SearchFilter.toLowerCase().trim()
-    const cleanQ = q.replace(/\D/g, "")
-    return crmGuests.filter(g => {
-      const name = (g.name || g.fullName || "").toLowerCase()
-      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
-      const phone = (g.phone || "").replace(/\D/g, "")
-      return name.includes(q) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ))
-    })
-  }, [crmGuests, guest2SearchFilter])
+  const filteredGuests2 = useMemo(
+    () => searchIndexedCrm(guest2SearchFilter, false),
+    [guest2SearchFilter, searchIndexedCrm]
+  )
 
-  const filteredGuests3 = useMemo(() => {
-    if (!guest3SearchFilter.trim()) return []
-    const q = guest3SearchFilter.toLowerCase().trim()
-    const cleanQ = q.replace(/\D/g, "")
-    return crmGuests.filter(g => {
-      const name = (g.name || g.fullName || "").toLowerCase()
-      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
-      const phone = (g.phone || "").replace(/\D/g, "")
-      return name.includes(q) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ))
-    })
-  }, [crmGuests, guest3SearchFilter])
+  const filteredGuests3 = useMemo(
+    () => searchIndexedCrm(guest3SearchFilter, false),
+    [guest3SearchFilter, searchIndexedCrm]
+  )
 
-  const liveGuest2Matches = useMemo(() => {
-    const query = (formGuest2Name || "").toLowerCase().trim()
-    if (!query) return []
-    const cleanQ = query.replace(/\D/g, "")
-    return crmGuests.filter(g => {
-      const name = (g.name || g.fullName || "").toLowerCase()
-      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
-      const phone = (g.phone || "").replace(/\D/g, "")
-      const comp = (g.companyName || "").toLowerCase()
-      return name.includes(query) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ)) || comp.includes(query)
-    }).slice(0, 8)
-  }, [crmGuests, formGuest2Name])
+  const liveGuest2Matches = useMemo(
+    () => searchIndexedCrm(formGuest2Name, true, 8),
+    [formGuest2Name, searchIndexedCrm]
+  )
 
-  const liveGuest3Matches = useMemo(() => {
-    const query = (formGuest3Name || "").toLowerCase().trim()
-    if (!query) return []
-    const cleanQ = query.replace(/\D/g, "")
-    return crmGuests.filter(g => {
-      const name = (g.name || g.fullName || "").toLowerCase()
-      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
-      const phone = (g.phone || "").replace(/\D/g, "")
-      const comp = (g.companyName || "").toLowerCase()
-      return name.includes(query) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ)) || comp.includes(query)
-    }).slice(0, 8)
-  }, [crmGuests, formGuest3Name])
+  const liveGuest3Matches = useMemo(
+    () => searchIndexedCrm(formGuest3Name, true, 8),
+    [formGuest3Name, searchIndexedCrm]
+  )
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -6153,6 +6270,283 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     })
   }, [modalOnly, data.flats, data.reservations, data.guests, cleaningFilter, specialFilter])
 
+  const dataGuestLookup = useMemo(() => {
+    const byId = new Map<any, any>()
+    const byDoc = new Map<string, any>()
+    const byPhone = new Map<string, any>()
+    const byName = new Map<string, any>()
+    for (const g of data.guests || []) {
+      if (!g) continue
+      if (g.id != null) byId.set(g.id, g)
+      const gDoc = String(g.document || g.documentNumber || "").replace(/\D/g, "")
+      if (gDoc.length >= 8 && !byDoc.has(gDoc)) byDoc.set(gDoc, g)
+      const gPhone = String(g.phone || "").replace(/\D/g, "")
+      if (gPhone.length >= 8 && !byPhone.has(gPhone)) byPhone.set(gPhone, g)
+      const n1 = String(g.name || "").toLowerCase().trim()
+      if (n1 && !byName.has(n1)) byName.set(n1, g)
+      const n2 = String(g.fullName || "").toLowerCase().trim()
+      if (n2 && !byName.has(n2)) byName.set(n2, g)
+    }
+    return { byId, byDoc, byPhone, byName }
+  }, [data.guests])
+
+  const findMatchedGuest = useCallback(
+    (resItem: any) => {
+      if (!resItem) return undefined
+      if (resItem.guestId != null) {
+        const byIdHit = dataGuestLookup.byId.get(resItem.guestId)
+        if (byIdHit) return byIdHit
+      }
+      const cleanDoc = String(resItem.guestDocument || "").replace(/\D/g, "")
+      if (cleanDoc.length >= 8) {
+        const byDocHit = dataGuestLookup.byDoc.get(cleanDoc)
+        if (byDocHit) return byDocHit
+      }
+      const cleanPhone = String(resItem.guestPhone || "").replace(/\D/g, "")
+      if (cleanPhone.length >= 8) {
+        const byPhoneHit = dataGuestLookup.byPhone.get(cleanPhone)
+        if (byPhoneHit) return byPhoneHit
+      }
+      const lowerName = String(resItem.guestName || "").toLowerCase().trim()
+      if (lowerName) {
+        return dataGuestLookup.byName.get(lowerName)
+      }
+      return undefined
+    },
+    [dataGuestLookup]
+  )
+
+  const stableSelectGuest = useStableCallback(handleSelectGuest)
+  const stableSelectRequester = useStableCallback(handleSelectRequester)
+  const stableSelectGuest2 = useStableCallback(handleSelectGuest2)
+  const stableSelectGuest3 = useStableCallback(handleSelectGuest3)
+  const stableSelectAgency = useStableCallback(handleSelectAgency)
+
+  const stableSelectCompanySimple = useStableCallback((val: string) => {
+    if (val === "__NEW_COMPANY__") {
+      handleOpenNewCompanyModal()
+      return
+    }
+    setFormCompanyId(val)
+    const c = companies.find(comp => String(comp.id) === val) as any
+    if (c) {
+      setFormCompanyName(c.tradeName || c.corporateName)
+    }
+  })
+
+  const stableSelectCompanyCorporate = useStableCallback((val: string) => {
+    if (val === "__NEW_COMPANY__") {
+      handleOpenNewCompanyModal()
+      return
+    }
+    setFormCompanyId(val)
+    const c = companies.find(comp => String(comp.id) === val) as any
+    if (c) {
+      setFormCompanyName(c.tradeName || c.corporateName)
+      if (!formRequesterName.trim() && (c.contactPerson || c.tradeName || c.corporateName)) {
+        setFormRequesterName(c.contactPerson || c.tradeName || c.corporateName)
+      }
+      if (!formRequesterPhone.trim() && (c.phone || c.telefone)) {
+        setFormRequesterPhone(c.phone || c.telefone)
+      }
+      if (!formRequesterEmail.trim() && (c.email || c.financialEmail || c.emailFinanceiro)) {
+        setFormRequesterEmail(c.email || c.financialEmail || c.emailFinanceiro)
+      }
+      setFormIsFaturadoBoleto(true)
+      setFormPaymentMethod("boleto_faturado")
+      setFormAutoInvoice(true)
+      const nonAutoCompanyPays = formPayments.filter(p =>
+        p && (String(p.id || "").startsWith("pay_bol_") || !/^(pagamento integral|pagamento inicial)$/i.test(String(p.notes || "").trim()))
+      )
+      if (nonAutoCompanyPays.length === 0) {
+        setFormPayments([])
+        setFormPaidAmount("0")
+        setFormPaymentStatus("pendente")
+      }
+      setFormBoletoPayerType("company")
+      if (c.defaultBoletoTermDays || c.billingTerms) {
+        const parsedDays = Number(c.defaultBoletoTermDays) || parseInt(String(c.billingTerms || "").replace(/\D/g, ""), 10) || 15
+        setFormBoletoTermDays(parsedDays)
+      }
+      if (c.defaultBoletoConsumptionMode) {
+        setFormBoletoConsumptionMode(
+          c.defaultBoletoConsumptionMode === "separate_boletos" || c.defaultBoletoConsumptionMode === "separate"
+            ? "separate_boletos"
+            : "single_boleto"
+        )
+      }
+      if (c.financialResponsible?.name) {
+        setFormFinRespName(c.financialResponsible.name || "")
+        setFormFinRespEmail(c.financialResponsible.email || "")
+        setFormFinRespPhone(c.financialResponsible.phone || c.financialResponsible.whatsapp || "")
+        setFormFinRespDoc(c.financialResponsible.document || "")
+      }
+      if (c.defaultBillingRecipients) {
+        setFormRecGuest(Boolean(c.defaultBillingRecipients.guest ?? false))
+        setFormRecRequester(Boolean(c.defaultBillingRecipients.requester ?? true))
+        setFormRecCompany(Boolean(c.defaultBillingRecipients.company ?? true))
+        setFormRecFinResp(Boolean(c.defaultBillingRecipients.financialResponsible ?? true))
+        setFormRecSendEmail(c.defaultBillingRecipients.sendEmail !== false)
+        setFormRecSendWhatsapp(c.defaultBillingRecipients.sendWhatsapp !== false)
+      } else {
+        setFormRecCompany(true)
+        setFormRecRequester(true)
+        setFormRecFinResp(true)
+      }
+    }
+  })
+
+  const stableSelectFlat = useStableCallback((val: string) => {
+    isFlatManuallyChangedRef.current = true
+    setFormFlatId(val)
+    setFormForceReplace(false)
+  })
+
+  const stableSelectChannel = useStableCallback((val: string) => {
+    setFormChannel(val)
+    const allSame = formDailyRates.length <= 1 || formDailyRates.every(d => (d.channel || "whatsapp") === formChannel)
+    const updatedDailyRates = allSame
+      ? formDailyRates.map(d => ({ ...d, channel: val }))
+      : formDailyRates
+    setFormDailyRates(updatedDailyRates)
+
+    if (val === "b2b") {
+      setFormRequesterType("agency_b2b")
+      setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b")
+      setFormStatus("confirmada")
+      syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b")
+    } else if (val === "booking" || val === "airbnb") {
+      const updatedCharges = [...formCharges]
+      const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning")
+      if (cleanIdx === -1) {
+        updatedCharges.push({
+          id: `charge_${Date.now()}_clean`,
+          type: "cleaning",
+          title: "Taxa de Limpeza",
+          amount: 50,
+          notes: ""
+        })
+      } else if (updatedCharges[cleanIdx].amount === 80) {
+        updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 }
+      }
+      setFormCharges(updatedCharges)
+      syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, val, val)
+    } else if (val === "site") {
+      setFormPaymentMethod("pix")
+      syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, "pix")
+    } else {
+      syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val)
+    }
+  })
+
+  const flatSelectOptions = useMemo(() => {
+    const todayIso = format(new Date(), "yyyy-MM-dd")
+    const isFutureCheckin = formCheckin > todayIso
+    return data.flats.map(f => {
+      const flatStat = fairShareResult?.allStats?.find(
+        (s: any) => Number(s.flat?.id) === Number(f.id) || String(s.flat?.number) === String(f.number)
+      )
+      const localResConflict = (data.reservations || []).find((r: any) => {
+        if (selectedRes && String(r.id) === String(selectedRes.id)) return false
+        if (Number(r.flatId) !== Number(f.id) && String(r.flatNumber) !== String(f.number)) return false
+        const st = String(r.status || "").toLowerCase()
+        if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false
+        if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= formCheckin) return false
+        return r.checkinDate < formCheckout && r.checkoutDate > formCheckin
+      })
+      const localBlockConflict = (data.blocks || []).find((b: any) => {
+        if (Number(b.flatId) !== Number(f.id) && String(b.flatNumber) !== String(f.number)) return false
+        return b.startDate < formCheckout && b.endDate >= formCheckin
+      })
+      const localSameDayCheckout = (data.reservations || []).some((r: any) => {
+        if (selectedRes && String(r.id) === String(selectedRes.id)) return false
+        if (Number(r.flatId) !== Number(f.id) && String(r.flatNumber) !== String(f.number)) return false
+        if (r.checkoutDate !== formCheckin) return false
+        const st = String(r.status || "").toLowerCase()
+        if (["cancelada", "cancelled", "no_show", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) return false
+        if (r.checkoutDone || r.earlyCheckout || r.actualCheckoutAt) return false
+        return true
+      })
+
+      const isBest = Number(fairShareResult?.bestFlatId) === Number(f.id)
+      const isAvail = flatStat ? Boolean(flatStat.isAvailable) : (!localResConflict && !localBlockConflict)
+      const conflictList = (flatStat?.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id))
+      const conflictName = conflictList[0]?.guestName || localResConflict?.guestName
+      const blockItem = flatStat?.blocks?.[0] || localBlockConflict
+      const isServiceOrMaintBlock = Boolean(
+        blockItem?.isServiceBlock ||
+        blockItem?.reason === "service_order" ||
+        flatStat?.hasServiceOrderConflict
+      )
+      const isBlockedOnly =
+        !isAvail &&
+        !conflictName &&
+        Boolean(blockItem || flatStat?.hasServiceOrderConflict || flatStat?.isFlatBlockedStatus)
+      const hasSameDayTurnover = flatStat ? Boolean(flatStat.hasCheckoutOnCheckinDay) : localSameDayCheckout
+      const hasCompletedSameDayCheckout = !isFutureCheckin && Boolean(flatStat?.hasCompletedSameDayCheckout)
+      const cleaningStatus = isFutureCheckin ? "clean" : (flatStat?.cleaningStatus || (f as any).cleaningStatus || "clean")
+      const isDirty = !isFutureCheckin && (cleaningStatus === "dirty" || Boolean(flatStat?.isDirty))
+      const isCleaningNow = !isFutureCheckin && (cleaningStatus === "cleaning_now" || Boolean(flatStat?.isCleaningNow))
+      const daysCount = flatStat?.monthOccupiedDays || 0
+
+      let stateBadgeText = `🟢 Vago & Limpo (${daysCount}d)`
+      let stateBadgeClass = "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20"
+      let bestSuffix = "Vago & Limpo"
+
+      if (hasSameDayTurnover) {
+        stateBadgeText = `🔄 Saída no Dia • Ocupado (${daysCount}d)`
+        stateBadgeClass = "text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30"
+        bestSuffix = "Saída no Dia"
+      } else if (isDirty) {
+        stateBadgeText = `🧹 Vago & Sujo${hasCompletedSameDayCheckout ? " • Saiu Hoje" : ""} (${daysCount}d)`
+        stateBadgeClass = "text-orange-700 dark:text-orange-300 bg-orange-500/15 border border-orange-500/30"
+        bestSuffix = "Vago & Sujo"
+      } else if (isCleaningNow) {
+        stateBadgeText = `🧽 Vago • Em Limpeza (${daysCount}d)`
+        stateBadgeClass = "text-sky-700 dark:text-sky-300 bg-sky-500/15 border border-sky-500/30"
+        bestSuffix = "Em Limpeza"
+      }
+
+      return (
+        <SelectItem key={f.id} value={String(f.id)}>
+          <div className="flex items-center justify-between gap-2 w-full py-0.5">
+            <span className="font-bold">Apt {f.number}</span>
+            {isBest && isAvail && (
+              <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                ✨ Quarto da Vez ({bestSuffix} • {daysCount}d)
+              </span>
+            )}
+            {!isAvail && (
+              <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
+                {isBlockedOnly
+                  ? `🔒 Bloqueado (${isServiceOrMaintBlock ? "OS" : "Manutenção"})`
+                  : `⚠️ Ocupado ${conflictName ? `(${conflictName})` : ""}`}
+              </span>
+            )}
+            {isAvail && !isBest && (
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${stateBadgeClass}`}>
+                {stateBadgeText}
+              </span>
+            )}
+          </div>
+        </SelectItem>
+      )
+    })
+  }, [data.flats, data.reservations, data.blocks, fairShareResult, selectedRes, formCheckin, formCheckout])
+
+  const frozenBgRef = useRef<{ node: React.ReactNode; dataRef: any; isSyncing: boolean } | null>(null)
+  const isModalOverlayActive =
+    resModalOpen ||
+    newCompanyModalOpen ||
+    blockModalOpen ||
+    blockDetailsModalOpen ||
+    flatTagsModalOpen ||
+    essentialConfigModalOpen ||
+    csvExportModalOpen ||
+    csvImportModalOpen ||
+    expiredModalOpen ||
+    Boolean(maintModalFlat)
+
   if (!loadingUser && user?.role !== "admin" && user?.role !== "dev") {
     if (modalOnly) return null
     return <AccessDenied moduleName="o Livro de Reservas & Mapa de Ocupação" />
@@ -6164,7 +6558,18 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     <MaybeShell>
       <div className={modalOnly ? "" : "p-4 sm:p-6 space-y-6 max-w-[100vw] overflow-x-hidden"}>
         {!modalOnly && (
-          <>
+          <MemoizedSlot
+            node={(() => {
+              if (
+                isModalOverlayActive &&
+                frozenBgRef.current &&
+                frozenBgRef.current.dataRef === data &&
+                frozenBgRef.current.isSyncing === isSyncing
+              ) {
+                return frozenBgRef.current.node
+              }
+              const nextBgNode = (
+                <>
         {/* Header Title & Actions */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -6955,18 +7360,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           ? `R$ ${resTotal.toLocaleString("pt-BR", { minimumFractionDigits: resTotal % 1 !== 0 ? 2 : 0, maximumFractionDigits: 2 })}` 
                           : null;
 
-                        // Verificação dinâmica de Mensalista (por reserva ou por cadastro no CRM)
-                        const resCardCleanDoc = String(resItem.guestDocument || "").replace(/\D/g, "");
-                        const resCardCleanPhone = String(resItem.guestPhone || "").replace(/\D/g, "");
-                        const matchedGuest = (data.guests || []).find((g: any) => {
-                          const gDoc = String(g.document || g.documentNumber || "").replace(/\D/g, "");
-                          const gPhone = String(g.phone || "").replace(/\D/g, "");
-                          return (g.id && g.id === resItem.guestId) ||
-                            (gDoc.length >= 8 && resCardCleanDoc.length >= 8 && gDoc === resCardCleanDoc) ||
-                            (gPhone.length >= 8 && resCardCleanPhone.length >= 8 && gPhone === resCardCleanPhone) ||
-                            (g.name && resItem.guestName && g.name.toLowerCase().trim() === resItem.guestName.toLowerCase().trim()) ||
-                            (g.fullName && resItem.guestName && g.fullName.toLowerCase().trim() === resItem.guestName.toLowerCase().trim());
-                        });
+                        // Verificação dinâmica de Mensalista (por reserva ou por cadastro no CRM - O(1) via índice)
+                        const matchedGuest = findMatchedGuest(resItem);
 
                         const isMensalista = Boolean(
                           resItem.isMonthlyGuest || 
@@ -7497,8 +7892,16 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
             </div>
           </div>
         )}
+                </>
+              )
+              frozenBgRef.current = { node: nextBgNode, dataRef: data, isSyncing }
+              return nextBgNode
+            })()}
+          />
+        )}
 
         {/* Modal de Confirmação Segura de Arraste / Redimensionamento */}
+        {!modalOnly && (
         <Dialog open={!!dragConfirmData?.isOpen} onOpenChange={(open) => { if (!open) handleCancelDragMove(); }}>
           <DialogContent className="w-full max-w-[95vw] sm:max-w-md p-4 sm:p-6">
             <DialogHeader>
@@ -7607,7 +8010,6 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
             </DialogFooter>
           </DialogContent>
         </Dialog>
-          </>
         )}
 
         {/* Modal: New / Edit Reservation */}
@@ -8026,7 +8428,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                     sideOffset={8}
                     className="z-[70] w-[310px] sm:w-[330px] max-w-[calc(100vw-2rem)] p-3 bg-popover border border-border shadow-2xl rounded-2xl animate-in fade-in-0 zoom-in-95"
                   >
-                    {(() => {
+                    {rangePickerOpen && (() => {
                       const safeMonth = !pickerMonth || isNaN(pickerMonth.getTime()) ? new Date() : pickerMonth;
                       return (
                         <>
@@ -8270,11 +8672,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                     </div>
                     <Select 
                       value={formFlatId} 
-                      onValueChange={(val) => { 
-                        isFlatManuallyChangedRef.current = true;
-                        setFormFlatId(val); 
-                        setFormForceReplace(false); 
-                      }}
+                      onValueChange={stableSelectFlat}
                     >
                       <SelectTrigger className="text-xs font-bold h-9 w-full min-w-0">
                         <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
@@ -8310,98 +8708,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent className="max-h-64">
-                        {data.flats.map(f => {
-                          const flatStat = fairShareResult?.allStats?.find(
-                            (s: any) => Number(s.flat?.id) === Number(f.id) || String(s.flat?.number) === String(f.number)
-                          );
-                          const localResConflict = (data.reservations || []).find((r: any) => {
-                            if (selectedRes && String(r.id) === String(selectedRes.id)) return false;
-                            if (Number(r.flatId) !== Number(f.id) && String(r.flatNumber) !== String(f.number)) return false;
-                            const st = String(r.status || "").toLowerCase();
-                            if (["cancelada", "cancelled", "no_show", "expirada"].includes(st)) return false;
-                            if ((r.checkoutDone || r.earlyCheckout || ["completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) && r.checkoutDate <= formCheckin) return false;
-                            return r.checkinDate < formCheckout && r.checkoutDate > formCheckin;
-                          });
-                          const localBlockConflict = (data.blocks || []).find((b: any) => {
-                            if (Number(b.flatId) !== Number(f.id) && String(b.flatNumber) !== String(f.number)) return false;
-                            return b.startDate < formCheckout && b.endDate >= formCheckin;
-                          });
-                          const localSameDayCheckout = (data.reservations || []).some((r: any) => {
-                            if (selectedRes && String(r.id) === String(selectedRes.id)) return false;
-                            if (Number(r.flatId) !== Number(f.id) && String(r.flatNumber) !== String(f.number)) return false;
-                            if (r.checkoutDate !== formCheckin) return false;
-                            const st = String(r.status || "").toLowerCase();
-                            if (["cancelada", "cancelled", "no_show", "expirada", "completed", "checked_out", "finalizada", "concluida", "checkout"].includes(st)) return false;
-                            if (r.checkoutDone || r.earlyCheckout || r.actualCheckoutAt) return false;
-                            return true;
-                          });
-
-                          const isBest = Number(fairShareResult?.bestFlatId) === Number(f.id);
-                          const isAvail = flatStat ? Boolean(flatStat.isAvailable) : (!localResConflict && !localBlockConflict);
-                          const conflictList = (flatStat?.conflicts || []).filter((c: any) => !selectedRes || String(c.id) !== String(selectedRes.id));
-                          const conflictName = conflictList[0]?.guestName || localResConflict?.guestName;
-                          const blockItem = flatStat?.blocks?.[0] || localBlockConflict;
-                          const isServiceOrMaintBlock = Boolean(
-                            blockItem?.isServiceBlock ||
-                            blockItem?.reason === "service_order" ||
-                            flatStat?.hasServiceOrderConflict
-                          );
-                          const isBlockedOnly =
-                            !isAvail &&
-                            !conflictName &&
-                            Boolean(blockItem || flatStat?.hasServiceOrderConflict || flatStat?.isFlatBlockedStatus);
-                          const todayIso = format(new Date(), "yyyy-MM-dd");
-                          const isFutureCheckin = formCheckin > todayIso;
-                          const hasSameDayTurnover = flatStat ? Boolean(flatStat.hasCheckoutOnCheckinDay) : localSameDayCheckout;
-                          const hasCompletedSameDayCheckout = !isFutureCheckin && Boolean(flatStat?.hasCompletedSameDayCheckout);
-                          const cleaningStatus = isFutureCheckin ? "clean" : (flatStat?.cleaningStatus || (f as any).cleaningStatus || "clean");
-                          const isDirty = !isFutureCheckin && (cleaningStatus === "dirty" || Boolean(flatStat?.isDirty));
-                          const isCleaningNow = !isFutureCheckin && (cleaningStatus === "cleaning_now" || Boolean(flatStat?.isCleaningNow));
-                          const daysCount = flatStat?.monthOccupiedDays || 0;
-
-                          let stateBadgeText = `🟢 Vago & Limpo (${daysCount}d)`;
-                          let stateBadgeClass = "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20";
-                          let bestSuffix = "Vago & Limpo";
-
-                          if (hasSameDayTurnover) {
-                            stateBadgeText = `🔄 Saída no Dia • Ocupado (${daysCount}d)`;
-                            stateBadgeClass = "text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30";
-                            bestSuffix = "Saída no Dia";
-                          } else if (isDirty) {
-                            stateBadgeText = `🧹 Vago & Sujo${hasCompletedSameDayCheckout ? " • Saiu Hoje" : ""} (${daysCount}d)`;
-                            stateBadgeClass = "text-orange-700 dark:text-orange-300 bg-orange-500/15 border border-orange-500/30";
-                            bestSuffix = "Vago & Sujo";
-                          } else if (isCleaningNow) {
-                            stateBadgeText = `🧽 Vago • Em Limpeza (${daysCount}d)`;
-                            stateBadgeClass = "text-sky-700 dark:text-sky-300 bg-sky-500/15 border border-sky-500/30";
-                            bestSuffix = "Em Limpeza";
-                          }
-
-                          return (
-                            <SelectItem key={f.id} value={String(f.id)}>
-                              <div className="flex items-center justify-between gap-2 w-full py-0.5">
-                                <span className="font-bold">Apt {f.number}</span>
-                                {isBest && isAvail && (
-                                  <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                    ✨ Quarto da Vez ({bestSuffix} • {daysCount}d)
-                                  </span>
-                                )}
-                                {!isAvail && (
-                                  <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
-                                    {isBlockedOnly
-                                      ? `🔒 Bloqueado (${isServiceOrMaintBlock ? "OS" : "Manutenção"})`
-                                      : `⚠️ Ocupado ${conflictName ? `(${conflictName})` : ""}`}
-                                  </span>
-                                )}
-                                {isAvail && !isBest && (
-                                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${stateBadgeClass}`}>
-                                    {stateBadgeText}
-                                  </span>
-                                )}
-                              </div>
-                            </SelectItem>
-                          );
-                        })}
+                        {flatSelectOptions}
                       </SelectContent>
                     </Select>
                   </div>
@@ -8410,42 +8717,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                     <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Canal de Origem</Label>
                     <Select 
                       value={formChannel} 
-                      onValueChange={val => {
-                        setFormChannel(val);
-                        const allSame = formDailyRates.length <= 1 || formDailyRates.every(d => (d.channel || "whatsapp") === formChannel);
-                        const updatedDailyRates = allSame 
-                          ? formDailyRates.map(d => ({ ...d, channel: val })) 
-                          : formDailyRates;
-                        setFormDailyRates(updatedDailyRates);
-
-                        if (val === "b2b") {
-                          setFormRequesterType("agency_b2b");
-                          setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
-                          setFormStatus("confirmada");
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b");
-                        } else if (val === "booking" || val === "airbnb") {
-                          let updatedCharges = [...formCharges];
-                          const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning");
-                          if (cleanIdx === -1) {
-                            updatedCharges.push({
-                              id: `charge_${Date.now()}_clean`,
-                              type: "cleaning",
-                              title: "Taxa de Limpeza",
-                              amount: 50,
-                              notes: ""
-                            });
-                          } else if (updatedCharges[cleanIdx].amount === 80) {
-                            updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 };
-                          }
-                          setFormCharges(updatedCharges);
-                          syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, val, val);
-                        } else if (val === "site") {
-                          setFormPaymentMethod("pix");
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, "pix");
-                        } else {
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val);
-                        }
-                      }}
+                      onValueChange={stableSelectChannel}
                     >
                       <SelectTrigger className="text-xs h-9 w-full min-w-0">
                         <SelectValue placeholder="Canal" />
@@ -8925,23 +9197,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           </div>
                         )}
 
-                        <Select value={formAgencyId} onValueChange={handleSelectAgency}>
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue placeholder="Selecione a Agência B2B cadastrada..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-64">
-                            <SelectItem value="__NEW_AGENCY__" className="text-purple-600 font-bold">
-                              ➕ Cadastrar Nova Agência B2B...
-                            </SelectItem>
-                            {agencies.map((ag: any) => (
-                              <SelectItem key={ag.id} value={String(ag.id)}>
-                                <span className="font-semibold">{ag.tradeName || ag.corporateName}</span>
-                                {ag.cnpj ? ` • CNPJ: ${ag.cnpj}` : ""}
-                                {ag.defaultRatePolicy ? ` • [${ag.defaultRatePolicy}]` : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <MemoAgencySelect
+                          value={formAgencyId}
+                          onValueChange={stableSelectAgency}
+                          agencies={agencies}
+                        />
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           <Input
@@ -8996,33 +9256,15 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <Select
+                          <MemoCompanySelect
                             value={formCompanyId}
-                            onValueChange={val => {
-                              if (val === "__NEW_COMPANY__") {
-                                handleOpenNewCompanyModal()
-                                return
-                              }
-                              setFormCompanyId(val)
-                              const c = companies.find(comp => String(comp.id) === val)
-                              if (c) setFormCompanyName(c.tradeName || c.corporateName)
-                            }}
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue placeholder="Selecione a Empresa Cliente..." />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-64">
-                              <SelectItem value="__NEW_COMPANY__" className="text-indigo-600 font-bold">
-                                ➕ Cadastrar Nova Empresa...
-                              </SelectItem>
-                              {companies.map((c: any) => (
-                                <SelectItem key={c.id} value={String(c.id)}>
-                                  <span className="font-semibold">{c.tradeName || c.corporateName}</span>
-                                  {c.cnpj && !String(c.cnpj).includes("Informado") ? ` • CNPJ: ${c.cnpj}` : ""}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            onValueChange={stableSelectCompanySimple}
+                            companies={companies}
+                            placeholder="Selecione a Empresa Cliente..."
+                            newLabel="➕ Cadastrar Nova Empresa..."
+                            newItemClassName="text-indigo-600 font-bold"
+                            skipInformadoCnpj
+                          />
 
                           <Input
                             value={formCostCenter}
@@ -9345,24 +9587,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       </div>
 
                       {/* Lista Suspensa Select tradicional com opção de Novo Hóspede */}
-                      <Select value={formGuestId} onValueChange={handleSelectGuest}>
-                        <SelectTrigger className="text-xs h-8">
-                          <SelectValue placeholder="Ou selecione um Hóspede Cadastrado..." />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-64">
-                          <SelectItem value="manual" className="text-primary font-bold">
-                            ➕ Novo Hóspede (Digitar manualmente)
-                          </SelectItem>
-                          {crmGuests.map((g: any) => (
-                            <SelectItem key={g.id} value={String(g.id)}>
-                              <span className="font-semibold">{g.name || g.fullName}</span>
-                              {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
-                              {g.phone ? ` • Tel: ${g.phone}` : ""}
-                              {g.companyName ? ` • (${g.companyName})` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <MemoCrmGuestSelect
+                        value={formGuestId}
+                        onValueChange={stableSelectGuest}
+                        guests={crmGuests}
+                        placeholder="Ou selecione um Hóspede Cadastrado..."
+                        manualLabel="➕ Novo Hóspede (Digitar manualmente)"
+                      />
                       {formGuestId && formGuestId !== "manual" && (
                         <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
                           <CheckCircle2 className="w-3.5 h-3.5" /> Hóspede vinculado do CRM ({formGuestName}). Dados preenchidos abaixo.
@@ -9467,24 +9698,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       </div>
 
                       {/* Select tradicional do Solicitante */}
-                      <Select value={formRequesterId} onValueChange={handleSelectRequester}>
-                        <SelectTrigger className="text-xs h-8">
-                          <SelectValue placeholder="Ou selecione um Solicitante Cadastrado..." />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-64">
-                          <SelectItem value="manual" className="text-primary font-bold">
-                            ➕ Novo Solicitante (Digitar manualmente)
-                          </SelectItem>
-                          {crmGuests.map((g: any) => (
-                            <SelectItem key={g.id} value={String(g.id)}>
-                              <span className="font-semibold">{g.name || g.fullName}</span>
-                              {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
-                              {g.phone ? ` • Tel: ${g.phone}` : ""}
-                              {g.companyName ? ` • (${g.companyName})` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <MemoCrmGuestSelect
+                        value={formRequesterId}
+                        onValueChange={stableSelectRequester}
+                        guests={crmGuests}
+                        placeholder="Ou selecione um Solicitante Cadastrado..."
+                        manualLabel="➕ Novo Solicitante (Digitar manualmente)"
+                      />
                       {formRequesterId && formRequesterId !== "manual" && (
                         <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
                           <CheckCircle2 className="w-3.5 h-3.5" /> Solicitante vinculado do CRM ({formRequesterName}).
@@ -9623,85 +9843,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         </button>
                       </div>
 
-                      <Select 
-                        value={formCompanyId} 
-                        onValueChange={(val) => {
-                          if (val === "__NEW_COMPANY__") {
-                            handleOpenNewCompanyModal();
-                            return;
-                          }
-                          setFormCompanyId(val);
-                          const c = companies.find(comp => String(comp.id) === val) as any;
-                          if (c) {
-                            setFormCompanyName(c.tradeName || c.corporateName);
-                            if (!formRequesterName.trim() && (c.contactPerson || c.tradeName || c.corporateName)) {
-                              setFormRequesterName(c.contactPerson || c.tradeName || c.corporateName);
-                            }
-                            if (!formRequesterPhone.trim() && (c.phone || c.telefone)) {
-                              setFormRequesterPhone(c.phone || c.telefone);
-                            }
-                            if (!formRequesterEmail.trim() && (c.email || c.financialEmail || c.emailFinanceiro)) {
-                              setFormRequesterEmail(c.email || c.financialEmail || c.emailFinanceiro);
-                            }
-                            setFormIsFaturadoBoleto(true);
-                            setFormPaymentMethod("boleto_faturado");
-                            setFormAutoInvoice(true);
-                            const nonAutoCompanyPays = formPayments.filter(p =>
-                              p && (String(p.id || "").startsWith("pay_bol_") || !/^(pagamento integral|pagamento inicial)$/i.test(String(p.notes || "").trim()))
-                            );
-                            if (nonAutoCompanyPays.length === 0) {
-                              setFormPayments([]);
-                              setFormPaidAmount("0");
-                              setFormPaymentStatus("pendente");
-                            }
-                            setFormBoletoPayerType("company");
-                            if (c.defaultBoletoTermDays || c.billingTerms) {
-                              const parsedDays = Number(c.defaultBoletoTermDays) || parseInt(String(c.billingTerms || "").replace(/\D/g, ""), 10) || 15;
-                              setFormBoletoTermDays(parsedDays);
-                            }
-                            if (c.defaultBoletoConsumptionMode) {
-                              setFormBoletoConsumptionMode(
-                                c.defaultBoletoConsumptionMode === "separate_boletos" || c.defaultBoletoConsumptionMode === "separate"
-                                  ? "separate_boletos"
-                                  : "single_boleto"
-                              );
-                            }
-                            if (c.financialResponsible?.name) {
-                              setFormFinRespName(c.financialResponsible.name || "");
-                              setFormFinRespEmail(c.financialResponsible.email || "");
-                              setFormFinRespPhone(c.financialResponsible.phone || c.financialResponsible.whatsapp || "");
-                              setFormFinRespDoc(c.financialResponsible.document || "");
-                            }
-                            if (c.defaultBillingRecipients) {
-                              setFormRecGuest(Boolean(c.defaultBillingRecipients.guest ?? false));
-                              setFormRecRequester(Boolean(c.defaultBillingRecipients.requester ?? true));
-                              setFormRecCompany(Boolean(c.defaultBillingRecipients.company ?? true));
-                              setFormRecFinResp(Boolean(c.defaultBillingRecipients.financialResponsible ?? true));
-                              setFormRecSendEmail(c.defaultBillingRecipients.sendEmail !== false);
-                              setFormRecSendWhatsapp(c.defaultBillingRecipients.sendWhatsapp !== false);
-                            } else {
-                              setFormRecCompany(true);
-                              setFormRecRequester(true);
-                              setFormRecFinResp(true);
-                            }
-                          }
-                        }}
-                      >
-                        <SelectTrigger className="text-xs h-8">
-                          <SelectValue placeholder="Selecione a Empresa Parceira..." />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-64">
-                          <SelectItem value="__NEW_COMPANY__" className="text-indigo-600 dark:text-indigo-400 font-bold cursor-pointer bg-indigo-50/60 dark:bg-indigo-950/40">
-                            ➕ Cadastrar Nova Empresa Parceira...
-                          </SelectItem>
-                          {companies.map((c: any) => (
-                            <SelectItem key={c.id} value={String(c.id)}>
-                              <span className="font-semibold">{c.tradeName || c.corporateName}</span>
-                              {c.cnpj ? ` • CNPJ: ${c.cnpj}` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <MemoCompanySelect
+                        value={formCompanyId}
+                        onValueChange={stableSelectCompanyCorporate}
+                        companies={companies}
+                        placeholder="Selecione a Empresa Parceira..."
+                        newLabel="➕ Cadastrar Nova Empresa Parceira..."
+                      />
 
                       {formCompanyId && (
                         <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 mt-0.5">
@@ -9758,22 +9906,16 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {formRequesterType !== "guest" && (
                           <div className="w-44 sm:w-56">
-                            <Select value={formGuestId} onValueChange={handleSelectGuest}>
-                              <SelectTrigger className="text-[10px] h-6 px-2">
-                                <SelectValue placeholder="Puxar do CRM..." />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-60">
-                                <SelectItem value="manual" className="text-primary font-bold text-xs">
-                                  Digitar manualmente
-                                </SelectItem>
-                                {crmGuests.map((g: any) => (
-                                  <SelectItem key={g.id} value={String(g.id)} className="text-xs">
-                                    {g.name || g.fullName}
-                                    {g.phone ? ` • ${g.phone}` : ""}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <MemoCrmGuestSelect
+                              value={formGuestId}
+                              onValueChange={stableSelectGuest}
+                              guests={crmGuests}
+                              placeholder="Puxar do CRM..."
+                              manualLabel="Digitar manualmente"
+                              triggerClassName="text-[10px] h-6 px-2"
+                              contentClassName="max-h-60"
+                              compact
+                            />
                           </div>
                         )}
                         <Button
@@ -10184,24 +10326,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           )}
                         </div>
 
-                        <Select value={formGuest2Id} onValueChange={handleSelectGuest2}>
-                          <SelectTrigger className="text-xs h-8">
-                            <SelectValue placeholder="Ou selecione um Hóspede Cadastrado..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-64">
-                            <SelectItem value="manual" className="text-primary font-bold">
-                              ➕ Novo Hóspede (Digitar manualmente)
-                            </SelectItem>
-                            {crmGuests.map((g: any) => (
-                              <SelectItem key={g.id} value={String(g.id)}>
-                                <span className="font-semibold">{g.name || g.fullName}</span>
-                                {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
-                                {g.phone ? ` • Tel: ${g.phone}` : ""}
-                                {g.companyName ? ` • (${g.companyName})` : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <MemoCrmGuestSelect
+                          value={formGuest2Id}
+                          onValueChange={stableSelectGuest2}
+                          guests={crmGuests}
+                          placeholder="Ou selecione um Hóspede Cadastrado..."
+                          manualLabel="➕ Novo Hóspede (Digitar manualmente)"
+                        />
 
                         {formGuest2Id && formGuest2Id !== "manual" && (
                           <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
@@ -10407,24 +10538,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           )}
                         </div>
 
-                        <Select value={formGuest3Id} onValueChange={handleSelectGuest3}>
-                          <SelectTrigger className="text-xs h-8">
-                            <SelectValue placeholder="Ou selecione um Hóspede Cadastrado..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-64">
-                            <SelectItem value="manual" className="text-primary font-bold">
-                              ➕ Novo Hóspede (Digitar manualmente)
-                            </SelectItem>
-                            {crmGuests.map((g: any) => (
-                              <SelectItem key={g.id} value={String(g.id)}>
-                                <span className="font-semibold">{g.name || g.fullName}</span>
-                                {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
-                                {g.phone ? ` • Tel: ${g.phone}` : ""}
-                                {g.companyName ? ` • (${g.companyName})` : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <MemoCrmGuestSelect
+                          value={formGuest3Id}
+                          onValueChange={stableSelectGuest3}
+                          guests={crmGuests}
+                          placeholder="Ou selecione um Hóspede Cadastrado..."
+                          manualLabel="➕ Novo Hóspede (Digitar manualmente)"
+                        />
 
                         {formGuest3Id && formGuest3Id !== "manual" && (
                           <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
@@ -11275,35 +11395,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                               <Plus className="w-3.5 h-3.5" /> Cadastrar Empresa
                             </button>
                           </div>
-                          <Select
+                          <MemoCompanySelect
                             value={formCompanyId}
-                            onValueChange={(val) => {
-                              if (val === "__NEW_COMPANY__") {
-                                handleOpenNewCompanyModal()
-                                return
-                              }
-                              setFormCompanyId(val)
-                              const c = companies.find(comp => String(comp.id) === val) as any
-                              if (c) {
-                                setFormCompanyName(c.tradeName || c.corporateName)
-                              }
-                            }}
-                          >
-                            <SelectTrigger className="text-xs h-8">
-                              <SelectValue placeholder="Selecione a Empresa para emissão da NFS-e..." />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-64">
-                              <SelectItem value="__NEW_COMPANY__" className="text-indigo-600 dark:text-indigo-400 font-bold cursor-pointer bg-indigo-50/60 dark:bg-indigo-950/40">
-                                ➕ Cadastrar Nova Empresa...
-                              </SelectItem>
-                              {companies.map((c: any) => (
-                                <SelectItem key={c.id} value={String(c.id)}>
-                                  <span className="font-semibold">{c.tradeName || c.corporateName}</span>
-                                  {c.cnpj ? ` • CNPJ: ${c.cnpj}` : ""}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            onValueChange={stableSelectCompanySimple}
+                            companies={companies}
+                            placeholder="Selecione a Empresa para emissão da NFS-e..."
+                            newLabel="➕ Cadastrar Nova Empresa..."
+                          />
                         </div>
                       )}
 
