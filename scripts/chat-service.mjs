@@ -204,7 +204,41 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
   const isResObject = options && typeof options === "object" && ("checkinDate" in options || "flatNumber" in options || "guestName" in options) && !("reservation" in options);
   const r = isResObject ? options : (options?.reservation || null);
   const preferType = isResObject ? null : (options?.preferType || null);
-  const cleanPhoneNum = onlyDigits(options?.cleanTarget || options?.phone || r?.guestPhone || r?.phone || r?.whatsapp || "");
+
+  const firstResSlot = Array.isArray(r?.guests) && r.guests.length > 0 ? r.guests[0] : null;
+  const checkinInfo = r?.checkinData || r?.fnrh || null;
+
+  const callerPhoneNum = onlyDigits(options?.cleanTarget || options?.phone || "");
+  const resGuestPhoneNum = onlyDigits(r?.guestPhone || r?.phone || r?.whatsapp || firstResSlot?.phone || "");
+  const reqPhoneNum = onlyDigits(r?.requesterInfo?.phone || r?.requesterInfo?.whatsapp || r?.requesterPhone || "");
+  const reqPhoneLast8 = reqPhoneNum.length >= 8 ? reqPhoneNum.slice(-8) : "";
+  const resGuestPhoneLast8 = resGuestPhoneNum.length >= 8 ? resGuestPhoneNum.slice(-8) : "";
+  const callerPhoneLast8 = callerPhoneNum.length >= 8 ? callerPhoneNum.slice(-8) : "";
+
+  const normPersonName = (val = "") =>
+    String(val || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const resRealGuestName = (r?.guestName && !/^(h[oó]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(String(r.guestName).trim()))
+    ? String(r.guestName).trim()
+    : "";
+  const reqPersonName = String(r?.requesterInfo?.name || "").trim();
+  const isRequesterDifferentPerson = Boolean(
+    r &&
+    (r.requesterType === "other_person" || r.requesterType === "company" || r.requesterType === "agency_b2b" || reqPersonName) &&
+    (
+      (resRealGuestName && reqPersonName && normPersonName(resRealGuestName) !== normPersonName(reqPersonName)) ||
+      (reqPhoneLast8 && resGuestPhoneLast8 && reqPhoneLast8 !== resGuestPhoneLast8) ||
+      (r.requesterType && r.requesterType !== "guest" && !resRealGuestName)
+    )
+  );
+  const isCallerThirdPartyRequester = Boolean(
+    callerPhoneLast8 &&
+    reqPhoneLast8 &&
+    callerPhoneLast8 === reqPhoneLast8 &&
+    (!resGuestPhoneLast8 || resGuestPhoneLast8 !== callerPhoneLast8 || isRequesterDifferentPerson)
+  );
+
+  // Para buscar o HÓSPEDE da reserva, prioriza estritamente o telefone do hóspede (nunca o telefone do solicitante terceiro)
+  const cleanPhoneNum = resGuestPhoneNum || (!isCallerThirdPartyRequester ? callerPhoneNum : "");
   const phoneLast8 = cleanPhoneNum.length >= 8 ? cleanPhoneNum.slice(-8) : "";
 
   const allGuests = Array.isArray(db?.guests) ? db.guests : [];
@@ -213,24 +247,38 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
   const allAccounts = Array.isArray(db?.guestAccounts) ? db.guestAccounts : [];
   const allInvoices = Array.isArray(db?.invoices) ? db.invoices : [];
 
-  const firstResSlot = Array.isArray(r?.guests) && r.guests.length > 0 ? r.guests[0] : null;
-  const checkinInfo = r?.checkinData || r?.fnrh || null;
-
   const resDocDigits = onlyDigits(
     r?.guestDocument || r?.guestCpf || r?.document || r?.cpf ||
     firstResSlot?.cpf || firstResSlot?.document || ""
   );
 
-  // Localiza hóspede(s) no CRM (mesma regra do /notas + enriquecimento de múltiplas entradas)
+  // Localiza hóspede(s) no CRM blindando contra colisão com Solicitante Terceiro (other_person)
   const matchingGuests = allGuests.filter(g => {
     if (!g) return false;
     if (options?.guest && (g === options.guest || (options.guest.id && String(g.id) === String(options.guest.id)))) return true;
     if (r?.guestId && String(g.id) === String(r.guestId)) return true;
+
+    // Se este registro de CRM é exclusivamente o Solicitante Terceiro desta reserva (e não o hóspede), exclui do pool do hóspede
+    const isThisRecordThirdPartyRequester = Boolean(
+      isRequesterDifferentPerson && (
+        (r?.requesterInfo?.guestId && String(g.id) === String(r.requesterInfo.guestId) && String(g.id) !== String(r?.guestId || "")) ||
+        (Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro") && resRealGuestName && normPersonName(g.fullName || g.name) !== normPersonName(resRealGuestName))
+      )
+    );
+    if (isThisRecordThirdPartyRequester) return false;
+
     const gDoc = onlyDigits(g.documentNumber || g.document || g.cpf || g.cpfCnpj || "");
     if (resDocDigits && resDocDigits.length >= 11 && gDoc === resDocDigits) return true;
+    if (resRealGuestName && normPersonName(g.fullName || g.name) === normPersonName(resRealGuestName)) return true;
+
     const gPhone = onlyDigits(g.phone || g.whatsapp || "");
-    if (phoneLast8 && gPhone && (gPhone === cleanPhoneNum || gPhone.endsWith(phoneLast8) || cleanPhoneNum.endsWith(gPhone.slice(-8)))) return true;
-    if (r?.guestName && String(g.fullName || g.name || "").trim().toLowerCase() === String(r.guestName).trim().toLowerCase()) return true;
+    // Só casa por telefone se não houver conflito de nome com o hóspede titular da reserva
+    if (phoneLast8 && gPhone && (gPhone === cleanPhoneNum || gPhone.endsWith(phoneLast8) || cleanPhoneNum.endsWith(gPhone.slice(-8)))) {
+      if (resRealGuestName && (g.fullName || g.name) && normPersonName(g.fullName || g.name) !== normPersonName(resRealGuestName)) {
+        return false;
+      }
+      return true;
+    }
     return false;
   });
 
@@ -378,13 +426,14 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
 
   const guestName = pickNonEmpty(
     options?.guestName,
+    resRealGuestName,
+    firstResSlot?.name,
+    checkinInfo?.fullName, checkinInfo?.name,
     primaryGuest?.fullName, primaryGuest?.name,
     ...matchingGuests.flatMap(g => [g.fullName, g.name]),
     r?.guestName,
-    firstResSlot?.name,
-    checkinInfo?.fullName, checkinInfo?.name,
     ...matchingAccounts.flatMap(a => [a.fullName, a.name]),
-    options?.senderName,
+    !isCallerThirdPartyRequester ? options?.senderName : "",
     "Hóspede"
   );
 
@@ -594,10 +643,56 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     tomadorCodigoMunicipio: onlyDigits(agAddrSource?.ibgeCode || agAddrSource?.codigoMunicipio || "")
   } : null;
 
-  // Seleção do Tomador Ativo (idêntica a recipientPref em populateStayFromReservation no /notas)
-  let recipientType = String(r?.invoiceRecipientType || "").toLowerCase();
+  // Opção 4: Solicitante / Terceiro Pagador (other_person / requester), sem misturar com o Hóspede da estadia
+  const rawReqDoc = onlyDigits(r?.requesterInfo?.cpf || r?.requesterInfo?.document || "");
+  const reqCrmGuest = (r?.requesterInfo || r?.invoiceRecipientType === "requester" || r?.invoiceRecipientType === "other_person")
+    ? allGuests.find(g =>
+        g && (
+          (r?.requesterInfo?.guestId && String(g.id) === String(r.requesterInfo.guestId)) ||
+          (rawReqDoc.length >= 11 && onlyDigits(g.documentNumber || g.document || g.cpf || "") === rawReqDoc) ||
+          (reqPhoneLast8 && onlyDigits(g.phone || g.whatsapp || "").endsWith(reqPhoneLast8))
+        )
+      )
+    : null;
+  const reqDoc = onlyDigits(rawReqDoc || reqCrmGuest?.documentNumber || reqCrmGuest?.document || reqCrmGuest?.cpf || "");
+  const reqName = pickNonEmpty(r?.requesterInfo?.name, reqCrmGuest?.fullName, reqCrmGuest?.name);
+  const normReqAddr = reqCrmGuest ? extractNormalizedGuestAddress(reqCrmGuest, reqDoc) : {
+    logradouro: "", numero: "", complemento: "", bairro: "", cep: "", cidade: "", uf: "", ibge: ""
+  };
+  const requesterOption = (reqName || reqDoc) ? {
+    type: "requester",
+    tomadorTipo: reqDoc.length === 14 ? "PJ" : "PF",
+    tomadorType: reqDoc.length === 14 ? "pj" : "pf",
+    tomadorPadrao: reqDoc.length === 14 ? "PJ" : "TERCEIRO PF",
+    requesterGuestId: reqCrmGuest?.id ? Number(reqCrmGuest.id) : (r?.requesterInfo?.guestId ? Number(r.requesterInfo.guestId) : null),
+    guestId: guestOption.guestId,
+    name: toTitleCaseLocal(reqName || "Solicitante"),
+    doc: reqDoc,
+    tomadorNome: toTitleCaseLocal(reqName || "Solicitante"),
+    tomadorCpfCnpj: reqDoc,
+    tomadorEmail: pickNonEmpty(r?.requesterInfo?.email, reqCrmGuest?.email, reqCrmGuest?.financialEmail).toLowerCase(),
+    tomadorTelefone: onlyDigits(pickNonEmpty(r?.requesterInfo?.phone, r?.requesterInfo?.whatsapp, reqCrmGuest?.phone, callerPhoneNum)),
+    tomadorEndereco: normReqAddr.logradouro,
+    tomadorNumero: normReqAddr.numero,
+    tomadorComplemento: normReqAddr.complemento,
+    tomadorBairro: normReqAddr.bairro,
+    tomadorCep: normReqAddr.cep,
+    tomadorCidade: normReqAddr.cidade,
+    tomadorUf: normReqAddr.uf,
+    tomadorCodigoMunicipio: normReqAddr.ibge
+  } : null;
+
+  // Seleção do Tomador Ativo desacoplando Solicitante ≠ Hóspede ≠ Tomador e respeitando preferência salva no CRM
+  let rawResRecType = String(r?.invoiceRecipientType || "").toLowerCase();
+  if (rawResRecType === "other_person" || rawResRecType === "third_party") rawResRecType = "requester";
+  let crmPrefType = String(primaryGuest?.preferredInvoiceRecipient || "").toLowerCase();
+  if (crmPrefType === "other_person" || crmPrefType === "third_party") crmPrefType = "requester";
+
+  let recipientType = rawResRecType;
   if (preferType === "PF" || preferType === "pf" || preferType === "guest") {
     recipientType = "guest";
+  } else if (preferType === "requester" || preferType === "other_person") {
+    recipientType = requesterOption ? "requester" : "guest";
   } else if (preferType === "PJ" || preferType === "pj" || preferType === "company") {
     recipientType = companyOption ? "company" : (agencyOption ? "agency" : "guest");
   } else if (preferType === "agency") {
@@ -606,17 +701,31 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
     const confDoc = onlyDigits(confFiscal.tomadorCpfCnpj || confFiscal.doc);
     if (agencyOption && confDoc === agencyOption.tomadorCpfCnpj) recipientType = "agency";
     else if (companyOption && confDoc === companyOption.tomadorCpfCnpj) recipientType = "company";
+    else if (requesterOption && requesterOption.tomadorCpfCnpj && confDoc === requesterOption.tomadorCpfCnpj && confDoc !== guestOption.tomadorCpfCnpj) recipientType = "requester";
     else if (confDoc.length === 14 && (confFiscal.tomadorTipo === "PJ" || confFiscal.tomador === "PJ" || confFiscal.type === "COMPANY")) recipientType = "company";
     else recipientType = "guest";
-  } else if (!["guest", "company", "agency"].includes(recipientType)) {
-    if (agencyOption && r?.channel === "b2b") recipientType = "agency";
-    else if (companyOption && companyOption.tomadorCpfCnpj.length === 14 && isValidCnpj(companyOption.tomadorCpfCnpj)) recipientType = "company";
-    else recipientType = "guest";
+  } else if (!["guest", "company", "agency", "requester"].includes(recipientType)) {
+    if (crmPrefType === "guest") {
+      recipientType = "guest";
+    } else if (crmPrefType === "company" && companyOption && companyOption.tomadorCpfCnpj.length === 14) {
+      recipientType = "company";
+    } else if (crmPrefType === "agency" && agencyOption) {
+      recipientType = "agency";
+    } else if (crmPrefType === "requester" && requesterOption) {
+      recipientType = "requester";
+    } else if (agencyOption && r?.channel === "b2b") {
+      recipientType = "agency";
+    } else if (companyOption && companyOption.tomadorCpfCnpj.length === 14 && isValidCnpj(companyOption.tomadorCpfCnpj)) {
+      recipientType = "company";
+    } else {
+      recipientType = "guest";
+    }
   }
 
   let activeOption =
     (recipientType === "agency" && agencyOption && agencyOption.tomadorCpfCnpj) ? { ...agencyOption } :
     (recipientType === "company" && companyOption && companyOption.tomadorCpfCnpj) ? { ...companyOption } :
+    (recipientType === "requester" && requesterOption && (requesterOption.tomadorCpfCnpj || requesterOption.tomadorNome)) ? { ...requesterOption } :
     { ...guestOption };
 
   // Se houver dados já confirmados/personalizados em confirmedFiscalData ou invoiceDetails compatíveis com o tomador ativo, aplica por cima
@@ -624,8 +733,8 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
   const ovDoc = onlyDigits(customOverlay?.tomadorCpfCnpj || customOverlay?.doc || "");
   const overlayMatchesActive = Boolean(
     customOverlay &&
-    (!preferType || (preferType === "PF" && ovDoc.length === 11) || (preferType === "PJ" && ovDoc.length === 14)) &&
-    (!ovDoc || ovDoc === activeOption.tomadorCpfCnpj || (ovDoc.length === 14 && activeOption.tomadorTipo === "PJ" && (companyOption || agencyOption)))
+    (!preferType || (preferType === "PF" && ovDoc.length === 11) || (preferType === "PJ" && ovDoc.length === 14) || (preferType === "requester" && ovDoc.length === 11)) &&
+    (!ovDoc || ovDoc === activeOption.tomadorCpfCnpj || (recipientType === "requester" && ovDoc.length === 11) || (ovDoc.length === 14 && activeOption.tomadorTipo === "PJ" && (companyOption || agencyOption)))
   );
   if (overlayMatchesActive) {
     if (ovDoc.length === 11 || ovDoc.length === 14) {
@@ -812,9 +921,11 @@ export function buildOfficialNfseDraftForReservation(db, options = {}) {
       guest: guestOption,
       company: companyOption,
       agency: agencyOption,
+      requester: requesterOption,
       guestOption,
       companyOption,
-      agencyOption
+      agencyOption,
+      requesterOption
     }
   };
 }

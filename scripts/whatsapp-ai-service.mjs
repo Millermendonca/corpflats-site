@@ -11025,6 +11025,13 @@ export async function handleManagerFiscalApprovalReply({
     }
   }
 
+  if (emissionResult?.invoice && requesterPhone) {
+    await dispatchPdfViaGlobalHelper(emissionResult.invoice, {
+      cleanTarget: requesterPhone,
+      db
+    });
+  }
+
   if (typeof appendMessageFn === "function") {
     appendMessageFn(db, {
       phone: managerPhone,
@@ -11069,11 +11076,17 @@ export async function handleManagerFiscalApprovalReply({
  */
 export function findContactAndReservation(db, cleanTarget) {
   if (!db || !cleanTarget) {
-    return { matchedReservation: null, matchedGuest: null, companyId: null, linkedCompany: null };
+    return { matchedReservation: null, matchedGuest: null, companyId: null, linkedCompany: null, callerRole: "guest", callerCrmGuest: null };
   }
 
   const cleanPhoneNum = cleanWhatsAppPhone(cleanTarget);
   const targetLast8 = cleanPhoneNum.slice(-8);
+  const phoneMatches = (p) => {
+    const cp = cleanWhatsAppPhone(p);
+    return Boolean(cp && targetLast8 && (cp === cleanPhoneNum || cp.endsWith(targetLast8) || cleanPhoneNum.endsWith(cp.slice(-8))));
+  };
+  const normPersonName = (val = "") =>
+    String(val || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
   // 1. Procura reserva compatível
   const reservations = Array.isArray(db.reservations) ? db.reservations : [];
@@ -11088,6 +11101,7 @@ export function findContactAndReservation(db, cleanTarget) {
     if (r.requesterInfo?.phone) pList.push(r.requesterInfo.phone);
     if (r.requesterInfo?.whatsapp) pList.push(r.requesterInfo.whatsapp);
     if (r.requesterPhone) pList.push(r.requesterPhone);
+    if (r.agencyAgentPhone) pList.push(r.agencyAgentPhone);
     if (Array.isArray(r.guests)) {
       for (const g of r.guests) {
         if (typeof g === "string") pList.push(g);
@@ -11095,10 +11109,7 @@ export function findContactAndReservation(db, cleanTarget) {
         else if (g?.whatsapp) pList.push(g.whatsapp);
       }
     }
-    return pList.some(p => {
-      const cp = cleanWhatsAppPhone(p);
-      return cp && (cp === cleanPhoneNum || cp.endsWith(targetLast8) || cleanPhoneNum.endsWith(cp.slice(-8)));
-    });
+    return pList.some(phoneMatches);
   });
 
   const nonCancelled = matchedReservations.filter(r => r.status !== "cancelada" && r.status !== "cancelled");
@@ -11132,8 +11143,50 @@ export function findContactAndReservation(db, cleanTarget) {
     matchedReservation = matchedReservations[0];
   }
 
-  // 2. Procura cadastro de hóspede no CRM (mesclando candidatos se houver mais de um registro para o telefone/reserva)
+  // Identifica o papel exato de quem está falando no WhatsApp (Hóspede vs Solicitante Terceiro vs Empresa vs Agência)
+  let callerRole = "guest";
+  if (matchedReservation) {
+    const guestPhones = [
+      matchedReservation.guestPhone,
+      matchedReservation.phone,
+      matchedReservation.whatsapp,
+      matchedReservation.guestWhatsapp,
+      ...(Array.isArray(matchedReservation.guests)
+        ? matchedReservation.guests.map(g => (typeof g === "string" ? g : (g?.phone || g?.whatsapp)))
+        : [])
+    ].filter(Boolean);
+    const requesterPhones = [
+      matchedReservation.requesterInfo?.phone,
+      matchedReservation.requesterInfo?.whatsapp,
+      matchedReservation.requesterPhone
+    ].filter(Boolean);
+    const agencyPhones = [matchedReservation.agencyAgentPhone].filter(Boolean);
+
+    const matchesGuestPhone = guestPhones.some(phoneMatches);
+    const matchesRequesterPhone = requesterPhones.some(phoneMatches);
+    const matchesAgencyPhone = agencyPhones.some(phoneMatches);
+
+    const resRealGuestName = (matchedReservation.guestName && !/^(h[oó]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(String(matchedReservation.guestName).trim()))
+      ? String(matchedReservation.guestName).trim()
+      : "";
+    const reqName = String(matchedReservation.requesterInfo?.name || "").trim();
+    const isDiffPerson = Boolean(resRealGuestName && reqName && normPersonName(resRealGuestName) !== normPersonName(reqName));
+
+    if (matchesAgencyPhone && !matchesGuestPhone) {
+      callerRole = "agency";
+    } else if (matchesRequesterPhone && (!matchesGuestPhone || isDiffPerson)) {
+      callerRole = matchedReservation.requesterType === "company"
+        ? "company"
+        : (matchedReservation.requesterType === "agency_b2b" ? "agency" : "requester");
+    } else {
+      callerRole = "guest";
+    }
+  }
+
+  // 2. Procura cadastro do HÓSPEDE da reserva no CRM (separando de eventual Solicitante Terceiro)
   const guests = Array.isArray(db.guests) ? db.guests : [];
+  const callerCrmGuest = guests.find(g => g && phoneMatches(g.phone || g.whatsapp || "")) || null;
+
   const resDocDigits = onlyDigits(
     matchedReservation?.guestDocument ||
     matchedReservation?.guestCpf ||
@@ -11143,14 +11196,52 @@ export function findContactAndReservation(db, cleanTarget) {
     matchedReservation?.guests?.[0]?.document ||
     ""
   );
+  const resGuestPhoneNum = cleanWhatsAppPhone(
+    matchedReservation?.guestPhone || matchedReservation?.phone || matchedReservation?.whatsapp || matchedReservation?.guests?.[0]?.phone || ""
+  );
+  const resRealName = (matchedReservation?.guestName && !/^(h[oó]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(String(matchedReservation.guestName).trim()))
+    ? String(matchedReservation.guestName).trim()
+    : "";
 
   const guestCandidates = guests.filter(g => {
     if (!g) return false;
     if (matchedReservation?.guestId && String(g.id) === String(matchedReservation.guestId)) return true;
+
+    // Exclui registros que sejam estritamente o Solicitante Terceiro da reserva
+    if (
+      matchedReservation &&
+      callerRole !== "guest" &&
+      (
+        (matchedReservation.requesterInfo?.guestId && String(g.id) === String(matchedReservation.requesterInfo.guestId) && String(g.id) !== String(matchedReservation.guestId || "")) ||
+        (Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro") && resRealName && normPersonName(g.fullName || g.name) !== normPersonName(resRealName))
+      )
+    ) {
+      return false;
+    }
+
     const gDoc = onlyDigits(g.document || g.documentNumber || g.cpf || g.cnpj || g.cpfCnpj || "");
     if (resDocDigits && resDocDigits.length >= 11 && gDoc === resDocDigits) return true;
+    if (resRealName && normPersonName(g.fullName || g.name) === normPersonName(resRealName)) return true;
+
     const gp = cleanWhatsAppPhone(g.phone || g.whatsapp || "");
-    return Boolean(gp && targetLast8 && (gp === cleanPhoneNum || gp.endsWith(targetLast8) || cleanPhoneNum.endsWith(gp.slice(-8))));
+    if (!gp) return false;
+    if (matchedReservation && resGuestPhoneNum.length >= 8) {
+      const resLast8 = resGuestPhoneNum.slice(-8);
+      if (gp === resGuestPhoneNum || gp.endsWith(resLast8) || resGuestPhoneNum.endsWith(gp.slice(-8))) {
+        if (resRealName && (g.fullName || g.name) && normPersonName(g.fullName || g.name) !== normPersonName(resRealName)) {
+          return false;
+        }
+        return true;
+      }
+      return false;
+    }
+    if (callerRole === "guest" && targetLast8 && (gp === cleanPhoneNum || gp.endsWith(targetLast8) || cleanPhoneNum.endsWith(gp.slice(-8)))) {
+      if (resRealName && (g.fullName || g.name) && normPersonName(g.fullName || g.name) !== normPersonName(resRealName)) {
+        return false;
+      }
+      return true;
+    }
+    return false;
   });
 
   guestCandidates.sort((a, b) => {
@@ -11167,7 +11258,7 @@ export function findContactAndReservation(db, cleanTarget) {
     return score(b) - score(a);
   });
 
-  let matchedGuest = guestCandidates[0] || null;
+  let matchedGuest = guestCandidates[0] || (!matchedReservation ? callerCrmGuest : null);
 
   // Se encontramos hóspede no CRM mas ainda não tínhamos localizado a reserva por telefone, busca por guestId/documento
   if (!matchedReservation && matchedGuest) {
@@ -11205,7 +11296,391 @@ export function findContactAndReservation(db, cleanTarget) {
     }
   }
 
-  return { matchedReservation, matchedGuest, companyId, linkedCompany };
+  return { matchedReservation, matchedGuest, companyId, linkedCompany, callerRole, callerCrmGuest };
+}
+
+/**
+ * Dispara o documento PDF oficial da DANFSE no WhatsApp via helper global do servidor (se disponível).
+ */
+async function dispatchPdfViaGlobalHelper(invoice, { cleanTarget, db } = {}) {
+  if (!invoice || !cleanTarget || typeof globalThis.dispatchNfseInvoiceWhatsApp !== "function") {
+    return null;
+  }
+  try {
+    return await globalThis.dispatchNfseInvoiceWhatsApp(
+      invoice,
+      {
+        phone: cleanTarget,
+        channelId: "ai_agent",
+        senderName: db?.whatsappAiSettings?.agentName || "Sofia",
+        bypassTestMode: isDeveloperPhone(cleanTarget, db)
+      },
+      db
+    );
+  } catch (err) {
+    console.warn("[WhatsApp Fiscal PDF Dispatch Warning]:", err?.message || err);
+    return null;
+  }
+}
+
+/**
+ * Detecta se a mensagem do usuário pede explicitamente troca/emissão em Pessoa Jurídica (CNPJ) ou Pessoa Física (CPF).
+ */
+function detectExplicitTomadorTypePreference(text = "") {
+  if (!text || typeof text !== "string") return null;
+  const norm = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const asksPj = /\b(?:no\s+cnpj|pelo\s+cnpj|para\s+o\s+cnpj|pro\s+cnpj|para\s+(?:a\s+)?empresa|na\s+empresa|nome\s+da\s+empresa|pessoa\s+juridica|nota\s+pj|emitir\s+(?:na|para)\s+pj)\b/i.test(norm);
+  const asksPf = /\b(?:no\s+(?:meu\s+)?cpf|pelo\s+(?:meu\s+)?cpf|para\s+o\s+(?:meu\s+)?cpf|pro\s+(?:meu\s+)?cpf|pessoa\s+fisica|no\s+meu\s+nome|para\s+mim\s+mesm[oa]|nota\s+pf|emitir\s+(?:na|para)\s+pf)\b/i.test(norm);
+  if (asksPj && !asksPf) return "PJ";
+  if (asksPf && !asksPj) return "PF";
+  return null;
+}
+
+/**
+ * Persiste imediatamente no CRM (db.guests / db.companies) e na reserva ativa os dados fiscais
+ * informados ou confirmados pelo cliente via Sofia, salvando também a preferência de tomador
+ * (preferredInvoiceRecipient) sem misturar Hóspede com Solicitante Terceiro.
+ */
+export function persistFiscalPreferenceToCrm(db, {
+  matchedReservation = null,
+  matchedGuest = null,
+  callerRole = "guest",
+  callerCrmGuest = null,
+  conf = null,
+  cleanTarget = "",
+  saveDatabase = null
+} = {}) {
+  if (!db || !conf) return;
+  if (!Array.isArray(db.guests)) db.guests = [];
+  if (!Array.isArray(db.companies)) db.companies = [];
+  if (!Array.isArray(db.agencies)) db.agencies = [];
+
+  const cleanDoc = onlyDigits(conf.tomadorCpfCnpj || "");
+  if (cleanDoc.length !== 11 && cleanDoc.length !== 14) return;
+
+  const normPersonName = (val = "") =>
+    String(val || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const cleanEmail = String(conf.tomadorEmail || "").trim().toLowerCase();
+  const cleanTel = cleanWhatsAppPhone(conf.tomadorTelefone || cleanTarget || "");
+  const rawAddr = String(conf.tomadorEndereco || "").replace(/,\s*([^,]+)$/, "").trim();
+  const hasRealAddr = Boolean(
+    rawAddr &&
+    rawAddr.toLowerCase() !== "endereço cadastrado" &&
+    !/^(av\.?\s*pelinca|avenida\s*pelinca)$/i.test(rawAddr)
+  );
+  const cleanCepVal = cleanCep(conf.tomadorCep || "");
+  const hasRealCep = Boolean(cleanCepVal && cleanCepVal !== "28035000");
+
+  // Garante localização do hóspede titular da reserva no CRM (caso já haja nome real na reserva)
+  let guestRec = matchedGuest || (matchedReservation
+    ? db.guests.find(g =>
+        g && (
+          (matchedReservation.guestId && String(g.id) === String(matchedReservation.guestId)) ||
+          (matchedReservation.guestDocument && onlyDigits(g.documentNumber || g.document || g.cpf || "") === onlyDigits(matchedReservation.guestDocument))
+        )
+      )
+    : null);
+
+  if (cleanDoc.length === 14) {
+    const existingAgency = db.agencies.find(a => a && onlyDigits(a.cnpj) === cleanDoc) || null;
+    if (existingAgency) {
+      if (cleanEmail && !existingAgency.financialEmail) existingAgency.financialEmail = cleanEmail;
+      existingAgency.updatedAt = new Date().toISOString();
+      if (guestRec && callerRole === "guest") {
+        guestRec.preferredInvoiceRecipient = "agency";
+        guestRec.autoEmitInvoice = true;
+      }
+      if (matchedReservation) {
+        matchedReservation.agencyId = existingAgency.id;
+        matchedReservation.invoiceRecipientType = "agency";
+        matchedReservation.nfRecipientType = "agency";
+        matchedReservation.confirmedFiscalData = {
+          ...(matchedReservation.confirmedFiscalData || {}),
+          ...conf,
+          invoiceRecipientType: "agency",
+          updatedAt: new Date().toISOString()
+        };
+      }
+    } else {
+      let comp = db.companies.find(c => c && onlyDigits(c.cnpj) === cleanDoc);
+      const corpName = toTitleCase(conf.tomadorNome || "Empresa");
+      if (!comp) {
+        const numericIds = db.companies.map(c => Number(c?.id)).filter(n => Number.isFinite(n) && n > 0);
+        const nextCompId = numericIds.length > 0 ? Math.max(...numericIds) + 1 : 1;
+        comp = {
+          id: nextCompId,
+          corporateName: corpName,
+          tradeName: corpName,
+          cnpj: cleanDoc,
+          financialEmail: cleanEmail,
+          phone: cleanTel,
+          address: hasRealAddr ? rawAddr : "",
+          logradouro: hasRealAddr ? rawAddr : "",
+          street: hasRealAddr ? rawAddr : "",
+          number: conf.tomadorNumero || "S/N",
+          numero: conf.tomadorNumero || "S/N",
+          neighborhood: conf.tomadorBairro || "",
+          bairro: conf.tomadorBairro || "",
+          city: conf.tomadorCidade || "",
+          cidade: conf.tomadorCidade || "",
+          state: (conf.tomadorUf || "").toUpperCase(),
+          uf: (conf.tomadorUf || "").toUpperCase(),
+          cep: hasRealCep ? cleanCepVal : (cleanCepVal || ""),
+          ibgeCode: conf.tomadorCodigoMunicipio || "",
+          codigoMunicipio: conf.tomadorCodigoMunicipio || "",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        db.companies.push(comp);
+      } else {
+        if (corpName && corpName !== "Empresa" && (!comp.corporateName || comp.corporateName === "Empresa")) {
+          comp.corporateName = corpName;
+          if (!comp.tradeName || comp.tradeName === "Empresa") comp.tradeName = corpName;
+        }
+        if (cleanEmail) comp.financialEmail = cleanEmail;
+        if (hasRealAddr) {
+          comp.address = rawAddr;
+          comp.logradouro = rawAddr;
+          comp.street = rawAddr;
+          if (conf.tomadorNumero) { comp.number = conf.tomadorNumero; comp.numero = conf.tomadorNumero; }
+          if (conf.tomadorBairro) { comp.neighborhood = conf.tomadorBairro; comp.bairro = conf.tomadorBairro; }
+          if (conf.tomadorCidade) { comp.city = conf.tomadorCidade; comp.cidade = conf.tomadorCidade; }
+          if (conf.tomadorUf) { comp.state = conf.tomadorUf.toUpperCase(); comp.uf = conf.tomadorUf.toUpperCase(); }
+        }
+        if (hasRealCep) comp.cep = cleanCepVal;
+        if (conf.tomadorCodigoMunicipio) {
+          comp.ibgeCode = conf.tomadorCodigoMunicipio;
+          comp.codigoMunicipio = conf.tomadorCodigoMunicipio;
+        }
+        comp.updatedAt = new Date().toISOString();
+      }
+
+      if (!guestRec && matchedReservation?.guestName && !/^(h[oó]spede|a\s+definir)/i.test(String(matchedReservation.guestName).trim())) {
+        const numericGuestIds = db.guests.map(g => Number(g?.id)).filter(n => Number.isFinite(n) && n > 0);
+        const nextGId = numericGuestIds.length > 0 ? Math.max(...numericGuestIds) + 1 : 1;
+        guestRec = {
+          id: nextGId,
+          name: toTitleCase(matchedReservation.guestName),
+          fullName: toTitleCase(matchedReservation.guestName),
+          phone: matchedReservation.guestPhone || (callerRole === "guest" ? cleanTel : ""),
+          email: matchedReservation.guestEmail || "",
+          document: matchedReservation.guestDocument || "",
+          documentNumber: matchedReservation.guestDocument || "",
+          tags: ["Corporativo"],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        db.guests.push(guestRec);
+        matchedReservation.guestId = guestRec.id;
+      }
+
+      if (guestRec) {
+        guestRec.companyId = comp.id;
+        guestRec.companyName = comp.tradeName || comp.corporateName;
+        guestRec.companyCnpj = cleanDoc;
+        guestRec.preferredInvoiceRecipient = "company";
+        guestRec.autoEmitInvoice = true;
+        if (!Array.isArray(guestRec.tags)) guestRec.tags = [];
+        if (!guestRec.tags.includes("Corporativo")) guestRec.tags.push("Corporativo");
+        guestRec.updatedAt = new Date().toISOString();
+      }
+
+      if (matchedReservation) {
+        matchedReservation.companyId = comp.id;
+        matchedReservation.companyName = comp.corporateName || comp.tradeName;
+        matchedReservation.companyCnpj = cleanDoc;
+        matchedReservation.invoiceRecipientType = "company";
+        matchedReservation.nfRecipientType = "company";
+        matchedReservation.confirmedFiscalData = {
+          ...(matchedReservation.confirmedFiscalData || {}),
+          ...conf,
+          invoiceRecipientType: "company",
+          updatedAt: new Date().toISOString()
+        };
+      }
+    }
+  } else if (cleanDoc.length === 11) {
+    const resRealGuestName = (matchedReservation?.guestName && !/^(h[oó]spede(\s*\d+|\s+a\s+definir|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(String(matchedReservation.guestName).trim()))
+      ? String(matchedReservation.guestName).trim()
+      : "";
+    const isThirdPartyRequesterSelf = Boolean(
+      conf.invoiceRecipientType === "requester" ||
+      (
+        callerRole === "requester" &&
+        matchedReservation?.requesterType === "other_person" &&
+        resRealGuestName &&
+        conf.tomadorNome &&
+        normPersonName(conf.tomadorNome) !== normPersonName(resRealGuestName)
+      )
+    );
+
+    if (isThirdPartyRequesterSelf) {
+      let reqRec = callerCrmGuest || db.guests.find(g =>
+        g && (
+          (matchedReservation?.requesterInfo?.guestId && String(g.id) === String(matchedReservation.requesterInfo.guestId)) ||
+          onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc
+        )
+      );
+      if (!reqRec) {
+        const numericGuestIds = db.guests.map(g => Number(g?.id)).filter(n => Number.isFinite(n) && n > 0);
+        const nextGId = numericGuestIds.length > 0 ? Math.max(...numericGuestIds) + 1 : 1;
+        reqRec = {
+          id: nextGId,
+          name: toTitleCase(conf.tomadorNome || matchedReservation?.requesterInfo?.name || "Solicitante"),
+          fullName: toTitleCase(conf.tomadorNome || matchedReservation?.requesterInfo?.name || "Solicitante"),
+          document: cleanDoc,
+          documentNumber: cleanDoc,
+          cpf: cleanDoc,
+          docType: "CPF",
+          email: cleanEmail,
+          phone: cleanTel,
+          address: hasRealAddr ? rawAddr : "",
+          street: hasRealAddr ? rawAddr : "",
+          logradouro: hasRealAddr ? rawAddr : "",
+          number: conf.tomadorNumero || "",
+          streetNumber: conf.tomadorNumero || "",
+          neighborhood: conf.tomadorBairro || "",
+          cep: hasRealCep ? cleanCepVal : "",
+          city: conf.tomadorCidade || "",
+          state: (conf.tomadorUf || "").toUpperCase(),
+          ibgeCode: conf.tomadorCodigoMunicipio || "",
+          tags: ["solicitante_terceiro"],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        db.guests.push(reqRec);
+      } else {
+        reqRec.document = cleanDoc;
+        reqRec.documentNumber = cleanDoc;
+        reqRec.cpf = cleanDoc;
+        if (cleanEmail) reqRec.email = cleanEmail;
+        if (hasRealAddr) {
+          reqRec.address = rawAddr;
+          reqRec.street = rawAddr;
+          reqRec.logradouro = rawAddr;
+          if (conf.tomadorNumero) { reqRec.number = conf.tomadorNumero; reqRec.streetNumber = conf.tomadorNumero; }
+          if (conf.tomadorBairro) reqRec.neighborhood = conf.tomadorBairro;
+          if (conf.tomadorCidade) reqRec.city = conf.tomadorCidade;
+          if (conf.tomadorUf) reqRec.state = conf.tomadorUf.toUpperCase();
+        }
+        if (hasRealCep) reqRec.cep = cleanCepVal;
+        if (conf.tomadorCodigoMunicipio) reqRec.ibgeCode = conf.tomadorCodigoMunicipio;
+        reqRec.updatedAt = new Date().toISOString();
+      }
+
+      if (matchedReservation) {
+        matchedReservation.requesterInfo = {
+          ...(matchedReservation.requesterInfo || {}),
+          guestId: reqRec.id,
+          name: toTitleCase(conf.tomadorNome || matchedReservation.requesterInfo?.name || "Solicitante"),
+          cpf: cleanDoc,
+          email: cleanEmail || matchedReservation.requesterInfo?.email || "",
+          phone: cleanTel || matchedReservation.requesterInfo?.phone || ""
+        };
+        matchedReservation.invoiceRecipientType = "requester";
+        matchedReservation.nfRecipientType = "requester";
+        matchedReservation.confirmedFiscalData = {
+          ...(matchedReservation.confirmedFiscalData || {}),
+          ...conf,
+          invoiceRecipientType: "requester",
+          updatedAt: new Date().toISOString()
+        };
+      }
+    } else {
+      if (!guestRec) {
+        guestRec = db.guests.find(g =>
+          g && (
+            onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc ||
+            (resRealGuestName && normPersonName(g.fullName || g.name) === normPersonName(resRealGuestName))
+          )
+        ) || null;
+      }
+      const resolvedGuestName = toTitleCase(resRealGuestName || conf.tomadorNome || "Hóspede");
+      if (!guestRec) {
+        const numericGuestIds = db.guests.map(g => Number(g?.id)).filter(n => Number.isFinite(n) && n > 0);
+        const nextGId = numericGuestIds.length > 0 ? Math.max(...numericGuestIds) + 1 : 1;
+        guestRec = {
+          id: nextGId,
+          name: resolvedGuestName,
+          fullName: resolvedGuestName,
+          document: cleanDoc,
+          documentNumber: cleanDoc,
+          cpf: cleanDoc,
+          docType: "CPF",
+          preferredInvoiceRecipient: "guest",
+          autoEmitInvoice: true,
+          email: cleanEmail || matchedReservation?.guestEmail || "",
+          phone: matchedReservation?.guestPhone || (callerRole === "guest" ? cleanTel : ""),
+          address: hasRealAddr ? rawAddr : "",
+          street: hasRealAddr ? rawAddr : "",
+          logradouro: hasRealAddr ? rawAddr : "",
+          number: conf.tomadorNumero || "",
+          streetNumber: conf.tomadorNumero || "",
+          numero: conf.tomadorNumero || "",
+          neighborhood: conf.tomadorBairro || "",
+          bairro: conf.tomadorBairro || "",
+          cep: hasRealCep ? cleanCepVal : "",
+          city: conf.tomadorCidade || "",
+          cidade: conf.tomadorCidade || "",
+          state: (conf.tomadorUf || "").toUpperCase(),
+          uf: (conf.tomadorUf || "").toUpperCase(),
+          ibgeCode: conf.tomadorCodigoMunicipio || "",
+          codigoMunicipio: conf.tomadorCodigoMunicipio || "",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        db.guests.push(guestRec);
+      } else {
+        if (resolvedGuestName && (!guestRec.fullName || guestRec.fullName === "Hóspede")) {
+          guestRec.fullName = resolvedGuestName;
+          guestRec.name = resolvedGuestName;
+        }
+        guestRec.document = cleanDoc;
+        guestRec.documentNumber = cleanDoc;
+        guestRec.cpf = cleanDoc;
+        guestRec.preferredInvoiceRecipient = "guest";
+        guestRec.autoEmitInvoice = true;
+        if (cleanEmail) guestRec.email = cleanEmail;
+        if (callerRole === "guest" && cleanTel && !guestRec.phone) guestRec.phone = cleanTel;
+        if (hasRealAddr) {
+          guestRec.address = rawAddr;
+          guestRec.street = rawAddr;
+          guestRec.logradouro = rawAddr;
+          if (conf.tomadorNumero) { guestRec.number = conf.tomadorNumero; guestRec.streetNumber = conf.tomadorNumero; guestRec.numero = conf.tomadorNumero; }
+          if (conf.tomadorBairro) { guestRec.neighborhood = conf.tomadorBairro; guestRec.bairro = conf.tomadorBairro; }
+          if (conf.tomadorCidade) { guestRec.city = conf.tomadorCidade; guestRec.cidade = conf.tomadorCidade; }
+          if (conf.tomadorUf) { guestRec.state = conf.tomadorUf.toUpperCase(); guestRec.uf = conf.tomadorUf.toUpperCase(); }
+        }
+        if (hasRealCep) guestRec.cep = cleanCepVal;
+        if (conf.tomadorCodigoMunicipio) {
+          guestRec.ibgeCode = conf.tomadorCodigoMunicipio;
+          guestRec.codigoMunicipio = conf.tomadorCodigoMunicipio;
+        }
+        guestRec.updatedAt = new Date().toISOString();
+      }
+
+      if (matchedReservation) {
+        matchedReservation.guestId = guestRec.id;
+        matchedReservation.guestDocument = cleanDoc;
+        if (cleanEmail && !matchedReservation.guestEmail) matchedReservation.guestEmail = cleanEmail;
+        if (Array.isArray(matchedReservation.guests) && matchedReservation.guests[0] && !matchedReservation.guests[0].cpf) {
+          matchedReservation.guests[0].cpf = cleanDoc;
+        }
+        matchedReservation.invoiceRecipientType = "guest";
+        matchedReservation.nfRecipientType = "guest";
+        matchedReservation.confirmedFiscalData = {
+          ...(matchedReservation.confirmedFiscalData || {}),
+          ...conf,
+          invoiceRecipientType: "guest",
+          updatedAt: new Date().toISOString()
+        };
+      }
+    }
+  }
+
+  if (typeof saveDatabase === "function") {
+    try { saveDatabase(); } catch (_) {}
+  }
 }
 
 /**
@@ -12026,8 +12501,13 @@ export async function handleWhatsAppFiscalFlow({
   const isAwaitingConfEarly = Boolean(conv?.fiscalConferenceState && conv.fiscalConferenceState.status === "awaiting_confirmation");
   const isAwaitingFiscalEarly = Boolean(conv?.awaitingFiscalData === true);
   if (isFiscalRequestEarly || isAwaitingConfEarly || isAwaitingFiscalEarly) {
-    const { matchedReservation: earlyRes, matchedGuest: earlyGuest } = findContactAndReservation(db, cleanTarget);
-    if (earlyGuest || earlyRes || conv?.fiscalConferenceState?.reservationId) {
+    const { matchedReservation: earlyRes, matchedGuest: earlyGuest, callerRole: earlyCallerRole } = findContactAndReservation(db, cleanTarget);
+    const isHiddenFromCallerEarly = Boolean(
+      earlyRes?.nfHideFromGuest === true &&
+      earlyCallerRole === "guest" &&
+      earlyRes?.invoiceRecipientType !== "guest"
+    );
+    if (!isHiddenFromCallerEarly && (earlyGuest || earlyRes || conv?.fiscalConferenceState?.reservationId)) {
       enableAutoEmitInvoiceForGuestAndReservations(db, {
         guest: earlyGuest,
         reservation: earlyRes,
@@ -12274,6 +12754,36 @@ export async function handleWhatsAppFiscalFlow({
     return { handled: false };
   }
 
+  const {
+    matchedReservation,
+    matchedGuest,
+    companyId,
+    linkedCompany,
+    callerRole,
+    callerCrmGuest
+  } = findContactAndReservation(db, cleanTarget);
+  const explicitPrefType = detectExplicitTomadorTypePreference(messageText);
+
+  // Trava de Sigilo Tarifário Corporativo / Agência B2B (nfHideFromGuest):
+  // Se a reserva oculta tarifas/NFS-e do hóspede e quem chama é o próprio hóspede, orienta sem expor valores.
+  if (
+    matchedReservation?.nfHideFromGuest === true &&
+    callerRole === "guest" &&
+    matchedReservation?.invoiceRecipientType !== "guest"
+  ) {
+    const entityLabel = matchedReservation.channel === "b2b" || matchedReservation.invoiceRecipientType === "agency"
+      ? "agência de viagens responsável pela reserva"
+      : "empresa contratante responsável pela reserva";
+    const hideMsg = `Olá! Identificamos a sua reserva #${matchedReservation.code || matchedReservation.id}. 🏨✨\n\n` +
+      `Como esta hospedagem possui faturamento corporativo direto, a Nota Fiscal de Serviços (NFS-e) é emitida e encaminhada diretamente para o setor financeiro da *${entityLabel}*.\n\n` +
+      `Caso precise de segunda via do comprovante de faturamento ou deseje nota de consumos extras pagos à parte, nossa recepção está à disposição!`;
+    return await respond(hideMsg, {
+      action: "blocked_nf_hide_from_guest",
+      nfHideFromGuest: true,
+      reservationId: matchedReservation.id
+    });
+  }
+
   // ── ETAPA 1: Usuário já está na fase de conferência e respondeu à mensagem ──
   if (isAwaitingConferenceConfirmation) {
     // Migração automática de descrições legadas fora do padrão para o padrão de /notas
@@ -12455,23 +12965,93 @@ export async function handleWhatsAppFiscalFlow({
 
     // 1.4 Alteração de Dados Cadastrais ou de Descrição (R2)
     let hasCadastralChanges = false;
+    const resForConfLookup = Array.isArray(db.reservations)
+      ? (db.reservations.find(r =>
+          r && (
+            (conf.reservationId && Number(r.id) === Number(conf.reservationId)) ||
+            (conf.reservationCode && String(r.code) === String(conf.reservationCode))
+          )
+        ) || matchedReservation)
+      : matchedReservation;
+
+    // Alternância explícita PF <-> PJ durante a conferência ("quero na empresa", "emite no meu CPF")
+    if (
+      !llmResult.cadastralUpdates?.tomadorCpfCnpj &&
+      !extractCnpj(messageText) &&
+      !extractCpf(messageText) &&
+      explicitPrefType &&
+      explicitPrefType !== conf.tomadorTipo
+    ) {
+      const switchedDraft = resolveCrmFiscalTomador(db, {
+        cleanTarget,
+        matchedReservation: resForConfLookup,
+        matchedGuest,
+        linkedCompany,
+        senderName,
+        preferType: explicitPrefType
+      });
+      if (switchedDraft && switchedDraft.tomadorCpfCnpj) {
+        conf.tomadorNome = switchedDraft.tomadorNome;
+        conf.tomadorCpfCnpj = switchedDraft.tomadorCpfCnpj;
+        conf.tomadorTipo = switchedDraft.tomadorTipo;
+        conf.invoiceRecipientType = switchedDraft.invoiceRecipientType || (switchedDraft.tomadorTipo === "PJ" ? "company" : "guest");
+        conf.tomadorEmail = switchedDraft.tomadorEmail || conf.tomadorEmail || "";
+        conf.tomadorEndereco = switchedDraft.tomadorEndereco || "";
+        conf.tomadorNumero = switchedDraft.tomadorNumero || "";
+        conf.tomadorBairro = switchedDraft.tomadorBairro || "";
+        conf.tomadorCidade = switchedDraft.tomadorCidade || "";
+        conf.tomadorUf = switchedDraft.tomadorUf || "";
+        conf.tomadorCep = switchedDraft.tomadorCep || "";
+        conf.tomadorCodigoMunicipio = switchedDraft.tomadorCodigoMunicipio || "";
+        hasCadastralChanges = true;
+      } else {
+        conv.awaitingFiscalData = true;
+        conv.awaitingFiscalDataAt = new Date().toISOString();
+        conf.status = "cancelled";
+        conf.updatedAt = new Date().toISOString();
+        if (explicitPrefType === "PJ") {
+          return await respond(
+            `Perfeito! Ainda não temos o CNPJ da empresa vinculado ao seu cadastro. Por gentileza, nos envie o **CNPJ** da empresa e o **e-mail financeiro** para emissão da nota fiscal. 🏢`,
+            { action: "prompted_pj_data" }
+          );
+        }
+        return await respond(
+          `Perfeito! Ainda não temos o seu CPF registrado para emissão fiscal. Por gentileza, nos informe seu **Nome Completo**, **CPF**, **Endereço com CEP** e **E-mail** para atualizarmos seu cadastro e gerarmos a nota! 👤`,
+          { action: "prompted_pf_data" }
+        );
+      }
+    }
+
     if (llmResult.cadastralUpdates?.tomadorCpfCnpj) {
       conf.tomadorCpfCnpj = onlyDigits(llmResult.cadastralUpdates.tomadorCpfCnpj);
       conf.tomadorTipo = llmResult.cadastralUpdates.tomadorTipo || (conf.tomadorCpfCnpj.length === 14 ? "PJ" : "PF");
       hasCadastralChanges = true;
       if (conf.tomadorTipo === "PJ") {
+        conf.invoiceRecipientType = "company";
         try {
           const lookup = await lookupCnpj(conf.tomadorCpfCnpj, db);
           if (lookup?.razaoSocial && !llmResult.cadastralUpdates?.tomadorNome) {
             conf.tomadorNome = toTitleCase(lookup.razaoSocial);
           }
-          if (lookup?.email && !conf.tomadorEmail && !llmResult.cadastralUpdates?.tomadorEmail) {
+          if (lookup?.email && !llmResult.cadastralUpdates?.tomadorEmail) {
             conf.tomadorEmail = lookup.email.toLowerCase().trim();
           }
-          if (lookup?.logradouro && !conf.tomadorEndereco) {
+          if (lookup?.logradouro && !llmResult.cadastralUpdates?.tomadorEndereco) {
             conf.tomadorEndereco = `${lookup.logradouro}, ${lookup.numero || "S/N"}`;
+            conf.tomadorNumero = lookup.numero || "S/N";
+            if (lookup.bairro) conf.tomadorBairro = lookup.bairro;
+            if (lookup.cidade) conf.tomadorCidade = lookup.cidade;
+            if (lookup.uf) conf.tomadorUf = String(lookup.uf).toUpperCase();
+            if (lookup.cep) conf.tomadorCep = onlyDigits(lookup.cep);
+            if (lookup.codigoMunicipio || lookup.ibge) {
+              conf.tomadorCodigoMunicipio = onlyDigits(lookup.codigoMunicipio || lookup.ibge);
+            }
           }
         } catch (_) {}
+      } else {
+        const resGDoc = onlyDigits(resForConfLookup?.guestDocument || matchedGuest?.documentNumber || matchedGuest?.document || matchedGuest?.cpf || "");
+        const isReqSelf = Boolean(callerRole === "requester" && (!resGDoc || conf.tomadorCpfCnpj !== resGDoc));
+        conf.invoiceRecipientType = isReqSelf ? "requester" : "guest";
       }
     }
 
@@ -12524,6 +13104,9 @@ export async function handleWhatsAppFiscalFlow({
           if (cepLookup.bairro) conf.tomadorBairro = cepLookup.bairro;
           if (cepLookup.cidade) conf.tomadorCidade = cepLookup.cidade;
           if (cepLookup.uf) conf.tomadorUf = cepLookup.uf;
+          if (cepLookup.codigoMunicipio || cepLookup.ibge) {
+            conf.tomadorCodigoMunicipio = onlyDigits(cepLookup.codigoMunicipio || cepLookup.ibge);
+          }
         }
       } catch (_) {}
     }
@@ -12531,14 +13114,7 @@ export async function handleWhatsAppFiscalFlow({
     if (hasCadastralChanges) {
       conf.status = "awaiting_confirmation";
       conf.updatedAt = new Date().toISOString();
-      const resForUpdate = Array.isArray(db.reservations)
-        ? db.reservations.find(r =>
-            r && (
-              (conf.reservationId && Number(r.id) === Number(conf.reservationId)) ||
-              (conf.reservationCode && String(r.code) === String(conf.reservationCode))
-            )
-          )
-        : null;
+      const resForUpdate = resForConfLookup;
       if (resForUpdate) {
         resForUpdate.confirmedFiscalData = {
           ...(resForUpdate.confirmedFiscalData || {}),
@@ -12546,6 +13122,15 @@ export async function handleWhatsAppFiscalFlow({
           updatedAt: conf.updatedAt
         };
       }
+      persistFiscalPreferenceToCrm(db, {
+        matchedReservation: resForUpdate || matchedReservation,
+        matchedGuest,
+        callerRole,
+        callerCrmGuest,
+        conf,
+        cleanTarget,
+        saveDatabase
+      });
       const isCheckedOutUpdate = isReservationCheckedOutForFiscal(resForUpdate, db);
       const updatedConfMsg = `Dados cadastrais atualizados com sucesso!\n\n${buildConferencePresentationMessage(conf, { isCheckedOut: isCheckedOutUpdate })}`;
       return await respond(updatedConfMsg, {
@@ -12556,14 +13141,7 @@ export async function handleWhatsAppFiscalFlow({
 
     // 1.5 Confirmação pelo Hóspede (R1 & Compreensão Semântica)
     if (llmResult.isConfirmation) {
-      const resForConf = Array.isArray(db.reservations)
-        ? db.reservations.find(r =>
-            r && (
-              (conf.reservationId && Number(r.id) === Number(conf.reservationId)) ||
-              (conf.reservationCode && String(r.code) === String(conf.reservationCode))
-            )
-          )
-        : null;
+      const resForConf = resForConfLookup;
 
       // Trava contra emissão duplicada para a mesma reserva
       const existingInv = findExistingInvoiceForReservation(db, {
@@ -12585,9 +13163,12 @@ export async function handleWhatsAppFiscalFlow({
           `📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkExisting}\n\n` +
           `Agradecemos pela preferência pela CorpFlats! 🏨✨`;
 
+        const pdfSentDup = await dispatchPdfViaGlobalHelper(existingInv, { cleanTarget, db });
+
         return await respond(dupMsg, {
           action: "already_emitted_resent",
           alreadyEmitted: true,
+          pdfSent: pdfSentDup,
           numeroNfse: existingInv.numeroNfse,
           codigoVerificacao: existingInv.codigoVerificacao,
           linkPrefeitura: linkExisting,
@@ -12595,6 +13176,17 @@ export async function handleWhatsAppFiscalFlow({
           invoice: existingInv
         });
       }
+
+      // Persiste imediatamente a preferência de tomador (CPF/CNPJ e PF/PJ) no CRM para próximas estadias
+      persistFiscalPreferenceToCrm(db, {
+        matchedReservation: resForConf || matchedReservation,
+        matchedGuest,
+        callerRole,
+        callerCrmGuest,
+        conf,
+        cleanTarget,
+        saveDatabase
+      });
 
       const isCheckedOut = isReservationCheckedOutForFiscal(resForConf, db);
       const valFmt = formatMoneyBr(conf.valorServico);
@@ -12641,6 +13233,7 @@ export async function handleWhatsAppFiscalFlow({
           tomadorNome: conf.tomadorNome,
           tomadorCpfCnpj: conf.tomadorCpfCnpj,
           tomadorTipo: conf.tomadorTipo,
+          invoiceRecipientType: conf.invoiceRecipientType || (conf.tomadorTipo === "PJ" ? "company" : "guest"),
           tomadorEmail: conf.tomadorEmail,
           tomadorTelefone: conf.tomadorTelefone || cleanTarget,
           tomadorEndereco: conf.tomadorEndereco,
@@ -12670,6 +13263,10 @@ export async function handleWhatsAppFiscalFlow({
       const codVerif = emissionResult.codigoVerificacao;
       const linkNfse = emissionResult.linkPrefeitura || emissionResult.danfseUrl;
 
+      const pdfSentNow = emissionResult?.invoice
+        ? await dispatchPdfViaGlobalHelper(emissionResult.invoice, { cleanTarget, db })
+        : false;
+
       const successMsg = `✅ *Nota Fiscal Emitida com Sucesso!*\n\n` +
         `Sua NFS-e foi emitida com os dados conferidos:\n` +
         `• *Número da NFS-e:* ${numNfse}\n` +
@@ -12682,6 +13279,7 @@ export async function handleWhatsAppFiscalFlow({
       return await respond(successMsg, {
         action: emissionResult.alreadyEmitted ? "already_emitted_resent" : "emitted_nfse",
         alreadyEmitted: Boolean(emissionResult.alreadyEmitted),
+        pdfSent: pdfSentNow,
         numeroNfse: numNfse,
         codigoVerificacao: codVerif,
         linkPrefeitura: linkNfse,
@@ -12760,7 +13358,6 @@ export async function handleWhatsAppFiscalFlow({
   }
 
   // ── ETAPA 2: Abertura / Captação de Dados para Conferência (R1) ──────────────
-  const { matchedReservation, matchedGuest, companyId, linkedCompany } = findContactAndReservation(db, cleanTarget);
   const rawCnpj = extractCnpj(messageText);
   const rawCpf = extractCpf(messageText);
   const isMatchedResCheckedOut = isReservationCheckedOutForFiscal(matchedReservation, db);
@@ -12769,11 +13366,11 @@ export async function handleWhatsAppFiscalFlow({
     guest: matchedGuest,
     reservation: matchedReservation,
     phone: cleanTarget,
-    cpfCnpj: rawCpf || null,
+    cpfCnpj: callerRole === "requester" ? null : (rawCpf || null),
     saveDatabase
   });
 
-  // Se a reserva localizada já possui nota fiscal emitida, impede duplicidade e reenvia a nota existente
+  // Se a reserva localizada já possui nota fiscal emitida, impede duplicidade e reenvia a nota existente + PDF DANFSE
   const existingInvOnRequest = matchedReservation
     ? findExistingInvoiceForReservation(db, { reservation: matchedReservation })
     : null;
@@ -12789,9 +13386,12 @@ export async function handleWhatsAppFiscalFlow({
       `📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkExisting}\n\n` +
       `Agradecemos pela preferência pela CorpFlats! 🏨✨`;
 
+    const pdfSentExisting = await dispatchPdfViaGlobalHelper(existingInvOnRequest, { cleanTarget, db });
+
     return await respond(dupMsg, {
       action: "already_emitted_resent",
       alreadyEmitted: true,
+      pdfSent: pdfSentExisting,
       numeroNfse: existingInvOnRequest.numeroNfse,
       codigoVerificacao: existingInvOnRequest.codigoVerificacao,
       linkPrefeitura: linkExisting,
@@ -12830,6 +13430,16 @@ export async function handleWhatsAppFiscalFlow({
     const finalUf = (lookupData.uf || "RJ").toUpperCase();
     const effectiveCep = cleanCep(extractCep(messageText) || lookupData.cep || "28035000");
 
+    let resolvedIbge = onlyDigits(lookupData.codigoMunicipio || lookupData.ibge || "");
+    if (!resolvedIbge && effectiveCep && effectiveCep.length === 8 && effectiveCep !== "28035000") {
+      try {
+        const cepInfo = await lookupCep(effectiveCep, db);
+        if (cepInfo?.ibge || cepInfo?.codigoMunicipio) {
+          resolvedIbge = onlyDigits(cepInfo.ibge || cepInfo.codigoMunicipio);
+        }
+      } catch (_) {}
+    }
+
     // Salva / atualiza em db.companies
     if (!Array.isArray(db.companies)) db.companies = [];
     let company = db.companies.find(c => onlyDigits(c.cnpj) === cleanCnpjNum);
@@ -12848,10 +13458,23 @@ export async function handleWhatsAppFiscalFlow({
         cidade: finalCidade,
         uf: finalUf,
         cep: effectiveCep,
+        ibgeCode: resolvedIbge || "3301009",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
       db.companies.push(company);
+    } else {
+      if (finalEmail && !company.financialEmail) company.financialEmail = finalEmail;
+      if (finalLogradouro && !company.address) {
+        company.address = finalLogradouro;
+        company.logradouro = finalLogradouro;
+        company.numero = finalNumero;
+        company.bairro = finalBairro;
+        company.cidade = finalCidade;
+        company.uf = finalUf;
+      }
+      if (effectiveCep && effectiveCep !== "28035000" && !company.cep) company.cep = effectiveCep;
+      if (resolvedIbge && !company.ibgeCode) company.ibgeCode = resolvedIbge;
     }
 
     const officialDraft = buildOfficialNfseDraftForReservation(db, {
@@ -12864,24 +13487,26 @@ export async function handleWhatsAppFiscalFlow({
     });
     const valTotal = Number(officialDraft.valorServico || matchedReservation?.totalAmount || matchedReservation?.valorTotal || 600.00);
     const desc = officialDraft.descricaoServico;
+    const finalCompanyIbge = resolvedIbge || onlyDigits(officialDraft.tomadorCodigoMunicipio || company.ibgeCode || "") || "3301009";
 
     conv.fiscalConferenceState = {
       status: "awaiting_confirmation",
       reservationId: matchedReservation?.id,
       reservationCode: matchedReservation?.code,
       flatNumber: matchedReservation?.flatNumber,
+      invoiceRecipientType: "company",
       tomadorNome: company.corporateName,
       tomadorCpfCnpj: cleanCnpjNum,
       tomadorTipo: "PJ",
       tomadorEmail: finalEmail || company.financialEmail || "",
       tomadorTelefone: cleanTarget,
-      tomadorEndereco: finalLogradouro ? `${finalLogradouro}, ${finalNumero}` : "Endereço cadastrado",
+      tomadorEndereco: finalLogradouro ? `${finalLogradouro}, ${finalNumero}` : (officialDraft.tomadorEndereco || "Endereço cadastrado"),
       tomadorNumero: finalNumero,
-      tomadorBairro: finalBairro,
-      tomadorCidade: finalCidade,
-      tomadorUf: finalUf,
+      tomadorBairro: finalBairro || officialDraft.tomadorBairro || "",
+      tomadorCidade: finalCidade || officialDraft.tomadorCidade || "Campos dos Goytacazes",
+      tomadorUf: finalUf || officialDraft.tomadorUf || "RJ",
       tomadorCep: effectiveCep,
-      tomadorCodigoMunicipio: "3301009",
+      tomadorCodigoMunicipio: finalCompanyIbge,
       descricaoServico: desc,
       valorOriginal: valTotal,
       valorServico: valTotal,
@@ -12889,6 +13514,17 @@ export async function handleWhatsAppFiscalFlow({
       updatedAt: new Date().toISOString()
     };
     conv.awaitingFiscalData = false;
+
+    // Salva imediatamente no CRM (empresa vinculada ao hóspede + preferência PJ para próximas notas)
+    persistFiscalPreferenceToCrm(db, {
+      matchedReservation,
+      matchedGuest,
+      callerRole,
+      callerCrmGuest,
+      conf: conv.fiscalConferenceState,
+      cleanTarget,
+      saveDatabase
+    });
 
     const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState, { isCheckedOut: isMatchedResCheckedOut });
     return await respond(confMsg, {
@@ -12908,6 +13544,15 @@ export async function handleWhatsAppFiscalFlow({
       return await respond(replyText, { action: "invalid_cpf", invalidCpf: rawCpf });
     }
 
+    const cleanCpfNum = onlyDigits(rawCpf);
+    const resGuestDoc = onlyDigits(matchedReservation?.guestDocument || matchedGuest?.documentNumber || matchedGuest?.document || matchedGuest?.cpf || "");
+    const reqDoc = onlyDigits(matchedReservation?.requesterInfo?.cpf || callerCrmGuest?.documentNumber || callerCrmGuest?.document || callerCrmGuest?.cpf || "");
+    const isRequesterSelf = Boolean(
+      (callerRole === "requester" && (!resGuestDoc || cleanCpfNum !== resGuestDoc)) ||
+      (matchedReservation?.requesterType === "other_person" && reqDoc && cleanCpfNum === reqDoc && cleanCpfNum !== resGuestDoc)
+    );
+    const resolvedPfRecipientType = isRequesterSelf ? "requester" : "guest";
+
     const crmPf = resolveCrmFiscalTomador(db, {
       cleanTarget,
       matchedReservation,
@@ -12916,17 +13561,43 @@ export async function handleWhatsAppFiscalFlow({
       senderName,
       preferType: "PF"
     });
-    const cleanCpfNum = onlyDigits(rawCpf);
     const emailFromText = extractEmail(messageText);
     const cepFromText = extractCep(messageText);
     const cleanCepNum = cleanCep(cepFromText || crmPf?.tomadorCep || "");
     const nameFromText = extractPersonName(messageText);
-    const finalName = toTitleCase(nameFromText || crmPf?.tomadorNome || contactDisplayName || "Hóspede");
+    const defaultPfName = isRequesterSelf
+      ? (matchedReservation?.requesterInfo?.name || callerCrmGuest?.fullName || callerCrmGuest?.name || senderName || "Solicitante")
+      : (matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || crmPf?.tomadorNome || contactDisplayName || "Hóspede");
+    const finalName = toTitleCase(nameFromText || defaultPfName);
 
+    let cepStreet = "";
+    let cepNumero = "";
+    let cepBairro = "";
+    let cepCidade = "";
+    let cepUf = "";
+    let cepIbge = "";
+    if (cleanCepNum && cleanCepNum.length === 8 && (cepFromText || !crmPf?.tomadorEndereco)) {
+      try {
+        const cepInfo = await lookupCep(cleanCepNum, db);
+        if (cepInfo?.logradouro) {
+          cepStreet = cepInfo.logradouro;
+          cepNumero = cepInfo.numero || "";
+          cepBairro = cepInfo.bairro || "";
+          cepCidade = cepInfo.cidade || "";
+          cepUf = (cepInfo.uf || "").toUpperCase();
+          cepIbge = onlyDigits(cepInfo.ibge || cepInfo.codigoMunicipio || "");
+        }
+      } catch (_) {}
+    }
+    const addrMatchInline = messageText.match(/\bendere[cç]o\s*[:=]?\s*([^\n\r]+?)(?=\s*(?:,\s*CEP|\s*CEP|,\s*e-?mail|$))/i);
+    const inlineAddr = addrMatchInline ? addrMatchInline[1].trim() : "";
+
+    // Hóspede real SEMPRE permanece na descrição do serviço (nunca sobrescrito por solicitante terceiro)
+    const realStayGuestName = matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || (!isRequesterSelf ? finalName : "Hóspede");
     const officialDraftPf = buildOfficialNfseDraftForReservation(db, {
       reservation: matchedReservation,
       guest: matchedGuest,
-      guestName: matchedReservation?.guestName || matchedGuest?.fullName || matchedGuest?.name || finalName,
+      guestName: realStayGuestName,
       cleanTarget,
       preferType: "PF"
     });
@@ -12938,18 +13609,19 @@ export async function handleWhatsAppFiscalFlow({
       reservationId: matchedReservation?.id,
       reservationCode: matchedReservation?.code,
       flatNumber: matchedReservation?.flatNumber,
+      invoiceRecipientType: resolvedPfRecipientType,
       tomadorNome: finalName,
       tomadorCpfCnpj: cleanCpfNum,
       tomadorTipo: "PF",
-      tomadorEmail: emailFromText || crmPf?.tomadorEmail || matchedGuest?.email || "",
+      tomadorEmail: emailFromText || (isRequesterSelf ? (matchedReservation?.requesterInfo?.email || callerCrmGuest?.email || "") : (crmPf?.tomadorEmail || matchedGuest?.email || "")),
       tomadorTelefone: cleanTarget,
-      tomadorEndereco: crmPf?.tomadorEndereco || officialDraftPf.tomadorEndereco || "",
-      tomadorNumero: crmPf?.tomadorNumero || officialDraftPf.tomadorNumero || "",
-      tomadorBairro: crmPf?.tomadorBairro || officialDraftPf.tomadorBairro || "",
-      tomadorCidade: crmPf?.tomadorCidade || officialDraftPf.tomadorCidade || "",
-      tomadorUf: crmPf?.tomadorUf || officialDraftPf.tomadorUf || "",
-      tomadorCep: cleanCepNum || officialDraftPf.tomadorCep || "",
-      tomadorCodigoMunicipio: crmPf?.tomadorCodigoMunicipio || officialDraftPf.tomadorCodigoMunicipio || "",
+      tomadorEndereco: inlineAddr || (cepStreet ? `${cepStreet}${cepNumero ? `, ${cepNumero}` : ""}` : "") || (!isRequesterSelf ? (crmPf?.tomadorEndereco || officialDraftPf.tomadorEndereco || "") : ""),
+      tomadorNumero: cepNumero || (!isRequesterSelf ? (crmPf?.tomadorNumero || officialDraftPf.tomadorNumero || "") : ""),
+      tomadorBairro: cepBairro || (!isRequesterSelf ? (crmPf?.tomadorBairro || officialDraftPf.tomadorBairro || "") : ""),
+      tomadorCidade: cepCidade || (!isRequesterSelf ? (crmPf?.tomadorCidade || officialDraftPf.tomadorCidade || "") : ""),
+      tomadorUf: cepUf || (!isRequesterSelf ? (crmPf?.tomadorUf || officialDraftPf.tomadorUf || "") : ""),
+      tomadorCep: cleanCepNum || (!isRequesterSelf ? (officialDraftPf.tomadorCep || "") : ""),
+      tomadorCodigoMunicipio: cepIbge || (!isRequesterSelf ? (crmPf?.tomadorCodigoMunicipio || officialDraftPf.tomadorCodigoMunicipio || "") : ""),
       descricaoServico: desc,
       valorOriginal: valTotal,
       valorServico: valTotal,
@@ -12957,6 +13629,17 @@ export async function handleWhatsAppFiscalFlow({
       updatedAt: new Date().toISOString()
     };
     conv.awaitingFiscalData = false;
+
+    // Salva imediatamente no CRM (CPF, endereço, e-mail e preferência PF no cadastro do hóspede ou do solicitante)
+    persistFiscalPreferenceToCrm(db, {
+      matchedReservation,
+      matchedGuest,
+      callerRole,
+      callerCrmGuest,
+      conf: conv.fiscalConferenceState,
+      cleanTarget,
+      saveDatabase
+    });
 
     const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState, { isCheckedOut: isMatchedResCheckedOut });
     return await respond(confMsg, {
@@ -12968,7 +13651,7 @@ export async function handleWhatsAppFiscalFlow({
   // Cenário C: Se estava aguardando dados e respondeu escolha PJ/PF sem documento
   if (isAwaitingFiscal) {
     const lower = messageText.toLowerCase();
-    if (/\b(?:empresa|pj|pessoa\s*jur[ií]dica|corporativ[ao])\b/i.test(lower)) {
+    if (explicitPrefType === "PJ" || /\b(?:empresa|pj|pessoa\s*jur[ií]dica|corporativ[ao])\b/i.test(lower)) {
       const crmPj = resolveCrmFiscalTomador(db, {
         cleanTarget,
         matchedReservation,
@@ -12985,6 +13668,7 @@ export async function handleWhatsAppFiscalFlow({
           reservationId: matchedReservation?.id,
           reservationCode: matchedReservation?.code,
           flatNumber: matchedReservation?.flatNumber,
+          invoiceRecipientType: crmPj.invoiceRecipientType || "company",
           ...crmPj,
           descricaoServico: desc,
           valorOriginal: valTotal,
@@ -12993,6 +13677,15 @@ export async function handleWhatsAppFiscalFlow({
           updatedAt: new Date().toISOString()
         };
         conv.awaitingFiscalData = false;
+        persistFiscalPreferenceToCrm(db, {
+          matchedReservation,
+          matchedGuest,
+          callerRole,
+          callerCrmGuest,
+          conf: conv.fiscalConferenceState,
+          cleanTarget,
+          saveDatabase
+        });
         const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState, { isCheckedOut: isMatchedResCheckedOut });
         return await respond(confMsg, {
           action: "presented_conference",
@@ -13002,7 +13695,7 @@ export async function handleWhatsAppFiscalFlow({
       const replyText = `Perfeito! Por gentileza, nos envie o número do **CNPJ** da empresa e o **e-mail financeiro** para emissão da nota fiscal. 🏢`;
       return await respond(replyText, { action: "prompted_pj_data" });
     }
-    if (/\b(?:f[ií]sica|pf|pessoa\s*f[ií]sica|para\s*mim|no\s*meu\s*nome|particular)\b/i.test(lower)) {
+    if (explicitPrefType === "PF" || /\b(?:f[ií]sica|pf|pessoa\s*f[ií]sica|para\s*mim|no\s*meu\s*nome|particular)\b/i.test(lower)) {
       const crmPf = resolveCrmFiscalTomador(db, {
         cleanTarget,
         matchedReservation,
@@ -13019,6 +13712,7 @@ export async function handleWhatsAppFiscalFlow({
           reservationId: matchedReservation?.id,
           reservationCode: matchedReservation?.code,
           flatNumber: matchedReservation?.flatNumber,
+          invoiceRecipientType: crmPf.invoiceRecipientType || "guest",
           ...crmPf,
           descricaoServico: desc,
           valorOriginal: valTotal,
@@ -13027,6 +13721,15 @@ export async function handleWhatsAppFiscalFlow({
           updatedAt: new Date().toISOString()
         };
         conv.awaitingFiscalData = false;
+        persistFiscalPreferenceToCrm(db, {
+          matchedReservation,
+          matchedGuest,
+          callerRole,
+          callerCrmGuest,
+          conf: conv.fiscalConferenceState,
+          cleanTarget,
+          saveDatabase
+        });
         const confMsg = buildConferencePresentationMessage(conv.fiscalConferenceState, { isCheckedOut: isMatchedResCheckedOut });
         return await respond(confMsg, {
           action: "presented_conference",
@@ -13041,13 +13744,14 @@ export async function handleWhatsAppFiscalFlow({
     }
   }
 
-  // Cenário D: Obtém todos os dados já pré-montados diretamente da plataforma oficial /notas
+  // Cenário D: Obtém todos os dados já pré-montados diretamente da plataforma oficial /notas (respeitando preferência salva no CRM ou pedida na mensagem)
   const crmTomador = resolveCrmFiscalTomador(db, {
     cleanTarget,
     matchedReservation,
     matchedGuest,
     linkedCompany,
-    senderName
+    senderName,
+    preferType: explicitPrefType
   });
 
   if (crmTomador && crmTomador.tomadorCpfCnpj) {
@@ -13068,6 +13772,7 @@ export async function handleWhatsAppFiscalFlow({
       reservationId: matchedReservation?.id,
       reservationCode: matchedReservation?.code,
       flatNumber: matchedReservation?.flatNumber,
+      invoiceRecipientType: crmTomador.invoiceRecipientType || (crmTomador.tomadorTipo === "PJ" ? "company" : "guest"),
       tomadorNome: crmTomador.tomadorNome,
       tomadorCpfCnpj: crmTomador.tomadorCpfCnpj,
       tomadorTipo: crmTomador.tomadorTipo,
@@ -13087,6 +13792,24 @@ export async function handleWhatsAppFiscalFlow({
       updatedAt: new Date().toISOString()
     };
     conv.awaitingFiscalData = false;
+
+    if (explicitPrefType) {
+      persistFiscalPreferenceToCrm(db, {
+        matchedReservation,
+        matchedGuest,
+        callerRole,
+        callerCrmGuest,
+        conf: conv.fiscalConferenceState,
+        cleanTarget,
+        saveDatabase
+      });
+    } else if (matchedReservation) {
+      matchedReservation.confirmedFiscalData = {
+        ...(matchedReservation.confirmedFiscalData || {}),
+        ...conv.fiscalConferenceState,
+        updatedAt: conv.fiscalConferenceState.updatedAt
+      };
+    }
 
     if (guestDescOnOpen?.type === "add_guest_unnamed") {
       conv.fiscalConferenceState.pendingFieldEdit = "add_guest_to_description";
@@ -13117,6 +13840,20 @@ export async function handleWhatsAppFiscalFlow({
       action: "presented_conference",
       conference: conv.fiscalConferenceState
     });
+  }
+
+  // Se o cliente já pediu explicitamente PJ ou PF na mensagem inicial, mas ainda não tem o documento no CRM:
+  if (explicitPrefType === "PJ") {
+    conv.awaitingFiscalData = true;
+    conv.awaitingFiscalDataAt = new Date().toISOString();
+    const replyText = `Olá${firstName ? `, ${firstName}` : ""}! Perfeito, vamos emitir a nota fiscal para a empresa! 🏢✨\n\nPor gentileza, nos envie o número do **CNPJ** da empresa e o **e-mail financeiro** (esses dados já ficarão salvos no seu cadastro para as próximas estadias).`;
+    return await respond(replyText, { action: "prompted_pj_data", awaitingFiscalData: true });
+  }
+  if (explicitPrefType === "PF") {
+    conv.awaitingFiscalData = true;
+    conv.awaitingFiscalDataAt = new Date().toISOString();
+    const replyText = `Olá${firstName ? `, ${firstName}` : ""}! Perfeito, vamos emitir a nota fiscal no seu CPF! 👤✨\n\nPor gentileza, nos informe seu **Nome Completo**, **CPF**, **Endereço com CEP** e **E-mail** (esses dados já ficarão salvos no seu cadastro para as próximas estadias).`;
+    return await respond(replyText, { action: "prompted_pf_data", awaitingFiscalData: true });
   }
 
   // Cenário E: Não possui cadastro fiscal prévio -> Solicita dados didaticamente

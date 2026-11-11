@@ -1228,7 +1228,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [formB2bVcnToken, setFormB2bVcnToken] = useState("")
   const [formB2bConciliationUrl, setFormB2bConciliationUrl] = useState("https://conciliacao.b2breservas.com.br")
   const [formB2bAuthorizedExpenses, setFormB2bAuthorizedExpenses] = useState("SOMENTE DIÁRIAS COM IMPOSTOS")
-  const [formInvoiceRecipientType, setFormInvoiceRecipientType] = useState<"company" | "agency" | "guest">("company")
+  const [formInvoiceRecipientType, setFormInvoiceRecipientType] = useState<"company" | "agency" | "guest" | "requester">("guest")
   const [formNfDeliveryEmails, setFormNfDeliveryEmails] = useState("")
   const [formNfHideFromGuest, setFormNfHideFromGuest] = useState(false)
   const [formInvoicingInstructions, setFormInvoicingInstructions] = useState("")
@@ -3348,9 +3348,9 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormB2bVcnToken("")
     setFormB2bConciliationUrl("https://conciliacao.b2breservas.com.br")
     setFormB2bAuthorizedExpenses("Apenas Diárias")
-    setFormInvoiceRecipientType("agency")
+    setFormInvoiceRecipientType(initialChannel === "b2b" ? "agency" : "guest")
     setFormNfDeliveryEmails("")
-    setFormNfHideFromGuest(true)
+    setFormNfHideFromGuest(initialChannel === "b2b")
     setFormInvoicingInstructions("")
     setFormVoucherUrl("")
     setShowVoucherParser(false)
@@ -3607,9 +3607,9 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormB2bVcnToken("")
     setFormB2bConciliationUrl("https://conciliacao.b2breservas.com.br")
     setFormB2bAuthorizedExpenses("Apenas Diárias")
-    setFormInvoiceRecipientType("agency")
+    setFormInvoiceRecipientType(initialChannel === "b2b" ? "agency" : "guest")
     setFormNfDeliveryEmails("")
-    setFormNfHideFromGuest(true)
+    setFormNfHideFromGuest(initialChannel === "b2b")
     setFormInvoicingInstructions("")
     setFormVoucherUrl("")
     setShowVoucherParser(false)
@@ -3853,14 +3853,19 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormB2bConciliationUrl(resItem.b2bConciliationUrl || "https://conciliacao.b2breservas.com.br")
     setFormB2bAuthorizedExpenses(resItem.b2bAuthorizedExpenses || "Apenas Diárias")
     setFormInvoiceRecipientType(
-      resItem.invoiceRecipientType === "company" || resItem.invoiceRecipientType === "guest" || resItem.invoiceRecipientType === "agency"
+      resItem.invoiceRecipientType === "company" ||
+      resItem.invoiceRecipientType === "guest" ||
+      resItem.invoiceRecipientType === "agency" ||
+      resItem.invoiceRecipientType === "requester"
         ? resItem.invoiceRecipientType
-        : (isB2bRes ? (resItem.b2bRatePolicy === "NET" && resItem.companyId ? "company" : "agency") : (resItem.companyId ? "company" : "guest"))
+        : (isB2bRes
+            ? (resItem.b2bRatePolicy === "NET" && resItem.companyId ? "company" : "agency")
+            : (resItem.requesterType === "company" && resItem.companyId ? "company" : "guest"))
     )
     setFormNfDeliveryEmails(
       Array.isArray(resItem.nfDeliveryEmails)
         ? resItem.nfDeliveryEmails.join(", ")
-        : (resItem.nfDeliveryEmails || resItem.agencyAgentEmail || "conciliacao@b2breservas.com.br")
+        : (resItem.nfDeliveryEmails || (isB2bRes ? (resItem.agencyAgentEmail || "conciliacao@b2breservas.com.br") : ""))
     )
     setFormNfHideFromGuest(resItem.nfHideFromGuest !== undefined ? Boolean(resItem.nfHideFromGuest) : isB2bRes)
     setFormInvoicingInstructions(resItem.invoicingInstructions || "")
@@ -4349,6 +4354,15 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         setFormCompanyId(String(g.companyId))
         const comp = companies.find(c => c.id === Number(g.companyId))
         if (comp) setFormCompanyName(comp.tradeName || comp.corporateName)
+      }
+      if (formChannel !== "b2b" && formRequesterType !== "agency_b2b") {
+        if (g.preferredInvoiceRecipient === "company" && (g.companyId || formCompanyId)) {
+          setFormInvoiceRecipientType("company")
+        } else if (g.preferredInvoiceRecipient === "guest") {
+          setFormInvoiceRecipientType("guest")
+        } else if (!isSameGuest && formRequesterType !== "company") {
+          setFormInvoiceRecipientType("guest")
+        }
       }
       if (g.defaultBoletoTermDays) setFormBoletoTermDays(Number(g.defaultBoletoTermDays))
       if (g.defaultBoletoConsumptionMode === "separate_boletos" || g.defaultBoletoConsumptionMode === "separate") {
@@ -5706,6 +5720,14 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
       const holdInfoForSave = statusToSave === "pre_reserva" ? computeHoldExpirationInfo() : null
       const isReactivatingNow = Boolean(isReactivatingRes || selectedRes?.status === "expirada")
+      const hasCompanyLink = Boolean(resolvedReqType === "company" || formInvoiceRecipientType === "company" || isB2b)
+      const resolvedInvRecType: "company" | "agency" | "guest" | "requester" = isB2b
+        ? formInvoiceRecipientType
+        : (formInvoiceRecipientType === "agency"
+            ? (resolvedReqType === "company" ? "company" : "guest")
+            : (formInvoiceRecipientType === "requester" && resolvedReqType !== "other_person"
+                ? "guest"
+                : formInvoiceRecipientType))
 
       const payload: any = {
         flatId: Number(formFlatId),
@@ -5728,9 +5750,9 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
           phone: formAgencyAgentPhone.trim(),
           email: formAgencyAgentEmail.trim()
         } : null),
-        companyId: (resolvedReqType === "company" || isB2b) && formCompanyId ? Number(formCompanyId) : null,
-        companyName: (resolvedReqType === "company" || isB2b) ? resolvedCompName : "",
-        companyCnpj: (resolvedReqType === "company" || isB2b) && selectedComp?.cnpj ? selectedComp.cnpj : undefined,
+        companyId: hasCompanyLink && formCompanyId ? Number(formCompanyId) : null,
+        companyName: hasCompanyLink ? resolvedCompName : "",
+        companyCnpj: hasCompanyLink && selectedComp?.cnpj ? selectedComp.cnpj : undefined,
         costCenter: formCostCenter.trim() || undefined,
         agencyId: isB2b && formAgencyId ? Number(formAgencyId) : (selectedRes?.agencyId || null),
         agencyName: isB2b ? (selectedAg?.corporateName || resolvedAgName) : undefined,
@@ -5759,12 +5781,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         invoicingInstructions: isB2b ? formInvoicingInstructions.trim() : undefined,
         voucherUrl: isB2b ? formVoucherUrl.trim() : undefined,
         b2bVoucherUrl: isB2b ? formVoucherUrl.trim() : undefined,
-        invoiceRecipientType: isB2b ? formInvoiceRecipientType : (resolvedReqType === "company" ? "company" : "guest"),
-        nfRecipientType: isB2b ? formInvoiceRecipientType : (resolvedReqType === "company" ? "company" : "guest"),
-        nfDeliveryEmails: isB2b
+        invoiceRecipientType: resolvedInvRecType,
+        nfRecipientType: resolvedInvRecType,
+        nfDeliveryEmails: (isB2b || formNfDeliveryEmails.trim())
           ? formNfDeliveryEmails.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean)
           : undefined,
-        nfHideFromGuest: isB2b ? Boolean(formNfHideFromGuest) : false,
+        nfHideFromGuest: (isB2b || resolvedReqType === "company" || resolvedInvRecType === "company") ? Boolean(formNfHideFromGuest) : false,
         checkinDate: formCheckin,
         checkoutDate: formCheckout,
         checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
@@ -8628,7 +8650,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <button
                       type="button"
-                      onClick={() => setFormRequesterType("guest")}
+                      onClick={() => {
+                        setFormRequesterType("guest")
+                        if (formInvoiceRecipientType === "requester" || formInvoiceRecipientType === "agency") {
+                          setFormInvoiceRecipientType(formCompanyId ? "company" : "guest")
+                        }
+                      }}
                       className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
                         formRequesterType === "guest"
                           ? "bg-primary text-primary-foreground border-primary shadow-xs"
@@ -8639,7 +8666,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                     </button>
                     <button
                       type="button"
-                      onClick={() => setFormRequesterType("other_person")}
+                      onClick={() => {
+                        setFormRequesterType("other_person")
+                        if (formInvoiceRecipientType === "agency") {
+                          setFormInvoiceRecipientType("guest")
+                        }
+                      }}
                       className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
                         formRequesterType === "other_person"
                           ? "bg-primary text-primary-foreground border-primary shadow-xs"
@@ -8650,7 +8682,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                     </button>
                     <button
                       type="button"
-                      onClick={() => setFormRequesterType("company")}
+                      onClick={() => {
+                        setFormRequesterType("company")
+                        if (!selectedRes) {
+                          setFormInvoiceRecipientType("company")
+                        }
+                      }}
                       className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
                         formRequesterType === "company"
                           ? "bg-primary text-primary-foreground border-primary shadow-xs"
@@ -8666,6 +8703,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         setFormChannel("b2b")
                         setFormPaymentMethod(formB2bPaymentType === "FATURADO" ? "faturado_b2b" : "vcn_b2b")
                         setFormStatus("confirmada")
+                        if (!selectedRes) {
+                          setFormInvoiceRecipientType("agency")
+                          setFormNfHideFromGuest(true)
+                        }
                       }}
                       className={`p-2 rounded-xl border text-[11px] font-bold text-left transition-all ${
                         formRequesterType === "agency_b2b" || formChannel === "b2b"
@@ -11123,16 +11164,126 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                   <Switch checked={formIsMonthlyGuest} onCheckedChange={setFormIsMonthlyGuest} />
                 </div>
 
-                {/* Auto NFS-e Switch */}
-                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Auto-Emitir Nota Fiscal (NFS-e) no Check-out</span>
-                      <span className="text-[11px] text-muted-foreground">Emite e envia NFS-e no WhatsApp deste cliente no check-out (Padrão: OFF)</span>
+                {/* Bloco Fiscal: Tomador da NFS-e (Independente do Solicitante) + Auto-Emissão no Check-out */}
+                <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl space-y-2.5">
+                  {formChannel !== "b2b" && formRequesterType !== "agency_b2b" && (
+                    <div className="space-y-2 pb-2.5 border-b border-emerald-200/70 dark:border-emerald-800/50">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-[11px] font-black uppercase tracking-wide text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                          <span>Para quem emitir a Nota Fiscal (Tomador NFS-e)?</span>
+                        </span>
+                        <Badge variant="outline" className="text-[9.5px] bg-background/80 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300">
+                          Independente do Solicitante • Hóspede sempre sai na descrição
+                        </Badge>
+                      </div>
+
+                      <div className={`grid gap-1.5 ${(formRequesterType === "other_person" || formInvoiceRecipientType === "requester") ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2"}`}>
+                        <button
+                          type="button"
+                          onClick={() => setFormInvoiceRecipientType("guest")}
+                          className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left ${
+                            formInvoiceRecipientType === "guest"
+                              ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-emerald-500/60"
+                          }`}
+                        >
+                          👤 Hóspede Titular (PF)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormInvoiceRecipientType("company")}
+                          className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left ${
+                            formInvoiceRecipientType === "company"
+                              ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-500/60"
+                          }`}
+                        >
+                          🏢 Empresa (CNPJ / PJ)
+                        </button>
+                        {(formRequesterType === "other_person" || formInvoiceRecipientType === "requester") && (
+                          <button
+                            type="button"
+                            onClick={() => setFormInvoiceRecipientType("requester")}
+                            className={`py-1.5 px-2.5 rounded-lg border text-[11px] font-bold transition-all text-left ${
+                              formInvoiceRecipientType === "requester"
+                                ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                                : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-amber-500/60"
+                            }`}
+                          >
+                            👥 Solicitante / Terceiro (PF)
+                          </button>
+                        )}
+                      </div>
+
+                      {formInvoiceRecipientType === "company" && formRequesterType !== "company" && (
+                        <div className="p-2.5 bg-background border border-indigo-300/60 dark:border-indigo-800/60 rounded-xl space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] uppercase font-black text-indigo-700 dark:text-indigo-300">
+                              Empresa Tomadora da Nota Fiscal (PJ)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleOpenNewCompanyModal}
+                              className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Cadastrar Empresa
+                            </button>
+                          </div>
+                          <Select
+                            value={formCompanyId}
+                            onValueChange={(val) => {
+                              if (val === "__NEW_COMPANY__") {
+                                handleOpenNewCompanyModal()
+                                return
+                              }
+                              setFormCompanyId(val)
+                              const c = companies.find(comp => String(comp.id) === val) as any
+                              if (c) {
+                                setFormCompanyName(c.tradeName || c.corporateName)
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="text-xs h-8">
+                              <SelectValue placeholder="Selecione a Empresa para emissão da NFS-e..." />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-64">
+                              <SelectItem value="__NEW_COMPANY__" className="text-indigo-600 dark:text-indigo-400 font-bold cursor-pointer bg-indigo-50/60 dark:bg-indigo-950/40">
+                                ➕ Cadastrar Nova Empresa...
+                              </SelectItem>
+                              {companies.map((c: any) => (
+                                <SelectItem key={c.id} value={String(c.id)}>
+                                  <span className="font-semibold">{c.tradeName || c.corporateName}</span>
+                                  {c.cnpj ? ` • CNPJ: ${c.cnpj}` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {(formInvoiceRecipientType === "company" || formRequesterType === "company") && (
+                        <div className="flex items-center justify-between p-2 rounded-lg bg-background/80 border border-border/60">
+                          <div>
+                            <span className="text-[11px] font-bold text-slate-900 dark:text-slate-100 block">Sigilo Tarifário p/ Hóspede</span>
+                            <span className="text-[10px] text-muted-foreground block">Se ativo, oculta tarifa do hóspede e envia a NFS-e somente para a empresa</span>
+                          </div>
+                          <Switch checked={formNfHideFromGuest} onCheckedChange={setFormNfHideFromGuest} />
+                        </div>
+                      )}
                     </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Auto-Emitir Nota Fiscal (NFS-e) no Check-out</span>
+                        <span className="text-[11px] text-muted-foreground">Emite na SEFIN Nacional e envia o PDF oficial no WhatsApp no check-out (Padrão: OFF)</span>
+                      </div>
+                    </div>
+                    <Switch checked={formAutoInvoice} onCheckedChange={setFormAutoInvoice} />
                   </div>
-                  <Switch checked={formAutoInvoice} onCheckedChange={setFormAutoInvoice} />
                 </div>
 
                 {/* Special Reception Notice */}

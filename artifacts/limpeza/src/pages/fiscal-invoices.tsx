@@ -125,8 +125,9 @@ export default function FiscalInvoicesPage() {
   const [linkedCompany, setLinkedCompany] = useState<any | null>(null)
   const [linkedAgency, setLinkedAgency] = useState<any | null>(null)
   const [linkedGuest, setLinkedGuest] = useState<any | null>(null)
+  const [linkedRequester, setLinkedRequester] = useState<any | null>(null)
   const [linkedReservation, setLinkedReservation] = useState<any | null>(null)
-  const [tomadorMode, setTomadorMode] = useState<"pj" | "pf" | "agency">("pf")
+  const [tomadorMode, setTomadorMode] = useState<"pj" | "pf" | "agency" | "requester">("pf")
   const [formNfHideFromGuest, setFormNfHideFromGuest] = useState(false)
   const [formNfDeliveryEmails, setFormNfDeliveryEmails] = useState("")
   const guestComboboxRef = useRef<HTMLDivElement>(null)
@@ -1439,8 +1440,120 @@ export default function FiscalInvoicesPage() {
     }
   }
 
-  // ── Selecionar ou Alternar Tomador (PF, Empresa PJ ou Agência B2B) ─────────
-  const handleSelectTomadorMode = (targetMode: "pf" | "pj" | "agency") => {
+  // ── Aplicar Solicitante / Terceiro (PF) como Tomador (mantendo Hóspede na descrição) ──
+  const applyTomadorRequester = (requester: any, guest: any, stayInfo?: any, resInfo?: any) => {
+    setTomadorMode("requester")
+    const r = resInfo || linkedReservation
+    const reqDoc = (requester?.documentNumber || requester?.document || requester?.cpf || r?.requesterInfo?.cpf || "").replace(/\D/g, "")
+    const reqName = requester?.fullName || requester?.name || r?.requesterInfo?.name || "Solicitante"
+    const reqEmail = requester?.email || r?.requesterInfo?.email || ""
+    const reqTel = (requester?.phone || r?.requesterInfo?.phone || "").replace(/\D/g, "")
+    const normAddr = extractNormalizedGuestAddress(requester || {}, reqDoc)
+    const reqEnd = normAddr.logradouro
+    const reqNum = normAddr.numero
+    const reqComp = normAddr.complemento
+    const reqBairro = normAddr.bairro
+    const reqCidade = normAddr.cidade
+    const reqUf = normAddr.uf
+    const reqCep = normAddr.cep
+    const reqIbge = normAddr.ibge
+
+    const realGuestName = guest?.fullName || guest?.name || r?.guestName || "Hóspede"
+    const flat = stayInfo?.flatNumber || extractedData.flatNumber || formFlatNumber
+    const checkin = stayInfo?.checkIn || extractedData.checkIn || formCheckin
+    const checkout = stayInfo?.checkOut || extractedData.checkOut || formCheckout
+    const diarias = stayInfo?.quantidadeDiarias || extractedData.quantidadeDiarias || formDiarias
+    const valor = stayInfo?.valorServico || extractedData.valorServico || formValor
+
+    const extraIds = r ? {
+      b2bNumber: r.b2bReservationNumber || r.externalReservationNumber || undefined,
+      rloc: r.b2bLocatorRloc || undefined,
+      costCenter: r.costCenter || undefined
+    } : undefined
+
+    const desc = buildStandardDescription(realGuestName, flat, checkin, checkout, diarias, extraIds)
+
+    setExtractedData(prev => ({
+      ...prev,
+      tomadorNome: reqName,
+      tomadorCpfCnpj: reqDoc,
+      tomadorEmail: reqEmail,
+      tomadorTelefone: reqTel,
+      tomadorEndereco: reqEnd,
+      tomadorNumero: reqNum,
+      tomadorComplemento: reqComp,
+      tomadorBairro: reqBairro,
+      tomadorCidade: reqCidade,
+      tomadorUf: reqUf,
+      tomadorCep: reqCep,
+      tomadorCodigoMunicipio: reqIbge,
+      descricaoServico: desc,
+      ...(stayInfo || {})
+    }))
+
+    setFormTomadorNome(reqName)
+    setFormTomadorDoc(reqDoc)
+    setFormTomadorEmail(reqEmail)
+    setFormTomadorTelefone(reqTel)
+    setFormTomadorEndereco(reqEnd)
+    setFormTomadorNumero(reqNum)
+    setFormTomadorComplemento(reqComp)
+    setFormTomadorBairro(reqBairro)
+    setFormTomadorCidade(reqCidade)
+    setFormTomadorUf(reqUf)
+    setFormTomadorCep(reqCep)
+    setFormTomadorIbge(reqIbge)
+    setFormDescricao(desc)
+    if (flat) setFormFlatNumber(flat)
+    if (checkin) setFormCheckin(checkin)
+    if (checkout) setFormCheckout(checkout)
+    if (diarias) setFormDiarias(diarias)
+    if (valor) setFormValor(String(valor))
+
+    if (reqName && reqDoc && valor) {
+      setIsReadyToEmit(true)
+    }
+
+    if (reqDoc.length === 11 && !reqEnd && !reqCep) {
+      fetch(`/api/nfse/lookup-cpf/${reqDoc}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!data || !data.hasRealAddress) return
+          const resolvedEnd = data.logradouro || data.endereco || ""
+          const resolvedCep = String(data.cep || "").replace(/\D/g, "")
+          if (isGenericPelincaCompanyAddr(resolvedEnd, resolvedCep, data.bairro, data.cidade, data.numero)) return
+          const resolvedNum = data.numero || ""
+          const resolvedComp = data.complemento || reqComp || ""
+          const resolvedBairro = data.bairro || ""
+          const resolvedCity = data.cidade || ""
+          const resolvedUf = data.uf || ""
+          const resolvedIbge = data.codigoMunicipio || data.ibge || ""
+          setFormTomadorEndereco(resolvedEnd)
+          setFormTomadorNumero(resolvedNum)
+          setFormTomadorComplemento(resolvedComp)
+          setFormTomadorBairro(resolvedBairro)
+          setFormTomadorCidade(resolvedCity)
+          setFormTomadorUf(resolvedUf)
+          setFormTomadorCep(resolvedCep)
+          setFormTomadorIbge(resolvedIbge)
+          setExtractedData(prev => ({
+            ...prev,
+            tomadorEndereco: resolvedEnd,
+            tomadorNumero: resolvedNum,
+            tomadorComplemento: resolvedComp,
+            tomadorBairro: resolvedBairro,
+            tomadorCidade: resolvedCity,
+            tomadorUf: resolvedUf,
+            tomadorCep: resolvedCep,
+            tomadorCodigoMunicipio: resolvedIbge
+          }))
+        })
+        .catch(() => {})
+    }
+  }
+
+  // ── Selecionar ou Alternar Tomador (PF Hóspede, Solicitante PF, Empresa PJ ou Agência B2B) ──
+  const handleSelectTomadorMode = (targetMode: "pf" | "pj" | "agency" | "requester") => {
     const guest = linkedGuest || selectedGuest
     if (targetMode === "pf") {
       if (guest) {
@@ -1449,11 +1562,24 @@ export default function FiscalInvoicesPage() {
           ...prev,
           {
             role: "assistant",
-            content: `Tomador definido para Pessoa Física: **${guest.fullName || guest.name}** (CPF: ${guest.documentNumber || guest.cpf || 'Não informado'}). 👤\n\nTodos os detalhes da estadia, flat e valores foram preservados!`
+            content: `Tomador definido para Hóspede (PF): **${guest.fullName || guest.name}** (CPF: ${guest.documentNumber || guest.cpf || 'Não informado'}). 👤\n\nTodos os detalhes da estadia, flat e valores foram preservados!`
           }
         ])
       } else {
         setTomadorMode("pf")
+      }
+    } else if (targetMode === "requester") {
+      if (linkedRequester) {
+        applyTomadorRequester(linkedRequester, guest, extractedData, linkedReservation)
+        setMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `Tomador definido para Solicitante / Terceiro (PF): **${linkedRequester.fullName || linkedRequester.name}** (CPF: ${linkedRequester.documentNumber || linkedRequester.cpf || 'Não informado'}). 👥\n\nO hóspede **${guest?.fullName || guest?.name || ''}** permanece na discriminação do serviço!`
+          }
+        ])
+      } else {
+        setTomadorMode("requester")
       }
     } else if (targetMode === "pj") {
       if (linkedCompany) {
@@ -1512,11 +1638,16 @@ export default function FiscalInvoicesPage() {
     }
 
     const resSlot = Array.isArray(res.guests) && res.guests.length > 0 ? res.guests[0] : null
-    const crmGuest = guests.find(g => 
-      (res.guestId && String(g.id) === String(res.guestId)) ||
-      (res.guestDocument && (g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "") === String(res.guestDocument).replace(/\D/g, "")) ||
-      (res.guestName && (g.fullName || g.name || "").toLowerCase() === String(res.guestName).toLowerCase())
-    )
+    const crmGuest = guests.find(g => {
+      if (!g) return false
+      if (res.guestId && String(g.id) === String(res.guestId)) return true
+      const isThirdPartyReq = Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro")
+      if (isThirdPartyReq) return false
+      const gDoc = (g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "")
+      const rDoc = String(res.guestDocument || "").replace(/\D/g, "")
+      if (rDoc && gDoc === rDoc) return true
+      return Boolean(res.guestName && (g.fullName || g.name || "").toLowerCase() === String(res.guestName).toLowerCase())
+    })
     const pickNonGenericStr = (pred: (v: string) => boolean, ...vals: any[]) => {
       for (const v of vals) {
         const s = String(v || "").trim()
@@ -1546,6 +1677,34 @@ export default function FiscalInvoicesPage() {
       state: (foundStreet || foundCep) ? (res.state || res.guestState || resSlot?.state || crmGuest?.state || "") : "",
       ibgeCode: (foundStreet || foundCep) ? (res.ibgeCode || res.codigoMunicipio || resSlot?.ibgeCode || crmGuest?.ibgeCode || crmGuest?.codigoMunicipio || "") : ""
     } : null
+
+    const reqInfo = res.requesterInfo || null
+    const reqDocDigits = String(reqInfo?.cpf || reqInfo?.document || "").replace(/\D/g, "")
+    const hasThirdPartyRequester = Boolean(
+      res.requesterType === "other_person" ||
+      res.invoiceRecipientType === "requester" ||
+      (reqInfo && (reqInfo.name || reqDocDigits) && res.requesterType !== "guest" && res.requesterType !== "company" && res.requesterType !== "agency_b2b")
+    )
+    const crmRequester = hasThirdPartyRequester
+      ? guests.find(g =>
+          g && (
+            (reqInfo?.guestId && String(g.id) === String(reqInfo.guestId)) ||
+            (reqDocDigits.length === 11 && (g.documentNumber || g.document || g.cpf || "").replace(/\D/g, "") === reqDocDigits)
+          )
+        )
+      : null
+    const foundRequester = hasThirdPartyRequester && (crmRequester || reqInfo?.name || reqDocDigits)
+      ? {
+          ...(crmRequester || {}),
+          fullName: crmRequester?.fullName || crmRequester?.name || reqInfo?.name || "Solicitante",
+          name: crmRequester?.name || crmRequester?.fullName || reqInfo?.name || "Solicitante",
+          documentNumber: (crmRequester?.documentNumber || crmRequester?.document || crmRequester?.cpf || reqDocDigits || "").replace(/\D/g, ""),
+          cpf: (crmRequester?.cpf || crmRequester?.documentNumber || reqDocDigits || "").replace(/\D/g, ""),
+          email: reqInfo?.email || crmRequester?.email || "",
+          phone: reqInfo?.phone || crmRequester?.phone || ""
+        }
+      : null
+    setLinkedRequester(foundRequester)
 
     const crmAgency = agencies.find(a =>
       (res.agencyId && String(a.id) === String(res.agencyId)) ||
@@ -1609,14 +1768,18 @@ export default function FiscalInvoicesPage() {
       setSelectedGuest(foundGuest)
     }
 
-    const recipientPref: "guest" | "company" | "agency" =
+    const guestCrmPref = foundGuest?.preferredInvoiceRecipient
+    const recipientPref: "guest" | "company" | "agency" | "requester" =
       res.invoiceRecipientType ||
-      (foundAgency && res.channel === "b2b" ? "agency" : foundComp ? "company" : "guest")
+      (guestCrmPref === "company" && foundComp ? "company" : (guestCrmPref === "guest" ? "guest" : null)) ||
+      (foundAgency && res.channel === "b2b" ? "agency" : (res.requesterType === "company" && foundComp ? "company" : "guest"))
 
     if (recipientPref === "agency" && foundAgency) {
       applyTomadorAgency(foundAgency, foundGuest, stayInfo, res)
     } else if (recipientPref === "company" && foundComp) {
       applyTomadorPJ(foundComp, foundGuest, stayInfo, res)
+    } else if (recipientPref === "requester" && foundRequester) {
+      applyTomadorRequester(foundRequester, foundGuest, stayInfo, res)
     } else if (foundGuest) {
       applyTomadorPF(foundGuest, stayInfo, res)
     } else {
@@ -1643,7 +1806,7 @@ export default function FiscalInvoicesPage() {
         !cfDoc ||
         (recipientPref === "agency" && cfDoc === String(foundAgency?.cnpj || "").replace(/\D/g, "")) ||
         (recipientPref === "company" && cfDoc === String(foundComp?.cnpj || "").replace(/\D/g, "")) ||
-        (recipientPref === "guest" && cfDoc.length === 11)
+        ((recipientPref === "guest" || recipientPref === "requester") && cfDoc.length === 11)
       if (cfMatchesTarget) {
         if (cf.tomadorNome) {
           setFormTomadorNome(cf.tomadorNome)
@@ -2112,7 +2275,7 @@ export default function FiscalInvoicesPage() {
       sistemaEmissor,
       reservationId: linkedReservation?.id || undefined,
       reservationCode: linkedReservation?.code || undefined,
-      invoiceRecipientType: tomadorMode === "agency" ? "agency" : tomadorMode === "pj" ? "company" : "guest",
+      invoiceRecipientType: tomadorMode === "agency" ? "agency" : tomadorMode === "pj" ? "company" : tomadorMode === "requester" ? "requester" : "guest",
       agencyId: tomadorMode === "agency" ? (linkedAgency?.id || linkedReservation?.agencyId || undefined) : (linkedReservation?.agencyId || undefined),
       companyId: tomadorMode === "pj" ? (linkedCompany?.id || linkedReservation?.companyId || undefined) : (linkedReservation?.companyId || undefined),
       guestId: linkedGuest?.id || selectedGuest?.id || linkedReservation?.guestId || undefined,
@@ -3804,6 +3967,7 @@ export default function FiscalInvoicesPage() {
                         setLinkedCompany(null)
                         setLinkedAgency(null)
                         setLinkedGuest(null)
+                        setLinkedRequester(null)
                         setLinkedReservation(null)
                         setExtractedData({})
                         setIsReadyToEmit(false)
@@ -3851,7 +4015,7 @@ export default function FiscalInvoicesPage() {
                 )}
               </div>
 
-              {/* Seletores Rápidos dos 3 Tomadores: Hóspede (PF) | Empresa (PJ) | Agência B2B (PJ) */}
+              {/* Seletores Rápidos dos Tomadores: Hóspede (PF) | Solicitante (PF) | Empresa (PJ) | Agência B2B (PJ) */}
               <div className="flex items-center gap-1.5 bg-muted/50 p-1 rounded-2xl border border-border shrink-0 flex-wrap">
                 <button
                   type="button"
@@ -3864,6 +4028,20 @@ export default function FiscalInvoicesPage() {
                 >
                   <span>👤 Hóspede (PF)</span>
                 </button>
+                {(linkedRequester || tomadorMode === "requester" || linkedReservation?.requesterType === "other_person") && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectTomadorMode("requester")}
+                    className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                      tomadorMode === "requester"
+                        ? "bg-amber-600 text-white shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <span>👥 Solicitante (PF)</span>
+                    {linkedRequester && <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => handleSelectTomadorMode("pj")}
@@ -4025,6 +4203,15 @@ export default function FiscalInvoicesPage() {
                               >
                                 👤 Hóspede (PF)
                               </button>
+                              {(linkedRequester || tomadorMode === "requester" || linkedReservation?.requesterType === "other_person") && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectTomadorMode("requester")}
+                                  className={`font-bold px-2 py-0.5 rounded-lg transition-colors ${tomadorMode === "requester" ? "bg-amber-600 text-white" : "text-muted-foreground hover:text-foreground"}`}
+                                >
+                                  👥 Solicitante (PF)
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => handleSelectTomadorMode("pj")}
@@ -4046,18 +4233,24 @@ export default function FiscalInvoicesPage() {
                             {/* Documento com Botão Buscar CPF/CNPJ */}
                             <div className="sm:col-span-5 space-y-1">
                               <Label className="text-[11px] font-bold">
-                                {tomadorMode === "agency" ? "CNPJ da Agência B2B" : tomadorMode === "pj" ? "CNPJ da Empresa" : "CPF do Hóspede"}
+                                {tomadorMode === "agency"
+                                  ? "CNPJ da Agência B2B"
+                                  : tomadorMode === "pj"
+                                    ? "CNPJ da Empresa"
+                                    : tomadorMode === "requester"
+                                      ? "CPF do Solicitante"
+                                      : "CPF do Hóspede"}
                               </Label>
                               <div className="flex gap-1.5">
                                 <Input 
-                                  placeholder={tomadorMode === "pf" ? "000.000.000-00" : "00.000.000/0000-00"}
+                                  placeholder={tomadorMode === "pf" || tomadorMode === "requester" ? "000.000.000-00" : "00.000.000/0000-00"}
                                   value={formTomadorDoc}
                                   onChange={e => {
                                     const val = e.target.value
                                     setFormTomadorDoc(val)
                                     syncFormToPreview({ tomadorCpfCnpj: val })
                                     const cleanVal = val.replace(/\D/g, "")
-                                    if ((cleanVal.length === 11 && tomadorMode === "pf") || cleanVal.length === 14) {
+                                    if ((cleanVal.length === 11 && (tomadorMode === "pf" || tomadorMode === "requester")) || cleanVal.length === 14) {
                                       handleLookupDoc(cleanVal)
                                     }
                                   }}
@@ -4070,7 +4263,7 @@ export default function FiscalInvoicesPage() {
                                   onClick={() => handleLookupDoc()}
                                   disabled={isLookingUpDoc}
                                   className="h-9 px-2.5 rounded-xl text-xs font-bold bg-muted hover:bg-muted/80 text-foreground border border-border shrink-0"
-                                  title={tomadorMode !== "pf" ? "Buscar Razão Social e Endereço pelo CNPJ" : "Buscar Cadastro e Endereço do Check-in Digital pelo CPF"}
+                                  title={tomadorMode !== "pf" && tomadorMode !== "requester" ? "Buscar Razão Social e Endereço pelo CNPJ" : "Buscar Cadastro e Endereço do Check-in Digital pelo CPF"}
                                 >
                                   <Search className={`w-3.5 h-3.5 ${isLookingUpDoc ? 'animate-spin' : ''}`} />
                                 </Button>
@@ -4080,7 +4273,13 @@ export default function FiscalInvoicesPage() {
                             {/* Nome / Razão Social */}
                             <div className="sm:col-span-7 space-y-1">
                               <Label className="text-[11px] font-bold">
-                                {tomadorMode === "agency" ? "Razão Social da Agência" : tomadorMode === "pj" ? "Razão Social da Empresa" : "Nome Completo do Hóspede"}
+                                {tomadorMode === "agency"
+                                  ? "Razão Social da Agência"
+                                  : tomadorMode === "pj"
+                                    ? "Razão Social da Empresa"
+                                    : tomadorMode === "requester"
+                                      ? "Nome Completo do Solicitante"
+                                      : "Nome Completo do Hóspede"}
                               </Label>
                               <Input 
                                 placeholder="Nome completo ou Razão Social..."

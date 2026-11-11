@@ -33972,9 +33972,12 @@ app.post("/api/pms/reservations", async (req, res) => {
       if (guest) {
         guest.companyId = existingComp.id;
         guest.companyName = existingComp.corporateName;
+        guest.companyCnpj = cleanCnpj;
+        guest.preferredInvoiceRecipient = "company";
         guest.autoEmitInvoice = true;
       }
     } else if (invoiceDetails.type === "pf" && guest) {
+      guest.preferredInvoiceRecipient = "guest";
       guest.autoEmitInvoice = true;
     }
   }
@@ -34063,7 +34066,7 @@ app.post("/api/pms/reservations", async (req, res) => {
         : Number((finalTotalAmount - (resolvedCommAmt || 0)).toFixed(2)))
     : undefined;
 
-  const resolvedInvRecipient = invoiceRecipientType || resolvedAgency?.defaultInvoiceRecipient || (resolvedCompany ? "company" : "guest");
+  const resolvedInvRecipient = invoiceRecipientType || resolvedAgency?.defaultInvoiceRecipient || guest?.preferredInvoiceRecipient || (resolvedCompany ? "company" : "guest");
   const resolvedNfEmails = Array.isArray(nfDeliveryEmails)
     ? nfDeliveryEmails.map(e => String(e).trim()).filter(Boolean)
     : (typeof nfDeliveryEmails === "string" && nfDeliveryEmails.trim()
@@ -46566,135 +46569,89 @@ const handleCheckout = async (req, res) => {
   );
   const shouldEmitBoletoOnCheckout = isResFaturado && (r.autoEmitBoletoOnCheckout !== false || req.body?.emitBoleto === true);
 
-  if (shouldAutoEmit && !shouldEmitBoletoOnCheckout && !r.invoiceId && !existingInvForCheckout && (r.guestName || confFiscal?.tomadorNome) && (company || r.guestDocument || guest?.document || guest?.documentNumber || confFiscal?.tomadorCpfCnpj)) {
+  if (shouldAutoEmit && !shouldEmitBoletoOnCheckout && !r.invoiceId && !existingInvForCheckout) {
     try {
+      const officialDraft = buildOfficialNfseDraftForReservation(db, { reservation: r });
       const breakdown = computeReservationAccommodationAndConsumption(r, db);
       const valor = (confFiscal?.managerApprovedValue && Number(confFiscal.valorServico) > 0)
         ? Number(confFiscal.valorServico)
-        : Number(breakdown.accommodationAmount || r.dailyRate || confFiscal?.valorServico || 250);
+        : Number(breakdown.accommodationAmount || officialDraft?.valorServico || r.dailyRate || confFiscal?.valorServico || 250);
 
-      // Calcular quantidade de diárias (preservando o período contratado em caso de check-out antecipado)
-      let quantidadeDiarias = 1;
-      const effectiveInvoiceCheckout = (r.earlyCheckout && r.originalCheckoutDate) ? r.originalCheckoutDate : r.checkoutDate;
-      if (r.checkinDate && effectiveInvoiceCheckout) {
-        const d1 = new Date(r.checkinDate);
-        const d2 = new Date(effectiveInvoiceCheckout);
-        const diff = Math.round((d2 - d1) / 86400000);
-        if (diff > 0) quantidadeDiarias = diff;
-      }
+      const tomadorNome = confFiscal?.tomadorNome || officialDraft?.tomadorNome || r.guestName || "";
+      const tomadorDoc = onlyDigits(
+        confFiscal?.tomadorCpfCnpj ||
+        officialDraft?.tomadorCpfCnpj ||
+        r.guestDocument ||
+        guest?.documentNumber ||
+        guest?.document ||
+        company?.cnpj ||
+        ""
+      );
 
-      let tomadorNome = confFiscal?.tomadorNome || r.guestName;
-      let tomadorDoc = confFiscal?.tomadorCpfCnpj || r.guestDocument || guest?.document || guest?.documentNumber || "";
-      let tomadorEmail = confFiscal?.tomadorEmail || r.guestEmail || guest?.email || "";
-      let tomadorTelefone = confFiscal?.tomadorTelefone || r.guestPhone || guest?.phone || "";
-      let tomadorEndereco = confFiscal?.tomadorEndereco || guest?.address || guest?.logradouro || "";
-      let tomadorNumero = confFiscal?.tomadorNumero || guest?.number || "";
-      let tomadorComplemento = confFiscal?.tomadorComplemento || guest?.complement || "";
-      let tomadorBairro = confFiscal?.tomadorBairro || guest?.neighborhood || guest?.bairro || "";
-      let tomadorCep = confFiscal?.tomadorCep || guest?.cep || "";
-      let tomadorCidade = confFiscal?.tomadorCidade || guest?.city || guest?.cidade || "Campos dos Goytacazes";
-      let tomadorUf = confFiscal?.tomadorUf || guest?.state || guest?.uf || "RJ";
-      let tomadorCodigoMunicipio = confFiscal?.tomadorCodigoMunicipio || guest?.ibgeCode || guest?.codigoMunicipio || "3301009";
+      if (tomadorNome && (tomadorDoc.length === 11 || tomadorDoc.length === 14)) {
+        const effectiveInvoiceCheckout = (r.earlyCheckout && r.originalCheckoutDate) ? r.originalCheckoutDate : r.checkoutDate;
+        const targetNfPhone = cleanPhone(
+          confFiscal?.tomadorTelefone ||
+          officialDraft?.tomadorTelefone ||
+          r.guestPhone ||
+          guest?.phone ||
+          ""
+        );
 
-      if (company && !confFiscal?.tomadorCpfCnpj) {
-        tomadorNome = company.corporateName || company.razaoSocial || company.tradeName || tomadorNome;
-        tomadorDoc = company.cnpj || company.document || tomadorDoc;
-        tomadorEmail = company.financialEmail || company.email || tomadorEmail;
-        tomadorTelefone = company.phone || company.telefone || tomadorTelefone;
-        tomadorEndereco = company.address || company.logradouro || company.endereco || tomadorEndereco;
-        tomadorNumero = company.number || company.numero || tomadorNumero;
-        tomadorComplemento = company.complement || company.complemento || tomadorComplemento;
-        tomadorBairro = company.neighborhood || company.bairro || tomadorBairro;
-        tomadorCep = company.cep || tomadorCep;
-        tomadorCidade = company.city || company.cidade || tomadorCidade;
-        tomadorUf = company.state || company.uf || tomadorUf;
-        tomadorCodigoMunicipio = company.ibgeCode || company.codigoMunicipio || tomadorCodigoMunicipio;
-      }
+        const nfseOut = await executeNfseEmissionInternal({
+          reservationId: r.id,
+          reservationCode: r.reservationCode || r.code || null,
+          flatNumber: String(r.flatNumber || "113"),
+          checkinDate: r.checkinDate,
+          checkoutDate: effectiveInvoiceCheckout,
+          guestId: guest ? Number(guest.id) : (r.guestId ? Number(r.guestId) : null),
+          guestName: r.guestName || officialDraft?.guestName || tomadorNome,
+          guestPhone: cleanPhone(r.guestPhone || guest?.phone || ""),
+          companyId: officialDraft?.companyId || (company ? Number(company.id) : (r.companyId ? Number(r.companyId) : null)),
+          agencyId: officialDraft?.agencyId || (r.agencyId ? Number(r.agencyId) : null),
+          invoiceRecipientType: r.invoiceRecipientType || officialDraft?.invoiceRecipientType || (tomadorDoc.length === 14 ? "company" : "guest"),
+          tomadorNome: toTitleCase(tomadorNome),
+          tomadorCpfCnpj: tomadorDoc,
+          tomadorEmail: (confFiscal?.tomadorEmail || officialDraft?.tomadorEmail || r.guestEmail || guest?.email || "").trim().toLowerCase(),
+          tomadorTelefone: targetNfPhone,
+          whatsappTargetPhone: !r.nfHideFromGuest ? targetNfPhone : "",
+          tomadorEndereco: (confFiscal?.tomadorEndereco || officialDraft?.tomadorEndereco || guest?.address || guest?.logradouro || "").trim(),
+          tomadorNumero: (confFiscal?.tomadorNumero || officialDraft?.tomadorNumero || guest?.number || "").trim(),
+          tomadorComplemento: (confFiscal?.tomadorComplemento ?? officialDraft?.tomadorComplemento ?? guest?.complement ?? "").trim(),
+          tomadorBairro: (confFiscal?.tomadorBairro || officialDraft?.tomadorBairro || guest?.neighborhood || guest?.bairro || "").trim(),
+          tomadorCep: cleanCep(confFiscal?.tomadorCep || officialDraft?.tomadorCep || guest?.cep || ""),
+          tomadorCidade: (confFiscal?.tomadorCidade || officialDraft?.tomadorCidade || guest?.city || guest?.cidade || "Campos dos Goytacazes").trim(),
+          tomadorUf: (confFiscal?.tomadorUf || officialDraft?.tomadorUf || guest?.state || guest?.uf || "RJ").trim().toUpperCase(),
+          tomadorCodigoMunicipio: (confFiscal?.tomadorCodigoMunicipio || officialDraft?.tomadorCodigoMunicipio || guest?.ibgeCode || guest?.codigoMunicipio || "3301009").trim(),
+          valorServico: valor,
+          discriminacao: confFiscal?.descricaoServico || officialDraft?.descricaoServico,
+          descricaoServico: confFiscal?.descricaoServico || officialDraft?.descricaoServico,
+          nfHideFromGuest: Boolean(r.nfHideFromGuest),
+          nfDeliveryEmails: Array.isArray(r.nfDeliveryEmails) ? r.nfDeliveryEmails : undefined,
+          skipAutoWhatsapp: Boolean(r.nfHideFromGuest)
+        });
 
-      // Discriminação detalhada via template (ou descrição personalizada confirmada via Sofia)
-      const template = db.fiscalSettings?.descriptionTemplate || DEFAULT_FISCAL_TEMPLATE;
-      const discriminacaoFormatada = confFiscal?.descricaoServico || formatarDescricaoComTemplate({
-        tomadorNome: r.guestName,
-        tomadorCpfCnpj: r.guestDocument || guest?.document || guest?.documentNumber || "",
-        localNome: "CorpFlats",
-        localEndereco: "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes/RJ",
-        flatNumber: String(r.flatNumber || "113"),
-        checkIn: r.checkinDate,
-        checkOut: r.checkoutDate,
-        quantidadeDiarias,
-        valorServico: valor
-      }, template);
+        if (nfseOut && nfseOut.success && nfseOut.invoice) {
+          autoInvoiceEmitted = true;
+          autoInvoiceNumber = nfseOut.numeroNfse;
+          autoInvoicePdf = nfseOut.pdfUrl || nfseOut.danfseUrl;
 
-      const maxId = db.invoices && db.invoices.length > 0 ? Math.max(...db.invoices.map(i => Number(i.id || 0))) : 875;
-      const nextId = maxId + 1;
-      const numNota = String(20260000 + (nextId % 9000) + 100);
-      const codVerif = crypto.randomBytes(4).toString("hex").toUpperCase();
-
-      const newInvoice = {
-        id: nextId,
-        numeroRps: nextId,
-        numeroNfse: numNota,
-        numeroNota: numNota,
-        codigoVerificacao: codVerif,
-        chaveAcesso: `3326084796481300016501001${String(nextId).padStart(9, "0")}1${codVerif}`,
-        dataEmissao: new Date().toISOString(),
-        sistemaEmissor: "padrao_nacional",
-        prestadorRazaoSocial: "Rental Miller's LTDA",
-        prestadorCnpj: "47.964.813/0001-65",
-        prestadorIm: "142591",
-        companyId: company ? Number(company.id) : null,
-        guestId: guest ? Number(guest.id) : (r.guestId ? Number(r.guestId) : null),
-        tomadorNome: toTitleCase(tomadorNome),
-        tomadorCpfCnpj: onlyDigits(tomadorDoc),
-        tomadorEmail: (tomadorEmail || "").trim().toLowerCase(),
-        tomadorTelefone: cleanPhone(tomadorTelefone),
-        tomadorEndereco: (tomadorEndereco || "").trim(),
-        tomadorLogradouro: (tomadorEndereco || "").trim(),
-        tomadorNumero: (tomadorNumero || "").trim(),
-        tomadorComplemento: (tomadorComplemento || "").trim(),
-        tomadorBairro: (tomadorBairro || "").trim(),
-        tomadorCep: cleanCep(tomadorCep),
-        tomadorCidade: (tomadorCidade || "Campos dos Goytacazes").trim(),
-        tomadorUf: (tomadorUf || "RJ").trim().toUpperCase(),
-        tomadorCodigoMunicipio: (tomadorCodigoMunicipio || "3301009").trim(),
-        flatNumber: String(r.flatNumber || "113"),
-        reservationId: r.id,
-        reservationCode: r.reservationCode || r.code || null,
-        valorServico: valor,
-        discriminacao: discriminacaoFormatada,
-        status: "autorizada",
-        linkPdf: `/api/nfse/danfse/${numNota}`,
-        danfseUrl: `/api/nfse/danfse/${numNota}`,
-        createdAt: new Date().toISOString()
-      };
-
-      db.invoices.unshift(newInvoice);
-      r.invoiceId = newInvoice.id;
-      r.numeroNfse = newInvoice.numeroNfse;
-      autoInvoiceEmitted = true;
-      autoInvoiceNumber = newInvoice.numeroNfse;
-      autoInvoicePdf = newInvoice.danfseUrl;
-
-      const targetNfPhone = cleanPhone(r.guestPhone || guest?.phone || confFiscal?.tomadorTelefone || "");
-      if (!r.nfHideFromGuest && targetNfPhone && targetNfPhone.length >= 10 && typeof sendZapiMessage === "function") {
-        const linkNf = `https://www.nfse.gov.br/ConsultaPublica?tpc=1&chave=${newInvoice.chaveAcesso}`;
-        const checkoutNfMsg = `✅ *Nota Fiscal Emitida no Check-out!*\n\n` +
-          `Conforme combinado, sua NFS-e foi emitida automaticamente após a conclusão do seu check-out:\n` +
-          `• *Número da NFS-e:* ${newInvoice.numeroNfse}\n` +
-          `• *Código de Verificação:* ${newInvoice.codigoVerificacao}\n` +
-          `• *Tomador:* ${newInvoice.tomadorNome}\n` +
-          `• *Valor:* R$ ${Number(newInvoice.valorServico).toFixed(2).replace(".", ",")}\n\n` +
-          `📄 *Acesse e baixe sua nota fiscal pelo link abaixo:*\n${linkNf}\n\n` +
-          `Agradecemos pela sua estadia na CorpFlats! 🏨✨`;
-        sendZapiMessage(db.zapiConfig, {
-          phone: targetNfPhone,
-          message: checkoutNfMsg,
-          channelId: "ai_agent",
-          recipientRole: "guest",
-          triggerEvent: "nfse_checkout_dispatch",
-          bypassTestMode: true,
-          db
-        }).catch(() => {});
+          // Atualiza sessão fiscal da Sofia caso estivesse agendada para o check-out
+          if (Array.isArray(db.whatsappConversations)) {
+            for (const c of db.whatsappConversations) {
+              const fc = c?.fiscalConferenceState;
+              if (!fc) continue;
+              const matchesRes =
+                (fc.reservationId && Number(fc.reservationId) === Number(r.id)) ||
+                (fc.reservationCode && r.code && String(fc.reservationCode) === String(r.code));
+              if (matchesRes && fc.status === "scheduled_for_checkout") {
+                fc.status = "emitted";
+                fc.numeroNfse = nfseOut.numeroNfse;
+                fc.emittedAt = new Date().toISOString();
+              }
+            }
+          }
+        }
       }
     } catch (e) {
       console.error("[Auto-Invoice Error]", e);
@@ -54319,8 +54276,14 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       : (r.agencyCnpj ? (db.agencies || []).find(a => onlyDigits(a.cnpj) === onlyDigits(r.agencyCnpj)) : null);
 
     let invoiceRecipientType = String(r.invoiceRecipientType || "").toLowerCase();
-    if (!["guest", "company", "agency"].includes(invoiceRecipientType)) {
-      if (agency && r.b2bRatePolicy === "NET" && !company) {
+    if (invoiceRecipientType === "other_person" || invoiceRecipientType === "third_party") invoiceRecipientType = "requester";
+    if (!["guest", "company", "agency", "requester"].includes(invoiceRecipientType)) {
+      const gPref = String(guest?.preferredInvoiceRecipient || "").toLowerCase();
+      if (gPref === "guest") {
+        invoiceRecipientType = "guest";
+      } else if (gPref === "company" && company) {
+        invoiceRecipientType = "company";
+      } else if (agency && r.b2bRatePolicy === "NET" && !company) {
         invoiceRecipientType = "agency";
       } else if (company) {
         invoiceRecipientType = "company";
@@ -54423,9 +54386,38 @@ app.get("/api/nfse/pending-reservations", (req, res) => {
       tomadorCodigoMunicipio: (agency.ibgeCode || r.agencyIbgeCode || "3550308").trim()
     } : null;
 
+    const requesterCrm = r.requesterInfo ? (db.guests || []).find(g =>
+      g && (
+        (r.requesterInfo.guestId && Number(g.id) === Number(r.requesterInfo.guestId)) ||
+        (r.requesterInfo.cpf && onlyDigits(g.documentNumber || g.document || g.cpf) === onlyDigits(r.requesterInfo.cpf)) ||
+        (r.requesterInfo.phone && cleanPhone(g.phone) === cleanPhone(r.requesterInfo.phone))
+      )
+    ) : null;
+
+    const requesterOption = r.requesterInfo && (r.requesterInfo.name || r.requesterInfo.cpf) ? {
+      type: "requester",
+      tomadorType: "pf",
+      tomadorPadrao: "TERCEIRO PF",
+      name: toTitleCase(r.requesterInfo.name || requesterCrm?.fullName || requesterCrm?.name || "Solicitante"),
+      doc: onlyDigits(r.requesterInfo.cpf || requesterCrm?.documentNumber || requesterCrm?.document || requesterCrm?.cpf || ""),
+      tomadorNome: toTitleCase(r.requesterInfo.name || requesterCrm?.fullName || requesterCrm?.name || "Solicitante"),
+      tomadorCpfCnpj: onlyDigits(r.requesterInfo.cpf || requesterCrm?.documentNumber || requesterCrm?.document || requesterCrm?.cpf || ""),
+      tomadorEmail: (r.requesterInfo.email || requesterCrm?.email || "").trim().toLowerCase(),
+      tomadorTelefone: cleanPhone(r.requesterInfo.phone || requesterCrm?.phone || ""),
+      tomadorEndereco: (requesterCrm?.street || requesterCrm?.address || requesterCrm?.logradouro || "").trim(),
+      tomadorNumero: (requesterCrm?.streetNumber || requesterCrm?.number || "").trim(),
+      tomadorComplemento: (requesterCrm?.complement || "").trim(),
+      tomadorBairro: (requesterCrm?.neighborhood || "").trim(),
+      tomadorCep: cleanCep(requesterCrm?.cep || ""),
+      tomadorCidade: (requesterCrm?.city || "Campos dos Goytacazes").trim(),
+      tomadorUf: (requesterCrm?.state || "RJ").trim().toUpperCase(),
+      tomadorCodigoMunicipio: (requesterCrm?.ibgeCode || "3301009").trim()
+    } : null;
+
     const activeOption =
       (invoiceRecipientType === "agency" && agencyOption) ? agencyOption :
       (invoiceRecipientType === "company" && companyOption) ? companyOption :
+      (invoiceRecipientType === "requester" && requesterOption) ? requesterOption :
       guestOption;
 
     const resolvedTomadorType = activeOption.tomadorType;
@@ -54976,6 +54968,7 @@ export async function executeNfseEmissionInternal(payload) {
         matchedGuest.companyId = Number(comp.id);
         matchedGuest.companyName = comp.tradeName || comp.corporateName || toTitleCase(tomadorNome);
         matchedGuest.companyCnpj = cleanDoc;
+        matchedGuest.preferredInvoiceRecipient = "company";
         if (!Array.isArray(matchedGuest.tags)) matchedGuest.tags = [];
         if (!matchedGuest.tags.includes("Corporativo")) matchedGuest.tags.push("Corporativo");
         matchedGuest.updatedAt = new Date().toISOString();
@@ -55015,6 +55008,89 @@ export async function executeNfseEmissionInternal(payload) {
       matchedRes.invoiceRecipientType = "agency";
       matchedRes.nfRecipientType = "agency";
     }
+  } else if (cleanDoc.length === 11 && Boolean(
+    payload.invoiceRecipientType === "requester" ||
+    payload.invoiceRecipientType === "other_person" ||
+    (!payload.invoiceRecipientType && (matchedRes?.invoiceRecipientType === "requester" || matchedRes?.invoiceRecipientType === "other_person")) ||
+    (
+      matchedRes?.requesterInfo?.name &&
+      matchedRes?.guestName &&
+      String(tomadorNome || "").trim().toLowerCase() === String(matchedRes.requesterInfo.name).trim().toLowerCase() &&
+      String(tomadorNome || "").trim().toLowerCase() !== String(matchedRes.guestName).trim().toLowerCase()
+    )
+  )) {
+    if (!db.guests) db.guests = [];
+    let reqGuestRec = db.guests.find(g =>
+      g && (
+        (matchedRes?.requesterInfo?.guestId && Number(g.id) === Number(matchedRes.requesterInfo.guestId)) ||
+        onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc ||
+        (cleanTel && cleanPhone(g.phone) === cleanTel && Array.isArray(g.tags) && g.tags.includes("solicitante_terceiro"))
+      )
+    );
+    if (!reqGuestRec) {
+      const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+      reqGuestRec = {
+        id: nextGuestId,
+        fullName: toTitleCase(tomadorNome),
+        name: toTitleCase(tomadorNome),
+        documentNumber: cleanDoc,
+        document: cleanDoc,
+        cpf: cleanDoc,
+        docType: "CPF",
+        email: cleanEmail || "",
+        phone: cleanTel || "",
+        address: endLogradouro || "",
+        street: endLogradouro || "",
+        logradouro: endLogradouro || "",
+        number: endNumero || "",
+        streetNumber: endNumero || "",
+        numero: endNumero || "",
+        complement: endComplemento || "",
+        complemento: endComplemento || "",
+        neighborhood: endBairro || "",
+        bairro: endBairro || "",
+        cep: endCep || "",
+        city: endCidade || "",
+        cidade: endCidade || "",
+        state: endUf || "",
+        uf: endUf || "",
+        ibgeCode: endCodMun || "",
+        codigoMunicipio: endCodMun || "",
+        tags: ["solicitante_terceiro"],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      db.guests.unshift(reqGuestRec);
+    } else {
+      reqGuestRec.documentNumber = cleanDoc;
+      reqGuestRec.document = cleanDoc;
+      reqGuestRec.cpf = cleanDoc;
+      if (cleanEmail) reqGuestRec.email = cleanEmail;
+      if (cleanTel && !isInternalOrForbiddenGuestPhone(cleanTel)) reqGuestRec.phone = cleanTel;
+      if (hasRealPayloadOrCheckinAddr) {
+        if (endLogradouro) { reqGuestRec.address = endLogradouro; reqGuestRec.street = endLogradouro; reqGuestRec.logradouro = endLogradouro; }
+        if (endNumero) { reqGuestRec.number = endNumero; reqGuestRec.streetNumber = endNumero; reqGuestRec.numero = endNumero; }
+        if (endComplemento !== undefined) { reqGuestRec.complement = endComplemento; reqGuestRec.complemento = endComplemento; }
+        if (endBairro) { reqGuestRec.neighborhood = endBairro; reqGuestRec.bairro = endBairro; }
+        if (endCep) reqGuestRec.cep = endCep;
+        if (endCidade) { reqGuestRec.city = endCidade; reqGuestRec.cidade = endCidade; }
+        if (endUf) { reqGuestRec.state = endUf; reqGuestRec.uf = endUf; }
+        if (endCodMun) { reqGuestRec.ibgeCode = endCodMun; reqGuestRec.codigoMunicipio = endCodMun; }
+      }
+      reqGuestRec.updatedAt = new Date().toISOString();
+    }
+    if (matchedRes) {
+      matchedRes.requesterInfo = {
+        ...(matchedRes.requesterInfo || {}),
+        guestId: reqGuestRec.id,
+        name: toTitleCase(tomadorNome),
+        cpf: cleanDoc,
+        email: cleanEmail || matchedRes.requesterInfo?.email || "",
+        phone: cleanTel || matchedRes.requesterInfo?.phone || ""
+      };
+      matchedRes.invoiceRecipientType = "requester";
+      matchedRes.nfRecipientType = "requester";
+    }
   } else if (cleanDoc.length === 11) {
     if (!db.guests) db.guests = [];
     let guestRec = matchedGuest || db.guests.find(g =>
@@ -55034,6 +55110,7 @@ export async function executeNfseEmissionInternal(payload) {
         document: cleanDoc,
         cpf: cleanDoc,
         docType: "CPF",
+        preferredInvoiceRecipient: "guest",
         email: cleanEmail || "",
         phone: cleanTel || "",
         address: endLogradouro || "",
@@ -55065,6 +55142,7 @@ export async function executeNfseEmissionInternal(payload) {
       guestRec.documentNumber = cleanDoc;
       guestRec.document = cleanDoc;
       guestRec.cpf = cleanDoc;
+      guestRec.preferredInvoiceRecipient = "guest";
       if (cleanEmail) guestRec.email = cleanEmail;
       if (cleanTel && !isInternalOrForbiddenGuestPhone(cleanTel)) guestRec.phone = cleanTel;
       if (hasRealPayloadOrCheckinAddr) {
@@ -55299,7 +55377,7 @@ export async function executeNfseEmissionInternal(payload) {
       prestadorRazaoSocial: "Rental Miller's LTDA",
       prestadorCnpj: "47.964.813/0001-65",
       prestadorIm: "142591",
-      invoiceRecipientType: isAgencyTomador ? "agency" : (cleanDoc.length === 14 ? "company" : "guest"),
+      invoiceRecipientType: isAgencyTomador ? "agency" : (cleanDoc.length === 14 ? "company" : (payload.invoiceRecipientType === "requester" || matchedRes?.invoiceRecipientType === "requester" ? "requester" : "guest")),
       agencyId: resolvedAgencyId,
       companyId: resolvedCompanyId,
       guestId: payload.guestId ? Number(payload.guestId) : (resolvedCheckin?.guestId ? Number(resolvedCheckin.guestId) : (matchedRes?.guestId ? Number(matchedRes.guestId) : null)),
@@ -55392,7 +55470,10 @@ export async function executeNfseEmissionInternal(payload) {
     let whatsappDispatch = null;
     if (process.env.NODE_ENV !== "test" && !newInvoice.nfHideFromGuest && !payload.skipAutoWhatsapp) {
       try {
-        whatsappDispatch = await dispatchNfseInvoiceWhatsApp(newInvoice, { autoTriggered: true });
+        whatsappDispatch = await dispatchNfseInvoiceWhatsApp(newInvoice, {
+          autoTriggered: true,
+          phone: payload.whatsappTargetPhone || undefined
+        });
       } catch (waErr) {
         console.warn("[NFS-e Auto WhatsApp Dispatch Error]:", waErr.message);
       }
@@ -55422,6 +55503,10 @@ globalThis.executeNfseEmissionInternal = (payload, callerDb = null) => {
   return executeNfseEmissionInternal(payload);
 };
 globalThis.getOfficialNfseDraftForReservation = (opts) => buildOfficialNfseDraftForReservation(db, opts);
+globalThis.dispatchNfseInvoiceWhatsApp = (inv, opts = {}, callerDb = null) => {
+  if (callerDb && callerDb !== db) return { success: false, sent: false, pdfSent: false };
+  return dispatchNfseInvoiceWhatsApp(inv, opts);
+};
 
 // Sincronização imediata dos dados preenchidos na aba "Formulário" (/notas) direto para o cadastro do Hóspede / Empresa / Agência no CRM
 app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
@@ -55621,6 +55706,7 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
           linkedGuestRec.companyId = Number(comp.id);
           linkedGuestRec.companyName = comp.tradeName || comp.corporateName;
           if (comp.cnpj) linkedGuestRec.companyCnpj = comp.cnpj;
+          linkedGuestRec.preferredInvoiceRecipient = "company";
           if (!Array.isArray(linkedGuestRec.tags)) linkedGuestRec.tags = [];
           if (!linkedGuestRec.tags.includes("Corporativo")) linkedGuestRec.tags.push("Corporativo");
           linkedGuestRec.updatedAt = new Date().toISOString();
@@ -55654,6 +55740,80 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
       return res.json({ success: true, entityType: "company", entity: comp, guest: linkedGuestRec || null });
     }
 
+    // Solicitante / Terceiro (PF separado do hóspede)
+    if (mode === "requester" || body.invoiceRecipientType === "requester") {
+      let reqRec = db.guests.find(g =>
+        g && (
+          (matchedRes?.requesterInfo?.guestId && Number(g.id) === Number(matchedRes.requesterInfo.guestId)) ||
+          (cleanDoc.length === 11 && onlyDigits(g.documentNumber || g.document || g.cpf || "") === cleanDoc)
+        )
+      );
+      if (!reqRec && (rawName || cleanDoc.length === 11)) {
+        const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+        reqRec = {
+          id: nextGuestId,
+          fullName: toTitleCase(rawName || matchedRes?.requesterInfo?.name || "Solicitante"),
+          name: toTitleCase(rawName || matchedRes?.requesterInfo?.name || "Solicitante"),
+          documentNumber: cleanDoc.length === 11 ? cleanDoc : "",
+          document: cleanDoc.length === 11 ? cleanDoc : "",
+          cpf: cleanDoc.length === 11 ? cleanDoc : "",
+          docType: "CPF",
+          email: cleanEmail || "",
+          phone: cleanTel || "",
+          address: hasRealAddr ? rawEnd : "",
+          street: hasRealAddr ? rawEnd : "",
+          logradouro: hasRealAddr ? rawEnd : "",
+          number: hasRealAddr ? rawNum : "",
+          streetNumber: hasRealAddr ? rawNum : "",
+          numero: hasRealAddr ? rawNum : "",
+          complement: rawComp || "",
+          complemento: rawComp || "",
+          neighborhood: hasRealAddr ? rawBairro : "",
+          bairro: hasRealAddr ? rawBairro : "",
+          cep: hasRealAddr ? rawCep : "",
+          city: hasRealAddr ? rawCidade : "",
+          cidade: hasRealAddr ? rawCidade : "",
+          state: hasRealAddr ? rawUf : "",
+          uf: hasRealAddr ? rawUf : "",
+          ibgeCode: hasRealAddr ? rawIbge : "",
+          codigoMunicipio: hasRealAddr ? rawIbge : "",
+          tags: ["solicitante_terceiro"],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        db.guests.unshift(reqRec);
+      } else if (reqRec) {
+        if (cleanDoc.length === 11) { reqRec.documentNumber = cleanDoc; reqRec.document = cleanDoc; reqRec.cpf = cleanDoc; }
+        if (cleanEmail) reqRec.email = cleanEmail;
+        if (cleanTel && !isInternalOrForbiddenGuestPhone(cleanTel)) reqRec.phone = cleanTel;
+        if (hasRealAddr) {
+          if (rawEnd) { reqRec.address = rawEnd; reqRec.street = rawEnd; reqRec.logradouro = rawEnd; }
+          if (rawNum) { reqRec.number = rawNum; reqRec.streetNumber = rawNum; reqRec.numero = rawNum; }
+          if (rawComp !== undefined) { reqRec.complement = rawComp; reqRec.complemento = rawComp; }
+          if (rawBairro) { reqRec.neighborhood = rawBairro; reqRec.bairro = rawBairro; }
+          if (rawCep) reqRec.cep = rawCep;
+          if (rawCidade) { reqRec.city = rawCidade; reqRec.cidade = rawCidade; }
+          if (rawUf) { reqRec.state = rawUf; reqRec.uf = rawUf; }
+          if (rawIbge) { reqRec.ibgeCode = rawIbge; reqRec.codigoMunicipio = rawIbge; }
+        }
+        reqRec.updatedAt = new Date().toISOString();
+      }
+      if (matchedRes) {
+        matchedRes.requesterInfo = {
+          ...(matchedRes.requesterInfo || {}),
+          guestId: reqRec?.id || matchedRes.requesterInfo?.guestId || null,
+          name: toTitleCase(rawName || matchedRes.requesterInfo?.name || "Solicitante"),
+          cpf: cleanDoc || matchedRes.requesterInfo?.cpf || "",
+          email: cleanEmail || matchedRes.requesterInfo?.email || "",
+          phone: cleanTel || matchedRes.requesterInfo?.phone || ""
+        };
+        matchedRes.invoiceRecipientType = "requester";
+        matchedRes.nfRecipientType = "requester";
+      }
+      saveDatabase();
+      return res.json({ success: true, entityType: "requester", entity: reqRec || null });
+    }
+
     // Hóspede (PF)
     const targetGuestNameLower = String(rawName || matchedRes?.guestName || "").trim().toLowerCase();
     let guestRec = db.guests.find(g =>
@@ -55675,6 +55835,7 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
         document: cleanDoc.length === 11 ? cleanDoc : "",
         cpf: cleanDoc.length === 11 ? cleanDoc : "",
         docType: "CPF",
+        preferredInvoiceRecipient: "guest",
         email: cleanEmail || "",
         phone: cleanTel || "",
         address: hasRealAddr ? rawEnd : "",
@@ -55708,6 +55869,7 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
         guestRec.document = cleanDoc;
         guestRec.cpf = cleanDoc;
       }
+      guestRec.preferredInvoiceRecipient = "guest";
       if (cleanEmail) guestRec.email = cleanEmail;
       if (cleanTel && !isInternalOrForbiddenGuestPhone(cleanTel)) guestRec.phone = cleanTel;
       if (hasRealAddr) {
@@ -55758,6 +55920,10 @@ app.post("/api/nfse/sync-tomador-crm", async (req, res) => {
           (!rDoc && gNameLower.length >= 4 && String(r.guestName || "").trim().toLowerCase() === gNameLower);
         if (!isMatch) continue;
         if (!r.guestId) r.guestId = guestRec.id;
+        if (matchedRes && Number(r.id) === Number(matchedRes.id)) {
+          r.invoiceRecipientType = "guest";
+          r.nfRecipientType = "guest";
+        }
         if (cleanDoc.length === 11) {
           r.guestDocument = cleanDoc;
           r.document = cleanDoc;
@@ -57252,16 +57418,19 @@ async function dispatchNfseInvoiceWhatsApp(inv, opts = {}) {
     } catch (_) {}
 
     if (cleanPhoneNum.length >= 10 && opts.sendZapi !== false) {
+      const dispatchChannelId = opts.channelId || "reservations";
+      const dispatchSenderName = opts.senderName || "CorpFlats";
+      const dispatchBypassTest = opts.bypassTestMode !== undefined ? Boolean(opts.bypassTestMode) : true;
       const pdfBase64Uri = `data:application/pdf;base64,${pdfBuf.toString("base64")}`;
       zapiResult = await sendZapiDocument(db.zapiConfig || {}, {
         phone: cleanPhoneNum,
         document: pdfBase64Uri,
         fileName,
         caption: captionText,
-        channelId: "reservations",
+        channelId: dispatchChannelId,
         recipientRole: "guest",
         triggerEvent: "nfse_pdf_dispatch",
-        bypassTestMode: true,
+        bypassTestMode: dispatchBypassTest,
         db
       });
       pdfSent = Boolean(zapiResult?.success);
@@ -57270,10 +57439,10 @@ async function dispatchNfseInvoiceWhatsApp(inv, opts = {}) {
         zapiResult = await sendZapiMessage(db.zapiConfig || {}, {
           phone: cleanPhoneNum,
           message: captionText,
-          channelId: "reservations",
+          channelId: dispatchChannelId,
           recipientRole: "guest",
           triggerEvent: "nfse_dispatch",
-          bypassTestMode: true,
+          bypassTestMode: dispatchBypassTest,
           db
         });
         textSent = Boolean(zapiResult?.success);
@@ -57282,7 +57451,7 @@ async function dispatchNfseInvoiceWhatsApp(inv, opts = {}) {
       if ((pdfSent || textSent) && typeof appendMessageToConversation === "function") {
         appendMessageToConversation(db, {
           phone: cleanPhoneNum,
-          senderName: "CorpFlats",
+          senderName: dispatchSenderName,
           fromMe: true,
           text: captionText,
           type: pdfSent ? "document" : "text",
