@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { Link, useLocation } from "wouter"
 import { useGetMe, useLogout, getGetMeQueryKey, useGetAlerts } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { showNativeNotification, markInitialHistoryAsSeen } from "@/lib/push-notifications"
+import { showNativeNotification, markInitialHistoryAsSeen, unsubscribeWebPush } from "@/lib/push-notifications"
 import { playHotelChime } from "@/lib/sound"
 import { cancelGoogleOneTap } from "@/lib/auth-client"
 import { 
@@ -167,6 +167,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const logout = useLogout({
     mutation: {
       onSuccess: () => {
+        unsubscribeWebPush().catch(() => {})
         try {
           localStorage.removeItem("corpflats_anserve_token")
           localStorage.removeItem("corpflats_anserve_user_name")
@@ -230,21 +231,33 @@ export function Shell({ children }: { children: React.ReactNode }) {
               setActiveToastNotif((prev: any) => prev?.id === latest.id ? null : prev)
             }, 10000)
 
-            // Notificação nativa de browser se permitido
-            showNativeNotification({
-              id: latest.id,
-              title: latest.title,
-              message: latest.message,
-              url: latest.targetUrl || "/notificacoes",
-              createdAt: latest.createdAt
-            })
+            // Fallback local agrupado: empilha todos os novos alertas não entregues pelo Web Push real
+            const orderedNew = [...newItems].reverse().slice(-5)
+            for (const item of orderedNew) {
+              showNativeNotification({
+                id: item.id,
+                title: item.title,
+                message: item.message,
+                category: item.category,
+                flatNumber: item.metadata?.flatNumber,
+                url: item.targetUrl || "/notificacoes",
+                createdAt: item.createdAt
+              })
+            }
           }
         }
       } catch {}
     }
     checkNotifs()
+    const onPushReceived = () => {
+      checkNotifs()
+    }
+    window.addEventListener("gfm:push-received", onPushReceived)
     const intv = setInterval(checkNotifs, 12000)
-    return () => clearInterval(intv)
+    return () => {
+      window.removeEventListener("gfm:push-received", onPushReceived)
+      clearInterval(intv)
+    }
   }, [isAuthenticated])
 
   const isAnservePinRoute = location === "/frigobar-reposicao" || location === "/anserve/reposicao"

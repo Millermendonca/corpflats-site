@@ -21,9 +21,23 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
-  Volume2
+  Volume2,
+  Radio,
+  BellRing
 } from "lucide-react";
-import { testVoiceAnnouncement, unlockSpeechAudio, syncAndRecoverCheckouts } from "@/lib/restocker-voice-notifications";
+import {
+  testVoiceAnnouncement,
+  unlockSpeechAudio,
+  syncAndRecoverCheckouts,
+  isRadioModeEnabled,
+  setRadioModeEnabled,
+  startRestockerRadioKeepAlive
+} from "@/lib/restocker-voice-notifications";
+import {
+  getPushPermissionState,
+  requestPushPermission,
+  syncWebPushSubscription
+} from "@/lib/push-notifications";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -208,6 +222,44 @@ export default function AnserveRestockPage() {
   const [launchNotes, setLaunchNotes] = useState("");
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [radioModeOn, setRadioModeOn] = useState<boolean>(() => isRadioModeEnabled());
+  const [pushPermState, setPushPermState] = useState<NotificationPermission>(() => getPushPermissionState());
+
+  useEffect(() => {
+    setPushPermState(getPushPermissionState());
+    if (getPushPermissionState() === "granted") {
+      syncWebPushSubscription({ roleHint: "anserve_repositora" }).catch(() => {});
+    }
+  }, [localToken, user?.role]);
+
+  const handleToggleRadioAndPush = async () => {
+    unlockSpeechAudio();
+    if (pushPermState !== "granted") {
+      const granted = await requestPushPermission();
+      setPushPermState(getPushPermissionState());
+      setRadioModeEnabled(true);
+      setRadioModeOn(true);
+      startRestockerRadioKeepAlive();
+      toast({
+        title: granted ? "📻 Modo Rádio + Web Push Ativados!" : "📻 Modo Rádio Ativado!",
+        description: granted
+          ? "Seu celular agora recebe alertas e fala 'Check-out flat ...' mesmo com a tela bloqueada."
+          : "Modo Rádio ativo! Libere também a permissão de notificações do navegador para entrega Push."
+      });
+      return;
+    }
+
+    const next = !radioModeOn;
+    setRadioModeEnabled(next);
+    setRadioModeOn(next);
+    await syncWebPushSubscription({ roleHint: "anserve_repositora" });
+    toast({
+      title: next ? "📻 Modo Rádio (Tela Bloqueada) Ativo" : "Modo Rádio Pausado",
+      description: next
+        ? "O canal de áudio em 2º plano manterá a voz ativa mesmo com a tela apagada."
+        : "Notificações Web Push continuam chegando normalmente; a voz falará ao abrir o painel."
+    });
+  };
 
   // Determine authorized user
   const isAuthorizedRole = useMemo(() => {
@@ -881,6 +933,29 @@ export default function AnserveRestockPage() {
             >
               <Users className="w-3.5 h-3.5 mr-1.5" />
               Trocar Repositora / PIN
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleToggleRadioAndPush}
+              className={`rounded-xl text-xs font-bold h-9 ${
+                radioModeOn && pushPermState === "granted"
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20"
+              }`}
+              title="Ativa Web Push Real + Modo Rádio para falar em voz alta mesmo com a tela bloqueada"
+            >
+              {radioModeOn && pushPermState === "granted" ? (
+                <>
+                  <Radio className="w-3.5 h-3.5 mr-1.5 animate-pulse" />
+                  Rádio + Push Ativo
+                </>
+              ) : (
+                <>
+                  <BellRing className="w-3.5 h-3.5 mr-1.5" />
+                  {pushPermState !== "granted" ? "Ativar Push + Tela Bloqueada" : "Modo Rádio Pausado"}
+                </>
+              )}
             </Button>
             <Button
               variant="outline"

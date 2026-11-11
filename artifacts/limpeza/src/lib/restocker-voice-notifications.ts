@@ -22,6 +22,7 @@ export interface SpokenCheckoutRecord {
 }
 
 const STORAGE_KEY_SPOKEN = "corpflats_restocker_spoken_checkouts_v1";
+const STORAGE_KEY_RADIO_MODE = "corpflats_restocker_radio_mode_v1";
 const TOLERANCE_WINDOW_MS = 4 * 60 * 60 * 1000; // 4 horas
 const INTER_SPEECH_PAUSE_MS = 400; // Pausa entre anúncios para clareza
 const WATCHDOG_TIMEOUT_MS = 8000; // Máximo de 8s por frase para evitar congelamento
@@ -41,12 +42,18 @@ export function cleanFlatNumber(raw: string | number | undefined | null): string
   return s.replace(FLAT_PREFIX_REGEX, "").trim();
 }
 
-// Estado em memória do motor de voz
+// Estado em memória do motor de voz e Modo Rádio (Tela Bloqueada)
 let isSpeaking = false;
 let audioUnlocked = false;
+let radioKeepAliveRunning = false;
+let radioKeepAliveAudio: HTMLAudioElement | null = null;
+let ttsPlaybackAudio: HTMLAudioElement | null = null;
+let screenWakeLockSentinel: any = null;
+let webLockReleaseResolver: (() => void) | null = null;
 let activeUtterance: SpeechSynthesisUtterance | null = null;
 let watchdogTimer: any = null;
 let interSpeechTimer: any = null;
+let cachedSilentWavUri: string | null = null;
 const speechQueue: CheckoutAnnouncementItem[] = [];
 
 // Cache em memória de check-outs já anunciados (resiliência contra indisponibilidade/falha do localStorage)
@@ -320,21 +327,201 @@ export function isCheckoutWithinTolerance(
 }
 
 /**
- * Desbloqueia o áudio da Web Speech API na primeira interação do usuário (touch/click/key)
- * com disparo de utterance silenciosa para conformidade estrita com políticas do WebKit / Safari iOS.
+ * Gera um URI WAV PCM 8kHz mono silencioso (0.5s, ponto médio 0x80 sem ruído)
+ * para manter a MediaSession do Modo Rádio viva quando o celular bloqueia a tela.
+ */
+function getSilentKeepAliveWavUri(): string {
+  if (cachedSilentWavUri) return cachedSilentWavUri;
+  const sampleRate = 8000;
+  const numSamples = 4000; // 0.5 segundo
+  const byteSize = 44 + numSamples;
+  const bytes = new Uint8Array(byteSize);
+  const view = new DataView(bytes.buffer);
+
+  const writeStr = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) bytes[offset + i] = str.charCodeAt(i);
+  };
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + numSamples, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true); // PCM chunk size
+  view.setUint16(20, 1, true); // AudioFormat = 1 (PCM)
+  view.setUint16(22, 1, true); // NumChannels = 1
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate, true); // ByteRate
+  view.setUint16(32, 1, true); // BlockAlign
+  view.setUint16(34, 8, true); // BitsPerSample = 8
+  writeStr(36, "data");
+  view.setUint32(40, numSamples, true);
+  bytes.fill(0x80, 44); // 0x80 = silêncio absoluto em PCM 8-bit unsigned
+
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const b64 =
+    typeof btoa === "function"
+      ? btoa(binary)
+      : typeof Buffer !== "undefined"
+      ? Buffer.from(bytes).toString("base64")
+      : "";
+  cachedSilentWavUri = `data:audio/wav;base64,${b64}`;
+  return cachedSilentWavUri;
+}
+
+/**
+ * Verifica se o Modo Rádio (fala com tela bloqueada) está habilitado para a repositora (padrão: true).
+ */
+export function isRadioModeEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_RADIO_MODE);
+    if (raw === null) return true;
+    return raw !== "false" && raw !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function isRadioKeepAliveActive(): boolean {
+  return radioKeepAliveRunning;
+}
+
+/**
+ * Ativa ou desativa o Modo Rádio (canal de áudio persistente em 2º plano para tela bloqueada).
+ */
+export function setRadioModeEnabled(enabled: boolean): boolean {
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(STORAGE_KEY_RADIO_MODE, enabled ? "true" : "false");
+    } catch {}
+  }
+  if (enabled) {
+    startRestockerRadioKeepAlive();
+  } else {
+    stopRestockerRadioKeepAlive();
+  }
+  return enabled;
+}
+
+/**
+ * Inicia o canal silencioso de MediaSession + Web Lock para impedir que Android/iOS
+ * congelem o áudio quando a repositora bloqueia a tela e guarda o celular no bolso.
+ */
+export function startRestockerRadioKeepAlive(): void {
+  if (typeof window === "undefined" || typeof Audio === "undefined") return;
+  if (!isRestockerProfile() || !isRadioModeEnabled()) return;
+
+  try {
+    const silentUri = getSilentKeepAliveWavUri();
+
+    if (!radioKeepAliveAudio) {
+      radioKeepAliveAudio = new Audio(silentUri);
+      radioKeepAliveAudio.loop = true;
+      radioKeepAliveAudio.volume = 0.01;
+      (radioKeepAliveAudio as any).playsInline = true;
+    }
+
+    if (!ttsPlaybackAudio) {
+      ttsPlaybackAudio = new Audio(silentUri);
+      ttsPlaybackAudio.volume = 1.0;
+      (ttsPlaybackAudio as any).playsInline = true;
+      // Destrava o elemento <audio> de TTS na interação do usuário
+      ttsPlaybackAudio.play().then(() => {
+        ttsPlaybackAudio?.pause();
+      }).catch(() => {});
+    }
+
+    const playPromise = radioKeepAliveAudio.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      playPromise
+        .then(() => {
+          radioKeepAliveRunning = true;
+          try {
+            if ("mediaSession" in navigator && typeof MediaMetadata !== "undefined") {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: "Rádio Check-out Ativo",
+                artist: "CorpFlats • Perfil Repositora",
+                album: "Alertas por Voz em Tempo Real"
+              });
+              navigator.mediaSession.playbackState = "playing";
+            }
+          } catch {}
+        })
+        .catch(() => {});
+    }
+
+    // Segura Web Lock para evitar congelamento da aba em 2º plano no Android Chrome
+    const navAny = navigator as any;
+    if (!webLockReleaseResolver && navAny?.locks && typeof navAny.locks.request === "function") {
+      navAny.locks
+        .request("corpflats_restocker_radio_lock", () => {
+          return new Promise<void>((resolve) => {
+            webLockReleaseResolver = resolve;
+          });
+        })
+        .catch(() => {});
+    }
+
+    // Solicita Screen Wake Lock enquanto o painel estiver aberto no carrinho
+    if (!screenWakeLockSentinel && navAny?.wakeLock && typeof navAny.wakeLock.request === "function" && typeof document !== "undefined" && !document.hidden) {
+      navAny.wakeLock
+        .request("screen")
+        .then((sentinel: any) => {
+          screenWakeLockSentinel = sentinel;
+          sentinel?.addEventListener?.("release", () => {
+            screenWakeLockSentinel = null;
+          });
+        })
+        .catch(() => {});
+    }
+  } catch {}
+}
+
+export function stopRestockerRadioKeepAlive(): void {
+  radioKeepAliveRunning = false;
+  try {
+    if (radioKeepAliveAudio) {
+      radioKeepAliveAudio.pause();
+    }
+  } catch {}
+  try {
+    if (webLockReleaseResolver) {
+      webLockReleaseResolver();
+      webLockReleaseResolver = null;
+    }
+  } catch {}
+  try {
+    if (screenWakeLockSentinel) {
+      screenWakeLockSentinel.release?.().catch(() => {});
+      screenWakeLockSentinel = null;
+    }
+  } catch {}
+}
+
+/**
+ * Desbloqueia o áudio da Web Speech API e inicia o Modo Rádio na primeira interação do usuário
+ * (touch/click/key) para conformidade estrita com políticas do Android Chrome e Safari iOS.
  */
 export function unlockSpeechAudio(): void {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  if (typeof window === "undefined") return;
   try {
-    if (!audioUnlocked) {
-      const silent = new SpeechSynthesisUtterance("");
-      silent.volume = 0;
-      silent.rate = 10;
-      window.speechSynthesis.speak(silent);
-      window.speechSynthesis.resume();
-      audioUnlocked = true;
-    } else if (window.speechSynthesis.paused) {
-      window.speechSynthesis.resume();
+    if (isRestockerProfile() && isRadioModeEnabled()) {
+      startRestockerRadioKeepAlive();
+    }
+    if ("speechSynthesis" in window) {
+      if (!audioUnlocked) {
+        const silent = new SpeechSynthesisUtterance("");
+        silent.volume = 0;
+        silent.rate = 10;
+        window.speechSynthesis.speak(silent);
+        window.speechSynthesis.resume();
+        audioUnlocked = true;
+      } else if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
     }
     processNextInQueue();
   } catch {}
@@ -472,12 +659,65 @@ function processNextInQueue(): void {
       cleanup();
     }, WATCHDOG_TIMEOUT_MS);
 
-    // Destrava se estiver em estado pausado do Chrome
-    if (window.speechSynthesis.paused) {
-      window.speechSynthesis.resume();
+    const speakViaNativeWebSpeech = () => {
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        cleanup();
+      }
+    };
+
+    // Modo Rádio (Tela Bloqueada / App em 2º plano): usa canal HTML5 <audio> desbloqueado
+    // que toca na tela bloqueada do Android e iOS sem ser silenciado pelo SO, com fallback p/ speechSynthesis
+    const isLockedOrBackground =
+      typeof document !== "undefined" &&
+      Boolean(document.hidden) &&
+      isRadioModeEnabled() &&
+      typeof Audio !== "undefined";
+
+    if (isLockedOrBackground) {
+      try {
+        if (!ttsPlaybackAudio) {
+          ttsPlaybackAudio = new Audio();
+          (ttsPlaybackAudio as any).playsInline = true;
+        }
+        ttsPlaybackAudio.volume = 1.0;
+        ttsPlaybackAudio.onended = () => {
+          if (ttsPlaybackAudio) {
+            ttsPlaybackAudio.onended = null;
+            ttsPlaybackAudio.onerror = null;
+          }
+          cleanup();
+        };
+        ttsPlaybackAudio.onerror = () => {
+          if (ttsPlaybackAudio) {
+            ttsPlaybackAudio.onended = null;
+            ttsPlaybackAudio.onerror = null;
+          }
+          speakViaNativeWebSpeech();
+        };
+        ttsPlaybackAudio.src = `/api/tts/checkout?flat=${encodeURIComponent(flatNumClean)}`;
+        const p = ttsPlaybackAudio.play();
+        if (p && typeof p.catch === "function") {
+          p.catch(() => {
+            if (ttsPlaybackAudio) {
+              ttsPlaybackAudio.onended = null;
+              ttsPlaybackAudio.onerror = null;
+            }
+            speakViaNativeWebSpeech();
+          });
+        }
+        return;
+      } catch {
+        speakViaNativeWebSpeech();
+        return;
+      }
     }
 
-    window.speechSynthesis.speak(utterance);
+    speakViaNativeWebSpeech();
   } catch (err) {
     console.warn("[Voice Notifier] Exceção ao disparar speak:", err);
     if (watchdogTimer) {
@@ -663,6 +903,41 @@ export async function syncAndRecoverCheckouts(user?: { role?: string } | null): 
   } catch {}
 
   return enqueuedCount;
+}
+
+/**
+ * Processa instantaneamente um evento de Web Push recebido via Service Worker (GFM_PUSH_RECEIVED),
+ * acionando a voz em menos de 100ms mesmo com a tela bloqueada (Modo Rádio).
+ */
+export function handleIncomingCheckoutPushPayload(
+  payload: any,
+  user?: { role?: string } | null
+): boolean {
+  if (!payload || !isRestockerProfile(user)) return false;
+  const isCheckout =
+    payload.category === "checkout" ||
+    payload.type === "restocker_checkout" ||
+    Boolean(payload.isRestockerCheckout);
+  if (!isCheckout) return false;
+
+  const flatNum = cleanFlatNumber(
+    payload.flatNumber || (payload.title?.match(FLAT_TITLE_REGEX)?.[1] || "")
+  );
+  if (!flatNum) return false;
+
+  const occurredAt = payload.createdAt || new Date().toISOString();
+  const checkoutTime = payload.checkoutTime || null;
+  if (!payload.isTest && !isCheckoutWithinTolerance(occurredAt, checkoutTime, Date.now())) {
+    return false;
+  }
+
+  return enqueueCheckoutAnnouncement({
+    id: payload.isTest ? `test_push_${Date.now()}` : String(payload.id || `push_${flatNum}_${Date.now()}`),
+    flatNumber: flatNum,
+    occurredAt,
+    checkoutTime: checkoutTime || undefined,
+    reservationCode: payload.reservationCode || undefined
+  });
 }
 
 /**

@@ -80,3 +80,22 @@ Este roteiro descreve o procedimento passo a passo para auditoria e homologaçã
    - Recarregue a página com `F5` ou `Ctrl+R`.
    - Aguarde o ciclo de 12 segundos do timer de sincronização.
    - **Confirme que NENHUM anúncio por voz é repetido**, pois os registros foram persistidos no `localStorage` sob a chave `corpflats_restocker_spoken_checkouts_v1`.
+
+---
+
+### Passo 6 — Modo Rádio + Web Push Real com Tela Bloqueada no Celular
+1. No celular da repositora, acesse `/frigobar-reposicao` e toque no botão **"Ativar Push + Tela Bloqueada"** (que passará a exibir **"Rádio + Push Ativo"** em verde).
+2. Bloqueie a tela do celular (pressione o botão lateral de energia) e aguarde 30 segundos.
+3. Em outro computador/aba (Recepção), registre o check-out de um flat (ex: **Flat 1004**).
+4. **Resultado Esperado (com a tela ainda bloqueada):**
+   - O servidor dispara **Web Push Real criptografado (RFC 8291 / VAPID)** acordando o celular imediatamente, vibrando e exibindo na tela de bloqueio `"🔔 Check-out flat 1004"`.
+   - Com o **Modo Rádio** ativo, o canal de áudio em 2º plano reproduz em voz alta **`"Check-out flat 1004"`** mesmo com a tela apagada.
+
+---
+
+### Passo 7 — Agrupamento Expansível de Notificações no Android (WhatsApp + Sistema)
+1. Em um celular Android logado como Recepção ou Admin (com permissão de notificações concedida em `/notificacoes` ou `/whatsapp-chat`), bloqueie a tela.
+2. Envie 3 mensagens seguidas de um mesmo hóspede no WhatsApp e, em seguida, gere 2 alertas operacionais (ex: uma reserva e um check-out).
+3. **Resultado Esperado na Barra de Notificações do Android:**
+   - Todas as notificações aparecem recolhidas em um **único grupo do app CorpFlats**; ao puxar a setinha para baixo, todos os cards se abrem individualmente.
+   - No card da conversa do WhatsApp daquele hóspede, as 3 mensagens ficam acumuladas linha por linha (`• Mensagem 1`, `• Mensagem 2`, `• Mensagem 3`) com contador `(3 novas)`, sem apagar as anteriores.

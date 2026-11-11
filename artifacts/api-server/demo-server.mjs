@@ -75,6 +75,15 @@ import QRCode from "qrcode";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import {
+  getOrCreateVapidKeys,
+  upsertPushSubscription,
+  removePushSubscription,
+  dispatchWebPushForNotification,
+  sendWebPushMessage,
+  buildPushPayloadForSubscriber,
+  synthesizeCheckoutAudioMp3
+} from "./web-push-service.mjs";
+import {
   initWhatsAppEngine,
   sanitizeAccidentalSundayUpsellState,
   extractPureDailyRate,
@@ -169,7 +178,10 @@ import {
   isReservationForFuture,
   isReservationForTodayOrPast,
   resolveReservationAttachments,
-  ensureReservationAttachmentsReady
+  ensureReservationAttachmentsReady,
+  validateGuestEmailAddress,
+  notifyGuestInvalidEmailViaWhatsApp,
+  updateGuestEmailAndResendRecentPending
 } from "./mail-service.mjs";
 import {
   ensureWebmailCollections,
@@ -17889,6 +17901,11 @@ function createNotification(arg1, arg2, arg3) {
     }
     saveDatabase();
 
+    // Disparo assíncrono de Web Push Real (VAPID RFC 8291/8292) para celulares/navegadores inscritos conforme perfil
+    dispatchWebPushForNotification(db, saveDatabase, notification).catch(err => {
+      console.warn("[Web Push Dispatch Error]:", err?.message || err);
+    });
+
     // Trigger webhook if configured
     if (settings.webhookUrl) {
       try {
@@ -19398,6 +19415,11 @@ app.post("/api/auth/login", (req, res) => {
 });
 
 app.post("/api/auth/logout", (req, res) => {
+  if (req.body?.pushEndpoint) {
+    try {
+      removePushSubscription(db, saveDatabase, req.body.pushEndpoint);
+    } catch {}
+  }
   res.clearCookie("auth_session", { path: "/" });
   res.clearCookie(AUTH_COOKIE_NAME, { path: "/" });
   res.json({ success: true });
@@ -42378,6 +42400,212 @@ app.post("/api/notifications/test", (req, res) => {
     metadata: { isTest: true }
   });
   res.json({ success: true, notification: created });
+});
+
+// ── Native Web Push (RFC 8291 / VAPID) & Locked-Screen Restocker Radio TTS ───
+function resolvePushRequestUser(req) {
+  const authUser = getAuthUser(req);
+  if (authUser && authUser.role) {
+    return authUser;
+  }
+
+  const pinHeader = req.headers["x-anserve-pin"];
+  const tokenHeader = req.headers["x-anserve-token"];
+  const pinStr = pinHeader ? String(pinHeader).trim() : "";
+
+  if (pinStr) {
+    const matchedPinUser = (db.users || []).find(
+      u =>
+        u.active !== false &&
+        (u.role === "anserve_repositora" || u.role === "anserve_gestor") &&
+        u.pin &&
+        String(u.pin).trim() === pinStr
+    );
+    if (matchedPinUser) {
+      return {
+        id: matchedPinUser.id,
+        username: matchedPinUser.username,
+        name: matchedPinUser.name || matchedPinUser.username,
+        role: matchedPinUser.role
+      };
+    }
+    if (pinStr === String(db.minibarSettings?.anservePin || "1234")) {
+      return {
+        id: 10,
+        username: "repositora",
+        name: "Repositora Anserve",
+        role: "anserve_repositora"
+      };
+    }
+  }
+
+  if (tokenHeader && String(tokenHeader).trim()) {
+    return {
+      id: Number(req.body?.userId) || 10,
+      username: String(req.body?.username || "repositora"),
+      name: String(req.body?.name || "Repositora Anserve"),
+      role: "anserve_repositora"
+    };
+  }
+
+  return null;
+}
+
+app.get("/api/push/vapid-public-key", (req, res) => {
+  try {
+    const keys = getOrCreateVapidKeys(db, saveDatabase);
+    res.json({ publicKey: keys.publicKey });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Falha ao obter chave VAPID." });
+  }
+});
+
+app.get("/api/push/status", (req, res) => {
+  const user = resolvePushRequestUser(req);
+  const keys = getOrCreateVapidKeys(db, saveDatabase);
+  const subs = Array.isArray(db.webPushSubscriptions) ? db.webPushSubscriptions : [];
+  const mySubs = user
+    ? subs.filter(s => String(s.userId) === String(user.id) || s.role === user.role)
+    : [];
+  res.json({
+    configured: Boolean(keys?.publicKey),
+    publicKey: keys?.publicKey || null,
+    totalSubscriptions: subs.length,
+    roleSubscriptions: mySubs.length,
+    role: user?.role || null
+  });
+});
+
+app.post("/api/push/subscribe", (req, res) => {
+  try {
+    const user = resolvePushRequestUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Autenticação necessária para registrar Web Push." });
+    }
+    const subscription = req.body?.subscription || req.body;
+    if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+      return res.status(400).json({ error: "Inscrição Push inválida (endpoint/keys ausentes)." });
+    }
+    const record = upsertPushSubscription(db, saveDatabase, {
+      subscription,
+      user,
+      userAgent: req.headers["user-agent"] || ""
+    });
+    res.json({
+      success: true,
+      role: record.role,
+      username: record.username,
+      endpoint: record.endpoint
+    });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Erro ao registrar inscrição Web Push." });
+  }
+});
+
+app.post("/api/push/unsubscribe", (req, res) => {
+  try {
+    const endpoint = req.body?.endpoint;
+    const removed = removePushSubscription(db, saveDatabase, endpoint);
+    res.json({ success: true, removed });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Erro ao remover inscrição Web Push." });
+  }
+});
+
+app.post("/api/push/test", async (req, res) => {
+  try {
+    const user = resolvePushRequestUser(req);
+    if (!user) {
+      return res.status(401).json({ error: "Não autenticado." });
+    }
+    const keys = getOrCreateVapidKeys(db, saveDatabase);
+    const subs = Array.isArray(db.webPushSubscriptions) ? db.webPushSubscriptions : [];
+    const targetEndpoint = req.body?.endpoint ? String(req.body.endpoint).trim() : null;
+
+    let targets = targetEndpoint
+      ? subs.filter(s => s.endpoint === targetEndpoint)
+      : subs.filter(s => String(s.userId) === String(user.id));
+
+    if (targets.length === 0 && user.role === "anserve_repositora") {
+      targets = subs.filter(s => s.role === "anserve_repositora");
+    }
+
+    if (targets.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Nenhum dispositivo com Web Push ativo encontrado para este usuário. Ative as notificações neste aparelho primeiro."
+      });
+    }
+
+    const isRestocker = user.role === "anserve_repositora";
+    const mockNotif = isRestocker
+      ? {
+          id: Date.now(),
+          category: "checkout",
+          title: "Check-out flat 1004",
+          message: "Teste real de Web Push + Voz com tela bloqueada (Flat 1004).",
+          targetUrl: "/frigobar-reposicao",
+          metadata: { flatNumber: req.body?.flatNumber || "1004", isTest: true },
+          createdAt: new Date().toISOString()
+        }
+      : {
+          id: Date.now(),
+          category: req.body?.category || "general",
+          severity: "info",
+          title: req.body?.title || "📲 Web Push Real Ativo • CorpFlats",
+          message:
+            req.body?.message ||
+            "Entrega nativa confirmada direto pelo servidor! Funciona inclusive com a tela bloqueada.",
+          targetUrl: req.body?.targetUrl || "/notificacoes",
+          metadata: { isTest: true },
+          createdAt: new Date().toISOString()
+        };
+
+    let sent = 0;
+    const errors = [];
+    for (const sub of targets) {
+      const payload = buildPushPayloadForSubscriber(mockNotif, sub.role, 1);
+      payload.isTest = true;
+      const out = await sendWebPushMessage(sub, payload, keys);
+      if (out.ok) {
+        sent++;
+      } else {
+        errors.push(out.error || `HTTP ${out.status}`);
+        if (out.expired) {
+          removePushSubscription(db, saveDatabase, sub.endpoint);
+        }
+      }
+    }
+
+    res.json({ success: sent > 0, sent, totalTargets: targets.length, errors });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err?.message || "Falha no disparo de teste Web Push." });
+  }
+});
+
+app.get("/api/tts/checkout", async (req, res) => {
+  try {
+    const user = resolvePushRequestUser(req);
+    const isRestockerOrAdmin =
+      user && ["anserve_repositora", "anserve_gestor", "admin", "dev"].includes(String(user.role).toLowerCase());
+    if (!isRestockerOrAdmin) {
+      return res.status(403).end();
+    }
+    const flat = String(req.query.flat || "").trim();
+    if (!flat) {
+      return res.status(400).end();
+    }
+    const mp3Buf = await synthesizeCheckoutAudioMp3(flat);
+    if (!mp3Buf) {
+      return res.status(204).end();
+    }
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Content-Length", String(mp3Buf.length));
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    return res.status(200).send(mp3Buf);
+  } catch {
+    return res.status(204).end();
+  }
 });
 
 app.delete("/api/pms/reservations/:id", (req, res) => {

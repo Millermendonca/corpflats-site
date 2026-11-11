@@ -24,7 +24,9 @@ import {
   updateAppBadge,
   showWhatsAppChatNotification,
   requestPushNotificationPermission,
-  canUsePushNotifications
+  canUsePushNotifications,
+  clearWhatsAppTrayNotification,
+  syncWebPushSubscription
 } from '@/lib/push-notifications'
 import {
   MessageSquare,
@@ -408,6 +410,9 @@ export default function WhatsappChat() {
 
   useEffect(() => {
     activePhoneRef.current = activePhone
+    if (activePhone) {
+      clearWhatsAppTrayNotification(activePhone)
+    }
   }, [activePhone])
 
   useEffect(() => {
@@ -416,6 +421,8 @@ export default function WhatsappChat() {
 
   // PWA beforeinstallprompt listener & Service Worker message listener
   useEffect(() => {
+    syncWebPushSubscription().catch(() => {})
+
     const onBeforeInstallPrompt = (e: any) => {
       e.preventDefault()
       setDeferredInstallPrompt(e)
@@ -423,12 +430,14 @@ export default function WhatsappChat() {
     window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt)
 
     const onSwMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'WHATSAPP_NOTIFICATION_CLICK' && event.data?.phone) {
+      const msgType = event.data?.type
+      if ((msgType === 'WHATSAPP_NOTIFICATION_CLICK' || msgType === 'WA_OPEN_CONVERSATION') && event.data?.phone) {
         const clean = String(event.data.phone).replace(/\D/g, '')
         if (clean) {
           setActivePhone(clean)
           setIsMobileListOpen(false)
           markAsRead(clean)
+          clearWhatsAppTrayNotification(clean)
         }
       }
     }
@@ -659,7 +668,9 @@ export default function WhatsappChat() {
                   senderName: c.name || c.formattedPhone || c.phone,
                   flatNumber: c.flatNumber,
                   reservationCode: c.reservationCode,
-                  messageText: c.lastMessage.text || '[Mídia recebida]',
+                  message: c.lastMessage.text || '[Mídia recebida]',
+                  messageKey: sig,
+                  timestamp: c.lastMessage.timestamp,
                   unreadCount: totalUnread || 1
                 })
               }
@@ -692,6 +703,21 @@ export default function WhatsappChat() {
     const timer = setTimeout(() => setFloatingBanner(null), 7000)
     return () => clearTimeout(timer)
   }, [floatingBanner])
+
+  // Real-time refresh when a server Web Push (VAPID) arrives
+  useEffect(() => {
+    const onPushReceived = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail
+      if (!detail || detail.category === 'whatsapp' || detail.type === 'whatsapp_message') {
+        fetchConversations(true)
+        if (activePhoneRef.current && (!detail?.phone || detail.phone === activePhoneRef.current)) {
+          fetchActiveMessages(activePhoneRef.current, true)
+        }
+      }
+    }
+    window.addEventListener('gfm:push-received', onPushReceived as EventListener)
+    return () => window.removeEventListener('gfm:push-received', onPushReceived as EventListener)
+  }, [fetchConversations])
 
   // Fetch Active Conversation Messages
   const fetchActiveMessages = useCallback(async (phone: string, silent = false, reservationCode?: string) => {

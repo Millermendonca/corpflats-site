@@ -36,7 +36,9 @@ import {
   getPushPermissionState, 
   requestPushPermission, 
   showNativeNotification, 
-  isPushSupported 
+  isPushSupported,
+  syncWebPushSubscription,
+  sendServerWebPushTest
 } from "@/lib/push-notifications"
 import { format, formatDistanceToNow, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -131,7 +133,11 @@ export default function NotificationsHub() {
   const [isRequestingPush, setIsRequestingPush] = useState<boolean>(false)
 
   useEffect(() => {
-    setPushPermission(getPushPermissionState())
+    const state = getPushPermissionState()
+    setPushPermission(state)
+    if (state === "granted") {
+      syncWebPushSubscription().catch(() => {})
+    }
   }, [])
 
   const handleEnablePush = async () => {
@@ -140,12 +146,18 @@ export default function NotificationsHub() {
       const granted = await requestPushPermission()
       setPushPermission(granted ? "granted" : "denied")
       if (granted) {
-        showNativeNotification({
-          title: "🎉 Notificações Push Ativadas!",
-          message: "Você receberá alertas nativos com som e vibração em tempo real no Chrome e Android.",
-          url: "/notificacoes",
-          force: true
+        const pushRes = await sendServerWebPushTest({
+          title: "🎉 Web Push Real Ativado!",
+          message: "Seu dispositivo está inscrito no servidor VAPID e receberá alertas agrupados mesmo com a tela bloqueada."
         })
+        if (!pushRes.success) {
+          showNativeNotification({
+            title: "🎉 Notificações Push Ativadas!",
+            message: "Você receberá alertas nativos com som e vibração em tempo real no Chrome e Android.",
+            url: "/notificacoes",
+            force: true
+          })
+        }
       }
     } finally {
       setIsRequestingPush(false)
@@ -158,12 +170,18 @@ export default function NotificationsHub() {
       return
     }
     playChimeSound()
-    showNativeNotification({
-      title: "📲 Alerta Push - Teste no Celular/Chrome",
-      message: "Notificação nativa recebida com sucesso no seu Android/Chrome!",
-      url: "/notificacoes",
-      force: true
+    const pushRes = await sendServerWebPushTest({
+      title: "📲 Web Push Real • Teste CorpFlats",
+      message: "Disparo criptografado recebido direto do servidor! Funciona inclusive com a tela bloqueada."
     })
+    if (!pushRes.success) {
+      showNativeNotification({
+        title: "📲 Alerta Push - Teste no Celular/Chrome",
+        message: "Notificação nativa recebida com sucesso no seu Android/Chrome!",
+        url: "/notificacoes",
+        force: true
+      })
+    }
   }
 
   const fetchNotifications = async () => {

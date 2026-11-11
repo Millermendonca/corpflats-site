@@ -21,6 +21,16 @@ import {
   applyReservationCheckoutAndEarlyRelease,
   buildTodayCheckoutsSummaryForRestockers
 } from "../artifacts/api-server/zapi-service.mjs";
+import {
+  generateVapidKeys,
+  createVapidAuthHeader,
+  encryptWebPushPayload,
+  decryptWebPushPayloadForTesting,
+  upsertPushSubscription,
+  shouldRoleReceiveNotification,
+  dispatchWebPushForNotification,
+  fromBase64Url
+} from "../artifacts/api-server/web-push-service.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -149,7 +159,11 @@ globalThis.localStorage = mockLocalStorage;
 globalThis.sessionStorage = mockSessionStorage;
 globalThis.speechSynthesis = mockSpeechSynthesis;
 globalThis.SpeechSynthesisUtterance = MockSpeechSynthesisUtterance;
-globalThis.navigator = { onLine: true };
+Object.defineProperty(globalThis, "navigator", {
+  value: { onLine: true },
+  configurable: true,
+  writable: true
+});
 
 // Transpila e carrega dinamicamente o código real de restocker-voice-notifications.ts
 const tsSource = fs.readFileSync(
@@ -520,6 +534,285 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
       assert.strictEqual(summary.doneCheckouts.length, 1);
       assert.strictEqual(summary.doneCheckouts[0].flatNumber, "802");
       assert.strictEqual(summary.doneCheckouts[0].actualCheckoutAt, "2026-11-11T10:15:00.000Z");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // R4 & R5: Web Push Real (RFC 8291 / VAPID), Modo Rádio & Agrupamento Android
+  // ─────────────────────────────────────────────────────────────────────────────
+  describe("R4 & R5: Web Push Real (VAPID RFC 8291), Modo Rádio & Agrupamento Android", () => {
+    it("deve criptografar e descriptografar payload RFC 8291 (aes128gcm) e validar assinatura VAPID ES256", () => {
+      const vapidKeys = generateVapidKeys();
+      assert.ok(vapidKeys.publicKey.length >= 80, "Chave pública VAPID deve estar em base64url (65 bytes)");
+
+      // Verifica assinatura ES256 JWT (RFC 8292)
+      const { jwt } = createVapidAuthHeader("https://fcm.googleapis.com/fcm/send/abc123", vapidKeys);
+      const [h, p, sig] = jwt.split(".");
+      const pubRaw = fromBase64Url(vapidKeys.publicKey);
+      const pubKeyObj = crypto.createPublicKey({
+        key: {
+          kty: "EC",
+          crv: "P-256",
+          x: pubRaw.subarray(1, 33).toString("base64url"),
+          y: pubRaw.subarray(33, 65).toString("base64url")
+        },
+        format: "jwk"
+      });
+      const verified = crypto.verify(
+        "sha256",
+        Buffer.from(`${h}.${p}`, "utf8"),
+        { key: pubKeyObj, dsaEncoding: "ieee-p1363" },
+        fromBase64Url(sig)
+      );
+      assert.strictEqual(verified, true, "Assinatura VAPID ES256 deve ser matematicamente válida");
+
+      // Simula chaves ECDH + auth do navegador do celular (PushSubscription)
+      const clientEcdh = crypto.createECDH("prime256v1");
+      clientEcdh.generateKeys();
+      const authSecret = crypto.randomBytes(16);
+
+      const originalPayload = {
+        id: 501,
+        type: "restocker_checkout",
+        category: "checkout",
+        flatNumber: "1004",
+        title: "🔔 Check-out flat 1004",
+        message: "Flat 1004 liberado para conferência e reposição do frigobar."
+      };
+
+      const encrypted = encryptWebPushPayload(originalPayload, {
+        p256dh: clientEcdh.getPublicKey().toString("base64url"),
+        auth: authSecret.toString("base64url")
+      });
+
+      const decryptedStr = decryptWebPushPayloadForTesting(encrypted, clientEcdh, authSecret);
+      const parsed = JSON.parse(decryptedStr);
+      assert.deepStrictEqual(parsed, originalPayload);
+    });
+
+    it("deve isolar estritamente os envios de Web Push por perfil e limpar endpoints expirados (410)", async () => {
+      const fakeDb = { notifications: [], webPushSubscriptions: [] };
+      const mkKeys = () => {
+        const ec = crypto.createECDH("prime256v1");
+        ec.generateKeys();
+        return {
+          p256dh: ec.getPublicKey().toString("base64url"),
+          auth: crypto.randomBytes(16).toString("base64url")
+        };
+      };
+
+      // Dispositivo 1: originalmente logado como admin, depois trocou para repositora no mesmo navegador
+      upsertPushSubscription(fakeDb, null, {
+        subscription: { endpoint: "https://fcm.example.com/sub-restocker", keys: mkKeys() },
+        user: { id: 1, username: "admin", role: "admin" }
+      });
+      upsertPushSubscription(fakeDb, null, {
+        subscription: { endpoint: "https://fcm.example.com/sub-restocker", keys: mkKeys() },
+        user: { id: 10, username: "repositora", role: "anserve_repositora" }
+      });
+
+      // Dispositivo 2: Recepção ativa
+      upsertPushSubscription(fakeDb, null, {
+        subscription: { endpoint: "https://fcm.example.com/sub-recepcao", keys: mkKeys() },
+        user: { id: 7, username: "recepcao", role: "recepcao" }
+      });
+
+      // Dispositivo 3: Endpoint expirado (retornará 410 Gone)
+      upsertPushSubscription(fakeDb, null, {
+        subscription: { endpoint: "https://fcm.example.com/sub-stale-410", keys: mkKeys() },
+        user: { id: 5, username: "gestor", role: "admin" }
+      });
+
+      assert.strictEqual(fakeDb.webPushSubscriptions.length, 3);
+      assert.strictEqual(
+        shouldRoleReceiveNotification("anserve_repositora", { category: "whatsapp" }),
+        false,
+        "Repositora NUNCA deve receber Web Push de WhatsApp"
+      );
+      assert.strictEqual(
+        shouldRoleReceiveNotification("anserve_repositora", { category: "checkout" }),
+        true,
+        "Repositora DEVE receber Web Push de check-out"
+      );
+
+      const deliveredEndpoints = [];
+      const mockFetch = async (url) => {
+        if (String(url).includes("sub-stale-410")) {
+          return { status: 410, text: async () => "Gone" };
+        }
+        deliveredEndpoints.push(String(url));
+        return { status: 201, text: async () => "" };
+      };
+
+      // 1) Mensagem do WhatsApp: só deve ir para recepção (e tentar o admin 410 que será podado), NUNCA para repositora
+      const waResult = await dispatchWebPushForNotification(
+        fakeDb,
+        null,
+        {
+          id: 901,
+          category: "whatsapp",
+          title: "WhatsApp: Hóspede 408",
+          message: "Preciso de toalhas",
+          targetUrl: "/whatsapp-chat?phone=5522999990000"
+        },
+        { fetchImpl: mockFetch }
+      );
+      assert.strictEqual(waResult.sent, 1);
+      assert.strictEqual(waResult.pruned, 1);
+      assert.deepStrictEqual(deliveredEndpoints, ["https://fcm.example.com/sub-recepcao"]);
+      assert.strictEqual(fakeDb.webPushSubscriptions.length, 2, "Endpoint 410 deve ter sido removido");
+
+      // 2) Check-out de Flat: deve entregar tanto para repositora quanto para recepção
+      deliveredEndpoints.length = 0;
+      const coResult = await dispatchWebPushForNotification(
+        fakeDb,
+        null,
+        {
+          id: 902,
+          category: "checkout",
+          title: "Check-out realizado — Flat 1004",
+          message: "Saída registrada",
+          metadata: { flatNumber: "1004" }
+        },
+        { fetchImpl: mockFetch }
+      );
+      assert.strictEqual(coResult.sent, 2);
+      assert.ok(deliveredEndpoints.includes("https://fcm.example.com/sub-restocker"));
+      assert.ok(deliveredEndpoints.includes("https://fcm.example.com/sub-recepcao"));
+    });
+
+    it("deve acionar voz imediata via handleIncomingCheckoutPushPayload apenas para repositora e respeitar Modo Rádio", () => {
+      assert.strictEqual(voiceModule.isRadioModeEnabled(), true, "Modo Rádio deve iniciar ativo por padrão");
+      voiceModule.setRadioModeEnabled(false);
+      assert.strictEqual(voiceModule.isRadioModeEnabled(), false);
+      voiceModule.setRadioModeEnabled(true);
+      assert.strictEqual(voiceModule.isRadioModeEnabled(), true);
+
+      const pushPayload = {
+        id: 1234,
+        type: "restocker_checkout",
+        category: "checkout",
+        flatNumber: "Flat 1004",
+        createdAt: new Date().toISOString()
+      };
+
+      // Admin não deve disparar voz
+      const adminHandled = voiceModule.handleIncomingCheckoutPushPayload(pushPayload, { role: "admin" });
+      assert.strictEqual(adminHandled, false);
+      assert.strictEqual(mockSpeechSynthesis.spokenUtterances.length, 0);
+
+      // Repositora deve disparar voz imediatamente
+      const restockerHandled = voiceModule.handleIncomingCheckoutPushPayload(pushPayload, {
+        role: "anserve_repositora"
+      });
+      assert.strictEqual(restockerHandled, true);
+      assert.strictEqual(mockSpeechSynthesis.spokenUtterances.length, 1);
+      assert.strictEqual(mockSpeechSynthesis.spokenUtterances[0].text, "Check-out flat 1004");
+    });
+
+    it("sw.js deve acumular linhas por conversa de WhatsApp e manter tags distintas por alerta para agrupamento Android", async () => {
+      const swCode = fs.readFileSync(path.join(rootDir, "artifacts/limpeza/public/sw.js"), "utf8");
+      const activeNotifications = new Map();
+      let pushHandler = null;
+
+      const fakeSelf = {
+        skipWaiting: () => {},
+        clients: {
+          claim: async () => {},
+          matchAll: async () => []
+        },
+        navigator: {
+          setAppBadge: async () => {}
+        },
+        registration: {
+          getNotifications: async ({ tag } = {}) => {
+            if (tag) {
+              return activeNotifications.has(tag) ? [activeNotifications.get(tag)] : [];
+            }
+            return Array.from(activeNotifications.values());
+          },
+          showNotification: async (title, options) => {
+            activeNotifications.set(options.tag, {
+              title,
+              body: options.body,
+              tag: options.tag,
+              data: options.data,
+              close: () => activeNotifications.delete(options.tag)
+            });
+          }
+        },
+        addEventListener: (type, fn) => {
+          if (type === "push") pushHandler = fn;
+        }
+      };
+
+      const runSw = new Function("self", swCode);
+      runSw(fakeSelf);
+      assert.ok(pushHandler, "sw.js deve registrar listener 'push'");
+
+      const triggerPush = async (payload) => {
+        let p = Promise.resolve();
+        pushHandler({
+          data: { json: () => payload },
+          waitUntil: (promise) => {
+            p = promise;
+          }
+        });
+        await p;
+      };
+
+      // 3 mensagens do mesmo hóspede devem empilhar linha por linha no mesmo card expansível
+      await triggerPush({
+        category: "whatsapp",
+        phone: "5522998887777",
+        title: "💬 Carlos • Flat 512",
+        message: "Bom dia",
+        messageKey: "m1"
+      });
+      await triggerPush({
+        category: "whatsapp",
+        phone: "5522998887777",
+        title: "💬 Carlos • Flat 512",
+        message: "Tem travesseiro extra?",
+        messageKey: "m2"
+      });
+      await triggerPush({
+        category: "whatsapp",
+        phone: "5522998887777",
+        title: "💬 Carlos • Flat 512",
+        message: "Obrigado!",
+        messageKey: "m3"
+      });
+
+      // Outro hóspede + 2 check-outs devem manter cards próprios (não sobrescrever!) p/ o grupo expansível do Android
+      await triggerPush({
+        category: "whatsapp",
+        phone: "5521977776666",
+        title: "💬 Ana • Flat 904",
+        message: "Qual a senha do Wi-Fi?",
+        messageKey: "m4"
+      });
+      await triggerPush({
+        id: 701,
+        category: "checkout",
+        isRestockerCheckout: true,
+        flatNumber: "1004",
+        title: "🔔 Check-out flat 1004",
+        message: "Flat liberado"
+      });
+      await triggerPush({
+        id: 702,
+        category: "checkout",
+        isRestockerCheckout: true,
+        flatNumber: "605",
+        title: "🔔 Check-out flat 605",
+        message: "Flat liberado"
+      });
+
+      assert.strictEqual(activeNotifications.size, 4, "Deve haver 4 cards independentes agrupáveis pelo Android");
+      const carlosCard = activeNotifications.get("wa-chat-5522998887777");
+      assert.strictEqual(carlosCard.title, "💬 Carlos • Flat 512 (3 novas)");
+      assert.strictEqual(carlosCard.body, "• Bom dia\n• Tem travesseiro extra?\n• Obrigado!");
     });
   });
 

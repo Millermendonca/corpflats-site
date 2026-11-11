@@ -3411,6 +3411,18 @@ export function sendMirrorEmail(db, saveDatabase, {
       settings: { hotelName: db?.siteConfig?.branding?.brandName || "CorpFlats" }
     });
     const resRef = reservationCode || reservation?.code || reservation?.reservationCode || reservationId || reservation?.id || "0";
+    const normRecipientEmail = String(email || "").trim().toLowerCase();
+    const isKnownInvalidGuestEmail = Boolean(
+      recipientType === "guest" &&
+      (
+        reservation?._skipGuestMirrorSendSmtp === true ||
+        (
+          reservation?.guestEmailInvalid === true &&
+          normRecipientEmail &&
+          normRecipientEmail === String(reservation?.emailCorrectionRequest?.invalidEmail || reservation?.guestEmail || "").trim().toLowerCase()
+        )
+      )
+    );
     return sendEmailAsync({
       db,
       saveDatabase,
@@ -3429,7 +3441,16 @@ export function sendMirrorEmail(db, saveDatabase, {
         recipientType,
         recipientName,
         guestName: reservation?.guestName || recipientName,
-        source
+        source,
+        ...(isKnownInvalidGuestEmail
+          ? {
+              awaitingEmailCorrection: true,
+              invalidEmailReason:
+                reservation?._invalidCheckinEmailReason ||
+                reservation?.emailCorrectionRequest?.reason ||
+                "E-mail inválido informado no cadastro (aguardando correção via WhatsApp)."
+            }
+          : {})
       }
     });
   } catch (err) {
@@ -9923,16 +9944,24 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         updatedConv.chatLid = incomingInfo.chatLid;
       }
 
-      // Se for mensagem recebida de cliente (!fromMe), cria notificação visual e sonora
+      // Se for mensagem recebida de cliente (!fromMe), cria notificação visual e sonora + Web Push Real
       if (!incomingInfo.fromMe && typeof createNotification === "function") {
         const preview = incomingInfo.text || (incomingInfo.type === "audio" ? "🎵 Áudio recebido" : (incomingInfo.type === "image" ? "📷 Foto recebida" : (incomingInfo.type === "document" ? "📄 Documento recebido" : "Nova mensagem")));
         createNotification({
           category: "whatsapp",
           title: `WhatsApp: ${incomingInfo.senderName || updatedConv?.name || cleanTarget}`,
-          message: preview.substring(0, 120),
+          message: preview.substring(0, 180),
           type: "whatsapp_message",
           targetUrl: `/whatsapp-chat?phone=${cleanTarget}`,
-          link: `/whatsapp-chat?phone=${cleanTarget}`
+          link: `/whatsapp-chat?phone=${cleanTarget}`,
+          metadata: {
+            phone: cleanTarget,
+            senderName: incomingInfo.senderName || updatedConv?.name || cleanTarget,
+            flatNumber: updatedConv?.flatNumber || null,
+            reservationCode: updatedConv?.reservationCode || null,
+            unreadCount: updatedConv?.unreadCount || 1,
+            messageId: incomingInfo.messageId || null
+          }
         });
       }
 
@@ -10347,11 +10376,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           if (!incomingInfo.fromMe && typeof createNotification === "function") {
             createNotification({
               category: "whatsapp",
-              title: `WhatsApp: ${incomingInfo.senderName || cleanTarget}`,
-              message: (incomingInfo.text || "Nova mensagem recebida").substring(0, 100),
+              title: `WhatsApp: ${incomingInfo.senderName || updatedConv?.name || cleanTarget}`,
+              message: (incomingInfo.text || "Nova mensagem recebida").substring(0, 180),
               type: "whatsapp_message",
               targetUrl: `/whatsapp-chat?phone=${cleanTarget}`,
-              link: `/whatsapp-chat?phone=${cleanTarget}`
+              link: `/whatsapp-chat?phone=${cleanTarget}`,
+              metadata: {
+                phone: cleanTarget,
+                senderName: incomingInfo.senderName || updatedConv?.name || cleanTarget,
+                flatNumber: updatedConv?.flatNumber || null,
+                reservationCode: updatedConv?.reservationCode || null,
+                unreadCount: updatedConv?.unreadCount || 1,
+                messageId: incomingInfo.messageId || null
+              }
             });
           }
           if (typeof saveDatabase === "function") saveDatabase();
