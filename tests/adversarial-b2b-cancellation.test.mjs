@@ -242,9 +242,9 @@ describe('Adversarial M3.1: Intent Detection & 4-Tier Matching Stress Test', () 
       const audit = db.auditLogs.find(l => l.action === 'B2B_CANCELLATION_RESERVATION_NOT_FOUND');
       assert.ok(audit, 'Audit log B2B_CANCELLATION_RESERVATION_NOT_FOUND must exist');
 
-      // Verify alert
+      // Verify alert routed to manager (5522998505276), never hotel's own Z-API bot (5522997124021)
       assert.ok(capturedAlert, 'WhatsApp alert must be sent');
-      assert.equal(capturedAlert.phone, '5522997124021');
+      assert.equal(capturedAlert.phone, '5522998505276');
       assert.ok(capturedAlert.msg.includes('SEM CORRESPONDÊNCIA'));
     });
 

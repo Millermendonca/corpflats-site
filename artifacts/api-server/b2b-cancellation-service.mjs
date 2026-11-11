@@ -13,7 +13,87 @@
 
 import { sendZapiMessage } from "./zapi-service.mjs";
 
-const DEFAULT_ADMIN_WHATSAPP = "5522997124021";
+const DEFAULT_ADMIN_WHATSAPP = "5522998505276";
+const HOTEL_OWN_BOT_PHONES = new Set(["5522997124021", "22997124021"]);
+const unmatchedAlertWindowTimestamps = [];
+
+function isHotelOwnBotPhone(rawPhone = "", db = null) {
+  const digits = String(rawPhone || "").replace(/\D/g, "");
+  if (!digits) return false;
+  if (HOTEL_OWN_BOT_PHONES.has(digits)) return true;
+  if ((digits.endsWith("997124021") || digits.endsWith("97124021")) && (digits.startsWith("5522") || digits.startsWith("22"))) {
+    return true;
+  }
+  const connectedDigits = String(db?.zapiConfig?.connectedPhone || "").replace(/\D/g, "");
+  if (connectedDigits && digits === connectedDigits) return true;
+  return false;
+}
+
+export function resolveB2bManagerWhatsApp(db = null) {
+  const candidates = [
+    db?.settings?.managerWhatsApp,
+    db?.whatsappAiSettings?.developerPhone,
+    db?.zapiConfig?.npsManagerAlertPhone,
+    db?.settings?.adminPhone,
+    db?.settings?.adminWhatsApp,
+    DEFAULT_ADMIN_WHATSAPP
+  ];
+  for (const raw of candidates) {
+    let digits = String(raw || "").replace(/\D/g, "");
+    if (!digits) continue;
+    if (digits.length >= 10 && digits.length <= 11 && !digits.startsWith("55")) {
+      digits = `55${digits}`;
+    }
+    // NUNCA dispara alerta de gestor para o próprio número oficial Z-API do hotel (evita loop de auto-conversa)
+    if (isHotelOwnBotPhone(digits, db)) continue;
+    if (digits.length >= 12) return digits;
+  }
+  return DEFAULT_ADMIN_WHATSAPP;
+}
+
+function buildB2bCancelAlertDedupeKey(emailData = {}, cancelExtract = {}) {
+  if (emailData && typeof emailData === "object") {
+    const explicitId = String(emailData.id || emailData.messageId || emailData.zohoMessageId || "").trim();
+    if (explicitId) return `id:${explicitId}`;
+  }
+  const subj =
+    emailData && typeof emailData === "object"
+      ? normalizeStr(emailData.subject || emailData.Subject || "")
+      : normalizeStr(String(emailData || "").slice(0, 120));
+  const from =
+    emailData && typeof emailData === "object"
+      ? String(emailData.from || emailData.fromAddress || "").trim().toLowerCase()
+      : "";
+  const parts = [
+    from,
+    subj.slice(0, 120),
+    String(cancelExtract.b2bReservationNumber || "").trim(),
+    String(cancelExtract.rloc || "").trim().toUpperCase(),
+    String(cancelExtract.pmsCode || "").trim().toUpperCase(),
+    normalizeStr(cancelExtract.guestName || ""),
+    String(cancelExtract.checkinDate || "").trim()
+  ];
+  return parts.some(Boolean) ? `fp:${parts.join("|")}` : "";
+}
+
+function hasProcessedB2bCancelAlert(db, key) {
+  if (!db || !key || !Array.isArray(db.processedB2bCancelAlerts)) return false;
+  return db.processedB2bCancelAlerts.includes(key);
+}
+
+function recordProcessedB2bCancelAlert(db, keys = []) {
+  if (!db) return;
+  if (!Array.isArray(db.processedB2bCancelAlerts)) db.processedB2bCancelAlerts = [];
+  for (const key of keys) {
+    if (!key) continue;
+    if (!db.processedB2bCancelAlerts.includes(key)) {
+      db.processedB2bCancelAlerts.unshift(key);
+    }
+  }
+  if (db.processedB2bCancelAlerts.length > 1000) {
+    db.processedB2bCancelAlerts.length = 1000;
+  }
+}
 
 /**
  * Normaliza strings removendo acentos e espaços extras para comparação segura
@@ -579,6 +659,29 @@ export function formatBlockedCancellationAlert(reservation = {}, matchResult = {
  */
 export async function executeAutonomousB2bCancellation(db, emailData = {}, options = {}) {
   const nowIso = new Date().toISOString();
+  const fromLower =
+    emailData && typeof emailData === "object"
+      ? String(emailData.from || emailData.fromAddress || "").trim().toLowerCase()
+      : "";
+
+  // Ignora cópias internas do próprio hotel ou notificações de OTAs B2C (gerenciadas pelo Channel Manager)
+  if (
+    fromLower &&
+    (fromLower.includes("corpflats.com.br") ||
+      fromLower.includes("@booking.com") ||
+      fromLower.includes("@airbnb.com") ||
+      fromLower.includes("@expedia.com") ||
+      fromLower.includes("@decolar.com") ||
+      fromLower.includes("@channex.io"))
+  ) {
+    return {
+      success: false,
+      cancelled: false,
+      blockedReason: "NOT_A_B2B_EMAIL",
+      alertSent: false
+    };
+  }
+
   const intent = detectB2bEmailIntent(emailData);
 
   if (!intent.isCancellation) {
@@ -591,12 +694,52 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
   }
 
   const cancelExtract = extractCancellationData(emailData);
+  const dedupeKey = buildB2bCancelAlertDedupeKey(emailData, cancelExtract);
   const matchResult = matchReservationForCancellation(db, cancelExtract);
 
   // Caso 1: Reserva não encontrada
   if (!matchResult.matched || !matchResult.reservation) {
-    const adminPhone = db?.settings?.adminWhatsApp || DEFAULT_ADMIN_WHATSAPP;
+    const hasReservationIdentifiers = Boolean(
+      cancelExtract.b2bReservationNumber ||
+      cancelExtract.rloc ||
+      cancelExtract.pmsCode ||
+      (cancelExtract.guestName && cancelExtract.checkinDate) ||
+      fromLower.includes("b2breservas")
+    );
+
+    // E-mails genéricos/newsletters com a palavra "cancelamento" mas sem qualquer identificador de reserva B2B
+    // não devem gerar falsos alertas de WhatsApp "SEM CORRESPONDÊNCIA".
+    if (!hasReservationIdentifiers && matchResult.candidatesCount === 0) {
+      if (dedupeKey) recordProcessedB2bCancelAlert(db, [dedupeKey]);
+      return {
+        success: false,
+        cancelled: false,
+        blockedReason: "NOT_B2B_RESERVATION_CONTEXT",
+        matchedBy: null,
+        alertSent: false
+      };
+    }
+
     const notFoundReason = matchResult.candidatesCount > 1 ? "MULTIPLE_MATCHES" : "RESERVATION_NOT_FOUND";
+    const unmatchedDedupeKey = dedupeKey ? `unmatched:${notFoundReason}:${dedupeKey}` : "";
+
+    // Idempotência estrita: nunca reenvia o mesmo alerta de e-mail sem correspondência
+    if (unmatchedDedupeKey && hasProcessedB2bCancelAlert(db, unmatchedDedupeKey)) {
+      return {
+        success: false,
+        cancelled: false,
+        alreadyAlerted: true,
+        blockedReason: notFoundReason,
+        matchedBy: null,
+        alertSent: false
+      };
+    }
+
+    if (unmatchedDedupeKey) {
+      recordProcessedB2bCancelAlert(db, [unmatchedDedupeKey, dedupeKey]);
+    }
+
+    const adminPhone = resolveB2bManagerWhatsApp(db);
 
     if (!Array.isArray(db.auditLogs)) db.auditLogs = [];
     const auditId = db.auditLogs.length > 0 ? (Number(db.auditLogs[0].id) || db.auditLogs.length) + 1 : 1;
@@ -622,14 +765,23 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
       `Por favor, verifique manualmente a caixa de e-mails.`;
 
     const zapiFn = options.sendZapiMessage || sendZapiMessage;
+    const isRealDefaultZapi = !options.sendZapiMessage;
+    const nowMs = Date.now();
+    while (unmatchedAlertWindowTimestamps.length > 0 && nowMs - unmatchedAlertWindowTimestamps[0] > 10 * 60 * 1000) {
+      unmatchedAlertWindowTimestamps.shift();
+    }
+    const rateLimited = isRealDefaultZapi && unmatchedAlertWindowTimestamps.length >= 3;
+
     let alertSent = false;
-    if (typeof zapiFn === "function") {
+    if (typeof zapiFn === "function" && !rateLimited) {
       try {
+        if (isRealDefaultZapi) unmatchedAlertWindowTimestamps.push(nowMs);
         await zapiFn(adminPhone, notFoundAlert, {
           db,
           isAdminAlert: true,
           bypassTestMode: true,
-          recipientRole: "developer"
+          recipientRole: "developer",
+          triggerEvent: "b2b_cancellation_unmatched_alert"
         });
         alertSent = true;
       } catch (zErr) {
@@ -651,11 +803,12 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
   }
 
   const reservation = matchResult.reservation;
-  const adminPhone = db?.settings?.adminWhatsApp || DEFAULT_ADMIN_WHATSAPP;
+  const adminPhone = resolveB2bManagerWhatsApp(db);
 
   // ── IDEMPOTÊNCIA: Reserva já cancelada anteriormente ───────────────────────
   const currentStatus = String(reservation.status || "").toLowerCase().trim();
   if (currentStatus === "cancelada" || currentStatus === "cancelled") {
+    if (dedupeKey) recordProcessedB2bCancelAlert(db, [dedupeKey]);
     return {
       success: true,
       cancelled: false,
@@ -678,6 +831,21 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
     Boolean(reservation.actualCheckinTime);
 
   if (isCheckedIn) {
+    const blockedDedupeKey = `blocked:${reservation.id || reservation.code}:${dedupeKey || "res"}`;
+    if (hasProcessedB2bCancelAlert(db, blockedDedupeKey)) {
+      return {
+        success: false,
+        cancelled: false,
+        alreadyAlerted: true,
+        blockedReason: "CHECKED_IN_CANCELLATION",
+        reservationCode: reservation.code || String(reservation.id),
+        reservation,
+        matchedBy: matchResult.matchedBy,
+        alertSent: false
+      };
+    }
+    recordProcessedB2bCancelAlert(db, [blockedDedupeKey, dedupeKey]);
+
     if (!Array.isArray(reservation.auditLogs)) reservation.auditLogs = [];
     const blockAuditEntry = {
       id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -743,7 +911,8 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
           db,
           isAdminAlert: true,
           bypassTestMode: true,
-          recipientRole: "developer"
+          recipientRole: "developer",
+          triggerEvent: "b2b_cancellation_blocked_alert"
         });
         alertSent = true;
       } catch (zErr) {
@@ -980,6 +1149,10 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
     db.notifications.unshift({ id: Date.now(), ...notifObj, createdAt: nowIso, read: false });
   }
 
+  if (dedupeKey) {
+    recordProcessedB2bCancelAlert(db, [dedupeKey]);
+  }
+
   // ── ALERTA WHATSAPP Z-API AO GESTOR ─────────────────────────────────────────
   const zapiFn = options.sendZapiMessage || sendZapiMessage;
   let alertSent = false;
@@ -991,7 +1164,8 @@ export async function executeAutonomousB2bCancellation(db, emailData = {}, optio
           db,
           isAdminAlert: true,
           bypassTestMode: true,
-          recipientRole: "developer"
+          recipientRole: "developer",
+          triggerEvent: "b2b_cancellation_processed_alert"
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error("Z-API timeout")), 2000))
       ]);

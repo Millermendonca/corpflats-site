@@ -509,9 +509,9 @@ Instruções de Faturamento: Emitir NFS-e contra Lactalis do Brasil Ltda (CNPJ 0
       assert.strictEqual(globalAudit.details.flatNumber, '113');
       assert.strictEqual(globalAudit.details.guestName, 'Arlindo Amorim Barcelos');
 
-      // 6. Alerta WhatsApp Z-API ao Gestor
+      // 6. Alerta WhatsApp Z-API ao Gestor (5522998505276, bloqueando auto-disparo ao 5522997124021)
       assert.ok(capturedZapiAlert, 'Alerta via Z-API deve ter sido disparado');
-      assert.strictEqual(capturedZapiAlert.phone, '5522997124021', 'Deve disparar para o WhatsApp do gestor');
+      assert.strictEqual(capturedZapiAlert.phone, '5522998505276', 'Deve disparar para o WhatsApp pessoal do gestor');
       assert.ok(capturedZapiAlert.msg.includes('CANCELAMENTO AUTÔNOMO B2B PROCESSADO'));
       assert.ok(capturedZapiAlert.msg.includes('Arlindo Amorim Barcelos'));
       assert.ok(capturedZapiAlert.msg.includes('113'));
@@ -575,9 +575,9 @@ Instruções de Faturamento: Emitir NFS-e contra Lactalis do Brasil Ltda (CNPJ 0
       assert.ok(globalBlockedAudit, 'db.auditLogs deve conter bloqueio');
       assert.strictEqual(globalBlockedAudit.level, 'danger');
 
-      // Alerta urgente disparado ao gestor 5522997124021
+      // Alerta urgente disparado ao gestor 5522998505276
       assert.ok(urgentAlertDispatched);
-      assert.strictEqual(urgentAlertDispatched.phone, '5522997124021');
+      assert.strictEqual(urgentAlertDispatched.phone, '5522998505276');
       assert.ok(urgentAlertDispatched.msg.includes('ALERTA URGENTE: TENTATIVA DE CANCELAMENTO BLOQUEADA'));
       assert.ok(urgentAlertDispatched.msg.includes('Eduardo Martins Soares'));
       assert.ok(urgentAlertDispatched.msg.includes('Flat 211'));

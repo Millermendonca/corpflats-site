@@ -1745,6 +1745,26 @@ export function isDeveloperPhone(rawPhone, db = null) {
   return false;
 }
 
+export function isOwnHotelWhatsAppPhone(rawPhone, db = null, connectedPhoneOverride = "") {
+  if (!rawPhone) return false;
+  const digits = String(rawPhone).replace(/\D/g, "");
+  if (!digits) return false;
+  if (isDeveloperPhone(digits, db)) return false;
+  const clean = cleanWhatsAppPhone(digits) || digits;
+  if (clean === "5522997124021" || digits === "22997124021" || digits === "5522997124021") {
+    return true;
+  }
+  if ((digits.endsWith("997124021") || digits.endsWith("97124021")) && (clean.startsWith("5522") || digits.startsWith("22"))) {
+    return true;
+  }
+  const connectedRaw = connectedPhoneOverride || db?.zapiConfig?.connectedPhone || "";
+  const connectedDigits = String(connectedRaw).replace(/\D/g, "");
+  if (connectedDigits && (clean === cleanWhatsAppPhone(connectedDigits) || digits === connectedDigits)) {
+    return true;
+  }
+  return false;
+}
+
 // ── Motor de Regras de Exceção e Segmentação por Cliente (FAQ Sofia) ───────────
 export function isFaqApplicableToClient(faqItem, clientPhone) {
   if (!faqItem || typeof faqItem !== 'object') return false;
@@ -1854,6 +1874,11 @@ export function isBotMessage(text) {
 
   // 6. Mensagens automáticas do Fluxo Fiscal da Sofia (NFS-e)
   if (/\b(?:conferencia\s+de\s+dados\s+para\s+(?:emissao\s+de\s+)?nota\s+fiscal|dados\s+cadastrais\s+atualizados\s+com\s+sucesso|dados\s+da\s+nota\s+fiscal\s+confirmados|nota\s+fiscal\s+emitida\s+com\s+sucesso|nota\s+fiscal\s+ja\s+emitida\s+para\s+esta\s+reserva|solicitacao\s+de\s+alteracao\s+de\s+valor\s+de\s+nfs-e|aprovacao\s+confirmada\s+e\s+nfs-e\s+emitida|com\s+certeza\s+podemos\s+emitir\s+a\s+sua\s+nota\s+fiscal|me\s+informe\s+o\s+nome\s+completo\s+da\s+pessoa\s+que\s+voce\s+deseja\s+acrescentar|nao\s+consegui\s+identificar\s+o\s+nome\s+na\s+mensagem\s+anterior|qual\s+alteracao\s+voce\s+gostaria\s+de\s+fazer\s+na\s+nota\s+fiscal|cancelei\s+a\s+emissao\s+da\s+nota\s+fiscal|por\s+motivos\s+de\s+seguranca\s+fiscal\s+e\s+conformidade\s+contabil)\b/i.test(lower)) {
+    return true;
+  }
+
+  // 7. Alertas internos automáticos de Gestão / B2B / Redirecionamento de Teste (impede eco na IA)
+  if (/(?:cancelamento\s+autonomo\s+b2b\s+processado|e-mail\s+de\s+cancelamento\s+b2b\s+sem\s+correspondencia|alerta\s+urgente:\s*tentativa\s+de\s+cancelamento\s+bloqueada|alerta\s+sofia\s+ia\s*\[|\[modo\s+teste\s*•\s*canal:|alerta\s+de\s+check-out\s+antecipado|alerta\s+de\s+overbooking)/i.test(lower)) {
     return true;
   }
 
@@ -5115,6 +5140,22 @@ export async function sendZapiMessage(configOrPhone, optionsOrMessage = {}, thir
       finalDocumentCaption = `${header}${finalDocumentCaption}`;
     } else if (!finalMessage && !finalTitle) {
       finalDocumentCaption = header.trim();
+    }
+  }
+
+  // Blindagem Anti-Loop: Impede que a instância Z-API do hotel envie mensagem para si mesma (5522997124021) em produção
+  const realInstanceConfigured = Boolean(config?.instanceId?.trim() && config?.token?.trim() && config.instanceId !== "test-instance");
+  if (isOwnHotelWhatsAppPhone(targetPhone, activeDb, config?.connectedPhone)) {
+    if (rawOpts.isAdminAlert || String(recipientRole || "").toLowerCase() === "developer") {
+      targetPhone = "5522998505276";
+    } else if (realInstanceConfigured && process.env.NODE_ENV !== "test") {
+      console.warn(`[Z-API Self-Send Guard] Disparo bloqueado para o próprio número oficial do hotel (${targetPhone}) para evitar loop de webhook.`);
+      return {
+        success: false,
+        blockedSelfSend: true,
+        channelId: policy.channelId,
+        error: "Envio bloqueado preventivamente: destinatário é o próprio número Z-API do hotel."
+      };
     }
   }
 
@@ -10204,13 +10245,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     // 5. Agente de IA para WhatsApp (Atuação Híbrida / Resposta Autônoma / Transbordo Humano / Assistente Fiscal)
     let aiProcessResult = null;
+    const isSelfHotelTarget = isOwnHotelWhatsAppPhone(cleanTarget, db, req.body?.connectedPhone);
     const isDevSelfTest = Boolean(
       incomingInfo.fromMe &&
       isDeveloperPhone(cleanTarget, db) &&
       !isBot &&
       !preResFromMeResult?.handled
     );
-    if (npsInboundResult?.npsHandled) {
+    if (isSelfHotelTarget || (!incomingInfo.fromMe && isBot)) {
+      aiProcessResult = {
+        skipped: true,
+        reason: isSelfHotelTarget ? "self_hotel_phone_loop_guard" : "bot_echo_loop_guard"
+      };
+    } else if (npsInboundResult?.npsHandled) {
       aiProcessResult = {
         skipped: true,
         reason: "nps_flow_handled",
@@ -10408,7 +10455,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
                         isBotMessage(incomingInfo.text) ||
                         /^(?:sofia|ai|ia|bot|system|sistema)$/i.test(String(incomingInfo.senderName || "").trim()) ||
                         isRecentBotSentMessage({ messageId: incomingInfo.messageId, phone: cleanTarget, text: incomingInfo.text });
-          if (!incomingInfo.fromMe || (isDeveloperPhone(cleanTarget, db) && !isBot)) {
+          const isSelfHotelTarget = isOwnHotelWhatsAppPhone(cleanTarget, db, req.body?.connectedPhone);
+          if (!isSelfHotelTarget && !isBot && (!incomingInfo.fromMe || isDeveloperPhone(cleanTarget, db))) {
             const effectiveIncoming = incomingInfo.fromMe ? { ...incomingInfo, fromMe: false, senderName: "Miller" } : incomingInfo;
             const debounceWindowMs = req.body?.debounceMs !== undefined
               ? Number(req.body.debounceMs)

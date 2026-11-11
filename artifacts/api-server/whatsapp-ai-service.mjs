@@ -11,7 +11,7 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp, formatReservationChannelLabel, resolveReservationGuestCount } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, isOwnHotelWhatsAppPhone, isBotMessage, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp, formatReservationChannelLabel, resolveReservationGuestCount } from "./zapi-service.mjs";
 import { buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
 
 export function isNonRequesterGuestForReservation(reservation, senderPhone = "", db = {}) {
@@ -13882,6 +13882,8 @@ export async function handleWhatsAppFiscalFlow({
 /**
  * Processa mensagens recebidas no Webhook Z-API e aciona o Agente de IA de forma autônoma
  */
+const aiHighFreqGuardMap = new Map();
+
 export async function processAiInboundMessage({
   db,
   incomingInfo,
@@ -13894,6 +13896,28 @@ export async function processAiInboundMessage({
 }) {
   if (!incomingInfo || incomingInfo.fromMe || incomingInfo.isGroup || !incomingInfo.text || !cleanTarget) {
     return { skipped: true, reason: "not_eligible" };
+  }
+
+  // Blindagem Anti-Loop: Nunca processa mensagens oriundas do próprio número oficial do hotel (5522997124021)
+  // nem ecos de alertas internos de sistema/gestão/cancelamento B2B
+  if (isOwnHotelWhatsAppPhone(cleanTarget, db)) {
+    return { skipped: true, reason: "self_hotel_phone" };
+  }
+  if (isBotMessage(incomingInfo.text)) {
+    return { skipped: true, reason: "system_or_bot_alert_echo" };
+  }
+
+  // Disjuntor de Alta Frequência (Circuit Breaker em produção): bloqueia loops anômalos > 6 chamadas em 60s para o mesmo telefone
+  if (process.env.NODE_ENV !== "test" && !aiClientMock) {
+    const nowMs = Date.now();
+    const normKey = cleanWhatsAppPhone(cleanTarget) || String(cleanTarget);
+    const windowArr = (aiHighFreqGuardMap.get(normKey) || []).filter(ts => nowMs - ts < 60000);
+    if (windowArr.length >= 6) {
+      console.warn(`[WhatsApp AI Circuit Breaker] Alta frequência detectada para ${normKey} (${windowArr.length} acionamentos/60s). Bloqueando eco preventivamente.`);
+      return { skipped: true, reason: "anti_loop_circuit_breaker" };
+    }
+    windowArr.push(nowMs);
+    aiHighFreqGuardMap.set(normKey, windowArr);
   }
 
   const aiConfig = getWhatsAppAiConfig(db);
@@ -15702,6 +15726,9 @@ function isAutomatedOrSofiaMessage(msg) {
   if (!text) return false;
   const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   if (/\b(?:sou\s+a\s+sofia|concierge\s+virtual|assistente\s+ativa\s+de\s+pre-reservas|resumo\s+atualizado\s+da\s+pre-reserva|pre-reserva\s+criada\s+com\s+sucesso\s+no\s+sistema|proposta\s+de\s+pre-reserva\s+cancelada|possui\s+conflito\s+de\s+ocupacao\/bloqueio|nao\s+encontrei\s+o\s+\*?flat|nao\s+foi\s+possivel\s+criar\s+a\s+pre-reserva|pre-reserva\s+garantida|pix\s+copia\s+e\s+cola.*expira\s+em)\b/.test(lower)) {
+    return true;
+  }
+  if (/(?:cancelamento\s+autonomo\s+b2b\s+processado|e-mail\s+de\s+cancelamento\s+b2b\s+sem\s+correspondencia|alerta\s+urgente:\s*tentativa\s+de\s+cancelamento\s+bloqueada|alerta\s+sofia\s+ia\s*\[|\[modo\s+teste\s*•\s*canal:)/i.test(lower)) {
     return true;
   }
 

@@ -15,7 +15,10 @@ import {
   renderB2bAgencyCredentialRequestEmail,
   renderManualEmail,
   resolveReservationAttachments,
-  ensureReservationAttachmentsReady
+  ensureReservationAttachmentsReady,
+  validateGuestEmailAddress,
+  isInternalOrThirdPartyOperationalEmail,
+  notifyGuestInvalidEmailViaWhatsApp
 } from "./mail-service.mjs";
 import { extractTextFromPdfBuffer } from "./pdf-extract-service.mjs";
 import {
@@ -107,6 +110,9 @@ export function ensureWebmailCollections(db) {
   }
   if (!Array.isArray(db.webmailInboundMessages)) {
     db.webmailInboundMessages = [];
+  }
+  if (!Array.isArray(db.processedB2bCancelEmailKeys)) {
+    db.processedB2bCancelEmailKeys = [];
   }
 
   // Semeia mensagens iniciais de demonstração operacional na Caixa de Entrada caso esteja vazia,
@@ -200,6 +206,39 @@ export function ensureWebmailCollections(db) {
       }
     );
     db.settings.webmailSeededV1 = true;
+  }
+}
+
+function buildZohoB2bCancelSignature(subject = "", from = "") {
+  const normSubj = String(subject || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 140);
+  const normFrom = String(from || "").trim().toLowerCase();
+  return normSubj || normFrom ? `sig:${normFrom}|${normSubj}` : "";
+}
+
+function hasProcessedZohoB2bCancelKey(db, keys = []) {
+  if (!db || !Array.isArray(db.processedB2bCancelEmailKeys)) return false;
+  return keys.some(k => k && db.processedB2bCancelEmailKeys.includes(k));
+}
+
+function markProcessedZohoB2bCancelKey(db, keys = []) {
+  if (!db) return;
+  if (!Array.isArray(db.processedB2bCancelEmailKeys)) {
+    db.processedB2bCancelEmailKeys = [];
+  }
+  for (const k of keys) {
+    if (!k) continue;
+    if (!db.processedB2bCancelEmailKeys.includes(k)) {
+      db.processedB2bCancelEmailKeys.unshift(k);
+    }
+  }
+  if (db.processedB2bCancelEmailKeys.length > 2000) {
+    db.processedB2bCancelEmailKeys.length = 2000;
   }
 }
 
@@ -1084,10 +1123,15 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
     }
 
     let addedOrUpdated = 0;
+    let b2bCancelProcessedMutated = false;
+    const nowSyncMs = Date.now();
+    const MAX_AUTONOMOUS_CANCEL_AGE_MS = 24 * 60 * 60 * 1000; // 24 horas (evita disparar alertas retroativos de e-mails antigos)
+
     for (const zm of rawZohoMessages) {
       if (!zm || !zm.messageId) continue;
       const zId = `zoho_${zm.messageId}`;
       const existingIdx = db.zohoMessagesCache.findIndex(m => m.id === zId);
+      const existingMsg = existingIdx >= 0 ? db.zohoMessagesCache[existingIdx] : null;
       const isoDate = resolveZohoTrueIsoDate(zm);
 
       const resolvedFolder = classifyZohoMessageFolder(zm, zohoFolderMap, folder);
@@ -1113,16 +1157,17 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         cc: cleanCc,
         subject: cleanSubject,
         snippet: cleanSnippet,
-        bodyHtml: existingIdx >= 0 ? db.zohoMessagesCache[existingIdx].bodyHtml : "",
-        attachments: existingIdx >= 0 && Array.isArray(db.zohoMessagesCache[existingIdx].attachments) ? db.zohoMessagesCache[existingIdx].attachments : [],
+        bodyHtml: existingMsg ? existingMsg.bodyHtml : "",
+        attachments: existingMsg && Array.isArray(existingMsg.attachments) ? existingMsg.attachments : [],
         isRead: String(zm.status) === "1" || Boolean(zm.isRead),
         isStarred: Boolean(zm.flagid && zm.flagid !== "flag_not_set"),
         hasAttachments: Boolean(zm.hasAttachment === "1" || zm.hasAttachment === true),
         receivedTimeMs: Number(zm.receivedTime || 0) || undefined,
+        b2bCancelProcessed: Boolean(existingMsg?.b2bCancelProcessed || existingMsg?.b2bCancelled),
+        b2bCancelled: Boolean(existingMsg?.b2bCancelled),
         created_at: isoDate,
         source: "zoho_api"
       };
-      const existingMsg = existingIdx >= 0 ? db.zohoMessagesCache[existingIdx] : null;
       const subjResMatch = String(mapped.subject || "").match(/Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*(\d{7,10})/i);
       const subjResNum = subjResMatch ? subjResMatch[1].trim() : "";
       const isB2bConfirmationEmail =
@@ -1163,90 +1208,131 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         return [];
       };
 
+      const fromLower = String(mapped.fromEmail || "").toLowerCase();
+      const folderNameLower = String(mapped.zohoFolderName || "").toLowerCase();
+      const isNonB2bSystemOrMarketing =
+        resolvedFolder !== "inbox" ||
+        /newsletter|marketing|spam|trash|lixeira|sent|enviado/i.test(folderNameLower) ||
+        fromLower.includes("corpflats.com.br") ||
+        fromLower.includes("@booking.com") ||
+        fromLower.includes("@airbnb.com") ||
+        fromLower.includes("@expedia.com") ||
+        fromLower.includes("@decolar.com") ||
+        fromLower.includes("@channex.io");
+
       const messagePreview = {
         subject: mapped.subject,
         text: mapped.snippet,
         from: mapped.fromEmail
       };
       const previewIntent = detectB2bEmailIntent(messagePreview);
+      const cancelSig = buildZohoB2bCancelSignature(mapped.subject, mapped.fromEmail);
+      const alreadyCancelEvaluated =
+        mapped.b2bCancelProcessed ||
+        hasProcessedZohoB2bCancelKey(db, [zId, cancelSig]);
+
       const isB2bCancellationCandidate =
         mapped.direction === "inbound" &&
+        !isNonB2bSystemOrMarketing &&
         (previewIntent.isCancellation || /cancel/i.test(mapped.subject || ""));
 
-      if (isB2bCancellationCandidate && !existingMsg?.b2bCancelled) {
-        try {
-          let fetchedHtml = mapped.bodyHtml || "";
-          if (!fetchedHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
-            try {
-              const contentRes = await callZohoMailApi(
-                db,
-                `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/content`
-              );
-              if (contentRes.ok && contentRes.data?.content) {
-                fetchedHtml = contentRes.data.content;
-                mapped.bodyHtml = fetchedHtml;
-              }
-            } catch {}
-          }
+      if (isB2bCancellationCandidate && !alreadyCancelEvaluated) {
+        const msgTimeMs = Number(mapped.receivedTimeMs) || new Date(isoDate || 0).getTime() || 0;
+        const isStaleHistoricalEmail = msgTimeMs > 0 && (nowSyncMs - msgTimeMs) > MAX_AUTONOMOUS_CANCEL_AGE_MS;
 
-          let attachmentPdfText = "";
-          if (mapped.hasAttachments && mapped.zohoMessageId && mapped.zohoFolderId) {
-            try {
-              const attRes = await callZohoMailApi(
-                db,
-                `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachmentinfo`
-              );
-              const rawAtts = extractAttList(attRes);
-              if (rawAtts.length > 0) {
-                mapped.attachments = rawAtts.map(a => ({
-                  id: a.attachmentId || a.id,
-                  filename: a.attachmentName || a.filename || "anexo.pdf",
-                  size: a.attachmentSize || a.size || 0,
-                  contentType: a.contentType || "application/octet-stream",
-                  downloadUrl: `/api/webmail/attachments/${mapped.zohoFolderId}/${mapped.zohoMessageId}/${a.attachmentId || a.id}?name=${encodeURIComponent(a.attachmentName || a.filename || "anexo")}`
-                }));
-                for (const att of rawAtts) {
-                  const attId = att?.attachmentId || att?.id;
-                  const fname = String(att?.attachmentName || att?.filename || "");
-                  const mime = String(att?.contentType || "");
-                  if (attId && (fname.toLowerCase().endsWith(".pdf") || mime.toLowerCase() === "application/pdf")) {
-                    try {
-                      const fileRes = await callZohoMailApi(
-                        db,
-                        `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachments/${attId}`,
-                        { responseType: "buffer" }
-                      );
-                      if (fileRes.ok && Buffer.isBuffer(fileRes.data)) {
-                        const pdfText = extractTextFromPdfBuffer(fileRes.data);
-                        if (pdfText) attachmentPdfText += `\n${pdfText}`;
-                      }
-                    } catch {}
+        // E-mails históricos (> 24h) são apenas carimbados como já avaliados sem disparar cancelamento retroativo nem spam WhatsApp
+        if (isStaleHistoricalEmail) {
+          mapped.b2bCancelProcessed = true;
+          markProcessedZohoB2bCancelKey(db, [zId, cancelSig]);
+          b2bCancelProcessedMutated = true;
+        } else {
+          try {
+            let fetchedHtml = mapped.bodyHtml || "";
+            if (!fetchedHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
+              try {
+                const contentRes = await callZohoMailApi(
+                  db,
+                  `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/content`
+                );
+                if (contentRes.ok && contentRes.data?.content) {
+                  fetchedHtml = contentRes.data.content;
+                  mapped.bodyHtml = fetchedHtml;
+                }
+              } catch {}
+            }
+
+            let attachmentPdfText = "";
+            if (mapped.hasAttachments && mapped.zohoMessageId && mapped.zohoFolderId) {
+              try {
+                const attRes = await callZohoMailApi(
+                  db,
+                  `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachmentinfo`
+                );
+                const rawAtts = extractAttList(attRes);
+                if (rawAtts.length > 0) {
+                  mapped.attachments = rawAtts.map(a => ({
+                    id: a.attachmentId || a.id,
+                    filename: a.attachmentName || a.filename || "anexo.pdf",
+                    size: a.attachmentSize || a.size || 0,
+                    contentType: a.contentType || "application/octet-stream",
+                    downloadUrl: `/api/webmail/attachments/${mapped.zohoFolderId}/${mapped.zohoMessageId}/${a.attachmentId || a.id}?name=${encodeURIComponent(a.attachmentName || a.filename || "anexo")}`
+                  }));
+                  for (const att of rawAtts) {
+                    const attId = att?.attachmentId || att?.id;
+                    const fname = String(att?.attachmentName || att?.filename || "");
+                    const mime = String(att?.contentType || "");
+                    if (attId && (fname.toLowerCase().endsWith(".pdf") || mime.toLowerCase() === "application/pdf")) {
+                      try {
+                        const fileRes = await callZohoMailApi(
+                          db,
+                          `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachments/${attId}`,
+                          { responseType: "buffer" }
+                        );
+                        if (fileRes.ok && Buffer.isBuffer(fileRes.data)) {
+                          const pdfText = extractTextFromPdfBuffer(fileRes.data);
+                          if (pdfText) attachmentPdfText += `\n${pdfText}`;
+                        }
+                      } catch {}
+                    }
                   }
                 }
-              }
-            } catch {}
-          }
-
-          const combinedText = [mapped.snippet || "", attachmentPdfText].filter(Boolean).join("\n");
-          const emailCancelData = {
-            subject: mapped.subject,
-            text: combinedText,
-            html: fetchedHtml,
-            from: mapped.fromEmail
-          };
-          const fullIntent = detectB2bEmailIntent(emailCancelData);
-          if (fullIntent.isCancellation) {
-            const cancelRes = await executeAutonomousB2bCancellation(db, emailCancelData, {
-              saveDatabase
-            });
-            if (cancelRes.cancelled) {
-              addedOrUpdated++;
+              } catch {}
             }
-            mapped.b2bParsed = true;
-            mapped.b2bCancelled = cancelRes.cancelled;
+
+            const combinedText = [mapped.snippet || "", attachmentPdfText].filter(Boolean).join("\n");
+            const emailCancelData = {
+              id: zId,
+              zohoMessageId: mapped.zohoMessageId,
+              subject: mapped.subject,
+              text: combinedText,
+              html: fetchedHtml,
+              from: mapped.fromEmail
+            };
+
+            // Marca imediatamente como processado ANTES do disparo para impedir reprocessamento em loops/syncs concorrentes
+            mapped.b2bCancelProcessed = true;
+            markProcessedZohoB2bCancelKey(db, [zId, cancelSig]);
+            b2bCancelProcessedMutated = true;
+
+            const fullIntent = detectB2bEmailIntent(emailCancelData);
+            if (fullIntent.isCancellation) {
+              const preMatch = matchReservationForCancellation(db, emailCancelData);
+              const isExplicitB2bSender = fromLower.includes("b2breservas");
+              // Na sincronização passiva de caixa de entrada, só executa se casar com reserva do PMS ou vier do portal B2B Reservas
+              if (preMatch.matched || preMatch.candidatesCount > 0 || isExplicitB2bSender) {
+                const cancelRes = await executeAutonomousB2bCancellation(db, emailCancelData, {
+                  saveDatabase
+                });
+                if (cancelRes.cancelled) {
+                  addedOrUpdated++;
+                }
+                mapped.b2bParsed = true;
+                mapped.b2bCancelled = Boolean(cancelRes.cancelled);
+              }
+            }
+          } catch (cancelErr) {
+            console.warn("[B2B Sync Cancel] Erro ao processar cancelamento:", cancelErr?.message || cancelErr);
           }
-        } catch (cancelErr) {
-          console.warn("[B2B Sync Cancel] Erro ao processar cancelamento:", cancelErr?.message || cancelErr);
         }
       }
 
@@ -1342,12 +1428,23 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         matchedRes
       );
 
+      if (!existingMsg?.guestBounceProcessed && mapped.direction === "inbound") {
+        const bounceHandled = await processInboundBounceForGuestEmail(db, saveDatabase, mapped, matchedRes);
+        if (bounceHandled?.isBounce) {
+          mapped.guestBounceProcessed = true;
+        }
+      } else if (existingMsg?.guestBounceProcessed) {
+        mapped.guestBounceProcessed = true;
+      }
+
       if (existingIdx >= 0) {
         const changed =
           existingMsg.isRead !== mapped.isRead ||
           existingMsg.isStarred !== mapped.isStarred ||
           existingMsg.folder !== mapped.folder ||
-          (!existingMsg.b2bParsed && mapped.b2bParsed);
+          (!existingMsg.b2bParsed && mapped.b2bParsed) ||
+          (!existingMsg.b2bCancelProcessed && mapped.b2bCancelProcessed) ||
+          (!existingMsg.guestBounceProcessed && mapped.guestBounceProcessed);
         db.zohoMessagesCache[existingIdx] = { ...existingMsg, ...mapped };
         if (changed) addedOrUpdated++;
       } else {
@@ -1356,11 +1453,137 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       }
     }
 
+    if (b2bCancelProcessedMutated && typeof saveDatabase === "function") {
+      saveDatabase("zoho_b2b_cancel_processed");
+    }
+
     zohoTokenCache.lastFolderSyncAt[folder] = Date.now();
     zohoTokenCache.lastSyncAt = new Date().toISOString();
     return { ok: true, synced: addedOrUpdated, mode: "zoho_api" };
   } catch (err) {
     return { ok: false, error: err.message, mode: "hybrid_fallback" };
+  }
+}
+
+/**
+ * Detecta mensagens de devolução (bounce / mailer-daemon / Undelivered Mail) recentes,
+ * marca a comunicação original como "bounced" e avisa o hóspede no WhatsApp para corrigir o e-mail.
+ */
+export async function processInboundBounceForGuestEmail(db, saveDatabase, msgItem = {}, matchedResSummary = null) {
+  try {
+    if (!db || !msgItem) return { isBounce: false };
+    const fromLower = String(msgItem.fromEmail || msgItem.from || "").toLowerCase();
+    const subjLower = String(msgItem.subject || "").toLowerCase();
+    const isBounce =
+      fromLower.includes("mailer-daemon") ||
+      fromLower.includes("postmaster") ||
+      fromLower.includes("mail delivery") ||
+      subjLower.includes("undelivered") ||
+      subjLower.includes("undeliverable") ||
+      subjLower.includes("delivery status notification") ||
+      subjLower.includes("delivery failure") ||
+      subjLower.includes("mail delivery failed") ||
+      subjLower.includes("returned mail") ||
+      subjLower.includes("falha na entrega") ||
+      subjLower.includes("não foi possível entregar") ||
+      subjLower.includes("nao foi possivel entregar");
+
+    if (!isBounce) return { isBounce: false };
+
+    const msgMs = new Date(msgItem.created_at || msgItem.date || Date.now()).getTime();
+    const nowMs = Date.now();
+    if (!msgMs || Number.isNaN(msgMs) || nowMs - msgMs > 48 * 3600 * 1000) {
+      return { isBounce: true, ignoredReason: "bounce_older_than_48h" };
+    }
+
+    const rawBodyPlain = String(msgItem.bodyHtml || "")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ");
+    const combinedText = `${msgItem.subject || ""}\n${msgItem.snippet || ""}\n${msgItem.bodyText || ""}\n${rawBodyPlain}`;
+
+    const ownEmailLower = String(getSmtpConfig(db)?.fromEmail || "contato@corpflats.com.br").trim().toLowerCase();
+    const extractedEmails = new Set();
+    const emailMatches = combinedText.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,24}/gi) || [];
+    for (const rawEm of emailMatches) {
+      const em = String(rawEm).trim().toLowerCase().replace(/[.,;:!?)]+$/g, "");
+      if (!em || em === ownEmailLower) continue;
+      if (em.includes("mailer-daemon") || em.includes("postmaster") || em.includes("corpflats.com.br")) continue;
+      if (isInternalOrThirdPartyOperationalEmail(em, null, db)) continue;
+      extractedEmails.add(em);
+    }
+
+    const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+    let targetRes = null;
+    let bouncedEmail = "";
+    let matchedGuestIdx = 1;
+
+    for (const candidateEmail of extractedEmails) {
+      const found = reservations.find(r => {
+        if (!r || r.status === "cancelada" || r.status === "cancelled") return false;
+        if (String(r.guestEmail || "").trim().toLowerCase() === candidateEmail) return true;
+        if (Array.isArray(r.guests) && r.guests.some(g => String(g?.email || "").trim().toLowerCase() === candidateEmail)) return true;
+        return false;
+      });
+      if (found) {
+        targetRes = found;
+        bouncedEmail = candidateEmail;
+        if (Array.isArray(found.guests)) {
+          const idx = found.guests.findIndex(g => String(g?.email || "").trim().toLowerCase() === candidateEmail);
+          if (idx >= 0) matchedGuestIdx = Number(found.guests[idx]?.index) || idx + 1;
+        }
+        break;
+      }
+    }
+
+    if (!targetRes && matchedResSummary) {
+      targetRes = reservations.find(
+        r => r && (r.id === matchedResSummary.id || (r.code && r.code === matchedResSummary.code))
+      );
+      if (targetRes) {
+        const resGuestEmail = String(targetRes.guestEmail || "").trim().toLowerCase();
+        bouncedEmail = extractedEmails.size > 0 ? Array.from(extractedEmails)[0] : resGuestEmail;
+      }
+    }
+
+    if (!targetRes || !bouncedEmail || isInternalOrThirdPartyOperationalEmail(bouncedEmail, targetRes, db)) {
+      return { isBounce: true, ignoredReason: "no_matching_guest_reservation" };
+    }
+
+    const nowIso = new Date().toISOString();
+    const resCodeUpper = String(targetRes.code || "").trim().toUpperCase();
+    const resIdStr = targetRes.id != null ? String(targetRes.id) : "";
+
+    if (Array.isArray(db.reservationCommunications)) {
+      for (const c of db.reservationCommunications) {
+        if (!c || c.direction === "inbound") continue;
+        const cResUpper = String(c.reservation_id || "").trim().toUpperCase();
+        const sameRes = (resCodeUpper && cResUpper === resCodeUpper) || (resIdStr && String(c.reservation_id) === resIdStr);
+        if (!sameRes) continue;
+        if (String(c.recipient || "").trim().toLowerCase() === bouncedEmail && (c.status === "sent" || c.status === "pending")) {
+          c.status = "bounced";
+          c.metadata = {
+            ...(c.metadata || {}),
+            bouncedAt: nowIso,
+            bounceSubject: msgItem.subject || "Undelivered Mail"
+          };
+        }
+      }
+    }
+
+    const notifyResult = await notifyGuestInvalidEmailViaWhatsApp({
+      db,
+      saveDatabase,
+      reservation: targetRes,
+      guestIndex: matchedGuestIdx,
+      invalidEmail: bouncedEmail,
+      reason: `E-mail devolvido pelo servidor de destino (${msgItem.subject || "Bounce"})`,
+      source: "zoho_bounce"
+    });
+
+    return { isBounce: true, notified: notifyResult?.notified || false, bouncedEmail, reservationCode: targetRes.code };
+  } catch (err) {
+    console.warn("[Zoho Bounce Handler] Aviso ao processar devolução de e-mail:", err?.message || err);
+    return { isBounce: false, error: err?.message };
   }
 }
 
@@ -4914,7 +5137,13 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
 
   const combinedRawText = [rawText, attachmentPdfText].filter(Boolean).join("\n");
 
+  const rawWebhookMsgId = String(payload?.messageId || payload?.id || payload?.data?.messageId || "").trim();
+  const webhookZId = rawWebhookMsgId ? `zoho_${rawWebhookMsgId}` : "";
+  const webhookCancelSig = buildZohoB2bCancelSignature(rawSubj, rawFrom);
+  const webhookCancelKeys = [webhookZId, webhookCancelSig].filter(Boolean);
+
   const emailData = {
+    ...(webhookZId ? { id: webhookZId, zohoMessageId: rawWebhookMsgId } : {}),
     subject: rawSubj,
     from: rawFrom,
     html: rawHtml,
@@ -4927,12 +5156,15 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
   const intent = detectB2bEmailIntent(emailData);
 
   if (intent.isCancellation) {
-    try {
-      directCancelResult = await executeAutonomousB2bCancellation(db, emailData, {
-        saveDatabase
-      });
-    } catch (cancelErr) {
-      console.warn("[Zoho Webhook Direct B2B Cancel] Erro ao processar cancelamento:", cancelErr?.message || cancelErr);
+    if (!hasProcessedZohoB2bCancelKey(db, webhookCancelKeys)) {
+      markProcessedZohoB2bCancelKey(db, webhookCancelKeys);
+      try {
+        directCancelResult = await executeAutonomousB2bCancellation(db, emailData, {
+          saveDatabase
+        });
+      } catch (cancelErr) {
+        console.warn("[Zoho Webhook Direct B2B Cancel] Erro ao processar cancelamento:", cancelErr?.message || cancelErr);
+      }
     }
   } else {
     const isB2bCandidate =
@@ -4962,6 +5194,17 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
       }
     }
   }
+
+  await processInboundBounceForGuestEmail(db, saveDatabase, {
+    fromEmail: rawFrom,
+    from: rawFrom,
+    subject: rawSubj,
+    bodyHtml: rawHtml,
+    bodyText: combinedRawText,
+    snippet: rawText,
+    direction: "inbound",
+    created_at: nowIso
+  });
 
   const syncRes = await syncZohoMessagesToCache(db, {
     folder: "inbox",

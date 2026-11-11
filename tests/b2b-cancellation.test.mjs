@@ -385,9 +385,9 @@ describe('M3: Cancelamento Autônomo B2B & Notificação ao Gestor', () => {
       assert.ok(notif);
       assert.equal(notif.severity, 'danger');
 
-      // Alerta urgente disparado ao WhatsApp do gestor 5522997124021
+      // Alerta urgente disparado ao WhatsApp real do gestor 5522998505276 (nunca ao próprio bot 5522997124021)
       assert.ok(capturedWhatsAppAlert);
-      assert.equal(capturedWhatsAppAlert.phone, '5522997124021');
+      assert.equal(capturedWhatsAppAlert.phone, '5522998505276');
       assert.ok(capturedWhatsAppAlert.msg.includes('ALERTA URGENTE: TENTATIVA DE CANCELAMENTO BLOQUEADA'));
       assert.ok(capturedWhatsAppAlert.msg.includes('Flat 302'));
     });
@@ -457,7 +457,7 @@ describe('M3: Cancelamento Autônomo B2B & Notificação ao Gestor', () => {
 
   describe('5. Auditoria Dupla e Alerta WhatsApp Z-API ao Gestor (F16)', () => {
 
-    it('5.1 Deve gravar auditoria na reserva, auditoria global e disparar WhatsApp para 5522997124021', async () => {
+    it('5.1 Deve gravar auditoria na reserva, auditoria global e disparar WhatsApp para 5522998505276', async () => {
       const db = createMockDatabase();
       let sentWhatsApp = null;
 
@@ -503,14 +503,46 @@ describe('M3: Cancelamento Autônomo B2B & Notificação ao Gestor', () => {
       assert.equal(notif.severity, 'warning');
       assert.ok(notif.message.includes('Flat 205'));
 
-      // 4. Alerta WhatsApp ao Gestor
+      // 4. Alerta WhatsApp ao Gestor (5522998505276, nunca ao próprio número do bot 5522997124021)
       assert.ok(sentWhatsApp);
-      assert.equal(sentWhatsApp.phone, '5522997124021');
+      assert.equal(sentWhatsApp.phone, '5522998505276');
       assert.ok(sentWhatsApp.msg.includes('CANCELAMENTO AUTÔNOMO B2B PROCESSADO'));
       assert.ok(sentWhatsApp.msg.includes('*Flat:* 205'));
       assert.ok(sentWhatsApp.msg.includes('Mariana Mendonça Ferreira'));
       assert.ok(sentWhatsApp.msg.includes('RLOC-AZUL01'));
       assert.ok(sentWhatsApp.msg.includes('Quarto e escala de governança foram liberados'));
+    });
+
+    it('5.2 Blindagem Anti-Loop & Anti-Spam: nunca reenvia alerta duplicado para o mesmo e-mail sem correspondência nem alerta e-mails genéricos sem identificador B2B', async () => {
+      const db = createMockDatabase();
+      let sentCount = 0;
+
+      // A) E-mail genérico/newsletter sem nenhum identificador de reserva B2B -> 0 disparos
+      const genericEmail = {
+        subject: 'Cancelamento de assinatura de newsletter',
+        text: 'Confirmamos o cancelamento da sua inscrição promocional.',
+        from: 'contato@servico-externo.com.br'
+      };
+      const genRes = await executeAutonomousB2bCancellation(db, genericEmail, {
+        sendZapiMessage: async () => { sentCount++; return { success: true }; }
+      });
+      assert.equal(genRes.blockedReason, 'NOT_B2B_RESERVATION_CONTEXT');
+      assert.equal(genRes.alertSent, false);
+      assert.equal(sentCount, 0);
+
+      // B) E-mail B2B sem reserva correspondente disparado 5 vezes seguidas -> apenas 1 alerta enviado
+      const unmatchedB2b = {
+        id: 'zoho_msg_999',
+        subject: 'Cancelamento de Reserva - 25099999 - Hóspede Teste',
+        text: 'Solicitamos o cancelamento da reserva B2B-25099999.',
+        from: 'reservas@b2breservas.com.br'
+      };
+      for (let i = 0; i < 5; i++) {
+        await executeAutonomousB2bCancellation(db, unmatchedB2b, {
+          sendZapiMessage: async () => { sentCount++; return { success: true }; }
+        });
+      }
+      assert.equal(sentCount, 1, 'Deve enviar no máximo 1 alerta para o mesmo e-mail sem correspondência');
     });
 
   });

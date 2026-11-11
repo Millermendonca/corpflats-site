@@ -17035,6 +17035,8 @@ function pruneDatabase() {
     garageAuthorizations: 300,
     reservationCommunications: 150,
     zohoMessagesCache: 120,
+    processedB2bCancelEmailKeys: 2000,
+    processedB2bCancelAlerts: 1000,
     webmailInboundMessages: 80,
     emailQueue: 40,
     serviceOrders: 500,
@@ -17927,6 +17929,65 @@ function createNotification(arg1, arg2, arg3) {
   }
 }
 globalThis.__corpflatsCreateNotification = createNotification;
+globalThis.__corpflatsSendZapiMessage = (phone, message, opts = {}) =>
+  sendZapiMessage(db.zapiConfig, {
+    phone,
+    message,
+    db,
+    ...opts
+  });
+globalThis.__corpflatsEvaluateZapiChannelPolicy = (opts = {}) =>
+  evaluateZapiChannelPolicy(db.zapiConfig, { db, ...opts });
+globalThis.__corpflatsAppendMessageToConversation = (opts = {}) =>
+  appendMessageToConversation(db, opts);
+globalThis.__corpflatsSyncBidirectionalGuestProfile = (opts = {}) => {
+  if (typeof syncBidirectionalGuestProfile === "function") {
+    return syncBidirectionalGuestProfile(opts);
+  }
+  return null;
+};
+globalThis.__corpflatsEnsureScheduledEmails = (resObj) => {
+  if (typeof ensureReservationScheduledEmails === "function" && resObj) {
+    return ensureReservationScheduledEmails(db, saveDatabase, resObj);
+  }
+  return null;
+};
+globalThis.__corpflatsSendPreCheckinMirrorEmail = (resObj, emailAddr, guestIdx = 1, originUrl = "") => {
+  try {
+    if (!resObj || !emailAddr) return null;
+    const tpl =
+      (Array.isArray(db.whatsappTemplates) &&
+        db.whatsappTemplates.find(t => t && (t.id === "tpl_pre_checkin_completed" || t.triggerEvent === "pre_checkin_completed"))) ||
+      (Array.isArray(DEFAULT_WHATSAPP_TEMPLATES) &&
+        DEFAULT_WHATSAPP_TEMPLATES.find(t => t && (t.id === "tpl_pre_checkin_completed" || t.triggerEvent === "pre_checkin_completed"))) ||
+      null;
+    if (!tpl) return null;
+    const targetGuest = Array.isArray(resObj.guests)
+      ? (resObj.guests.find(g => Number(g?.index) === Number(guestIdx)) || resObj.guests[Math.max(0, (Number(guestIdx) || 1) - 1)])
+      : null;
+    const recName = targetGuest?.name || resObj.guestName || "Hóspede";
+    const renderedMsg = resolveWhatsAppTags(tpl.message, resObj, db, originUrl, "guest", tpl);
+    const renderedBtns = renderTemplateButtons(tpl.buttons, resObj, db, originUrl, "guest", tpl);
+    const subj = buildMirrorEmailSubject(tpl, resObj, db, originUrl, "guest");
+    return sendMirrorEmail(db, saveDatabase, {
+      reservation: resObj,
+      email: emailAddr,
+      recipientName: recName,
+      recipientType: "guest",
+      templateId: tpl.id,
+      triggerEvent: "pre_checkin_completed",
+      subject: subj,
+      message: renderedMsg,
+      buttons: renderedBtns,
+      footer: tpl.footer || "",
+      baseUrl: originUrl,
+      source: "email_correction_resend"
+    });
+  } catch (err) {
+    console.warn("[MailService] Falha ao sintetizar espelho de pré-check-in:", err?.message || err);
+    return null;
+  }
+};
 
 // ── Centralized Check-in URL Resolver & Resilient Fallback Engine ─────────────
 /**
@@ -39517,6 +39578,26 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
       console.warn("[B2B Credential] Aviso ao disparar régua de WhatsApp para o hóspede:", errWa.message);
     }
 
+    if (cleanEmail) {
+      setImmediate(async () => {
+        try {
+          const credEmailCheck = await validateGuestEmailAddress(cleanEmail, { checkDns: true, timeoutMs: 2000 });
+          if (!credEmailCheck.valid) {
+            await notifyGuestInvalidEmailViaWhatsApp({
+              db,
+              saveDatabase,
+              reservation: r,
+              guestIndex: 1,
+              invalidEmail: cleanEmail,
+              reason: credEmailCheck.message,
+              suggestedEmail: credEmailCheck.suggestedEmail || null,
+              source: "checkin"
+            });
+          }
+        } catch (_) {}
+      });
+    }
+
     return res.json({
       ok: true,
       success: true,
@@ -51005,6 +51086,36 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   const isCheckinTodayOrPast = isReservationForTodayOrPast(r);
   const shouldNotifyReception = Boolean(wasReSignature || isCheckinTodayOrPast);
 
+  // Validação inteligente do e-mail preenchido no check-in (sem bloquear a conclusão da FNRH)
+  let checkinEmailCheck = null;
+  const hadPendingInvalidEmailBefore = Boolean(
+    r.guestEmailInvalid || r.emailCorrectionRequest?.status === "awaiting_reply"
+  );
+  if (cleanEmail) {
+    try {
+      checkinEmailCheck = await validateGuestEmailAddress(cleanEmail, {
+        checkDns: true,
+        timeoutMs: 1800
+      });
+      if (!checkinEmailCheck.valid) {
+        r.guestEmailInvalid = true;
+      } else if (hadPendingInvalidEmailBefore) {
+        await updateGuestEmailAndResendRecentPending({
+          db,
+          saveDatabase,
+          reservation: r,
+          guestIndex: Number(guestIndex) || 1,
+          newEmail: checkinEmailCheck.normalizedEmail,
+          maxAgeHours: 72,
+          baseUrl: originHeader,
+          skipPreCheckinMirrorSynthesis: true
+        });
+      }
+    } catch (emailValErr) {
+      console.warn("[POST /api/pms/pre-checkin] Aviso ao validar e-mail do hóspede:", emailValErr?.message || emailValErr);
+    }
+  }
+
   // Gatilho E: Envio Automático de Confirmação e Instruções de Recepção via WhatsApp para o Hóspede que concluiu o Check-in Online
   if (typeof triggerImmediateWhatsApp === "function") {
     try {
@@ -51015,12 +51126,36 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
         {
           ...r,
           _checkinGuestIndex: Number(guestIndex) || 1,
-          _wasReSignature: wasReSignature
+          _wasReSignature: wasReSignature,
+          ...(checkinEmailCheck && !checkinEmailCheck.valid
+            ? {
+                _skipGuestMirrorSendSmtp: true,
+                _invalidCheckinEmailReason: checkinEmailCheck.message
+              }
+            : {})
         },
         originHeader
       );
     } catch (waPreErr) {
       console.warn("[POST /api/pms/pre-checkin] Erro ao disparar WhatsApp de confirmação pós-check-in:", waPreErr?.message || waPreErr);
+    }
+  }
+
+  // Se o e-mail preenchido no check-in estiver incorreto, avisa o hóspede pelo WhatsApp pedindo o e-mail correto
+  if (cleanEmail && checkinEmailCheck && !checkinEmailCheck.valid) {
+    try {
+      await notifyGuestInvalidEmailViaWhatsApp({
+        db,
+        saveDatabase,
+        reservation: r,
+        guestIndex: Number(guestIndex) || 1,
+        invalidEmail: cleanEmail,
+        reason: checkinEmailCheck.message,
+        suggestedEmail: checkinEmailCheck.suggestedEmail || null,
+        source: "checkin"
+      });
+    } catch (waEmailErr) {
+      console.warn("[POST /api/pms/pre-checkin] Aviso ao solicitar correção de e-mail via WhatsApp:", waEmailErr?.message || waEmailErr);
     }
   }
 
