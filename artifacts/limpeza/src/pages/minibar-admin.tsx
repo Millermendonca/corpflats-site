@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Shell } from "@/components/layout";
 import { MinibarEcosystemNav } from "@/components/minibar-ecosystem-nav";
 import { useGetMe } from "@workspace/api-client-react";
@@ -608,7 +608,7 @@ export const INITIAL_HOMOLOGATION_CATALOG: BrandHomologationItem[] = [
     id: "prod_cortesia_agua_copo",
     productName: "Água Mineral Copo (Cortesia)",
     category: "Kit Boas-Vindas",
-    currentImageUrl: "/images/frigobar/proposta_agua_mineral_copo_200ml.png",
+    currentImageUrl: "/images/frigobar/agua_mineral_copo.png",
     currentDiagnosis: "Item de cortesia do Kit Boas-Vindas (estoque e repasse Anserve)",
     proposedBrand: {
       brandName: "Água Mineral Copo Selado Crystal 200ml",
@@ -686,6 +686,41 @@ export default function MinibarAdminPage() {
   const [swapModalItem, setSwapModalItem] = useState<BrandHomologationItem | null>(null);
   const [customSwapNotes, setCustomSwapNotes] = useState<string>("");
   const [applyingApprovedPhotos, setApplyingApprovedPhotos] = useState(false);
+  const hasAutoSyncedHomologationRef = useRef(false);
+
+  const resolveBackendProductId = (homologationId: string): string => {
+    if (homologationId === "prod_cortesia_amendoim_mendorato") return "prod_amendoim_mendorato";
+    if (homologationId === "prod_cortesia_agua_copo") return "prod_agua_mineral_copo";
+    return homologationId;
+  };
+
+  const getActiveHomologationBrand = (item: BrandHomologationItem) =>
+    item.selectedBrandIndex === 0
+      ? item.proposedBrand
+      : item.alternatives[item.selectedBrandIndex - 1] || item.proposedBrand;
+
+  const syncItemPhotoToBackend = async (item: BrandHomologationItem, approved: boolean) => {
+    const backendId = resolveBackendProductId(item.id);
+    const activeBrand = getActiveHomologationBrand(item);
+    const targetImageUrl = approved ? activeBrand.imageUrl : item.currentImageUrl;
+    const cleanProdName = item.productName.replace(/\s*\(Cortesia\)/i, "").trim();
+    const payload: Record<string, any> = {
+      imageUrl: targetImageUrl
+    };
+    if (approved) {
+      payload.description = `${cleanProdName} • ${activeBrand.brandName} (${activeBrand.volumeOrWeight})`;
+    }
+    const res = await fetch(`/api/minibar/products/${encodeURIComponent(backendId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `Falha ao atualizar produto (${res.status})`);
+    }
+  };
 
   const saveHomologation = (items: BrandHomologationItem[]) => {
     setHomologationItems(items);
@@ -698,54 +733,126 @@ export default function MinibarAdminPage() {
     }
   };
 
-  const handleApprovePhoto = (id: string) => {
+  const handleApprovePhoto = async (id: string) => {
+    const targetItem = homologationItems.find(item => item.id === id);
+    if (!targetItem) return;
+    const newStatus: "approved" | "pending" = targetItem.status === "approved" ? "pending" : "approved";
+    const backendId = resolveBackendProductId(id);
+    const previousItems = homologationItems;
+
     const updated = homologationItems.map(item => {
-      if (item.id === id) {
-        const newStatus = item.status === "approved" ? "pending" : "approved";
-        return { ...item, status: newStatus as any };
+      if (item.id === id || resolveBackendProductId(item.id) === backendId) {
+        return { ...item, status: newStatus };
       }
       return item;
     });
     saveHomologation(updated);
-    toast({
-      title: "Homologação de Foto Atualizada! 📸",
-      description: "A decisão foi gravada com sucesso."
-    });
+
+    try {
+      await syncItemPhotoToBackend({ ...targetItem, status: newStatus }, newStatus === "approved");
+      await fetchProducts();
+      toast({
+        title: newStatus === "approved" ? "Foto publicada no cardápio! 📸" : "Aprovação desfeita",
+        description:
+          newStatus === "approved"
+            ? "A nova foto já está ativa no cardápio dos hóspedes."
+            : "A foto anterior foi restaurada no cardápio."
+      });
+    } catch (err: any) {
+      saveHomologation(previousItems);
+      toast({
+        title: "Não foi possível publicar a foto",
+        description: err.message || "Verifique sua sessão administrativa e tente novamente.",
+        variant: "destructive"
+      });
+    }
   };
 
-  const handleApproveAllPhotos = () => {
+  const handleApproveAllPhotos = async () => {
+    const previousItems = homologationItems;
     const updated = homologationItems.map(item => ({ ...item, status: "approved" as const }));
     saveHomologation(updated);
-    toast({
-      title: "Todas as Fotos Foram Homologadas! ✅",
-      description: "Todas as 20 fotos comerciais de marcas reais foram aprovadas para o cardápio."
-    });
+    setApplyingApprovedPhotos(true);
+    try {
+      const seenBackendIds = new Set<string>();
+      for (const item of updated) {
+        const bId = resolveBackendProductId(item.id);
+        if (seenBackendIds.has(bId)) continue;
+        seenBackendIds.add(bId);
+        await syncItemPhotoToBackend(item, true);
+      }
+      await fetchProducts();
+      toast({
+        title: "Todas as Fotos Publicadas! ✅",
+        description: "Todas as fotos comerciais reais já estão ativas no cardápio dos hóspedes."
+      });
+    } catch (err: any) {
+      saveHomologation(previousItems);
+      toast({
+        title: "Erro ao publicar todas as fotos",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setApplyingApprovedPhotos(false);
+    }
   };
 
-  const handleResetHomologation = () => {
+  const handleResetHomologation = async () => {
     saveHomologation(INITIAL_HOMOLOGATION_CATALOG);
-    toast({
-      title: "Homologação Reiniciada",
-      description: "Todos os status retornaram para pendente de conferência."
-    });
+    setApplyingApprovedPhotos(true);
+    try {
+      const seenBackendIds = new Set<string>();
+      for (const item of INITIAL_HOMOLOGATION_CATALOG) {
+        const bId = resolveBackendProductId(item.id);
+        if (seenBackendIds.has(bId)) continue;
+        seenBackendIds.add(bId);
+        await syncItemPhotoToBackend(item, false);
+      }
+      await fetchProducts();
+      toast({
+        title: "Homologação Reiniciada",
+        description: "Todos os status e fotos retornaram ao padrão anterior."
+      });
+    } catch (err: any) {
+      toast({
+        title: "Erro ao restaurar padrões",
+        description: err.message,
+        variant: "destructive"
+      });
+    } finally {
+      setApplyingApprovedPhotos(false);
+    }
   };
 
-  const handleSelectBrandAlternative = (productId: string, altIndex: number) => {
+  const handleSelectBrandAlternative = async (productId: string, altIndex: number) => {
+    const targetItem = homologationItems.find(i => i.id === productId);
+    const updatedItem = targetItem ? { ...targetItem, selectedBrandIndex: altIndex } : null;
     const updated = homologationItems.map(item => {
       if (item.id === productId) {
         return {
           ...item,
-          selectedBrandIndex: altIndex,
-          status: "pending" as const
+          selectedBrandIndex: altIndex
         };
       }
       return item;
     });
     saveHomologation(updated);
     setSwapModalItem(null);
+
+    if (updatedItem && updatedItem.status === "approved") {
+      try {
+        await syncItemPhotoToBackend(updatedItem, true);
+        await fetchProducts();
+      } catch (_) {}
+    }
+
     toast({
       title: "Marca Alternativa Selecionada! 🔄",
-      description: "A marca e foto foram atualizadas para conferência."
+      description:
+        updatedItem?.status === "approved"
+          ? "A marca e foto foram atualizadas imediatamente no cardápio."
+          : "Marca selecionada — clique em Aprovar Foto para publicar no cardápio."
     });
   };
 
@@ -782,29 +889,21 @@ export default function MinibarAdminPage() {
     setApplyingApprovedPhotos(true);
     try {
       let appliedCount = 0;
+      const seenBackendIds = new Set<string>();
       for (const item of approved) {
-        const matchingProduct = products.find(p => p.id === item.id);
+        const backendId = resolveBackendProductId(item.id);
+        if (seenBackendIds.has(backendId)) continue;
+        const matchingProduct = products.find(p => p.id === backendId);
         if (matchingProduct) {
-          const activeBrand = item.selectedBrandIndex === 0
-            ? item.proposedBrand
-            : item.alternatives[item.selectedBrandIndex - 1] || item.proposedBrand;
-
-          await fetch(`/api/minibar/products/${item.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-              imageUrl: activeBrand.imageUrl,
-              description: `${item.productName} • ${activeBrand.brandName} (${activeBrand.volumeOrWeight})`
-            })
-          });
+          await syncItemPhotoToBackend(item, true);
+          seenBackendIds.add(backendId);
           appliedCount++;
         }
       }
       await fetchProducts();
       toast({
         title: "Fotos de Marcas Reais Aplicadas! 🚀",
-        description: `${appliedCount} produtos do frigobar foram atualizados com sucesso em produção.`
+        description: `${appliedCount} produtos do frigobar foram atualizados com sucesso no cardápio.`
       });
     } catch (err: any) {
       toast({
@@ -823,6 +922,61 @@ export default function MinibarAdminPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("todas");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Sincroniza aprovações já salvas localmente com o backend ao carregar os produtos
+  useEffect(() => {
+    if (hasAutoSyncedHomologationRef.current || products.length === 0) return;
+    hasAutoSyncedHomologationRef.current = true;
+
+    let needsBackendSync = false;
+    let localChanged = false;
+
+    const reconciled = homologationItems.map(item => {
+      const backendId = resolveBackendProductId(item.id);
+      const prod = products.find(p => p.id === backendId);
+      if (!prod) return item;
+      const activeBrand = getActiveHomologationBrand(item);
+      if (item.status === "approved" && prod.imageUrl !== activeBrand.imageUrl) {
+        needsBackendSync = true;
+      } else if (
+        item.status === "pending" &&
+        item.proposedBrand.imageUrl !== item.currentImageUrl &&
+        prod.imageUrl === activeBrand.imageUrl
+      ) {
+        localChanged = true;
+        return { ...item, status: "approved" as const };
+      }
+      return item;
+    });
+
+    if (localChanged) {
+      saveHomologation(reconciled);
+    }
+
+    if (needsBackendSync) {
+      (async () => {
+        const seenIds = new Set<string>();
+        let syncedAny = false;
+        for (const item of reconciled) {
+          if (item.status !== "approved") continue;
+          const bId = resolveBackendProductId(item.id);
+          if (seenIds.has(bId)) continue;
+          const prod = products.find(p => p.id === bId);
+          const activeBrand = getActiveHomologationBrand(item);
+          if (prod && prod.imageUrl !== activeBrand.imageUrl) {
+            try {
+              await syncItemPhotoToBackend(item, true);
+              seenIds.add(bId);
+              syncedAny = true;
+            } catch (_) {}
+          }
+        }
+        if (syncedAny) {
+          await fetchProducts();
+        }
+      })();
+    }
+  }, [products]);
 
   // Product Modal State
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -2718,14 +2872,28 @@ export default function MinibarAdminPage() {
                       <Button
                         size="sm"
                         variant="outline"
+                        disabled={applyingApprovedPhotos}
                         onClick={handleResetHomologation}
                         className="rounded-xl text-xs font-bold h-9"
                       >
                         <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
                         Restaurar Padrões
                       </Button>
+                      {homologationItems.some(i => i.status === "approved") && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={applyingApprovedPhotos}
+                          onClick={handleApplyApprovedToCatalog}
+                          className="rounded-xl text-xs font-bold h-9"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${applyingApprovedPhotos ? "animate-spin" : ""}`} />
+                          Sincronizar Aprovadas ({homologationItems.filter(i => i.status === "approved").length})
+                        </Button>
+                      )}
                       <Button
                         size="sm"
+                        disabled={applyingApprovedPhotos}
                         onClick={handleApproveAllPhotos}
                         className="rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white h-9"
                       >

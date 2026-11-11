@@ -2132,7 +2132,10 @@ export default function GuestMinibar() {
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-12 h-12 rounded-xl bg-white border border-slate-700/60 flex items-center justify-center shrink-0 overflow-hidden p-1">
                           <img
-                            src="/images/frigobar/agua_mineral_copo.png"
+                            src={
+                              catalog.find((p) => p.id === "prod_agua_mineral_copo")?.imageUrl ||
+                              "/images/frigobar/agua_mineral_copo.png"
+                            }
                             alt="Copo d'Água Mineral"
                             className="w-full h-full object-contain"
                             onError={(e) => {
@@ -2159,7 +2162,10 @@ export default function GuestMinibar() {
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-12 h-12 rounded-xl bg-white border border-slate-700/60 flex items-center justify-center shrink-0 overflow-hidden p-1">
                           <img
-                            src="/images/frigobar/amendoim_mendorato.png"
+                            src={
+                              catalog.find((p) => p.id === "prod_amendoim_mendorato")?.imageUrl ||
+                              "/images/frigobar/amendoim_mendorato.png"
+                            }
                             alt="Amendoim Mendorato 27g"
                             className="w-full h-full object-contain"
                             onError={(e) => {
@@ -2189,11 +2195,16 @@ export default function GuestMinibar() {
 
                 {/* Separador nítido para os produtos pagos */}
                 <div className="pt-2 pb-1 border-t border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <Refrigerator className="w-4 h-4 text-cyan-400" />
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                      Produtos Pagos do Frigobar (Tabela de Preços)
-                    </h3>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <Refrigerator className="w-4 h-4 text-cyan-400" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                        Produtos do Frigobar (Valores por Unidade)
+                      </h3>
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      Cobrança apenas do que for consumido
+                    </span>
                   </div>
                 </div>
 
@@ -2287,7 +2298,9 @@ export default function GuestMinibar() {
                           <div className="flex items-center gap-3 min-w-0">
                             <div
                               className={`w-12 h-12 rounded-2xl border flex items-center justify-center shrink-0 overflow-hidden shadow-inner ${
-                                isCourtesyItem
+                                prod.imageUrl
+                                  ? "bg-white border-slate-700/50"
+                                  : isCourtesyItem
                                   ? "bg-emerald-950/60 border-emerald-700/50"
                                   : "bg-white border-slate-700/50"
                               }`}
@@ -2319,7 +2332,7 @@ export default function GuestMinibar() {
                                 )}
                               </div>
                               <span className="text-[10px] text-slate-400 block">
-                                Padrão: {nominalStandard} un.
+                                Disponível no frigobar: {nominalStandard} {nominalStandard === 1 ? "unidade" : "unidades"}
                               </span>
                             </div>
                           </div>
@@ -2330,9 +2343,14 @@ export default function GuestMinibar() {
                                 Cortesia
                               </strong>
                             ) : (
-                              <strong className="text-sm font-black text-cyan-400 font-mono">
-                                {formatBRL(prod.price)}
-                              </strong>
+                              <div className="leading-tight">
+                                <strong className="text-sm font-black text-cyan-400 font-mono block">
+                                  {formatBRL(prod.price)}
+                                </strong>
+                                <span className="text-[10px] text-slate-400 font-medium block">
+                                  por unidade
+                                </span>
+                              </div>
                             )}
                           </div>
                         </div>
