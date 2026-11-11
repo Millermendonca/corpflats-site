@@ -4436,10 +4436,10 @@ export default function GuestPortal() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 font-bold text-emerald-800">
                     <Gift className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>Kit de Boas-Vindas Consumido (Cortesia da Casa)</span>
+                    <span>Kit de Boas-Vindas</span>
                   </div>
                   <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-300 text-[10px] font-bold">
-                    Cortesia • R$ 0,00
+                    Cortesia
                   </Badge>
                 </div>
                 <div className="space-y-1 text-emerald-900 font-medium text-[11px]">
@@ -4456,9 +4456,6 @@ export default function GuestPortal() {
                     </div>
                   )}
                 </div>
-                <p className="text-[10px] text-emerald-700/80 italic">
-                  * Itens de cortesia da hospedagem sem acréscimo no saldo da estadia.
-                </p>
               </div>
             );
           })()}

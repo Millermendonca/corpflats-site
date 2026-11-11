@@ -1547,45 +1547,33 @@ export default function GuestMinibar() {
 
             {/* ── Sub-bloco Segregado: Cortesias Consumidas do Kit de Boas-Vindas (R$ 0,00) ── */}
             {consumedCourtesyItems.length > 0 && (
-              <div className="rounded-2xl border-2 border-emerald-500/40 bg-gradient-to-r from-emerald-950/40 via-slate-900 to-emerald-950/30 p-4 space-y-2.5 shadow-md">
-                <div className="flex items-center justify-between gap-2 border-b border-emerald-500/20 pb-2">
+              <div className="rounded-2xl border border-emerald-500/35 bg-emerald-950/25 p-3.5 space-y-2 shadow-sm">
+                <div className="flex items-center justify-between gap-2 border-b border-emerald-500/15 pb-2">
                   <div className="flex items-center gap-2">
                     <Gift className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span className="text-xs font-black text-emerald-300">
-                      🎁 Kit de Boas-Vindas Consumido (Cortesia da Casa)
+                    <span className="text-xs font-black text-white">
+                      Kit de Boas-Vindas
                     </span>
                   </div>
                   <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">
-                    Cortesia • R$ 0,00
+                    Cortesia
                   </Badge>
                 </div>
 
                 <div className="divide-y divide-emerald-500/10">
                   {consumedCourtesyItems.map((cItem: any) => (
-                    <div key={cItem.productId} className="py-2 flex items-center justify-between text-xs">
+                    <div key={cItem.productId} className="py-1.5 flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <div>
-                          <span className="font-bold text-white block">
-                            {cItem.quantity}x {cItem.productName}
-                          </span>
-                          <span className="text-[10px] text-emerald-300/80">
-                            Item de cortesia da hospedagem
-                          </span>
-                        </div>
+                        <span className="font-bold text-white">
+                          {cItem.quantity}x {cItem.productName}
+                        </span>
                       </div>
                       <strong className="text-emerald-400 font-mono font-black text-xs">
                         R$ 0,00
                       </strong>
                     </div>
                   ))}
-                </div>
-
-                <div className="pt-1 flex items-center justify-between text-[11px] text-emerald-400/80 font-medium">
-                  <span>Subtotal de Cortesias</span>
-                  <span className="font-mono font-bold text-emerald-300">
-                    R$ 0,00 (Sem acréscimo no total da estadia)
-                  </span>
                 </div>
               </div>
             )}
@@ -2122,37 +2110,27 @@ export default function GuestMinibar() {
 
             {showReferenceCatalog && (
               <div className="p-4 sm:p-5 pt-0 border-t border-slate-800/80 space-y-4">
-                {/* ── Kit de Boas-Vindas (Cortesia da Casa) ── */}
-                <div className="mt-3 p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-emerald-950/70 via-slate-900 to-emerald-950/40 border-2 border-emerald-500/50 shadow-2xl space-y-3.5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                {/* ── Kit de Boas-Vindas ── */}
+                <div className="mt-3 p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/40 shadow-xl space-y-3">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
                         <Gift className="w-4 h-4 text-emerald-400" />
                       </div>
-                      <div>
-                        <h3 className="text-sm sm:text-base font-black text-white">
-                          Kit de Boas-Vindas (Cortesia da Casa)
-                        </h3>
-                        <p className="text-[10px] text-slate-300">
-                          Itens de boas-vindas disponíveis para sua chegada sem qualquer custo adicional!
-                        </p>
-                      </div>
+                      <h3 className="text-sm sm:text-base font-black text-white">
+                        Kit de Boas-Vindas
+                      </h3>
                     </div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-black uppercase tracking-wider">
-                        100% Gratuito
-                      </Badge>
-                      <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold">
-                        Cortesia da Hospedagem
-                      </Badge>
-                    </div>
+                    <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">
+                      Cortesia
+                    </Badge>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {/* Copo d'Água Mineral 200ml */}
-                    <div className="p-3 rounded-2xl bg-slate-950/80 border border-emerald-500/30 flex items-center justify-between gap-3">
+                    <div className="p-3 rounded-2xl bg-slate-950/80 border border-emerald-500/25 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-12 h-12 rounded-xl bg-white/5 border border-slate-700/60 flex items-center justify-center shrink-0 overflow-hidden p-1">
+                        <div className="w-12 h-12 rounded-xl bg-white border border-slate-700/60 flex items-center justify-center shrink-0 overflow-hidden p-1">
                           <img
                             src="/images/frigobar/agua_mineral_copo.png"
                             alt="Copo d'Água Mineral"
@@ -2166,28 +2144,20 @@ export default function GuestMinibar() {
                           <span className="font-black text-white text-xs block truncate">
                             Copo d'Água Mineral 200ml
                           </span>
-                          <span className="text-[10px] text-slate-400 block">
-                            Disponível na chegada: até 2 unidades
-                          </span>
-                          <span className="text-[9px] text-emerald-400 font-semibold block">
-                            Estoque Anserve • 100% Grátis
+                          <span className="text-[11px] text-slate-400 block">
+                            2 unidades
                           </span>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <strong className="text-emerald-400 font-mono text-sm font-black block">
-                          R$ 0,00
-                        </strong>
-                        <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] px-1.5 py-0">
-                          Grátis
-                        </Badge>
-                      </div>
+                      <strong className="text-emerald-400 font-mono text-sm font-black shrink-0">
+                        R$ 0,00
+                      </strong>
                     </div>
 
                     {/* Amendoim Mendorato 27g */}
-                    <div className="p-3 rounded-2xl bg-slate-950/80 border border-emerald-500/30 flex items-center justify-between gap-3">
+                    <div className="p-3 rounded-2xl bg-slate-950/80 border border-emerald-500/25 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-12 h-12 rounded-xl bg-white/5 border border-slate-700/60 flex items-center justify-center shrink-0 overflow-hidden p-1">
+                        <div className="w-12 h-12 rounded-xl bg-white border border-slate-700/60 flex items-center justify-center shrink-0 overflow-hidden p-1">
                           <img
                             src="/images/frigobar/amendoim_mendorato.png"
                             alt="Amendoim Mendorato 27g"
@@ -2201,27 +2171,19 @@ export default function GuestMinibar() {
                           <span className="font-black text-white text-xs block truncate">
                             Amendoim Mendorato 27g
                           </span>
-                          <span className="text-[10px] text-slate-400 block">
-                            Disponível na chegada: até 2 unidades
-                          </span>
-                          <span className="text-[9px] text-amber-400 font-semibold block">
-                            Fornecimento Próprio Hotel • 100% Grátis
+                          <span className="text-[11px] text-slate-400 block">
+                            2 unidades
                           </span>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <strong className="text-emerald-400 font-mono text-sm font-black block">
-                          R$ 0,00
-                        </strong>
-                        <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] px-1.5 py-0">
-                          Grátis
-                        </Badge>
-                      </div>
+                      <strong className="text-emerald-400 font-mono text-sm font-black shrink-0">
+                        R$ 0,00
+                      </strong>
                     </div>
                   </div>
 
-                  <p className="text-[10px] text-slate-400 italic">
-                    * Itens de cortesia exclusivos para o check-in. Reposição realizada exclusivamente na virada de hóspede pela camareira.
+                  <p className="text-[11px] text-slate-400">
+                    Disponível apenas na chegada, sem reposição durante a estadia.
                   </p>
                 </div>
 

@@ -162,15 +162,16 @@ console.log('\n--- TEST GROUP 2: guest-minibar.tsx & Kit de Boas-Vindas ---');
 const guestMinibarPath = path.join(projectRoot, 'artifacts/limpeza/src/pages/guest-minibar.tsx');
 const guestMinibarContent = fs.readFileSync(guestMinibarPath, 'utf8');
 
-assert(guestMinibarContent.includes('Kit de Boas-Vindas (Cortesia da Casa)'), 'Top container "Kit de Boas-Vindas (Cortesia da Casa)" present');
-assert(guestMinibarContent.includes('100% Gratuito'), 'Badge "100% Gratuito" present in welcome kit container');
+assert(guestMinibarContent.includes('Kit de Boas-Vindas'), 'Top container "Kit de Boas-Vindas" present');
+assert(guestMinibarContent.includes('Cortesia'), 'Badge "Cortesia" present in welcome kit container');
 assert(guestMinibarContent.includes('R$ 0,00'), 'R$ 0,00 displayed for courtesy items');
 assert(guestMinibarContent.includes("Copo d'Água Mineral 200ml"), "Copo d'Água Mineral 200ml present in welcome kit");
 assert(guestMinibarContent.includes('Amendoim Mendorato 27g'), 'Amendoim Mendorato 27g present in welcome kit');
+assert(!guestMinibarContent.includes('Estoque Anserve') && !guestMinibarContent.includes('Fornecimento Próprio'), 'No internal supplier details leaked to guest');
 
 // Check that welcome kit in reference catalog has no purchase buttons
 const welcomeKitSlice = guestMinibarContent.slice(
-  guestMinibarContent.indexOf('{/* ── Kit de Boas-Vindas (Cortesia da Casa) ── */}'),
+  guestMinibarContent.indexOf('{/* ── Kit de Boas-Vindas ── */}'),
   guestMinibarContent.indexOf('{/* Separador nítido para os produtos pagos */}')
 );
 assert(!welcomeKitSlice.includes('onClick={() => handleAddToCart'), 'Welcome kit container contains NO add to cart actions');
@@ -186,8 +187,7 @@ assert(
 
 // Check segregated statement block
 assert(guestMinibarContent.includes('consumedCourtesyItems.length > 0'), 'Statement has segregated condition for consumedCourtesyItems');
-assert(guestMinibarContent.includes('🎁 Kit de Boas-Vindas Consumido (Cortesia da Casa)'), 'Statement has highlighted courtesy block');
-assert(guestMinibarContent.includes('R$ 0,00 (Sem acréscimo no total da estadia)'), 'Statement clearly states zero impact on stay total');
+assert(guestMinibarContent.includes('Disponível apenas na chegada, sem reposição durante a estadia.'), 'Concise arrival-only no-restock note present');
 
 // ---------------------------------------------------------------------
 // TEST 3: anserve-restock.tsx & Repositora Conference
@@ -241,8 +241,8 @@ console.log('\n--- TEST GROUP 5: guest-portal.tsx & pms-calendar.tsx Segregation
 const portalPath = path.join(projectRoot, 'artifacts/limpeza/src/pages/guest-portal.tsx');
 const portalContent = fs.readFileSync(portalPath, 'utf8');
 
-assert(portalContent.includes('Kit de Boas-Vindas Consumido (Cortesia da Casa)'), 'guest-portal.tsx renders segregated Kit de Boas-Vindas block');
-assert(portalContent.includes('Itens de cortesia da hospedagem sem acréscimo no saldo da estadia'), 'guest-portal.tsx confirms zero balance effect');
+assert(portalContent.includes('<span>Kit de Boas-Vindas</span>'), 'guest-portal.tsx renders segregated Kit de Boas-Vindas block');
+assert(!portalContent.includes('Estoque Anserve') && !portalContent.includes('Fornecimento Próprio'), 'guest-portal.tsx leaks no internal supplier details');
 
 const pmsPath = path.join(projectRoot, 'artifacts/limpeza/src/pages/pms-calendar.tsx');
 const pmsContent = fs.readFileSync(pmsPath, 'utf8');
