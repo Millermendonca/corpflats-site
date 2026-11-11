@@ -1,46 +1,46 @@
-# BRIEFING — 2026-10-29T16:50:00Z
+# BRIEFING — 2026-11-10T02:14:00Z
 
 ## Mission
-Investigate Google Contacts synchronization logic, identify root causes of contact merging and name overwriting, and propose an exact fix strategy.
+Detailed technical specification for Feature F1 (Maid Attribution: `resolveMaidCleaningForReservation`) in `maid-automation-service.mjs`.
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: read-only investigation, code tracing, root cause analysis
-- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_1
-- Original parent: 77bac84a-2c7b-483b-8533-2e30a6efd40e
-- Milestone: milestone_1
+- Roles: Read-only investigation, technical specification, concrete code design
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_1\
+- Original parent: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Milestone: M1 (Maid Attribution Engine)
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement
-- Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never run any script that sends WhatsApp messages to guests.
-- Update progress.md with timestamped heartbeats.
+- Read-only investigation — do NOT implement in production source files directly
+- Output self-contained handoff.md with 5 components
+- Twin-server awareness (`artifacts/api-server/` ↔ `scripts/`)
+- Adhere strictly to project conventions in AGENTS.md and PROJECT.md
 
 ## Current Parent
-- Conversation ID: 77bac84a-2c7b-483b-8533-2e30a6efd40e
-- Updated: not yet
+- Conversation ID: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Updated: 2026-11-10T02:14:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/api-server/demo-server.mjs` (lines 9760–11150, 33560–34852)
-  - `scripts/demo-server.mjs` (twin file)
-  - `scripts/check-twin-parity.mjs`
-  - `artifacts/limpeza/src/pages/crm-guests.tsx`
-  - `tests/guest-unlink-contamination.test.mjs`
-  - `data/database.json`
+  - `ORIGINAL_REQUEST.md`, `PROJECT.md`
+  - `artifacts/api-server/maid-automation-service.mjs` (data structures, syncMaidCredits, getMaidPeriodFinances, resolveMaidTemplateTags)
+  - `artifacts/api-server/demo-server.mjs` (db.cleaningRequests schema, db.reservations schema, deduplication rules)
+  - `artifacts/api-server/zapi-service.mjs` (handleInboundNpsScoreOrComment, syncNpsCommentToReviews, npsResponses structure)
+  - `tests/maid-period-finances.test.mjs` (existing test harness and cleaning data conventions)
 - **Key findings**:
-  - Root causes of contact merging: 8-digit phone suffix matching without DDD (lines 34083, 34569–34571), companion phone aggregation into candidate list (lines 33750–33762), accumulation of unlinked phones in `additionalPhones` (lines 9857–9862).
-  - Root causes of name overwriting: update payload blindly updates `names` field via People API without validating that existing Google contact name matches guest (lines 34114–34135, 34739–34751); `mergeGuestRecords` overwrites shorter names with longer names (lines 9833–9838).
-  - Traced exact mechanisms for Roselene (phone `21976403551`) vs Raiza Castro Tavares, and Fabiana (phone `28999136926`) vs João Eduardo Leal Correa.
-  - Formulated fix strategy and restoration methodology.
-- **Unexplored areas**: None. Exploration complete.
+  - `db.cleaningRequests` records checkout and stayover cleanings with `status: "clean"`, `flatNumber`, `requestDate`, `completedAt`, `assignedUserId`, `assignedUsername`.
+  - Manual instructions (`isInstructionOnly`, `isBedAdjustmentOnly`, `source: "manual_instruction"`, `type: "instruction"`) must be strictly excluded.
+  - Same-day turnover is cleanly decoupled: preparation cleanings require `requestDate <= checkinDate`, preventing the checkout cleaning of departing guests from being misattributed to them.
+  - In-stay stayover cleanings (`isStayover: true`, within `checkinDate <= cDate <= checkoutDate`) are prioritized over prior checkin preparation cleanings.
+  - Fallback mechanisms for missing `assignedUserId`: checking `db.maidStatementEntries` and username matching in `db.users`.
+- **Unexplored areas**: None for Feature F1. Ready to synthesize specification and unit test cases into handoff.md.
 
 ## Key Decisions Made
-- Completed read-only investigation.
-- Generated `analysis.md` and `handoff.md`.
+- Formulate complete production-ready implementation of `resolveMaidCleaningForReservation(db, reservation, options)`.
+- Define 8 rigorous unit verification test cases covering all edge cases.
 
 ## Artifact Index
-- DISPATCH.md — Parent dispatch instruction
-- BRIEFING.md — Situational awareness and state
-- progress.md — Heartbeat and activity log
-- analysis.md — Detailed technical analysis report
-- handoff.md — 5-component handoff report
+- DISPATCH.md — Initial dispatch message
+- BRIEFING.md — Persistent context and situational awareness
+- progress.md — Liveness heartbeat
+- handoff.md — 5-component specification and handoff report

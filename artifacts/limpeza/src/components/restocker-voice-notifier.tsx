@@ -15,6 +15,7 @@ export function RestockerVoiceNotifier() {
   const { data: user } = useGetMe();
   const isRestocker = isRestockerProfile(user);
   const syncInProgressRef = useRef(false);
+  const syncStartTimeRef = useRef(0);
 
   useEffect(() => {
     // Escuta primeira interação para desbloquear áudio Web Speech no navegador
@@ -40,9 +41,19 @@ export function RestockerVoiceNotifier() {
     }
 
     const triggerSync = async () => {
-      if (syncInProgressRef.current) return;
+      const now = Date.now();
+      // Destravamento automático se uma requisição anterior tiver ficado presa por mais de 15 segundos
+      if (syncInProgressRef.current) {
+        if (now - syncStartTimeRef.current > 15000) {
+          syncInProgressRef.current = false;
+        } else {
+          return;
+        }
+      }
+
       try {
         syncInProgressRef.current = true;
+        syncStartTimeRef.current = Date.now();
         await syncAndRecoverCheckouts(user);
       } finally {
         syncInProgressRef.current = false;

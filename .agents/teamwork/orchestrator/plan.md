@@ -1,34 +1,39 @@
-# Orchestration Plan — Guest-Flow-Manager Optimization
+# Orchestration Plan — Padronização Visual do Frigobar, Kit de Boas-Vindas & Repasse Anserve
 
 ## Objective
-Execute all modifications proposed for Guest-Flow-Manager across Priorities 1 to 3 in parallel:
-- Prioridade 1: Eliminating white screens and "Carregando módulo..." via smart asset caching, lazy loading with retry for 17 heavy routes, non-blocking auth guards.
-- Prioridade 2: Eliminating UI lag when opening screens via on-demand PMS Calendar modal loading, polling interval reduction (10s-15s) and document.hidden pause.
-- Prioridade 2 & 3: Eliminating backend latency on GET routes (dirty flag / cooldown for reconciliation, getRequestsForDate deduplication, O(1) periodic tasks) and ensuring Node.js/PostgreSQL stability on Render (flushPgState optimization, Base64 offloading, database pruning).
-- Compliance: Strict adherence to git push on commit, npm run build in artifacts/limpeza with dist included, no global/batch test execution, strictly targeted tests only.
+Implementar as diretrizes completas de frigobar:
+1. Padronização e substituição das fotos do cardápio por marcas reais comerciais (fundo branco puro, proporções, ângulo e iluminação uniformes).
+2. Galeria para validação e aprovação prévia das fotos com nomes de produtos e marcas antes da implantação final.
+3. Inclusão dos itens de cortesia (Kit de Boas-Vindas) no cardápio do hóspede (`/frigobar/:flatNumber`): até 2 copos d'água mineral e até 2 amendoins Mendorato em destaque no topo com selo visual de cortesia e R$ 0,00.
+4. Contabilização individual pela repositora no checklist/painel Anserve (0-2 copos e 0-2 amendoins) sem gerar ordem de reposição para a repositora (reposição feita por camareira na virada de hóspede).
+5. Segregação e valor zerado (R$ 0,00) no extrato do hóspede e nos detalhes de reserva do PMS, sem acrescer o total a pagar da reserva.
+6. Distinção de fornecimento e apuração de repasse financeiro à Anserve: amendoins Mendorato = fornecimento próprio do hotel (R$ 0 repasse); copos d'água = estoque Anserve (consumo cortesia * custo unitário para totalizador de repasse devido à Anserve pelo hotel).
 
 ## Step-by-Step Execution Plan
 
-### Phase 1: Survey & Technical Investigation (Parallel Explorers)
-- Dispatch 3 Explorers in parallel:
-  - Explorer 1 (Frontend Bundle & Cache): Investigate `artifacts/limpeza/vite.config.ts`, `artifacts/limpeza/src/App.tsx`, and asset caching in `artifacts/api-server/demo-server.mjs`.
-  - Explorer 2 (Frontend Component Optimization): Investigate `artifacts/limpeza/src/components/floating-new-reservation.tsx` and `pms-calendar.tsx`.
-  - Explorer 3 (Backend Performance & Stability): Investigate `artifacts/api-server/demo-server.mjs` regarding GET routes, reconciliation, periodic tasks, `flushPgState`, Base64 offload, and `pruneDatabase`.
-- Aggregate reports into `PROJECT.md`.
+### Phase 0: Survey & Technical Investigation (3 Explorers in Parallel)
+- **Explorer 1**: R1 & R2 — Frigobar catalog, current product list, real commercial brand mapping, image asset locations/formats, and preview gallery design for prior user approval.
+- **Explorer 2**: R3 & R5 — Guest minibar page (`/frigobar/:flatNumber`), welcome kit section with cortesia badge & R$ 0,00, and reservation statement / PMS consumption detail segregation.
+- **Explorer 3**: R4 & R6 — Anserve restock/conferência panel (`anserve-restock.tsx`, `anserve-dashboard.tsx`), checklist modification without restock triggers, and financial reconciliation for Anserve water cup cost repasse vs Mendorato own supply.
 
-### Phase 2: Implementation (Workers)
-- Worker 1: Execute Priority 1 changes (Asset caching in server/vite, lazyWithRetry for 17 pages in App.tsx, non-blocking auth guards).
-- Worker 2: Execute Priority 2 frontend changes (On-demand mount of PmsCalendar in floating-new-reservation, polling interval 10s-15s & hidden tab pause in pms-calendar.tsx).
-- Worker 3: Execute Priority 2 & 3 backend changes in demo-server.mjs (Cooldown/dirty flag for reconciliation, deduplicate getRequestsForDate, O(1) task status/regularization, flushPgState event loop yield/chunking, Base64 offload & pruning enhancements).
+### Phase 1: Survey Synthesis into PROJECT.md & Decomposition
+- Synthesize explorer findings into `PROJECT.md`.
+- Define Feature Inventory (F1 to FN) and decompose into clean milestones.
+- Specify Interface Contracts and Code Layout.
 
-### Phase 3: Review, Challenge & Forensic Audit
-- Dispatch Reviewers to inspect code changes across frontend and backend.
-- Dispatch Challengers to verify build, component rendering logic, non-blocking flows, and backend logic.
-- Dispatch Forensic Auditor to verify genuine implementation and compliance with project rules.
+### Phase 2: Milestone Implementation (Workers)
+- Worker(s) implement changes following twin file rule (`artifacts/api-server/` -> `scripts/`) and frontend guidelines.
+- Build frontend (`npm run build` in `artifacts/limpeza`).
+- Execute strictly targeted tests if applicable.
 
-### Phase 4: Build Verification, Commit & Push
-- Require Worker to run `npm run build` in `artifacts/limpeza`.
-- Check that `dist/` is generated and error-free.
-- Verify punctual test execution rules (no batch tests).
-- Execute git commit and git push to remote origin.
-- Present final report to user/parent.
+### Phase 3: Gate Verification (Multi-Agent Verification)
+- 2 Reviewers independently assess code quality, contracts, and requirements.
+- 2 Challengers empirically test edge cases, financial calculations, and UI presentation.
+- 1 Forensic Auditor verifies zero cheating, authentic logic, and twin parity.
+
+### Phase 4: Final Integration, Build & Git Push
+- Worker runs final verification build.
+- Git commit and `git push` to remote origin.
+
+### Phase 5: Sentinel Final Reporting
+- Present complete results to parent Sentinel via `send_message`.

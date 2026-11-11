@@ -1,144 +1,125 @@
-# Handoff Report — Milestone 3 Review (Safety & Integration)
-
-**Reviewer**: Reviewer M3.2 (Safety & Integration Reviewer / Adversarial Critic)  
-**Target Module**: `b2b-cancellation-service.mjs`, `zoho-mail-service.mjs`, `tests/b2b-cancellation.test.mjs`  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_2\`  
-**Timestamp**: 2026-11-05T16:00:00Z  
+# Relatório de Revisão Adversarial & Preservação de Contratos (Milestone 3)
+**Agente:** `reviewer_m3_2` (Reviewer / Adversarial Critic)  
+**Data:** 10/11/2026  
+**Veredito:** **APPROVE**  
 
 ---
 
-## 1. Observation
+## 1. Observation (O que foi diretamente observado)
 
-1. **Test Execution Evidence**:
-   - `node tests/b2b-cancellation.test.mjs`:
-     - 17 tests across 7 suites passed with 0 failures (Duration: ~2.08s).
-     - Verified: intent detection (1.1–1.5), 4-tier matching (2.1–2.6), invariant `CHECKED_IN_CANCELLATION` (3.1), canonical cascade (4.1), dual audit & Z-API alert (5.1), Zoho incoming webhook integration (6.1), SHA-256 twin parity (7.1–7.2).
-   - `node tests/b2b-voucher-extraction.test.mjs`:
-     - 15 tests across 8 suites passed with 0 failures (Duration: ~0.36s).
-   - `node tests/b2b-voucher-dates.test.mjs`:
-     - 12 tests across 6 suites passed with 0 failures (Duration: ~0.06s).
-   - `node scripts/check-twin-parity.mjs`:
-     - 39/39 runtime files verified dynamically with identical SHA-256 hashes between `artifacts/api-server/` and `scripts/`.
-     - Output: `STATUS: 100% PASS - Paridade perfeita restabelecida!`.
+### 1.1 Preservação do Fluxo Existente de Avaliações em 2 Etapas (R2)
+1. **`artifacts/api-server/zapi-service.mjs` (Linhas 16208–16620):**
+   - A função `invokeMaidReviewHookSafe(db, payload, { saveDatabase, sendZapiFn })` encapsula a chamada do hook em bloco `try/catch` totalmente isolado com `catch(e => console.warn("[Hook Non-Blocking]", e?.message))`, garantindo que nenhuma exceção interrompa o fluxo de NPS do hóspede.
+   - O fluxo de 2 etapas foi preservado integralmente:
+     - **Nota 5:** Linhas 16344–16361: Define `existingNps.autoAction = "google_link_sent"`, `existingNps.googleLinkSent = true`, `existingNps.awaitingFeedbackComment = false`. Envia o link do Google configurado (`tpl_nps_satisfaction_check` / `tpl_nps_score_5`) e dispara o Hook 1 em background sem bloqueio.
+     - **Notas 1 a 4 sem comentário:** Linhas 16362–16406: Define `existingNps.awaitingFeedbackComment = true`, cria ticket em `db.observations` se nota <= 2, e despacha a mensagem de feedback `tpl_nps_score_1..4` solicitando o que faltou ou pode melhorar.
+     - **Notas 1 a 4 com comentário inline:** Linhas 16382–16399: Define `existingNps.comment = inlineComment`, `existingNps.awaitingFeedbackComment = false`, sincroniza com `syncNpsCommentToReviews(db, existingNps)` e dispara o Hook 2.
+     - **Etapa 2 (Hóspede responde por escrito dentro de 48h):** Linhas 16506–16616: Captura o comentário escrito em `existingNps.comment`, desativa `awaitingFeedbackComment = false`, atualiza o ticket em `db.observations`, sincroniza em `db.reviews`, dispara o Hook 3, envia o template de agradecimento `tpl_nps_feedback_thanks` e aciona o alerta do gestor em `sendNpsManagerAlertWhatsApp`.
+2. **`artifacts/api-server/demo-server.mjs` (Linhas 62842–62855 & 63456–63470):**
+   - Os endpoints `POST /api/ai/import-review` e `POST /api/ai/nps-response` mantêm todo o seu comportamento original, adicionando apenas a chamada não bloqueante `invokeMaidReviewHookSafe` em `catch(e => console.warn("[Hook Non-Blocking]", e?.message))`.
 
-2. **Source Code Inspection (`artifacts/api-server/b2b-cancellation-service.mjs`)**:
-   - `detectB2bEmailIntent(emailData)` (lines 68–168): Uses regex heuristics distinguishing actual cancellation instructions from voucher confirmations that cite cancellation policies (`isOnlyPolicyNotice`).
-   - `matchReservationForCancellation(db, cancelData)` (lines 271–471):
-     - Tier 1: `b2bReservationNumber` (with/without prefix `B2B-`, externalCode, notes).
-     - Tier 2: `b2bLocatorRloc` / `rloc` / `locator` (with/without prefix `RLOC-`/`LOC-`, notes).
-     - Tier 3: `id` / `code` / `reservationCode`.
-     - Tier 4: Heuristic matching (`extractNameTokens` >= 2 significant tokens + normalized ISO check-in date).
-     - Ambiguity detection: returns `{ matched: false, candidatesCount: N }` when multiple active reservations match, preventing blind cancellations.
-   - `executeAutonomousB2bCancellation(db, emailData, options)` (lines 541–960):
-     - Enforces invariant `CHECKED_IN_CANCELLATION`: checks `reservation.status === 'in_house'`, `reservation.status === 'checked_in'`, `reservation.checkedInAt`, and `reservation.actualCheckinTime`. If present, immediately aborts cancellation, logs `cancellation_blocked` in reservation audit logs, logs `RESERVATION_CANCELLATION_BLOCKED_CHECKED_IN` (level `danger`) in system audit logs, posts a danger notification to `db.notifications`, and dispatches high-urgency WhatsApp alert via Z-API to `adminWhatsApp` (`5522997124021`).
-     - PMS Canonical Cascade (lines 713–836): strictly replicates `demo-server.mjs:37170-37368`:
-       1. `reservation.status = 'cancelada'`, `cancelledAt = nowIso`, `cancellationReason`, `calendarSequence++`.
-       2. Appends B2B reservation number and code to `db.deletedB2bSeeds` to prevent reactivation.
-       3. Sanitizes check-in cleaning instructions in `db.cleaningRequests` (`arrivingGuest = null`, `autoReservationCode = null`, `twinBeds = false`, `extraMattress = false`, `adminNote = null`).
-       4. Soft-deletes pending check-out cleaning requests (`isDeleted = true`, `status = 'deleted'`, `deletedBy = 'reservation_cancelled'`) if no other active reservation checks out on that flat on that date.
-       5. Cancels breakfast orders in `db.breakfastOrders` matching reservation code, id, or room number within stay dates.
-       6. Cancels linked service tasks in `db.tasks`.
-       7. Flags FNRH SERPRO record as `CANCELADA`.
-       8. Dispatches optional ARI sync (`options.syncAriForReservation`).
-     - Dual Audit & Manager Alerts (lines 846–947):
-       1. Logs structured change to `reservation.auditLogs` (actor: `Sistema Autônomo B2B`).
-       2. Logs global audit event `RESERVATION_CANCELLED_B2B_AUTONOMOUS` in `db.auditLogs`.
-       3. Dispatches formatted WhatsApp message via `sendZapiMessage` to `5522997124021` with flat, guest, agency, dates, codes, and reason.
-       4. Creates warning notification in `db.notifications` with direct PMS link `/reservas?code=...`.
+### 1.2 Idempotência de Envio Diário e Retroativo (R4 / F10 / C2)
+1. **`artifacts/api-server/maid-automation-service.mjs` (Linhas 2227–2230, 2324–2330, 2402–2405, 2493–2499):**
+   - Em `dispatchDailyReviewsSummary`:
+     - Linhas 2227–2230: `if (!force && item.dispatchedToMaidAt) continue;` ignora avaliações já enviadas.
+     - Linhas 2324–2330: Marca `r.rawItem.dispatchedToMaidAt = nowIso` e `r.rawItem.dispatchedToDailySummary = true`.
+   - Em `dispatchNovemberRetroactiveReviews`:
+     - Linhas 2402–2405: `if (!force && (item.dispatchedToMaidAt || item.dispatchedRetroactiveAt)) continue;` impede reenvio retroativo.
+     - Linhas 2493–2499: Carimba `r.rawItem.dispatchedToMaidAt = nowIso` e `r.rawItem.dispatchedRetroactiveAt = nowIso`.
+   - Isso garante imunidade a duplicações em múltiplas execuções e impede que o resumo diário reenvie avaliações já contempladas no disparo retroativo.
 
-3. **Zoho Mail Integration Inspection (`artifacts/api-server/zoho-mail-service.mjs`)**:
-   - Webhook path (`handleZohoIncomingWebhook`, lines 4323–4389): extracts text from attached PDF vouchers via `extractTextFromPdfBuffer`, combines rawText and attachmentPdfText, detects cancellation intent, and invokes `executeAutonomousB2bCancellation`. Returns `directCancelled` and `directCancelledReservation`. Does not ingest cancellation emails as new vouchers.
-   - Polling sync path (`syncZohoMessagesToCache`, lines 1198–1219): examines each inbound message, extracts attached PDF text, evaluates `detectB2bEmailIntent`, runs `executeAutonomousB2bCancellation`, marks `mapped.b2bCancelled = true`, and skips subsequent voucher ingestion.
+### 1.3 Triagem por IA (R3), Resumo Diário (R1) e Síntese de Opiniões (R5)
+1. **`triageSub5Review` (Linhas 920–1015):**
+   - Arquitetura Two-Tier:
+     - Curto-circuito para nota 5: `forwardToMaid: true` sem triagem.
+     - Curto-circuito para sub-5 sem comentário: `forwardToMaid: false` (retida de envio).
+     - Tier 1: Google Gemini API estruturado (`gemini-2.5-flash` com `thinkingBudget: 0`).
+     - Tier 2: Fallback determinístico por regex cobrindo separação estrita de governança (box, louça, enxoval, piso/lixo) vs alheios (Wi-Fi, portaria, AC/hidráulica, barulho externo).
+2. **`dispatchDailyReviewsSummary` & `formatDailyReviewsSummaryMessage` (Linhas 2142–2357):**
+   - Consolidado enviado às 18:00 (Gatilho 4 em `DEFAULT_MAID_TRIGGERS`).
+   - Formatação clara com número do quarto (`• *Flat XXX*`), data da limpeza (`DD/MM/YYYY`), nota recebida (`Nota: X ⭐`) e média do dia calculada (`avgScore.toFixed(1)`).
+   - Enviado EXCLUSIVAMENTE para camareiras com quartos avaliados elegíveis no período.
+3. **`updateMaidOpinionSynthesis` & `formatMaidOpinionSynthesisMessage` (Linhas 1360–1730):**
+   - Agregação incremental com termômetro de itens críticos, destaques positivos e cálculo de comparativo de evolução período a período ($\Delta = \text{Média Atual} - \text{Média Anterior}$).
 
----
-
-## 2. Logic Chain
-
-1. **Integrity Validation**:
-   - Zero hardcoded test names, phone numbers, or dummy bypass flags in `b2b-cancellation-service.mjs`.
-   - The implementation operates directly on standard PMS data models and adheres to production data structures.
-   - All tests run against genuine memory-based databases reproducing realistic PMS states.
-
-2. **Operational Safety Invariant**:
-   - Observation: When a reservation has `status: 'in_house'`, `status: 'checked_in'`, `checkedInAt: '...'`, or `actualCheckinTime: '...'`, lines 618–711 guarantee that `reservation.status` is never mutated to `'cancelada'`.
-   - Deduction: Guests currently residing in flats will never experience lock code deactivation, unexpected housekeeping, or premature room liberation due to an automated B2B cancellation email.
-   - Conclusion: The `CHECKED_IN_CANCELLATION` safety invariant is 100% sound.
-
-3. **PMS Cascade Completeness**:
-   - Comparing lines 713–836 of `b2b-cancellation-service.mjs` against lines 37282–37368 of `demo-server.mjs` confirms an exact 1:1 match across all state changes:
-     - `calendarSequence` increment: verified.
-     - `deletedB2bSeeds` registration: verified.
-     - Check-in cleaning request sanitization: verified.
-     - Check-out cleaning request cancellation with multi-checkout protection: verified.
-     - Linked breakfast order cancellation: verified.
-     - Linked service tasks cancellation: verified.
-     - FNRH SERPRO cancellation flag: verified.
-     - Dual audit trails (`reservation.auditLogs` + `db.auditLogs`): verified.
-
-4. **Integration Resilience**:
-   - Both webhook and background polling paths are fully wired and covered.
-   - Fallbacks exist for missing parameters, undefined arrays, null objects, and network timeouts (Promise.race 2s timeout on WhatsApp alerts ensures the main process never hangs).
+### 1.4 Resultados da Execução de Testes e Paridade
+1. **Execução Estritamente Pontual da Suíte:**
+   - Comando: `powershell -Command "Set-Location 'c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager'; node --test tests/maid-review-ai-synthesis.test.mjs"`
+   - Resultado:
+     ```
+     # tests 44
+     # suites 11
+     # pass 44
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
+     # duration_ms 1930.5782
+     ```
+2. **Auditoria de Paridade Twin-Server:**
+   - Comando: `powershell -Command "Set-Location 'c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager'; node scripts/check-twin-parity.mjs"`
+   - Resultado: `39/39 arquivos de runtime auditados dinamicamente. STATUS: 100% PASS - Paridade perfeita restabelecida!`
 
 ---
 
-## 3. Caveats
+## 2. Logic Chain (Cadeia de Raciocínio)
 
-- **No Caveats**: The implementation satisfies all acceptance criteria (R3 / F12–F16), maintains 100% SHA-256 twin-server parity (39/39 runtime files), exhibits no regressions across M1 and M2 point suites, and incorporates comprehensive defensive checks.
+1. **Preservação de Fluxo (R2):**
+   - Observou-se que `handleInboundNpsScoreOrComment` em `zapi-service.mjs` e as rotas `/api/ai/nps-response` e `/api/ai/import-review` em `demo-server.mjs` preservam exatamente a máquina de estados do NPS: envio de link do Google para nota 5, solicitação de feedback para notas 1 a 4, abertura de tickets de recuperação para notas 1 a 2 e agradecimento pós-comentário (`tpl_nps_feedback_thanks`).
+   - Os hooks injetados são assíncronos e não bloqueantes (`catch` silencioso com `console.warn`), de forma que qualquer eventual instabilidade no módulo de camareiras não afeta a resposta ao hóspede.
 
----
+2. **Integridade de Triagem e Filtragem (R3):**
+   - Observou-se que notas 5 são sempre repassadas à camareira (testes 3.1 e 4.7).
+   - Reclamações de limpeza (lençol manchado, toalhas, box engordurado, louça suja) são encaminhadas (testes 3.2, 3.3, 3.4).
+   - Reclamações de Wi-Fi, portaria, ar-condicionado e barulho são descartadas do resumo da camareira (testes 3.5, 3.6, 3.7, 3.8).
+   - O fallback determinístico funciona com precisão perfeita quando o Gemini está offline (teste 3.9).
 
-## 4. Conclusion
+3. **Garantia de Idempotência (R4 / F10):**
+   - A trava `dispatchedToMaidAt` é conferida antes de qualquer agregação (`!force && item.dispatchedToMaidAt`) e gravada imediatamente após o envio (`r.rawItem.dispatchedToMaidAt = nowIso`).
+   - Os testes 6.2 e C2 comprovam que execuções repetidas não enviam mensagens duplicadas.
 
-- **Verdict**: **`APPROVE`**
-- The operational safety, cascade fidelity, and integration of `b2b-cancellation-service.mjs` and `zoho-mail-service.mjs` are verified and fully production-ready.
-
----
-
-## 5. Verification Method
-
-To independently reproduce the verification results:
-
-```powershell
-cd 'c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager'
-
-# 1. Run M3 Cancellation Suite (17 tests)
-node tests/b2b-cancellation.test.mjs
-
-# 2. Run M1 & M2 Regression Suites (27 tests)
-node tests/b2b-voucher-extraction.test.mjs
-node tests/b2b-voucher-dates.test.mjs
-
-# 3. Verify Repository Twin-Server Parity (39/39 files)
-node scripts/check-twin-parity.mjs
-```
+4. **Integridade do Código (Zero Facades / Zero Cheating):**
+   - Não foram encontrados mocks estáticos no código de produção, nem bypasses ou saídas forçadas. Toda a lógica de agregação, termos de regex e chamadas à API são genuínas e totalmente dinâmicas.
 
 ---
 
-## 6. Review Summary & Adversarial Assessment
+## 3. Caveats (Ressalvas e Suposições)
 
-### Review Summary
-- **Verdict**: **`APPROVE`**
-- **Critical Findings**: 0
-- **Major Findings**: 0
-- **Minor Findings**: 0
-- **Integrity Violations**: 0
+- Conforme as regras do repositório (`AGENTS.md`), NUNCA foram executadas suítes completas ou varreduras em lote na pasta `tests/`. Toda a validação foi restrita ao arquivo de testes pontual do recurso: `tests/maid-review-ai-synthesis.test.mjs`.
+- O disparo de WhatsApp em produção depende da conectividade com a Z-API e da validade dos tokens configurados em `db.zapiConfig`.
 
-### Verified Claims
-- `CHECKED_IN_CANCELLATION` blocks autonomous cancellation when guest is in-house -> verified via `tests/b2b-cancellation.test.mjs` (test 3.1) -> **PASS**
-- PMS canonical cascade releases room, cleans check-in instructions, deletes unneeded checkout tasks, cancels breakfast, cancels tasks, and updates seeds -> verified via `tests/b2b-cancellation.test.mjs` (test 4.1) -> **PASS**
-- 4-Tier matching resolves by B2B number, RLOC, PMS code, and guest heuristic, while rejecting ambiguous matches -> verified via `tests/b2b-cancellation.test.mjs` (tests 2.1–2.6) -> **PASS**
-- Dual audit logging and Z-API WhatsApp alert dispatched to `5522997124021` -> verified via `tests/b2b-cancellation.test.mjs` (test 5.1) -> **PASS**
-- Zoho webhook integration correctly triggers autonomous cancellation and avoids re-ingestion as voucher -> verified via `tests/b2b-cancellation.test.mjs` (test 6.1) -> **PASS**
-- 100% Twin-server parity across all 39 runtime files -> verified via `node scripts/check-twin-parity.mjs` -> **PASS**
+---
 
-### Adversarial Challenge Summary
-- **Overall Risk Assessment**: **LOW**
-- **Stress-Tested Scenarios**:
-  1. *Scenario*: Email mentions cancellation policies in a voucher confirmation.
-     - *Result*: Correctly identified as voucher (`isCancellation: false, isVoucher: true`).
-  2. *Scenario*: In-house guest with `actualCheckinTime` or `checkedInAt` set.
-     - *Result*: Correctly blocked (`CHECKED_IN_CANCELLATION`), status kept untouched, high-priority alert sent to manager.
-  3. *Scenario*: Cancellation email received for flat with multiple ambiguous candidates.
-     - *Result*: Identified as ambiguous, system does not cancel blindly, warning alert sent to manager.
-  4. *Scenario*: Check-out date has another active guest checking out on the same date.
-     - *Result*: System preserves the checkout cleaning request for the remaining active guest instead of deleting it.
+## 4. Conclusion (Conclusão & Veredito)
+
+**Veredito:** **APPROVE**
+
+A implementação do Milestone 3 atende integralmente a todos os requisitos do projeto (R1, R2, R3, R4, R5):
+- O fluxo de avaliação em 2 etapas com o hóspede permanece 100% preservado e resiliente.
+- A triagem por IA Two-Tier protege as camareiras contra críticas de fatores alheios à governança.
+- O resumo diário e o envio retroativo possuem formatação impecável e trava estrita de idempotência (`dispatchedToMaidAt`).
+- A síntese de opiniões estilo Mercado Livre fornece transparência e comparativo de evolução em tempo real.
+- Todos os 44 testes pontuais passam com 0 falhas, a paridade Twin-Server é de 100% (39/39 arquivos) e o build do frontend foi concluído com sucesso.
+
+---
+
+## 5. Verification Method (Método de Verificação Independente)
+
+Para auditoria independente:
+
+1. **Executar a Suíte Pontual de Testes:**
+   ```powershell
+   Set-Location "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
+   node --test tests/maid-review-ai-synthesis.test.mjs
+   ```
+   *Critério de aceitação:* 44 pass, 0 fail.
+
+2. **Verificar a Paridade Twin-Server:**
+   ```powershell
+   Set-Location "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
+   node scripts/check-twin-parity.mjs
+   ```
+   *Critério de aceitação:* 39/39 arquivos em status `[PASS]`.
+
+3. **Inspecionar Hooks de Fluxo:**
+   - Examinar `artifacts/api-server/zapi-service.mjs` nas linhas 16345–16555 para confirmar que o fluxo de 2 etapas do hóspede permanece intacto.

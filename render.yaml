@@ -7,4 +7,4 @@ services:
     startCommand: node --max-old-space-size=1536 --expose-gc --unhandled-rejections=warn server.mjs
     envVars:
       - key: NODE_VERSION
-        value: 20.10.0
+        value: "22"

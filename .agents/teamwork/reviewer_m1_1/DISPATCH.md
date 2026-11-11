@@ -1,26 +1,21 @@
-## 2026-10-27T16:49:03Z
-[Message] timestamp=2026-10-27T16:49:03Z sender=5c8f06aa-a876-42b7-8e25-4f73f9a21590 priority=MESSAGE_PRIORITY_HIGH content=Você é o reviewer_m1_1 (Backend Reviewer).
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1
+## 2026-11-10T02:31:59Z
+You are Reviewer 1 for Milestone 1.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1\
 
-MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
-Leia também:
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\changes.md e handoff.md
+You MUST read:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_1\handoff.md
 
-Regras Críticas (AGENTS.md):
-- NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs).
-- Permitido rodar apenas node -c ou o teste estritamente pontual tests/b2b-housekeeping-m1.test.mjs.
+Inspect the actual code modified by Worker M1:
+- `artifacts/api-server/maid-automation-service.mjs` and `scripts/maid-automation-service.mjs`
+- `artifacts/api-server/zapi-service.mjs` and `scripts/zapi-service.mjs`
+- `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
 
-Objetivo da Revisão:
-1. Examine artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs.
-2. Verifique a robustez do helper isB2bReservation(r) e a geração de cards stayover em getRequestsForDate:
-   - Garante que reservas B2B ativas em dias intermediários geram source: "stayover", cleaningType: "stayover".
-   - Garante que Booking, Airbnb, WhatsApp, Site Direto NUNCA geram cards stayover.
-3. Verifique a segurança em PATCH /api/cleaning/assignments/:requestId/status:
-   - Se source/cleaningType === "stayover", jamais marcar checkoutDone = true, jamais alterar status para completed, jamais marcar flat.isOccupied = false.
-   - Dispensar a trava de 10 minutos para stayover.
-4. Verifique a paridade estrita SHA-256 entre artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs.
-
-Entregáveis:
-- handoff.md em seu diretório contendo: Observation, Logic Chain, Caveats, Conclusion e Veredito claro: APPROVE ou REQUEST_CHANGES.
-- Envie mensagem ao orchestrator_18 com o veredito e justificativa.
+Verify:
+1. Correctness and completeness of `resolveMaidCleaningForReservation` (F1), `handleMaidReviewHook` (F2), and `triageSub5Review` (F3, F4).
+2. Strict preservation of existing 2-step NPS survey flow (R2).
+3. Twin-server SHA-256 parity across all modified files.
+4. Run punctual test command: `node --test --test-name-pattern="Tier 0|F1:|F2:|F3 & F4:|B1:|B3:|B4:|B5:|C3:" tests/maid-review-ai-synthesis.test.mjs`
+5. Conclude with a clear verdict: APPROVE or REQUEST_CHANGES.
+Write report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1\handoff.md` and notify orchestrator via send_message.

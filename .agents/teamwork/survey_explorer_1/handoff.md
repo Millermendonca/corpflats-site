@@ -1,123 +1,117 @@
-# Handoff Report — Explorer 1 (Frontend UI Explorer)
+# Handoff Report — Minibar Visual Standardization & Preview Gallery (R1 & R2)
 
-**Data:** 04/11/2026  
-**Tarefa:** Investigação e Análise Técnica do Requisito R1 (Frontend UI na `⚡ Régua Automática`)  
-**Autor:** Explorer 1 (Frontend UI Explorer)  
-**Destinatário:** Orchestrator / Implementador (Parent Agent ID: `967b1f8a-534e-4526-94ad-683f5ef4e50f`)  
-**Documento Detalhado:** `artifacts/limpeza/src/pages/whatsapp-automation.tsx` e `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\analysis.md`
+**Investigator:** `survey_explorer_1` (teamwork_explorer)  
+**Parent / Caller:** `92ba65f0-be83-406c-8289-2ffbe5293de2`  
+**Working Directory:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\`  
+**Date:** 2026-11-11T10:42:00Z  
+**Type:** Hard Handoff (Investigation & Architecture Complete)  
 
 ---
 
-## 1. Observation (Observações Diretas)
+## 1. Observation
 
-1. **Localização da Aba na Interface:**
-   - Em `artifacts/limpeza/src/pages/whatsapp-automation.tsx`:
-     - O gatilho de aba correspondente à Régua Automática está nas linhas 2618–2621:
-       ```tsx
-       <TabsTrigger value="rules" className="rounded-lg text-xs font-bold gap-1.5">
-         <Zap className="w-3.5 h-3.5 text-amber-500" />
-         ⚡ Régua Automática
-       </TabsTrigger>
-       ```
-     - O container de conteúdo correspondente está nas linhas 4336–4601:
-       ```tsx
-       <TabsContent value="rules" className="space-y-4">
-       ```
-     - A sub-aba auxiliar de edição de templates (`TabsContent value="editor"`) está nas linhas 4606–5652.
+1. **Current Image Assets in Filesystem:**
+   - Command: `Get-ChildItem -Path "artifacts\limpeza\public\images\frigobar"`
+   - Output: Exactly 18 PNG files found:
+     `achocolatado.png`, `agua_mineral_copo.png`, `agua_mineral_garrafa.png`, `barra_cereal.png`, `batata.png`, `biscoito_salgado.png`, `castanha_caju.png`, `cerveja_long_neck.png`, `chiclete.png`, `chocolate.png`, `chocolate_kinder_bueno.png`, `chocolate_kitkat_snickers.png`, `cookies.png`, `energetico.png`, `refrigerante.png`, `smirnoff_ice.png`, `suco_fruta.png`, `suco_uva_integral.png`.
+   - Node dimension inspection confirmed: All 18 files are exactly `1024x1024` resolution, sized between 549.8 KB and 1399.9 KB.
 
-2. **Governança de Canais Independentes Z-API:**
-   - Em `whatsapp-automation.tsx` (linhas 2553–2561), a Central de Governança mapeia 7 canais independentes:
-     ```tsx
-     { id: "guest_schedule", short: "📅 Régua Hóspedes" },
-     { id: "ai_agent", short: "🤖 IA Sofia & Fiscal" },
-     { id: "maids", short: "🧹 Camareiras" },
-     { id: "service_providers", short: "🔧 Prestadores (OS)" },
-     { id: "reception", short: "🏢 Recepção" },
-     { id: "stay_operations", short: "☕ Café & Achados" },
-     { id: "transactional_chat", short: "🔐 Chat & OTP" }
+2. **Visual Inspection of Current Images (`view_file` tool):**
+   - `refrigerante.png`: Fictional red can with generic text *"REFRIGERANTE REFROSCANTE SODA 350ml e"* instead of real Coca-Cola.
+   - `batata.png`: Fictional cylinder *"BATATA ORIGINAL POTATO CHIPS Crispy & Delicious Classic Salted"* instead of Pringles.
+   - `achocolatado.png`: Fictional carton *"DELÍCIA CHOCO Achocolatado 250ml"* instead of Toddynho / Nescau.
+   - `cerveja_long_neck.png`: Generic brown bottle *"CERVEJA LONG NECK Brewery Premium Quality 330ml"* instead of Heineken Long Neck 330ml.
+   - `energetico.png`: Generic can *"ENERGÉTICO ENERGY DRINK ORIGINAL FLAVOR 250ml"* instead of Red Bull.
+   - `chocolate_kinder_bueno.png`: Shows an unpacked broken chocolate wafer stick lying on a table, completely omitting the iconic branded Ferrero wrapper!
+   - `castanha_caju.png`: Generic fictitious pouch *"NATURÉL CASTANHA DE CAJU"*.
+   - `cookies.png`: Generic kraft pouch *"GRANDMA'S OWN CHOCOLATE CHIP COOKIES"*.
+   - `suco_uva_integral.png`: Fictitious label *"VINHEDO PURO 1L"* (mismatch with the 300ml catalog description).
+
+3. **Backend Catalog Definition (`artifacts/api-server/demo-server.mjs`):**
+   - `getDefaultMinibarProducts()` (lines 1495–1768): Returns array of 18 products with attributes `id`, `name`, `category`, `price`, `cost`, `defaultQuantity`, `imageUrl`, `description`, `active`, `isCourtesy`, `sortOrder`, `createdAt`, `updatedAt`.
+   - `getDefaultMinibarStock()` (lines 1770–1794): Defines `globalTemplate` mapping each product ID to `defaultQuantity` and `quantity`.
+   - Hardcoded Integrity Guards (lines 11169 & 11434):
+     ```javascript
+     if (!Array.isArray(db.minibarProducts) || db.minibarProducts.length === 0 || db.minibarProducts.length !== 18 || !db.minibarProducts.some(p => p.id === "prod_achocolatado")) db.minibarProducts = getDefaultMinibarProducts();
+     if (!db.minibarDefaultStock || !Array.isArray(db.minibarDefaultStock.globalTemplate) || db.minibarDefaultStock.globalTemplate.length !== 18 || !db.minibarDefaultStock.globalTemplate.some(t => t.productId === "prod_achocolatado")) db.minibarDefaultStock = getDefaultMinibarStock();
      ```
-   - No backend `artifacts/api-server/zapi-service.mjs` (linhas 1899–1930), o Canal #1 oficial é definido em `DEFAULT_ZAPI_CHANNELS` como `guest_schedule`, possuindo propriedades `enabled`, `testMode`, `redirectToWhitelistOnTest`, `whitelist`, `blacklist` e lista de comunicações permitidas.
-   - Em `zapi-service.mjs` (linha 2137), qualquer evento não específico de outra categoria é roteado deterministicamente para `resolvedChannelId = "guest_schedule"`.
+   - API endpoints:
+     - `GET /api/minibar/products` (lines 74324–74353)
+     - `POST /api/minibar/products` (lines 74355–74393)
+     - `PATCH /api/minibar/products/:id` (lines 74395–74420)
+     - `DELETE /api/minibar/products/:id` (lines 74422–74442)
+     - `GET /api/minibar/default-stock` (lines 74444–74450)
 
-3. **Carregamento e Mapeamento de Tags Dinâmicas:**
-   - Em `whatsapp-automation.tsx` (linhas 2164–2250), a função `renderPreviewText(text: string)` interpola variáveis de reserva como `{{nome_hospede}}`, `{{quarto}}`, `{{data_checkout}}`, `{{valor_total}}`.
-   - A lista visual de tags clicáveis para o editor de templates está definida no array `TAG_GROUPS` (linhas 230–315) e renderizada na linha 5006.
+4. **Frontend Admin & Guest Interface (`artifacts/limpeza/src/pages/`):**
+   - `minibar-admin.tsx`:
+     - Line 1086: Tabs container with 4 triggers (`insights`, `catalogo`, `equipe`, `extrato`).
+     - Line 1728: `<TabsContent value="catalogo">`.
+     - Lines 1730–1756: Sub-view buttons (`catalogSubView === "produtos"` e `catalogSubView === "gabarito"`).
+     - Lines 1813–1819: Renders product image `<img src={p.imageUrl} alt={p.name} className="w-12 h-12 rounded-2xl object-cover shrink-0" />`.
+   - `guest-minibar.tsx`:
+     - Lines 2160–2174: Product image container `<div className="w-12 h-12 rounded-2xl border flex items-center justify-center shrink-0 overflow-hidden shadow-inner bg-white border-slate-700/50">` containing `<img src={prod.imageUrl} alt={prod.name} className="w-full h-full object-contain p-0.5" />`.
+     - Uses `bg-white`, which creates an unsightly contrast if product images do not have pure white `#FFFFFF` backgrounds.
 
-4. **Comportamento Atual da Lista de Templates:**
-   - Em `whatsapp-automation.tsx`, a lista de templates é carregada via `GET /api/whatsapp/templates` (linha 1567) e atualizada via `POST /api/whatsapp/templates` (linhas 1856, 1919, 2025).
-   - O backend armazena a lista em `db.whatsappTemplates` com inicialização a partir de `DEFAULT_WHATSAPP_TEMPLATES` (`zapi-service.mjs`, linha 359).
-
----
-
-## 2. Logic Chain (Cadeia Lógica de Raciocínio)
-
-1. **Acesso e Experiência do Operador (R1):**
-   - Como observado em (1), a aba `⚡ Régua Automática` (`TabsContent value="rules"`) é o ponto central onde o operador gerencia os disparos do ciclo de vida do hóspede. Portanto, a implementação do painel de controle da "Oferta de Domingo Sem Pressa" deve residir nesta aba.
-   - Inserir um card executivo dedicado no topo de `TabsContent value="rules"` (antes do grid geral de templates) dá visibilidade máxima à automação e atende a todos os critérios do Requisito R1:
-     - Master Switch: ativa/desativa a automação (`sundayUpsellEnabled`);
-     - Campo de valor: configura `sundayUpsellPrice` (R$ 90,00);
-     - Painel demonstrativo: calcula dinamicamente a diária de referência (`valor_normal`) e a economia (`economia`);
-     - Governança de canal: exibe a vinculação estrita ao Canal #1 (`guest_schedule`);
-     - Botão de disparo manual/teste: executa teste imediato para reservas elegíveis em sandbox.
-
-2. **Roteamento pelo Canal #1 (`guest_schedule`):**
-   - Como observado em (2), `guest_schedule` é o Canal #1 independente de disparos para hóspedes.
-   - Ao vincular a automação ao `guest_schedule`, o disparo respeita automaticamente o isolamento de modo de teste e whitelist do canal, garantindo que testes não vazem para hóspedes reais fora da lista autorizada, sem interferir na Sofia (`ai_agent`) ou em outros canais.
-
-3. **Cálculo da Diária Normal (`valor_normal`) e Pré-Visualização em 2 Balões:**
-   - Conforme observado em (3), a função `renderPreviewText` já simula dados reais ou simulados de reserva.
-   - Integrando o cálculo da diária real (`targetRes.dailyRate` ou `targetRes.totalAmount / numNights`) e a subtração do `sundayUpsellPrice`, o operador visualiza em tempo real tanto no card quanto no editor os 2 balões de envio exigidos no Requisito R5:
-     - Balão 1: Mensagem persuasiva com `{{valor_normal}}`, `{{valor_promocional}}`, `{{economia}}` e prazo de 30min;
-     - Balão 2: Chave PIX Copia e Cola isolada para cópia com 1 toque.
-
-4. **Endpoints de Suporte e Desacoplamento:**
-   - Para que a interface opere de forma reativa e consistente:
-     - `GET /api/whatsapp/sunday-upsell/config` fornece o estado inicial da automação;
-     - `POST /api/whatsapp/sunday-upsell/config` salva as alterações de toggle e preço;
-     - `POST /api/whatsapp/sunday-upsell/trigger` executa a verificação de elegibilidade e o disparo imediato em modo de teste, retornando o sumário detalhado de reservas processadas.
+5. **Static Asset Pipeline:**
+   - Static files located in `artifacts/limpeza/public/images/frigobar/`.
+   - Copied to `artifacts/limpeza/dist/images/frigobar/` during `npm run build`.
+   - Served directly by Express in `demo-server.mjs` (lines 72243 & 72254).
 
 ---
 
-## 3. Caveats (Ressalvas e Limitações)
+## 2. Logic Chain
 
-1. **Paridade Twin-Server:**
-   - Conforme as diretrizes imutáveis do `AGENTS.md`, qualquer rota ou template implementado em `artifacts/api-server/zapi-service.mjs` DEVE ser copiado via `Copy-Item` para `scripts/zapi-service.mjs` para manter a paridade SHA-256.
-2. **Ambiente de Teste Sandbox:**
-   - Em modo de teste (`testMode: true` no Canal #1), o backend não enviará WhatsApp para hóspedes reais fora da whitelist cadastrada (`zapiConfig.channels.guest_schedule.whitelist`). O disparo manual retornará status de sucesso e simulará/registrará o hold no PMS, mas o envio físico de mensagem ficará restrito aos números autorizados.
-3. **Escopo Restrito à Investigação:**
-   - Como Explorer, nenhum código de produção foi modificado nesta etapa. A implementação concreta das rotas de backend e dos componentes React será realizada na fase de implementação.
-
----
-
-## 4. Conclusion (Conclusão e Recomendações)
-
-A arquitetura do Frontend está perfeitamente preparada para acomodar o Requisito R1:
-- A aba `⚡ Régua Automática` (`artifacts/limpeza/src/pages/whatsapp-automation.tsx`, linha 4336) receberá o card executivo da "Oferta de Domingo Sem Pressa" com o toggle mestre, o campo `sundayUpsellPrice`, o display dinâmico da tarifa normal (`valor_normal`), a vinculação visual ao Canal #1 e o botão de disparo manual.
-- O template base `tpl_sunday_upsell` deve ser registrado em `DEFAULT_WHATSAPP_TEMPLATES` (`zapi-service.mjs`, linha 359), permitindo ao operador editar o texto e consultar as variáveis em `TAG_GROUPS`.
-- O relatório completo e especificações detalhadas de JSX, contratos de API e modelos de dados estão documentados em:
-  `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\analysis.md`.
+1. **Premise 1:** The user request explicitly demands replacing all minibar product photos with real commercial brands (Coca-Cola, Kinder Bueno, etc.) adhering to an identical visual standard: pure white background `#FFFFFF`, uniform proportions, camera angle, distance, and lighting (Requirement R1).
+2. **Premise 2:** As observed in Observation 2, 17 of the 18 current images are AI-generated generics with fictitious labels (*"DELÍCIA CHOCO"*, *"REFRIGERANTE SODA"*, *"BATATA ORIGINAL"*), and the Kinder Bueno image depicts an unpackaged chocolate bar rather than the recognizable commercial package.
+3. **Premise 3:** In `guest-minibar.tsx` (Observation 4), product images are rendered inside a container with `bg-white`. Images with off-white, grey, or colored studio backdrops cause visible square artifacts. Therefore, isolating the product on pure `#FFFFFF` with a soft diffuse contact shadow is essential for visual perfection in both dark-mode guest UI and light-mode admin UI.
+4. **Premise 4:** Requirement R2 dictates that before updating definitive files, a preview gallery or validation panel must be provided so the user can inspect side-by-side each proposed photo, product name, and chosen brand, and provide explicit approval or request swaps before final deployment.
+5. **Premise 5:** In `minibar-admin.tsx` (Observation 4), tab `catalogo` already has an established sub-view selector pattern (`produtos` vs `gabarito`). Adding a 3rd sub-view `galeria_marcas` seamlessly integrates the validation workflow without cluttering the primary navigation tabs.
+6. **Premise 6:** Backend analysis (Observation 3) revealed that `demo-server.mjs` hardcodes `length !== 18` checks at lines 11169 & 11434. Adding the 2 welcome kit courtesy items (Amendoim Mendorato and Água Copo) will trigger an automatic reset if these lines are not updated in lockstep.
 
 ---
 
-## 5. Verification Method (Método de Verificação Independente)
+## 3. Caveats
 
-Para o agente implementador verificar a entrega da UI:
-1. **Compilação do Frontend:**
+1. **Read-Only Scope:** In compliance with instructions, no source code, database state, or image files were modified during this investigation.
+2. **Twin Server Files Parity:** Per `AGENTS.md`, any future backend code modifications to `artifacts/api-server/demo-server.mjs` must be synchronized to `scripts/demo-server.mjs`.
+3. **Alternative Brand Preferences:** The mapping proposes the dominant market leader for each SKU (e.g. Toddynho for Achocolatado, Heineken for Cerveja Long Neck, Pringles for Batata). The Preview Gallery UI design includes alternative brand selection (e.g., Nescau, Stella Artois, Ruffles) so the hotel administrator can easily swap brands according to supplier agreements.
+4. **Courtesy Item SKU Separation:** Requisite R3 introduces Amendoim Mendorato and Água Copo as courtesy items. Whether they are added as new SKUs (`prod_cortesia_amendoim_mendorato`) or reuse existing catalog items with `isCourtesy: true` must be coordinated with the backend investigator for Requirements R3–R6.
+
+---
+
+## 4. Conclusion
+
+1. **Full Catalog & Brand Mapping Complete:**
+   All 18 minibar products + 2 courtesy items have been cataloged with their exact IDs, prices, current image flaws, proposed real commercial brands, official packaging volumes, and manufacturers (see Section 4 of `survey_report.md`).
+2. **Standardized Photographic Blueprint Established:**
+   - Aspect ratio: 1:1 Square (1024x1024 px PNG).
+   - Canvas isolation: Pure white `#FFFFFF` (RGB 255, 255, 255) with soft ambient contact shadow beneath base.
+   - Framing: Product occupies 75%–80% of canvas height/width with 10%–12% margin padding.
+   - Angle: Frontal 10°–15° elevated perspective capturing both branding and top seal/cap.
+   - Lighting: 5500K balanced daylight studio lighting.
+3. **Validation Panel (R2) UI Architecture Defined:**
+   A dedicated sub-view `galeria_marcas` within `<TabsContent value="catalogo">` in `minibar-admin.tsx`, featuring side-by-side legacy vs proposed comparisons, high-resolution zoom modals, brand replacement selectors, and batch/individual approval mechanisms.
+4. **Backend Guard Identified:**
+   The `length !== 18` guard in `artifacts/api-server/demo-server.mjs` (lines 11169 & 11434) has been documented with an explicit recommendation for backend adjustments.
+
+---
+
+## 5. Verification Method
+
+To independently verify the findings in this report:
+
+1. **Inspect Existing Image Files & Dimensions:**
    ```powershell
-   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\limpeza"
-   npm run build
+   $dir = "artifacts\limpeza\public\images\frigobar"
+   Get-ChildItem -Path $dir | Select-Object Name, Length
    ```
-   *Condição de invalidação:* Erros de tipagem TypeScript em `whatsapp-automation.tsx` ou falhas na importação de ícones/componentes Radix.
-2. **Inspeção de Elementos na Aba `⚡ Régua Automática`:**
-   - Abrir o navegador na rota `/whatsapp-automation`.
-   - Clicar na aba `⚡ Régua Automática`.
-   - Verificar a renderização do Card de Controle da Oferta de Domingo no topo da página.
-   - Testar a alternância do Switch (deve mudar badge para ATIVA/PAUSADA e persistir via API).
-   - Testar a edição de `sundayUpsellPrice` (deve atualizar os exemplos de cálculo de economia instantaneamente).
-   - Clicar no botão "Disparo Manual / Teste" e verificar o feedback em Toast com o total de reservas elegíveis.
-3. **Verificação de Paridade Twin-Server:**
+2. **Inspect Current Generic Artwork:**
+   Use `view_file` to inspect `refrigerante.png`, `batata.png`, `achocolatado.png`, and `chocolate_kinder_bueno.png` to confirm the generic/fictional AI artwork and unpackaged wafer.
+3. **Verify Backend Schema & Length Guards:**
    ```powershell
-   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
-   node scripts/check-twin-parity.mjs
+   Select-String -Path "artifacts\api-server\demo-server.mjs" -Pattern "length !== 18" | Select-Object LineNumber, Line
    ```
-   *Condição de invalidação:* Divergência de hash SHA-256 entre `artifacts/api-server/zapi-service.mjs` e `scripts/zapi-service.mjs`.
+4. **Verify Frontend Catalog Tabs & Sub-views:**
+   Inspect lines 1086–1107 and 1728–1768 in `artifacts\limpeza\src\pages\minibar-admin.tsx`.
+5. **Inspect Detailed Survey Report:**
+   Read the full technical specification in `.agents/teamwork/survey_explorer_1/survey_report.md`.

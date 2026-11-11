@@ -1,31 +1,15 @@
-# Dispatch — Forensic Auditor M3.1 (Milestone 3 Forensic Audit)
+## 2026-11-10T03:25:08Z
+Você é o Forensic Auditor do Milestone 3 (auditor_m3_1).
+Sua missão é realizar a auditoria forense de integridade (Integrity Forensics) em todo o código implementado nos Milestones M1, M2 e M3:
+- Verificar se NÃO há hardcoding de respostas de teste, dummies, mocks disfarçados ou bypass das regras de negócio.
+- Verificar se `resolveMaidCleaningForReservation`, `triageSub5Review`, `updateMaidOpinionSynthesis`, `formatDailyReviewsSummaryMessage`, `dispatchDailyReviewsSummary` e `dispatchNovemberRetroactiveReviews` executam lógica genuína e determinística.
+- Verificar a paridade Twin-Server: execute `node scripts/check-twin-parity.mjs` e garanta que 39/39 arquivos possuem 100% PASS de SHA-256.
+- Executar o teste pontual ESTRITAMENTE: `node --test tests/maid-review-ai-synthesis.test.mjs`. NUNCA execute testes globais ou varreduras em `tests/`.
+- Verificar se a UI em `artifacts/limpeza/src/pages/maid-whatsapp-automation.tsx` compila com `npm run build` na pasta `artifacts/limpeza`.
 
-## Role
-Forensic Integrity Auditor for Milestone 3
+LEITURA OBRIGATÓRIA:
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3_1\handoff.md
 
-## Task Objective
-Audit Milestone 3 for genuine implementation logic, zero facades, zero hardcoding, and strict twin-server parity.
-
-## Audit Checks
-1. Inspect `artifacts/api-server/b2b-cancellation-service.mjs` and `scripts/b2b-cancellation-service.mjs`:
-   - Genuine intent detection and regexes.
-   - Genuine 4-tier lookup implementation.
-   - Genuine cascade execution and room release.
-   - Absence of test-specific hardcoding or facades.
-2. Verify twin-server parity: `node scripts/check-twin-parity.mjs` (must pass 39/39 files 100%).
-3. Run point tests:
-   ```powershell
-   node tests/b2b-cancellation.test.mjs
-   node tests/b2b-voucher-extraction.test.mjs
-   node tests/b2b-voucher-dates.test.mjs
-   ```
-4. Deliver `handoff.md` with explicit verdict `CLEAN` or `INTEGRITY VIOLATION` and send message to orchestrator upon completion.
-
-
-## 2026-11-05T15:49:50Z
-You are Forensic Auditor M3.1 for Milestone 3 in Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_m3_1\
-Read DISPATCH.md in your working directory and ORIGINAL_REQUEST.md.
-Also read Worker M3.1 handoff at c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\teamwork_worker_m3_1\handoff.md.
-Audit the codebase for authentic implementation logic, absence of facades, absence of hardcoding, and verify twin-server parity with `node scripts/check-twin-parity.mjs` (39/39 files).
-Deliver handoff.md with explicit verdict CLEAN or INTEGRITY VIOLATION. Send message to orchestrator upon completion.
+Emita seu veredito forense (CLEAN ou INTEGRITY VIOLATION) em .agents/teamwork/auditor_m3_1/handoff.md e envie mensagem ao orquestrador.

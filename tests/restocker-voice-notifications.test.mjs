@@ -30,11 +30,15 @@ const rootDir = path.resolve(__dirname, "..");
 class MockLocalStorage {
   constructor() {
     this.store = new Map();
+    this.throwOnSetItem = false;
   }
   getItem(key) {
     return this.store.has(key) ? this.store.get(key) : null;
   }
   setItem(key, value) {
+    if (this.throwOnSetItem) {
+      throw new Error("QuotaExceededError: DomException 22");
+    }
     this.store.set(String(key), String(value));
   }
   removeItem(key) {
@@ -42,6 +46,7 @@ class MockLocalStorage {
   }
   clear() {
     this.store.clear();
+    this.throwOnSetItem = false;
   }
 }
 
@@ -64,6 +69,10 @@ class MockSpeechSynthesis {
     this.paused = false;
     this.spokenUtterances = [];
     this.cancelledCount = 0;
+    this.syncThrowOnSpeak = false;
+    this.autoEnd = true;
+    this.lastUtterance = null;
+    this.pendingTimers = [];
   }
   getVoices() {
     return [
@@ -72,15 +81,22 @@ class MockSpeechSynthesis {
     ];
   }
   speak(utterance) {
+    if (this.syncThrowOnSpeak) {
+      throw new Error("AudioContext output device error");
+    }
     this.spokenUtterances.push(utterance);
+    this.lastUtterance = utterance;
     this.speaking = true;
-    // Simula conclusão assíncrona imediata para testes
-    setImmediate(() => {
-      this.speaking = false;
-      if (typeof utterance.onend === "function") {
-        utterance.onend({ type: "end", target: utterance });
-      }
-    });
+    if (this.autoEnd) {
+      // Simula conclusão assíncrona imediata para testes
+      const t = setImmediate(() => {
+        this.speaking = false;
+        if (typeof utterance.onend === "function") {
+          utterance.onend({ type: "end", target: utterance });
+        }
+      });
+      this.pendingTimers.push(t);
+    }
   }
   resume() {
     this.paused = false;
@@ -92,6 +108,27 @@ class MockSpeechSynthesis {
     this.speaking = false;
     this.paused = false;
     this.cancelledCount++;
+    if (this.lastUtterance && typeof this.lastUtterance.onerror === "function") {
+      const u = this.lastUtterance;
+      this.lastUtterance = null;
+      const t = setImmediate(() => {
+        u.onerror({ type: "error", error: "canceled" });
+      });
+      this.pendingTimers.push(t);
+    }
+  }
+  clearPending() {
+    for (const t of this.pendingTimers) {
+      clearImmediate(t);
+    }
+    this.pendingTimers = [];
+    if (this.lastUtterance) {
+      try {
+        this.lastUtterance.onend = null;
+        this.lastUtterance.onerror = null;
+      } catch {}
+      this.lastUtterance = null;
+    }
   }
 }
 
@@ -139,19 +176,27 @@ const {
   testVoiceAnnouncement,
   unlockSpeechAudio,
   resetVoiceNotifierForTesting,
-  getBrasiliaTodayYmd
+  getBrasiliaTodayYmd,
+  cleanFlatNumber,
+  FLAT_TITLE_REGEX,
+  getVoiceNotifierState
 } = voiceModule;
 
 describe("Resilient Restocker Voice Notification System — Targeted Test Suite", () => {
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    mockSpeechSynthesis.clearPending();
     mockLocalStorage.clear();
     mockSessionStorage.clear();
     mockSpeechSynthesis.spokenUtterances = [];
     mockSpeechSynthesis.speaking = false;
     mockSpeechSynthesis.paused = false;
     mockSpeechSynthesis.cancelledCount = 0;
+    mockSpeechSynthesis.syncThrowOnSpeak = false;
+    mockSpeechSynthesis.autoEnd = true;
+    mockSpeechSynthesis.lastUtterance = null;
     resetVoiceNotifierForTesting();
+    await new Promise(r => setTimeout(r, 20));
   });
 
   // ── 1. Paridade SHA-256 Twin-Server dos Arquivos Tocados ────────────────────
@@ -177,6 +222,11 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
   describe("2. Segmentação Estrita de Perfil (R1)", () => {
     it("Permite unicamente anserve_repositora quando autenticado diretamente", () => {
       assert.strictEqual(isRestockerProfile({ role: "anserve_repositora" }), true);
+    });
+
+    it("Permite anserve_repositora com maiúsculas ou espaços em branco (tolerância de casing)", () => {
+      assert.strictEqual(isRestockerProfile({ role: "ANSERVE_REPOSITORA" }), true);
+      assert.strictEqual(isRestockerProfile({ role: " anserve_repositora " }), true);
     });
 
     it("Bloqueia rigorosamente usuários admin, dev, recepcao, camareira e gestores", () => {
@@ -243,9 +293,8 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
       assert.strictEqual(isCheckoutWithinTolerance(null, "texto_qualquer", now), false);
     });
 
-    it("Suporta horários de check-out nos formatos HH:MM, HH:MM:SS e 11h30 em horário de Brasília", () => {
+    it("Suporta horários de check-out nos formatos HH:MM, HH:MM:SS, 11h30, 11h30m e 11h30min em Brasília", () => {
       const todayYmd = getBrasiliaTodayYmd();
-      // Simula referência às 12:00 de Brasília
       const refTimeMs = new Date(`${todayYmd}T12:00:00-03:00`).getTime();
 
       // Check-out às 11:30 (30m atrás) -> Aceita
@@ -254,6 +303,9 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
       assert.strictEqual(isCheckoutWithinTolerance(null, "11:30:15", refTimeMs), true);
       // Check-out às 11h30 (formato 'h') -> Aceita
       assert.strictEqual(isCheckoutWithinTolerance(null, "11h30", refTimeMs), true);
+      // Check-out às 11h30m e 11h30min (com sufixo m/min) -> Aceita
+      assert.strictEqual(isCheckoutWithinTolerance(null, "11h30m", refTimeMs), true);
+      assert.strictEqual(isCheckoutWithinTolerance(null, "11h30min", refTimeMs), true);
       // Check-out às 07:00 (5h atrás) -> Descarta
       assert.strictEqual(isCheckoutWithinTolerance(null, "07:00", refTimeMs), false);
     });
@@ -278,6 +330,32 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
       assert.strictEqual(res2, true);
     });
 
+    it("Remove prefixos 'Apto', 'Apt', 'Apartamento', 'Quarto', 'UH' sem corromper para 'o 204'", () => {
+      assert.strictEqual(cleanFlatNumber("Apto 204"), "204");
+      assert.strictEqual(cleanFlatNumber("Apto. 204"), "204");
+      assert.strictEqual(cleanFlatNumber("Apt 204"), "204");
+      assert.strictEqual(cleanFlatNumber("Apartamento 502"), "502");
+      assert.strictEqual(cleanFlatNumber("Quarto 301-A"), "301-A");
+      assert.strictEqual(cleanFlatNumber("UH 605"), "605");
+      assert.strictEqual(cleanFlatNumber("Flat 1004"), "1004");
+
+      const resApto = enqueueCheckoutAnnouncement({ id: "item_apto_204", flatNumber: "Apto 204" });
+      assert.strictEqual(resApto, true);
+      assert.strictEqual(mockSpeechSynthesis.spokenUtterances[0].text, "Check-out flat 204", "Não deve enunciar 'Check-out flat o 204'");
+    });
+
+    it("Extrai corretamente flat de títulos de notificação com prefixo Apto ou Apartamento", () => {
+      const title1 = "Check-out Realizado - Apto 204";
+      const title2 = "⚡ Check-out Antecipado - Apt 104B";
+      const title3 = "Check-out Realizado - Apartamento 502";
+      const title4 = "Check-out Realizado - UH 703";
+
+      assert.strictEqual(title1.match(FLAT_TITLE_REGEX)?.[1], "204");
+      assert.strictEqual(title2.match(FLAT_TITLE_REGEX)?.[1], "104B");
+      assert.strictEqual(title3.match(FLAT_TITLE_REGEX)?.[1], "502");
+      assert.strictEqual(title4.match(FLAT_TITLE_REGEX)?.[1], "703");
+    });
+
     it("Rejeita flat numbers nulos, vazios ou indefinidos", () => {
       assert.strictEqual(enqueueCheckoutAnnouncement({ id: "bad_1", flatNumber: "" }), false);
       assert.strictEqual(enqueueCheckoutAnnouncement({ id: "bad_2", flatNumber: "undefined" }), false);
@@ -297,12 +375,25 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
       assert.strictEqual(third, false, "Mesmo flat já anunciado hoje deve ser deduplicado");
     });
 
-    it("Testar Voz manual não bloqueia check-outs reais futuros do mesmo flat", () => {
-      // Repositora clica no botão 'Testar Voz' (padrão Flat 1004)
+    it("Mantém deduplicação ativa via cache em memória caso localStorage falhe ou lance QuotaExceededError", () => {
+      // Simula falha do localStorage (ex: navegação anônima restritiva ou quota estourada)
+      mockLocalStorage.throwOnSetItem = true;
+
+      const first = enqueueCheckoutAnnouncement({ id: "notif_quota_1", flatNumber: "901" });
+      assert.strictEqual(first, true);
+
+      // Segundo enfileiramento deve ser bloqueado pelo inMemorySpokenMap mesmo com localStorage quebrado
+      const second = enqueueCheckoutAnnouncement({ id: "notif_quota_1", flatNumber: "901" });
+      assert.strictEqual(second, false, "Cache em memória deve impedir repetições mesmo se localStorage falhar");
+
+      const sameFlat = enqueueCheckoutAnnouncement({ id: "notif_quota_2", flatNumber: "901" });
+      assert.strictEqual(sameFlat, false, "Flat 901 já falado deve ser deduplicado em memória");
+    });
+
+    it("Testar Voz manual não bloqueia check-outs reais futuros do mesmo flat", async () => {
       const testRes = testVoiceAnnouncement("1004");
       assert.strictEqual(testRes, true);
 
-      // Posteriormente, ocorre um check-out REAL no Flat 1004
       const realRes = enqueueCheckoutAnnouncement({
         id: "real_notif_999",
         flatNumber: "1004",
@@ -310,6 +401,7 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
         occurredAt: new Date().toISOString()
       });
       assert.strictEqual(realRes, true, "Check-out real do Flat 1004 NÃO deve ser silenciado por teste anterior");
+      await new Promise(r => setTimeout(r, 50));
     });
 
     it("Recupera e sanitiza estado de localStorage corrompido com arrays ou JSON inválido", () => {
@@ -321,9 +413,44 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
       const mapBad = getSpokenCheckoutsMap();
       assert.deepStrictEqual(mapBad, {}, "JSON inválido deve retornar objeto seguro vazio");
     });
+
+    it("Trava de idempotência contra double-cleanup protege itens subsequentes na fila em caso de cancelamento do watchdog", async () => {
+      // Desativa auto-end para simular travamento
+      mockSpeechSynthesis.autoEnd = false;
+
+      enqueueCheckoutAnnouncement({ id: "stalled_1", flatNumber: "101" });
+      enqueueCheckoutAnnouncement({ id: "queued_2", flatNumber: "102" });
+
+      // Reativa auto-end para os próximos itens antes do cancelamento
+      mockSpeechSynthesis.autoEnd = true;
+
+      // Simula watchdog cancelando o motor de voz durante o item 1 travado
+      mockSpeechSynthesis.cancel();
+
+      // Aguarda 600ms para a pausa natural de 400ms e processamento automático do item 2
+      await new Promise(r => setTimeout(r, 600));
+
+      const spokenTexts = mockSpeechSynthesis.spokenUtterances.map(u => u.text);
+      assert.ok(spokenTexts.includes("Check-out flat 101"), "Item 1 deve ter sido iniciado");
+      assert.ok(spokenTexts.includes("Check-out flat 102"), "Item 2 NÃO deve ser descartado por double-shift do watchdog");
+    });
+
+    it("Exceção síncrona em speak() não deixa watchdog ativo congelando itens futuros", async () => {
+      mockSpeechSynthesis.syncThrowOnSpeak = true;
+
+      // Enfileira item com áudio quebrando
+      enqueueCheckoutAnnouncement({ id: "error_item_1", flatNumber: "303" });
+
+      // O erro é tratado sem travar a aplicação
+      mockSpeechSynthesis.syncThrowOnSpeak = false;
+
+      // Novo item é enfileirado e processado normalmente
+      const res = enqueueCheckoutAnnouncement({ id: "good_item_2", flatNumber: "304" });
+      assert.strictEqual(res, true);
+    });
   });
 
-  // ── 5. Registro Automático de Notificação de Check-out no Backend ────────────
+  // ── 5. Registro Automático de Notificação no Backend (zapi-service) ────────────
   describe("5. Registro Automático de Notificação no Backend (zapi-service)", () => {
     it("applyReservationCheckoutAndEarlyRelease deve inserir evento de check-out em db.notifications", async () => {
       const fakeDb = {

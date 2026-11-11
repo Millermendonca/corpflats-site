@@ -80,6 +80,69 @@ function formatEmailChannelLabel(reservation) {
   return orig ? orig.charAt(0).toUpperCase() + orig.slice(1) : "Site CorpFlats";
 }
 
+export function isOtaOrB2bReservation(reservation) {
+  if (!reservation || typeof reservation !== "object") return false;
+  const raw = String(reservation.channel || reservation.source || "").toLowerCase().trim();
+  return Boolean(
+    raw.includes("booking") ||
+    raw.includes("airbnb") ||
+    raw.includes("expedia") ||
+    raw.includes("decolar") ||
+    raw.includes("b2b") ||
+    raw.includes("corporat") ||
+    raw.includes("agenc") ||
+    raw.includes("agênc") ||
+    reservation.isCorporate ||
+    reservation.isB2B ||
+    reservation.agencyId ||
+    reservation.b2bReservationNumber ||
+    reservation.b2bLocatorRloc
+  );
+}
+
+export function evaluateReceptionCheckinStage(reservation) {
+  const expectedGuests = Math.max(1, resolveEmailGuestCount(reservation));
+  const needsReSignature = Boolean(reservation?.needsReSignature);
+  const rawGuests = Array.isArray(reservation?.guests) ? reservation.guests : [];
+
+  let completedGuests = 0;
+  if (rawGuests.length > 0) {
+    completedGuests = rawGuests.filter(g =>
+      g &&
+      !needsReSignature &&
+      !g.needsReSignature &&
+      Boolean(g.hasCompletedCheckin || g.status === "CHECKED_IN" || g.fnrhDocumentUuid || g.fnrhSignedAt)
+    ).length;
+  } else {
+    const titularCompleted =
+      !needsReSignature &&
+      Boolean(
+        reservation?.fnhrCompleted ||
+        reservation?.preCheckinCompleted ||
+        reservation?.fnrhDocumentUuid ||
+        reservation?.fnrhSignedAt
+      );
+    completedGuests = titularCompleted ? 1 : 0;
+  }
+
+  completedGuests = Math.min(completedGuests, expectedGuests);
+  const pendingGuests = Math.max(0, expectedGuests - completedGuests);
+  const stage = completedGuests === 0
+    ? "awaiting"
+    : completedGuests < expectedGuests
+      ? "partial"
+      : "completed";
+
+  return {
+    expectedGuests,
+    completedGuests,
+    pendingGuests,
+    needsReSignature,
+    stage
+  };
+}
+
+
 export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   if (typeof globalThis.getCheckinUrl === "function") {
     return globalThis.getCheckinUrl(reservation, guestIndex, baseUrl, dbInstance);
@@ -479,8 +542,58 @@ export function wrapEmailTemplate({ title, badge = "", contentHtml, footerHtml =
 </html>`;
 }
 
+function buildPortariaAdaptiveButtonsHtml({ reservation, hostBase = "", stageInfo }) {
+  const portariaBase = String(hostBase || "https://corpflats.com.br")
+    .replace(/\/+$/, "")
+    .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br") || "https://corpflats.com.br";
+  const resCode = String(reservation?.code || reservation?.reservationCode || reservation?.id || "").trim();
+  const resParam = resCode ? `res=${encodeURIComponent(resCode)}` : "";
+
+  const sendCheckinLinkUrl = `${portariaBase}/portaria?${resParam ? `${resParam}&` : ""}action=send-checkin-link`;
+  const verifyEarlyCheckinUrl = `${portariaBase}/portaria?${resParam ? `${resParam}&` : ""}action=verify-early-checkin`;
+  const openPortariaUrl = `${portariaBase}/portaria${resParam ? `?${resParam}` : ""}`;
+
+  const isAllCompleted = stageInfo?.stage === "completed";
+
+  const buttonsHtml = isAllCompleted
+    ? `
+      <a href="${verifyEarlyCheckinUrl}" class="btn-action" style="display: inline-block; background-color: #0F766E; color: #FFFFFF !important; font-weight: 700; font-size: 13px; padding: 11px 18px; border-radius: 6px; text-decoration: none; margin: 4px 8px 4px 0;">
+        ⏰ Verificar permissão para Early Check-in
+      </a>
+      <a href="${openPortariaUrl}" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 13px; padding: 11px 18px; border-radius: 6px; text-decoration: none; margin: 4px 0;">
+        🏢 Abrir Terminal da Portaria
+      </a>
+    `
+    : `
+      <a href="${sendCheckinLinkUrl}" class="btn-action" style="display: inline-block; background-color: #059669; color: #FFFFFF !important; font-weight: 700; font-size: 13px; padding: 11px 18px; border-radius: 6px; text-decoration: none; margin: 4px 8px 4px 0;">
+        📲 Enviar link para check-in digital
+      </a>
+      <a href="${verifyEarlyCheckinUrl}" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 13px; padding: 11px 18px; border-radius: 6px; text-decoration: none; margin: 4px 0;">
+        ⏰ Verificar permissão para Early Check-in
+      </a>
+    `;
+
+  const descriptionText = isAllCompleted
+    ? "Acesse direto sem login pelo tablet ou computador da portaria para verificar permissão de Early Check-in, conferir selfie/documento/FNRH e liberar a entrada."
+    : "Acesse direto sem login pelo tablet ou computador da portaria para disparar o link no WhatsApp (ou exibir o QR Code no balcão) e verificar a permissão de Early Check-in.";
+
+  return `
+    <!-- Bloco de Ação Adaptativo: Terminal da Portaria (Acesso Direto Sem Senha) -->
+    <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-top: 24px;">
+      <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; margin-bottom: 4px;">Painel da Recepção & Portaria 24h • Acesso Livre</div>
+      <div style="font-size: 15px; font-weight: 600; color: #111827; margin-bottom: 6px;">Ações Rápidas no Terminal da Portaria</div>
+      <p style="font-size: 13px; color: #6B7280; margin: 0 0 14px 0; line-height: 1.5;">
+        ${descriptionText}
+      </p>
+      <div>
+        ${buttonsHtml}
+      </div>
+    </div>
+  `;
+}
+
 /**
- * Gatilho A: Template de Aviso de Check-in Concluído à Recepção/Portaria
+ * Gatilho A: Template Informativo de Reserva / Check-in à Recepção e Portaria
  */
 export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseUrl = "", db = null }) {
   const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
@@ -500,31 +613,70 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
 
   const checkinTime = settings?.checkinTime || "14:00";
   const checkoutTime = settings?.checkoutTime || "12:00";
-  const earlyCheckin = reservation?.earlyCheckinAuthorized ? "Sim (Liberação antecipada autorizada)" : "Padrão (a partir das " + checkinTime + ")";
+  const isOtaOrB2b = isOtaOrB2bReservation(reservation);
+  const freeEarlyHour = isOtaOrB2b ? "12:00" : "10:00";
+  const earlyCheckin = reservation?.earlyCheckinAuthorized
+    ? (reservation?.earlyCheckinTime
+        ? `Autorizado pela Administração (a partir das ${reservation.earlyCheckinTime}, mediante flat limpo)`
+        : "Autorizado pela Administração (liberação antecipada mediante flat limpo)")
+    : `Cortesia a partir das ${freeEarlyHour} (${isOtaOrB2b ? "regra OTA/Agência" : "regra Site/Direto/WhatsApp"}, mediante flat limpo; antes disso somente com autorização da Administração)`;
+
+  const stageInfo = evaluateReceptionCheckinStage(reservation);
+  const { expectedGuests, completedGuests, stage, needsReSignature } = stageInfo;
 
   // Monta lista de hóspedes (Titular + Acompanhantes)
   let guests = [];
   if (Array.isArray(reservation?.guests) && reservation.guests.length > 0) {
     guests = [...reservation.guests];
   } else {
-    guests = [{ name: guestName, cpf: reservation?.guestDocument || "", phone: reservation?.guestPhone || "", email: reservation?.guestEmail || "" }];
+    guests = [{
+      name: guestName,
+      cpf: reservation?.guestDocument || "",
+      phone: reservation?.guestPhone || "",
+      email: reservation?.guestEmail || "",
+      hasCompletedCheckin: completedGuests >= 1
+    }];
     if (Array.isArray(reservation?.additionalGuests) && reservation.additionalGuests.length > 0) {
       guests.push(...reservation.additionalGuests);
     }
   }
+  while (guests.length < expectedGuests) {
+    guests.push({
+      name: `Hóspede ${guests.length + 1} (Acompanhante)`,
+      cpf: "",
+      phone: "",
+      email: "",
+      hasCompletedCheckin: false
+    });
+  }
 
-  const guestsHtml = guests.map((g, idx) => `
+  const isGuestCheckinCompleted = (g, idx) => {
+    if (needsReSignature || g?.needsReSignature) return false;
+    if (Boolean(g?.hasCompletedCheckin || g?.status === "CHECKED_IN" || g?.fnrhDocumentUuid || g?.fnrhSignedAt)) return true;
+    if (!Array.isArray(reservation?.guests) || reservation.guests.length === 0) {
+      return idx === 0 && completedGuests >= 1;
+    }
+    return false;
+  };
+
+  const guestsHtml = guests.map((g, idx) => {
+    const guestDone = isGuestCheckinCompleted(g, idx);
+    const guestBadgeHtml = guestDone
+      ? `<span style="display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; margin-left: 6px;">Check-in Digital OK</span>`
+      : `<span style="display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; margin-left: 6px;">Aguardando Check-in Digital</span>`;
+    return `
     <div class="guest-box" style="background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 6px; padding: 14px 16px; margin-top: ${idx === 0 ? '0' : '8px'};">
       <div style="font-weight: 600; color: #111827; font-size: 14px; margin-bottom: 6px;">
-        👤 Hóspede ${idx + 1}: ${g.name || guestName}
+        👤 Hóspede ${idx + 1}: ${g.name || (idx === 0 ? guestName : `Hóspede ${idx + 1}`)} ${guestBadgeHtml}
       </div>
       <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
         <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Documento:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600; width: 62%;">${g.cpf || g.document || g.doc || "Não informado"}</td></tr>
-        <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Telefone / WhatsApp:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600; width: 62%;">${g.phone || reservation?.guestPhone || "Não informado"}</td></tr>
-        <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">E-mail:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600; width: 62%;">${g.email || reservation?.guestEmail || "Não informado"}</td></tr>
+        <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Telefone / WhatsApp:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600; width: 62%;">${g.phone || (idx === 0 ? reservation?.guestPhone : "") || "Não informado"}</td></tr>
+        <tr><td class="label" style="padding: 4px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">E-mail:</td><td class="val" style="padding: 4px 0; font-size: 13px; color: #111827; font-weight: 600; width: 62%;">${g.email || (idx === 0 ? reservation?.guestEmail : "") || "Não informado"}</td></tr>
       </table>
     </div>
-  `).join("");
+  `;
+  }).join("");
 
   // Veículo
   const vehicle = reservation?.vehicle;
@@ -541,32 +693,55 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
   const cleanReceptionNotes = rawReceptionNotes.replace(/^nota\s+(de\s+)?recep[cç][aã]o:\s*/i, "").trim();
   const receptionNotes = cleanReceptionNotes ? `Nota de Recepção: ${cleanReceptionNotes}` : "";
 
-  const expectedGuests = Number(reservation?.guestCount || reservation?.adults || guests.length || 1);
-  const completedGuests = guests.filter(g => g.hasCompletedCheckin || g.cpf || g.document).length;
-  const isPendingSecondGuest = expectedGuests > 1 && completedGuests < expectedGuests;
+  const clearedGuestNames = guests
+    .map((g, idx) => (isGuestCheckinCompleted(g, idx) ? (g.name || (idx === 0 ? guestName : `Hóspede ${idx + 1}`)) : null))
+    .filter(Boolean)
+    .join(", ") || guestName;
+
+  const statusCalloutHtml = stage === "awaiting"
+    ? `
+      <!-- Alerta Vermelho: Check-in Digital Ainda Não Realizado -->
+      <div style="background-color: #FEF2F2; border: 1px solid #FECACA; border-left: 4px solid #DC2626; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+        <div style="color: #B91C1C; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;">🚫 ATENÇÃO PORTARIA: CHECK-IN AINDA NÃO LIBERADO (AGUARDANDO CHECK-IN DIGITAL)</div>
+        <p style="color: #7F1D1D; font-size: 13px; margin: 6px 0 0 0; line-height: 1.55;">
+          <strong>O check-in presencial desta reserva ainda NÃO está liberado na portaria</strong>, pois estamos aguardando o preenchimento obrigatório do <strong>Check-in Digital${needsReSignature ? " (re-assinatura de termo pendente)" : ""}</strong> pelo(s) hóspede(s). Caso o hóspede chegue ao balcão, utilize o botão abaixo para enviar o link no WhatsApp ou exibir o QR Code na tela.
+        </p>
+      </div>
+    `
+    : stage === "partial"
+      ? `
+      <!-- Alerta Amarelo: Check-in Parcial (ex: 1/2 preenchido) -->
+      <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-left: 4px solid #D97706; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+        <div style="color: #92400E; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;">⚠️ ATENÇÃO PORTARIA: CHECK-IN PARCIAL (${completedGuests}/${expectedGuests})</div>
+        <p style="color: #78350F; font-size: 13px; margin: 6px 0 0 0; line-height: 1.55;">
+          <strong>Apenas ${clearedGuestNames} preencheu a ficha digital e está com cadastro liberado</strong> (entrada sujeita ao horário permitido e limpeza do flat). <strong>O(s) demais hóspede(s) permanece(m) BLOQUEADO(S)</strong> na portaria até concluírem o Check-in Digital individual.
+        </p>
+        <div style="margin-top: 10px;">
+          <a href="${checkinUrlGuest2}" style="color: #B45309; font-weight: 700; font-size: 13px; text-decoration: underline;">
+            🔗 Link direto de Check-in para o 2º Hóspede
+          </a>
+        </div>
+      </div>
+    `
+      : `
+      <!-- Aviso Verde: Check-in Digital Concluído por Todos -->
+      <div style="background-color: #ECFDF5; border: 1px solid #A7F3D0; border-left: 4px solid #059669; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+        <div style="color: #065F46; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;">✅ CHECK-IN DIGITAL CONCLUÍDO (${completedGuests}/${expectedGuests}) — CADASTRO PRONTO</div>
+        <p style="color: #064E3B; font-size: 13px; margin: 6px 0 0 0; line-height: 1.55;">
+          <strong>Todos os hóspedes concluíram o Check-in Digital e assinaram a FNRH.</strong> O cadastro está pronto; a liberação da entrada física está sujeita ao cumprimento do horário permitido (ou permissão de Early Check-in) e à conclusão da limpeza do apartamento no Terminal da Portaria.
+        </p>
+      </div>
+    `;
 
   const contentHtml = `
-    <div style="margin-bottom: 24px;">
+    <div style="margin-bottom: 18px;">
       <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 8px 0;">Olá, Equipe de Recepção & Portaria</h1>
       <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
         Segue o informativo cadastral da reserva referente ao <strong>Flat ${flatNumber}</strong> no condomínio <strong>${buildingName}</strong>.
       </p>
     </div>
 
-    ${isPendingSecondGuest ? `
-      <!-- Alerta de 2 Hóspedes com apenas 1 Ficha Preenchida -->
-      <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; border-left: 3px solid #D97706; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
-        <div style="color: #92400E; font-size: 13px; font-weight: 600;">⚠️ ATENÇÃO PORTARIA: RESERVA PARA ${expectedGuests} HÓSPEDES</div>
-        <p style="color: #78350F; font-size: 13px; margin: 6px 0 0 0; line-height: 1.5;">
-          <strong>Apenas o 1º hóspede (${guestName}) que preencheu a ficha digital está LIBERADO para check-in.</strong> O segundo hóspede AINDA NÃO ESTÁ LIBERADO; estamos aguardando o preenchimento digital de sua ficha para autorização de acesso ao flat.
-        </p>
-        <div style="margin-top: 10px;">
-          <a href="${checkinUrlGuest2}" style="color: #B45309; font-weight: 600; font-size: 13px; text-decoration: underline;">
-            🔗 Link de Check-in para o 2º Hóspede
-          </a>
-        </div>
-      </div>
-    ` : ""}
+    ${statusCalloutHtml}
 
     ${Boolean(reservation?.hasMinor || guests.some(g => g.isMinor)) ? `
       <!-- Alerta de Menor de Idade (ECA Art. 82) -->
@@ -588,7 +763,7 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
       </div>
     ` : ""}
 
-    ${Boolean(reservation?.fnrhDocumentUuid || reservation?.fnrhFilePath || guests.some(g => g.fnrhDocumentUuid || g.fnrhFilePath)) ? `
+    ${Boolean(!needsReSignature && (reservation?.fnrhDocumentUuid || reservation?.fnrhFilePath || guests.some(g => g.fnrhDocumentUuid || g.fnrhFilePath))) ? `
       <!-- Aviso de FNRH PDF Anexada -->
       <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-left: 3px solid #059669; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: #374151; line-height: 1.5;">
         <strong style="color: #111827;">📄 Ficha Digital FNRH Anexada em PDF:</strong> A Ficha Nacional de Registro de Hóspedes (FNRH) assinada digitalmente com trilha forense e QR Code foi anexada a este e-mail em formato PDF.
@@ -610,15 +785,15 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Código da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #111827; font-weight: 600; width: 62%;">#${reservation?.code || reservation?.id}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Total de Hóspedes:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${expectedGuests}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Canal da Reserva:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${formatEmailChannelLabel(reservation)}</td></tr>
-        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; width: 62%;"><a href="${checkinUrl}" style="color: #111827; font-weight: 600; text-decoration: underline;">Abrir Ficha de Check-in</a></td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Status Check-in Digital:</td><td class="val" style="padding: 5px 0; font-size: 14px; font-weight: 700; color: ${stage === "completed" ? "#047857" : stage === "partial" ? "#B45309" : "#B91C1C"}; width: 62%;">${stage === "completed" ? `Concluído (${completedGuests}/${expectedGuests})` : stage === "partial" ? `Parcial (${completedGuests}/${expectedGuests})` : `Aguardando check-in (0/${expectedGuests})`}</td></tr>
       </table>
     </div>
 
     <div class="section-title" style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #6B7280; margin: 24px 0 8px 0;">Período da Hospedagem</div>
     <div class="info-card" style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
       <table class="info-table" role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
-        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} (Previsão: ${checkinTime})</td></tr>
-        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Early Check-in:</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${earlyCheckin}</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Entrada (Check-in):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkinDateBr} (Horário padrão: ${checkinTime})</td></tr>
+        <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Early Check-in:</td><td class="val" style="padding: 5px 0; font-size: 13px; color: #111827; font-weight: 600; width: 62%; line-height: 1.45;">${earlyCheckin}</td></tr>
         <tr><td class="label" style="padding: 5px 0; font-size: 13px; color: #6B7280; font-weight: 500; width: 38%;">Saída (Check-out):</td><td class="val" style="padding: 5px 0; font-size: 14px; color: #111827; font-weight: 600; width: 62%;">${checkoutDateBr} (até as ${checkoutTime})</td></tr>
       </table>
     </div>
@@ -640,23 +815,26 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
       </div>
     ` : ""}
 
-    <!-- Bloco de Ação: Terminal da Portaria -->
-    <div style="background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 16px; margin-top: 24px;">
-      <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; margin-bottom: 4px;">Painel da Recepção & Portaria 24h</div>
-      <div style="font-size: 15px; font-weight: 600; color: #111827; margin-bottom: 6px;">Consulte Detalhes no Terminal da Portaria</div>
-      <p style="font-size: 13px; color: #6B7280; margin: 0 0 14px 0; line-height: 1.5;">
-        Acesse pelo tablet ou computador da portaria para conferência de documentos, fotos dos hóspedes e baixa rápida de entrada.
-      </p>
-      <a href="https://corpflats.com.br/portaria" class="btn-action" style="display: inline-block; background-color: #111827; color: #FFFFFF !important; font-weight: 700; font-size: 14px; padding: 12px 24px; border-radius: 6px; text-decoration: none;">
-        Abrir Terminal da Portaria (/portaria)
-      </a>
-    </div>
+    ${buildPortariaAdaptiveButtonsHtml({ reservation, hostBase, stageInfo })}
   `;
 
-  const badge = `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">Check-in Confirmado</span>`;
+  const badge = stage === "awaiting"
+    ? `<span class="badge badge-awaiting" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; background-color: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA;">Aguardando check-in</span>`
+    : stage === "partial"
+      ? `<span class="badge badge-partial" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; background-color: #FFFBEB; color: #B45309; border: 1px solid #FDE68A;">Check-in Parcial (${completedGuests}/${expectedGuests})</span>`
+      : `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; background-color: #ECFDF5; color: #047857; border: 1px solid #A7F3D0;">Check-in Digital Concluído</span>`;
+
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
 
-  return { subject, bodyHtml, html: bodyHtml, checkinUrl };
+  return {
+    subject,
+    bodyHtml,
+    html: bodyHtml,
+    checkinUrl,
+    checkinStage: stage,
+    completedGuests,
+    expectedGuests
+  };
 }
 
 /**

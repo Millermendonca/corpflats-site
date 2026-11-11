@@ -1,40 +1,16 @@
-# Dispatch — Reviewer M3.2 (Milestone 3 Safety & Integration Reviewer)
+## 2026-11-10T03:24:48Z
 
-## Role
-M3 Safety & Operational Invariant Reviewer
+Você é o Revisor de Contratos e Preservação de Fluxo do Milestone 3 (reviewer_m3_2).
+Sua missão é verificar de forma adversarial se o fluxo existente de avaliações (R2) foi integralmente preservado, se as regras de triagem (R3) e envio diário (R1) e retroativo (R4) e síntese de opiniões (R5) estão cumpridas e robustas.
 
-## Task Objective
-Review the operational safety of autonomous cancellations:
-1. Verify `CHECKED_IN_CANCELLATION` invariant: status `'in_house'`, `'checked_in'`, or `checkedInAt` / `actualCheckinTime` must never be cancelled autonomously. Must alert manager with high priority.
-2. Verify PMS cancellation cascade: room release, cleaning request deletion/cleanup, breakfast cancellation, and task cancellation.
-3. Verify integration in `zoho-mail-service.mjs`: incoming webhook and polling sync paths.
-4. Verify twin-server parity: `node scripts/check-twin-parity.mjs` (39/39 files).
-5. Run point tests:
-   ```powershell
-   node tests/b2b-cancellation.test.mjs
-   node tests/b2b-voucher-extraction.test.mjs
-   node tests/b2b-voucher-dates.test.mjs
-   ```
+LEITURA OBRIGATÓRIA:
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3_1\handoff.md
+- tests/maid-review-ai-synthesis.test.mjs
 
-## Output
-Deliver `handoff.md` with explicit verdict `APPROVE` or `REQUEST_CHANGES` and send a message to orchestrator upon completion.
-
-
-## 2026-11-05T15:49:44Z
-You are Reviewer M3.2 (Safety & Integration Reviewer) for Milestone 3 in Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_2\
-Read DISPATCH.md in your working directory and ORIGINAL_REQUEST.md.
-Also read Worker M3.1 handoff at c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\teamwork_worker_m3_1\handoff.md.
-Review the operational safety of b2b-cancellation-service.mjs (CHECKED_IN_CANCELLATION invariant, cascade, zoho integration).
-Run point tests:
-node tests/b2b-cancellation.test.mjs
-node tests/b2b-voucher-extraction.test.mjs
-node tests/b2b-voucher-dates.test.mjs
-node scripts/check-twin-parity.mjs
-Deliver handoff.md with explicit verdict APPROVE or REQUEST_CHANGES. Send message to orchestrator upon completion.
-
-
-## 2026-11-05T15:53:54Z
-**Context**: Milestone 3 Safety & Integration Review
-**Content**: Please note that your assignment is Milestone 3 of the B2B Email Ingestion project (`artifacts/api-server/b2b-cancellation-service.mjs`, `zoho-mail-service.mjs`, and `tests/b2b-cancellation.test.mjs`), as detailed in your `DISPATCH.md`. Please re-initialize your `BRIEFING.md` and `progress.md` for Milestone 3 (ignoring any legacy files from past runs), review `b2b-cancellation-service.mjs` and the cancellation cascade, and deliver `handoff.md`.
-**Action**: Please update progress.md and deliver your handoff report once review and point tests pass.
+VERIFICAÇÕES OBRIGATÓRIAS:
+1. Examine se os hooks em `zapi-service.mjs` e `demo-server.mjs` continuam íntegros sem nenhuma alteração que quebre o fluxo de 2 etapas do hóspede (`tpl_nps_satisfaction_check` e `tpl_nps_score_1..4`).
+2. Verifique se a trava de idempotência de envio retroativo (`dispatchedToMaidAt`) impede duplicidade no envio para as camareiras.
+3. Execute o teste pontual ESTRITAMENTE: `node --test tests/maid-review-ai-synthesis.test.mjs`. NUNCA execute testes globais.
+4. Emita seu veredito em .agents/teamwork/reviewer_m3_2/handoff.md (APPROVE ou REQUEST_CHANGES) e envie mensagem ao orquestrador.

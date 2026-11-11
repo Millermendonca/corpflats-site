@@ -1,105 +1,129 @@
-# Project: Envio Automático de Resumo Diário, Triagem por IA e Síntese de Avaliações para Camareiras
+# Project: Padronização Visual do Frigobar, Kit de Boas-Vindas & Repasse Anserve
 
 ## Architecture
-- **Review Hook & Ingestion**:
-  - `artifacts/api-server/zapi-service.mjs` (espelhado em `scripts/zapi-service.mjs`): Hook listeners em `handleInboundNpsScoreOrComment` (linhas 16321, 16348, 16488) e `syncNpsCommentToReviews`. Preservação 100% intacta do fluxo de 2 etapas (`tpl_nps_satisfaction_check` e `tpl_nps_score_1..4`).
-  - `artifacts/api-server/demo-server.mjs` (espelhado em `scripts/demo-server.mjs`): Hooks em `POST /api/ai/nps-response` e `POST /api/ai/import-review`.
-- **Maid Attribution & Housekeeping Engine**:
-  - `artifacts/api-server/maid-automation-service.mjs` (espelhado em `scripts/maid-automation-service.mjs`):
-    - `resolveMaidCleaningForReservation(db, reservation)`: Identifica deterministicamente a camareira responsável pela última limpeza do quarto correspondente à reserva avaliada (verificando limpezas de preparação na data ou anterior ao check-in e stayovers durante a estadia).
-- **AI Triage Engine (Sub-5 Feedback)**:
-  - `triageSub5Review`: Arquitetura Two-Tier (Tier 1: Google Gemini JSON estruturado via `gemini-2.5-flash` com `thinkingBudget: 0`; Tier 2: Fallback determinístico por expressões regulares cobrindo 100% de precisão sem falhas quando offline).
-  - Separação estrita: responsabilidades da camareira (lençol manchado/sujo, toalhas, amenities, louça/talher, box do banheiro, poeira/lixo) vs alheios (check-in, portaria, Wi-Fi/internet, ar-condicionado, barulho externo).
-  - Notas 5: Elegíveis por definição sem necessidade de triagem. Notas < 5 sem comentário: retidas de envio para a camareira.
-- **Mercado Livre Style Opinion Synthesis & Evolution Engine**:
-  - Persistência em `db.maidOpinionSynthesis[maidId]`.
-  - Agregação em tempo real: nota média acumulada, distribuição de notas, destaques positivos e termômetro de recorrência de itens críticos (Box e Banheiro; Louças, Pratos e Talheres; Enxoval de Cama e Banho; Piso e Superfícies).
-  - Cálculo de evolução delta contra período anterior ($\Delta = \text{Média Atual} - \text{Média Anterior}$), determinando evolução (subiu 📈), estabilidade (➡️) ou regressão (pontos de atenção 📉).
-  - Envio duplo em tempo real: Mensagem 1 (avaliação recebida) + Mensagem 2 (síntese atualizada com comparativo).
-- **Scheduled Daily Summary & Retroactive November Dispatcher**:
-  - Trigger diário em horário fixo em `DEFAULT_MAID_TRIGGERS` (`trigger_daily_review_summary`, padrão 18:00).
-  - Mensagem consolidada contendo número do quarto, data da limpeza e nota recebida.
-  - Rotina e endpoint `POST /api/maid-automation/dispatch-retroactive-reviews` para consolidação e despacho retroativo de Novembro/2026 com idempotência registrada em `dispatchedReviews`.
-- **Frontend Settings**:
-  - `artifacts/limpeza/src/pages/maid-whatsapp-automation.tsx`: Card de configuração do resumo diário de avaliações, seletor de horário fixo, botão de disparo retroativo de Novembro e visualização do histórico.
-- **Twin-Server Parity**: Todo arquivo `.mjs` modificado em `artifacts/api-server/` deve manter paridade SHA-256 byte a byte com seu espelho em `scripts/`.
+- **Catálogo de Produtos & Marcas Reais (`artifacts/api-server/demo-server.mjs` & `artifacts/limpeza/public/images/frigobar/`)**:
+  - Definição do catálogo em `getDefaultMinibarProducts()` e integridade em `db.minibarProducts`.
+  - Inclusão dos itens de cortesia do Kit de Boas-Vindas (`prod_cortesia_amendoim_mendorato` e `prod_cortesia_agua_copo` / `prod_agua_mineral_copo`).
+  - Atualização dos guards de tamanho (`length !== 18` atualizado para acomodar cortesias sem auto-reset).
+  - Padronização de imagens: 1024x1024 px PNG, proporção 1:1, fundo branco puro `#FFFFFF`, iluminação de estúdio 5500K, ângulo frontal 10°-15°, sombra de contato suave.
+- **Painel de Homologação e Galeria de Fotos (`artifacts/limpeza/src/pages/minibar-admin.tsx`)**:
+  - Nova sub-visão `galeria_marcas` na aba `catalogo` (ou modal dedicado de homologação).
+  - Exibição lado a lado de foto proposta vs foto legada, nome do produto e marca comercial mapeada (Coca-Cola, Kinder Bueno, Toddynho, Heineken, Pringles, etc.).
+  - Ações de homologação individual e em lote para validação prévia do usuário.
+- **Cardápio Digital do Hóspede (`artifacts/limpeza/src/pages/guest-minibar.tsx`)**:
+  - Seção em destaque no topo: "Kit de Boas-Vindas (Cortesia da Casa)" com borda e badges verde esmeralda ("100% Gratuito" / "Cortesia da Casa").
+  - Exibição de até 2 copos d'água mineral 200ml e até 2 amendoins Mendorato 27g com valor R$ 0,00, segregados dos produtos pagos e sem botões de cobrança.
+- **Conferência da Repositora Anserve (`artifacts/limpeza/src/pages/anserve-restock.tsx`)**:
+  - Bloco de conferência dedicado do Kit de Boas-Vindas nos modais "Lançar Consumo" e "Sem Consumo".
+  - Contadores independentes `[0, 1, 2]` para copos d'água e `[0, 1, 2]` para amendoins Mendorato.
+  - Envio desacoplado em `welcomeKitConsumption: { waterCups, mendoratoPeanuts }` sem injetar itens em `restockedItems` (sem ordens/alertas de reposição para a repositora).
+- **Extrato Segregado e Imunidade de Saldo (`demo-server.mjs`, `guest-minibar.tsx`, `guest-portal.tsx`, `pms-calendar.tsx`)**:
+  - Rotina `buildReservationMinibarStatement()` agrupa e expõe `consumedCourtesyItems`.
+  - Exibição apenas dos itens consumidos (se 0 não exibe, se 1 ou 2 exibe) em bloco destacado verde esmeralda com R$ 0,00.
+  - Saldo devedor e total da reserva (`totalLaunchedAmount`, `pendingBalance`, `reservation.totalAmount`) matematicamente imunes (sempre R$ 0,00 de acréscimo).
+- **Apuração Financeira e Repasse Anserve (`demo-server.mjs`, `anserve-dashboard.tsx`, `minibar-admin.tsx`)**:
+  - Distinção de fornecimento: Amendoim Mendorato = `hotel_proprio` (R$ 0,00 de repasse); Copos d'Água = `anserve` (custo unitário de R$ 2,00).
+  - Cálculo de repasse devido pelo hotel à Anserve: $\text{Total Copos d'Água Cortesia} \times \text{R\$ 2,00}$.
+  - Demonstrativo transparente na aba 1 de `anserve-dashboard.tsx` e aba extrato de `minibar-admin.tsx`.
+- **Twin-Server Parity**: Todo arquivo `.mjs` alterado em `artifacts/api-server/` deve ser espelhado em `scripts/` mantendo 100% de paridade SHA-256.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | F1_MAID_ATTRIBUTION | Algoritmo determinístico de identificação da camareira da última limpeza correspondente à reserva avaliada | M1 | R1, Survey 1, Survey 2 |
-| 2 | F2_REVIEW_FLOW_PRESERVATION | Preservação integral do fluxo de 2 etapas de coleta de notas e comentários (R2) | M1 | R2, Survey 1 |
-| 3 | F3_AI_SUB5_TRIAGE | Motor Two-Tier de triagem por IA (Gemini JSON + Fallback) para notas < 5 separando limpeza vs alheios | M1 | R3, Survey 3 |
-| 4 | F4_FORWARDING_RULES | Regras de elegibilidade (nota 5 sempre incluída; sub-5 sem comentário ou alheia descartada) | M1 | R3, Survey 2, Survey 3 |
-| 5 | F5_OPINION_SYNTHESIS_DATA | Estrutura de agregação incremental de síntese de opiniões da camareira (`db.maidOpinionSynthesis`) | M2 | R5, Survey 3 |
-| 6 | F6_EVOLUTION_COMPARATIVE | Cálculo do comparativo de evolução entre períodos (delta, tendência subiu/desceu, aspectos de melhoria) | M2 | R5, Survey 3 |
-| 7 | F7_REALTIME_DUAL_MESSAGE | Disparo em tempo real via WhatsApp da avaliação + síntese atualizada Mercado Livre ao receber comentário | M2 | R5, Survey 1, Survey 3 |
-| 8 | F8_DAILY_SUMMARY_CRON | Job agendado diário em horário fixo para consolidação e envio do resumo de avaliações | M3 | R1, Survey 2 |
-| 9 | F9_DAILY_MESSAGE_FORMAT | Formatação da mensagem diária com número do quarto, data da limpeza e nota recebida | M3 | R1, Survey 2 |
-| 10 | F10_RETROACTIVE_NOVEMBER | Rotina e endpoint de envio retroativo das avaliações elegíveis de Novembro/2026 com trava de idempotência | M3 | R4, Survey 2 |
-| 11 | F11_FRONTEND_AUTOMATION_UI | Card na interface de automações das camareiras para ativação, horário e disparo retroativo | M3 | Survey 2 |
-| 12 | F12_PUNCTUAL_TEST_SUITE | Suíte de testes pontual dedicada (`tests/maid-review-ai-synthesis.test.mjs`) validando R1 a R5 | M4 | Critérios de Aceite |
+| 1 | F1_REAL_BRAND_PHOTOS | Substituição das fotos por marcas reais comerciais com fundo branco puro #FFFFFF e padrão uniforme | M1 | R1, Survey 1 |
+| 2 | F2_PREVIEW_APPROVAL_GALLERY | Galeria/painel de validação prévia das fotos com nomes de produtos e marcas lado a lado no minibar-admin | M1 | R2, Survey 1 |
+| 3 | F3_WELCOME_KIT_MENU | Seção "Kit de Boas-Vindas (Cortesia da Casa)" no topo do cardápio do hóspede com R$ 0,00 e selo visual | M2 | R3, Survey 2 |
+| 4 | F4_REPOSITA_CONFERENCE_CHECKLIST | Checklist da repositora para registro de 0 a 2 copos e 0 a 2 amendoins sem gerar ordem de reposição | M2 | R4, Survey 3 |
+| 5 | F5_ZERO_CHARGE_STATEMENT_SEGREGATION | Segregação discriminada no extrato do hóspede e PMS com valor R$ 0,00 sem afetar o total da reserva | M2 | R5, Survey 2 |
+| 6 | F6_ANSERVE_FINANCIAL_RECONCILIATION | Distinção de insumos e apuração de repasse de custo dos copos d'água (vol * R$ 2,00) à Anserve | M3 | R6, Survey 3 |
+| 7 | F7_INTEGRATION_VERIFICATION_PUSH | Testes pontuais, paridade twin-server, build de produção e git push | M4 | Critérios de Aceite |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Atribuição de Limpeza & Motor de Triagem por IA | F1, F2, F3, F4 | none | PLANNED |
-| M2 | Síntese de Opiniões Mercado Livre & Comparativo | F5, F6, F7 | M1 | PLANNED |
-| M3 | Resumo Diário, Envio Retroativo Novembro & UI | F8, F9, F10, F11 | M2 | PLANNED |
-| M4 | Verificação Integrada & Hardening de Cobertura | F12 | M1, M2, M3 | PLANNED |
+| M1 | Padronização Visual & Galeria de Homologação de Fotos | F1, F2 | none | DONE |
+| M2 | Kit de Boas-Vindas, Conferência Repositora & Extrato Zerado | F3, F4, F5 | M1 | DONE |
+| M3 | Fechamento Financeiro & Repasse de Custos Anserve | F6 | M2 | DONE |
+| M4 | Testes Pontuais, Paridade Twin, Build & Git Push | F7 | M1, M2, M3 | IN_PROGRESS |
 
 ## Interface Contracts
 
-### M1: Atribuição de Camareira (`resolveMaidCleaningForReservation`)
-- Localização: `artifacts/api-server/maid-automation-service.mjs`
-- Assinatura: `resolveMaidCleaningForReservation(db, reservation: object): { maidUser: object | null, cleaningRequest: object | null, cleaningDate: string | null, isStayover: boolean }`
-- Invariante: Localiza a limpeza concluída (`status: "clean"`) correspondente à reserva avaliada, priorizando stayover executado durante a estadia ou a limpeza de preparação na data ou anterior ao check-in.
-
-### M1: Triagem de Feedback por IA (`triageSub5Review`)
-- Localização: `artifacts/api-server/maid-automation-service.mjs` (ou módulo dedicado de triagem)
-- Assinatura: `triageSub5Review({ score: number, comment: string, flatNumber?: string, db?: object, aiClientMock?: Function }): Promise<FeedbackTriageResult>`
-- Retorno garantido:
+### M1: Galeria de Homologação (`minibar-admin.tsx`)
+- Sub-visão: `catalogSubView === "galeria_marcas"` dentro de `<TabsContent value="catalogo">`.
+- Interface de Produto Homologado:
   ```typescript
-  interface FeedbackTriageResult {
-    isCleaningRelated: boolean;
-    category: "maid_cleaning" | "non_maid_infrastructure" | "non_maid_checkin_service" | "non_maid_external_noise" | "mixed";
-    primaryResponsibility: "camareira" | "hotel_gestao" | "manutencao" | "recepcao_portaria" | "externo";
-    forwardToMaid: boolean;
-    cleaningAspects: string[];
-    nonCleaningAspects: string[];
-    explanation: string;
-    triageMethod: "gemini_llm" | "deterministic_fallback";
+  interface ProductBrandPreview {
+    id: string;
+    name: string;
+    category: string;
+    currentImageUrl: string;
+    proposedImageUrl: string;
+    realBrand: string;
+    manufacturer: string;
+    volumeOrWeight: string;
+    status: "aprovado" | "pendente" | "troca_solicitada";
+    alternativeBrands?: string[];
   }
   ```
-- Invariante: `score === 5` retorna `forwardToMaid: true` imediatamente. Comentários contendo aspectos de limpeza retornam `forwardToMaid: true`. Comentários puramente sobre Wi-Fi, portaria, check-in, etc. retornam `forwardToMaid: false`.
 
-### M2: Síntese de Opiniões & Comparativo (`updateMaidOpinionSynthesis`)
-- Localização: `artifacts/api-server/maid-automation-service.mjs`
-- Assinatura: `updateMaidOpinionSynthesis(db, { maidId: number, review: object, triageResult?: object }): MaidOpinionSynthesis`
-- Retorno garantido: Objeto com `avgScore`, contagem de itens (box, louças/utensílios, enxoval, piso), comparativo de evolução com o período anterior (`delta`, `trend: "evolucao" | "estabilidade" | "regressao"`).
+### M2: Kit de Boas-Vindas no Cardápio (`guest-minibar.tsx`)
+- Identificação dos itens de cortesia:
+  - `prod_cortesia_agua_copo`: Copo d'Água Mineral Selado 200ml (cota máxima 2 un., R$ 0,00).
+  - `prod_cortesia_amendoim_mendorato`: Amendoim Mendorato Santa Helena 27g (cota máxima 2 un., R$ 0,00).
+- Exibição no topo antes dos produtos pagos com badge `Cortesia da Casa • R$ 0,00`.
 
-### M2: Disparo em Tempo Real (`dispatchRealtimeMaidReviewAlerts`)
-- Assinatura: `dispatchRealtimeMaidReviewAlerts(db, { review, maidUser, cleaningDate, triageResult }): Promise<{ success: boolean, messagesSent: number }>`
-- Envia Mensagem 1 (avaliação recebida com quarto, data da limpeza, nota e comentário) e Mensagem 2 (síntese atualizada Mercado Livre com comparativo).
+### M2: Conferência da Repositora (`anserve-restock.tsx` & `demo-server.mjs`)
+- Payload enviado em `POST /api/minibar/inspections`:
+  ```json
+  {
+    "flatNumber": "509",
+    "isDailyLaunch": true,
+    "welcomeKitConsumption": {
+      "waterCups": 1,
+      "mendoratoPeanuts": 2
+    },
+    "consumedItemsList": [...],
+    "restockedItems": []
+  }
+  ```
+- Invariante: `welcomeKitConsumption` NÃO é mesclado em `restockedItems`. A repositora não recebe tarefas de reposição de cortesias.
 
-### M3: Resumo Diário Consolidado (`dispatchDailyReviewsSummary`)
-- Assinatura: `dispatchDailyReviewsSummary(db, { targetDate?: string, force?: boolean }): Promise<{ maidsNotified: number, totalReviewsSent: number }>`
-- Envia para cada camareira a mensagem diária contendo quarto, data da limpeza e nota recebida apenas das avaliações elegíveis do período.
+### M2: Extrato Discriminado (`demo-server.mjs` - `buildReservationMinibarStatement`)
+- Retorno de extrato com nó próprio:
+  ```typescript
+  statement.consumedCourtesyItems = [
+    { productId: "prod_cortesia_agua_copo", name: "Copo d'Água Mineral 200ml", quantity: 1, unitPrice: 0.00, totalPrice: 0.00 },
+    { productId: "prod_cortesia_amendoim_mendorato", name: "Amendoim Mendorato 27g", quantity: 2, unitPrice: 0.00, totalPrice: 0.00 }
+  ];
+  ```
+- Invariante: `statement.totalLaunchedAmount` e `statement.pendingBalance` não somam nenhum valor desses itens.
 
-### M3: Disparo Retroativo de Novembro (`dispatchNovemberRetroactiveReviews`)
-- Assinatura: `dispatchNovemberRetroactiveReviews(db): Promise<{ maidsNotified: number, totalReviewsSent: number, summaryByMaid: Record<string, number> }>`
-- Consolidada histórico de Novembro/2026, marca avaliações como `dispatchedToMaidAt` para evitar duplicidade.
+### M3: Repasse Financeiro Anserve (`demo-server.mjs` - `GET /api/minibar/settlement`)
+- Apuração no endpoint de fechamento:
+  ```javascript
+  const courtesyWaterCount = totalCourtesyWaterCupsConsumed;
+  const courtesyWaterUnitCost = 2.00;
+  const courtesyWaterReimbursement = courtesyWaterCount * courtesyWaterUnitCost;
+  const courtesyPeanutCount = totalCourtesyPeanutsConsumed;
+  const courtesyPeanutReimbursement = 0.00; // Fornecimento próprio CorpFlats
+
+  settlement.courtesySummary = {
+    waterCups: { quantity: courtesyWaterCount, unitCost: 2.00, totalCost: courtesyWaterReimbursement, supplier: "anserve" },
+    peanuts: { quantity: courtesyPeanutCount, unitCost: 0.00, totalCost: 0.00, supplier: "hotel_proprio" },
+    totalReimbursementToAnserve: courtesyWaterReimbursement
+  };
+  ```
 
 ## Code Layout
 - Backend:
-  - `artifacts/api-server/maid-automation-service.mjs`
-  - `artifacts/api-server/zapi-service.mjs`
   - `artifacts/api-server/demo-server.mjs`
-  - Espelhos idênticos (paridade SHA-256):
-    - `scripts/maid-automation-service.mjs`
-    - `scripts/zapi-service.mjs`
-    - `scripts/demo-server.mjs`
+  - Espelho idêntico (paridade SHA-256): `scripts/demo-server.mjs`
 - Frontend:
-  - `artifacts/limpeza/src/pages/maid-whatsapp-automation.tsx`
-- Testes Pontuais (estritamente pontual conforme AGENTS.md):
-  - `tests/maid-review-ai-synthesis.test.mjs`
+  - `artifacts/limpeza/src/pages/minibar-admin.tsx` (Galeria de validação e extrato financeiro)
+  - `artifacts/limpeza/src/pages/guest-minibar.tsx` (Cardápio do hóspede com kit no topo e extrato segregado)
+  - `artifacts/limpeza/src/pages/anserve-restock.tsx` (Conferência individual da repositora)
+  - `artifacts/limpeza/src/pages/anserve-dashboard.tsx` (Demonstrativo de repasse Anserve)
+  - `artifacts/limpeza/src/pages/guest-portal.tsx` e `pms-calendar.tsx` (Extrato da reserva segregado)
+  - Assets: `artifacts/limpeza/public/images/frigobar/`
+- Testes Pontuais:
+  - `tests/minibar-welcome-kit-and-brands.test.mjs`

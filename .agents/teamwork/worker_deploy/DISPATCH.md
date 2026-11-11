@@ -1,40 +1,40 @@
-# Task Assignment: Deployment Worker (Git Commit & Git Push)
-Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_deploy
-Role: teamwork_preview_worker
+# DISPATCH — worker_deploy
 
-## Escopo e Instruções
-Conforme exigido pelo R4 e pelo `AGENTS.md`, realizar o commit e push das alterações implementadas:
-
-1. **Verificação Prévia**:
-   - Rodar `git status` para inspecionar os arquivos alterados e não rastreados.
-   - Confirmar que `data/database.json` permaneceu intocado (se houver modificação acidental, executar `git checkout -- data/database.json`).
-   - Confirmar que `artifacts/limpeza/dist/` está atualizado.
-
-2. **Git Add & Commit**:
-   - Adicionar os arquivos modificados e novos:
-     * `artifacts/api-server/`
-     * `scripts/`
-     * `artifacts/limpeza/src/`
-     * `artifacts/limpeza/dist/`
-     * `tests/nfse-crm-whatsapp-flow.test.mjs`
-     * `.agents/teamwork/`
-   - Criar commit descritivo:
-     `git commit -m "feat: auditoria, correcao e unificacao de NFS-e, CRM 360 e assistente fiscal WhatsApp"`
-
-3. **Git Push**:
-   - Executar `git push` imediatamente para o repositório remoto na branch ativa (regra inegociável do `AGENTS.md`: "Sempre fazer git push por padrão").
-   - Confirmar que o push foi realizado com sucesso.
-
-Escreva seu relatório em `handoff.md` e avise o orquestrador via `send_message`.
+## Task
+Finalize Milestone 4:
+1. Verify `PROJECT.md`, images in `artifacts/limpeza/public/images/frigobar/`, `artifacts/limpeza/dist/`, and test scripts.
+2. Stage and commit all relevant project files:
+   - `git add PROJECT.md artifacts/limpeza/public/images/frigobar/ artifacts/limpeza/dist/ tests/minibar-finance-adversarial.test.mjs tests/frontend-ui-audit.mjs`
+   - Include any other relevant changes.
+3. Commit message: `feat(minibar): padronizar fotos com marcas comerciais, galeria de homologacao, kit de boas-vindas e conciliacao anserve`
+4. Execute `git push origin main`.
+5. Report status in `handoff.md`.
 
 
-## 2026-10-14T11:39:58Z
-Você é o Deployment Worker (Git Commit & Git Push).
-Seu diretório de trabalho: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_deploy
+## 2026-11-11T12:47:28Z
+You are worker_deploy, a teamwork_worker.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_deploy\
+Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\
 
-Tarefas:
-1. Inspecionar `git status`. Garantir que `data/database.json` não foi modificado.
-2. Fazer `git add` dos arquivos de código, scripts, testes, build dist e metadados teamwork.
-3. Fazer `git commit` com mensagem descritiva.
-4. Fazer `git push` para o repositório remoto.
-5. Reportar o hash do commit e confirmação do push em seu handoff.md e via send_message.
+MANDATORY: Read ORIGINAL_REQUEST.md before starting work:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+
+Also read:
+- PROJECT.md at: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+- DISPATCH.md at: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_deploy\DISPATCH.md
+
+Task:
+1. Check git status in the project root.
+2. Stage and commit all newly added files:
+   - `artifacts/limpeza/public/images/frigobar/proposta_*.png`
+   - `artifacts/limpeza/dist/`
+   - `PROJECT.md`
+   - `tests/minibar-finance-adversarial.test.mjs`
+   - `tests/frontend-ui-audit.mjs`
+   - Any other files modified as part of the minibar feature.
+3. Commit message:
+   `feat(minibar): padronizar fotos com marcas comerciais, galeria de homologacao, kit de boas-vindas e conciliacao anserve`
+4. Execute `git push origin main`.
+5. Verify `git status` is clean.
+6. Record results in `handoff.md`.
+7. Send a message to caller with your handoff path.

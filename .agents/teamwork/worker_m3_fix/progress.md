@@ -1,19 +1,17 @@
-# Progress - worker_m3_fix
+# PROGRESS — worker_m3_fix
 
-Last visited: 2026-10-21T21:57:45Z
+Last visited: 2026-11-10T03:39:15Z
+Current Status: Complete
 
-## Status
-- [x] Initialized DISPATCH.md, BRIEFING.md, and progress.md
-- [x] Read ORIGINAL_REQUEST.md, AGENTS.md, and explorer handoffs
-- [x] Inspect target lines in minibar-admin.tsx and demo-server.mjs
-- [x] Implement changes in minibar-admin.tsx (A6 print stylesheet and totalFees fallback)
-- [x] Implement changes in artifacts/api-server/demo-server.mjs (add totalFees to settlement)
-- [x] Sync demo-server.mjs to scripts/demo-server.mjs and verify SHA-256 parity (`Equal: True`)
-- [x] Run frontend build `npm --prefix artifacts/limpeza run build` (Exit code 0)
-- [x] Run targeted backend tests:
-  - `node --test tests/minibar-backend-flow.test.mjs`: 20/20 pass
-  - `node --test tests/challenger-m1-2-verification.test.mjs`: 13/13 pass
-  - `node --test tests/minibar-stress-challenger.test.mjs`: 13/13 pass
-- [x] Write changes.md and handoff.md
-- [x] Git add, commit, push (commit a00d1f8 pushed to origin main)
-- [x] Notify parent orchestrator
+## Steps
+1. [x] Read DISPATCH.md, ORIGINAL_REQUEST.md and reviewer_m3_1 handoff.md
+2. [x] Update BRIEFING.md and progress.md
+3. [x] View and edit `artifacts/api-server/maid-automation-service.mjs`:
+   - [x] Fix template reset in `ensureConfig()` restricting to quinzena triggers
+   - [x] Add `{{lista_avaliacoes}}` and `{{media_dia}}` in `resolveMaidTemplateTags`
+   - [x] Use `getBrasiliaNow().date` in `dispatchNovemberRetroactiveReviews`
+4. [x] Copy to `scripts/maid-automation-service.mjs`
+5. [x] Run `node scripts/check-twin-parity.mjs` (100% PASS - 39/39 files)
+6. [x] Run template bug verification node snippet (PASS: Template customizado preservado com sucesso!)
+7. [x] Run `node --test tests/maid-review-ai-synthesis.test.mjs` (PASS: 44/44 tests passed, 0 failures)
+8. [ ] Write handoff.md and report to orchestrator

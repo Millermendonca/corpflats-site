@@ -1,22 +1,35 @@
-## 2026-11-04T16:04:37Z
-You are Explorer 1 (Frontend UI Explorer).
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\
-Read ORIGINAL_REQUEST.md at: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-Also read the project architecture and rules in c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md.
+# DISPATCH — survey_explorer_1
 
-YOUR GOAL:
-Investigate and produce a complete technical analysis for Requirement R1 (Frontend UI in `⚡ Régua Automática`):
-1. Locate where the tab `⚡ Régua Automática` is implemented in `artifacts/limpeza/src/pages/` (e.g. `whatsapp-automation.tsx` or similar).
-2. Examine the existing structure for automation settings, channels (Canal #1 Régua Hóspedes vs others), triggers, and configuration models.
-3. Detail how to implement:
-   - Toggle to enable/disable "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)".
-   - Configuration field for `sundayUpsellPrice`.
-   - Normal reference price calculation/display (`valor_normal`) in the message template/preview based on guest daily rate.
-   - Channel #1 (Régua Hóspedes) binding.
-   - Manual test / trigger button ("Disparo manual / teste") that calls the backend endpoint immediately for eligible reservations in the validation environment.
-4. Detail all UI components, state management, API routes (GET/POST for settings, POST for manual trigger), and error/success handling.
+## Objective
+Investigate Requirements R1 & R2 for the minibar visual standardization and preview gallery:
+1. Map all existing minibar items, current image paths, categories, and database structures in `artifacts/api-server/demo-server.mjs` and `artifacts/limpeza/src/pages/minibar-admin.tsx` / `guest-minibar.tsx`.
+2. Map every product to real commercial brands (Coca-Cola, Kinder Bueno, etc.) with standardized visual guidelines (pure white background `#FFFFFF`, uniform proportions, angle, lighting).
+3. Design the preview gallery / validation panel (R2) where the user can view proposed photos, product names, and brand names side-by-side with approval actions before final production deployment.
 
-DELIVERABLES:
-Write your full findings to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\analysis.md`
-Write your completion handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\handoff.md`
-Notify me via send_message when complete.
+## Reference
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
+Write findings to `survey_report.md` and `handoff.md` in this directory.
+
+## 2026-11-11T10:28:46Z
+From: 92ba65f0-be83-406c-8289-2ffbe5293de2 (caller agent parent)
+Priority: MESSAGE_PRIORITY_HIGH
+
+You are survey_explorer_1, a teamwork_explorer.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\
+Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\
+
+MANDATORY: You MUST read ORIGINAL_REQUEST.md before starting work:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+
+Also read your DISPATCH.md at:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\DISPATCH.md
+
+Your role is to investigate Requirements R1 & R2:
+1. Map all minibar catalog products, current image paths/URLs, categories, and data structures in the codebase (check `artifacts/api-server/demo-server.mjs`, `minibar-admin.tsx`, `guest-minibar.tsx`, mock/seed data, etc.).
+2. Map every single item in the minibar catalog to its real commercial brand (e.g., Coca-Cola lata 350ml, Coca-Cola Zero lata 350ml, Água Crystal com/sem gás, Cerveja Heineken/Amstel, Suco Del Valle, Red Bull, Chocolate Kinder Bueno, Batata Pringles/Ruffles, Castanhas/Amendoim, etc.).
+3. Identify how images are served in the application (in `artifacts/limpeza/public/`, static asset paths, external CDNs, or base64) and determine the exact image standardization requirements: pure white background (`#FFFFFF`), uniform proportions (e.g. 1:1 square or 4:3), angle, distance, lighting.
+4. Design the Preview Gallery / Validation Panel (R2): where should it be placed in the UI (e.g., in `artifacts/limpeza/src/pages/minibar-admin.tsx` or a dedicated preview modal/tab) so the user can inspect side-by-side each proposed photo, product name, and chosen brand, and provide explicit approval or request swaps before final production rollout.
+
+You are READ-ONLY: do NOT write or modify application code or source files.
+Write your full findings to `survey_report.md` and complete a structured `handoff.md` in your working directory.
+When finished, send a message to the caller with a concise summary and path to your handoff report.

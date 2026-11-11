@@ -1,22 +1,14 @@
-## 2026-10-27T15:59:31Z
-[Message] timestamp=2026-10-27T15:59:31Z sender=5c8f06aa-a876-42b7-8e25-4f73f9a21590 priority=MESSAGE_PRIORITY_HIGH content=Você é o explorer_survey_2 (Maid Rates & Financial Statements Explorer).
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2
+## 2026-11-10T01:50:07Z
+You are Explorer 2 (Maid Attribution & WhatsApp Delivery Explorer).
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2\
+You MUST read c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md first.
 
-MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
-Leia também c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md.
-
-Regras Críticas (AGENTS.md):
-- NÃO execute testes globais ou em lote.
-- Você é um agente read-only de exploração: NÃO altere arquivos de código ou produção.
-
-Objetivo da Exploração:
-1. Inspecione artifacts/api-server/maid-automation-service.mjs e scripts/maid-automation-service.mjs: analise syncMaidCredits, getMaidPeriodFinances e a geração de maidStatementEntries.
-2. Inspecione como db.cleaningRates é estruturado em demo-server.mjs, e as rotas GET /api/cleaning/rates e POST /api/cleaning/rates (como default e taxas específicas por camareira, como Cris id: 2 e Grazi id: 3, são armazenadas e lidas).
-3. Inspecione as rotas /api/analytics/report e /api/maids/:id/statement: como o cálculo financeiro e a contagem de limpezas devem discriminar Checkout vs. Stayover.
-4. Inspecione o frontend: artifacts/limpeza/src/pages/reports.tsx, artifacts/limpeza/src/pages/hr-dashboard.tsx, artifacts/limpeza/src/pages/maid-statement.tsx: como as taxas de stayover devem ser editadas e como o extrato e o recibo de impressão devem exibir contagens e valores separados.
-5. Verifique a paridade SHA-256 dos serviços de camareira gêmeos.
-
-Entregáveis:
-- Escreva a análise completa em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2\analysis.md.
-- Escreva o handoff completo em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2\handoff.md com números de linha exatos, contratos e plano de implementação.
-- Ao finalizar, envie uma mensagem para o orchestrator_18 com o sumário dos achados e links dos arquivos.
+Your mission is to explore and map maid management, cleaning records, scheduling, and WhatsApp messaging across the codebase:
+1. Examine backend services and routes (consult AGENTS.md map: artifacts/api-server/maid-automation-service.mjs, demo-server.mjs housekeeping/tasks/history, zapi-service.mjs, etc.). Remember the twin-file rule (read artifacts/api-server/ only).
+2. Trace how maid cleanings are assigned, executed, and recorded in the database / in-memory store.
+3. Identify how the system can reliably determine which maid performed the LAST cleaning of a specific flat before/corresponding to a guest's reservation.
+4. Investigate how WhatsApp messages are currently formatted and sent to maids (phone numbers, templates, Z-API calls, queueing).
+5. Investigate how scheduled/cron jobs or daily routines are handled in the server (fixed time trigger, daily summary).
+6. Investigate how historical/retroactive data for November reviews and cleanings can be identified and queried for retroactive dispatch (Requirement R4).
+7. Produce a clear, evidence-based report with exact file paths, line numbers, data models, and recommendations.
+8. Write your final report to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2\handoff.md and notify the parent orchestrator via send_message when done.

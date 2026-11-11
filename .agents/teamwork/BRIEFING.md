@@ -1,29 +1,33 @@
-# BRIEFING — 2026-11-05T12:30:00Z
+# BRIEFING — 2026-11-11T10:25:00Z
 
 ## Mission
-Orchestrate autonomous B2B email reservation ingestion, PDF/web voucher data extraction, and cancellation handling.
+Supervise execution of approved task prompt via teamwork_orchestrator, run monitoring crons, and gate victory with teamwork_victory_auditor.
 
 ## 🔒 My Identity
 - Archetype: sentinel
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\
-- Orchestrator: 360f24b1-a735-4f80-861f-c34322083e6f
+- Orchestrator: 92ba65f0-be83-406c-8289-2ffbe5293de2
 - Victory Auditor: to be spawned on victory claim
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
 - Victory Audit is MANDATORY before reporting completion
-- R1: Accurate calculation of nights for multi-night B2B reservations
-- R2: Full voucher extraction (PDF attachment or web link) including agency metadata, financial values, and invoice instructions
-- R3: Autonomous cancellation processing via cancellation emails with manager notifications
+- Routing decision: General path -> teamwork_orchestrator (multi-domain full-stack task across UI gallery, minibar guest catalog, repositora audit workflow, PMS statements, Anserve financial accounting).
+- Pre-approval gallery required before committing new product photos.
+- Kit boas-vindas: 2 copos d'água + 2 amendoins Mendorato com valor R$ 0,00 e selo cortesia.
+- Repositora audit: 0-2 copos d'água e 0-2 amendoins Mendorato sem gerar ordem de reposição.
+- Extrato do hóspede e PMS: itens de cortesia segregados com R$ 0,00 e sem acrescer total a pagar.
+- Fechamento Anserve: apuração de repasse de custo unitário somente para copos d'água; Mendorato é fornecimento próprio.
+- Regra twin-server: edição em artifacts/api-server/ e espelhamento em scripts/.
+- Proibido rodar testes globais ou em lote.
 
 ## User Context
-- **Last user request**: Approved task prompt received for B2B email reservation fixes and cancellation handling.
+- **Last user request**: Approved task prompt received.
 - **Pending clarifications**: none
-- **Delivered results**: M1 complete & passing (Gate 1 PASS); M2 in iteration 3.
+- **Delivered results**: [none]
 
 ## Project Status
 - **Phase**: in progress
-- **Route**: General -> teamwork_orchestrator
 
 ## Victory Audit Status
 - **Triggered**: no
@@ -31,4 +35,4 @@ Orchestrate autonomous B2B email reservation ingestion, PDF/web voucher data ext
 - **Retry count**: 0
 
 ## Artifact Index
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md — Authoritative user intent record
+- .agents/teamwork/ORIGINAL_REQUEST.md — Authoritative task prompt record

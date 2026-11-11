@@ -1,21 +1,16 @@
-## 2026-10-27T15:59:31Z
-Você é o explorer_survey_3 (Guest Portal & Frontend Housekeeping UI Explorer).
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3
+## 2026-11-10T01:50:17Z
+You are Explorer 3 (AI Feedback Synthesis Explorer).
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\
+You MUST read c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md first.
 
-MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
-Leia também c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md.
-
-Regras Críticas (AGENTS.md):
-- NÃO execute testes globais ou em lote.
-- Você é um agente read-only de exploração: NÃO altere arquivos de código ou produção.
-
-Objetivo da Exploração:
-1. Inspecione artifacts/limpeza/src/pages/guest-portal.tsx e as rotas de backend do portal do hóspede em demo-server.mjs (/api/pms/guest-portal/:code): como os dados da reserva são expostos, como verificar se é B2B, e onde/como implementar as ações de Não Perturbe (DND) e Solicitação de Troca de Enxoval (para o dia seguinte), retornando 403 para não-B2B.
-2. Inspecione artifacts/limpeza/src/components/flat-card.tsx: analise como os cards de checkout são renderizados, como funciona o modal de vistoria/conclusão (InspectionModal), se existe bloqueio de 10 minutos ou checklist de saída, e como adaptar para stayover.
-3. Mapeie exatamente as alterações necessárias em flat-card.tsx para Stayover B2B: visual diferenciado, dia X de Y, hóspede, status de enxoval, aviso de Não Perturbe bloqueando ações, e modal simplificado perguntando apenas se toalhas e cama foram trocadas (sem vistoria de saída e sem bloqueio).
-4. Analise a estrutura de testes pontuais existentes (ex: tests/tariff-engine.test.mjs ou tests/smart-flat-hub.test.mjs) para desenhar a estrutura do teste pontual dedicado tests/b2b-stayover-housekeeping.test.mjs.
-
-Entregáveis:
-- Escreva a análise completa em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\analysis.md.
-- Escreva o handoff completo em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\handoff.md com números de linha exatos, contratos e plano de implementação.
-- Ao finalizar, envie uma mensagem para o orchestrator_18 com o sumário dos achados e links dos arquivos.
+Your mission is to explore and map AI capabilities, feedback triage, and opinion synthesis across the codebase:
+1. Examine AI integrations and services (consult AGENTS.md map: artifacts/api-server/whatsapp-ai-service.mjs, review-insights, etc.). How does the project interact with Gemini / LLMs?
+2. Design the triage mechanism for ratings < 5 stars (Requirement R3):
+   - Discriminating between maid/cleaning responsibilities (stained sheets, dirty linen, missing towels/amenities, dirty bathroom/kitchen) vs non-maid responsibilities (Wi-Fi speed, check-in delays, noise, air conditioning failure).
+   - What prompt structure, fallback, and schema should be used?
+3. Design the consolidated opinion synthesis & evolution comparative (Requirement R5, Mercado Livre style):
+   - What data points to aggregate: key points highlighted by guests, positive highlights, recurrence of specific items (shower box, kitchen utensils, dishes/cutlery, linen, etc.).
+   - Average score calculation and period-over-period comparison (evolution vs regression, improved/worsened indicators).
+   - Incremental update strategy when a new eligible review is received.
+4. Investigate testing patterns in the codebase for AI services (mocking vs deterministic test cases) respecting the strict punctual testing rule in AGENTS.md.
+5. Write your final report to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3\handoff.md and notify the parent orchestrator via send_message when done.

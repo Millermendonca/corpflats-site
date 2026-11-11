@@ -1,53 +1,49 @@
-# BRIEFING — 2026-10-27T16:15:00Z
+# BRIEFING — 2026-11-10T02:01:00Z
 
 ## Mission
-Investigar e mapear a arquitetura de backend do fluxo de governança (housekeeping), checkouts, cards de limpeza diária, estadias ativas (stayover), identificação B2B, linenTracking e arquivos gêmeos.
+Explore and map existing guest review and rating mechanisms across backend routes, stores, checkout portal, and WhatsApp flows to support survey automation requirements (esp. R2: preserving < 5 star feedback prompt and identifying review submission hook points).
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: Backend & Housekeeping Architecture Explorer
-- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1
-- Original parent: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
-- Milestone: Housekeeping Stayover & B2B Architecture Discovery
+- Roles: investigator, synthesizer
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\
+- Original parent: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Milestone: Review Flow Exploration & Mapping
 
 ## 🔒 Key Constraints
 - Read-only investigation — do NOT implement
-- Strictly NO global or batch tests
-- Respect twin files synchronization rules (scripts/demo-server.mjs vs artifacts/api-server/demo-server.mjs)
-- Write only to .agents/teamwork/explorer_survey_1/
+- Respect Twin-File Rule: read artifacts/api-server/ only, do not touch scripts/
+- Do not run global or batch tests
+- Output detailed handoff report to handoff.md and send_message to parent
 
 ## Current Parent
-- Conversation ID: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
-- Updated: 2026-10-27T16:15:00Z
+- Conversation ID: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Updated: 2026-11-10T02:01:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/api-server/demo-server.mjs` (linhas 13150-13250, 14596-15092, 15109-15374, 15743-16120, 18966-19130, 24450-24650, 50540-50670)
-  - `scripts/demo-server.mjs` (twin)
-  - `artifacts/api-server/maid-automation-service.mjs` (linhas 1-430)
-  - `scripts/maid-automation-service.mjs` (twin)
-  - `data/database.json` (reservas B2B e canais)
-  - `artifacts/limpeza/src/components/flat-card.tsx`
-  - `artifacts/limpeza/src/pages/guest-portal.tsx`
-  - `artifacts/limpeza/src/pages/reports.tsx`
-  - `artifacts/limpeza/src/pages/hr-dashboard.tsx`
+  - `artifacts/api-server/demo-server.mjs` (routes `/api/ai/nps-response`, `/api/ai/reviews`, `/api/ai/import-review`, `/api/ai/improvements-summary`, `/api/public/checkout`)
+  - `artifacts/api-server/zapi-service.mjs` (`handleInboundNpsScoreOrComment`, `processInboundNpsAndSentiment`, `registerNpsSurveySent`, `syncNpsCommentToReviews`, `rebuildNpsImprovementsSummary`, templates `tpl_nps_satisfaction_check`, `tpl_post_checkout_review`, `tpl_nps_score_1..4`, `tpl_nps_feedback_thanks`)
+  - `artifacts/api-server/maid-automation-service.mjs` (`DEFAULT_MAID_TRIGGERS`, `initMaidAutomationEngine`, `getMaidStats`, `syncMaidCredits`)
+  - `artifacts/limpeza/src/pages/guest-checkout.tsx` (digital checkout confirmation, triggers WhatsApp checkout flow)
+  - `artifacts/limpeza/src/pages/review-insights.tsx` (admin reviews & improvements dashboard)
+  - `tests/nps-score-messages-and-improvements.test.mjs` (canonical test flow for 2-step NPS, feedback comments, and manager alert)
+  - `data/database.json` (live state of `db.reviews`, `db.npsResponses`, `db.cleaningRequests`, `db.reservations`, `db.users`)
 - **Key findings**:
-  - `getRequestsForDate` localiza-se na linha 14596 e atualmente apenas descarta checkouts em stayovers sem gerar cards diários.
-  - Rota `GET /api/reservations/checkouts` (linha 15109) mapeia `requestsForDate` em cards com metadados de hóspede e quarto.
-  - Reservas B2B são identificadas por `channel === 'b2b'`, `channel.includes('b2b')`, `b2bReservationNumber`, `agencyId` ou `b2bLocatorRloc`.
-  - `PATCH /api/cleaning/assignments/:requestId/status` força `checkoutDone = true` e desocupa o quarto ao mudar para `cleaning_now` ou `clean`; exige bypass explícito para `isStayover`.
-  - Lógica de `linenTracking` desenhada com histórico de trocas de cama/banho e alerta visual a cada 3 dias (`daysSinceBeddingChange >= 3`).
-  - Tarifação de camareiras (`syncMaidCredits` e `getMaidPeriodFinances`) exige suporte a `userStayoverRates` (R$ 15,00) discriminando no extrato.
-  - Endpoints do portal do hóspede (`do-not-disturb` e `linen-request` para `tomorrowStr`) devem validar e restringir para B2B retornando 403 para outros canais.
-  - Hashes SHA-256 dos arquivos gêmeos conferidos e 100% idênticos.
-- **Unexplored areas**: Nenhuma. Todos os 6 itens foram completamente investigados.
+  - NPS collection is a two-step WhatsApp conversational flow orchestrated by `zapi-service.mjs`.
+  - Stage 1: Template `tpl_nps_satisfaction_check` dispatched 24h post-checkout asking for a 1-5 score.
+  - Stage 2: Inbound score parsed in `handleInboundNpsScoreOrComment`. If 5, sends Google Review link (`tpl_post_checkout_review`). If < 5 (1-4), triggers specific prompt template (`tpl_nps_score_1` to `4`), sets `awaitingFeedbackComment = true` and waits for written explanation.
+  - Subsequent explanation message is captured (up to 48h), updates `existingNps.comment`, calls `syncNpsCommentToReviews(db, existingNps)`, updates `db.npsImprovements`, and sends `tpl_nps_feedback_thanks`.
+  - Hook points for real-time review/comment arrival: `handleInboundNpsScoreOrComment` (lines 16348 and 16488), `/api/ai/nps-response` (line 63445), `/api/ai/import-review` (line 62844).
+  - Hook point for daily batch summary: `initMaidAutomationEngine` in `maid-automation-service.mjs` (lines 998-1058), which already runs cron loops for daily maid summaries.
+  - Maids in system: `db.users` with `role: 'camareira' | 'cleaner'` (Cris ID 2, Grazi ID 3).
+  - Linking maid to reservation review: Query `db.cleaningRequests` where `flatNumber === r.flatNumber` and `status === 'clean'`.
+- **Unexplored areas**: None — all 6 mission tasks mapped with exact lines and schemas.
 
 ## Key Decisions Made
-- Estruturação completa em `analysis.md` e `handoff.md` pronta para consumo imediato pelo orquestrador e workers de implementação.
+- Fully analyzed and documented two-step NPS collection, schemas, hook points, and maid linkage.
 
 ## Artifact Index
-- DISPATCH.md — Log das diretivas de dispatch recebidas
-- BRIEFING.md — Persistência de contexto e identidade
-- progress.md — Heartbeat de execução
-- analysis.md — Relatório técnico aprofundado com linhas exatas e algoritmos
-- handoff.md — Relatório formal de handoff em 5 seções
+- handoff.md — Complete 5-component handoff report
+- progress.md — Liveness heartbeat & progress updates
+- DISPATCH.md — Log of received dispatch instructions

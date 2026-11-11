@@ -1,32 +1,21 @@
-# Dispatch for reviewer_m1_2
-Role: Backend Reviewer
-Milestone: M1
+## 2026-11-10T02:32:09Z
+You are Reviewer 2 for Milestone 1.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2\
 
-## 2026-10-27T16:49:03Z
-Você é o reviewer_m1_2 (Backend Reviewer).
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2
+You MUST read:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_1\handoff.md
 
-MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
-Leia também:
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md
-- c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\changes.md e handoff.md
+Inspect the actual code modified by Worker M1:
+- `artifacts/api-server/maid-automation-service.mjs` and `scripts/maid-automation-service.mjs`
+- `artifacts/api-server/zapi-service.mjs` and `scripts/zapi-service.mjs`
+- `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
 
-Regras Críticas (AGENTS.md):
-- NUNCA executar testes globais, varreduras ou em lote.
-- Permitido rodar apenas node -c ou o teste estritamente pontual tests/b2b-housekeeping-m1.test.mjs.
-
-Objetivo da Revisão:
-1. Examine a lógica de computeLinenTracking em demo-server.mjs:
-   - stayDayNumber (1-indexado), totalStayNights.
-   - daysSinceBeddingChange e daysSinceTowelsChange.
-   - Alerta visual a cada 3 dias: needsBeddingChangeAlert: true quando daysSinceBeddingChange >= 3.
-2. Examine a persistência de towelsChanged e beddingChanged ao concluir limpeza stayover, e atualização de lastBeddingChangeDate/lastTowelsChangeDate.
-3. Examine os endpoints do Guest Portal:
-   - GET /api/pms/guest-portal/:code (injeção de b2bHousekeeping).
-   - POST /api/pms/guest-portal/:code/do-not-disturb (403 para não-B2B).
-   - POST /api/pms/guest-portal/:code/linen-request (403 para não-B2B, agendamento para tomorrowStr).
-4. Verifique a paridade estrita SHA-256 entre artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs.
-
-Entregáveis:
-- handoff.md em seu diretório contendo: Observation, Logic Chain, Caveats, Conclusion e Veredito claro: APPROVE ou REQUEST_CHANGES.
-- Envie mensagem ao orchestrator_18 com o veredito e justificativa.
+Conduct independent adversarial code review:
+1. Review logic for subtle flaws in `resolveMaidCleaningForReservation`, `triageSub5Review`, and hook points.
+2. Check non-blocking error isolation in `invokeMaidReviewHookSafe` — verify that errors never leak or break existing WhatsApp survey flows.
+3. Verify twin-server parity (`node scripts/check-twin-parity.mjs`).
+4. Run punctual test command: `node --test --test-name-pattern="Tier 0|F1:|F2:|F3 & F4:|B1:|B3:|B4:|B5:|C3:" tests/maid-review-ai-synthesis.test.mjs`
+5. Conclude with a clear verdict: APPROVE or REQUEST_CHANGES.
+Write report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2\handoff.md` and notify orchestrator via send_message.

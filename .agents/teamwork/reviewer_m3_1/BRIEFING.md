@@ -1,72 +1,64 @@
-# BRIEFING — 2026-11-05T15:56:00Z
+# BRIEFING — 2026-11-10T03:31:00Z
 
 ## Mission
-Technical Quality & Adversarial Review of Milestone 3: B2B Autonomous Cancellation & Notification (`b2b-cancellation-service.mjs`, `zoho-mail-service.mjs`).
+Revisão detalhada de código, conformidade, integridade e robustez adversarial dos Milestones M2 e M3 implementados no Guest-Flow-Manager.
 
 ## 🔒 My Identity
-- Archetype: reviewer_and_adversarial_critic
+- Archetype: reviewer
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m3_1
-- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Milestone: M3 (Automação WhatsApp, Comprovantes REP-P, Saldo de Horas e Lembretes Preventivos)
+- Original parent: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Milestone: Milestone 3 & Milestone 2
 - Instance: 1 of 1
-- Appended Identity:
-  - Parent: 360f24b1-a735-4f80-861f-c34322083e6f
-  - Milestone: M3 (Cancelamento Autônomo B2B & Notificação de Gestor)
-  - Date: 2026-11-05
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Respect strict test scope: NEVER run global tests (`tests/*.test.mjs`), ONLY `tests/b2b-cancellation.test.mjs`, `tests/b2b-voucher-extraction.test.mjs`, `tests/b2b-voucher-dates.test.mjs`, and `scripts/check-twin-parity.mjs`
-- Actively check for integrity violations: hardcoded results, dummy logic, facade implementations, bypassed tasks
-- Maintain twin parity verification (39/39 files matching SHA-256)
-- Check canonical PMS cancellation cascade in `demo-server.mjs:37170-37328`
-- Check safety invariant `CHECKED_IN_CANCELLATION`
+- Check for integrity violations (hardcoded test results, facade logic, bypasses)
+- NEVER run global test suites or tests outside punctual scope (`AGENTS.md`)
+- Strictly run punctual test `tests/maid-review-ai-synthesis.test.mjs`
+- Output handoff.md in working directory
+- Communicate via send_message to parent
 
 ## Current Parent
-- Conversation ID: 360f24b1-a735-4f80-861f-c34322083e6f
-- Updated: 2026-11-05T15:56:00Z
+- Conversation ID: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Updated: not yet
 
 ## Review Scope
-- **Files reviewed**:
-  - `artifacts/api-server/b2b-cancellation-service.mjs` & `scripts/b2b-cancellation-service.mjs`
-  - `artifacts/api-server/zoho-mail-service.mjs` & `scripts/zoho-mail-service.mjs`
-  - `tests/b2b-cancellation.test.mjs`
-  - `artifacts/api-server/demo-server.mjs:37170-37328` (canonical PMS cascade reference)
-- **Interface contracts**:
-  - `ORIGINAL_REQUEST.md` (R3: Identificação de e-mails de cancelamento e cancelamento autônomo com notificação)
-  - Worker M3.1 handoff in `.agents/teamwork/teamwork_worker_m3_1/handoff.md`
-- **Review criteria**: Correctness, integrity, safety invariant conformance, PMS cascade fidelity, twin-server SHA-256 parity, edge case resilience.
+- **Files to review**: `artifacts/api-server/maid-automation-service.mjs`, `scripts/maid-automation-service.mjs`, `artifacts/limpeza/src/pages/maid-whatsapp-automation.tsx`, `tests/maid-review-ai-synthesis.test.mjs`
+- **Interface contracts**: `PROJECT.md` (M1, M2, M3 contracts), `ORIGINAL_REQUEST.md` (R1-R5)
+- **Review criteria**: correctness, completeness, code quality, adversarial attack surface, integrity
 
 ## Key Decisions Made
-- Confirmed zero integrity violations (no dummy logic, no hardcoded cheating, no bypassed tasks).
-- Confirmed 100% test pass on M3 (17/17), M2 (15/15), M1 (12/12) point test suites.
-- Confirmed 100% twin-server parity (39/39 files matching SHA-256).
-- Identified 1 Major finding (idempotency on already cancelled reservations), 3 Minor findings (intent regex precedence on policy notices, alertSent flag consistency, additional checked-in status variants).
-- Issued APPROVE verdict.
+- Concluded verification of parity (100% PASS), punctual tests (44/44 PASS) and frontend build (PASS).
+- Verified lack of integrity violations (no cheating or hardcoded mock tests in production code).
+- Identified Major Finding: `ensureConfig()` resets `trigger_daily_review_summary` and `trigger_overtime_cleaning` templates back to defaults on every API call.
+- Decided verdict: REQUEST_CHANGES to allow implementer to apply the precise 2-line guard fix.
 
 ## Artifact Index
-- `BRIEFING.md` — persistent working memory
-- `progress.md` — liveness heartbeat
-- `DISPATCH.md` — dispatch history
-- `handoff.md` — final review report with verdict
+- `.agents/teamwork/reviewer_m3_1/DISPATCH.md` — Log de despachos recebidos
+- `.agents/teamwork/reviewer_m3_1/BRIEFING.md` — Memória persistente de trabalho
+- `.agents/teamwork/reviewer_m3_1/progress.md` — Heartbeat de progresso
+- `.agents/teamwork/reviewer_m3_1/handoff.md` — Relatório final de revisão e veredito
 
 ## Review Checklist
 - **Items reviewed**:
-  - `b2b-cancellation-service.mjs` (F12, F13, F14, F15, F16)
-  - `zoho-mail-service.mjs` (webhook + sync integration)
-  - `tests/b2b-cancellation.test.mjs` (17 tests)
-  - Canonical cascade in `demo-server.mjs:37170-37328`
-  - Parity check in `scripts/check-twin-parity.mjs` (39/39 files)
-- **Verdict**: APPROVE
-- **Unverified claims**: None.
+  - `artifacts/api-server/maid-automation-service.mjs`
+  - `scripts/maid-automation-service.mjs`
+  - `artifacts/limpeza/src/pages/maid-whatsapp-automation.tsx`
+  - `tests/maid-review-ai-synthesis.test.mjs`
+- **Verdict**: REQUEST_CHANGES
+- **Unverified claims**: None. All claims independently verified.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Intent detection with newsletter/policy notice in subject: Confirmed edge case where `hasSubjectCancellation` fires before `isOnlyPolicyNotice`.
-  - Cancellation of already cancelled reservation: Confirmed lack of early idempotent exit (re-cancels, overwrites cancelledAt, sends duplicate WhatsApp).
-  - Safety invariant on in-house guest: Confirmed blocked with `CHECKED_IN_CANCELLATION`, status preserved, urgent WhatsApp sent.
-  - Multi-night housekeeping & breakfast cascade: Confirmed alignment with demo-server.mjs.
-  - 4-Tier matching ambiguity: Confirmed returns `matched: false`, alerts manager without blindly cancelling.
-- **Vulnerabilities found**: 1 Major (re-cancellation idempotency), 3 Minor.
-- **Untested angles**: Live production Z-API network transport (mocked in tests, verified with Promise.race fallback in code).
+  - Twin-Server parity: Verified (39/39 files SHA-256 match)
+  - Punctual tests: Verified (44/44 PASS)
+  - Frontend build: Verified (`npm run build` succeeds)
+  - Template persistence under UI edits: FAILED due to `ensureConfig()` clobbering bug
+  - Idempotency of daily summary and retroactive dispatches: Verified
+  - Input fuzzing (missing fields, malformed scores, empty comments): Handled safely
+- **Vulnerabilities found**:
+  - [Major] Template clobbering in `ensureConfig()` (lines 2553-2556)
+  - [Minor] Missing tag replacement in `resolveMaidTemplateTags()` for modal preview
+  - [Minor] Hardcoded targetDate string in `dispatchNovemberRetroactiveReviews()`
+- **Untested angles**: None within milestone scope.

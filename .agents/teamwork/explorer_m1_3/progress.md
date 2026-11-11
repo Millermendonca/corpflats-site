@@ -1,14 +1,15 @@
-# Progress Log - Explorer M1-3
+# Progress Report — Explorer M1.3 (AI Triage Engine Architect)
 
-Last visited: 2026-10-29T16:51:30Z
+Last visited: 2026-11-10T02:17:15Z
 
-- [x] Initialized DISPATCH.md and workspace
-- [x] Initialized BRIEFING.md
-- [x] Read ORIGINAL_REQUEST.md and AGENTS.md
-- [x] Investigate Google Contacts / People API authentication & credentials
-- [x] Inspect existing scripts / utilities related to Google Contacts in Guest-Flow-Manager
-- [x] Analyze People API methods for querying live state (multiple phones, resourceNames, etags)
-- [x] Analyze update / split / delete / recreate workflows
-- [x] Synthesize findings in analysis.md and handoff.md
-- [x] Update BRIEFING.md
-- [x] Notify parent orchestrator
+## Completed Tasks
+- [x] Received dispatch for Feature F3 & F4 (`triageSub5Review`).
+- [x] Analyzed existing Gemini calls in `artifacts/api-server/demo-server.mjs` (`thinkingBudget: 0`, auto-discovery of models).
+- [x] Analyzed existing review and improvement models in `artifacts/api-server/zapi-service.mjs`.
+- [x] Designed Two-Tier triage architecture:
+  - Tier 1: Google Gemini structured JSON prompt with `thinkingBudget: 0` and auto-candidate fallback.
+  - Tier 2: Deterministic regex engine with Portuguese dialect/plural/defect handling and praise disambiguation.
+- [x] Validated scoring rules (Score 5 auto-forward; Sub-5 empty comment auto-withheld).
+- [x] Executed and verified 16 realistic scenarios on Node.js runtime achieving 100% precision.
+- [x] Produced complete specification, drop-in code snippet, and test fixtures in `handoff.md`.
+- [x] Updated `BRIEFING.md` and prepared orchestrator handoff.

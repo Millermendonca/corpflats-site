@@ -1,16 +1,20 @@
-# Progress — Explorer 3 (WhatsApp & Sofia AI Explorer)
+# Progress — Explorer 3 (Anserve Repositora & Financial Accounting Explorer)
 
-Last visited: 2026-11-04T16:20:00Z
+Last visited: 2026-11-11T10:40:00Z
 Status: Complete
 
-## Current Tasks
+## Completed Tasks
 - [x] Initialized BRIEFING.md and DISPATCH.md
-- [x] Investigate WhatsApp Canal #1 dispatch in `zapi-service.mjs`, `chat-service.mjs`, `demo-server.mjs`
-- [x] Investigate 2-balloon sequential dispatch pattern & typing delay simulation
-- [x] Investigate Sofia AI context injection in `whatsapp-ai-service.mjs`, `agent-architecture.mjs`, `src/agent/middleware/context-injector.ts`
-- [x] Investigate in-stay prompt (`src/agent/prompts/in-stay.prompt.ts`) and handling Sunday Upsell offer
-- [x] Investigate tool definitions (`src/agent/tools/`, `estender-estadia.tool.ts`, or new `ofertar-domingo-sem-pressa.tool.ts`)
-- [x] Verify AGENTS.md compliance (5 laws, AgentToolResponse, zero-ask, admin notifier)
-- [x] Write `analysis.md`
+- [x] Examine Anserve Repositora Conference Panel and Restock Flow:
+  - `artifacts/limpeza/src/pages/anserve-restock.tsx`
+  - `artifacts/limpeza/src/pages/anserve-dashboard.tsx`
+  - `artifacts/limpeza/src/pages/minibar-invoices.tsx`
+  - Backend routes in `artifacts/api-server/demo-server.mjs`
+- [x] Investigate how repositora currently performs room inspections and registers minibar consumption
+- [x] Detail adaptation of checklist interface for R4 (0, 1, 2 copos d'água mineral; 0, 1, 2 amendoins Mendorato)
+- [x] Ensure welcome kit consumption does NOT trigger restock orders or alerts for repositora
+- [x] Investigate financial accounting and cost repasse rules for R6 (supplier distinction, hotel supply vs Anserve stock, cost calculations)
+- [x] Determine where repasse report/totalizer should be surfaced
+- [x] Write `survey_report.md`
 - [x] Write `handoff.md`
-- [ ] Notify parent orchestrator via send_message
+- [x] Notify caller via `send_message`

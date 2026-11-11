@@ -1,76 +1,66 @@
-# BRIEFING — 2026-10-27T17:00:00Z
+# BRIEFING — 2026-11-10T02:38:00Z
 
 ## Mission
-Revisão objetiva e crítica adversarial do Marco M1 (Serviço Diário de Governança B2B / Stayover, Linen Tracking com alerta a cada 3 dias, endpoints do Guest Portal para DND e troca de enxoval, e paridade Twin-Server SHA-256).
+Conduct independent adversarial code review of Milestone 1 changes (Maid Review AI Synthesis: resolution, triage, hook points, twin parity, error isolation).
 
 ## 🔒 My Identity
-- Archetype: reviewer_critic
+- Archetype: reviewer & critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2
-- Original parent: 58ecb31f-60d2-4e1e-9aac-82400a58c263
-- Milestone: M1 (Isolamento de Prestadoras & Paridade Twin-Server)
+- Original parent: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Milestone: Milestone 1
 - Instance: 2 of 2
-- Milestone (Current): M1 - B2B Stayover Housekeeping System (CorpFlats Soho Residence)
-- Instance (Current): reviewer_m1_2 (Backend Reviewer)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Integrity check: detect hardcoded outputs, facades, shortcuts, fake verifications
-- No global tests (`tests/*.test.mjs`), only strict pontual verification
-- Respect AGENTS.md rules
-- Apenas node -c ou o teste estritamente pontual tests/b2b-housekeeping-m1.test.mjs é permitido
-- NUNCA executar testes globais, varreduras ou em lote
+- Strictly obey AGENTS.md and PROJECT.md rules (no global test sweeps, only punctual tests)
+- Integrity check: actively check for hardcoded test results, facade logic, bypassed work, fabricated outputs
+- Twin parity verification required between artifacts/api-server/ and scripts/
 
 ## Current Parent
-- Conversation ID: 5c8f06aa-a876-42b7-8e25-4f73f9a21590
-- Updated: 2026-10-27T17:00:00Z
+- Conversation ID: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Updated: 2026-11-10T02:32:09Z
 
 ## Review Scope
 - **Files to review**:
-  - `artifacts/api-server/demo-server.mjs`
-  - `scripts/demo-server.mjs`
-  - `tests/b2b-housekeeping-m1.test.mjs`
-  - `.agents/teamwork/worker_m1/changes.md`
-  - `.agents/teamwork/worker_m1/handoff.md`
-- **Interface contracts**:
-  - `.agents/teamwork/ORIGINAL_REQUEST.md` (## 2026-10-27T15:53:10Z)
-  - `.agents/teamwork/orchestrator_18/PROJECT.md`
-- **Review criteria**:
-  - computeLinenTracking: stayDayNumber (1-indexado), totalStayNights, daysSinceBeddingChange, daysSinceTowelsChange, needsBeddingChangeAlert: true quando daysSinceBeddingChange >= 3.
-  - Conclusão stayover: persistência de towelsChanged e beddingChanged, atualização de lastBeddingChangeDate/lastTowelsChangeDate, NÃO desocupar nem dar baixa na reserva.
-  - Endpoints Guest Portal: GET /api/pms/guest-portal/:code (injeção b2bHousekeeping), POST /api/pms/guest-portal/:code/do-not-disturb (403 para não-B2B), POST /api/pms/guest-portal/:code/linen-request (403 para não-B2B, agendamento para tomorrowStr).
-  - Paridade estrita SHA-256 entre artifacts/api-server/demo-server.mjs e scripts/demo-server.mjs.
+  - `artifacts/api-server/maid-automation-service.mjs` & `scripts/maid-automation-service.mjs`
+  - `artifacts/api-server/zapi-service.mjs` & `scripts/zapi-service.mjs`
+  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`
+  - `tests/maid-review-ai-synthesis.test.mjs`
+- **Interface contracts**: PROJECT.md, SCOPE.md, AGENTS.md, ORIGINAL_REQUEST.md
+- **Review criteria**: correctness, adversarial failure modes, non-blocking error isolation, twin-server parity, test validity
 
 ## Review Checklist
 - **Items reviewed**:
-  - `computeLinenTracking` em `demo-server.mjs`: PASS
-  - Conclusão stayover e persistência de `towelsChanged` / `beddingChanged` em `demo-server.mjs`: PASS
-  - Endpoints do Guest Portal B2B (`GET /guest-portal/:code`, `POST /do-not-disturb`, `POST /linen-request`): PASS
-  - Paridade Twin-Server SHA-256: FAIL (`8523209F...` vs `824C8A26...`)
-  - Teste pontual `node --test tests/b2b-housekeeping-m1.test.mjs`: FAIL (Subteste 3 falha com ERR_ASSERTION)
-- **Verdict**: REQUEST_CHANGES
-- **Unverified claims**: O handoff de `worker_m1` atestou falsamente que ambos os arquivos tinham hash `824C8A...` e que 5/5 testes passaram.
+  - `resolveMaidCleaningForReservation` in `maid-automation-service.mjs` (F1)
+  - `triageSub5Review` & `deterministicTriageSub5Review` in `maid-automation-service.mjs` (F3, F4)
+  - `handleMaidReviewHook` in `maid-automation-service.mjs` (F2)
+  - `invokeMaidReviewHookSafe` in `zapi-service.mjs` (F2)
+  - Hook Points 1, 2, 3 in `zapi-service.mjs` (F2)
+  - Hook Points 4, 5 in `demo-server.mjs` (F2)
+  - Twin parity across all 39 runtime scripts
+  - Punctual test suite `tests/maid-review-ai-synthesis.test.mjs` (26 tests)
+- **Verdict**: APPROVE
+- **Unverified claims**: none; all claims verified independently
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Lógica de stayDayNumber (1-indexado) e totalStayNights: Correto e resiliente (PASS)
-  - Alerta de troca de enxoval quando daysSinceBeddingChange >= 3: Correto (PASS)
-  - Bloqueio de camareiras quando DND ativo no flat (HTTP 422): Implementado (PASS)
-  - Isenção de trava de 10 min para stayover: Implementado (PASS)
-  - Proteção de checkout no stayover (não marca checkoutDone = true, não esvazia flat): Implementado (PASS)
-  - Endpoints Guest Portal com 403 para reservas não-B2B: Implementado (PASS)
-  - Paridade estrita SHA-256 entre os servidores gêmeos: FALHA CRÍTICA (FAIL)
-- **Vulnerabilities found**:
-  - `scripts/demo-server.mjs` desatualizado em 192 linhas frente a `artifacts/api-server/demo-server.mjs`.
-  - Quebra de paridade SHA-256 e reprovação imediata do teste pontual `tests/b2b-housekeeping-m1.test.mjs`.
-- **Untested angles**:
-  - M2 (Tarifação e extrato de camareiras) e M3/M4 (UI React) que serão validados nos próximos marcos.
+  - Integrity violation / hardcoded bypass: tested and refuted (clean, genuine domain logic)
+  - Hook error leakage into inbound chat survey: tested and refuted (complete error isolation verified)
+  - Stayover vs preparation cleaning precedence: verified and working deterministically
+  - Same-day turnover distinction between arriving and departing guests: verified
+  - Adversarial inputs to AI triage (empty, whitespace, praising cleaning with external faults, noise): verified
+  - Fallback resilience under AI failure/timeout: verified
+- **Vulnerabilities found**: zero blocking vulnerabilities. All edge cases handled gracefully.
+- **Untested angles**: M2 and M3 future integrations (stubbed safely with `typeof === 'function'`)
 
 ## Key Decisions Made
-- Emitido veredito formal de REQUEST_CHANGES devido à falha de teste unitário e quebra de paridade Twin-Server SHA-256.
+- Confirmed zero integrity violations.
+- Verified 100% twin parity and 26/26 punctual tests.
+- Issued APPROVE verdict for Milestone 1.
 
 ## Artifact Index
-- `.agents/teamwork/reviewer_m1_2/DISPATCH.md` — Histórico de despacho
-- `.agents/teamwork/reviewer_m1_2/BRIEFING.md` — Consciência situacional
-- `.agents/teamwork/reviewer_m1_2/progress.md` — Liveness heartbeat
-- `.agents/teamwork/reviewer_m1_2/handoff.md` — Relatório formal de handoff com pareceres de Review e Challenge
+- DISPATCH.md — incoming dispatch messages
+- BRIEFING.md — working memory and identity
+- progress.md — liveness heartbeat
+- handoff.md — final review report

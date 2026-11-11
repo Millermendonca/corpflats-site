@@ -59,6 +59,7 @@ storage/invoices_vault/
 
 # Temporary scratch
 scratch/
+RELATORIO_MELHORIAS_SISTEMA_24_48H.pdf
 data/backups/database_backup_post_recovery_*.json
 
 # Banco de dados local — PostgreSQL na nuvem é a fonte de verdade.

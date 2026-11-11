@@ -1,200 +1,140 @@
-# Handoff Report — challenger_m1_1 (Housekeeping Challenger)
+# Handoff Report — Challenger 1 (Milestone 1 Verification)
+
+**Agent**: Challenger 1 (`challenger_m1_1`)  
+**Target Milestone**: Milestone 1 (M1) — Maid Attribution & AI Review Triage Engine  
+**Verdict**: **REJECT** (Rejeitado para ajuste pontual no Worker M1)  
+**Date**: 2026-11-10T02:39:00Z  
+
+---
 
 ## 1. Observation
 
-### 1.1 Executed Test Suite
-Executed the isolated adversarial test harness:
-```bash
-node --test tests/challenger-m1-1.test.mjs
-```
-Output:
-```
-# Subtest: CHALLENGER M1: Adversarial Housekeeping Challenge
-    # Subtest: 1. Card Generation Adversarial Testing (getRequestsForDate & GET /api/reservations/checkouts)
-        ok 1 - Scenario 1: B2B reservation on check-in day (checkinDate === dateStr) MUST NOT generate stayover card
-        ok 2 - Scenario 2: B2B reservation on checkout day (checkoutDate === dateStr) MUST NOT generate stayover card (generates checkout)
-        ok 3 - Scenario 3: Non-B2B channels (Booking, Airbnb, WhatsApp, Site Direto) in intermediate days MUST NEVER generate stayover cards
-        not ok 4 - Adversarial Probe A: Non-B2B channels with companyName / agencyName MUST NOT leak into B2B stayovers
-          ---
-          error: 'CRITICAL LEAK: Booking reservation with companyName was classified as B2B and generated a stayover card!'
-          code: 'ERR_ASSERTION'
-          expected: undefined
-          actual: { id: ..., source: 'stayover', cleaningType: 'stayover', ... }
-          ...
-        not ok 5 - Adversarial Probe B: B2B reservations that are already completed / checked-out MUST NOT generate stayover cards
-          ---
-          error: 'DEFECT: getRequestsForDate generated stayover card for a reservation with status === "completed" / checkoutDone === true!'
-          code: 'ERR_ASSERTION'
-          expected: undefined
-          actual: { id: ..., source: 'stayover', cleaningType: 'stayover', ... }
-          ...
-        ok 6 - Scenario 4: B2B reservation in intermediate day (checkinDate < dateStr && checkoutDate > dateStr) MUST generate stayover card
-        ok 7 - Scenario 4b: Idempotency of card generation in getRequestsForDate
-    # Subtest: 2. Stayover Cleaning Completion Adversarial Testing (PATCH /api/cleaning/assignments/:id/status)
-        ok 1 - Scenario 5: Completing stayover cleaning MUST NOT free flat, complete reservation, or set checkoutDone
-        ok 2 - Scenario 6: 10-minute minimum lock does NOT block housekeeper in stayover, but DOES block in checkout
-        ok 3 - Scenario 7: Do Not Disturb (DND) mode blocks maid from starting or completing stayover with HTTP 422
-        ok 4 - Scenario 8: Passing isVacant: true for a stayover request is safely overridden (invariant holds)
-    # Subtest: 3. Twin-Server SHA-256 Parity Empirical Audit
-        ok 1 - Twin servers artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs SHA-256 parity
-# tests 12
-# suites 4
-# pass 10
-# fail 2
-```
+1. **Harness Execution Command and Overall Results**:
+   Command:
+   ```powershell
+   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
+   node scripts/test-challenger-m1.mjs
+   ```
+   Output:
+   ```
+   ================================================================================
+      CHALLENGER 1 — EMPIRICAL STRESS TEST SUITE (MILESTONE 1)
+   ================================================================================
 
-### 1.2 Direct Code Inspections
+   --- CHALLENGE 1: resolveMaidCleaningForReservation ---
+   [PASS] 1.1 Multiple stayovers in 14-day stay picks latest stayover (Day 13 Grazi): cleaningId=13, maidId=3, isStayover=true, date=2026-11-13
+   [PASS] 1.2 Same-day turnover: Guest A gets Nov 01 prep (Cris), Guest B gets Nov 05 turnover (Grazi): GuestA: cleanId=51 maid=Cris | GuestB: cleanId=52 maid=Grazi
+   [PASS] 1.3 Reservation with missing flat number resolved from db.reservations: resObj: flat=211 maid=Cris
+   [PASS] 1.4 Missing assignedUserId resolved via statementEntries (Cris) & username match (Grazi): Statement Maid: Cris (id=2) | Username Maid: Grazi (id=3)
+   [PASS] 1.5 Ignored cleanings: skips in_progress, instructionOnly, bedAdjustmentOnly: selectedId=4
 
-#### Defect 1: Leak of Non-B2B Channels into Stayover Cards via `companyName` / `agencyName`
-- File: `artifacts/api-server/demo-server.mjs:14636-14651` (and `scripts/demo-server.mjs`):
-```javascript
-function isB2bReservation(r) {
-  if (!r) return false;
-  const chanLower = String(r.channel || "").toLowerCase().trim();
-  return Boolean(
-    chanLower === "b2b" ||
-    chanLower.includes("b2b") ||
-    r.isB2b === true ||
-    r.b2bReservationNumber ||
-    r.agencyId ||
-    r.agencyName ||
-    r.agencyTradeName ||
-    r.companyName ||
-    r.b2bLocatorRloc ||
-    String(r.code || "").startsWith("B2B-")
-  );
-}
-```
-- Empirical Verification:
-```bash
-node -e "import('./artifacts/api-server/demo-server.mjs').then(({ isB2bReservation }) => {
-  console.log('bookingWithCompany:', isB2bReservation({ channel: 'booking', companyName: 'Petrobras S.A.' }));
-  console.log('airbnbWithCompany: ', isB2bReservation({ channel: 'airbnb', companyName: 'Vale S.A.' }));
-  console.log('whatsappWithAgency:', isB2bReservation({ channel: 'whatsapp', agencyName: 'Agência Corporativa' }));
-  process.exit(0);
-});"
-```
-Output verbatim:
-```
-bookingWithCompany: true
-airbnbWithCompany:  true
-whatsappWithAgency: true
-```
-Any OTA or Direct reservation (Booking.com, Airbnb, WhatsApp) that includes corporate billing details (`companyName` or `agencyName`) is falsely classified as B2B, causing `getRequestsForDate` and `/api/reservations/checkouts` to generate stayover cards on intermediate days.
+   --- CHALLENGE 2: triageSub5Review ---
+   [PASS] 2.1 Subtle complaint: "travesseiro com cheiro ruim": forward=true, isCleaningRelated=true, cat=maid_cleaning, aspects=lençóis e roupas de cama
+   [FAIL] 2.1 Subtle complaint: "o piso estava pegajoso": forward=false, isCleaningRelated=false, cat=non_maid_infrastructure, aspects=none
+   [PASS] 2.1 Subtle complaint: "banheiro com cabelo no ralo": forward=true, isCleaningRelated=true, cat=maid_cleaning, aspects=box e banheiro
+   [FAIL] 2.1 Subtle complaint: "amenities acabaram": forward=false, isCleaningRelated=false, cat=non_maid_infrastructure, aspects=none
+   [PASS] 2.2 Non-maid complaint: "Wi-Fi oscilando na reunião": forward=false, isCleaningRelated=false, cat=non_maid_infrastructure, nonAspects=Wi-Fi e Internet
+   [PASS] 2.2 Non-maid complaint: "porta emperrada": forward=false, isCleaningRelated=false, cat=non_maid_infrastructure, nonAspects=none
+   [PASS] 2.2 Non-maid complaint: "check-in demorado": forward=false, isCleaningRelated=false, cat=non_maid_checkin_service, nonAspects=Check-in e Portaria
+   [PASS] 2.2 Non-maid complaint: "elevador barulhento": forward=false, isCleaningRelated=false, cat=non_maid_external_noise, nonAspects=Barulho Externo e Vizinhos
+   [PASS] 2.3 Mixed complaint: "Cama suja e internet ruim": forward=true, cat=mixed, cleaningAspects=lençóis e roupas de cama, nonCleaningAspects=Wi-Fi e Internet
+   [PASS] 2.4 Sarcasm/Subtle phrasing: "Adorei a toalha encardida (sqn)": forward=true, isCleaningRelated=true, cat=maid_cleaning, aspects=toalhas de banho e rosto
+   [FAIL] 2.4 Sarcasm/Subtle phrasing: "O quarto estava um primor de limpeza, só esqueceram de lavar o banheiro": forward=false, isCleaningRelated=false, cat=non_maid_infrastructure, aspects=none
 
-#### Defect 2: Ghost Stayover Cards for Checked-Out / Completed Reservations
-- File: `artifacts/api-server/demo-server.mjs:14792-14801`:
-```javascript
-  const b2bStayoversForDate = (db.reservations || []).filter(r =>
-    r.status !== "cancelada" &&
-    r.status !== "cancelado" &&
-    r.status !== "no_show" &&
-    r.checkinDate &&
-    r.checkoutDate &&
-    r.checkinDate < dateStr &&
-    r.checkoutDate > dateStr &&
-    isB2bReservation(r)
-  );
-```
-- Observed Behavior: The filter excludes ONLY `cancelada`, `cancelado`, and `no_show`. It does NOT exclude reservations with `r.status === "completed"`, `r.status === "checked_out"`, `r.checkoutDone === true`, or `r.earlyCheckout === true`.
-- Empirical Verification in Probe B: When a B2B guest checks out early (e.g. departs on day 2 of a 10-day stay and is marked `status: "completed"`, `checkoutDone: true`), `getRequestsForDate` on day 6 continues to generate a daily stayover cleaning card for Flat 105.
+   --- CHALLENGE 2.5: triageSub5Review with AI Mock & Async invocation ---
+   [PASS] 2.5 Async triageSub5Review with AI Mock on subtle irony: forward=true, method=gemini_llm
+   [PASS] 2.5 Async triageSub5Review short-circuit for score 5: forward=true, method=deterministic_fallback
+   [PASS] 2.5 Async triageSub5Review short-circuit for sub-5 with empty comment: forward=false
 
-### 1.3 Verified Positive Invariants
-1. **Scenario 1 (Check-in Day)**: `checkinDate === dateStr` correctly evaluates `checkinDate < dateStr` as `false`, generating 0 stayover cards.
-2. **Scenario 2 (Checkout Day)**: `checkoutDate === dateStr` correctly evaluates `checkoutDate > dateStr` as `false`, generating a standard checkout card instead of a stayover card.
-3. **Scenario 3 (Pure OTA Intermediate Days)**: Booking, Airbnb, and WhatsApp without companyName evaluate `isB2bReservation(r) === false`, producing 0 stayover cards.
-4. **Scenario 4 (Valid B2B Intermediate Days)**: Valid active B2B reservations generate cards with `source: "stayover"`, `cleaningType: "stayover"`, `isOccupied: true`, `isVacant: false`, and `linenTracking` attached.
-5. **Scenario 5 (Safe Completion)**: On transition to `clean`, `relatedFlat.isOccupied` remains `true`, reservation status remains active (e.g. `confirmada`), `checkoutDone` remains `false`, and `linenChangeHistory` records the bed/towel changes.
-6. **Scenario 6 (10-Minute Lock Bypass)**: Stayovers bypass the 10-minute minimum lock (`!isStayover` guard in line 16181), whereas normal checkouts are blocked with HTTP 400 when elapsed time is under 10 minutes.
-7. **Scenario 7 (Do Not Disturb Enforcement)**: Maids attempting to start or complete a stayover under DND receive HTTP 422 with `"Não é possível iniciar ou concluir a limpeza. Hóspede ativou o modo Não Perturbe."`.
-8. **Scenario 8 (isVacant Invariant)**: Housekeepers sending `{ isVacant: true }` in stayover updates are overridden: `isVacant` remains `false` and `relatedFlat.isOccupied` remains `true`.
-9. **Twin-Server Parity**: `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` match after twin resynchronization.
+   ================================================================================
+   TOTAL CHECKS: 19 | PASSED: 16 | FAILED: 3
+   FAILURES DETECTED:
+    - 2.1 Subtle complaint: "o piso estava pegajoso": forward=false, isCleaningRelated=false, cat=non_maid_infrastructure, aspects=none
+    - 2.1 Subtle complaint: "amenities acabaram": forward=false, isCleaningRelated=false, cat=non_maid_infrastructure, aspects=none
+    - 2.4 Sarcasm/Subtle phrasing: "O quarto estava um primor de limpeza, só esqueceram de lavar o banheiro": forward=false, isCleaningRelated=false, cat=non_maid_infrastructure, aspects=none
+   ================================================================================
+   ```
+
+2. **Source Code Inspection (`artifacts/api-server/maid-automation-service.mjs`)**:
+   - Line 622:
+     ```javascript
+     const CLEANING_DEFECT_REGEX = /\b(?:suj[oa]s?|sujeira[s]?|mancha[s]?|manchad[oa]s?|encardid[oa]s?|imund[oa]s?|amarel[oa]s?|amarelid[aã]o|engordurad[oa]s?|gordur[aa]s?|limo|lodo|cabelo[s]?|poeira[s]?|p[oó]\b|lixo[s]?|chei[oa]s?|falt\w*|sem\b|n[aã]o\s+tinha|acabou|ruim|p[eé]ssim\w*|mal\s+lavad[oa]s?|mal\s+feit[oa]s?|cheiro\s+ruim|mau\s+cheiro|odor(?:es)?|mofo|inseto[s]?|barata[s]?|formiga[s]?)\b/i;
+     ```
+   - In lines 743–747:
+     ```javascript
+     for (const rule of CLEANING_CATEGORY_RULES) {
+       if (rule.targetRegex.test(cleanComment) && CLEANING_DEFECT_REGEX.test(cleanComment)) {
+         cleaningAspects.push(rule.aspect);
+       }
+     }
+     ```
+   - For `o piso estava pegajoso`: `rule.targetRegex` matches `piso`, but `CLEANING_DEFECT_REGEX` fails because `pegajos[oa]s?` or `grudent[oa]s?` is missing.
+   - For `amenities acabaram`: `rule.targetRegex` matches `amenities`, but `CLEANING_DEFECT_REGEX` fails because it only has exact `acabou`, not matching plural `acabaram`.
+   - For `O quarto estava um primor de limpeza, só esqueceram de lavar o banheiro`: `rule.targetRegex` matches `banheiro`, but `CLEANING_DEFECT_REGEX` fails because `esquec\w*` or `n[aã]o\s+lavar\w*` is missing.
+
+3. **Crash Check**:
+   - Zero crashes. All functions returned gracefully without throwing unhandled exceptions.
 
 ---
 
 ## 2. Logic Chain
 
-1. *From Observation 1.1 and 1.2*: `isB2bReservation` evaluates `r.companyName`, `r.agencyName`, and `r.agencyTradeName` as independent fallback boolean OR clauses (`||`).
-2. *From Observation 1.2*: OTA platforms (Booking.com, Airbnb) allow guests to enter corporate names or billing entities during checkout.
-3. *Logic Step*: When a Booking.com or Airbnb guest enters a company name, `r.companyName` is truthy, triggering `isB2bReservation(r) = true` despite `r.channel === "booking"`.
-4. *Direct Violation*: This directly violates requirement § R1 of `ORIGINAL_REQUEST.md`:
-   *"Reservas de Booking, Airbnb, WhatsApp, Site Direto ou outros canais nunca geram limpeza diária de stayover."*
-5. *From Observation 1.1 and 1.2 (Probe B)*: In `getRequestsForDate`, `b2bStayoversForDate` only checks `r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "no_show"`.
-6. *Logic Step*: Completed reservations (including early check-outs) retain their original `checkinDate` and `checkoutDate`. Because their status is `"completed"` or `"checked_out"` (and not `"cancelada"`), they satisfy all predicates of `b2bStayoversForDate`.
-7. *Direct Violation*: Housekeeping cards for stayover cleaning are generated for unoccupied rooms where the guest has already checked out and departed.
-8. *Conclusion*: Milestone 1 fails adversarial verification on two functional counts. A `REQUEST_CHANGES` verdict is necessary.
+1. **Atribuição de Camareira (`resolveMaidCleaningForReservation`)**:
+   - Aprovada com louvor em todos os 5 cenários empíricos:
+     - 1.1: Seleciona o stayover mais recente durante estada longa de 14 dias (Grazi no dia 13, priorizado sobre Cris no dia 10, Grazi no dia 5 e Cris no dia 1).
+     - 1.2: No mesmo dia de turnover (05/11), o Hóspede A que sai às 11h recebe a limpeza de preparação do seu check-in (Cris em 01/11), enquanto o Hóspede B que entra às 14h recebe a limpeza de turnover realizada no dia (Grazi em 05/11).
+     - 1.3: Quando a reserva é passada sem número de flat (ex: `{ id: 777 }` ou `"RES-777"`), o método resgata os dados completos em `db.reservations` e localiza a limpeza com sucesso.
+     - 1.4: Quando `assignedUserId` é nulo, o resgate via extrato de camareira (`db.maidStatementEntries`) ou via nome de usuário (`assignedUserName`) funciona perfeitamente.
+     - 1.5: Registros com status não concluído (`in_progress`) ou que sejam apenas instrução de arrumação (`isInstructionOnly`, `isBedAdjustmentOnly`) são devidamente ignorados.
+
+2. **Triagem de Feedback Sub-5 (`triageSub5Review`)**:
+   - Quando o Gemini AI está online (Tier 1 simulado via mock), ironias e queixas complexas são perfeitamente classificadas como governança.
+   - No entanto, a especificação e o `PROJECT.md` estabelecem um motor Two-Tier com Tier 2 determinístico de alta precisão para proteger o sistema contra quedas de rede, timeouts ou ausência de chave de API.
+   - No Tier 2 determinístico, 3 frases específicas falham em ser classificadas como defeitos de governança devido a lacunas na expressão regular `CLEANING_DEFECT_REGEX`:
+     - *"o piso estava pegajoso"*: descartado porque "pegajoso" não consta na regex.
+     - *"amenities acabaram"*: descartado porque a regex possui apenas `acabou` (singular) e não aceita a flexão plural `acabaram`.
+     - *"O quarto estava um primor de limpeza, só esqueceram de lavar o banheiro"*: descartado porque a regex não contempla a omissão de limpeza com termos como `esqueceram` ou `não lavaram`.
+   - Essa omissão viola o Requisito R3 ("Se o hóspede responder e o motivo for relacionado a limpeza ou responsabilidades diretas da camareira... devem ser encaminhados para a camareira").
 
 ---
 
 ## 3. Caveats
 
-- Milestone 2 (Maid rates in `maid-automation-service.mjs`), Milestone 3 (Guest Portal UI), and Milestone 4 (Housekeeper Flat Cards UI) were not evaluated as they belong to subsequent milestones.
-- The twin-server SHA-256 parity was temporarily broken earlier due to asynchronous edits in `artifacts/api-server/demo-server.mjs`, but is now passing.
+- **Ambiente sem chave Gemini ativa**: Nos testes executados, `process.env.GEMINI_API_KEY` estava ausente, o que acionou diretamente o Tier 2. Quando o Tier 1 possui chave e LLM ativa, o modelo semântico compreende o contexto natural; porém, a resiliência do Tier 2 é requisito contratual de integridade do sistema.
+- **Não alteração de código pelo Challenger**: Em conformidade com o papel de Challenger / Critic, o Challenger não efetuou commits de correção no código de produção. A correção deve ser realizada pelo Worker M1.
 
 ---
 
 ## 4. Conclusion
 
-**Verdict**: **REQUEST_CHANGES**
+**Veredito: REJECT**.
 
-Milestone 1 core implementation is mostly solid (Scenarios 1, 2, 3, 4, 5, 6, 7, and 8 all passed 100%), but contains two critical empirical bugs that must be remediated by worker before proceeding to Milestone 2:
+A atribuição de governança (`resolveMaidCleaningForReservation`) e os hooks de fluxo de avaliação (F1 e F2) estão impecáveis e aprovados. No entanto, o motor de triagem determinístico (Tier 2) falhou em 3 dos cenários de teste exigidos pelo desafio empírico.
 
-### Required Remediation:
-1. **Fix `isB2bReservation` (demo-server.mjs ~line 14636)**:
-   Explicitly reject non-B2B channels before inspecting corporate fields, unless `r.isB2b === true` or channel explicitly contains `"b2b"`:
-   ```javascript
-   function isB2bReservation(r) {
-     if (!r) return false;
-     const chanLower = String(r.channel || "").toLowerCase().trim();
-     const nonB2b = ["booking", "airbnb", "whatsapp", "site", "direct", "balcao"];
-     if (nonB2b.includes(chanLower) && !r.isB2b && !chanLower.includes("b2b")) {
-       return false;
-     }
-     return Boolean(
-       chanLower === "b2b" ||
-       chanLower.includes("b2b") ||
-       r.isB2b === true ||
-       r.b2bReservationNumber ||
-       r.agencyId ||
-       r.agencyName ||
-       r.agencyTradeName ||
-       r.companyName ||
-       r.b2bLocatorRloc ||
-       String(r.code || "").startsWith("B2B-")
-     );
-   }
-   ```
-2. **Fix `b2bStayoversForDate` in `getRequestsForDate` (demo-server.mjs ~line 14792)**:
-   Exclude completed, checked-out, or early-checkout reservations:
-   ```javascript
-   const b2bStayoversForDate = (db.reservations || []).filter(r =>
-     r.status !== "cancelada" &&
-     r.status !== "cancelado" &&
-     r.status !== "no_show" &&
-     r.status !== "completed" &&
-     r.status !== "checked_out" &&
-     !r.checkoutDone &&
-     !r.earlyCheckout &&
-     r.checkinDate &&
-     r.checkoutDate &&
-     r.checkinDate < dateStr &&
-     r.checkoutDate > dateStr &&
-     isB2bReservation(r)
-   );
-   ```
-3. Keep twin-server parity 100% synchronized between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+### Ação Requerida para o Worker M1:
+Em `artifacts/api-server/maid-automation-service.mjs` (linha 622) e seu espelho `scripts/maid-automation-service.mjs`:
+Atualizar `CLEANING_DEFECT_REGEX` para:
+```javascript
+const CLEANING_DEFECT_REGEX = /\b(?:suj[oa]s?|sujeira[s]?|mancha[s]?|manchad[oa]s?|encardid[oa]s?|imund[oa]s?|amarel[oa]s?|amarelid[aã]o|engordurad[oa]s?|gordur[aa]s?|pegajos[oa]s?|grudent[oa]s?|viscos[oa]s?|limo|lodo|cabelo[s]?|poeira[s]?|p[oó]\b|lixo[s]?|chei[oa]s?|falt\w*|sem\b|n[aã]o\s+tinha|acab\w*|esquec\w*|n[aã]o\s+(?:lavar\w*|limpar\w*)|sem\s+(?:lavar|limpar)|ruim|p[eé]ssim\w*|mal\s+lavad[oa]s?|mal\s+feit[oa]s?|cheiro\s+ruim|mau\s+cheiro|odor(?:es)?|mofo|inseto[s]?|barata[s]?|formiga[s]?)\b/i;
+```
+Após o ajuste, sincronizar com `Copy-Item`, validar paridade com `node scripts/check-twin-parity.mjs` e reexecutar `node scripts/test-challenger-m1.mjs` para obter 19/19 [PASS].
 
 ---
 
 ## 5. Verification Method
 
-To independently verify the defects:
-```bash
-node --test tests/challenger-m1-1.test.mjs
-```
-Expected prior to fix:
-- `Adversarial Probe A`: Fails with `AssertionError: CRITICAL LEAK: Booking reservation with companyName was classified as B2B and generated a stayover card!`
-- `Adversarial Probe B`: Fails with `AssertionError: DEFECT: getRequestsForDate generated stayover card for a reservation with status === "completed" / checkoutDone === true!`
+Para verificar empiricamente as falhas encontradas e a validação após a correção:
 
-Expected post fix:
-- 12/12 tests passing across 4 suites.
+1. **Executar o teste de estresse do Challenger**:
+   ```powershell
+   cd "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
+   node scripts/test-challenger-m1.mjs
+   ```
+   *Estado atual*: 16 PASS, 3 FAIL.  
+   *Condição de invalidação / aprovação*: 19 PASS, 0 FAIL.
+
+2. **Auditar Paridade Twin-Server**:
+   ```powershell
+   node scripts/check-twin-parity.mjs
+   ```
+   *Esperado*: 39/39 arquivos com paridade SHA-256 idêntica.

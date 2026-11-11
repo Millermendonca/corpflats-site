@@ -1,51 +1,64 @@
-## 2026-11-02T01:52:07Z
-You are a teamwork_worker implementing Milestone M1.
-Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1
-Your parent is orchestrator_21 (ID: d148d17c-b644-4690-94c7-bab73af837cc).
+# DISPATCH — worker_m1
+
+## Milestone 1: Padronização Visual das Fotos por Marcas Reais & Galeria de Homologação (R1 & R2)
+
+### Mandatory Instructions
+1. Read `ORIGINAL_REQUEST.md` at:
+   `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
+2. Read `PROJECT.md` at:
+   `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md`
+3. Read `survey_explorer_1` report at:
+   `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\survey_report.md`
+   and `handoff.md`.
+
+### MANDATORY INTEGRITY WARNING
+DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
+
+### Scope & Tasks
+1. **R1: Padronização Visual das Fotos por Marcas Reais Comerciais**:
+   - Provide/prepare the standardized photos for all products of the catalog mapped to real commercial brands (Coca-Cola 350ml, Coca-Cola Zero 350ml, Toddynho 200ml, Heineken Long Neck 330ml, Red Bull 250ml, Pringles Original 114g/40g, KitKat 41.5g, Kinder Bueno Duplo 43g, Mendorato Santa Helena 27g, Água Mineral Copo Selado 200ml, Água Mineral Garrafa 500ml, etc.).
+   - Follow the visual standard: pure white background (`#FFFFFF`), uniform proportions 1:1, studio 5500K lighting, frontal 10°-15° angle, soft contact shadow.
+2. **R2: Galeria de Validação e Homologação Prévia no `minibar-admin.tsx`**:
+   - In `artifacts/limpeza/src/pages/minibar-admin.tsx`, implement the `galeria_marcas` sub-view (inside `<TabsContent value="catalogo">` or dedicated tab/modal) that displays side-by-side:
+     * Proposed real commercial brand photo.
+     * Legacy / current photo.
+     * Official product name and assigned commercial brand (with manufacturer and volume/weight).
+     * Homologation status ("Aprovado", "Pendente", "Troca Solicitada").
+     * Alternative brand switcher (e.g. switch between Heineken / Stella Artois, or Toddynho / Nescau).
+     * Approval actions (individual "Aprovar Foto" button and "Aprovar Todas as Fotos" bulk button) that persist the approval state in the system.
+3. **Verification**:
+   - Run `npm run build` in `artifacts/limpeza` to ensure zero compilation or bundle errors.
+   - Document verification results in your `handoff.md`.
+
+
+## 2026-11-11T10:43:52Z
+You are worker_m1, a teamwork_worker.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\
+Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\
 
 MANDATORY INTEGRITY WARNING:
 DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
 
-MANDATORY READINGS:
-1. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically lines 974-1011)
-2. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md` (STRICT: no global test suites, git commit + push)
-3. `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_21\PROJECT.md`
-4. Survey Handoffs:
-   - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\spec_miner_survey_1\handoff.md`
-   - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_bot_1\handoff.md`
-   - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_fiscal_1\handoff.md`
+MANDATORY REFERENCES:
+1. Read ORIGINAL_REQUEST.md at:
+   c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. Read PROJECT.md at:
+   c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+3. Read survey_explorer_1 findings at:
+   c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\survey_report.md
+   and c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_1\handoff.md
+4. Read your DISPATCH.md at:
+   c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\DISPATCH.md
 
-FILES YOU OWN EXCLUSIVELY:
-- `artifacts/api-server/whatsapp-ai-service.mjs`
-- `scripts/whatsapp-ai-service.mjs` (MUST be kept byte-for-byte identical to artifacts/api-server/whatsapp-ai-service.mjs, verify with SHA-256)
-- `tests/sofia-fiscal-whatsapp-confirmation.test.mjs` (punctual test)
-
-YOUR OBJECTIVES:
-1. Implement in `handleWhatsAppFiscalFlow` (and related handlers in `whatsapp-ai-service.mjs`):
-   - **R3. Restrição por Telefone**: In this test phase, if `!isDeveloperPhone(cleanTarget, db)` (i.e. sender is NOT 22998505276 / 5522998505276), return `{ handled: false }` immediately so the message falls through to normal bot conversation without entering or acknowledging fiscal flow.
-   - **R1. Conferência Prévia**: When 22998505276 requests a fiscal invoice, look up the reservation and tomador data via `findContactAndReservation`. Present borrower (name/company, CPF/CNPJ, address, email), stay description, and total value. Store the pending conference state in `conv.fiscalConferenceState` (or similar structured state in `conv`) and await confirmation.
-   - **R1. Confirmação e Emissão**: When user explicitly confirms ("sim", "pode emitir", "confirmo", "autorizo", etc.), emit the NFS-e using the national emission pipeline (`executeNfseEmissionInternal` or `processNationalInvoiceEmission`), record invoice in `db.invoices`, link invoiceId/numeroNfse to the reservation, and reply via WhatsApp delivering the NFS-e number, verification code, and link/DANFSE document.
-   - **R2. Alteração de Dados Cadastrais e Descrição**: If user requests changes to borrower info (name, CPF/CNPJ, address, email) or description, apply the changes and proceed with the emission/confirmation.
-   - **R2. Trava de Valor e Notificação ao Gestor**: If user requests a change of value (different from the reservation/original stay value), DO NOT emit directly. Activate the security lock:
-     - Block immediate emission.
-     - Store a pending approval in `db.pendingFiscalApprovals` (or in `conv` / `db`).
-     - Send a WhatsApp notification to manager 22998505276 via `sendZapiMessage` detailing the request (requester, reservation, flat, original value, requested value, reason).
-     - Inform the user that value modification requires prior manager approval.
-   - **R2. Aprovação do Gestor**: Intercept approval messages from manager 22998505276 (e.g. "Aprovar fiscal", "Aprovo", "Autorizado", etc.). When approved, emit the invoice with the new approved value and deliver the document to the requester.
-2. Synchronize twin files:
-   - Ensure `scripts/whatsapp-ai-service.mjs` is byte-for-byte identical (SHA-256 match) with `artifacts/api-server/whatsapp-ai-service.mjs`.
-3. Create dedicated punctual automated test file:
-   - `tests/sofia-fiscal-whatsapp-confirmation.test.mjs`
-   - MUST use isolated database copy (in os.tmpdir()), delete DATABASE_URL, and assert that the real `data/database.json` remains untouched (hash SHA-256 unchanged).
-   - Test all 4 core acceptance criteria:
-     (1) Display of conference data (tomador, description, value) upon request from 22998505276.
-     (2) Emission and delivery of invoice upon user confirmation.
-     (3) Immediate block and manager notification on value change request, followed by manager approval flow.
-     (4) Silent discard (`handled: false`) for fiscal requests from any phone other than 22998505276.
-4. Run ONLY the punctual test:
-   - Command: `node --test tests/sofia-fiscal-whatsapp-confirmation.test.mjs`
-   - Strict AGENTS.md rule: DO NOT run global test suites or batch tests (`tests/*.test.mjs`).
-5. Version control:
-   - Run `git status`, `git add` the changed files, `git commit -m "..."`, and `git push` to origin main (or current branch).
-6. Write your detailed handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md`.
-7. Send a completion message back to your parent with verification evidence.
+YOUR TASKS (Milestone 1 — Requirements R1 & R2):
+1. R1: Standardize the photo assets for all minibar catalog products mapped to real commercial brands (Coca-Cola, Coca-Cola Zero, Toddynho, Heineken, Red Bull, Pringles, KitKat, Kinder Bueno Duplo, Mendorato Santa Helena, Água Mineral Copo Selado, Água Mineral Garrafa, etc.). Ensure images comply with the visual standard: pure white background (#FFFFFF), uniform 1:1 proportion, studio lighting, frontal 10°-15° angle, and soft ambient shadow. Place/update the images in `artifacts/limpeza/public/images/frigobar/` (including proposed brand images or real brand assets).
+2. R2: Implement the Validation & Homologation Gallery in `artifacts/limpeza/src/pages/minibar-admin.tsx`:
+   - Under tab `catalogo`, implement the sub-view `galeria_marcas` (with button in the sub-view selector alongside "Produtos & Preços" and "Quantidade Padrão").
+   - Display side-by-side: proposed commercial photo vs legacy/current photo, product name, commercial brand name, manufacturer, and volume/weight.
+   - Include status indicators ("Aprovado", "Pendente", "Troca Solicitada"), alternative brand selector, and approval buttons (individual "Aprovar Foto" and "Aprovar Todas as Fotos").
+   - Persist approval status so the user can review and approve before final production rollout.
+3. Verification:
+   - Run `npm run build` in `artifacts/limpeza` to confirm zero TypeScript and bundling errors.
+   - Ensure twin parity if any backend file is touched (though M1 focuses on frontend and public assets).
+   - Write full implementation report and handoff to `handoff.md` in your working directory.
+   - Message caller upon completion.

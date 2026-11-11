@@ -1,23 +1,33 @@
-# Handoff Report — Sentinel
+# Handoff Report — Sentinel (Maid Review WhatsApp Automation & AI Synthesis)
 
-## Observation
-- Original prompt requested mandatory smoking check when completing housekeeping cards, persisting the smoking flag on the guest profile, displaying visual smoking warnings on future reservations, and allowing interactive corrections/reversals on the cleaning card.
-- Execution routed to SWE Light (`teamwork_swe`). Implementer and three adversarial review rounds completed with 4 git commits (`7a059a3`, `86de8f3`, `f955c7a`, `c29cb4e`).
-- Independent Sentinel Victory Auditor verified timeline forensics, anti-cheating checks, and test executions, confirming VICTORY CONFIRMED.
+## 1. Observation
+- **Original User Request**: Automatic daily WhatsApp summary for maids of reviews for flats cleaned by them, retroactive November dispatch, AI triage for ratings < 5 filtering out external issues, and real-time updated consolidated opinion synthesis (Mercado Livre style) with evolution comparison.
+- **Task Interview & Routing**: Interview conducted and approved prompt routed to `teamwork_orchestrator` (`5c040e5e-c55e-4650-ac48-960c732d710d`).
+- **Milestone Delivery**:
+  - M1: Cleaning attribution (`resolveMaidCleaningForReservation`) and Two-Tier AI triage engine (`triageSub5Review`).
+  - M2: Mercado Livre-style opinion synthesis (`updateMaidOpinionSynthesis`), trend deltas, and dual realtime message dispatch.
+  - M3: Daily summary scheduler (`trigger_daily_review_summary`), retroactive November dispatch (`dispatchNovemberRetroactiveReviews`), and UI management card in `maid-whatsapp-automation.tsx`.
+  - M4: Integration hardening, 44/44 tests passed in `tests/maid-review-ai-synthesis.test.mjs`, frontend production build compiled in 31.71s, 39/39 twin-server files in 100% SHA-256 parity, and git commit `3b93e9e` pushed to `origin main`.
+- **Independent Victory Audit**: Spawned `teamwork_victory_auditor` (`fa1b0ed0-bcef-41d4-874a-a1bc1e39583b`), which independently executed all 3 audit phases and returned `VERDICT: VICTORY CONFIRMED`.
 
-## Logic Chain
-- R1: When clicking "Finalizar Limpeza", flat cards display a prominent prompt taking the card area with "Sim, fumou" and "Não fumou", concluding directly without secondary modals.
-- R2: If "Sim" is chosen, an interactive badge ("🚬 Fumou") is displayed with a toggle action allowing immediate reversal by the maid or staff.
-- R3: The backend registers smoking in `db.guests` and flags future reservations matching the guest across phone, email, CPF, and name. Visual indicators appear across PMS Calendar, Reservation Hover Cards, CRM Guests, Reception Tablet, Live Operations Panel, and PMS Reports. Reversal cleanly undoes all flags.
-- Verification: 10/10 functional test blocks in `tests/smoking-marking-workflow.test.mjs` pass. 37/37 twin-server files maintain 100% SHA-256 byte-for-byte parity. Vite production build succeeds with exit code 0.
+## 2. Logic Chain
+- Requirements R1–R5 were mapped to discrete interface contracts and verified against adversarial gates.
+- When Challenger M1.1 detected colloquial edge cases (`pegajoso`, `acabaram`, `esqueceram de lavar`), the gate was properly rejected and remediated by `explorer_m1_fix` before advancing.
+- When Reviewer M3.1 detected a potential template reset bug on reboot, `worker_m3_fix` applied surgical protection and verified custom template persistence.
+- Complete twin-server parity between `artifacts/api-server/` and `scripts/` was enforced and confirmed on every commit.
+- Victory auditor independently executed the test suite, verified ReDoS safety on 80,000-character payloads, checked frontend build output, and confirmed git remote synchronization.
 
-## Caveats
-- Matching across future bookings without CPF relies on normalized full name or normalized phone/email; guest records created via manual ad-hoc cleanings without reservation ID are handled gracefully.
+## 3. Caveats
+- AI triage prioritizes Google Gemini (`gemini-2.5-flash`), with transparent deterministic fallback via regex when API keys are absent or network requests time out.
+- The retroactive November dispatch endpoint (`POST /api/maid-automation/dispatch-retroactive-reviews`) includes an idempotency lock (`dispatchedToMaidAt` and `dispatchedRetroactiveAt`), so repeating calls will not re-send duplicate WhatsApp messages to maids.
 
-## Conclusion
-All requirements and acceptance criteria have been implemented, tested, adversarial-reviewed, and independently verified. The feature is production ready.
+## 4. Conclusion
+- All requirements R1, R2, R3, R4, and R5 are 100% implemented, tested, verified, and deployed.
+- Independent Victory Auditor verdict: `VICTORY CONFIRMED`.
+- Sentinel cleanup executed: monitoring crons cancelled and subagents retired.
 
-## Verification Method
-- Independent Victory Auditor executed `node tests/smoking-marking-workflow.test.mjs` (10/10 PASS).
-- Twin-server parity verified with `node scripts/check-twin-parity.mjs` (37/37 PASS).
-- Frontend production build verified with `npm run build` in `artifacts/limpeza` (exit code 0).
+## 5. Verification Method
+- Punctual test suite: `node --test tests/maid-review-ai-synthesis.test.mjs` (44 tests, 0 failures).
+- Twin parity audit: `node scripts/check-twin-parity.mjs` (39/39 files PASS).
+- Frontend production build: `npm run build --prefix artifacts/limpeza` (exit code 0).
+- Git status: `git status` confirms working tree clean and up to date with `origin/main` (`3b93e9e`).

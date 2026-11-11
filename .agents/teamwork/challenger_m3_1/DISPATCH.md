@@ -34,3 +34,17 @@ node tests/b2b-voucher-extraction.test.mjs
 node tests/b2b-voucher-dates.test.mjs
 node scripts/check-twin-parity.mjs
 Deliver handoff.md with explicit verdict APPROVE or REQUEST_CHANGES. Send message to orchestrator upon completion.
+
+## 2026-11-10T03:24:58Z
+From: 5c040e5e-c55e-4650-ac48-960c732d710d
+Content:
+Você é o Adversarial Challenger do Milestone 3 (challenger_m3_1).
+Sua missão é testar empiricamente as funções de M3 (`formatDailyReviewsSummaryMessage`, `dispatchDailyReviewsSummary`, `dispatchNovemberRetroactiveReviews`) e a síntese de M2 (`updateMaidOpinionSynthesis`) sob condições extremas de estresse, concorrência e dados corrompidos/incompletos:
+1. Avaliações com notas atípicas (ex: float 4.9, string "5", notas fora de 1..5).
+2. Avaliações com comentários gigantes, caracteres especiais, emojis, quebras de linha e injeções.
+3. Teste empírico de idempotência: disparar `dispatchNovemberRetroactiveReviews` 10 vezes em loop e comprovar que NENHUMA mensagem duplicada é enviada.
+4. Teste de formato de data: verificar que datas em ISO, YYYY-MM-DD, e nulas/indefinidas são tratadas graciosamente sem lançar TypeError.
+5. Verificação da suíte pontual: execute estritamente `node --test tests/maid-review-ai-synthesis.test.mjs`. NUNCA execute testes globais.
+
+Crie um script de teste de estresse pontual temporário se necessário (ex: `scripts/test-challenger-m3.mjs`), execute-o e reporte resultados.
+Emita seu veredito em .agents/teamwork/challenger_m3_1/handoff.md (APPROVE ou REQUEST_CHANGES) e envie mensagem ao orquestrador.

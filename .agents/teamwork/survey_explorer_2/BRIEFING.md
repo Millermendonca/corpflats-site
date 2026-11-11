@@ -1,14 +1,9 @@
-# BRIEFING — 2026-11-04T16:26:00Z
+# BRIEFING — 2026-11-11T10:40:00Z
 
 ## Mission
-Investigate and produce a complete technical analysis for Requirements R2, R3, R4 of "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)":
-- Backend Trigger (Saturday 19:00h cron/interval) & Automation settings
-- Active reservation eligibility filter (Sunday 12:00h checkout)
-- Availability check (Sunday-to-Monday): flat vacant vs Sunday incoming reservation check + `selectFairShareFlat` alternate reallocation + 100% building occupancy check
-- 30-minute hold creation & tracking in `db` / system store
-- Silent expiration (`isSilentUpsellHold: true`): removing hold without guest notifications, keeping original Sunday checkout
-- PIX charge generation (`createInterPixCob` / `generateStaticPixPayload`)
-- Webhook PIX processing: identifying upsell, PMS checkout extension to Monday 12:00h, maid cleaning rescheduling, incoming guest reallocation, confirmation message
+Investigate and design technical specifications for Requirements R3 & R5 of the Minibar and Welcome Kit initiative:
+- R3: Guest Minibar Menu (`guest-minibar.tsx` at `/frigobar/:flatNumber`) - visual segregation of "Kit de Boas-Vindas (Cortesia da Casa)" at the top with up to 2 copos d'água mineral and 2 amendoins Mendorato, badges "Cortesia"/"Grátis"/R$ 0,00, no charges generated.
+- R5: Reservation consumption statement & checkout views across guest portals (`guest-portal.tsx`, `guest-checkout.tsx`) and PMS views (`pms-calendar.tsx`, `pms-reports.tsx`, `reception-checkout.tsx`, reservation details modal, and backend endpoints in `demo-server.mjs`). Ensure consumed courtesy items are segregated in a distinct block with quantity consumed and price R$ 0,00, without adding to total payable amount.
 
 ## 🔒 My Identity
 - Archetype: teamwork_preview_explorer
@@ -16,6 +11,11 @@ Investigate and produce a complete technical analysis for Requirements R2, R3, R
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2
 - Original parent: 967b1f8a-534e-4526-94ad-683f5ef4e50f
 - Milestone: Oferta de Domingo Sem Pressa - R2, R3, R4 Backend Engine Investigation
+- Archetype (Current): teamwork_explorer
+- Roles (Current): explorer, investigator (Survey Explorer 2 - R3 & R5 Minibar Guest Menu & Statement Segregation)
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\survey_explorer_2
+- Current Parent / Caller ID: 92ba65f0-be83-406c-8289-2ffbe5293de2
+- Milestone (Current): Minibar Welcome Kit & Zero-Charge Statement Segregation (R3 & R5)
 
 ## 🔒 Key Constraints
 - Read-only investigation — do NOT implement
@@ -23,28 +23,35 @@ Investigate and produce a complete technical analysis for Requirements R2, R3, R
 - Adhere strictly to project guidelines (AGENTS.md, PROJECT.md)
 - Report findings in `analysis.md` and `handoff.md` and notify parent via `send_message`
 - Remember twin-server rule: `artifacts/api-server/` <-> `scripts/` (edits to `artifacts/api-server/`, mirrored to `scripts/`)
+- Read-only investigation for R3 & R5: do NOT modify source code or application files
+- Write all findings to `survey_report.md` and `handoff.md` in `.agents/teamwork/survey_explorer_2/`
+- Ensure complete evidence chain (file paths, line numbers, data structures, UI flows)
 
 ## Current Parent
-- Conversation ID: 967b1f8a-534e-4526-94ad-683f5ef4e50f
-- Updated: 2026-11-04T16:26:00Z
+- Conversation ID: 92ba65f0-be83-406c-8289-2ffbe5293de2
+- Updated: 2026-11-11T10:40:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/api-server/zapi-service.mjs`: Background runner (line 11224), Brasilia timezone conversion, Canal #1 (`guest_schedule`), `calculateScheduledTime`.
-  - `artifacts/api-server/demo-server.mjs`: `sweepExpiredPreReservations` (line 28219), `POST /api/pms/inter/webhook` (line 57998), PMS checkout & cleaning synchronization (lines 31828-31950), `createInterPixCob` (line 57885), `calculateFairShareStats` (line 27378).
-  - `artifacts/api-server/whatsapp-ai-service.mjs`: `selectFairShareFlat` (line 14345), pendingModification conflict checks.
-  - `artifacts/api-server/agent-architecture.mjs`: Fair-share reallocation pattern (lines 586-599, 1823-1842), `injectSessionContext` (lines 69-245).
+  - `artifacts/limpeza/src/pages/guest-minibar.tsx` (lines 176–201, 350–470, 730–830, 1380–1438, 1448–1728, 2039–2215)
+  - `artifacts/limpeza/src/pages/guest-portal.tsx` (lines 4409–4501)
+  - `artifacts/limpeza/src/pages/guest-checkout.tsx` (lines 1–250)
+  - `artifacts/limpeza/src/pages/reception-checkout.tsx` (lines 1–150)
+  - `artifacts/limpeza/src/pages/pms-calendar.tsx` (lines 10879–11010, 11760–11772)
+  - `artifacts/limpeza/src/pages/pms-reports.tsx` (lines 1–60)
+  - `artifacts/limpeza/src/pages/anserve-restock.tsx` (lines 545–680)
+  - `artifacts/api-server/demo-server.mjs` (lines 1495–1780, 75408–75668, 76305–76530, 78080–78250)
 - **Key findings**:
-  - Full evidence chain mapped for all requirements R2, R3, and R4.
-  - Silent expiration model designed: `pendingSundayUpsell` + `pendingModification` with `isSilentUpsellHold: true`, completely bypassing WhatsApp cancellation/expiration alerts.
-  - Webhook integration mapped: seamlessly joins the `pending*` ancillary order pattern in `POST /api/pms/inter/webhook`.
-  - Reallocation of incoming guests into alternative flat via `selectFairShareFlat` verified and ready for implementation.
-- **Unexplored areas**: None within scope. All backend requirements investigated.
+  - Complete evidence chain established for R3 and R5.
+  - Designed "Kit de Boas-Vindas (Cortesia da Casa)" prominent section at top of guest menu with emerald/gold branding, up to 2 copos d'água and up to 2 amendoins Mendorato, distinctive badges, clear segregation from paid products, and zero-charge guarantee.
+  - Mapped all reservation statement and consumption display points across guest portal, guest checkout, reception checkout, PMS calendar reservation modal, and backend endpoints.
+  - Specified R5 implementation: exact consumed quantities (0, 1, or 2), dedicated highlighted emerald block with R$ 0,00, and complete immunity of reservation total payable amount.
+- **Unexplored areas**: None within scope. All R3 and R5 objectives completed.
 
 ## Key Decisions Made
-- Deliver detailed findings in `analysis.md` and structured 5-component report in `handoff.md`.
+- Documented findings in comprehensive `survey_report.md` and structured 5-component `handoff.md`.
 
 ## Artifact Index
 - `progress.md` — Liveness heartbeat and milestone tracking
-- `analysis.md` — Full technical analysis for R2, R3, R4
+- `survey_report.md` — Detailed technical report on R3 & R5
 - `handoff.md` — 5-component handoff report

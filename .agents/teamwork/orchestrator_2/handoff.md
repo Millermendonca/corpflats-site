@@ -1,83 +1,80 @@
-# Orchestrator 2 Final Handoff Report
+# Handoff Report — Orchestrator 2 (Entrega Final)
 
-**Project:** CorpFlats (Guest-Flow-Manager)  
-**Feature:** Global Dynamic Check-in Provider Toggle (CorpFlats vs FNRH Gov.br/SERPRO) & Resilient Link Unification  
-**Agent:** teamwork_preview_orchestrator (`orchestrator_2`)  
-**Parent Conversation ID:** `935e5fdd-81de-48cf-a2ff-cf3e7fa54a72`  
-**Date:** 2026-10-07T17:45:00Z  
-**Type:** Hard (Task complete)  
+**Task**: Recurso para envio automático de resumo diário via WhatsApp para as camareiras com as avaliações dos hóspedes dos quartos limpos por elas, incluindo envio retroativo de novembro, triagem por IA para notas abaixo de 5 e síntese consolidada de opiniões dos clientes atualizada a cada novo comentário.
+**Date**: 2026-11-10T03:51:00Z
+**Parent Sentinel ID**: `97669649-0156-479a-924b-dc117b202647`
 
 ---
 
 ## 1. Observation
 
-1. **R1. Chave Seletora de Provedor de Check-in no Painel Administrativo:**
-   - Configuration `settings.checkinProvider`: `'proprio'` | `'gov_fnrh'` initialized in `data/database.json`.
-   - `demo-server.mjs` handles `GET /api/settings` and `PATCH /api/settings` with immediate disk persistence and PostgreSQL cloud snapshot shielding (`loadDatabase`), reflecting live changes without server restarts.
-   - Admin UI Hero Card in `artifacts/limpeza/src/pages/settings.tsx` with Radix Switch toggle between "Check-in Próprio (CorpFlats)" and "Check-in Gov.br (FNRH Digital - Ministério do Turismo)", with TanStack Query instant cache invalidation.
-   - Status badge displaying active mode and SERPRO connection health (`GET /api/fnrh-serpro/status`) showing Operacional, Instável, or Em Contingência (Fallback Automático Ativo) with manual latency ping.
-
-2. **R2. Serviço de Integração com API SERPRO FNRH v2.4.2 e Obtenção do Link Oficial:**
-   - Client implemented in `scripts/fnrh-serpro-service.mjs` and twin `artifacts/api-server/fnrh-serpro-service.mjs` with Basic Auth (`usuario:senha`), environment configuration (`homologacao` / `producao`), 11-digit `cpf_solicitante`, `registerReservation(reservation)`, `checkHealth()`, and 5000ms AbortController timeout.
-   - Reservation creation hooks in `POST /api/pms/reservations` and `POST /api/reservations/direct-booking` register reservations when Gov.br is active and persist `serproReservaId` and `serproPrecheckinUrl` / `link_precheckin`.
-
-3. **R3. Função Helper Centralizada e Fallback Resiliente de URLs:**
-   - Helper `getCheckinUrl(reservation, guestIndex, baseUrl, dbInstance)` and synchronous companion `getCheckinUrlSync` implemented in `demo-server.mjs` and frontend helper `checkin-url.ts`.
-   - In `'gov_fnrh'` mode: returns official Gov.br precheckin URL.
-   - If link missing, API error (HTTP 500/401/ECONNREFUSED), or timeout (>5s): activates intelligent fallback immediately, returns `${baseUrl}/pre-checkin/${reservation.code}?guest=${guestIndex}`, appends audit log `FNRH_SERPRO_FALLBACK`, and creates reception alert notification without throwing exceptions.
-   - In `'proprio'` mode: returns `${baseUrl}/pre-checkin/${reservation.code}?guest=${guestIndex}`.
-
-4. **R4. Unificação Universal de Links em Disparos e Interface:**
-   - WhatsApp (`zapi-service.mjs`): `resolveWhatsAppTags` (`{{link_checkin_digital}}`), multi-guest reminders (guest 2), and `renderTemplateButtons` use dynamic URL. Button filter predicate updated to support Gov.br domains and button IDs.
-   - Emails (`mail-service.mjs`): Confirmation, pre-checkin reminders, and access instructions use dynamic URL.
-   - WhatsApp AI Assistant (`whatsapp-ai-service.mjs`): Sofia AI and heuristic replies use dynamic URL.
-   - Reception & Portals: `pms-calendar.tsx`, `reservation-hover-card.tsx`, `reception-tablet.tsx`, `use-quick-messages.ts`, and endpoint `POST /api/pms/reservations/:id/resend-checkin-link` use dynamic URL.
-
-5. **Acceptance Tests & Verification:**
-   - Authoritative acceptance test suite `tests/fnrh-checkin-toggle.test.mjs` passes 28/28 tests.
-   - Full test battery passes 108/108 tests across 23 suites with 0 failures.
-   - 100% byte-for-byte and SHA-256 twin mirror parity verified across all 5 mirrored pairs:
-     - `artifacts/api-server/demo-server.mjs` <==> `scripts/demo-server.mjs`
-     - `artifacts/api-server/fnrh-serpro-service.mjs` <==> `scripts/fnrh-serpro-service.mjs`
-     - `artifacts/api-server/zapi-service.mjs` <==> `scripts/zapi-service.mjs`
-     - `artifacts/api-server/mail-service.mjs` <==> `scripts/mail-service.mjs`
-     - `artifacts/api-server/whatsapp-ai-service.mjs` <==> `scripts/whatsapp-ai-service.mjs`
-   - Frontend production build verified in `artifacts/limpeza/dist/public`.
-   - Git commit `9ab970a` and git push to `origin main` confirmed.
-   - Final Forensic Auditor verdict: **CLEAN** (zero integrity violations).
+1. **Paridade Twin-Server SHA-256 (Regra Constitucional do Repositório)**:
+   - Execução: `node scripts/check-twin-parity.mjs`
+   - Resultado: `39/39 arquivos de runtime auditados dinamicamente. STATUS: 100% PASS - Paridade perfeita restabelecida!`
+2. **Suíte de Testes Pontual Dedicada**:
+   - Execução estritamente pontual: `node --test tests/maid-review-ai-synthesis.test.mjs`
+   - Resultado: 44 testes executados, 44 testes aprovados (100% PASS), 0 falhas, duração ~1.07s. Nenhuma varredura global foi executada, obedecendo rigorosamente à regra de testes de `AGENTS.md`.
+3. **Compilação de Produção do Frontend**:
+   - Execução: `npm run build` na pasta `artifacts/limpeza`
+   - Resultado: Código de saída 0, gerando bundle `dist/public/assets/maid-whatsapp-automation-YjjGklR1.js` e assets de produção.
+4. **Vereditos da Esteira de Auditoria e Revisão**:
+   - `auditor_m3_1` (Forensic Auditor): **CLEAN** (zero violações de integridade, ausência total de hardcoding ou dummies, lógica 100% autêntica).
+   - `reviewer_m3_2` (Contract & Flow Preservation Reviewer): **APPROVE** (fluxo de 2 etapas do NPS preservado intacto).
+   - `challenger_m3_1` (Adversarial Stress Challenger): **APPROVE** (18/18 testes de estresse, idempotência comprovada em loop de 10 execuções sem duplicidades, imunidade a ReDoS comprovada com payloads de 100k caracteres).
+   - `reviewer_m3_final` (Final Bugfix Reviewer): **APPROVE** (correção de `ensureConfig` validada, preservando templates customizados).
+5. **Git Versioning & Remote Push**:
+   - Commit: `3b93e9e` (`feat(maid-automation): auto daily review summary, AI triage sub-5, Mercado Livre synthesis and retroactive dispatch`)
+   - Push: Enviado com sucesso para `origin main` (`7661ad3..3b93e9e main -> main`).
 
 ---
 
 ## 2. Logic Chain
 
-1. **Architecture Discovery**: Survey phase mapped the 17 link generation call sites, database settings hydration, and SERPRO FNRH v2.4.2 specifications before any file edits.
-2. **Backend Engine**: Built authentic SERPRO client with 5s timeout guard and resilient fallback. Extended settings endpoints with live invalidation and cloud snapshot preservation.
-3. **Communication & Frontend Integration**: Replaced all hardcoded string templates across messaging and UI components with centralized dynamic link resolvers.
-4. **Adversarial & Forensic Verification**: 2 independent Reviewers (APPROVE), 2 Challengers (APPROVE with timeout and error simulations), and 2 Forensic Auditors (CLEAN) empirically verified code correctness and integrity.
-5. **Production Deployment**: Vite production bundle compiled, staged, committed, and pushed to remote GitHub repository `origin main`.
+1. **Atribuição Determinística de Limpeza (R1 / F1)**:
+   - Implementada em `resolveMaidCleaningForReservation(db, reservation)` em `artifacts/api-server/maid-automation-service.mjs` (espelhado em `scripts/maid-automation-service.mjs`).
+   - Prioriza stayover executado durante a estadia (`checkin <= cleaningDate <= checkout`). Na ausência de stayover, utiliza a última limpeza de preparação na data ou anterior ao check-in (`requestDate <= checkinDate`). Em turnovers no mesmo dia (data D), o hóspede que sai recebe a limpeza de preparação da data de entrada dele e o hóspede que entra recebe a limpeza do dia D.
+2. **Preservação Integral do Fluxo Existente de Avaliações (R2 / F2)**:
+   - O fluxo de 2 etapas (`tpl_nps_satisfaction_check` e `tpl_nps_score_1..4`), geração de links do Google para notas 5 e tickets em `db.observations` para notas <= 2 em `zapi-service.mjs` e `demo-server.mjs` foi 100% preservado. A integração com o módulo das camareiras ocorre através do hook não-bloqueante seguro `invokeMaidReviewHookSafe`.
+3. **Triagem por IA para Notas < 5 (R3 / F3, F4)**:
+   - Motor Two-Tier: Tier 1 via Google Gemini estruturado (`gemini-2.5-flash`, `thinkingBudget: 0`) e Tier 2 via fallback determinístico de regex (`deterministicTriageSub5Review`).
+   - Notas 5: Sempre elegíveis e encaminhadas para a camareira.
+   - Notas < 5 sem comentário: Retidas de envio para a camareira.
+   - Notas < 5 com comentário sobre limpeza, enxoval, amenidades ou louças: Encaminhadas (`forwardToMaid: true`).
+   - Notas < 5 com comentários alheios (Wi-Fi, portaria, check-in, ar-condicionado, barulho): Descartadas com proteção anti-cobrança indevida (`forwardToMaid: false`).
+4. **Envio Retroativo Inicial de Novembro (R4 / F10)**:
+   - Função canônica `dispatchNovemberRetroactiveReviews(db, { sendZapiFn, force })` e endpoint `POST /api/maid-automation/dispatch-retroactive-reviews`.
+   - Trava estrita de idempotência marcando `dispatchedToMaidAt` e `dispatchedRetroactiveAt`, garantindo que reexecuções não dupliquem envios para Cris ou Grazi.
+5. **Síntese Consolidada de Opiniões estilo Mercado Livre & Comparativo (R5 / F5, F6, F7)**:
+   - Estrutura de agregação incremental em `db.maidOpinionSynthesis[maidId]`.
+   - Termômetro de recorrência de itens críticos (Box do Banheiro; Louças, Pratos e Talheres; Enxoval de Cama e Banho; Piso e Superfícies).
+   - Cálculo de evolução período a período: $\Delta = \text{Média Atual} - \text{Média Anterior}$, gerando tags de tendência (`evolucao` 📈, `estabilidade` ➡️, `regressao` 📉).
+   - Disparo duplo em tempo real via WhatsApp ao receber comentário elegível: Mensagem 1 (avaliação individual) + Mensagem 2 (síntese atualizada com comparativo).
+6. **Resumo Diário Agendado em Horário Fixo (R1 / F8, F9)**:
+   - Gatilho `trigger_daily_review_summary` em `DEFAULT_MAID_TRIGGERS` (horário padrão 18:00 Brasília).
+   - Formatação clara com número do quarto, data da limpeza em formato brasileiro (`DD/MM/YYYY`) e nota recebida.
+   - Endpoint manual `POST /api/maid-automation/dispatch-daily-reviews`.
+7. **Frontend Web (F11)**:
+   - Card completo em `artifacts/limpeza/src/pages/maid-whatsapp-automation.tsx` com toggle ativo/pausado, seletor de horário, botões "Disparar Retroativo Nov/26" e "Disparar Resumo Hoje", além de pré-visualização em tempo real no mockup do WhatsApp.
 
 ---
 
 ## 3. Caveats
 
-- In production environments, Gov.br registration requires valid Basic Auth credentials (`usuario:senha`) and CPF issued by Serpro/MTur. In the absence of credentials or during network downtime, the system operates seamlessly in automatic fallback mode, logging audit events and alerting reception while providing the CorpFlats internal check-in link.
+- **Ambiente de Testes vs Produção**: Os testes unitários utilizam mocks seguros para o envio via Z-API (`sendZapiFn`). Em produção, os envios utilizam a instância ativa da Z-API configurada em `db.zapiConfig`, com histórico salvo em `db.maidAutomationConfig.history`.
+- **Regras Imutáveis**: Nenhuma varredura global foi executada, e a paridade Twin-Server foi mantida em 100% dos 39 arquivos.
 
 ---
 
 ## 4. Conclusion
 
-All requirements (R1–R4), acceptance criteria, and critical repository rules have been fully satisfied, verified, and pushed to production. The project is ready for operational use.
+Todos os 5 requisitos (R1 a R5) e todos os critérios de aceitação foram cumpridos integralmente e validados por revisores, challengers e auditor forense independente. O código está compilado, testado e publicado no repositório remoto (`origin main`, commit `3b93e9e`).
 
 ---
 
 ## 5. Verification Method
 
-To independently verify the implementation:
-1. `node --test tests/fnrh-checkin-toggle.test.mjs`
-2. `node --test tests/m1-backend-serpro-verification.test.mjs tests/m2-messaging-checkin-url.test.mjs tests/challenger-m1-adversarial.test.mjs tests/challenger-m1-2-serpro-integrity.test.mjs tests/service-orders.test.mjs`
-3. Verify twin mirror bitwise parity:
-   `node -e "const fs = require('fs'); const pairs = [['artifacts/api-server/demo-server.mjs', 'scripts/demo-server.mjs'], ['artifacts/api-server/fnrh-serpro-service.mjs', 'scripts/fnrh-serpro-service.mjs'], ['artifacts/api-server/zapi-service.mjs', 'scripts/zapi-service.mjs'], ['artifacts/api-server/mail-service.mjs', 'scripts/mail-service.mjs'], ['artifacts/api-server/whatsapp-ai-service.mjs', 'scripts/whatsapp-ai-service.mjs']]; pairs.forEach(([a, b]) => console.log(a, '<==>', b, fs.readFileSync(a).equals(fs.readFileSync(b)) ? 'PASS' : 'FAIL'));"`
-4. Verify build:
-   `cd artifacts/limpeza && npm run build`
-5. Verify git:
-   `git status` (clean) and `git log -n 1`
+Para verificar a implementação:
+1. `node scripts/check-twin-parity.mjs` -> Deve retornar 100% PASS (39/39).
+2. `node --test tests/maid-review-ai-synthesis.test.mjs` -> Deve retornar 44 pass, 0 fail.
+3. `npm run build --prefix artifacts/limpeza` -> Deve compilar com código 0.
+4. `git log -1` -> Deve confirmar o commit `3b93e9e` enviado para `origin/main`.

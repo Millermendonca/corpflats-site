@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-14T11:47:20Z
+# BRIEFING — 2026-11-11T12:48:00Z
 
 ## Mission
-Deploy changes: Inspect git status, ensure data/database.json is untouched, stage code/tests/dist/teamwork, commit with descriptive message, push to remote repository, report commit hash and push confirmation.
+Deploy changes: verify twin parity and build, stage all minibar feature assets and code (including proposta_*.png, tests, dist, PROJECT.md), commit with descriptive message, push to remote repository (main), and verify clean git status.
 
 ## 🔒 My Identity
 - Archetype: worker
@@ -17,18 +17,18 @@ Deploy changes: Inspect git status, ensure data/database.json is untouched, stag
 - Maintain byte-for-byte twin parity between `artifacts/api-server/` and `scripts/` where applicable.
 
 ## Current Parent
-- Conversation ID: 3d03f136-f013-4588-99e3-f22e17cc1ae4
-- Updated: 2026-10-14T11:47:20Z
+- Conversation ID: 92ba65f0-be83-406c-8289-2ffbe5293de2
+- Updated: 2026-11-11T12:47:28Z
 
 ## Task Summary
-- **What to build**: Git commit and push for NFS-e, CRM 360, and WhatsApp fiscal assistant integration.
+- **What to build**: Git commit and push for minibar feature: standardization of product photos with commercial brands, approval gallery, welcome kit, and Anserve reconciliation.
 - **Success criteria**: Clean status, database.json unmodified, files staged, commit created, push succeeded, handoff and message sent.
 - **Interface contracts**: PROJECT.md / AGENTS.md
 - **Code layout**: Guest-Flow-Manager repository structure
 
 ## Key Decisions Made
-- Staged and verified files, built frontend dist, verified SHA-256 twin parity across 7 file pairs.
-- Committed with hash `a20c7f0` and pushed to `origin/feature/wbp-integration`.
+- Staged and verified files, verified SHA-256 twin parity across 40 runtime files (100% pass).
+- Building frontend dist to ensure all production bundles reflect latest minibar and voice notification changes.
 
 ## Artifact Index
 - DISPATCH.md — Task dispatch instructions
@@ -36,14 +36,14 @@ Deploy changes: Inspect git status, ensure data/database.json is untouched, stag
 - handoff.md — 5-component handoff report
 
 ## Change Tracker
-- **Files modified**: Code, scripts, tests, dist, metadata committed in `a20c7f0`
-- **Build status**: Pass (npm run build exit code 0)
+- **Files modified**: artifacts/limpeza/public/images/frigobar/proposta_*.png, artifacts/limpeza/dist/, PROJECT.md, tests/minibar-finance-adversarial.test.mjs, tests/frontend-ui-audit.mjs, etc.
+- **Build status**: In progress / Verifying
 - **Pending issues**: None
 
 ## Quality Status
-- **Build/test result**: Pass
+- **Build/test result**: Pass (twin parity 100% PASS; build in progress)
 - **Lint status**: N/A
-- **Tests added/modified**: tests/nfse-crm-whatsapp-flow.test.mjs
+- **Tests added/modified**: tests/minibar-finance-adversarial.test.mjs, tests/frontend-ui-audit.mjs
 
 ## Loaded Skills
 None

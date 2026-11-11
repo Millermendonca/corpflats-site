@@ -1,39 +1,47 @@
-# BRIEFING — 2026-10-29T16:53:00Z
+# BRIEFING — 2026-11-10T02:15:30Z
 
 ## Mission
-Investigate CRM database, contacts, reservations, documents, and chat history regarding merged/corrupted contacts and formulate unmerge audit criteria.
+Detailed technical specification for Feature F2 (Preservation of 2-step review flow & hook points) in Guest-Flow-Manager.
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: investigation, synthesis
+- Roles: investigator, synthesizer
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_2
-- Original parent: 77bac84a-2c7b-483b-8533-2e30a6efd40e
-- Milestone: M1 - Database & CRM Contact Data Audit & Unmerge Logic Analysis
+- Original parent: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Milestone: M1.2
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement
-- Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`)
-- Never run any script that sends WhatsApp messages to guests
-- Write only to .agents/teamwork/explorer_m1_2/
+- Read-only investigation — do NOT implement in production source code.
+- Non-invasive hook design: zero modification/breaking of existing satisfaction survey prompts (tpl_nps_satisfaction_check, tpl_nps_score_1..4).
+- Adhere to AGENTS.md and PROJECT.md guidelines.
 
 ## Current Parent
-- Conversation ID: 77bac84a-2c7b-483b-8533-2e30a6efd40e
-- Updated: not yet
+- Conversation ID: 5c040e5e-c55e-4650-ac48-960c732d710d
+- Updated: 2026-11-10T02:15:30Z
 
 ## Investigation State
-- **Explored paths**: `data/database.json`, `data/backups/`, `scripts/demo-server.mjs`, `tests/guest-unlink-contamination.test.mjs`, `data/audit_logs.jsonl`.
+- **Explored paths**:
+  - `artifacts/api-server/zapi-service.mjs` (lines 975–1115, 9610–9635, 15590–16050, 16085–16620, 16860–17050)
+  - `artifacts/api-server/demo-server.mjs` (lines 120–145, 62818–62850, 63393–63480)
+  - `artifacts/api-server/maid-automation-service.mjs` (lines 1–100, 190–240, exports & trigger structure)
+  - `tests/nps-score-messages-and-improvements.test.mjs` (lines 1–260)
+  - Peer explorer missions: `explorer_m1_1` (F1 Maid Attribution), `explorer_m1_3` (F3/F4 AI Triage)
 - **Key findings**:
-  - Phone `21976403551`: Authoritative guest Roselene (`RES-712-0012` Booking.com audit log `audit_init_12`). In CRM, Roselene was contaminated with phone `21997598289` of Sintia (`RES-313-0025`), moving `21976403551` to `additionalPhones`. In Google Contacts, 8-digit suffix search (`76403551`) and candidate phone variants merged it into "Raiza Castro Tavares".
-  - Phone `28999136926`: Authoritative guest Fabiana (`RES-509-0539`, UH 509). João Eduardo Leal Correa (Guest 20, `people/c5362578501072660427`) had Fabiana's number added to his contact, causing caller ID to show his name.
-  - Audit revealed 9 guests with `additionalPhones`, 7 groups of guests sharing identical phone numbers, and 5 WhatsApp conversations with mismatched reservation guest names.
-  - Google Contacts sync bugs identified: 8-digit suffix query (`slice(-8)`) ignoring DDD, map collision in `existingByPhoneSuffix`, candidate phone variant aggregation across contaminated records, and lack of explicit Google People API unmerge when names mismatch.
-- **Unexplored areas**: None for M1; findings synthesized in `analysis.md` and `handoff.md`.
+  - Exact storage locations of `existingNps.score` (lines 16287, 63417) and `existingNps.comment` (lines 16344, 16467, 63417, 62835).
+  - Identified 5 hook points: Hook 1 (Score 5 in Z-API), Hook 2 (Inline Sub-5 + Comment in Z-API), Hook 3 (Step 2 Sub-5 Comment in Z-API), Hook 4 (Portal/API NPS in demo-server), Hook 5 (Imported Review in demo-server).
+  - Verified 100% preservation of all survey templates (`tpl_nps_satisfaction_check`, `tpl_nps_score_1..4`, `tpl_post_checkout_review`, `tpl_nps_feedback_thanks`) without touching text, tags, delays or buttons.
+  - Designed non-invasive, asynchronous, error-isolated listener `invokeMaidReviewHookSafe` and `handleMaidReviewHook`.
+- **Unexplored areas**:
+  - Full implementation details of Milestone 2 (F5, F6, F7) and Milestone 3 (F8, F9, F10, F11), which depend on M1.
 
 ## Key Decisions Made
-- Formulated criteria and unmerge logic based on authoritative reservation `auditLogs` and channel sync records (`audit_init_*`).
-- Documented technical recommendations and repair steps for the implementation agent.
+- Architecture uses `invokeMaidReviewHookSafe` with error isolation, so no hook failure can break the guest's survey flow.
+- Score 5 is routed directly to maid attribution & daily summary pool without AI triage.
+- Sub-5 without comment remains withheld from maid until guest types comment (Step 2).
+- Sub-5 with comment triggers AI triage -> if cleaning-related, triggers opinion synthesis and real-time dual WhatsApp message.
 
 ## Artifact Index
-- `analysis.md` — Comprehensive analysis report covering CRM data models, root causes, case studies, full database audit, and unmerge criteria.
-- `handoff.md` — 5-component handoff report.
-- `progress.md` — Timestamped progress log.
+- DISPATCH.md — incoming instructions log
+- progress.md — liveness and step progress
+- BRIEFING.md — working memory
+- handoff.md — comprehensive technical report following 5-component protocol

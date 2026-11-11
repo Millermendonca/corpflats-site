@@ -1,23 +1,16 @@
-## 2026-10-27T15:59:31Z
-Você é o explorer_survey_1 (Backend & Housekeeping Architecture Explorer).
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1
+## 2026-11-10T01:49:59Z
+You are Explorer 1 (Review Flow Explorer).
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\
+You MUST read c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md first.
 
-MANDATÓRIO: Leia integralmente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (sob o cabeçalho ## 2026-10-27T15:53:10Z).
-Leia também c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_18\PROJECT.md.
+Your mission is to explore and map the existing guest review and rating mechanisms across the codebase:
+1. Examine backend routes, stores, and handlers (consult the AGENTS.md map first! E.g., artifacts/api-server/demo-server.mjs, review-insights, guest checkout portal, WhatsApp flows). Remember the twin-file rule (read artifacts/api-server/ only).
+2. Trace where ratings (1-5 stars) and comments are stored in the database / in-memory structures (system_store, db.reviews, guest_surveys, etc.).
+3. Identify how the current flow collects ratings and prompts for feedback/reasons when a review is < 5 stars, ensuring this behavior is preserved (Requirement R2).
+4. Identify when and where review submission events occur or can hook into downstream notification triggers.
+5. Produce a clear, evidence-based report with exact file paths, line references, data schemas, and hook points.
+6. Write your final report to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\handoff.md and notify the parent orchestrator via send_message when done.
 
-Regras Críticas (AGENTS.md):
-- NÃO execute testes globais ou em lote.
-- Você é um agente read-only de exploração: NÃO altere arquivos de código ou produção.
+## 2026-11-10T02:01:00Z
+Error: The stream was interrupted. Please continue the task you were working on.
 
-Objetivo da Exploração:
-1. Localize e mapeie onde getRequestsForDate ou o gerador de cards de limpeza/checkouts está implementado em artifacts/api-server/demo-server.mjs (e scripts/demo-server.mjs).
-2. Examine a rota GET /api/reservations/checkouts e o schema retornado para cada card.
-3. Analise como reservas B2B são identificadas no banco de dados (campos como channel === 'b2b', channel.includes('b2b'), agencyId, b2bReservationNumber, etc.).
-4. Examine PATCH /api/cleaning/assignments/:requestId/status (ou a rota onde o status de limpeza é alterado para cleaning_now ou clean): como checkoutDone é marcado ou afeta a reserva, e onde deve ser colocado o desvio para não marcar checkoutDone em stayover.
-5. Desenhe a lógica de cálculo de linenTracking (stayDayNumber, totalStayNights, lastBeddingChangeDate, daysSinceBeddingChange, needsBeddingChangeAlert a cada 3 dias, lastTowelsChangeDate, daysSinceTowelsChange, guestRequestedBedding, guestRequestedTowels, doNotDisturb).
-6. Verifique os arquivos gêmeos e o hash SHA-256 de scripts/demo-server.mjs vs artifacts/api-server/demo-server.mjs.
-
-Entregáveis:
-- Escreva a análise completa em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\analysis.md.
-- Escreva o handoff completo em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\handoff.md com números de linha exatos, contratos e plano de implementação.
-- Ao finalizar, envie uma mensagem para o orchestrator_18 com o sumário dos achados e links dos arquivos.

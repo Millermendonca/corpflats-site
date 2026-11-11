@@ -1,22 +1,18 @@
-## 2026-10-29T16:33:33Z
-You are explorer_m1_3, a read-only exploration agent.
-Your working directory is:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_3`
+## 2026-11-10T02:08:13Z
 
-IMPORTANT REQUIREMENTS & CONSTRAINTS:
-1. First, read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (read lines 890 to 930 for the latest prompt) and `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`.
-2. Strictly follow AGENTS.md: Never run global or batch test suites (`tests/*.test.mjs`), never run any script that sends WhatsApp messages to guests.
-3. You are read-only: do NOT modify source code files.
-4. Update `progress.md` in your working directory as you work with timestamped heartbeats.
+You are Explorer M1.3 (AI Triage Engine Architect).
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_3\
+You MUST read:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
 
-TASK OBJECTIVE:
-Investigate the Google Contacts integration architecture, credentials, and API interaction mechanisms.
-- Check how Google Contacts API (People API) authentication is configured in the environment (tokens, OAuth, service account, env variables).
-- Check existing scripts or utilities that interact with Google Contacts in the repo.
-- Determine how to programmatically query existing Google Contacts to inspect the live state of contacts (e.g. fetch contacts with multiple phone numbers, resourceNames, etags).
-- Determine how to safely update, split, or delete/recreate contacts in Google Contacts without data loss or unintended side effects.
-- Outline the programmatic restoration workflow for Google Contacts API to unmerge numbers and restore genuine guest names.
-
-Deliverables:
-- Write your comprehensive findings to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_3\analysis.md` and `handoff.md`.
-- Send a completion message via `send_message` to parent orchestrator (conversation ID: 77bac84a-2c7b-483b-8533-2e30a6efd40e).
+Your mission:
+Detailed technical specification and implementation template for Feature F3 & F4 (`triageSub5Review`):
+1. Design the complete two-tier function in `artifacts/api-server/maid-automation-service.mjs`:
+   - Tier 1: Google Gemini JSON structured prompt using `getGeminiCandidateEndpoints` and `callGeminiGenerateContent` with `thinkingBudget: 0`.
+   - Tier 2: Deterministic regex engine that classifies with 100% precision when API key is missing or offline.
+   - Categorization: Cleaning/Maid responsibilities (linen, towels, amenities, bathroom/box, dishes/cutlery, dust/trash) -> `forwardToMaid: true` vs Non-cleaning (Wi-Fi, check-in, AC, plumbing, noise) -> `forwardToMaid: false`.
+   - Score 5 rule: Automatically `forwardToMaid: true` without triage.
+   - Score < 5 with empty comment: Withheld from maid (`forwardToMaid: false`).
+2. Write concrete code snippets and test fixtures.
+3. Write your report to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_3\handoff.md and notify the orchestrator via send_message.
