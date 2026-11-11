@@ -355,8 +355,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
       items: [
         { href: "/financeiro", label: "ERP Financeiro & DRE", icon: DollarSign, description: "DRE Gerencial, Contas a Pagar/Receber, Long-Stay e Fluxo de Caixa" },
         { href: "/tarifas", label: "Tarifas & Precificação SEBRAE", icon: Coins, description: "Calendário, Custo por UH (R$ 149,38), Tarifa Mínima R$ 276,63, Sazonalidade, Canais e WBP" },
-        { href: "/pagamentos", label: "Pagamentos, PIX & Cauções", icon: CreditCard, description: "Conciliação PIX Inter, Mercado Pago, Taxas e Cauções" },
-        { href: "/notas", label: "Hub de Notas Fiscais (NFS-e)", icon: FileText, description: "Chat IA, formulário, livro fiscal e templates" },
+        { href: "/pagamentos", label: "Pagamentos, PIX & Boletos", icon: CreditCard, description: "Recebimentos, conciliação PIX, carteira de boletos Inter e taxas" },
+        { href: "/notas", label: "Notas Fiscais (NFS-e)", icon: FileText, description: "Emissão avulsa ou em lote, livro fiscal, Kit Contador e Certificado A1" },
         { href: "/funil-vendas", label: "Funil de Vendas & Tráfego IA", icon: TrendingUp, description: "Funil 5 etapas, recuperação WhatsApp e anúncios Meta/Google IA" },
       ]
     },

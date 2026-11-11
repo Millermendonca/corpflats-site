@@ -2950,7 +2950,7 @@ export default function CrmGuests() {
                       variant="outline"
                       onClick={() => {
                         setDetailModalOpen(false)
-                        setLocation("/notas?tab=boletos")
+                        setLocation("/pagamentos?tab=boletos")
                       }}
                       className="h-6 px-2 text-[10px] font-bold rounded-lg text-indigo-600 border-indigo-500/30"
                     >
@@ -4111,7 +4111,7 @@ export default function CrmGuests() {
                       variant="outline"
                       onClick={() => {
                         setAgencyDetailModalOpen(false)
-                        setLocation("/notas?tab=boletos")
+                        setLocation("/pagamentos?tab=boletos")
                       }}
                       className="h-7 px-2.5 text-[10px] font-bold rounded-xl gap-1 text-indigo-600 border-indigo-300"
                     >
@@ -4244,7 +4244,7 @@ export default function CrmGuests() {
                       variant="outline"
                       onClick={() => {
                         setCompanyDetailModalOpen(false)
-                        setLocation("/notas?tab=boletos")
+                        setLocation("/pagamentos?tab=boletos")
                       }}
                       className="h-7 px-2.5 text-[10px] font-bold rounded-xl text-indigo-600 border-indigo-300"
                     >

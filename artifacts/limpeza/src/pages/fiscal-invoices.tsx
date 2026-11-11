@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react"
+import { useLocation } from "wouter"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -17,7 +18,7 @@ import {
   Send, Bot, Sparkles, Globe, ArrowRight, ExternalLink, Calendar, MapPin,
   Settings, Sliders, Check, Copy, HelpCircle, Code, ListFilter, MessageSquare,
   Trash2, Zap, Filter, Clock, CheckSquare, Layers, FileSpreadsheet, Eye, X,
-  ChevronRight, UploadCloud, AlertTriangle, PlayCircle, KeyRound, Lock
+  ChevronRight, UploadCloud, AlertTriangle, PlayCircle, KeyRound, Lock, CreditCard
 } from "lucide-react"
 
 import { useToast } from "@/hooks/use-toast"
@@ -61,16 +62,56 @@ interface CrmSearchItem {
 
 export default function FiscalInvoicesPage() {
   const { toast } = useToast()
+  const [, setLocation] = useLocation()
 
-  // ── Navegação do Hub Fiscal (6 Abas Especializadas) ─────────────────────────
-  const [activeTab, setActiveTab] = useState<"studio" | "batch" | "boletos" | "history" | "contingency" | "settings">(() => {
+  // ── Espaçamento seguro para o botão flutuante Menu quando a barra lateral está recolhida ──
+  const [isSidebarPinned, setIsSidebarPinned] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("gfm_sidebar_pinned") === "true"
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    const syncPin = (e?: Event) => {
+      try {
+        const detail = (e as CustomEvent)?.detail
+        if (detail && typeof detail.pinned === "boolean") {
+          setIsSidebarPinned(detail.pinned)
+        } else {
+          setIsSidebarPinned(localStorage.getItem("gfm_sidebar_pinned") === "true")
+        }
+      } catch {}
+    }
+    window.addEventListener("gfm-sidebar-pin-changed", syncPin)
+    window.addEventListener("storage", syncPin)
+    return () => {
+      window.removeEventListener("gfm-sidebar-pin-changed", syncPin)
+      window.removeEventListener("storage", syncPin)
+    }
+  }, [])
+
+  // ── Navegação do Hub Fiscal (4 Abas Focadas em NFS-e) ───────────────────────
+  const [activeTab, setActiveTab] = useState<"studio" | "batch" | "history" | "settings">(() => {
     try {
       const p = new URLSearchParams(window.location.search)
       const t = p.get("tab")
-      if (t === "boletos" || t === "batch" || t === "history" || t === "contingency" || t === "settings") return t
+      if (t === "batch" || t === "history" || t === "settings") return t
+      if (t === "contingency") return "history"
     } catch {}
     return "studio"
   })
+
+  // Redireciona links legados /notas?tab=boletos direto para a carteira centralizada em /pagamentos
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search)
+      if (p.get("tab") === "boletos") {
+        setLocation("/pagamentos?tab=boletos")
+      }
+    } catch {}
+  }, [setLocation])
 
   // ── Motor Emissor Ativo (Emissor Nacional Gov.br / ADN) ───────────────────
   const [sistemaEmissor] = useState<"padrao_nacional">("padrao_nacional")
@@ -186,6 +227,7 @@ export default function FiscalInvoicesPage() {
   const [isLookingUpCep, setIsLookingUpCep] = useState(false)
 
   // ── Faturamento & Lote State ────────────────────────────────────────────────
+  const [pendingScopeFilter, setPendingScopeFilter] = useState<"priority" | "in_stay" | "future" | "all">("priority")
   const [pendingSearch, setPendingSearch] = useState("")
   const [pendingTypeFilter, setPendingTypeFilter] = useState<"all" | "pf" | "pj" | "agency">("all")
   const [pendingCompanyFilter, setPendingCompanyFilter] = useState<string>("all")
@@ -315,26 +357,7 @@ export default function FiscalInvoicesPage() {
     }
   }
 
-  // ── Estado e Operações de Boletos Faturados (Banco Inter) ──────────────────
-  const [boletos, setBoletos] = useState<any[]>([])
-  const [boletosSummary, setBoletosSummary] = useState<any>({
-    totalCount: 0,
-    openCount: 0,
-    overdueCount: 0,
-    dueTodayCount: 0,
-    paidCount: 0,
-    cancelledCount: 0,
-    openAmount: 0,
-    overdueAmount: 0,
-    dueTodayAmount: 0,
-    paidAmount: 0
-  })
-  const [loadingBoletos, setLoadingBoletos] = useState(false)
-  const [boletoSearch, setBoletoSearch] = useState("")
-  const [boletoStatusFilter, setBoletoStatusFilter] = useState<"all" | "em_aberto" | "vencido" | "pago" | "cancelado">("all")
-  const [processingReminders, setProcessingReminders] = useState(false)
-
-  // Modal de Emissão NFS-e + Boleto(s) Inter para Reserva
+  // ── Modal de Emissão Conjunta: NFS-e + Boleto(s) Inter para Reserva ────────
   const [emitBoletoModalOpen, setEmitBoletoModalOpen] = useState(false)
   const [emitBoletoTargetRes, setEmitBoletoTargetRes] = useState<any | null>(null)
   const [emittingBoletoPackage, setEmittingBoletoPackage] = useState(false)
@@ -359,37 +382,6 @@ export default function FiscalInvoicesPage() {
   const [ebRecSendWhatsApp, setEbRecSendWhatsApp] = useState(true)
   const [ebMultaPct, setEbMultaPct] = useState("2")
   const [ebJurosMonthlyPct, setEbJurosMonthlyPct] = useState("1")
-
-  // Modal de Edição de Boleto (Sincronizado com Banco Inter)
-  const [editingBoleto, setEditingBoleto] = useState<any | null>(null)
-  const [editBoletoModalOpen, setEditBoletoModalOpen] = useState(false)
-  const [savingBoletoEdit, setSavingBoletoEdit] = useState(false)
-  const [editBoletoDueDate, setEditBoletoDueDate] = useState("")
-  const [editBoletoAmount, setEditBoletoAmount] = useState("")
-  const [editBoletoPayerName, setEditBoletoPayerName] = useState("")
-  const [editBoletoPayerDoc, setEditBoletoPayerDoc] = useState("")
-  const [editBoletoMultaPct, setEditBoletoMultaPct] = useState("2")
-  const [editBoletoJurosPct, setEditBoletoJurosPct] = useState("1")
-  const [editBoletoFinRespName, setEditBoletoFinRespName] = useState("")
-  const [editBoletoFinRespEmail, setEditBoletoFinRespEmail] = useState("")
-  const [editBoletoFinRespPhone, setEditBoletoFinRespPhone] = useState("")
-  const [editBoletoNotes, setEditBoletoNotes] = useState("")
-
-  const fetchBoletos = async () => {
-    setLoadingBoletos(true)
-    try {
-      const res = await fetch("/api/boletos", { credentials: "include" })
-      const data = await res.json()
-      if (data && Array.isArray(data.boletos)) {
-        setBoletos(data.boletos)
-        if (data.summary) setBoletosSummary(data.summary)
-      }
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setLoadingBoletos(false)
-    }
-  }
 
   const handleOpenEmitBoletoModal = (res: any) => {
     setEmitBoletoTargetRes(res)
@@ -465,11 +457,10 @@ export default function FiscalInvoicesPage() {
       } else {
         const count = Array.isArray(data.boletos) ? data.boletos.length : 1
         toast({
-          title: "✅ Pacote Faturado Emitido e Enviado!",
-          description: `${ebEmitNfseToo ? "NFS-e (Hospedagem) + " : ""}${count} Boleto(s) Banco Inter gerado(s) e disparado(s) aos destinatários.`
+          title: "Pacote Faturado Emitido e Enviado!",
+          description: `${ebEmitNfseToo ? "NFS-e (Hospedagem) + " : ""}${count} Boleto(s) Banco Inter gerado(s). Acompanhe em Pagamentos → Boletos & Faturado.`
         })
         setEmitBoletoModalOpen(false)
-        fetchBoletos()
         fetchInvoices()
         fetchReservations()
       }
@@ -477,162 +468,6 @@ export default function FiscalInvoicesPage() {
       toast({ title: "Erro de comunicação", description: err.message, variant: "destructive" })
     } finally {
       setEmittingBoletoPackage(false)
-    }
-  }
-
-  const handleOpenEditBoleto = (b: any) => {
-    setEditingBoleto(b)
-    setEditBoletoDueDate(b.dueDate || "")
-    setEditBoletoAmount(String(b.amount || ""))
-    setEditBoletoPayerName(b.payerName || "")
-    setEditBoletoPayerDoc(b.payerDoc || "")
-    setEditBoletoMultaPct(String(b.multaPct ?? 2))
-    setEditBoletoJurosPct(String(b.jurosMonthlyPct ?? 1))
-    setEditBoletoFinRespName(b.financialResponsible?.name || "")
-    setEditBoletoFinRespEmail(b.financialResponsible?.email || "")
-    setEditBoletoFinRespPhone(b.financialResponsible?.phone || "")
-    setEditBoletoNotes(b.notes || "")
-    setEditBoletoModalOpen(true)
-  }
-
-  const handleSaveEditBoleto = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!editingBoleto) return
-    setSavingBoletoEdit(true)
-    try {
-      const resp = await fetch(`/api/boletos/${editingBoleto.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          dueDate: editBoletoDueDate,
-          amount: Number(editBoletoAmount) || editingBoleto.amount,
-          payerName: editBoletoPayerName.trim(),
-          payerDoc: editBoletoPayerDoc.trim(),
-          multaPct: Number(editBoletoMultaPct ?? 2),
-          jurosMonthlyPct: Number(editBoletoJurosPct ?? 1),
-          financialResponsible: {
-            name: editBoletoFinRespName.trim(),
-            email: editBoletoFinRespEmail.trim(),
-            phone: editBoletoFinRespPhone.trim()
-          },
-          notes: editBoletoNotes.trim()
-        })
-      })
-      const data = await resp.json()
-      if (!resp.ok || data.error) {
-        toast({ title: "Erro ao atualizar boleto", description: data.error || "Tente novamente.", variant: "destructive" })
-      } else {
-        toast({
-          title: "✅ Boleto Atualizado e Sincronizado!",
-          description: data.interSync?.synced
-            ? "Alterações salvas e sincronizadas com a API do Banco Inter."
-            : "Alterações salvas com sucesso."
-        })
-        setEditBoletoModalOpen(false)
-        fetchBoletos()
-      }
-    } catch (err: any) {
-      toast({ title: "Erro ao salvar boleto", description: err.message, variant: "destructive" })
-    } finally {
-      setSavingBoletoEdit(false)
-    }
-  }
-
-  const handleMarkBoletoPaid = async (b: any) => {
-    try {
-      const resp = await fetch(`/api/boletos/${b.id}/mark-paid`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ paidAmount: b.amount })
-      })
-      const data = await resp.json()
-      if (resp.ok && data.success) {
-        toast({ title: "✅ Boleto Quitado!", description: `Boleto #${b.id} marcado como PAGO.` })
-        fetchBoletos()
-        fetchReservations()
-      }
-    } catch (err: any) {
-      toast({ title: "Erro", description: err.message, variant: "destructive" })
-    }
-  }
-
-  const handleReconcileBoleto = async (b: any) => {
-    try {
-      const resp = await fetch(`/api/boletos/${b.id}/reconcile`, {
-        method: "POST",
-        credentials: "include"
-      })
-      const data = await resp.json()
-      toast({
-        title: data.paid ? "✅ Pago no Banco Inter!" : "🔍 Status Consultado no Banco Inter",
-        description: data.paid ? `Liquidação confirmada para o boleto #${b.id}.` : `Situação atual: ${data.situacao || b.status}`
-      })
-      fetchBoletos()
-    } catch (err: any) {
-      toast({ title: "Erro na conciliação", description: err.message, variant: "destructive" })
-    }
-  }
-
-  const handleDispatchBoleto = async (b: any) => {
-    try {
-      toast({ title: "📤 Disparando E-mail e WhatsApp...", description: `Enviando PDF da NFS-e + Boleto #${b.id} aos destinatários.` })
-      const resp = await fetch(`/api/boletos/${b.id}/dispatch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({})
-      })
-      const data = await resp.json()
-      if (resp.ok && data.success) {
-        toast({ title: "✅ Envios Concluídos!", description: "PDFs e linha digitável/PIX enviados aos destinatários marcados." })
-        fetchBoletos()
-      }
-    } catch (err: any) {
-      toast({ title: "Erro ao reenviar", description: err.message, variant: "destructive" })
-    }
-  }
-
-  const handleCancelBoleto = async (b: any) => {
-    try {
-      const resp = await fetch(`/api/boletos/${b.id}/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ motivoCancelamento: "ACERTOS" })
-      })
-      const data = await resp.json()
-      if (resp.ok && data.success) {
-        toast({ title: "🗑️ Boleto Cancelado", description: `Baixa efetuada para o boleto #${b.id}.` })
-        fetchBoletos()
-      }
-    } catch (err: any) {
-      toast({ title: "Erro ao cancelar", description: err.message, variant: "destructive" })
-    }
-  }
-
-  const handleProcessBoletoReminders = async () => {
-    setProcessingReminders(true)
-    try {
-      const resp = await fetch("/api/boletos/process-reminders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ force: true })
-      })
-      const data = await resp.json()
-      if (resp.ok && data.success) {
-        toast({
-          title: "🔔 Lembretes de Vencimento/Atraso Processados!",
-          description: `${data.processedCount || 0} boleto(s) notificado(s) por E-mail e WhatsApp.`
-        })
-        fetchBoletos()
-      }
-    } catch (err: any) {
-      toast({ title: "Erro nos lembretes", description: err.message, variant: "destructive" })
-    } finally {
-      setProcessingReminders(false)
     }
   }
 
@@ -644,7 +479,6 @@ export default function FiscalInvoicesPage() {
     fetchReservations()
     fetchRetryQueue()
     fetchFiscalSettings()
-    fetchBoletos()
   }, [])
 
   const KNOWN_PJ_DIRECTORY_FRONTEND: Record<string, {
@@ -2747,6 +2581,20 @@ export default function FiscalInvoicesPage() {
           ? (company?.corporateName || company?.tradeName || company?.name || r.companyName || "Empresa sem razão social")
           : (guest?.fullName || guest?.name || r.guestName)
 
+      const todayIso = new Date().toISOString().slice(0, 10)
+      const thirtyDaysAgoIso = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
+      const isFaturadoBoleto =
+        r.paymentMethod === "faturado" ||
+        r.paymentMethod === "boleto" ||
+        r.billingMode === "faturado" ||
+        r.paymentStatus === "faturado"
+      const isInStay =
+        r.status === "hospedado" ||
+        Boolean(r.checkinDate && r.checkoutDate && r.checkinDate <= todayIso && r.checkoutDate >= todayIso)
+      const isFuture = Boolean(r.checkinDate && r.checkinDate > todayIso)
+      const isRecentCheckout = Boolean(r.checkoutDate && r.checkoutDate <= todayIso && r.checkoutDate >= thirtyDaysAgoIso)
+      const isPriority = Boolean(isPj || company || agency || isFaturadoBoleto || isRecentCheckout)
+
       return {
         ...r,
         totalAmount: resolvedAccommodationAmount || baseGross,
@@ -2761,15 +2609,43 @@ export default function FiscalInvoicesPage() {
         doc,
         hasDoc,
         isPj,
+        isFaturadoBoleto,
+        isInStay,
+        isFuture,
+        isPriority,
         tomadorDefaultName,
         tomadorDefaultDoc: doc
       }
     })
   }, [reservations, invoices, guests, companies, agencies, pendingTomadorOverrides])
 
+  const pendingScopeCounts = useMemo(() => {
+    let priority = 0
+    let in_stay = 0
+    let future = 0
+    for (const r of pendingReservationsList) {
+      if (r.isPriority) priority++
+      if (r.isInStay) in_stay++
+      if (r.isFuture) future++
+    }
+    return {
+      priority,
+      in_stay,
+      future,
+      all: pendingReservationsList.length
+    }
+  }, [pendingReservationsList])
+
   // Filtro de Reservas Pendentes
   const filteredPendingReservations = useMemo(() => {
     return pendingReservationsList.filter(r => {
+      // 0. Escopo Operacional (Prioritárias vs Hospedados vs Futuras vs Todas)
+      if (!pendingSearch.trim()) {
+        if (pendingScopeFilter === "priority" && !r.isPriority) return false
+        if (pendingScopeFilter === "in_stay" && !r.isInStay) return false
+        if (pendingScopeFilter === "future" && !r.isFuture) return false
+      }
+
       // 1. Busca textual
       if (pendingSearch.trim()) {
         const q = pendingSearch.toLowerCase()
@@ -2803,7 +2679,7 @@ export default function FiscalInvoicesPage() {
 
       return true
     })
-  }, [pendingReservationsList, pendingSearch, pendingTypeFilter, pendingCompanyFilter, pendingAgencyFilter, pendingCadastralFilter])
+  }, [pendingReservationsList, pendingScopeFilter, pendingSearch, pendingTypeFilter, pendingCompanyFilter, pendingAgencyFilter, pendingCadastralFilter])
 
   // Ações em Lote: Seleção
   const handleToggleSelectPending = (id: string) => {
@@ -3625,12 +3501,12 @@ export default function FiscalInvoicesPage() {
 
   return (
     <Shell>
-      <div className="space-y-6 pb-20">
+      <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-6 pb-20">
         {/* ══════════════════════════════════════════════════════════════════════
             R1: COCKPIT EXECUTIVO DE KPIS & MONITORAMENTO NO TOPO
            ══════════════════════════════════════════════════════════════════════ */}
         <div className="bg-card border border-border p-5 rounded-3xl shadow-sm space-y-4">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className={`flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all ${!isSidebarPinned ? "md:pl-20" : ""}`}>
             <div className="space-y-1">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
@@ -3638,8 +3514,8 @@ export default function FiscalInvoicesPage() {
                 </div>
                 <div>
                   <h1 className="text-xl font-black tracking-tight text-foreground flex items-center gap-2 flex-wrap">
-                    <span>Hub Fiscal & Emissor NFS-e 360°</span>
-                    <Badge className="bg-emerald-600 text-white text-[10px] h-5">Produção Real</Badge>
+                    <span>Notas Fiscais de Serviço (NFS-e)</span>
+                    <Badge className="bg-emerald-600 text-white text-[10px] h-5">Emissor Nacional Gov.br</Badge>
                   </h1>
                   <p className="text-xs text-muted-foreground">
                     Rental Miller's LTDA • CNPJ: <strong>47.964.813/0001-65</strong> • IM: <strong>142591</strong> • Campos dos Goytacazes/RJ
@@ -3665,6 +3541,20 @@ export default function FiscalInvoicesPage() {
                 </select>
               </div>
 
+              {/* Atalho Direto para Carteira de Boletos & Pagamentos */}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setLocation("/pagamentos?tab=boletos")}
+                className="h-8.5 px-3 rounded-2xl text-xs font-bold gap-1.5 border-indigo-500/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/10"
+                title="Abrir carteira centralizada de Boletos & Faturado a Prazo"
+              >
+                <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Boletos & Pagamentos</span>
+                <ArrowRight className="w-3 h-3 opacity-70" />
+              </Button>
+
               {/* Status do Certificado Digital A1 */}
               <button
                 onClick={() => setCertModalOpen(true)}
@@ -3679,21 +3569,15 @@ export default function FiscalInvoicesPage() {
                 <span>Certificado A1: <strong>{certStatus ? `${certStatus.daysRemaining}d` : "Válido"}</strong></span>
                 <KeyRound className="w-3 h-3 opacity-60 ml-0.5" />
               </button>
-
-              {/* Indicador Oficial do Emissor Nacional Gov.br */}
-              <div className="flex items-center gap-1.5 bg-indigo-600 text-white px-3.5 py-2 rounded-2xl text-xs font-bold shadow-xs">
-                <Globe className="w-3.5 h-3.5" />
-                <span>🇧🇷 Emissor Nacional Gov.br (ADN)</span>
-              </div>
             </div>
           </div>
 
-          {/* 4 KPI Cards em Tempo Real */}
+          {/* 4 KPI Cards em Tempo Real (100% focados em NFS-e) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-border/60">
             {/* Card 1: Faturamento Emitido & ISS */}
             <div className="p-3.5 rounded-2xl bg-muted/30 border border-border/80 flex items-center justify-between">
               <div>
-                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Faturamento Emitido</span>
+                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Faturamento c/ Nota</span>
                 <div className="text-lg font-black text-emerald-600 mt-0.5">
                   R$ {livroSubtotais.faturamentoTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
@@ -3706,10 +3590,14 @@ export default function FiscalInvoicesPage() {
               </div>
             </div>
 
-            {/* Card 2: Notas Autorizadas vs Canceladas/Substituídas */}
-            <div className="p-3.5 rounded-2xl bg-muted/30 border border-border/80 flex items-center justify-between">
+            {/* Card 2: Notas Autorizadas no Livro Fiscal */}
+            <button
+              type="button"
+              onClick={() => setActiveTab("history")}
+              className="p-3.5 rounded-2xl bg-muted/30 hover:bg-muted/50 border border-border/80 transition-all text-left flex items-center justify-between group cursor-pointer"
+            >
               <div>
-                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Status das Notas</span>
+                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Notas Emitidas</span>
                 <div className="text-lg font-black text-foreground mt-0.5 flex items-center gap-1.5">
                   <span className="text-emerald-600">{livroSubtotais.autorizadasCount}</span>
                   <span className="text-xs text-muted-foreground font-normal">autorizadas</span>
@@ -3724,23 +3612,27 @@ export default function FiscalInvoicesPage() {
               <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0">
                 <Layers className="w-4 h-4" />
               </div>
-            </div>
+            </button>
 
-            {/* Card 3: Reservas Pendentes de NFS-e (Clicável para aba Lote) */}
+            {/* Card 3: Fila Prioritária sem Nota (Clicável para aba Reservas sem Nota) */}
             <button
-              onClick={() => setActiveTab("batch")}
+              type="button"
+              onClick={() => {
+                setPendingScopeFilter("priority")
+                setActiveTab("batch")
+              }}
               className="p-3.5 rounded-2xl bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/20 transition-all text-left flex items-center justify-between group cursor-pointer"
             >
               <div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Reservas Pendentes</span>
-                  <Badge className="bg-amber-500 text-white text-[9px] h-4 px-1">Faturar</Badge>
+                  <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Fila Prioritária s/ Nota</span>
+                  <Badge className="bg-amber-500 text-white text-[9px] h-4 px-1">PJ & Recentes</Badge>
                 </div>
                 <div className="text-lg font-black text-amber-700 dark:text-amber-300 mt-0.5">
-                  {pendingReservationsList.length} estadias
+                  {pendingScopeCounts.priority} {pendingScopeCounts.priority === 1 ? "estadia" : "estadias"}
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                  <span>Clique para emitir em lote</span>
+                  <span>{pendingScopeCounts.all} no histórico total</span>
                   <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
@@ -3749,9 +3641,10 @@ export default function FiscalInvoicesPage() {
               </div>
             </button>
 
-            {/* Card 4: Fila de Contingência / Retentativa */}
+            {/* Card 4: Transmissão Gov.br & Contingência */}
             <button
-              onClick={() => setActiveTab("contingency")}
+              type="button"
+              onClick={() => setActiveTab(retryQueue.length > 0 ? "history" : "settings")}
               className={`p-3.5 rounded-2xl border transition-all text-left flex items-center justify-between group cursor-pointer ${
                 retryQueue.length > 0 
                   ? "bg-rose-500/5 hover:bg-rose-500/10 border-rose-500/30" 
@@ -3760,62 +3653,47 @@ export default function FiscalInvoicesPage() {
             >
               <div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Contingência & Fila</span>
+                  <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Transmissão & Automação</span>
                   {retryQueue.length > 0 && (
                     <Badge className="bg-rose-600 text-white text-[9px] h-4 px-1 animate-pulse">Atenção</Badge>
                   )}
                 </div>
                 <div className={`text-lg font-black mt-0.5 ${retryQueue.length > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                  {retryQueue.length > 0 ? `${retryQueue.length} na fila` : "0 pendências"}
+                  {retryQueue.length > 0 ? `${retryQueue.length} em contingência` : "Operacional"}
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1">
-                  <span>{retryQueue.length > 0 ? "Reprocessar envios" : "Tudo operacional"}</span>
+                  <span>{retryQueue.length > 0 ? "Ver fila no Livro Fiscal" : "Regras de auto-emissão & A1"}</span>
                   <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                 </div>
               </div>
               <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${retryQueue.length > 0 ? 'bg-rose-500/15 text-rose-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
-                <Clock className="w-4 h-4" />
+                {retryQueue.length > 0 ? <Clock className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
               </div>
             </button>
           </div>
         </div>
 
-        {/* ── NAVEGAÇÃO DO HUB FISCAL (6 ABAS ESPECÍFICAS) ── */}
+        {/* ── NAVEGAÇÃO DO HUB FISCAL (4 ABAS LIMPAS E SEM REDUNDÂNCIA) ── */}
         <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)} className="space-y-5">
-          <TabsList className="bg-card border border-border p-1.5 rounded-2xl h-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 shadow-xs">
+          <TabsList className="bg-card border border-border p-1.5 rounded-2xl h-auto grid grid-cols-2 lg:grid-cols-4 gap-1.5 shadow-xs">
             <TabsTrigger value="studio" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Sparkles className="w-4 h-4" />
-              <span>✨ Emissor Studio</span>
+              <span>Emitir Nota Avulsa</span>
             </TabsTrigger>
 
             <TabsTrigger value="batch" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Zap className="w-4 h-4" />
-              <span>📥 Faturamento & Lote</span>
-              {pendingReservationsList.length > 0 && (
+              <span>Reservas sem Nota</span>
+              {pendingScopeCounts.priority > 0 && (
                 <Badge className="ml-1 bg-amber-500 text-white text-[10px] px-1.5 py-0">
-                  {pendingReservationsList.length}
-                </Badge>
-              )}
-            </TabsTrigger>
-
-            <TabsTrigger value="boletos" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Building2 className="w-4 h-4" />
-              <span>🏦 Boletos & Faturado</span>
-              {boletosSummary.openCount > 0 && (
-                <Badge className={`ml-1 text-white text-[10px] px-1.5 py-0 ${boletosSummary.overdueCount > 0 ? "bg-rose-600" : "bg-indigo-600"}`}>
-                  {boletosSummary.openCount}
+                  {pendingScopeCounts.priority}
                 </Badge>
               )}
             </TabsTrigger>
 
             <TabsTrigger value="history" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <FileText className="w-4 h-4" />
-              <span>📚 Livro Fiscal ({invoices.length})</span>
-            </TabsTrigger>
-
-            <TabsTrigger value="contingency" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Clock className="w-4 h-4" />
-              <span>⚡ Contingência & Automação</span>
+              <span>Notas Emitidas ({invoices.length})</span>
               {retryQueue.length > 0 && (
                 <Badge className="ml-1 bg-rose-600 text-white text-[10px] px-1.5 py-0">
                   {retryQueue.length}
@@ -3825,7 +3703,7 @@ export default function FiscalInvoicesPage() {
 
             <TabsTrigger value="settings" className="rounded-xl py-2.5 text-xs font-bold gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Sliders className="w-4 h-4" />
-              <span>⚙️ Config & Certificado A1</span>
+              <span>Configurações & Certificado A1</span>
             </TabsTrigger>
           </TabsList>
 
@@ -4775,6 +4653,39 @@ export default function FiscalInvoicesPage() {
                 </div>
               </CardHeader>
 
+              {/* Escopo Inteligente: Prioritárias vs Hospedados vs Futuras vs Histórico Completo */}
+              <div className="px-4 pt-3.5 pb-2 bg-muted/10 border-b border-border/60 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {([
+                    { id: "priority", label: `Prioritárias: PJ, Faturado & Check-outs 30d (${pendingScopeCounts.priority})` },
+                    { id: "in_stay", label: `Hospedados Agora (${pendingScopeCounts.in_stay})` },
+                    { id: "future", label: `Reservas Futuras (${pendingScopeCounts.future})` },
+                    { id: "all", label: `Histórico Completo (${pendingScopeCounts.all})` }
+                  ] as const).map(sc => (
+                    <button
+                      key={sc.id}
+                      type="button"
+                      onClick={() => {
+                        setPendingScopeFilter(sc.id)
+                        setSelectedPendingIds([])
+                      }}
+                      className={`px-3 py-1.5 rounded-xl font-bold border transition-all ${
+                        pendingScopeFilter === sc.id && !pendingSearch.trim()
+                          ? "bg-primary text-primary-foreground border-primary shadow-2xs"
+                          : "bg-background text-muted-foreground border-border hover:border-primary/40 hover:text-foreground"
+                      }`}
+                    >
+                      {sc.label}
+                    </button>
+                  ))}
+                </div>
+                {pendingSearch.trim() && (
+                  <span className="text-[11px] font-semibold text-primary">
+                    Busca ativa em todo o histórico ({pendingScopeCounts.all} estadias)
+                  </span>
+                )}
+              </div>
+
               {/* Barra de Filtros das Pendências */}
               <div className="p-4 bg-muted/20 border-b border-border flex flex-wrap items-center gap-3 text-xs">
                 <div className="relative w-64">
@@ -5039,7 +4950,7 @@ export default function FiscalInvoicesPage() {
                                     title="Emitir NFS-e (Hospedagem) + Boleto(s) Faturado Banco Inter (1 ou 2 boletos)"
                                   >
                                     <Building2 className="w-3 h-3" />
-                                    <span>🏦 NF + Boleto</span>
+                                    <span>NF + Boleto</span>
                                   </Button>
 
                                   <Button
@@ -5066,9 +4977,106 @@ export default function FiscalInvoicesPage() {
           </TabsContent>
 
           {/* ══════════════════════════════════════════════════════════════════════
-              R4: ABA LIVRO FISCAL AVANÇADO (FILTROS, SUBTOTAIS, CANCELAR & KIT)
+              R4: ABA LIVRO FISCAL AVANÇADO + CONTINGÊNCIA INTEGRADA
              ══════════════════════════════════════════════════════════════════════ */}
           <TabsContent value="history" className="space-y-4 m-0">
+            {/* Alerta & Fila de Contingência Integrada (exibida apenas quando houver falhas/retentativas pendentes) */}
+            {retryQueue.length > 0 && (
+              <Card className="rounded-3xl border border-rose-500/40 bg-rose-500/5 shadow-sm">
+                <CardHeader className="p-5 border-b border-rose-500/20 flex flex-row items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-base font-black text-rose-700 dark:text-rose-300 flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-rose-600" />
+                      <span>Fila de Contingência & Retentativa ({retryQueue.length})</span>
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Emissões aguardando reprocessamento automático ou manual junto à SEFIN Nacional (Gov.br)
+                    </CardDescription>
+                  </div>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchRetryQueue}
+                    className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 bg-background"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingRetryQueue ? "animate-spin" : ""}`} />
+                    <span>Atualizar Fila</span>
+                  </Button>
+                </CardHeader>
+
+                <CardContent className="p-0">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-rose-500/10 text-muted-foreground border-b border-rose-500/20 font-bold">
+                        <tr>
+                          <th className="p-3.5">ID / Data</th>
+                          <th className="p-3.5">Tomador</th>
+                          <th className="p-3.5">Valor (R$)</th>
+                          <th className="p-3.5">Motivo da Falha / Detalhe</th>
+                          <th className="p-3.5">Tentativas</th>
+                          <th className="p-3.5">Próxima Tentativa</th>
+                          <th className="p-3.5 text-right">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/60 bg-card">
+                        {retryQueue.map((item: any) => (
+                          <tr key={item.id} className="hover:bg-muted/20">
+                            <td className="p-3.5 font-mono">
+                              <div className="font-bold text-foreground">#{item.id}</div>
+                              <div className="text-[10px] text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleTimeString("pt-BR") : "—"}</div>
+                            </td>
+                            <td className="p-3.5">
+                              <div className="font-bold text-foreground">{item.tomadorNome || item.payload?.tomadorNome || "Tomador"}</div>
+                              <div className="text-[10px] text-muted-foreground font-mono">{item.tomadorCpfCnpj || item.payload?.tomadorCpfCnpj}</div>
+                            </td>
+                            <td className="p-3.5 font-black text-foreground font-mono">
+                              R$ {Number(item.valorServico || item.payload?.valorServico || 0).toFixed(2)}
+                            </td>
+                            <td className="p-3.5 max-w-[260px]">
+                              <div className="text-rose-500 font-medium text-[11px] truncate" title={item.lastError || item.error}>
+                                {item.lastError || item.error || "Aguardando liberação SEFIN Nacional (Gov.br)"}
+                              </div>
+                            </td>
+                            <td className="p-3.5">
+                              <Badge variant="outline" className="text-[10px] font-bold">
+                                {item.attempts || 1} / 5
+                              </Badge>
+                            </td>
+                            <td className="p-3.5 text-muted-foreground text-[11px]">
+                              {item.nextRetry ? new Date(item.nextRetry).toLocaleTimeString("pt-BR") : "Em espera"}
+                            </td>
+                            <td className="p-3.5 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleRetryItem(item.id)}
+                                  disabled={reprocessingId === item.id}
+                                  className="h-7 px-2.5 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                                >
+                                  {reprocessingId === item.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />}
+                                  <span>Reprocessar Agora</span>
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleRemoveRetryItem(item.id)}
+                                  className="h-7 px-2 text-[11px] font-bold rounded-lg text-rose-500 hover:bg-rose-500/10"
+                                  title="Remover da fila"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <Card className="rounded-3xl border border-border shadow-sm">
               <CardHeader className="p-5 border-b border-border flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
@@ -5428,160 +5436,7 @@ export default function FiscalInvoicesPage() {
           </TabsContent>
 
           {/* ══════════════════════════════════════════════════════════════════════
-              R5: CENTRAL DE CONTINGÊNCIA & AUTOMAÇÃO POR CANAL
-             ══════════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="contingency" className="space-y-4 m-0">
-            {/* Painel da Fila de Retentativa */}
-            <Card className="rounded-3xl border border-border shadow-sm">
-              <CardHeader className="p-5 border-b border-border flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-rose-500" />
-                    <span>Fila de Contingência & Retentativa Automática</span>
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Emissões enfileiradas automaticamente devido a instabilidades temporárias nos servidores da prefeitura
-                  </CardDescription>
-                </div>
-
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={fetchRetryQueue}
-                  className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loadingRetryQueue ? 'animate-spin' : ''}`} />
-                  <span>Atualizar Fila</span>
-                </Button>
-              </CardHeader>
-
-              <CardContent className="p-0">
-                {retryQueue.length === 0 ? (
-                  <div className="p-12 text-center text-xs text-muted-foreground space-y-2">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto opacity-80" />
-                    <p className="font-bold text-foreground">Fila de contingência limpa!</p>
-                    <p className="text-[11px]">Nenhuma nota fiscal pendente de retentativa externa no momento.</p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left">
-                      <thead className="bg-muted/40 text-muted-foreground border-b border-border font-bold">
-                        <tr>
-                          <th className="p-3.5">ID / Data</th>
-                          <th className="p-3.5">Tomador</th>
-                          <th className="p-3.5">Valor (R$)</th>
-                          <th className="p-3.5">Motivo da Falha / Detalhe</th>
-                          <th className="p-3.5">Tentativas</th>
-                          <th className="p-3.5">Próxima Tentativa</th>
-                          <th className="p-3.5 text-right">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {retryQueue.map((item: any) => (
-                          <tr key={item.id} className="hover:bg-muted/20">
-                            <td className="p-3.5 font-mono">
-                              <div className="font-bold text-foreground">#{item.id}</div>
-                              <div className="text-[10px] text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleTimeString("pt-BR") : "—"}</div>
-                            </td>
-
-                            <td className="p-3.5">
-                              <div className="font-bold text-foreground">{item.tomadorNome || item.payload?.tomadorNome || "Tomador"}</div>
-                              <div className="text-[10px] text-muted-foreground font-mono">{item.tomadorCpfCnpj || item.payload?.tomadorCpfCnpj}</div>
-                            </td>
-
-                            <td className="p-3.5 font-black text-foreground font-mono">
-                              R$ {Number(item.valorServico || item.payload?.valorServico || 0).toFixed(2)}
-                            </td>
-
-                            <td className="p-3.5 max-w-[260px]">
-                              <div className="text-rose-500 font-medium text-[11px] truncate" title={item.lastError || item.error}>
-                                {item.lastError || item.error || "Aguardando liberação SEFIN Nacional (Gov.br)"}
-                              </div>
-                            </td>
-
-                            <td className="p-3.5">
-                              <Badge variant="outline" className="text-[10px] font-bold">
-                                {item.attempts || 1} / 5
-                              </Badge>
-                            </td>
-
-                            <td className="p-3.5 text-muted-foreground text-[11px]">
-                              {item.nextRetry ? new Date(item.nextRetry).toLocaleTimeString("pt-BR") : "Em espera"}
-                            </td>
-
-                            <td className="p-3.5 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleRetryItem(item.id)}
-                                  disabled={reprocessingId === item.id}
-                                  className="h-7 px-2.5 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
-                                >
-                                  {reprocessingId === item.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />}
-                                  <span>Reprocessar Agora</span>
-                                </Button>
-
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => handleRemoveRetryItem(item.id)}
-                                  className="h-7 px-2 text-[11px] font-bold rounded-lg text-rose-500 hover:bg-rose-500/10"
-                                  title="Remover da fila"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Regras de Automação por Canal */}
-            <Card className="rounded-3xl border border-border shadow-sm">
-              <CardHeader className="p-5 border-b border-border">
-                <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-primary" />
-                  <span>Automação de Emissão por Canal de Reserva</span>
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Configure quais reservas disparam emissão fiscal automática e quais aguardam liberação manual
-                </CardDescription>
-              </CardHeader>
-
-              <CardContent className="p-5 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {[
-                    { key: "direct", title: "Reservas Diretas (Site)", desc: "Auto-emissão ao confirmar pagamento da reserva direta" },
-                    { key: "whatsapp", title: "Reservas WhatsApp / Balcão", desc: "Auto-emissão ao registrar hóspede com CPF/CNPJ no chat" },
-                    { key: "booking", title: "Reservas Booking.com", desc: "Auto-emissão com dados fiscais fornecidos pelo canal OTA" },
-                    { key: "airbnb", title: "Reservas Airbnb", desc: "Auto-emissão com recibo de repasse e dados do hóspede" },
-                    { key: "b2b", title: "Reservas B2B Corporativo / Agências", desc: "Emissão conforme Tomador do voucher (Agência, Empresa ou Hóspede)" },
-                    { key: "autoCheckout", title: "Auto-Emissão no Check-out", desc: "Dispara NFS-e no momento em que a governança ou recepção marca saída" }
-                  ].map(rule => (
-                    <div key={rule.key} className="p-4 rounded-2xl bg-muted/20 border border-border flex items-center justify-between gap-4">
-                      <div>
-                        <h4 className="font-bold text-xs text-foreground">{rule.title}</h4>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">{rule.desc}</p>
-                      </div>
-                      <Switch 
-                        checked={channelRules[rule.key] !== false}
-                        onCheckedChange={() => handleToggleChannelRule(rule.key, channelRules[rule.key] !== false)}
-                        disabled={savingChannelRules}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* ══════════════════════════════════════════════════════════════════════
-              ABA 5: CONFIGURAÇÕES FISCAIS & COFRE DO CERTIFICADO A1
+              ABA 4: CONFIGURAÇÕES FISCAIS, AUTOMAÇÃO POR CANAL & CERTIFICADO A1
              ══════════════════════════════════════════════════════════════════════ */}
           <TabsContent value="settings" className="space-y-4 m-0">
             {/* Cofre do Certificado Digital A1 */}
@@ -5593,7 +5448,7 @@ export default function FiscalInvoicesPage() {
                     <span>Cofre do Certificado Digital A1</span>
                   </CardTitle>
                   <CardDescription className="text-xs">
-                    Certificado ICP-Brasil utilizado na assinatura digital dos lotes SOAP e ADN
+                    Certificado ICP-Brasil utilizado na assinatura digital das emissões no Padrão Nacional (ADN)
                   </CardDescription>
                 </div>
 
@@ -5641,6 +5496,44 @@ export default function FiscalInvoicesPage() {
                     </div>
                     <div className="text-[10px] text-muted-foreground mt-0.5">Armazenado em cofre seguro</div>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Regras de Automação por Canal (Unificado em Configurações) */}
+            <Card className="rounded-3xl border border-border shadow-sm">
+              <CardHeader className="p-5 border-b border-border">
+                <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-primary" />
+                  <span>Automação de Emissão por Canal de Reserva</span>
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Configure quais reservas disparam emissão fiscal automática e quais aguardam liberação manual
+                </CardDescription>
+              </CardHeader>
+
+              <CardContent className="p-5 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { key: "direct", title: "Reservas Diretas (Site)", desc: "Auto-emissão ao confirmar pagamento da reserva direta" },
+                    { key: "whatsapp", title: "Reservas WhatsApp / Balcão", desc: "Auto-emissão ao registrar hóspede com CPF/CNPJ no chat" },
+                    { key: "booking", title: "Reservas Booking.com", desc: "Auto-emissão com dados fiscais fornecidos pelo canal OTA" },
+                    { key: "airbnb", title: "Reservas Airbnb", desc: "Auto-emissão com recibo de repasse e dados do hóspede" },
+                    { key: "b2b", title: "Reservas B2B Corporativo / Agências", desc: "Emissão conforme Tomador do voucher (Agência, Empresa ou Hóspede)" },
+                    { key: "autoCheckout", title: "Auto-Emissão no Check-out", desc: "Dispara NFS-e no momento em que a governança ou recepção marca saída" }
+                  ].map(rule => (
+                    <div key={rule.key} className="p-4 rounded-2xl bg-muted/20 border border-border flex items-center justify-between gap-4">
+                      <div>
+                        <h4 className="font-bold text-xs text-foreground">{rule.title}</h4>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{rule.desc}</p>
+                      </div>
+                      <Switch 
+                        checked={channelRules[rule.key] !== false}
+                        onCheckedChange={() => handleToggleChannelRule(rule.key, channelRules[rule.key] !== false)}
+                        disabled={savingChannelRules}
+                      />
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -5792,355 +5685,10 @@ export default function FiscalInvoicesPage() {
               </CardContent>
             </Card>
           </TabsContent>
-
-          {/* ══════════════════════════════════════════════════════════════════════
-              ABA BOLETOS & FATURADO A PRAZO (BANCO INTER + NFS-E VINCULADA)
-             ══════════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="boletos" className="space-y-4 m-0">
-            {/* KPIs de Boletos Faturados */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <Card className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
-                <div className="text-[10px] font-bold uppercase text-indigo-700 dark:text-indigo-300">Boletos em Aberto (A Vencer)</div>
-                <div className="text-xl font-black text-indigo-600 mt-1">
-                  R$ {Number(boletosSummary.openAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">{boletosSummary.openCount || 0} título(s) aguardando pagamento</div>
-              </Card>
-
-              <Card className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
-                <div className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-300">Vencendo Hoje</div>
-                <div className="text-xl font-black text-amber-600 mt-1">
-                  R$ {Number(boletosSummary.dueTodayAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">{boletosSummary.dueTodayCount || 0} título(s) com vencimento hoje</div>
-              </Card>
-
-              <Card className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-4">
-                <div className="text-[10px] font-bold uppercase text-rose-700 dark:text-rose-300">Vencidos / Em Atraso</div>
-                <div className="text-xl font-black text-rose-600 mt-1">
-                  R$ {Number(boletosSummary.overdueAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">{boletosSummary.overdueCount || 0} título(s) com multa 2% + juros 1% a.m.</div>
-              </Card>
-
-              <Card className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
-                <div className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-300">Boletos Pagos / Liquidados</div>
-                <div className="text-xl font-black text-emerald-600 mt-1">
-                  R$ {Number(boletosSummary.paidAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">{boletosSummary.paidCount || 0} título(s) compensado(s) no Banco Inter</div>
-              </Card>
-            </div>
-
-            {/* Barra de Filtros & Lembretes Automáticos */}
-            <Card className="rounded-3xl border border-border shadow-xs">
-              <CardHeader className="pb-3 border-b border-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-sm font-black flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-indigo-600" />
-                    <span>Gestão de Boletos Faturados (Banco Inter mTLS • Boleto + QR Code PIX)</span>
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Acompanhe vencimentos, edite dados sincronizados com o Banco Inter, baixe PDFs e dispare lembretes para Hóspede, Solicitante, Empresa e Responsável Financeiro.
-                  </CardDescription>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleProcessBoletoReminders}
-                    disabled={processingReminders}
-                    className="h-8 text-xs font-bold rounded-xl gap-1.5 border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
-                  >
-                    <Clock className={`w-3.5 h-3.5 ${processingReminders ? "animate-spin" : ""}`} />
-                    <span>{processingReminders ? "Disparando..." : "🔔 Disparar Lembretes (Vencimento/Atraso)"}</span>
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={fetchBoletos}
-                    disabled={loadingBoletos}
-                    className="h-8 text-xs font-bold rounded-xl gap-1.5"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${loadingBoletos ? "animate-spin" : ""}`} />
-                    <span>Atualizar</span>
-                  </Button>
-                </div>
-              </CardHeader>
-
-              <CardContent className="p-4 space-y-4">
-                <div className="flex flex-col sm:flex-row gap-2.5 items-center justify-between">
-                  <div className="relative w-full sm:max-w-sm">
-                    <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-muted-foreground" />
-                    <Input
-                      value={boletoSearch}
-                      onChange={e => setBoletoSearch(e.target.value)}
-                      placeholder="Buscar por pagador, empresa, reserva, nosso número..."
-                      className="pl-8 h-8.5 text-xs rounded-xl"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5 w-full sm:w-auto">
-                    {([
-                      { id: "all", label: `Todos (${boletos.length})` },
-                      { id: "em_aberto", label: `⏳ Em Aberto (${boletosSummary.openCount || 0})` },
-                      { id: "vencido", label: `🚨 Vencidos (${boletosSummary.overdueCount || 0})` },
-                      { id: "pago", label: `✅ Pagos (${boletosSummary.paidCount || 0})` },
-                      { id: "cancelado", label: `🗑️ Cancelados (${boletosSummary.cancelledCount || 0})` }
-                    ] as const).map(st => (
-                      <button
-                        key={st.id}
-                        type="button"
-                        onClick={() => setBoletoStatusFilter(st.id)}
-                        className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all ${
-                          boletoStatusFilter === st.id
-                            ? "bg-indigo-600 text-white border-indigo-600"
-                            : "bg-background text-muted-foreground border-border hover:border-indigo-500/40"
-                        }`}
-                      >
-                        {st.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto rounded-2xl border border-border">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-muted/50 border-b border-border text-muted-foreground font-bold">
-                        <th className="p-3">Pagador / Reserva</th>
-                        <th className="p-3">Composição & NFS-e</th>
-                        <th className="p-3">Nosso Número</th>
-                        <th className="p-3">Vencimento & Prazo</th>
-                        <th className="p-3 text-right">Valor & Encargos</th>
-                        <th className="p-3">Destinatários / Envios</th>
-                        <th className="p-3 text-center">Status</th>
-                        <th className="p-3 text-right">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {(() => {
-                        const todayIso = new Date().toISOString().slice(0, 10)
-                        const list = boletos.filter(b => {
-                          const isOverdue = b.status === "vencido" || ((b.status === "aberto" || b.status === "em_aberto") && Boolean(b.dueDate && b.dueDate < todayIso))
-                          const isOpen = (b.status === "aberto" || b.status === "em_aberto") && !isOverdue
-                          if (boletoStatusFilter === "em_aberto" && !isOpen) return false
-                          if (boletoStatusFilter === "vencido" && !isOverdue) return false
-                          if (boletoStatusFilter === "pago" && b.status !== "pago") return false
-                          if (boletoStatusFilter === "cancelado" && b.status !== "cancelado") return false
-                          if (boletoSearch.trim()) {
-                            const q = boletoSearch.toLowerCase()
-                            const hay = `${b.payerName || ""} ${b.payerDoc || ""} ${b.guestName || ""} ${b.companyName || ""} ${b.agencyName || ""} ${b.reservationCode || ""} ${b.nossoNumero || ""} ${b.seuNumero || ""} ${b.financialResponsible?.name || ""}`.toLowerCase()
-                            if (!hay.includes(q)) return false
-                          }
-                          return true
-                        })
-
-                        if (list.length === 0) {
-                          return (
-                            <tr>
-                              <td colSpan={8} className="p-8 text-center text-muted-foreground">
-                                Nenhum boleto faturado encontrado para os filtros selecionados. Use a aba <strong>📥 Faturamento & Lote</strong> ou faça o check-out de uma reserva faturada para emitir.
-                              </td>
-                            </tr>
-                          )
-                        }
-
-                        return list.map(b => {
-                          const isOverdue = b.status === "vencido" || ((b.status === "aberto" || b.status === "em_aberto") && Boolean(b.dueDate && b.dueDate < todayIso))
-                          const isDueToday = (b.status === "aberto" || b.status === "em_aberto") && b.dueDate === todayIso
-                          const isUnpaid = b.status !== "pago" && b.status !== "cancelado"
-                          const dr = b.billingDeliveryRecipients || b.billingRecipients || {}
-                          return (
-                            <tr key={b.id} className="hover:bg-muted/20">
-                              <td className="p-3">
-                                <div className="font-bold text-foreground">{b.payerName}</div>
-                                <div className="text-[10px] font-mono text-muted-foreground">{b.payerDoc}</div>
-                                <div className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold mt-0.5">
-                                  Reserva {b.reservationCode || `#${b.reservationId}`} • Hóspede: {b.guestName || "—"} (Flat {b.flatNumber || "—"})
-                                </div>
-                              </td>
-
-                              <td className="p-3">
-                                <Badge variant="outline" className="text-[10px] font-bold border-indigo-500/40 text-indigo-700 dark:text-indigo-300">
-                                  {b.boletoKind === "accommodation"
-                                    ? "1/2 • Só Hospedagem"
-                                    : b.boletoKind === "consumption"
-                                      ? "2/2 • Só Consumo"
-                                      : "Unificado (Hosp + Consumo)"}
-                                </Badge>
-                                {b.nfseNumber && (
-                                  <div className="text-[10px] text-emerald-600 font-bold mt-1">
-                                    🧾 NFS-e #{b.nfseNumber} (Só Hospedagem)
-                                  </div>
-                                )}
-                              </td>
-
-                              <td className="p-3 font-mono text-[11px]">
-                                <div className="font-bold text-foreground">{b.nossoNumero || "—"}</div>
-                                <div className="text-[10px] text-muted-foreground">Seu Nº: {b.seuNumero || "—"}</div>
-                              </td>
-
-                              <td className="p-3">
-                                <div className="font-mono font-bold text-foreground">{b.dueDate}</div>
-                                <div className="text-[10px] text-muted-foreground">Prazo: {b.termDays || 15} dias</div>
-                                {isOverdue && (
-                                  <Badge className="mt-0.5 bg-rose-600 text-white text-[9px] px-1.5 py-0">🚨 Em Atraso</Badge>
-                                )}
-                                {isDueToday && (
-                                  <Badge className="mt-0.5 bg-amber-600 text-white text-[9px] px-1.5 py-0">⚠️ Vence Hoje</Badge>
-                                )}
-                              </td>
-
-                              <td className="p-3 text-right font-mono">
-                                <div className="font-black text-sm text-foreground">
-                                  R$ {Number(b.amount || 0).toFixed(2)}
-                                </div>
-                                <div className="text-[10px] text-muted-foreground">
-                                  Multa {b.multaPct ?? b.finePct ?? 2}% • Juros {b.jurosMonthlyPct ?? b.interestPct ?? 1}% a.m.
-                                </div>
-                              </td>
-
-                              <td className="p-3">
-                                <div className="flex flex-wrap gap-1">
-                                  {dr.guest && <Badge variant="outline" className="text-[9px] px-1 py-0">👤 Hóspede</Badge>}
-                                  {dr.requester && <Badge variant="outline" className="text-[9px] px-1 py-0">📋 Solicitante</Badge>}
-                                  {dr.company && <Badge variant="outline" className="text-[9px] px-1 py-0">🏢 Empresa</Badge>}
-                                  {dr.financialResponsible && <Badge variant="outline" className="text-[9px] px-1 py-0">💼 Resp. Fin.</Badge>}
-                                </div>
-                                {b.financialResponsible?.name && (
-                                  <div className="text-[10px] text-muted-foreground mt-0.5 truncate max-w-[180px]">
-                                    Resp: {b.financialResponsible.name} ({b.financialResponsible.email || b.financialResponsible.phone || ""})
-                                  </div>
-                                )}
-                              </td>
-
-                              <td className="p-3 text-center">
-                                {b.status === "pago" ? (
-                                  <Badge className="bg-emerald-600 text-white text-[10px]">✓ Pago</Badge>
-                                ) : b.status === "cancelado" ? (
-                                  <Badge variant="outline" className="text-muted-foreground text-[10px]">Cancelado</Badge>
-                                ) : isOverdue ? (
-                                  <Badge className="bg-rose-600 text-white text-[10px]">Vencido</Badge>
-                                ) : (
-                                  <Badge className="bg-amber-600 text-white text-[10px]">Em Aberto</Badge>
-                                )}
-                              </td>
-
-                              <td className="p-3 text-right">
-                                <div className="flex items-center justify-end gap-1 flex-wrap">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => window.open(`/api/boletos/${b.id}/pdf`, "_blank")}
-                                    className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1"
-                                    title="Abrir PDF Oficial do Boleto Banco Inter com QR Code PIX"
-                                  >
-                                    <FileText className="w-3 h-3 text-indigo-600" />
-                                    <span>PDF</span>
-                                  </Button>
-
-                                  {b.linhaDigitavel && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(b.linhaDigitavel)
-                                        toast({ title: "📋 Linha Digitável Copiada!", description: b.linhaDigitavel })
-                                      }}
-                                      className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1"
-                                      title="Copiar Linha Digitável"
-                                    >
-                                      <Copy className="w-3 h-3" />
-                                      <span>Linha</span>
-                                    </Button>
-                                  )}
-
-                                  {b.pixCopiaECola && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(b.pixCopiaECola)
-                                        toast({ title: "⚡ PIX Copia e Cola Copiado!", description: "Código PIX do boleto copiado." })
-                                      }}
-                                      className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1 text-emerald-600 border-emerald-500/30"
-                                      title="Copiar PIX Copia e Cola do Boleto"
-                                    >
-                                      <QrCode className="w-3 h-3" />
-                                      <span>PIX</span>
-                                    </Button>
-                                  )}
-
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleOpenEditBoleto(b)}
-                                    className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1 text-indigo-600 border-indigo-500/30"
-                                    title="Editar Vencimento, Valor, Pagador ou Multa/Juros (Sincronizado com Banco Inter)"
-                                  >
-                                    <Sliders className="w-3 h-3" />
-                                    <span>Editar</span>
-                                  </Button>
-
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleDispatchBoleto(b)}
-                                    className="h-7 px-2 text-[10px] font-bold rounded-lg gap-1"
-                                    title="Reenviar PDF da NFS-e + PDF do Boleto por E-mail e WhatsApp"
-                                  >
-                                    <Send className="w-3 h-3" />
-                                    <span>Enviar</span>
-                                  </Button>
-
-                                  {isUnpaid && (
-                                    <>
-                                      <Button
-                                        size="sm"
-                                        onClick={() => handleMarkBoletoPaid(b)}
-                                        className="h-7 px-2 text-[10px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
-                                        title="Dar baixa manual / marcar como Pago"
-                                      >
-                                        ✓ Quitar
-                                      </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => handleReconcileBoleto(b)}
-                                        className="h-7 px-1.5 text-[10px] font-bold rounded-lg"
-                                        title="Consultar liquidação no Banco Inter"
-                                      >
-                                        <RefreshCw className="w-3 h-3" />
-                                      </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="ghost"
-                                        onClick={() => handleCancelBoleto(b)}
-                                        className="h-7 px-1.5 text-[10px] font-bold rounded-lg text-rose-600"
-                                        title="Cancelar boleto no Banco Inter"
-                                      >
-                                        <Trash2 className="w-3 h-3" />
-                                      </Button>
-                                    </>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          )
-                        })
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
         </Tabs>
 
         {/* ══════════════════════════════════════════════════════════════════════
-            MODAIS DE BOLETO FATURADO BANCO INTER (EMISSÃO & EDIÇÃO SINCRONIZADA)
+            MODAL DE EMISSÃO CONJUNTA: NFS-E + BOLETO(S) BANCO INTER
            ══════════════════════════════════════════════════════════════════════ */}
 
         {/* Modal 1: Emitir NFS-e (Só Hospedagem) + Boleto(s) Faturado Banco Inter */}
@@ -6371,134 +5919,6 @@ export default function FiscalInvoicesPage() {
                   <Button type="submit" disabled={emittingBoletoPackage} className="rounded-xl h-9 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5">
                     {emittingBoletoPackage ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
                     <span>{emittingBoletoPackage ? "Emitindo e Enviando..." : "Emitir e Disparar Agora"}</span>
-                  </Button>
-                </DialogFooter>
-              </form>
-            )}
-          </DialogContent>
-        </Dialog>
-
-        {/* Modal 2: Editar Boleto Faturado (Sincronizado com Banco Inter) */}
-        <Dialog open={editBoletoModalOpen} onOpenChange={setEditBoletoModalOpen}>
-          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl p-6 shadow-2xl">
-            <DialogHeader>
-              <DialogTitle className="text-base font-black flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-indigo-600" />
-                <span>Editar Boleto #{editingBoleto?.id} (Sincronizado Banco Inter)</span>
-              </DialogTitle>
-              <DialogDescription className="text-xs">
-                Altere data de vencimento, valor nominal, dados do pagador, multa/juros ou responsável financeiro.
-              </DialogDescription>
-            </DialogHeader>
-
-            {editingBoleto && (
-              <form onSubmit={handleSaveEditBoleto} className="space-y-3 text-xs pt-2">
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div className="space-y-1">
-                    <Label className="font-bold">Data de Vencimento</Label>
-                    <Input
-                      type="date"
-                      value={editBoletoDueDate}
-                      onChange={e => setEditBoletoDueDate(e.target.value)}
-                      required
-                      className="h-9 text-xs rounded-xl font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="font-bold">Valor Nominal (R$)</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={editBoletoAmount}
-                      onChange={e => setEditBoletoAmount(e.target.value)}
-                      required
-                      className="h-9 text-xs rounded-xl font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div className="space-y-1">
-                    <Label className="font-bold">Nome / Razão Social do Pagador</Label>
-                    <Input
-                      value={editBoletoPayerName}
-                      onChange={e => setEditBoletoPayerName(e.target.value)}
-                      className="h-9 text-xs rounded-xl"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="font-bold">CPF / CNPJ do Pagador</Label>
-                    <Input
-                      value={editBoletoPayerDoc}
-                      onChange={e => setEditBoletoPayerDoc(e.target.value)}
-                      className="h-9 text-xs rounded-xl font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div className="space-y-1">
-                    <Label className="font-bold">Multa de Atraso (%)</Label>
-                    <Input
-                      type="number"
-                      step="0.1"
-                      value={editBoletoMultaPct}
-                      onChange={e => setEditBoletoMultaPct(e.target.value)}
-                      className="h-9 text-xs rounded-xl font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="font-bold">Juros de Mora ao Mês (%)</Label>
-                    <Input
-                      type="number"
-                      step="0.1"
-                      value={editBoletoJurosPct}
-                      onChange={e => setEditBoletoJurosPct(e.target.value)}
-                      className="h-9 text-xs rounded-xl font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-2xl bg-muted/30 border border-border space-y-2">
-                  <div className="font-bold text-foreground">💼 Responsável Financeiro</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <Input
-                      value={editBoletoFinRespName}
-                      onChange={e => setEditBoletoFinRespName(e.target.value)}
-                      placeholder="Nome"
-                      className="h-8 text-xs rounded-xl"
-                    />
-                    <Input
-                      value={editBoletoFinRespEmail}
-                      onChange={e => setEditBoletoFinRespEmail(e.target.value)}
-                      placeholder="E-mail"
-                      className="h-8 text-xs rounded-xl"
-                    />
-                    <Input
-                      value={editBoletoFinRespPhone}
-                      onChange={e => setEditBoletoFinRespPhone(e.target.value)}
-                      placeholder="WhatsApp"
-                      className="h-8 text-xs rounded-xl font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <Label className="font-bold">Observações Internas</Label>
-                  <Textarea
-                    value={editBoletoNotes}
-                    onChange={e => setEditBoletoNotes(e.target.value)}
-                    rows={2}
-                    className="text-xs rounded-xl"
-                  />
-                </div>
-
-                <DialogFooter className="gap-2 pt-2">
-                  <Button type="button" variant="outline" onClick={() => setEditBoletoModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
-                    Cancelar
-                  </Button>
-                  <Button type="submit" disabled={savingBoletoEdit} className="rounded-xl h-9 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white">
-                    {savingBoletoEdit ? "Sincronizando..." : "Salvar & Sincronizar Banco Inter"}
                   </Button>
                 </DialogFooter>
               </form>
