@@ -31889,7 +31889,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         const flat = (db.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber));
         const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
         const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
-        const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation, flat, settings: db.settings });
+        const { subject, bodyHtml, checkinStage } = renderCheckinConfirmedEmail({ reservation, flat, settings: db.settings });
         await ensureReservationAttachmentsReady({ reservation, guest, db });
         const emailAttachments = resolveReservationAttachments({ reservation, guest, db });
 
@@ -31906,6 +31906,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
           attachments: emailAttachments,
           metadata: {
             trigger: "sameday_direct_booking",
+            checkinStage,
             flatNumber: reservation.flatNumber,
             guestName: reservation.guestName,
             buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
@@ -34614,7 +34615,7 @@ app.post("/api/pms/reservations", async (req, res) => {
       const flat = (db.flats || []).find(f => f.id === newReservation.flatId || String(f.number) === String(newReservation.flatNumber));
       const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
       const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
-      const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: newReservation, flat, settings: db.settings });
+      const { subject, bodyHtml, checkinStage } = renderCheckinConfirmedEmail({ reservation: newReservation, flat, settings: db.settings });
       await ensureReservationAttachmentsReady({ reservation: newReservation, guest, db });
       const emailAttachments = resolveReservationAttachments({ reservation: newReservation, guest, db });
 
@@ -34631,6 +34632,7 @@ app.post("/api/pms/reservations", async (req, res) => {
         attachments: emailAttachments,
         metadata: {
           trigger: "sameday_pms_created",
+          checkinStage,
           flatNumber: newReservation.flatNumber,
           guestName: newReservation.guestName,
           buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
@@ -38903,11 +38905,14 @@ app.get(["/api/reception/reservations/:id/checkin-link-info", "/api/pms/reservat
     const rawGuests = Array.isArray(reservation.guests) ? reservation.guests : [];
     const guestSlots = [];
     for (let idx = 1; idx <= expectedCount; idx++) {
-      const existing = rawGuests.find(g => Number(g?.index || 0) === idx) || (rawGuests.length >= idx ? rawGuests[idx - 1] : null);
+      const posFallback = rawGuests[idx - 1] && (!rawGuests[idx - 1].index || Number(rawGuests[idx - 1].index) === idx)
+        ? rawGuests[idx - 1]
+        : null;
+      const existing = rawGuests.find(g => Number(g?.index || 0) === idx) || posFallback;
       const completed = !isReSig && Boolean(
         existing
           ? (!existing.needsReSignature && (existing.hasCompletedCheckin || existing.status === "CHECKED_IN" || existing.fnrhDocumentUuid || existing.fnrhSignedAt))
-          : (idx === 1 && (reservation.fnhrCompleted || reservation.preCheckinCompleted || reservation.fnrhDocumentUuid))
+          : (rawGuests.length === 0 && idx === 1 && (reservation.fnhrCompleted || reservation.preCheckinCompleted || reservation.fnrhDocumentUuid))
       );
       const slotName = (existing?.name || (idx === 1 ? reservation.guestName : `Hóspede ${idx}`) || `Hóspede ${idx}`).trim();
       const slotPhone = (existing?.phone || (idx === 1 ? reservation.guestPhone : "") || "").trim();
@@ -46067,18 +46072,498 @@ app.delete("/api/pms/blocks/:id", (req, res) => {
   res.json({ success: true });
 });
 
-// ── Reception Tablet & Portaria Endpoints ────────────────────────────────────
+// ── Reception Tablet & Portaria Endpoints (Open Operational Mode — Sanitized) ─
+function formatReceptionChannelLabel(r) {
+  if (!r || typeof r !== "object") return "Site CorpFlats";
+  if (r.channelLabel && String(r.channelLabel).trim()) return String(r.channelLabel).trim();
+  const raw = String(r.channel || r.source || "").toLowerCase().trim();
+  if (
+    raw.includes("b2b") ||
+    raw.includes("corporat") ||
+    raw.includes("agenc") ||
+    raw.includes("agênc") ||
+    r.isCorporate ||
+    r.isB2B ||
+    r.agencyId ||
+    r.b2bReservationNumber ||
+    r.b2bLocatorRloc
+  ) {
+    return "Agência / B2B";
+  }
+  if (raw.includes("booking")) return "Booking.com";
+  if (raw.includes("airbnb")) return "Airbnb";
+  if (raw.includes("expedia")) return "Expedia";
+  if (raw.includes("decolar")) return "Decolar";
+  if (raw.includes("whats") || raw.includes("wpp") || raw === "direta" || raw === "direto") return "WhatsApp";
+  if (raw.includes("site") || raw.includes("motor") || raw.includes("corpflats") || raw === "direct") return "Site CorpFlats";
+  if (raw.includes("balcao") || raw.includes("balcão") || raw.includes("presencial") || raw.includes("recepcao") || raw.includes("recepção")) {
+    return "Recepção / Balcão";
+  }
+  const orig = String(r.channel || r.source || "").trim();
+  return orig ? orig.charAt(0).toUpperCase() + orig.slice(1) : "Site CorpFlats";
+}
+
+export function evaluateReceptionEarlyCheckin(r, {
+  isRoomReady = true,
+  cleaningStatus = "clean",
+  cleaningLabel = "✨ Limpo",
+  bNow = null,
+  settings = null,
+  allCheckinDone = false,
+  someCheckinDone = false,
+  completedCount = 0,
+  totalCount = 1,
+  isReSignatureNeeded = false
+} = {}) {
+  const activeBNow = bNow || getBrasiliaNow();
+  const activeSettings = settings || db?.settings || {};
+  const today = activeBNow.date;
+  const currentTimeHHMM = activeBNow.timeStr || `${String(activeBNow.hour || 0).padStart(2, "0")}:${String(activeBNow.minute || 0).padStart(2, "0")}`;
+  const standardCheckinTime = activeSettings?.checkinTime || "14:00";
+
+  const resCheckinDate = String(r?.checkinDate || "").substring(0, 10);
+  const isCheckinDatePast = Boolean(resCheckinDate && resCheckinDate < today);
+  const isCheckinDateToday = Boolean(!resCheckinDate || resCheckinDate === today);
+  const isCheckinDateFuture = Boolean(resCheckinDate && resCheckinDate > today);
+
+  // Regra unificada da Sofia:
+  // - Site / Direto / WhatsApp: cortesia grátis a partir das 10:00 (com flat limpo)
+  // - Booking / Airbnb / Agência (OTA / B2B): cortesia grátis a partir das 12:00 (com flat limpo)
+  // - Antes desses horários: somente com autorização/pagamento registrado pela Administração
+  const isOtaOrB2b = isOtaOrB2bReservation(r);
+  const channelLabel = formatReceptionChannelLabel(r);
+  const freeEarlyTime = isOtaOrB2b ? "12:00" : "10:00";
+
+  const hasPendingEarlyPayment = Boolean(r?.pendingEarlyCheckin && r.pendingEarlyCheckin.status === "pending_payment");
+  const isPaidEarly = Boolean(r?.pendingEarlyCheckin && r.pendingEarlyCheckin.status === "paid");
+  const isEarlyAuthorizedByAdmin = Boolean(r?.earlyCheckinAuthorized || isPaidEarly);
+
+  const validAuthorizedTime = (typeof r?.earlyCheckinTime === "string" && /^\d{2}:\d{2}$/.test(r.earlyCheckinTime.trim()))
+    ? r.earlyCheckinTime.trim()
+    : null;
+
+  let effectiveAllowedTime = freeEarlyTime;
+  if (isEarlyAuthorizedByAdmin) {
+    const adminTime = validAuthorizedTime || "00:00";
+    effectiveAllowedTime = adminTime < freeEarlyTime ? adminTime : freeEarlyTime;
+  }
+
+  let isTimeAllowed = false;
+  if (isCheckinDatePast) {
+    isTimeAllowed = true;
+  } else if (isCheckinDateFuture) {
+    isTimeAllowed = false;
+  } else {
+    isTimeAllowed = currentTimeHHMM >= effectiveAllowedTime;
+  }
+
+  const isRegularCheckinWindow = isCheckinDatePast || (isCheckinDateToday && currentTimeHHMM >= standardCheckinTime);
+
+  let earlyCheckinStatus = "Não liberado";
+  let earlyCheckinReason = "";
+  const formattedCheckinBr = resCheckinDate ? resCheckinDate.split("-").reverse().join("/") : "";
+
+  if (isCheckinDateFuture) {
+    earlyCheckinStatus = "Aguardando data";
+    earlyCheckinReason = `Entrada prevista para ${formattedCheckinBr} (cortesia a partir das ${freeEarlyTime} no dia da chegada)`;
+  } else if (!isTimeAllowed) {
+    earlyCheckinStatus = "Não liberado";
+    earlyCheckinReason = isOtaOrB2b
+      ? `${channelLabel}: liberado grátis somente a partir das 12:00 (antes das 12:00 exige autorização da Administração)`
+      : `${channelLabel}: liberado grátis a partir das 10:00 (antes das 10:00 exige autorização da Administração)`;
+  } else if (!isRoomReady) {
+    earlyCheckinStatus = "Aguardando limpeza";
+    earlyCheckinReason = `Horário permitido (a partir das ${effectiveAllowedTime}), aguardando limpeza do flat`;
+  } else {
+    earlyCheckinStatus = "Liberado";
+    if (isEarlyAuthorizedByAdmin && currentTimeHHMM < freeEarlyTime) {
+      earlyCheckinReason = validAuthorizedTime
+        ? `Autorizado pela Administração (a partir das ${validAuthorizedTime})`
+        : "Autorizado pela Administração";
+    } else if (!isRegularCheckinWindow) {
+      earlyCheckinReason = `Cortesia ${isOtaOrB2b ? "OTA/Agência" : "Site/Direto/WhatsApp"} liberada (a partir das ${freeEarlyTime})`;
+    } else {
+      earlyCheckinReason = `Horário regular liberado (${standardCheckinTime})`;
+    }
+  }
+
+  const blockedReasons = [];
+  if (isCheckinDateFuture) {
+    blockedReasons.push(`Data de entrada prevista apenas para ${formattedCheckinBr}`);
+  }
+  if (isReSignatureNeeded) {
+    blockedReasons.push("Re-assinatura obrigatória do Check-in Digital pendente");
+  } else if (completedCount === 0) {
+    blockedReasons.push(`Check-in Digital pendente (0/${totalCount} concluído)`);
+  }
+  if (!isCheckinDateFuture && !isTimeAllowed) {
+    blockedReasons.push(`Horário atual (${currentTimeHHMM}) anterior às ${effectiveAllowedTime} sem autorização da Administração`);
+  }
+  if (!isRoomReady) {
+    blockedReasons.push(`Apartamento ainda não está limpo (${cleaningLabel})`);
+  }
+
+  const canAuthorizeEntry = !isCheckinDateFuture && !isReSignatureNeeded && completedCount > 0 && isTimeAllowed && isRoomReady;
+
+  let entryMessage = "";
+  let entryBadgeType = "neutral";
+  if (isCheckinDateFuture) {
+    entryMessage = `Entrada prevista para ${formattedCheckinBr}`;
+    entryBadgeType = "warning";
+  } else if (isReSignatureNeeded) {
+    entryMessage = "Check-in Pendente (Re-assinatura de Termo Obrigatória)";
+    entryBadgeType = "error";
+  } else if (completedCount === 0) {
+    entryMessage = `Check-in Digital Pendente (0/${totalCount} concluído)`;
+    entryBadgeType = "error";
+  } else if (!isTimeAllowed) {
+    entryMessage = `Aguardando Horário (${effectiveAllowedTime}) ou Autorização da Administração`;
+    entryBadgeType = "warning";
+  } else if (!isRoomReady) {
+    entryMessage = `Quarto não está pronto (${cleaningLabel})`;
+    entryBadgeType = "error";
+  } else if (!allCheckinDone) {
+    entryMessage = `Entrada Parcial Liberada (${completedCount}/${totalCount} prontos)`;
+    entryBadgeType = "warning";
+  } else if (isRegularCheckinWindow) {
+    entryMessage = `Check-in Regular Liberado (${standardCheckinTime})`;
+    entryBadgeType = "success";
+  } else {
+    entryMessage = `⚡ Early Check-in Liberado (${earlyCheckinReason})`;
+    entryBadgeType = "success";
+  }
+
+  return {
+    channelLabel,
+    isOtaOrB2b,
+    freeEarlyTime,
+    effectiveAllowedTime,
+    standardCheckinTime,
+    currentTimeHHMM,
+    isCheckinDatePast,
+    isCheckinDateToday,
+    isCheckinDateFuture,
+    isTimeAllowed,
+    isRegularCheckinWindow,
+    isEarlyAuthorizedByAdmin,
+    earlyCheckinTime: validAuthorizedTime,
+    hasPendingEarlyPayment,
+    isRoomReady: Boolean(isRoomReady),
+    cleaningStatus,
+    cleaningLabel,
+    completedGuestsCount: completedCount,
+    totalGuestsCount: totalCount,
+    allCheckinDone: Boolean(allCheckinDone),
+    someCheckinDone: Boolean(someCheckinDone),
+    needsReSignature: Boolean(isReSignatureNeeded),
+    earlyCheckinStatus,
+    earlyCheckinReason,
+    canAuthorizeEntry,
+    entryMessage,
+    entryBadgeType,
+    blockedReasons
+  };
+}
+
+export function buildSanitizedReceptionItem(r, { now = null, bNow = null, todayCleaningRequests = null } = {}) {
+  const activeNow = now || getEffectiveDate();
+  const activeBNow = bNow || getBrasiliaNow();
+  const today = activeBNow.date;
+  const activeCleanReqs = todayCleaningRequests || (typeof getRequestsForDate === "function" ? getRequestsForDate(today) : (db.cleaningRequests || []));
+
+  const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || {
+    id: r.flatId,
+    number: r.flatNumber || String(r.flatId)
+  };
+  const guest = (db.guests || []).find(g =>
+    areGuestNamesCompatible(r.guestName, g.fullName || g.name) && (
+      (r.guestId && g.id === r.guestId) ||
+      (r.guestDocument && g.document && r.guestDocument.replace(/\D/g, "") === g.document.replace(/\D/g, "")) ||
+      (r.guestEmail && g.email && r.guestEmail.trim().toLowerCase() === g.email.trim().toLowerCase()) ||
+      (r.guestPhone && g.phone && r.guestPhone.replace(/\D/g, "") === g.phone.replace(/\D/g, ""))
+    )
+  ) || {};
+
+  const cleanReq = activeCleanReqs.find(c =>
+    (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) &&
+    !c.isDeleted &&
+    c.status !== "deleted" &&
+    !c.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    c.type !== "bed_adjustment_only" &&
+    c.type !== "instruction"
+  ) || (db.cleaningRequests || []).find(c =>
+    (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) &&
+    c.requestDate === today &&
+    !c.isDeleted &&
+    c.status !== "deleted" &&
+    !c.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    c.type !== "bed_adjustment_only" &&
+    c.type !== "instruction"
+  );
+
+  const hasPendingCheckoutToday = (db.reservations || []).some(res =>
+    (res.flatId === flat.id || String(res.flatNumber) === String(flat.number)) &&
+    res.checkoutDate === today &&
+    res.id !== r.id &&
+    res.status !== "cancelada" &&
+    res.status !== "cancelado" &&
+    res.status !== "completed"
+  );
+
+  let cleaningStatus = "clean";
+  let cleaningLabel = "✨ Limpo";
+  let cleaningMinutes = 0;
+
+  if (r.status === "in_house") {
+    cleaningStatus = "clean";
+    cleaningLabel = "✨ Ocupado";
+  } else if (cleanReq) {
+    if (cleanReq.status === "cleaning_now" || cleanReq.status === "in_progress") {
+      cleaningStatus = "cleaning_now";
+      const startedAt = cleanReq.startedAt || cleanReq.assignedAt || cleanReq.updatedAt || new Date().toISOString();
+      const diffMins = Math.max(0, Math.floor((activeNow.getTime() - new Date(startedAt).getTime()) / 60000));
+      cleaningMinutes = diffMins;
+      cleaningLabel = `🧹 Limpando (há ${diffMins} min)`;
+    } else if (cleanReq.status === "dirty" || cleanReq.status === "pending") {
+      cleaningStatus = "dirty";
+      cleaningLabel = "⚠️ Sujo (aguardando limpeza)";
+    } else {
+      cleaningStatus = "clean";
+      cleaningLabel = "✨ Limpo";
+    }
+  } else if (hasPendingCheckoutToday) {
+    cleaningStatus = "dirty";
+    cleaningLabel = "⚠️ Sujo (aguardando limpeza)";
+  }
+
+  const isRoomReady = cleaningStatus === "clean";
+  const isReSignatureNeeded = Boolean(r.needsReSignature);
+
+  const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || (Array.isArray(r.guests) ? r.guests.length : 1) || 1, 1), 4);
+  const rawGuests = Array.isArray(r.guests) && r.guests.length > 0 ? [...r.guests] : [];
+  const guestList = [];
+
+  if (rawGuests.length === 0) {
+    const titularDone = Boolean(
+      !isReSignatureNeeded && (r.fnhrCompleted || r.preCheckinCompleted || r.fnrhDocumentUuid || r.fnrhSignedAt || r.status === "in_house")
+    );
+    guestList.push({
+      index: 1,
+      name: r.guestName || guest.fullName || guest.name || "Hóspede 1",
+      cpf: r.guestDocument || guest.document || "",
+      document: r.guestDocument || guest.document || "",
+      phone: r.guestPhone || guest.phone || "",
+      email: r.guestEmail || guest.email || "",
+      hasCompletedCheckin: titularDone,
+      needsReSignature: isReSignatureNeeded,
+      checkinCompletedAt: titularDone ? (r.fnrhSignedAt || r.updatedAt || null) : null,
+      entryAuthorized: Boolean(r.status === "in_house")
+    });
+    for (let i = 2; i <= count; i++) {
+      guestList.push({
+        index: i,
+        name: `Hóspede ${i}`,
+        cpf: "",
+        document: "",
+        phone: "",
+        email: "",
+        hasCompletedCheckin: false,
+        needsReSignature: isReSignatureNeeded,
+        checkinCompletedAt: null,
+        entryAuthorized: false
+      });
+    }
+  } else {
+    for (let i = 1; i <= Math.max(count, rawGuests.length); i++) {
+      const posFallback = rawGuests[i - 1] && (!rawGuests[i - 1].index || Number(rawGuests[i - 1].index) === i)
+        ? rawGuests[i - 1]
+        : null;
+      const existing = rawGuests.find(g => Number(g?.index || 0) === i) || posFallback;
+      if (existing) {
+        const done = !isReSignatureNeeded && !existing.needsReSignature && Boolean(
+          existing.hasCompletedCheckin || existing.status === "CHECKED_IN" || existing.fnrhDocumentUuid || existing.fnrhSignedAt
+        );
+        guestList.push({
+          ...existing,
+          index: Number(existing.index) || i,
+          hasCompletedCheckin: done,
+          needsReSignature: Boolean(isReSignatureNeeded || existing.needsReSignature)
+        });
+      } else {
+        guestList.push({
+          index: i,
+          name: i === 1 ? (r.guestName || guest.fullName || guest.name || "Hóspede 1") : `Hóspede ${i}`,
+          cpf: i === 1 ? (r.guestDocument || guest.document || "") : "",
+          document: i === 1 ? (r.guestDocument || guest.document || "") : "",
+          phone: i === 1 ? (r.guestPhone || guest.phone || "") : "",
+          email: i === 1 ? (r.guestEmail || guest.email || "") : "",
+          hasCompletedCheckin: false,
+          needsReSignature: isReSignatureNeeded,
+          checkinCompletedAt: null,
+          entryAuthorized: false
+        });
+      }
+    }
+  }
+
+  const completedCount = guestList.filter(g => g.hasCompletedCheckin && !g.needsReSignature).length;
+  const totalCount = guestList.length;
+  const allCheckinDone = !isReSignatureNeeded && totalCount > 0 && completedCount >= totalCount;
+  const someCheckinDone = !isReSignatureNeeded && completedCount > 0;
+
+  const earlyEval = evaluateReceptionEarlyCheckin(r, {
+    isRoomReady,
+    cleaningStatus,
+    cleaningLabel,
+    bNow: activeBNow,
+    settings: db.settings,
+    allCheckinDone,
+    someCheckinDone,
+    completedCount,
+    totalCount,
+    isReSignatureNeeded
+  });
+
+  let safePdfUrl = r.fnrhPdfUrl || null;
+  let safeDownloadUrl = r.fnrhDownloadUrl || null;
+  if (r.fnrhDocumentUuid) {
+    const tkn = generateSignedFnrhToken(r.fnrhDocumentUuid, 60 * 24 * 30);
+    safePdfUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/view?token=${tkn}`;
+    safeDownloadUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/download?token=${tkn}`;
+  }
+
+  // Sanitização estrita por allowlist de cada hóspede (sem valores financeiros nem senhas)
+  const sanitizedGuests = guestList.map((g, idx) => {
+    let gPdfUrl = g.fnrhPdfUrl || null;
+    let gDownloadUrl = g.fnrhDownloadUrl || null;
+    if (g.fnrhDocumentUuid) {
+      const tkn = generateSignedFnrhToken(g.fnrhDocumentUuid, 60 * 24 * 30);
+      gPdfUrl = `/api/pms/fnrh/${g.fnrhDocumentUuid}/view?token=${tkn}`;
+      gDownloadUrl = `/api/pms/fnrh/${g.fnrhDocumentUuid}/download?token=${tkn}`;
+    }
+    return {
+      index: Number(g.index) || idx + 1,
+      name: g.name || "",
+      cpf: g.cpf || g.document || "",
+      document: g.document || g.cpf || "",
+      phone: g.phone || "",
+      email: g.email || "",
+      birthDate: g.birthDate || "",
+      age: g.age ?? null,
+      address: g.address || "",
+      cep: g.cep || "",
+      city: g.city || "",
+      state: g.state || "",
+      hasCompletedCheckin: Boolean(g.hasCompletedCheckin),
+      checkinCompletedAt: g.checkinCompletedAt || g.fnrhSignedAt || null,
+      needsReSignature: Boolean(g.needsReSignature),
+      entryAuthorized: Boolean(g.entryAuthorized),
+      entryAuthorizedAt: g.entryAuthorizedAt || null,
+      selfieUrl: g.selfieUrl || null,
+      docPhotoUrl: g.docPhotoUrl || null,
+      signatureUrl: g.signatureUrl || null,
+      fnrhDocumentUuid: g.fnrhDocumentUuid || null,
+      fnrhPdfUrl: gPdfUrl,
+      fnrhDownloadUrl: gDownloadUrl,
+      isMinor: Boolean(g.isMinor),
+      minorKinship: g.minorKinship || null,
+      minorAuthDocUrl: g.minorAuthDocUrl || null,
+      aiVerification: g.aiVerification ? { facesMatch: Boolean(g.aiVerification.facesMatch) } : null
+    };
+  });
+
+  const isSmoker = Boolean(
+    r.isSmoker || r.smokerGuestAlert || r.guestSmoked || guest.isSmoker || guest.smokedInRoom || (guest.tags || []).includes("Fumante")
+  );
+
+  // Allowlist estrita: NENHUM valor financeiro (dailyRate, totalAmount, paidAmount, payments, charges,
+  // boletos, pixCopiaECola, earlyCheckinFee, notes internos, auditLogs) e NENHUMA senha (doorPassword,
+  // lockPassword, accessCode, wifiPassword) sai nas rotas públicas /api/reception/*
+  return {
+    id: r.id,
+    code: r.code || r.reservationCode || null,
+    reservationCode: r.reservationCode || r.code || null,
+    flatId: flat.id ?? r.flatId,
+    flatNumber: String(flat.number || r.flatNumber || ""),
+    buildingName: flat.buildingName || flat.building || db.settings?.buildingName || "Edifício Soho Residence Service",
+    channel: r.channel || "site",
+    channelLabel: earlyEval.channelLabel,
+    status: r.status || "confirmada",
+    guestName: r.guestName || "",
+    guestPhone: r.guestPhone || guest.phone || "",
+    guestEmail: r.guestEmail || guest.email || "",
+    guestDocument: r.guestDocument || guest.document || "",
+    guestAddress: r.guestAddress || guest.address || "",
+    guestCep: r.guestCep || r.cep || guest.cep || "",
+    guestCity: r.guestCity || r.city || guest.city || "",
+    guestState: r.guestState || r.state || guest.state || "",
+    checkinDate: r.checkinDate || "",
+    checkoutDate: r.checkoutDate || "",
+    checkinTime: r.checkinTime || db.settings?.checkinTime || "14:00",
+    checkoutTime: r.checkoutTime || db.settings?.checkoutTime || "12:00",
+    actualCheckinAt: r.actualCheckinAt || null,
+    actualCheckoutAt: r.actualCheckoutAt || null,
+    guestCount: count,
+    guests: sanitizedGuests,
+    vehicle: (r.vehicle && r.vehicle.plate)
+      ? {
+          plate: String(r.vehicle.plate).toUpperCase(),
+          brand: r.vehicle.brand || "",
+          model: r.vehicle.model || "",
+          color: r.vehicle.color || ""
+        }
+      : null,
+    cleaningStatus,
+    cleaningLabel,
+    cleaningMinutes,
+    isRoomReady,
+    earlyCheckinStatus: earlyEval.earlyCheckinStatus,
+    earlyCheckinReason: earlyEval.earlyCheckinReason,
+    earlyCheckinAuthorized: earlyEval.isEarlyAuthorizedByAdmin,
+    earlyCheckinTime: earlyEval.earlyCheckinTime,
+    earlyCheckinChecklist: earlyEval,
+    allCheckinDone,
+    someCheckinDone,
+    canAuthorizeEntry: earlyEval.canAuthorizeEntry,
+    entryMessage: earlyEval.entryMessage,
+    entryBadgeType: earlyEval.entryBadgeType,
+    receptionNotes: r.receptionNotes || "",
+    guestPhoto: r.selfieUrl || guest.photoUrl || null,
+    docPhoto: r.docPhotoUrl || guest.docPhotoUrl || null,
+    signatureUrl: r.signatureUrl || null,
+    fnrhDocumentUuid: r.fnrhDocumentUuid || null,
+    fnrhPdfUrl: safePdfUrl,
+    fnrhDownloadUrl: safeDownloadUrl,
+    serproPrecheckinUrl: r.serproPrecheckinUrl || null,
+    needsReSignature: isReSignatureNeeded,
+    reSignatureReason: r.reSignatureReason || (isReSignatureNeeded ? "Alteração de acomodação (flat) ou período da estadia" : null),
+    hasPreCheckin: Boolean(!isReSignatureNeeded && someCheckinDone),
+    isCheckoutToday: Boolean(r.checkoutDate === today),
+    isPartialCheckin: Boolean(r.isPartialCheckin),
+    hasMinor: Boolean(r.hasMinor || sanitizedGuests.some(g => g.isMinor)),
+    isCamposResident: Boolean(r.isCamposResident),
+    riskAttentionAlert: Boolean(r.riskAttentionAlert),
+    riskAttentionReason: r.riskAttentionReason || null,
+    isSmoker,
+    smokerGuestAlert: isSmoker,
+    guestSmoked: isSmoker,
+    smokingAlert: r.smokingAlert || (guest.isSmoker ? "Hóspede com histórico de fumo no quarto" : null)
+  };
+}
+
 app.get("/api/reception/today", (req, res) => {
   try {
     triggerBackgroundSync();
     const now = getEffectiveDate();
     const bNow = getBrasiliaNow();
     const today = bNow.date;
-    const currentHour = bNow.hour;
+    const todayCleaningRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(today) : (db.cleaningRequests || []);
+    const ctx = { now, bNow, todayCleaningRequests };
 
     // 1. Chegadas Previstas para Hoje (Aguardando Check-in ou com Entrada Parcial Ativa)
     // Pré-reservas aguardando pagamento NUNCA são enviadas/exibidas na recepção/portaria.
-    const todayCleaningRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(today) : (db.cleaningRequests || []);
     const arrivals = (db.reservations || [])
       .filter(r => {
         const resDate = r.checkinDate ? r.checkinDate.substring(0, 10) : "";
@@ -46096,258 +46581,9 @@ app.get("/api/reception/today", (req, res) => {
         }
         return false;
       })
-      .map(r => {
-        const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-        const guest = (db.guests || []).find(g =>
-          areGuestNamesCompatible(r.guestName, g.fullName || g.name) && (
-            (r.guestId && g.id === r.guestId) ||
-            (r.guestDocument && g.document && r.guestDocument.replace(/\D/g, "") === g.document.replace(/\D/g, "")) ||
-            (r.guestEmail && g.email && r.guestEmail.trim().toLowerCase() === g.email.trim().toLowerCase()) ||
-            (r.guestPhone && g.phone && r.guestPhone.replace(/\D/g, "") === g.phone.replace(/\D/g, ""))
-          )
-        ) || {};
-        const cleanReq = todayCleaningRequests.find(c =>
-          (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) &&
-          !c.isDeleted &&
-          c.status !== "deleted" &&
-          !c.isInstructionOnly &&
-          c.source !== "manual_instruction" &&
-          c.type !== "bed_adjustment_only" &&
-          c.type !== "instruction"
-        ) || (db.cleaningRequests || []).find(c =>
-          (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) &&
-          c.requestDate === today &&
-          !c.isDeleted &&
-          c.status !== "deleted" &&
-          !c.isInstructionOnly &&
-          c.source !== "manual_instruction" &&
-          c.type !== "bed_adjustment_only" &&
-          c.type !== "instruction"
-        );
-
-        const hasPendingCheckoutToday = (db.reservations || []).some(res =>
-          (res.flatId === flat.id || String(res.flatNumber) === String(flat.number)) &&
-          res.checkoutDate === today && res.id !== r.id && res.status !== "cancelada" && res.status !== "completed"
-        );
-        let cleaningStatus = "clean";
-        let cleaningLabel = "✨ Limpo";
-        let cleaningMinutes = 0;
-
-        if (cleanReq) {
-          if (cleanReq.status === "cleaning_now" || cleanReq.status === "in_progress") {
-            cleaningStatus = "cleaning_now";
-            const startedAt = cleanReq.startedAt || cleanReq.assignedAt || cleanReq.updatedAt || new Date().toISOString();
-            const diffMins = Math.max(0, Math.floor((now.getTime() - new Date(startedAt).getTime()) / 60000));
-            cleaningMinutes = diffMins;
-            cleaningLabel = `🧹 Limpando (há ${diffMins} min)`;
-          } else if (cleanReq.status === "dirty" || cleanReq.status === "pending") {
-            cleaningStatus = "dirty";
-            cleaningLabel = "⚠️ Sujo (aguardando limpeza)";
-          } else if (cleanReq.status === "clean") {
-            cleaningStatus = "clean";
-            cleaningLabel = "✨ Limpo";
-          }
-        } else {
-          if (hasPendingCheckoutToday) {
-            cleaningStatus = "dirty";
-            cleaningLabel = "⚠️ Sujo (aguardando limpeza)";
-          } else {
-            cleaningStatus = "clean";
-            cleaningLabel = "✨ Limpo";
-          }
-        }
-
-        const isRoomReady = cleaningStatus === "clean";
-
-        const isReSignatureNeeded = Boolean(r.needsReSignature);
-
-        // Quantidade de hóspedes autorizados (1, 2 ou 3)
-        const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
-        let guestList = Array.isArray(r.guests) && r.guests.length > 0 ? [...r.guests] : [];
-
-        if (guestList.length === 0) {
-          guestList.push({
-            index: 1,
-            name: r.guestName || guest.name || "Hóspede 1",
-            cpf: guest.document || "",
-            phone: r.guestPhone || guest.phone || "",
-            email: r.guestEmail || guest.email || "",
-            hasCompletedCheckin: Boolean(!isReSignatureNeeded && r.fnhrCompleted),
-            needsReSignature: isReSignatureNeeded,
-            checkinCompletedAt: r.fnhrCompleted && !isReSignatureNeeded ? r.updatedAt : null
-          });
-          for (let i = 2; i <= count; i++) {
-            guestList.push({
-              index: i,
-              name: `Hóspede ${i}`,
-              cpf: "",
-              phone: "",
-              email: "",
-              hasCompletedCheckin: false,
-              needsReSignature: isReSignatureNeeded,
-              checkinCompletedAt: null
-            });
-          }
-        } else if (isReSignatureNeeded) {
-          guestList = guestList.map(g => ({
-            ...g,
-            needsReSignature: true,
-            hasCompletedCheckin: false
-          }));
-        }
-
-        const allCheckinDone = !isReSignatureNeeded && guestList.every(g => g.hasCompletedCheckin && !g.needsReSignature);
-        const someCheckinDone = !isReSignatureNeeded && guestList.some(g => g.hasCompletedCheckin && !g.needsReSignature);
-
-        // Histórico de reservas anteriores do hóspede para checar se é 1ª vez ou recorrente
-        const priorReservations = (db.reservations || []).filter(prev => {
-          if (prev.id === r.id || prev.code === r.code) return false;
-          if (prev.status === "cancelada" || prev.status === "cancelado") return false;
-          if (!areGuestNamesCompatible(r.guestName, prev.guestName)) return false;
-          const sameDoc = r.guestDocument && prev.guestDocument && r.guestDocument.replace(/\D/g, "") === prev.guestDocument.replace(/\D/g, "");
-          const sameEmail = r.guestEmail && prev.guestEmail && r.guestEmail.trim().toLowerCase() === prev.guestEmail.trim().toLowerCase();
-          const samePhone = r.guestPhone && prev.guestPhone && r.guestPhone.replace(/\D/g, "") === prev.guestPhone.replace(/\D/g, "");
-          const sameGuestId = r.guestId && prev.guestId && r.guestId === prev.guestId;
-          return Boolean(sameDoc || sameEmail || samePhone || sameGuestId);
-        });
-        const priorStayCount = priorReservations.length;
-        const isFirstTimeGuest = priorStayCount === 0;
-
-        // Lógica de Liberação de Check-in Antecipado e Entrada na Portaria
-        const isSiteBooking = r.channel === "site" || r.channel === "site_direto" || r.channel === "direto";
-        const isOtaBooking = r.channel === "airbnb" || r.channel === "booking" || r.channel === "decolar" || r.channel === "expedia";
-        const isEarlyAuthorizedManual = Boolean(r.earlyCheckinAuthorized);
-        const isPastOrExact14h = currentHour >= 14;
-
-        // Early check-in só é liberado se o quarto estiver limpo E:
-        // 1) Reserva Direta no Site, OU
-        // 2) Liberação Manual do Admin, OU
-        // 3) Cortesia de 1ª Hospedagem de cliente OTA (Airbnb / Booking)
-        let earlyCheckinStatus = "Não liberado";
-        let earlyCheckinReason = "";
-        let isFirstStayCourtesy = false;
-
-        if (!isRoomReady) {
-          earlyCheckinStatus = "Não liberado";
-          earlyCheckinReason = "Quarto não está limpo";
-        } else {
-          if (isSiteBooking) {
-            earlyCheckinStatus = "Liberado";
-            earlyCheckinReason = "Reserva Direta no Site";
-          } else if (isEarlyAuthorizedManual) {
-            earlyCheckinStatus = "Liberado";
-            earlyCheckinReason = "Autorizado manualmente";
-          } else if (isOtaBooking && isFirstTimeGuest) {
-            earlyCheckinStatus = "Liberado";
-            isFirstStayCourtesy = true;
-            earlyCheckinReason = "Cortesia 1ª Reserva";
-          } else {
-            earlyCheckinStatus = "Não liberado";
-            earlyCheckinReason = `Hóspede recorrente (${priorStayCount + 1}ª reserva) via ${r.channel}`;
-          }
-        }
-
-        // Pode liberar entrada física na portaria se:
-        // Quarto está limpo E (Já passou das 14h OU Early Check-in Liberado)
-        let canAuthorizeEntry = false;
-        let entryMessage = "";
-        let entryBadgeType = "neutral";
-
-        const completedCount = guestList.filter(g => g.hasCompletedCheckin && !g.needsReSignature).length;
-        const totalCount = guestList.length;
-
-        if (isReSignatureNeeded) {
-          canAuthorizeEntry = false;
-          entryMessage = "Check-in Pendente (Re-assinatura de Termo Obrigatória)";
-          entryBadgeType = "error";
-        } else if (!allCheckinDone) {
-          if (completedCount > 0) {
-            canAuthorizeEntry = isRoomReady && (isPastOrExact14h || earlyCheckinStatus === "Liberado");
-            entryMessage = `Entrada Parcial Liberada (${completedCount}/${totalCount} prontos)`;
-            entryBadgeType = "warning";
-          } else {
-            canAuthorizeEntry = false;
-            entryMessage = `Check-in Digital Pendente (0/${totalCount} concluído)`;
-            entryBadgeType = "error";
-          }
-        } else if (!isRoomReady) {
-          canAuthorizeEntry = false;
-          entryMessage = `Quarto não está pronto (${cleaningLabel})`;
-          entryBadgeType = "error";
-        } else if (isPastOrExact14h) {
-          canAuthorizeEntry = true;
-          entryMessage = "Check-in Regular (14:00)";
-          entryBadgeType = "success";
-        } else if (earlyCheckinStatus === "Liberado") {
-          canAuthorizeEntry = true;
-          entryMessage = isFirstStayCourtesy ? "🎁 Cortesia 1ª Reserva" : "⚡ Check-in Antecipado";
-          entryBadgeType = "success";
-        } else {
-          canAuthorizeEntry = false;
-          entryMessage = "Horário regular às 14:00 (Check-in antecipado não liberado)";
-          entryBadgeType = "warning";
-        }
-
-        let safePdfUrl = r.fnrhPdfUrl;
-        let safeDownloadUrl = r.fnrhDownloadUrl;
-        if (r.fnrhDocumentUuid) {
-          const tkn = generateSignedFnrhToken(r.fnrhDocumentUuid, 60 * 24 * 30);
-          safePdfUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/view?token=${tkn}`;
-          safeDownloadUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/download?token=${tkn}`;
-        }
-        const enrichedGuests = guestList.map(g => {
-          let gPdfUrl = g.fnrhPdfUrl;
-          let gDownloadUrl = g.fnrhDownloadUrl;
-          if (g.fnrhDocumentUuid) {
-            const tkn = generateSignedFnrhToken(g.fnrhDocumentUuid, 60 * 24 * 30);
-            gPdfUrl = `/api/pms/fnrh/${g.fnrhDocumentUuid}/view?token=${tkn}`;
-            gDownloadUrl = `/api/pms/fnrh/${g.fnrhDocumentUuid}/download?token=${tkn}`;
-          }
-          return {
-            ...g,
-            fnrhPdfUrl: gPdfUrl,
-            fnrhDownloadUrl: gDownloadUrl
-          };
-        });
-
-        return {
-          ...r,
-          isSmoker: Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || guest.isSmoker || guest.smokedInRoom || (guest.tags || []).includes("Fumante")),
-          smokerGuestAlert: Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || guest.isSmoker || guest.smokedInRoom || (guest.tags || []).includes("Fumante")),
-          guestSmoked: Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || guest.isSmoker || guest.smokedInRoom || (guest.tags || []).includes("Fumante")),
-          smokingAlert: r.smokingAlert || (guest.isSmoker ? "Hóspede com histórico de fumo no quarto" : undefined),
-          fnrhPdfUrl: safePdfUrl,
-          fnrhDownloadUrl: safeDownloadUrl,
-          flatNumber: flat.number,
-          cleaningStatus,
-          cleaningLabel,
-          cleaningMinutes,
-          isRoomReady,
-          priorStayCount,
-          isFirstTimeGuest,
-          earlyCheckinStatus,
-          earlyCheckinReason,
-          isFirstStayCourtesy,
-          guestCount: count,
-          guests: enrichedGuests,
-          allCheckinDone,
-          someCheckinDone,
-          canAuthorizeEntry,
-          entryMessage,
-          entryBadgeType,
-          earlyCheckinAuthorized: isEarlyAuthorizedManual,
-          receptionNotes: r.receptionNotes || "",
-          guestPhoto: r.selfieUrl || guest.photoUrl || null,
-          docPhoto: r.docPhotoUrl || guest.docPhotoUrl || null,
-          signatureUrl: r.signatureUrl || null,
-          needsReSignature: isReSignatureNeeded,
-          reSignatureReason: r.reSignatureReason || (isReSignatureNeeded ? "Alteração de acomodação (flat) ou período da estadia" : null),
-          hasPreCheckin: Boolean(!isReSignatureNeeded && ((r.fnhrCompleted && !r.needsReSignature) || someCheckinDone))
-        };
-      });
+      .map(r => buildSanitizedReceptionItem(r, ctx));
 
     // 2. Hóspedes Atualmente Hospedados (In House)
-    // Devem ser apenas reservas com checkin confirmado (in_house) OU estadias anteriores ainda em andamento (checkinDate < today)
     const inHouse = (db.reservations || [])
       .filter(r => {
         if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out" || r.status === "expirada") {
@@ -46364,60 +46600,47 @@ app.get("/api/reception/today", (req, res) => {
         }
         return false;
       })
-      .map(r => {
-        const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-        const guest = (db.guests || []).find(g =>
-          areGuestNamesCompatible(r.guestName, g.fullName || g.name) && (
-            (r.guestId && g.id === r.guestId) ||
-            (r.guestDocument && g.document && r.guestDocument.replace(/\D/g, "") === g.document.replace(/\D/g, "")) ||
-            (r.guestEmail && g.email && r.guestEmail.trim().toLowerCase() === g.email.trim().toLowerCase()) ||
-            (r.guestPhone && g.phone && r.guestPhone.replace(/\D/g, "") === g.phone.replace(/\D/g, ""))
-          )
-        ) || {};
-        const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
-        return {
-          ...r,
-          isSmoker: Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || guest.isSmoker || guest.smokedInRoom || (guest.tags || []).includes("Fumante")),
-          smokerGuestAlert: Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || guest.isSmoker || guest.smokedInRoom || (guest.tags || []).includes("Fumante")),
-          guestSmoked: Boolean(r.isSmoker || r.smokerGuestAlert || r.guestSmoked || guest.isSmoker || guest.smokedInRoom || (guest.tags || []).includes("Fumante")),
-          smokingAlert: r.smokingAlert || (guest.isSmoker ? "Hóspede com histórico de fumo no quarto" : undefined),
-          flatNumber: flat.number,
-          guestCount: count,
-          guests: r.guests || [{ index: 1, name: r.guestName, hasCompletedCheckin: true, entryAuthorized: true }],
-          receptionNotes: r.receptionNotes || "",
-          isCheckoutToday: r.checkoutDate === today,
-          isPartialCheckin: Boolean(r.isPartialCheckin)
-        };
-      });
+      .map(r => buildSanitizedReceptionItem(r, ctx));
 
     // 3. Checkouts Realizados Hoje (com opção de desfazer permanente)
     const completedToday = (db.reservations || [])
       .filter(r => r.status === "completed" && (r.actualCheckoutAt?.startsWith(today) || r.checkoutDate === today))
-      .map(r => {
-        const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-        return {
-          ...r,
-          flatNumber: flat.number
-        };
-      });
+      .map(r => buildSanitizedReceptionItem(r, ctx));
 
     // 4. Todas as Saídas Previstas para Hoje
     const departures = (db.reservations || [])
       .filter(r => r.checkoutDate === today && r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "expirada" && !isPreReservationBlocked(r))
-      .map(r => {
-        const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-        return {
-          ...r,
-          flatNumber: flat.number
-        };
-      });
+      .map(r => buildSanitizedReceptionItem(r, ctx));
+
+    // 5. Reserva focada via deep-link de e-mail (?res=CODIGO) — higienizada e bloqueada se pré-reserva/cancelada
+    let focusedReservation = null;
+    const rawFocusCode = String(req.query?.res || "").trim();
+    if (rawFocusCode) {
+      const upperFocus = rawFocusCode.toUpperCase();
+      const targetRes = (db.reservations || []).find(r =>
+        String(r.id) === rawFocusCode ||
+        String(r.code || "").trim().toUpperCase() === upperFocus ||
+        String(r.reservationCode || "").trim().toUpperCase() === upperFocus
+      );
+      if (
+        targetRes &&
+        targetRes.status !== "cancelada" &&
+        targetRes.status !== "cancelado" &&
+        targetRes.status !== "expirada" &&
+        !isPreReservationBlocked(targetRes)
+      ) {
+        focusedReservation = buildSanitizedReceptionItem(targetRes, ctx);
+      }
+    }
 
     res.json({
       today,
+      currentTimeHHMM: bNow.timeStr,
       arrivals,
       inHouse,
       completedToday,
       departures,
+      focusedReservation,
       totalFlats: (db.flats || []).length
     });
   } catch (err) {
@@ -46429,8 +46652,134 @@ app.get("/api/reception/today", (req, res) => {
       inHouse: [],
       completedToday: [],
       departures: [],
+      focusedReservation: null,
       totalFlats: (db.flats || []).length
     });
+  }
+});
+
+// Endpoint: Portaria solicita análise de Early Check-in à Administração no WhatsApp
+const receptionEarlyRequestCooldown = new Map();
+app.post("/api/reception/reservations/:id/request-early-checkin-analysis", async (req, res) => {
+  try {
+    const idOrCode = String(req.params.id || "").trim();
+    const { requestedTime = "", receptionNote = "" } = req.body || {};
+    const upperCode = idOrCode.toUpperCase();
+    const r = (db.reservations || []).find(x =>
+      String(x.id) === idOrCode ||
+      String(x.code || "").trim().toUpperCase() === upperCode ||
+      String(x.reservationCode || "").trim().toUpperCase() === upperCode
+    );
+    if (!r || r.status === "cancelada" || r.status === "cancelado") {
+      return res.status(404).json({ error: "Reserva não encontrada." });
+    }
+    if (isPreReservationBlocked(r)) {
+      return res.status(403).json({ error: "Pré-reserva aguardando pagamento." });
+    }
+
+    const lastReqAt = receptionEarlyRequestCooldown.get(String(r.id)) || 0;
+    if (Date.now() - lastReqAt < 45000) {
+      return res.json({
+        success: true,
+        alreadySentRecently: true,
+        message: "A Administração já recebeu o alerta desta reserva há poucos segundos. Aguarde a atualização automática na tela."
+      });
+    }
+
+    const sanitizedItem = buildSanitizedReceptionItem(r);
+    const checklist = sanitizedItem.earlyCheckinChecklist;
+    const rawAdminPhone = String(
+      db.settings?.adminWhatsApp ||
+      db.whatsappAiSettings?.adminPhone ||
+      process.env.ADMIN_WHATSAPP_NUMBER ||
+      "5522997124021"
+    ).trim();
+    const cleanAdminPhone = typeof cleanWhatsAppPhone === "function"
+      ? cleanWhatsAppPhone(rawAdminPhone)
+      : rawAdminPhone.replace(/\D/g, "");
+
+    const safeRequestedTime = String(requestedTime || "").trim().slice(0, 20);
+    const safeNote = String(receptionNote || "").trim().slice(0, 240);
+
+    const adminMsg = [
+      `⏰ *PORTARIA SOLICITA ANÁLISE DE EARLY CHECK-IN*`,
+      ``,
+      `🏢 *Apartamento:* Flat ${sanitizedItem.flatNumber}`,
+      `👤 *Hóspede:* ${sanitizedItem.guestName}`,
+      `🔖 *Reserva:* #${sanitizedItem.code || sanitizedItem.id} (${sanitizedItem.channelLabel})`,
+      `🕒 *Horário na portaria:* ${checklist.currentTimeHHMM}${safeRequestedTime ? ` | Solicitado p/: ${safeRequestedTime}` : ""}`,
+      `🧹 *Governança:* ${sanitizedItem.cleaningLabel}`,
+      `📋 *Check-in Digital:* ${checklist.completedGuestsCount}/${checklist.totalGuestsCount} concluído(s)`,
+      ...(safeNote ? [`💬 *Obs. da Portaria:* ${safeNote}`] : []),
+      ``,
+      `⚠️ *Regra aplicada:* Cortesia gratuita deste canal inicia às *${checklist.freeEarlyTime}*. Para liberar antes desse horário, ative *"Early Check-in Autorizado"* na reserva pelo PMS.`
+    ].join("\n");
+
+    let sendResult = { success: false };
+    if (cleanAdminPhone && typeof sendZapiMessage === "function") {
+      sendResult = await sendZapiMessage(db.zapiConfig, {
+        phone: cleanAdminPhone,
+        message: adminMsg,
+        title: "Análise de Early Check-in • Portaria",
+        footer: "CorpFlats • Terminal da Portaria",
+        channelId: "admin_alerts",
+        recipientRole: "admin",
+        triggerEvent: "reception_early_checkin_request",
+        db
+      });
+    }
+
+    receptionEarlyRequestCooldown.set(String(r.id), Date.now());
+
+    if (typeof createNotification === "function") {
+      createNotification({
+        category: "checkin",
+        title: `⏰ Portaria pede análise de Early Check-in: Flat ${sanitizedItem.flatNumber}`,
+        message: `${sanitizedItem.guestName} (#${sanitizedItem.code || sanitizedItem.id}, ${sanitizedItem.channelLabel}) solicitou entrada às ${safeRequestedTime || checklist.currentTimeHHMM} (antes das ${checklist.freeEarlyTime}).`,
+        severity: "warning",
+        metadata: {
+          reservationId: r.id,
+          reservationCode: r.code,
+          flatNumber: sanitizedItem.flatNumber,
+          requestedTime: safeRequestedTime || checklist.currentTimeHHMM
+        }
+      });
+    }
+
+    if (typeof logAuditEvent === "function") {
+      await logAuditEvent({
+        level: "info",
+        category: "reception",
+        action: "RECEPTION_REQUEST_EARLY_CHECKIN_ANALYSIS",
+        actor: getAuthUser(req) || { name: "Terminal da Portaria", role: "reception" },
+        details: {
+          reservationId: r.id,
+          reservationCode: r.code,
+          flatNumber: sanitizedItem.flatNumber,
+          channelLabel: sanitizedItem.channelLabel,
+          requestedTime: safeRequestedTime || checklist.currentTimeHHMM,
+          sentViaZapi: Boolean(sendResult.success)
+        }
+      });
+    }
+
+    saveDatabase();
+
+    const normalizedWaPhone = cleanAdminPhone.startsWith("55") ? cleanAdminPhone : `55${cleanAdminPhone}`;
+    const fallbackWaWebUrl = !sendResult.success && cleanAdminPhone
+      ? `https://wa.me/${normalizedWaPhone}?text=${encodeURIComponent(adminMsg)}`
+      : null;
+
+    return res.json({
+      success: true,
+      sentViaZapi: Boolean(sendResult.success),
+      fallbackWaWebUrl,
+      message: sendResult.success
+        ? "Solicitação enviada com sucesso para o WhatsApp da Administração! Assim que autorizarem no sistema, a liberação aparecerá automaticamente aqui na tela."
+        : "Alerta registrado no painel da Administração. O disparo automático Z-API não pôde ser concluído agora — você pode abrir no WhatsApp Web se desejar."
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || "Erro ao solicitar análise da Administração." });
   }
 });
 
@@ -46463,6 +46812,12 @@ app.patch("/api/pms/reservations/:id/early-checkin", (req, res) => {
   }
 
   r.earlyCheckinAuthorized = newEarly;
+  if (req.body.earlyCheckinTime !== undefined) {
+    r.earlyCheckinTime = req.body.earlyCheckinTime || null;
+  } else if (newEarly) {
+    // Liberação manual pelo Admin no PMS vale imediatamente em qualquer horário
+    r.earlyCheckinTime = null;
+  }
   r.updatedAt = new Date().toISOString();
   saveDatabase();
   res.json({ success: true, earlyCheckinAuthorized: r.earlyCheckinAuthorized });
@@ -46503,9 +46858,12 @@ app.patch("/api/pms/reservations/:id/reception-notes", (req, res) => {
 });
 
 app.post("/api/reception/checkin/:reservationId", (req, res) => {
-  const id = Number(req.params.reservationId);
-  const r = (db.reservations || []).find(x => x.id === id);
-  if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+  const rawId = String(req.params.reservationId || "").trim();
+  const id = Number(rawId);
+  const r = (db.reservations || []).find(x => x.id === id || String(x.id) === rawId || x.code === rawId);
+  if (!r || r.status === "cancelada" || r.status === "cancelado") {
+    return res.status(404).json({ error: "Reserva não encontrada" });
+  }
 
   if (isPreReservationBlocked(r)) {
     return res.status(403).json({
@@ -46514,8 +46872,13 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
     });
   }
 
+  const authUser = getAuthUser(req);
+  const isVerifiedAdminOverride = Boolean(
+    req.body?.adminOverride && authUser && (authUser.role === "admin" || authUser.role === "dev")
+  );
+
   // Bloqueio mandatório: se a reserva requer re-assinatura de termo (datas ou flat alterados)
-  if (r.needsReSignature && !req.body.adminOverride && !req.body.forceOverrideReSignature) {
+  if (r.needsReSignature && !isVerifiedAdminOverride) {
     return res.status(400).json({
       error: "Não é possível liberar a entrada: Re-assinatura de termo obrigatória devido a alterações na reserva (datas/acomodação). O hóspede precisa assinar o termo atualizado antes da liberação.",
       needsReSignature: true,
@@ -46524,16 +46887,17 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   }
 
   // Garante array de hóspedes consistente
-  const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
+  const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || (Array.isArray(r.guests) ? r.guests.length : 1) || 1, 1), 4);
   if (!r.guests || r.guests.length === 0) {
+    const titularCompleted = Boolean(!r.needsReSignature && (r.fnhrCompleted || r.preCheckinCompleted || r.fnrhDocumentUuid || r.fnrhSignedAt));
     r.guests = [{
       index: 1,
       name: r.guestName || "Hóspede 1",
       cpf: r.guestDocument || "",
       phone: r.guestPhone || "",
       email: r.guestEmail || "",
-      hasCompletedCheckin: Boolean(r.fnhrCompleted),
-      checkinCompletedAt: r.fnhrCompleted ? r.updatedAt : null,
+      hasCompletedCheckin: titularCompleted,
+      checkinCompletedAt: titularCompleted ? (r.fnrhSignedAt || r.updatedAt) : null,
       entryAuthorized: r.status === "in_house"
     }];
     for (let i = 2; i <= count; i++) {
@@ -46548,22 +46912,72 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
         entryAuthorized: false
       });
     }
+  } else {
+    for (let i = 1; i <= count; i++) {
+      if (!r.guests.some(g => Number(g?.index || 0) === i)) {
+        r.guests.push({
+          index: i,
+          name: `Hóspede ${i}`,
+          cpf: "",
+          phone: "",
+          email: "",
+          hasCompletedCheckin: false,
+          checkinCompletedAt: null,
+          entryAuthorized: false
+        });
+      }
+    }
   }
 
-  const guests = r.guests;
-  const pendingGuests = guests.filter(g => !g.hasCompletedCheckin);
-  const clearedGuests = guests.filter(g => g.hasCompletedCheckin);
-  const isPartialRequested = Boolean(req.body.partial || (Array.isArray(req.body.guestIndices) && req.body.guestIndices.length > 0));
+  const isGuestCheckinValid = (g) => Boolean(
+    g && !r.needsReSignature && !g.needsReSignature && (g.hasCompletedCheckin || g.status === "CHECKED_IN" || g.fnrhDocumentUuid || g.fnrhSignedAt)
+  );
 
-  // Bloqueio mandatória: se nenhum hóspede completou a ficha digital
-  if (clearedGuests.length === 0 && !req.body.adminOverride && !r.fnhrCompleted) {
+  const guests = r.guests;
+  const pendingGuests = guests.filter(g => !isGuestCheckinValid(g));
+  const clearedGuests = guests.filter(g => isGuestCheckinValid(g));
+  const isPartialRequested = Boolean(req.body?.partial || (Array.isArray(req.body?.guestIndices) && req.body.guestIndices.length > 0));
+
+  // Bloqueio mandatório: se nenhum hóspede completou a ficha digital
+  if (clearedGuests.length === 0 && !isVerifiedAdminOverride) {
     return res.status(400).json({
       error: "Não é possível liberar a entrada: Nenhum hóspede concluiu o Check-in Digital ainda. É necessário preencher a ficha digital antes da liberação de entrada."
     });
   }
 
+  // Validação determinística da Regra Unificada de Early Check-in (Sofia) e Limpeza
+  const sanitizedSnapshot = buildSanitizedReceptionItem(r);
+  const earlyChecklist = sanitizedSnapshot.earlyCheckinChecklist;
+
+  if (earlyChecklist.isCheckinDateFuture && !isVerifiedAdminOverride) {
+    return res.status(400).json({
+      error: `Não é possível liberar a entrada antes da data de check-in da reserva (${String(r.checkinDate || "").split("-").reverse().join("/")}).`,
+      earlyCheckinBlocked: true,
+      earlyCheckinChecklist: earlyChecklist
+    });
+  }
+
+  if (!earlyChecklist.isTimeAllowed && !isVerifiedAdminOverride) {
+    return res.status(400).json({
+      error: `Entrada ainda não liberada pelo horário: para reservas via ${earlyChecklist.channelLabel}, a cortesia de Early Check-in inicia às ${earlyChecklist.freeEarlyTime}. Antes desse horário, somente com autorização registrada pela Administração.`,
+      earlyCheckinBlocked: true,
+      earlyCheckinChecklist: earlyChecklist
+    });
+  }
+
+  // Antes do horário padrão (14:00), Early Check-in exige flat limpo (a menos que Admin autenticado force).
+  // A partir das 14:00 (janela regular), caso a governança ainda não tenha dado baixa no app, aceita confirmação explícita force=true.
+  const canForceCleanInRegularWindow = Boolean(req.body?.force && earlyChecklist.isRegularCheckinWindow);
+  if (!earlyChecklist.isRoomReady && !canForceCleanInRegularWindow && !isVerifiedAdminOverride) {
+    return res.status(400).json({
+      error: `Não é possível liberar Early Check-in enquanto o apartamento consta como "${sanitizedSnapshot.cleaningLabel}". Aguarde a conclusão da limpeza pela governança.`,
+      roomNotReady: true,
+      earlyCheckinChecklist: earlyChecklist
+    });
+  }
+
   // Se houver pendentes e NÃO foi solicitada confirmação de liberação parcial nem adminOverride
-  if (pendingGuests.length > 0 && !isPartialRequested && !req.body.adminOverride && !r.fnhrCompleted) {
+  if (pendingGuests.length > 0 && !isPartialRequested && !isVerifiedAdminOverride) {
     const pendingNames = pendingGuests.map(g => g.name || `Hóspede ${g.index}`).join(", ");
     const clearedNames = clearedGuests.map(g => g.name || `Hóspede ${g.index}`).join(", ");
     return res.status(400).json({
@@ -46576,11 +46990,12 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
 
   // Identifica quais hóspedes terão a entrada autorizada neste momento
   let guestsToAuthorize = [];
-  if (Array.isArray(req.body.guestIndices) && req.body.guestIndices.length > 0) {
+  if (Array.isArray(req.body?.guestIndices) && req.body.guestIndices.length > 0) {
     const targetIndices = req.body.guestIndices.map(Number);
     guestsToAuthorize = guests.filter(g => targetIndices.includes(Number(g.index)));
   } else if (isPartialRequested) {
     guestsToAuthorize = clearedGuests.filter(g => !g.entryAuthorized);
+    if (guestsToAuthorize.length === 0) guestsToAuthorize = clearedGuests;
   } else {
     guestsToAuthorize = clearedGuests.length > 0 ? clearedGuests : guests;
   }
@@ -46591,8 +47006,8 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
     });
   }
 
-  // Não permitir liberar hóspede cujo check-in digital não foi concluído sem adminOverride
-  const unauthorizedAttempt = guestsToAuthorize.filter(g => !g.hasCompletedCheckin && !req.body.adminOverride);
+  // Não permitir liberar hóspede cujo check-in digital não foi concluído sem adminOverride verificado
+  const unauthorizedAttempt = guestsToAuthorize.filter(g => !isGuestCheckinValid(g) && !isVerifiedAdminOverride);
   if (unauthorizedAttempt.length > 0) {
     const names = unauthorizedAttempt.map(g => g.name || `Hóspede ${g.index}`).join(", ");
     return res.status(400).json({
@@ -46601,11 +47016,12 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   }
 
   const nowIso = new Date().toISOString();
-  const authUser = getAuthUser(req);
+  const previousStatus = r.status || "confirmada";
   const authorizerName = authUser?.username || "Recepção / Portaria";
 
   // Autoriza a entrada física dos hóspedes selecionados
   guestsToAuthorize.forEach(g => {
+    g.hasCompletedCheckin = Boolean(isGuestCheckinValid(g) || isVerifiedAdminOverride);
     g.entryAuthorized = true;
     g.entryAuthorizedAt = g.entryAuthorizedAt || nowIso;
     g.entryAuthorizedBy = authorizerName;
@@ -46621,6 +47037,21 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   if (flat) {
     flat.isOccupied = true;
     flat.updatedAt = nowIso;
+  }
+
+  if (canForceCleanInRegularWindow && !earlyChecklist.isRoomReady) {
+    const todayStr = getBrasiliaNow().date;
+    const pendingClean = (db.cleaningRequests || []).find(c =>
+      (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
+      c.requestDate === todayStr &&
+      !c.isDeleted &&
+      c.status !== "clean"
+    );
+    if (pendingClean) {
+      pendingClean.status = "clean";
+      pendingClean.completedAt = nowIso;
+      pendingClean.updatedAt = nowIso;
+    }
   }
 
   const clearedNames = guestsToAuthorize.map(g => g.name || `Hóspede ${g.index}`).join(", ");
@@ -46640,7 +47071,7 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
     description: r.isPartialCheckin
       ? `Entrada parcial do Apt ${r.flatNumber} registrada na portaria para: ${clearedNames}. Pendente(s): ${remainingNames}`
       : `Check-in / Entrada do Apt ${r.flatNumber} registrado na portaria para: ${clearedNames}`,
-    changes: [{ field: "status", label: "Status da Reserva", oldValue: r.status || "confirmada", newValue: "in_house" }]
+    changes: [{ field: "status", label: "Status da Reserva", oldValue: previousStatus, newValue: "in_house" }]
   });
 
   saveDatabase();
@@ -46658,7 +47089,7 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
       : `Check-in do Apt ${r.flatNumber} realizado com sucesso!`,
     authorizedGuests: clearedNames,
     pendingGuests: remainingNames,
-    reservation: r
+    reservation: buildSanitizedReceptionItem(r)
   });
 });
 
@@ -46882,6 +47313,16 @@ const handleCheckout = async (req, res) => {
     console.warn("[Reception Checkout WhatsApp Trigger Error]:", e.message);
   });
 
+  const isReceptionPublicPath = String(req.path || "").startsWith("/api/reception/");
+  if (isReceptionPublicPath) {
+    return res.json({
+      success: true,
+      message: `Check-out do Apt ${r.flatNumber} realizado. Apartamento desocupado!`,
+      reservationId: r.id,
+      flatNumber: r.flatNumber
+    });
+  }
+
   res.json({
     success: true,
     message: autoBoletosEmitted
@@ -47019,7 +47460,12 @@ const handleUndoCheckout = (req, res) => {
   }
 
   saveDatabase();
-  res.json({ success: true, message: `Check-out do Apt ${r.flatNumber} desfeito com sucesso!`, reservation: r });
+  const isReceptionUndo = String(req.path || "").startsWith("/api/reception/");
+  res.json({
+    success: true,
+    message: `Check-out do Apt ${r.flatNumber} desfeito com sucesso!`,
+    reservation: isReceptionUndo ? buildSanitizedReceptionItem(r) : r
+  });
 };
 app.post("/api/reception/undo-checkout/:reservationId", handleUndoCheckout);
 app.post("/api/pms/reservations/:id/undo-checkout", handleUndoCheckout);
@@ -50215,7 +50661,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
       const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
       const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
-      const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+      const { subject, bodyHtml, checkinStage } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
 
       await ensureReservationAttachmentsReady({ reservation: r, guest, db, appOrigin: originHeader });
       const emailAttachments = resolveReservationAttachments({ reservation: r, guest, db });
@@ -50250,6 +50696,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
         attachments: emailAttachments,
         metadata: {
           trigger: wasReSignature ? "re_signature_checkin" : "pre_checkin",
+          checkinStage,
           isReSignature: wasReSignature,
           flatNumber: r.flatNumber,
           guestName: validName,
@@ -67554,7 +68001,7 @@ async function dispatchConfirmedReservationToReceptionAndGarage(r, triggerSource
         const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
         const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
         const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
-        const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+        const { subject, bodyHtml, checkinStage } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
         const titularGuest = (db.guests || []).find(g => (r.guestId && g.id === r.guestId) || (r.guestDocument && (g.documentNumber || g.document) === r.guestDocument));
         await ensureReservationAttachmentsReady({ reservation: r, guest: titularGuest, db });
         const emailAttachments = resolveReservationAttachments({ reservation: r, guest: titularGuest, db });
@@ -67572,6 +68019,7 @@ async function dispatchConfirmedReservationToReceptionAndGarage(r, triggerSource
           attachments: emailAttachments,
           metadata: {
             trigger: triggerSource,
+            checkinStage,
             flatNumber: r.flatNumber,
             guestName: r.guestName,
             buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
@@ -67609,7 +68057,7 @@ async function ensureReceptionAndGarageNotifiedForArrival(r, { trigger = "self_c
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
     const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
     const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
-    const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+    const { subject, bodyHtml, checkinStage } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
     const titularGuest = (db.guests || []).find(g => (r.guestId && g.id === r.guestId) || (r.guestDocument && (g.documentNumber || g.document) === r.guestDocument));
     await ensureReservationAttachmentsReady({ reservation: r, guest: titularGuest, db, appOrigin });
     const emailAttachments = resolveReservationAttachments({ reservation: r, guest: titularGuest, db });
@@ -67629,6 +68077,7 @@ async function ensureReceptionAndGarageNotifiedForArrival(r, { trigger = "self_c
       attachments: emailAttachments,
       metadata: {
         trigger,
+        checkinStage,
         source,
         flatNumber: r.flatNumber,
         guestName: r.guestName,
@@ -74192,7 +74641,7 @@ setInterval(async () => {
           const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
           const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
           const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
-          const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+          const { subject, bodyHtml, checkinStage } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
 
           // Anexa a FNRH em PDF e/ou Documento Oficial do Hóspede (mesmo sem check-in digital)
           const titularGuest = (db.guests || []).find(g => (r.guestId && g.id === r.guestId) || (r.guestDocument && (g.documentNumber || g.document) === r.guestDocument));
@@ -74214,6 +74663,7 @@ setInterval(async () => {
             attachments: emailAttachments,
             metadata: {
               trigger: "morning_checkin_07h",
+              checkinStage,
               flatNumber: r.flatNumber,
               guestName: r.guestName,
               buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",

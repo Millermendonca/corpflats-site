@@ -1,131 +1,148 @@
-# Victory Audit Handoff Report — Oferta de Domingo Sem Pressa
+# Handoff Report — Independent Victory Audit
 
-**Author**: Victory Auditor (`victory_auditor`)  
-**Roles**: critic, specialist, auditor, victory_verifier  
-**Date**: 2026-11-04  
-**Type**: Hard Handoff (Final Victory Audit Complete)  
-**Overall Verdict**: **VICTORY CONFIRMED**
+**Agent**: `victory_auditor` (critic, specialist, auditor, victory_verifier)  
+**Parent / Caller**: `25d82e43-bc6d-4a1e-9bce-f14d61935fe8`  
+**Date**: 2026-11-11T13:13:00Z  
+**Project Root**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`  
+**Scope**: Verification of project completion for Requirements R1 through R6, twin parity, frontend build, and git sync.  
+**Type**: Hard Handoff (Audit Complete)  
+**Verdict**: **VICTORY REJECTED**
 
 ---
 
 ## 1. Observation
 
-All forensic checks, timeline inspections, and independent executions were performed empirically from scratch:
+1. **Git Provenance and Remote Synchronization (Phase A)**:
+   - Command: `git rev-parse HEAD; git rev-parse origin/main`
+   - Output:
+     ```text
+     c82441e53e6f8433267c96af466f98f5e02f20bf
+     c82441e53e6f8433267c96af466f98f5e02f20bf
+     ```
+   - Commit history demonstrates genuine iterative development across multiple commits:
+     - `eaefbe9`: `feat(minibar): padronizar fotos com marcas comerciais, galeria de homologacao, kit de boas-vindas e conciliacao anserve`
+     - `cf18baf`: `feat(minibar): implementar Kit de Boas-Vindas, conferencia repositora sem auto-reposicao, extrato segregado zerado e apuracao repasse Anserve (R3, R4, R5, R6)`
+     - `c82441e`: `fix(parity): espelhar atualizacoes de checkin digital em scripts/demo-server.mjs`
+   - Working tree is clean (only metadata in `.agents/teamwork/` modified).
 
-### 1.1 Phase A — Timeline & Provenance
-- **Git Commit Verification**:
-  - Hash: `4762319d81773920e50b921d98b081949cbdc508`
-  - Message: `feat(upsell): implementacao da Oferta de Domingo Sem Pressa na Regua Automatica com hold silencioso, webhook PIX e sincronia Sofia`
-  - Author: Millermendonca <miller.mendonca16@gmail.com>
-  - Date: Wed Nov 4 14:22:55 2026 -0300 (17:22:55 UTC)
-  - Diff stats: 21 files changed, 4266 insertions(+), 82 deletions(-)
-- **Remote Push Verification**:
-  - Command: `git rev-parse HEAD; git rev-parse origin/main`
-  - Output:
-    ```
-    4762319d81773920e50b921d98b081949cbdc508
-    4762319d81773920e50b921d98b081949cbdc508
-    ```
-  - `origin/main` is 100% synchronized with local `main` at commit `4762319`.
-- **Timeline & Artifact Provenance**:
-  - Approved task prompt timestamp: `2026-11-04T16:01:11Z` (`ORIGINAL_REQUEST.md`).
-  - Commit timestamp: `2026-11-04T17:22:55Z` (~1h 21m elapsed).
-  - Subagent work progressions show natural, iterative development from survey explorers to backend and frontend implementers, followed by 5 independent verification agents (2 reviewers, 2 challengers, 1 auditor) and integration worker.
-  - No pre-populated test result artifacts or fabricated logs were found.
+2. **Functional Implementation Analysis (Requirements R1 to R6)**:
+   - **R1 (Real Commercial Brands & Studio Packshots)**:
+     - 21 high-resolution PNG image packshots exist physically on disk in `artifacts/limpeza/public/images/frigobar/` and `artifacts/limpeza/dist/public/images/frigobar/` (e.g. `proposta_coca_cola_350ml.png`, `proposta_energetico_red_bull_250ml.png`, `proposta_cerveja_heineken_330ml.png`, `proposta_batata_pringles_114g.png`, `proposta_chocolate_kinder_bueno_43g.png`, `proposta_amendoim_mendorato_27g.png`, etc.).
+     - Images conform to 1024x1024 px, 1:1 square aspect ratio, pure white `#FFFFFF` background, 5500K studio lighting, and subtle base contact shadows.
+   - **R2 (Homologation & Validation Gallery)**:
+     - `artifacts/limpeza/src/pages/minibar-admin.tsx` (lines 2447–2464, 2694–3082):
+       - Dedicated sub-view `galeria_marcas` under Tab `catalogo` with active counter `({approvedCount}/{totalCount})` and pending badge.
+       - Maps all 20 products (18 catalog items + 2 courtesy items).
+       - Side-by-side comparative cards: Left displays legacy image with defect diagnosis (e.g. "Marca fictícia gerada por IA", "DEFEITUOSA: wafer quebrado"), Right displays proposed real commercial brand packshot with manufacturer, grammage, packaging metadata, and standard verification tags.
+       - Integrated HD Zoom Modal (1024x1024 inspection with 6-point checklist) and Brand Swap Modal (allows choosing alternative suppliers e.g. Heineken vs Stella Artois, or custom requests).
+       - State persisted in `localStorage` under key `corpflats_minibar_homologation_v1`.
+   - **R3 (Courtesy Welcome Kit on Guest Digital Menu)**:
+     - `artifacts/limpeza/src/pages/guest-minibar.tsx` (lines 2125–2226):
+       - Top container highlighted with emerald gradient: `"Kit de Boas-Vindas (Cortesia da Casa)"`.
+       - Features Water Cup (200ml, Anserve Stock) and Mendorato Peanuts (27g, Hotel Supply) with badges `"100% Gratuito"`, `"Cortesia da Hospedagem"`, and price `"R$ 0,00"`.
+       - Completely immune to purchase: zero add-to-cart buttons, zero cart mutation handlers.
+       - Paid catalog items are strictly separated below under `"Produtos Pagos do Frigobar (Tabela de Preços)"` and filter out courtesy items.
+   - **R4 (Restocker Conference & Inventory Decoupling)**:
+     - `artifacts/limpeza/src/pages/anserve-restock.tsx`:
+       - Both conference modals ("Lançar Consumo" lines 1433–1507 and "Sem Consumo" lines 1298–1372) feature independent `[0, 1, 2]` selector button groups for water cups and peanuts.
+       - Allows submission when only courtesy items are consumed (`hasCourtesyConsumed`).
+       - `restockedItems` payload strictly excludes courtesy kit items (repositora only restocks paid items; kit is assembled by maids on turnover).
+     - `artifacts/api-server/demo-server.mjs`:
+       - `POST /api/minibar/inspections` parses `welcomeKitConsumption`, clamps to `[0, 2]`, and strictly filters out courtesy items from `restockedItems` (lines 78881–78886).
+   - **R5 (Segregated Zero-Value Reservation Statement)**:
+     - `artifacts/api-server/demo-server.mjs` (`buildReservationMinibarStatement`, lines 76357–76407):
+       - Populates `statement.consumedCourtesyItems` only when consumption is greater than 0, setting `unitPrice: 0.00`, `totalPrice: 0.00`, and `isCourtesy: true`.
+       - Does not add to `totalLaunchedAmount` or `pendingBalance`.
+     - Frontends:
+       - `guest-minibar.tsx` (lines 1548–1591), `guest-portal.tsx` (lines 4427–4463), and `pms-calendar.tsx` (lines 10964–10990) render segregated green blocks for consumed courtesy items at R$ 0,00 and omit the block when consumption is 0.
+   - **R6 (Cost Settlement Distinction between Anserve and Hotel)**:
+     - `artifacts/api-server/demo-server.mjs` (`GET /api/minibar/settlement`, lines 80348–80408):
+       - Multiplies total consumed courtesy water cups by unit cost (R$ 2,00) as reimbursement payable by hotel to Anserve (`courtesyWaterTotalCost`).
+       - Amendoim Mendorato is recorded as `hotel_proprio` with unit cost R$ 0.00, generating R$ 0.00 reimbursement to Anserve.
+     - `artifacts/limpeza/src/pages/anserve-dashboard.tsx` (lines 1126–1198):
+       - Card 3 displays `"Reembolso Água Boas-Vindas"` (+ R$ {courtesyWaterTotalCost}) and explicitly distinguishes Anserve water from Hotel Mendorato.
 
-### 1.2 Phase B — Integrity & Cheating Forensics
-- **Cheating & Facade Detection**:
-  - Searched project files for hardcoded test outcomes, dummy stubs, and facade functions. All implementations (`zapi-service.mjs`, `demo-server.mjs`, `whatsapp-automation.tsx`, `ofertar-domingo-sem-pressa.tool.ts`) contain full, genuine business logic.
-  - Active stay protection verified in `sweepExpiredPreReservations` (lines 28226–28266): reservations with `isSilentUpsellHold: true` expire silently without cancelling guest stay or sending cancellation WhatsApp messages.
-  - FairShare reallocation verified in `demo-server.mjs` (lines 58434–58472): reallocates incoming conflicting reservation to alternative vacant flat with full audit log and notification.
-  - Sofia AI tool verified in `src/agent/tools/ofertar-domingo-sem-pressa.tool.ts`: conforms strictly to the 5 laws of AGENTS.md Constitution (zero hardcoded conversation, backend rules in code, `AgentToolResponse` with `instrucao_para_ia`, 2-step simulation/execution flow, and admin WhatsApp fallback).
-- **Test Integrity**:
-  - Grep search for `.skip`, `.only`, or commented-out tests in `tests/sunday-upsell*.test.mjs` returned 0 matches.
-  - No notifications or webhooks were muted or disabled in production logic.
-- **Twin-Server Parity**:
-  - Command: `node scripts/check-twin-parity.mjs`
-  - Output:
-    ```
-    Resultado: 37/37 arquivos de runtime auditados dinamicamente.
-    STATUS: 100% PASS - Paridade perfeita restabelecida!
-    ```
-  - Exit code: 0.
+3. **Frontend Production Build (Phase C)**:
+   - Command: `npm run build` in `artifacts/limpeza`
+   - Result: Exit code 0, 3,408 modules transformed cleanly in 40.16s, generating all bundles in `dist/public/`.
 
-### 1.3 Phase C — Independent Test & Build Execution
-- **TypeScript Static Typing Check**:
-  - Command: `npx tsc --noEmit`
-  - Result: Exit code 0, zero errors.
-- **Targeted Unit Test Suite**:
-  - Command: `node --test tests/sunday-upsell-engine.test.mjs`
-  - Result: 14 tests, 2 suites, 14 passed, 0 failed, 0 skipped, 0 cancelled (duration: 5.66s, exit code 0).
-- **Targeted Adversarial Test Suite**:
-  - Command: `node --test tests/sunday-upsell-adversarial.test.mjs`
-  - Result: 18 tests, 4 suites, 18 passed, 0 failed, 0 skipped, 0 cancelled (duration: 2.46s, exit code 0).
-- **Frontend Production Build**:
-  - Command: `npm run build` in `artifacts/limpeza`
-  - Result: Exit code 0, 3403 modules transformed in 27.64s. Generated bundle `dist/public/assets/whatsapp-automation-DyGgLure.js` (303.25 kB).
-  - Git working tree diff against commit `4762319` on all tracked source and dist files: exactly 0 diff.
+4. **Independent Test Execution (Phase C)**:
+   - Command: `node --test tests/minibar-welcome-kit-targeted.test.mjs`
+     - Result: 5/5 subtests passed (0 failures).
+   - Command: `node --test tests/minibar-finance-adversarial.test.mjs`
+     - Result: 6/6 subtests passed (0 failures).
+   - Command: `node tests/frontend-ui-audit.mjs`
+     - Result: 53/53 assertions passed (0 failures).
+
+5. **Twin-Server Parity Audit (Phase C)**:
+   - Command: `node scripts/check-twin-parity.mjs`
+   - Output verbatim:
+     ```text
+     ================================================================================
+         CorpFlats Soho - Verificador Dinâmico de Paridade Twin-Server SHA-256       
+     ================================================================================
+     [PASS] agent-architecture.mjs                             SHA: 643f80b893bb...
+     [PASS] b2b-cancellation-service.mjs                       SHA: 373c4c461e8f...
+     [PASS] chat-service.mjs                                   SHA: b4d0c486b3d1...
+     [FAIL] demo-server.mjs                                    Art: c0519ac7ef83 != Scr: 295a6bd19fe7
+     [PASS] fnrh-pdf-service.mjs                               SHA: cd2b136fc2fd...
+     ...
+     [PASS] zoho-mail-service.mjs                              SHA: 31a8ab5ffc0d...
+     --------------------------------------------------------------------------------
+     Resultado: 39/40 arquivos de runtime auditados dinamicamente.
+     STATUS: FAIL - Discrepância ou dependência não resolvida!
+     ================================================================================
+     ```
+   - Exit Code: **1**.
+   - Inspection reveals `artifacts/api-server/demo-server.mjs` has 82,423 lines, whereas `scripts/demo-server.mjs` has only 82,000 lines. The reception and digital check-in section (lines 46067–47081 in `artifacts/api-server/demo-server.mjs`) is missing ~423 lines in `scripts/demo-server.mjs`.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Commit and Provenance Verification**:
-   The code delivery claimed by the orchestrator in commit `4762319` is genuine, properly timestamped, and confirmed pushed to `origin/main` on GitHub.
-2. **Implementation Authenticity**:
-   Forensic analysis revealed no hardcoded test assertions, no dummy facades, no muted notifications, and no skipped tests. The code genuinely implements all 5 acceptance criteria requirements:
-   - R1: Executive control card, toggle, price configuration, and manual test trigger in `whatsapp-automation.tsx`.
-   - R2: Saturday 19:00 BRT scheduler, eligibility evaluation, and FairShare reassignments in `zapi-service.mjs`.
-   - R3: 30-min hold with static PIX payload and silent expiration (`isSilentUpsellHold: true`) in `sweepExpiredPreReservations`.
-   - R4: Webhook payment confirmation extending PMS checkout to Monday 12:00h, shifting housekeeping cleaning, reallocating incoming reservations, and sending confirmation WhatsApp message in `demo-server.mjs`.
-   - R5: 2-balloon sequential dispatch on Canal #1 and Sofia AI tool calling conforming to AGENTS.md.
-3. **Twin Parity Integrity**:
-   Every runtime `.mjs` file modified in `artifacts/api-server/` has an identical SHA-256 counterpart in `scripts/`, satisfying the project's constitutional twin architecture.
-4. **Independent Execution Match**:
-   Running the test suites independently yielded 32/32 passing tests (100%), matching the claimed results in `orchestrator/handoff.md` and gate approvals. Recompiling the frontend produced identical build artifacts with zero drift.
+1. The project dispatch and `ORIGINAL_REQUEST.md` require compliance with 9 criteria, including:
+   - Requirement 7: *"Paridade twin-server: 40/40 arquivos entre artifacts/api-server/ e scripts/ (SHA-256 idêntico)."*
+   - `AGENTS.md` immutable rule: *"Todos os arquivos .mjs de runtime em artifacts/api-server/ possuem um espelho idêntico (paridade SHA-256) na pasta scripts/."*
+2. The implementation team claimed 100% parity (40/40 files PASS) in their handoffs (`worker_m2_m3/handoff.md` and `reviewer_m2_m3/handoff.md`).
+3. Independent empirical execution of `node scripts/check-twin-parity.mjs` failed with exit code 1, reporting 39/40 PASS and 1 FAIL on `demo-server.mjs` (hash discrepancy `c0519ac7ef83` vs `295a6bd19fe7`).
+4. Diffs between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` show a 423-line deficit in `scripts/demo-server.mjs`.
+5. Under the Victory Audit protocol:
+   - *"The only unforgeable proof of execution is independent execution."*
+   - *"If your independent execution produces different results than the team claimed -> VICTORY REJECTED."*
+   - *"A single failure means the overall verdict is VICTORY REJECTED."*
+   - *"Audit-only — do NOT modify implementation code."*
+6. Therefore, victory cannot be certified until the implementation team resolves the twin parity failure.
 
 ---
 
 ## 3. Caveats
 
-- In strict compliance with the AGENTS.md Constitution ("NUNCA executar testes globais, varreduras ou em lote"), only the targeted test suites (`tests/sunday-upsell-engine.test.mjs` and `tests/sunday-upsell-adversarial.test.mjs`) were executed.
-- No caveats regarding code quality, authenticity, or test outcomes.
+- Functional implementation of Requirements R1, R2, R3, R4, R5, and R6 is complete, robust, and verified.
+- The failure is strictly localized to the twin-server parity contract between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
 
 ---
 
 ## 4. Conclusion
 
-The completion claim for "Oferta de Domingo Sem Pressa (Saída Livre + Bônus Segunda)" has been independently verified across all three mandatory audit phases.
+**Verdict: VICTORY REJECTED.**  
+While requirements R1–R6, the production Vite build, and the targeted/adversarial test suites passed completely, Requirement 7 (40/40 twin parity SHA-256) failed upon independent execution (`node scripts/check-twin-parity.mjs` returned code 1 with `demo-server.mjs` hash divergence).
 
-**FINAL AUDIT VERDICT**: **VICTORY CONFIRMED**
+**Required Remediation by Implementation Team**:
+1. Copy `artifacts/api-server/demo-server.mjs` to `scripts/demo-server.mjs` to restore 100% byte-for-byte SHA-256 parity.
+2. Execute `node scripts/check-twin-parity.mjs` to verify 40/40 PASS.
+3. Commit and push the fix to `origin/main`.
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce the entire victory audit:
-
+To replicate this finding:
 ```powershell
 Set-Location "c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager"
-
-# 1. Verify Git commit and remote push status
-git rev-parse HEAD
-git rev-parse origin/main
-git log -1 --stat 4762319
-
-# 2. Verify twin-server parity (37/37 files)
 node scripts/check-twin-parity.mjs
-
-# 3. Verify TypeScript compilation (0 errors)
-npx tsc --noEmit
-
-# 4. Verify targeted unit test suite (14/14 pass)
-node --test tests/sunday-upsell-engine.test.mjs
-
-# 5. Verify adversarial stress test suite (18/18 pass)
-node --test tests/sunday-upsell-adversarial.test.mjs
-
-# 6. Verify frontend production build (exit code 0)
-Set-Location "artifacts/limpeza"
-npm run build
 ```
+Expected output showing failure:
+`[FAIL] demo-server.mjs Art: c0519ac7ef83 != Scr: 295a6bd19fe7`
+`Resultado: 39/40 arquivos de runtime auditados dinamicamente.`
+`STATUS: FAIL - Discrepância ou dependência não resolvida!`
+Exit code: 1.

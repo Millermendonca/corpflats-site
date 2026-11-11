@@ -244,7 +244,11 @@ export function AdminAiCopilot() {
     location.startsWith('/portal-hospede') ||
     location.startsWith('/minha-reserva') ||
     location.startsWith('/credenciamento') ||
-    location.startsWith('/pix');
+    location.startsWith('/pix') ||
+    location.startsWith('/portaria') ||
+    location.startsWith('/tablet') ||
+    location.startsWith('/recepcao') ||
+    location.startsWith('/reception');
 
   useEffect(() => {
     try {

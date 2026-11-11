@@ -51,3 +51,8 @@ Diferenciar a origem dos itens de cortesia nas regras financeiras e relatórios:
 - [ ] O sistema calcula e totaliza a quantidade de copos d'água consumidos como cortesia multiplicada pelo custo unitário para apuração do valor a ser repassado pelo hotel à Anserve.
 - [ ] O amendoim Mendorato é identificado como fornecimento próprio, sem gerar débito de repasse ou cobrança com a Anserve.
 - [ ] A verificação ponta a ponta é validada nos flats e reservas de teste do ambiente de desenvolvimento.
+## Follow-up — 2026-11-11T13:16:19Z
+
+Não estão carrgando 
+
+[Imagem anexada pelo usuário: tela do navegador em corpflats.com.br/frigobar exibindo o modal "INSPEÇÃO DE PADRONIZAÇÃO VISUAL (1024x1024) - Refrigerante • Comparação Lado a Lado", onde a coluna da esquerda "Foto Legada (IA / Genérica)" exibe a imagem, porém a coluna da direita "Nova Foto Comercial (Marca Real)" exibe ícone de imagem quebrada com alt "Coca-Cola Original 350ml", e os cards de produtos ao fundo como "Toddynho Tradicional 200ml" também exibem ícone de imagem quebrada.]

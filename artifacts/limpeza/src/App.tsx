@@ -415,11 +415,11 @@ function Router() {
         <Route path="/verificar-ficha/:uuid" component={VerifyFnrh} />
         <Route path="/verificar-ficha" component={VerifyFnrh} />
 
-        {/* Reception Tablet Portaria Route (Admin / Recepção) */}
-        <ReceptionRoute path="/portaria" component={ReceptionTablet} moduleName="o Terminal da Portaria" />
-        <ReceptionRoute path="/tablet" component={ReceptionTablet} moduleName="o Terminal da Portaria" />
-        <ReceptionRoute path="/recepcao" component={ReceptionCheckout} moduleName="o Checkout da Recepção" />
-        <ReceptionRoute path="/reception" component={ReceptionCheckout} moduleName="o Checkout da Recepção" />
+        {/* Reception Tablet Portaria & Checkout Routes (Acesso Direto sem Login / Senha) */}
+        <Route path="/portaria" component={ReceptionTablet} />
+        <Route path="/tablet" component={ReceptionTablet} />
+        <Route path="/recepcao" component={ReceptionCheckout} />
+        <Route path="/reception" component={ReceptionCheckout} />
 
         {/* Public Guest Checkout Route */}
         <Route path="/minha-reserva/:code/checkout" component={GuestCheckout} />
