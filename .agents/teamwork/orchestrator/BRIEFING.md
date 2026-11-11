@@ -73,17 +73,17 @@ Substituição e padronização visual das fotos do cardápio do frigobar por ma
 | challenger_backend_finance | teamwork_challenger | Adversarial Backend & Settlement Stress Tests | completed | 769f8b9f-2c4b-4f4c-ada0-2f98939f4c2a |
 | challenger_frontend_ui | teamwork_challenger | Frontend Components & Build Verification | completed | 357d47ac-ea15-4c39-b577-8f610b4ce5ab |
 | auditor | teamwork_auditor | Forensic Integrity Audit & Twin-Server Parity | completed | 490b379d-0c57-43e9-a7a2-abe66af50137 |
-| worker_deploy | teamwork_worker | Milestone 4: Git Stage, Commit & Push | in-progress | be7e3207-911b-4976-bcd0-63a62f8f2690 |
+| worker_deploy | teamwork_worker | Milestone 4: Git Stage, Commit & Push | completed | be7e3207-911b-4976-bcd0-63a62f8f2690 |
 
 ## Succession Status
 - Succession required: no
 - Spawn count: 11 / 16
-- Pending subagents: be7e3207-911b-4976-bcd0-63a62f8f2690
+- Pending subagents: none
 - Predecessor: none
 - Successor: not yet spawned
 
 ## Active Timers
-- Heartbeat cron: 92ba65f0-be83-406c-8289-2ffbe5293de2/task-230
+- Heartbeat cron: cancelled (task-230 killed)
 - Safety timer: none
 
 ## Artifact Index

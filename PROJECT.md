@@ -44,7 +44,7 @@
 | M1 | Padronização Visual & Galeria de Homologação de Fotos | F1, F2 | none | DONE |
 | M2 | Kit de Boas-Vindas, Conferência Repositora & Extrato Zerado | F3, F4, F5 | M1 | DONE |
 | M3 | Fechamento Financeiro & Repasse de Custos Anserve | F6 | M2 | DONE |
-| M4 | Testes Pontuais, Paridade Twin, Build & Git Push | F7 | M1, M2, M3 | IN_PROGRESS |
+| M4 | Testes Pontuais, Paridade Twin, Build & Git Push | F7 | M1, M2, M3 | DONE |
 
 ## Interface Contracts
 

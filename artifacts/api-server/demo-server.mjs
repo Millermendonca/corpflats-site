@@ -159,6 +159,8 @@ import {
   renderGarageAuthorizationEmail,
   hasReceptionReceivedReservation,
   hasReceptionEmailInComms,
+  isOtaOrB2bReservation,
+  evaluateReceptionCheckinStage,
   toBrasiliaDateStr,
   renderManualEmail,
   renderB2bAgencyCredentialRequestEmail,
@@ -38875,16 +38877,79 @@ app.post("/api/pms/guest-portal/:code/linen-request/:requestId/cancel", (req, re
   });
 });
 
+// Endpoint: Recepção/Portaria - Obter Links + QR Codes de Check-in Digital (Balcão / Remoto)
+app.get(["/api/reception/reservations/:id/checkin-link-info", "/api/pms/reservations/:id/checkin-link-info"], async (req, res) => {
+  try {
+    const idOrCode = String(req.params.id || "").trim();
+    if (!db.reservations) db.reservations = [];
+    const reservation = (typeof findReservationByLocatorOrContact === "function" ? findReservationByLocatorOrContact(idOrCode) : null) ||
+      (db.reservations || []).find(r => String(r.id) === idOrCode || r.code === idOrCode || r.reservationCode === idOrCode);
+
+    if (!reservation || reservation.status === "cancelada" || reservation.status === "cancelado") {
+      return res.status(404).json({ error: "Reserva não encontrada." });
+    }
+    if (isPreReservationBlocked(reservation)) {
+      return res.status(403).json({
+        error: "Esta é uma pré-reserva aguardando pagamento. O link de check-in digital só é liberado após a confirmação do pagamento.",
+        preCheckinBlocked: true
+      });
+    }
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+    const flatNum = reservation.flatNumber || (db.flats?.find(f => f.id === reservation.flatId)?.number || "");
+    const expectedCount = Math.min(Math.max(Number(reservation.guestCount) || Number(reservation.adults) || (Array.isArray(reservation.guests) ? reservation.guests.length : 1) || 1, 1), 4);
+    const isReSig = Boolean(reservation.needsReSignature);
+
+    const rawGuests = Array.isArray(reservation.guests) ? reservation.guests : [];
+    const guestSlots = [];
+    for (let idx = 1; idx <= expectedCount; idx++) {
+      const existing = rawGuests.find(g => Number(g?.index || 0) === idx) || (rawGuests.length >= idx ? rawGuests[idx - 1] : null);
+      const completed = !isReSig && Boolean(
+        existing
+          ? (!existing.needsReSignature && (existing.hasCompletedCheckin || existing.status === "CHECKED_IN" || existing.fnrhDocumentUuid || existing.fnrhSignedAt))
+          : (idx === 1 && (reservation.fnhrCompleted || reservation.preCheckinCompleted || reservation.fnrhDocumentUuid))
+      );
+      const slotName = (existing?.name || (idx === 1 ? reservation.guestName : `Hóspede ${idx}`) || `Hóspede ${idx}`).trim();
+      const slotPhone = (existing?.phone || (idx === 1 ? reservation.guestPhone : "") || "").trim();
+      const checkinUrl = await getCheckinUrl(reservation, idx, baseUrl, db);
+      let qrCodeDataUrl = null;
+      try {
+        qrCodeDataUrl = await QRCode.toDataURL(checkinUrl, { width: 280, margin: 2 });
+      } catch (_) {}
+
+      guestSlots.push({
+        index: idx,
+        name: slotName,
+        phone: slotPhone,
+        hasCompletedCheckin: completed,
+        checkinUrl,
+        qrCodeDataUrl
+      });
+    }
+
+    return res.json({
+      reservationId: reservation.id,
+      reservationCode: reservation.code || reservation.reservationCode || String(reservation.id),
+      flatNumber: String(flatNum),
+      guestName: reservation.guestName || "Hóspede",
+      expectedGuests: expectedCount,
+      guests: guestSlots
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || "Erro ao gerar informações do link de check-in." });
+  }
+});
+
 // Endpoint: Recepção - Reenviar Link de Check-in Digital via Z-API WhatsApp
 app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reservations/:id/resend-checkin-link"], async (req, res) => {
   const idOrCode = (req.params.id || "").trim();
-  const { guestIndex = 1, phone: overridePhone } = req.body || {};
+  const { guestIndex = 1, phone: overridePhone, guestName: overrideGuestName } = req.body || {};
 
   if (!db.reservations) db.reservations = [];
   const reservation = (typeof findReservationByLocatorOrContact === "function" ? findReservationByLocatorOrContact(idOrCode) : null) ||
     (db.reservations || []).find(r => String(r.id) === idOrCode || r.code === idOrCode || r.reservationCode === idOrCode);
 
-  if (!reservation) {
+  if (!reservation || reservation.status === "cancelada" || reservation.status === "cancelado") {
     return res.status(404).json({ error: "Reserva não encontrada." });
   }
   if (isPreReservationBlocked(reservation)) {
@@ -38894,21 +38959,70 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
     });
   }
 
-  const targetGuest = (reservation.guests || []).find(g => (g.index || 1) === Number(guestIndex)) || (reservation.guests && reservation.guests[0]);
-  const guestName = (targetGuest?.name || reservation.guestName || "Hóspede").trim();
-  const rawPhone = (overridePhone || targetGuest?.phone || reservation.guestPhone || "").trim();
+  const safeGuestIndex = Math.min(Math.max(Number(guestIndex) || 1, 1), 4);
+  const expectedCount = Math.min(Math.max(Number(reservation.guestCount) || Number(reservation.adults) || safeGuestIndex, 1), 4);
+
+  if (!Array.isArray(reservation.guests) || reservation.guests.length === 0) {
+    reservation.guests = [{
+      index: 1,
+      name: reservation.guestName || "Hóspede 1",
+      cpf: reservation.guestDocument || "",
+      phone: reservation.guestPhone || "",
+      email: reservation.guestEmail || "",
+      hasCompletedCheckin: Boolean(!reservation.needsReSignature && (reservation.fnhrCompleted || reservation.fnrhDocumentUuid)),
+      needsReSignature: Boolean(reservation.needsReSignature),
+      entryAuthorized: reservation.status === "in_house"
+    }];
+  }
+  for (let i = 1; i <= expectedCount; i++) {
+    if (!reservation.guests.some(g => Number(g?.index || 0) === i)) {
+      reservation.guests.push({
+        index: i,
+        name: i === 1 ? (reservation.guestName || "Hóspede 1") : `Hóspede ${i}`,
+        cpf: "",
+        phone: i === 1 ? (reservation.guestPhone || "") : "",
+        email: i === 1 ? (reservation.guestEmail || "") : "",
+        hasCompletedCheckin: false,
+        needsReSignature: Boolean(reservation.needsReSignature),
+        entryAuthorized: false
+      });
+    }
+  }
+
+  const targetGuest = reservation.guests.find(g => Number(g?.index || 1) === safeGuestIndex) || reservation.guests[0];
+  if (overrideGuestName && String(overrideGuestName).trim() && (!targetGuest.name || /^H[oó]spede\s*\d+/i.test(targetGuest.name))) {
+    targetGuest.name = String(overrideGuestName).trim();
+  }
+
+  const guestName = (overrideGuestName || targetGuest?.name || (safeGuestIndex === 1 ? reservation.guestName : `Hóspede ${safeGuestIndex}`) || "Hóspede").trim();
+  const rawPhone = (overridePhone || targetGuest?.phone || (safeGuestIndex === 1 ? reservation.guestPhone : "") || "").trim();
   const cleanPhone = typeof cleanWhatsAppPhone === "function" ? cleanWhatsAppPhone(rawPhone) : rawPhone.replace(/\D/g, "");
+
+  const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+  const preCheckinUrl = await getCheckinUrl(reservation, safeGuestIndex, baseUrl, db);
+  let qrCodeDataUrl = null;
+  try {
+    qrCodeDataUrl = await QRCode.toDataURL(preCheckinUrl, { width: 280, margin: 2 });
+  } catch (_) {}
 
   if (!cleanPhone || cleanPhone.length < 10) {
     return res.status(400).json({
-      error: `Hóspede ${guestName} não possui número de WhatsApp válido cadastrado.`,
+      error: `Informe um número de WhatsApp válido com DDD para enviar o link a ${guestName}.`,
       needsPhone: true,
-      guestName
+      guestName,
+      guestIndex: safeGuestIndex,
+      checkinUrl: preCheckinUrl,
+      qrCodeDataUrl
     });
   }
 
-  const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
-  const preCheckinUrl = await getCheckinUrl(reservation, guestIndex, baseUrl, db);
+  // Salva o telefone digitado na recepção no slot do hóspede correspondente para facilitar próximos envios
+  if (overridePhone && targetGuest) {
+    targetGuest.phone = String(overridePhone).trim();
+    if (safeGuestIndex === 1 && !reservation.guestPhone) {
+      reservation.guestPhone = String(overridePhone).trim();
+    }
+  }
 
   const template = (db.whatsappTemplates || []).find(t => t.id === "tpl_pre_checkin_reminder");
   let msgText = "";
@@ -38921,7 +39035,7 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
     }
   ];
 
-  if (template && template.enabled && typeof resolveWhatsAppTags === "function") {
+  if (safeGuestIndex === 1 && template && template.enabled && typeof resolveWhatsAppTags === "function") {
     msgText = resolveWhatsAppTags(template.message, reservation, db, baseUrl, "guest");
     buttons = (template.buttons || []).map(b => ({
       ...b,
@@ -38932,6 +39046,9 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
     const flatNum = reservation.flatNumber || (db.flats.find(f => f.id === reservation.flatId)?.number || "");
     msgText = `Olá, *${firstName}*! Tudo bem? ⏳\n\nIdentificamos que seu *Check-in Digital* para o *Flat ${flatNum}* no CorpFlats ainda está pendente.\n\nPara agilizar a liberação da sua entrada na portaria do Edifício Soho, por favor preencha seus dados pelo link:\n${preCheckinUrl}\n\nAguardamos você e desejamos uma excelente estadia!`;
   }
+
+  const normalizedWaPhone = cleanPhone.startsWith("55") ? cleanPhone : `55${cleanPhone}`;
+  const waWebUrl = `https://wa.me/${normalizedWaPhone}?text=${encodeURIComponent(msgText)}`;
 
   try {
     let sendResult = { success: false };
@@ -38969,11 +39086,12 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
         level: "info",
         category: "reception",
         action: "RECEPTION_RESEND_CHECKIN_LINK",
-        actor: typeof getAuthUser === "function" ? (getAuthUser(req) || { name: "Recepção", role: "reception" }) : { name: "Recepção", role: "reception" },
+        actor: typeof getAuthUser === "function" ? (getAuthUser(req) || { name: "Recepção / Portaria", role: "reception" }) : { name: "Recepção / Portaria", role: "reception" },
         details: {
           reservationId: reservation.id,
           reservationCode: reservation.code,
           flatNumber: reservation.flatNumber,
+          guestIndex: safeGuestIndex,
           guestName,
           phone: cleanPhone,
           success: sendResult.success
@@ -38984,12 +39102,16 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
     saveDatabase();
 
     return res.json({
-      success: sendResult.success,
+      success: Boolean(sendResult.success),
       phone: cleanPhone,
       guestName,
+      guestIndex: safeGuestIndex,
+      checkinUrl: preCheckinUrl,
+      qrCodeDataUrl,
+      waWebUrl,
       message: sendResult.success
         ? `Link de Check-in Digital enviado com sucesso via WhatsApp para ${guestName} (${cleanPhone})!`
-        : `Erro ao enviar via Z-API: ${sendResult.error || "Falha no envio"}`
+        : `Não foi possível enviar automaticamente via Z-API (${sendResult.error || "Falha no envio"}). Use o QR Code na tela ou abra no WhatsApp Web.`
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });

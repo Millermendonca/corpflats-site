@@ -159,6 +159,8 @@ import {
   renderGarageAuthorizationEmail,
   hasReceptionReceivedReservation,
   hasReceptionEmailInComms,
+  isOtaOrB2bReservation,
+  evaluateReceptionCheckinStage,
   toBrasiliaDateStr,
   renderManualEmail,
   renderB2bAgencyCredentialRequestEmail,
