@@ -13,6 +13,7 @@ import {
   MessageCircle, FileText, Ban, AlertTriangle, ChevronRight,
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
   MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search,
+  CreditCard, QrCode, RefreshCw, AlertCircle, DoorOpen, MoreVertical,
   Download, Printer, PenTool, Refrigerator, BedDouble, Bell, BellOff,
   Gift
 } from "lucide-react"
