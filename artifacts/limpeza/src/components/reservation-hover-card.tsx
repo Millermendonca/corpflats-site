@@ -509,13 +509,19 @@ export function ReservationHoverCard({
                 </span>
               )}
               {(() => {
+                const normHoverChan = (raw?: string) => {
+                  const l = String(raw || "").trim().toLowerCase()
+                  if (l === "site" || l === "site_direto" || l === "site_proprio" || l === "website" || l === "motor") return "site"
+                  if (l === "direta" || l === "direct" || l === "whats" || l === "zapi") return "whatsapp"
+                  return l || "whatsapp"
+                }
                 if (Array.isArray(resItem.dailyRates) && resItem.dailyRates.length > 0) {
-                  const uniqueChannels = Array.from(new Set(resItem.dailyRates.map((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase())));
+                  const uniqueChannels = Array.from(new Set(resItem.dailyRates.map((d: any) => normHoverChan(d.channel || resItem.channel))));
                   if (uniqueChannels.length > 1) {
                     return uniqueChannels.map(ch => {
                       const label = ch.includes("b2b") ? "B2B" : ch.includes("booking") ? "Booking" : ch.includes("airbnb") ? "Airbnb" : ch.includes("site") ? "Site" : "WhatsApp";
-                      const color = ch.includes("b2b") ? "text-violet-700 bg-violet-50 border-violet-300 dark:bg-violet-950/60 dark:text-violet-300 dark:border-violet-700" : ch.includes("booking") ? "text-sky-700 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-700" : ch.includes("airbnb") ? "text-rose-700 bg-rose-50 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-700" : ch.includes("site") ? "text-indigo-700 bg-indigo-50 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-700" : "text-emerald-700 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-700";
-                      const count = resItem.dailyRates.filter((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase() === ch).length;
+                      const color = ch.includes("b2b") ? "text-violet-700 bg-violet-50 border-violet-300 dark:bg-violet-950/60 dark:text-violet-300 dark:border-violet-700" : ch.includes("booking") ? "text-sky-700 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-700" : ch.includes("airbnb") ? "text-rose-700 bg-rose-50 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-700" : ch.includes("site") ? "text-orange-700 bg-orange-50 border-orange-300 dark:bg-orange-950/60 dark:text-orange-300 dark:border-orange-700" : "text-emerald-700 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-700";
+                      const count = resItem.dailyRates.filter((d: any) => normHoverChan(d.channel || resItem.channel) === ch).length;
                       return (
                         <span key={ch} className={`text-[8.5px] font-bold px-1.5 py-0.5 rounded border shadow-2xs ${color}`}>
                           {label} ({count}d)
@@ -525,7 +531,8 @@ export function ReservationHoverCard({
                   }
                 }
                 return channelCfg ? (
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-2xs">
+                  <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-2xs">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${channelCfg.bg}`} />
                     {channelCfg.label || resItem.channel}
                   </span>
                 ) : null;
@@ -762,8 +769,8 @@ export function ReservationHoverCard({
                 >
                   {resItem.dailyRates.map((d: any, dIdx: number) => {
                     const dChan = (d.channel || resItem.channel || "whatsapp").toLowerCase();
-                    const dChanLabel = dChan.includes("booking") ? "Booking" : dChan.includes("airbnb") ? "Airbnb" : dChan.includes("site") ? "Site" : "WhatsApp";
-                    const dChanColor = dChan.includes("booking") ? "text-sky-700 bg-sky-50 dark:bg-sky-950/50 border-sky-200" : dChan.includes("airbnb") ? "text-rose-700 bg-rose-50 dark:bg-rose-950/50 border-rose-200" : dChan.includes("site") ? "text-indigo-700 bg-indigo-50 dark:bg-indigo-950/50 border-indigo-200" : "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200";
+                    const dChanLabel = dChan.includes("b2b") ? "B2B" : dChan.includes("booking") ? "Booking" : dChan.includes("airbnb") ? "Airbnb" : dChan.includes("site") ? "Site" : "WhatsApp";
+                    const dChanColor = dChan.includes("b2b") ? "text-violet-700 bg-violet-50 dark:bg-violet-950/50 border-violet-200 dark:text-violet-300 dark:border-violet-800" : dChan.includes("booking") ? "text-sky-700 bg-sky-50 dark:bg-sky-950/50 border-sky-200" : dChan.includes("airbnb") ? "text-rose-700 bg-rose-50 dark:bg-rose-950/50 border-rose-200" : dChan.includes("site") ? "text-orange-700 bg-orange-50 dark:bg-orange-950/50 border-orange-200 dark:text-orange-300 dark:border-orange-800" : "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200";
                     
                     let dateFmt = d.date;
                     try {

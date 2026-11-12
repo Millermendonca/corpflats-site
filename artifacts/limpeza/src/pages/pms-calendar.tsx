@@ -32,8 +32,18 @@ import {
 import { ptBR } from "date-fns/locale"
 import { cn } from "@/lib/utils"
 
+function normalizeCalendarChannel(raw?: string | null): string {
+  const lower = String(raw || "").trim().toLowerCase()
+  if (!lower) return "whatsapp"
+  if (lower === "site" || lower === "site_direto" || lower === "site_proprio" || lower === "website" || lower === "motor") return "site"
+  if (lower === "direta" || lower === "direct" || lower === "whats" || lower === "zapi") return "whatsapp"
+  return lower
+}
+
 const CHANNEL_CONFIG: Record<string, { label: string; bg: string; text: string; border: string }> = {
-  site: { label: "Site Próprio", bg: "bg-indigo-600", text: "text-white", border: "border-indigo-700" },
+  site: { label: "Site Próprio", bg: "bg-orange-600", text: "text-white", border: "border-orange-700" },
+  site_direto: { label: "Site Próprio", bg: "bg-orange-600", text: "text-white", border: "border-orange-700" },
+  site_proprio: { label: "Site Próprio", bg: "bg-orange-600", text: "text-white", border: "border-orange-700" },
   whatsapp: { label: "WhatsApp", bg: "bg-emerald-600", text: "text-white", border: "border-emerald-700" },
   direta: { label: "WhatsApp", bg: "bg-emerald-600", text: "text-white", border: "border-emerald-700" },
   booking: { label: "Booking", bg: "bg-sky-700", text: "text-white", border: "border-sky-800" },
@@ -291,7 +301,7 @@ export function buildReservationDailyRates(
         return {
           date: format(addDays(d1, i), "yyyy-MM-dd"),
           rate: !isNaN(rawRate) && rawRate >= 0 ? rawRate : defaultRate,
-          channel: exist.channel || defaultChannel,
+          channel: normalizeCalendarChannel(exist.channel || defaultChannel),
           notes: exist.notes
         };
       });
@@ -306,7 +316,7 @@ export function buildReservationDailyRates(
         result.push({
           date: dateStr,
           rate: !isNaN(rawRate) && rawRate >= 0 ? rawRate : defaultRate,
-          channel: exist.channel || defaultChannel,
+          channel: normalizeCalendarChannel(exist.channel || defaultChannel),
           notes: exist.notes
         });
       } else {
@@ -314,7 +324,7 @@ export function buildReservationDailyRates(
         result.push({
           date: dateStr,
           rate: prev && Number(prev.rate) >= 0 ? Number(prev.rate) : defaultRate,
-          channel: prev && prev.channel ? prev.channel : defaultChannel
+          channel: normalizeCalendarChannel(prev && prev.channel ? prev.channel : defaultChannel)
         });
       }
     }
@@ -4104,7 +4114,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormGuest3Phone(g3?.phone || "")
     setFormGuest3Email(g3?.email || "")
 
-    const chan = resItem.channel || "whatsapp"
+    const chan = normalizeCalendarChannel(resItem.channel)
     const isOtaRes = (chan === "booking" || chan === "airbnb")
     const rawResPmLower = String(resItem.paymentMethod || "").trim().toLowerCase()
     const isFatResEarly = Boolean(
@@ -7192,7 +7202,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
               {/* Legenda de Canais */}
               <div className="flex items-center gap-2">
                 <span className="flex items-center gap-1 font-medium">
-                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" /> Site
+                  <span className="w-2.5 h-2.5 rounded-full bg-orange-600" /> Site
                 </span>
                 <span className="flex items-center gap-1 font-medium">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" /> WhatsApp
@@ -7528,7 +7538,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           ? Math.max(0, overlappingGroup.findIndex((o: any) => o.id === resItem.id))
                           : 0;
 
-                        const channelCfg = CHANNEL_CONFIG[resItem.channel] || CHANNEL_CONFIG.direta;
+                        const normalizedResChannel = normalizeCalendarChannel(resItem.channel);
+                        const channelCfg = CHANNEL_CONFIG[normalizedResChannel] || CHANNEL_CONFIG.direta;
                         const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
                         
                         // Cálculo e formatação do Valor Total da Reserva
@@ -7558,9 +7569,9 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         const isSingleNight = nightsCount <= 1;
 
                         const isMultiChannel = Array.isArray(resItem.dailyRates) && 
-                          new Set(resItem.dailyRates.map((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase())).size > 1;
+                          new Set(resItem.dailyRates.map((d: any) => normalizeCalendarChannel(d.channel || resItem.channel))).size > 1;
                         const uniqueChannels = isMultiChannel 
-                          ? Array.from(new Set(resItem.dailyRates.map((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase()))) 
+                          ? Array.from(new Set(resItem.dailyRates.map((d: any) => normalizeCalendarChannel(d.channel || resItem.channel)))) 
                           : [];
 
                         const isCheckingOutToday = resItem.checkoutDate === todayStr;
@@ -7637,7 +7648,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                   {isMultiChannel && (
                                     <div className="absolute inset-0 flex pointer-events-none overflow-hidden rounded-xl z-0">
                                       {resItem.dailyRates.map((d: any, dIdx: number) => {
-                                        const dChan = (d.channel || resItem.channel || "whatsapp").toLowerCase();
+                                        const dChan = normalizeCalendarChannel(d.channel || resItem.channel);
                                         const cfg = CHANNEL_CONFIG[dChan] || CHANNEL_CONFIG.direta;
                                         return (
                                           <div 
@@ -8934,8 +8945,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         <SelectValue placeholder="Canal" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="site">🌐 Site Próprio / Motor de Reservas</SelectItem>
-                        <SelectItem value="whatsapp">💬 WhatsApp / Reserva Direta</SelectItem>
+                        <SelectItem value="site">🟠 Site Próprio / Motor de Reservas</SelectItem>
+                        <SelectItem value="whatsapp">🟢 WhatsApp / Reserva Direta</SelectItem>
                         <SelectItem value="booking">🔵 Booking.com</SelectItem>
                         <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
                         <SelectItem value="b2b">🟣 B2B Reservas / Agência Corporativa</SelectItem>
@@ -13047,11 +13058,11 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                       <SelectValue placeholder="Canal" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
+                                      <SelectItem value="whatsapp">🟢 WhatsApp / Direta</SelectItem>
                                       <SelectItem value="booking">🔵 Booking.com</SelectItem>
                                       <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
                                       <SelectItem value="b2b">🟣 B2B Reservas / Agência</SelectItem>
-                                      <SelectItem value="site">🌐 Site Próprio</SelectItem>
+                                      <SelectItem value="site">🟠 Site Próprio</SelectItem>
                                       <SelectItem value="balcao">🏨 Balcão</SelectItem>
                                       <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
                                     </SelectContent>

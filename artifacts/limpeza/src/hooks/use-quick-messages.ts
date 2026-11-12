@@ -303,7 +303,7 @@ export function formatReservationChannelLabel(reservationOrChannel: any): string
   }
 
   const lower = rawChannel.toLowerCase()
-  if (!lower || lower === "site" || lower === "website" || lower === "motor" || lower === "corpflats" || lower === "site_proprio" || lower === "site próprio") {
+  if (!lower || lower === "site" || lower === "site_direto" || lower === "website" || lower === "motor" || lower === "corpflats" || lower === "site_proprio" || lower === "site próprio") {
     return "Site CorpFlats"
   }
   if (lower === "whatsapp" || lower === "direta" || lower === "direct" || lower === "zapi" || lower === "whats") {
