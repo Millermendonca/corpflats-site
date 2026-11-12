@@ -2848,13 +2848,25 @@ export function isPendingGuestName(name) {
 
 export function isMissingGuestDataForCredential(reservation = {}) {
   if (!reservation) return false;
-  if (reservation.b2bCredentialCompletedAt) return false;
-  const gName = reservation.guestName || reservation.guests?.[0]?.name || "";
-  const cleanPhone = String(reservation.guestPhone || reservation.guests?.[0]?.phone || "").replace(/\D/g, "");
+  if (reservation.b2bCredentialCompletedAt || reservation.credentialStatus === "completed") return false;
+  const gName = String(reservation.guestName || reservation.guests?.[0]?.name || "").trim();
+  const rawPhone = String(reservation.guestPhone || reservation.guests?.[0]?.phone || "").trim();
+  const cleanPhone = rawPhone.replace(/\D/g, "");
+  const minPhoneLen = rawPhone.startsWith("+") && !cleanPhone.startsWith("55") ? 8 : 10;
+  const rawDoc = String(
+    reservation.guestDocument ||
+    reservation.guests?.[0]?.cpf ||
+    reservation.guests?.[0]?.document ||
+    ""
+  ).replace(/[^A-Za-z0-9]/g, "");
+  const isB2b =
+    String(reservation.channel || "").toLowerCase().includes("b2b") ||
+    Boolean(reservation.b2bReservationNumber);
   return Boolean(
     reservation.guestPending ||
     isPendingGuestName(gName) ||
-    cleanPhone.length < 10
+    cleanPhone.length < minPhoneLen ||
+    (isB2b && rawDoc.length < 5)
   );
 }
 
@@ -2867,7 +2879,7 @@ export function getReservationRecipients(reservation = {}, db = {}) {
   const guestEmail = normalizeEmailAddress(reservation.guestEmail || reservation.guests?.[0]?.email);
 
   const chanLower = String(reservation.channel || reservation.source || "").toLowerCase();
-  const isB2bChannel = chanLower.includes("b2b") || Boolean(reservation.agencyId || reservation.agencyName);
+  const isB2bChannel = chanLower.includes("b2b") || Boolean(reservation.agencyId || reservation.agencyName || reservation.b2bReservationNumber);
 
   let requesterName = "";
   let requesterPhone = "";
@@ -2896,6 +2908,12 @@ export function getReservationRecipients(reservation = {}, db = {}) {
     if (reservation.agencyId && Array.isArray(db?.agencies)) {
       agencyObj = db.agencies.find(a => String(a.id) === String(reservation.agencyId));
     }
+    if (!agencyObj && reservation.agencyCnpj && Array.isArray(db?.agencies)) {
+      const targetCnpj = String(reservation.agencyCnpj).replace(/\D/g, "");
+      if (targetCnpj) {
+        agencyObj = db.agencies.find(a => String(a.cnpj || "").replace(/\D/g, "") === targetCnpj);
+      }
+    }
     if (!agencyObj && reservation.agencyName && Array.isArray(db?.agencies)) {
       agencyObj = db.agencies.find(a =>
         a.tradeName?.toLowerCase() === reservation.agencyName?.toLowerCase() ||
@@ -2908,9 +2926,13 @@ export function getReservationRecipients(reservation = {}, db = {}) {
     }
     const agencyLabel = agencyObj?.tradeName || agencyObj?.corporateName || reservation.agencyName || "";
     const companyLabel = companyObj?.tradeName || companyObj?.corporateName || reservation.companyName || "";
+    const cleanAgentName =
+      reservation.agencyAgentName && !/^(WEBSERVICE|SISTEMA|ARGO\.)/i.test(String(reservation.agencyAgentName).trim())
+        ? reservation.agencyAgentName
+        : (agencyObj?.agents?.[0]?.name || "");
     requesterCompany = [agencyLabel, companyLabel].filter(Boolean).join(" / ") || "Agência / Empresa B2B";
     requesterName = (
-      reservation.agencyAgentName ||
+      cleanAgentName ||
       agencyLabel ||
       companyLabel ||
       reservation.requesterInfo?.name ||
@@ -2918,9 +2940,13 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       "Central B2B / Agência"
     ).trim();
     const rawAgencyPhone = (
+      reservation.validatedRequesterWhatsapp ||
       reservation.agencyAgentPhone ||
+      reservation.requesterInfo?.whatsapp ||
       reservation.requesterInfo?.phone ||
       reservation.requesterPhone ||
+      agencyObj?.agents?.[0]?.phone ||
+      agencyObj?.whatsapp ||
       agencyObj?.phone ||
       companyObj?.phone ||
       ""
@@ -2930,24 +2956,39 @@ export function getReservationRecipients(reservation = {}, db = {}) {
       const d = p.replace(/\D/g, "").replace(/^55/, "");
       return d.length === 11 && d[2] === "9";
     });
-    requesterPhone = mobilePart || phoneParts[0] || rawAgencyPhone;
+    requesterPhone = reservation.validatedRequesterWhatsapp || mobilePart || phoneParts[0] || rawAgencyPhone;
+    const nfEmailsLowerSet = new Set(
+      (Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails : [])
+        .map(e => normalizeEmailAddress(e))
+        .filter(Boolean)
+    );
+    const agencyFinancialLower = normalizeEmailAddress(agencyObj?.financialEmail || agencyObj?.emailFinanceiro || "");
+    const isOperationalAgencyEmail = (cand = "") => {
+      const clean = normalizeEmailAddress(cand);
+      if (!clean) return false;
+      const localPart = clean.split("@")[0] || "";
+      if (/^(?:conciliacao|faturamento|nf|nfe|nfse|notafiscal|notas?fiscais|nfebimbo|fiscal|financeiro|contasapagar)\b/i.test(localPart)) {
+        return false;
+      }
+      if (clean.endsWith("@b2breservas.com.br")) return false;
+      if (nfEmailsLowerSet.has(clean)) return false;
+      if (agencyFinancialLower && clean === agencyFinancialLower && localPart.includes("fatur")) return false;
+      return true;
+    };
+    const fallbackOperationalEmail = [agencyObj?.email, agencyObj?.agents?.[0]?.email].find(e => isOperationalAgencyEmail(e)) || "";
     requesterEmail = normalizeEmailAddress(
       reservation.agencyAgentEmail ||
       reservation.requesterInfo?.email ||
       reservation.requesterEmail ||
-      agencyObj?.financialEmail ||
-      agencyObj?.email ||
-      (Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails[0] : "") ||
-      companyObj?.financialEmail ||
-      companyObj?.email ||
+      fallbackOperationalEmail ||
       ""
     );
   } else if (requesterType === "other_person") {
     requesterName = (reservation.requesterInfo?.name || reservation.requesterName || "").trim();
-    requesterPhone = (reservation.requesterInfo?.phone || reservation.requesterPhone || "").trim();
+    requesterPhone = (reservation.validatedRequesterWhatsapp || reservation.requesterInfo?.whatsapp || reservation.requesterInfo?.phone || reservation.requesterPhone || "").trim();
     requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail);
   } else if (requesterType === "company") {
-    requesterCompany = reservation.companyName || "";
+    requesterCompany = reservation.companyName || reservation.companyData?.companyName || "";
     let companyObj = null;
     if (reservation.companyId && db?.companies) {
       companyObj = db.companies.find(c => String(c.id) === String(reservation.companyId));
@@ -2960,13 +3001,13 @@ export function getReservationRecipients(reservation = {}, db = {}) {
     }
     if (companyObj) {
       requesterName = (reservation.requesterInfo?.name || reservation.requesterName || companyObj.contactPerson || companyObj.tradeName || reservation.companyName || "Solicitante Corporativo").trim();
-      requesterPhone = (reservation.requesterInfo?.phone || reservation.requesterPhone || companyObj.phone || companyObj.telefone || "").trim();
-      requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail || companyObj.email || companyObj.financialEmail || companyObj.emailFinanceiro);
+      requesterPhone = (reservation.validatedRequesterWhatsapp || reservation.requesterInfo?.whatsapp || reservation.requesterInfo?.phone || reservation.requesterPhone || reservation.companyData?.companyPhone || companyObj.whatsapp || companyObj.phone || companyObj.telefone || "").trim();
+      requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail || reservation.companyData?.companyEmail || companyObj.email || companyObj.financialEmail || companyObj.emailFinanceiro);
       requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany;
     } else {
-      requesterName = (reservation.requesterInfo?.name || reservation.requesterName || reservation.companyName || "Solicitante Corporativo").trim();
-      requesterPhone = (reservation.requesterInfo?.phone || reservation.requesterPhone || "").trim();
-      requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail);
+      requesterName = (reservation.requesterInfo?.name || reservation.requesterName || reservation.companyName || reservation.companyData?.companyName || "Solicitante Corporativo").trim();
+      requesterPhone = (reservation.validatedRequesterWhatsapp || reservation.requesterInfo?.whatsapp || reservation.requesterInfo?.phone || reservation.requesterPhone || reservation.companyData?.companyPhone || "").trim();
+      requesterEmail = normalizeEmailAddress(reservation.requesterInfo?.email || reservation.requesterEmail || reservation.companyData?.companyEmail);
     }
   }
 
@@ -14244,7 +14285,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
           }
 
           if (target.email) {
-            if (eventName === "b2b_agency_credential_request" && (reservation.b2bCredentialEmailSentAt || String(reservation.channel || "").toLowerCase().includes("b2b") || reservation.b2bReservationNumber)) {
+            if (eventName === "b2b_agency_credential_request" || reservation._skipEmailMirror) {
               target.email = "";
             }
           }
@@ -15165,10 +15206,343 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
   }
 }
 
+const requesterPhoneExistsMemCache = new Map();
+const PHONE_EXISTS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
 /**
- * Dispara a solicitação de credenciamento do hóspede (/credenciamento/:code) para o Solicitante
- * (Agência B2B, Empresa ou Terceiro PF) via WhatsApp quando a reserva está Confirmada
- * e ainda não possui todos os dados obrigatórios do hóspede (Nome completo, CPF, Telefone).
+ * Coleta todos os telefones candidatos da Agência / Empresa / Solicitante (incluindo fixos com WhatsApp Business)
+ * e consulta na Z-API (`checkZapiPhoneExists`) qual deles possui conta ativa no WhatsApp.
+ */
+export async function resolveValidRequesterWhatsApp(db, reservation, options = {}) {
+  if (!reservation) return { valid: false, phone: "", candidatesTested: [] };
+  const forceRefresh = Boolean(options.forceRefresh);
+  const rawSources = [];
+
+  let agencyObj = null;
+  if (reservation.agencyId && Array.isArray(db?.agencies)) {
+    agencyObj = db.agencies.find(a => String(a.id) === String(reservation.agencyId));
+  }
+  if (!agencyObj && reservation.agencyCnpj && Array.isArray(db?.agencies)) {
+    const cleanAgCnpj = String(reservation.agencyCnpj).replace(/\D/g, "");
+    if (cleanAgCnpj) {
+      agencyObj = db.agencies.find(a => String(a.cnpj || "").replace(/\D/g, "") === cleanAgCnpj);
+    }
+  }
+  if (!agencyObj && reservation.agencyName && Array.isArray(db?.agencies)) {
+    agencyObj = db.agencies.find(a =>
+      String(a.tradeName || "").toLowerCase() === String(reservation.agencyName).toLowerCase() ||
+      String(a.corporateName || "").toLowerCase() === String(reservation.agencyName).toLowerCase()
+    );
+  }
+
+  let companyObj = null;
+  if (reservation.companyId && Array.isArray(db?.companies)) {
+    companyObj = db.companies.find(c => String(c.id) === String(reservation.companyId));
+  }
+  if (!companyObj && reservation.companyCnpj && Array.isArray(db?.companies)) {
+    const cleanCompCnpj = String(reservation.companyCnpj).replace(/\D/g, "");
+    if (cleanCompCnpj) {
+      companyObj = db.companies.find(c => String(c.cnpj || "").replace(/\D/g, "") === cleanCompCnpj);
+    }
+  }
+  if (!companyObj && reservation.companyName && Array.isArray(db?.companies)) {
+    companyObj = db.companies.find(c =>
+      String(c.tradeName || "").toLowerCase() === String(reservation.companyName).toLowerCase() ||
+      String(c.corporateName || "").toLowerCase() === String(reservation.companyName).toLowerCase()
+    );
+  }
+
+  rawSources.push(
+    reservation.agencyAgentPhone,
+    reservation.requesterInfo?.whatsapp,
+    reservation.requesterInfo?.phone,
+    reservation.requesterPhone
+  );
+  if (Array.isArray(agencyObj?.agents)) {
+    for (const ag of agencyObj.agents) {
+      if (ag?.whatsapp) rawSources.push(ag.whatsapp);
+      if (ag?.phone) rawSources.push(ag.phone);
+    }
+  }
+  rawSources.push(
+    agencyObj?.whatsapp,
+    agencyObj?.phone,
+    reservation.companyData?.companyPhone,
+    companyObj?.whatsapp,
+    companyObj?.phone,
+    companyObj?.telefone
+  );
+
+  const guestPhoneNorm = cleanWhatsAppPhone(reservation.guestPhone || reservation.guests?.[0]?.phone || "");
+  const isSeparateGuest = !isMissingGuestDataForCredential(reservation) && guestPhoneNorm.length >= 10;
+
+  const mobileCandidates = [];
+  const landlineOrOtherCandidates = [];
+  const seenClean = new Set();
+
+  for (const raw of rawSources) {
+    if (!raw) continue;
+    const parts = String(raw)
+      .split(/[\/;|,\n]+|\s+e\s+/i)
+      .map(s => s.trim())
+      .filter(Boolean);
+    for (const part of parts) {
+      const cleaned = cleanWhatsAppPhone(part);
+      if (!cleaned || cleaned.length < 10) continue;
+      if (isSeparateGuest && cleaned === guestPhoneNorm) continue;
+      if (seenClean.has(cleaned)) continue;
+      seenClean.add(cleaned);
+
+      const localBr = cleaned.startsWith("55") ? cleaned.slice(2) : cleaned;
+      const isBrMobile = localBr.length === 11 && localBr[2] === "9";
+      const isIntl = part.startsWith("+") && !cleaned.startsWith("55");
+      if (isBrMobile || isIntl) {
+        mobileCandidates.push({ raw: part, cleaned, isBrMobile, isIntl });
+      } else {
+        landlineOrOtherCandidates.push({ raw: part, cleaned, isBrMobile: false, isIntl: false });
+      }
+    }
+  }
+
+  const orderedCandidates = [...mobileCandidates, ...landlineOrOtherCandidates];
+  const candidatesTested = [];
+  if (orderedCandidates.length === 0) {
+    return { valid: false, phone: "", candidatesTested };
+  }
+
+  if (db && (!db.whatsappPhoneExistsCache || typeof db.whatsappPhoneExistsCache !== "object")) {
+    db.whatsappPhoneExistsCache = {};
+  }
+
+  const nowMs = Date.now();
+  for (const cand of orderedCandidates) {
+    const cachedDb = db?.whatsappPhoneExistsCache?.[cand.cleaned];
+    const cachedMem = requesterPhoneExistsMemCache.get(cand.cleaned);
+    const cached = cachedDb || cachedMem;
+
+    if (!forceRefresh && cached && cached.checked && nowMs - Number(cached.checkedAt || 0) < PHONE_EXISTS_CACHE_TTL_MS) {
+      candidatesTested.push({ phone: cand.cleaned, exists: cached.exists, fromCache: true });
+      if (cached.exists) {
+        const finalPhone = cached.resolvedPhone || cand.cleaned;
+        reservation.validatedRequesterWhatsapp = finalPhone;
+        return { valid: true, phone: finalPhone, candidatesTested };
+      }
+      continue;
+    }
+
+    const checkRes = typeof options.phoneExistsChecker === "function"
+      ? await options.phoneExistsChecker(cand.cleaned, db?.zapiConfig)
+      : await checkZapiPhoneExists(cand.cleaned, db?.zapiConfig);
+
+    if (checkRes?.checked) {
+      const entry = {
+        exists: Boolean(checkRes.exists),
+        resolvedPhone: checkRes.phone || cand.cleaned,
+        checked: true,
+        checkedAt: nowMs
+      };
+      requesterPhoneExistsMemCache.set(cand.cleaned, entry);
+      if (db?.whatsappPhoneExistsCache) {
+        db.whatsappPhoneExistsCache[cand.cleaned] = entry;
+      }
+      candidatesTested.push({ phone: cand.cleaned, exists: entry.exists, checked: true });
+      if (entry.exists) {
+        reservation.validatedRequesterWhatsapp = entry.resolvedPhone;
+        return { valid: true, phone: entry.resolvedPhone, candidatesTested };
+      }
+    } else {
+      // Quando a instância Z-API não pôde validar em tempo real (offline / ambiente sem token),
+      // aceita celulares válidos (DDD + 9 dígitos ou DDI internacional) e ignora telefones fixos puros sem confirmação Business
+      const fallbackValid = Boolean(cand.isBrMobile || cand.isIntl);
+      candidatesTested.push({ phone: cand.cleaned, exists: fallbackValid, checked: false });
+      if (fallbackValid) {
+        reservation.validatedRequesterWhatsapp = cand.cleaned;
+        return { valid: true, phone: cand.cleaned, candidatesTested };
+      }
+    }
+  }
+
+  reservation.validatedRequesterWhatsapp = "";
+  return { valid: false, phone: "", candidatesTested };
+}
+
+/**
+ * Cancela quaisquer agendamentos pendentes de credenciamento na fila do WhatsApp
+ * assim que os dados do hóspede são preenchidos.
+ */
+export function cancelPendingCredentialReminders(db, reservation) {
+  if (!db || !reservation) return 0;
+  const rCodeUpper = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
+  const rIdStr = reservation.id !== undefined && reservation.id !== null ? String(reservation.id) : "";
+  let cancelledCount = 0;
+  if (Array.isArray(db.whatsappQueue)) {
+    for (const q of db.whatsappQueue) {
+      if (!q || q.status !== "pending") continue;
+      const qCode = String(q.reservationCode || "").trim().toUpperCase();
+      const qId = q.reservationId ? String(q.reservationId) : "";
+      const isSame = (rCodeUpper && qCode === rCodeUpper) || (rIdStr && (qId === rIdStr || qCode === rIdStr));
+      if (!isSame) continue;
+      const trig = String(q.triggerEvent || "").toLowerCase();
+      if (trig.includes("credential")) {
+        q.status = "cancelled";
+        q.cancelledAt = new Date().toISOString();
+        q.cancelReason = "guest_credential_completed";
+        cancelledCount++;
+      }
+    }
+  }
+  return cancelledCount;
+}
+
+/**
+ * Envia alerta de contingência para o WhatsApp do Gestor + Painel Admin quando:
+ *  - "missing_contact": reserva confirmada aguardando dados do hóspede sem e-mail nem WhatsApp válido da agência/solicitante
+ *  - "checkin_day_overdue": dia do check-in >= 13:00 BRT (ou +1h pós-lembrete same-day) e hóspede ainda não credenciado
+ */
+export async function sendCredentialContingencyManagerAlert(
+  db,
+  saveDatabase,
+  reservation,
+  alertType = "missing_contact",
+  details = {}
+) {
+  try {
+    if (!db || !reservation) return { sent: false, reason: "missing_data" };
+    const isOverdue = alertType === "checkin_day_overdue";
+    if (isOverdue && reservation.credentialCheckinUrgentAlertSentAt) {
+      return { sent: false, reason: "already_notified" };
+    }
+    if (!isOverdue && reservation.credentialMissingContactAlertSentAt) {
+      return { sent: false, reason: "already_notified" };
+    }
+
+    const nowIso = new Date().toISOString();
+    if (isOverdue) {
+      reservation.credentialCheckinUrgentAlertSentAt = nowIso;
+    } else {
+      reservation.credentialMissingContactAlertSentAt = nowIso;
+    }
+
+    const managerPhone = cleanWhatsAppPhone(
+      db?.settings?.adminPhone ||
+      db?.settings?.managerPhone ||
+      db?.zapiConfig?.npsManagerAlertPhone ||
+      DEFAULT_MANAGER_NPS_ALERT_PHONE ||
+      "5522998505276"
+    ) || "5522998505276";
+
+    const flatLabel = reservation.flatNumber ? `Flat ${reservation.flatNumber}` : `Flat ID ${reservation.flatId}`;
+    const resCode = reservation.code || reservation.reservationCode || `#${reservation.id}`;
+    const b2bNum = reservation.b2bReservationNumber || reservation.externalReservationNumber || "";
+    const guestLabel = isPendingGuestName(reservation.guestName)
+      ? "A Definir (Aguardando Solicitante)"
+      : (reservation.guestName || "A Definir");
+    const checkinBr = formatDateBrSimple(reservation.checkinDate);
+    const checkoutBr = formatDateBrSimple(reservation.checkoutDate);
+    const chanLabel = formatReservationChannelLabel(reservation);
+    const recips = getReservationRecipients(reservation, db);
+    const requesterDisplay =
+      reservation.agencyTradeName ||
+      reservation.agencyName ||
+      reservation.companyName ||
+      recips.requester?.name ||
+      "Solicitante Não Identificado";
+
+    const baseUrl = String(details.baseUrl || db?.settings?.baseUrl || "https://corpflats.com.br")
+      .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
+      .replace(/\/+$/, "");
+    const credLink = `${baseUrl}/credenciamento/${encodeURIComponent(String(resCode))}`;
+
+    let msg = "";
+    let notifTitle = "";
+    let notifMsg = "";
+
+    if (isOverdue) {
+      notifTitle = `🚨 Check-in Hoje Sem Dados do Hóspede (${flatLabel})`;
+      notifMsg = `A reserva ${resCode}${b2bNum ? ` (B2B #${b2bNum})` : ""} — ${requesterDisplay} tem check-in HOJE (${checkinBr}) e continua sem dados do hóspede após os lembretes automáticos.`;
+      msg += `🚨 *ALERTA URGENTE DE CHECK-IN — DADOS DO HÓSPEDE PENDENTES (${flatLabel})*\n\n`;
+      msg += `⏰ Já passou das 12h do dia do check-in e o solicitante ainda *não preencheu* os dados obrigatórios do hóspede para liberação na portaria:\n\n`;
+      msg += `🔖 *Reserva:* ${resCode}${b2bNum ? ` (B2B #${b2bNum})` : ""}\n`;
+      msg += `🏢 *Unidade:* ${flatLabel}\n`;
+      msg += `👤 *Hóspede no Voucher:* ${guestLabel}\n`;
+      msg += `🏛️ *Solicitante / Agência:* ${requesterDisplay}\n`;
+      msg += `📌 *Canal:* ${chanLabel}\n`;
+      msg += `📅 *Período:* ${checkinBr} a ${checkoutBr}\n`;
+      if (recips.requester?.email) msg += `📧 *E-mail Solicitante:* ${recips.requester.email}\n`;
+      if (recips.requester?.phone) msg += `📱 *Telefone Solicitante:* ${recips.requester.phone}\n`;
+      msg += `\n🔐 *Link de Credenciamento:* ${credLink}\n`;
+      msg += `🔗 _Acesse o painel: ${baseUrl}/reservas_`;
+    } else {
+      notifTitle = `⚠️ Reserva Sem Contato do Solicitante/Agência (${flatLabel})`;
+      notifMsg = `A reserva ${resCode}${b2bNum ? ` (B2B #${b2bNum})` : ""} (${requesterDisplay}) chegou sem E-mail e sem WhatsApp válido para disparo do link de dados do hóspede.`;
+      msg += `⚠️ *ALERTA: RESERVA SEM CONTATO DA AGÊNCIA / SOLICITANTE (${flatLabel})*\n\n`;
+      msg += `Uma reserva aguardando dados do hóspede foi identificada *sem e-mail e sem WhatsApp válido* do solicitante para envio automático do link de credenciamento:\n\n`;
+      msg += `🔖 *Reserva:* ${resCode}${b2bNum ? ` (B2B #${b2bNum})` : ""}\n`;
+      msg += `🏢 *Unidade:* ${flatLabel}\n`;
+      msg += `👤 *Hóspede:* ${guestLabel}\n`;
+      msg += `🏛️ *Agência / Solicitante:* ${requesterDisplay}\n`;
+      msg += `📌 *Canal:* ${chanLabel}\n`;
+      msg += `📅 *Período:* ${checkinBr} a ${checkoutBr}\n\n`;
+      msg += `👉 Cadastre o e-mail ou WhatsApp da agência/solicitante na reserva (ou encaminhe manualmente o link abaixo) para disparar o credenciamento:\n${credLink}`;
+    }
+
+    if (typeof globalThis.__corpflatsCreateNotification === "function") {
+      try {
+        globalThis.__corpflatsCreateNotification({
+          category: "reservation",
+          type: isOverdue ? "credential_checkin_overdue" : "credential_missing_contact",
+          title: notifTitle,
+          message: notifMsg,
+          severity: isOverdue ? "danger" : "warning",
+          targetUrl: `/reservas?code=${encodeURIComponent(String(resCode))}`,
+          metadata: {
+            reservationId: reservation.id,
+            reservationCode: resCode,
+            b2bReservationNumber: b2bNum,
+            flatNumber: reservation.flatNumber,
+            alertType
+          }
+        });
+      } catch (_) {}
+    } else if (db) {
+      if (!Array.isArray(db.notifications)) db.notifications = [];
+      db.notifications.unshift({
+        id: `notif_cred_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        category: "reservation",
+        type: isOverdue ? "credential_checkin_overdue" : "credential_missing_contact",
+        title: notifTitle,
+        message: notifMsg,
+        severity: isOverdue ? "danger" : "warning",
+        read: false,
+        targetUrl: `/reservas?code=${encodeURIComponent(String(resCode))}`,
+        createdAt: nowIso
+      });
+    }
+
+    if (typeof saveDatabase === "function") {
+      saveDatabase(`credential_manager_alert_${alertType}`);
+    }
+
+    const sendRes = await sendZapiMessage(db.zapiConfig, {
+      phone: managerPhone,
+      message: msg,
+      channelId: "internal_alerts",
+      recipientRole: "manager",
+      triggerEvent: isOverdue ? "credential_checkin_overdue_manager_alert" : "credential_missing_contact_manager_alert",
+      bypassTestMode: true,
+      db
+    });
+
+    return { sent: Boolean(sendRes?.success !== false), result: sendRes };
+  } catch (err) {
+    console.warn("[Credential Contingency Manager Alert Error]:", err?.message || err);
+    return { sent: false, error: err?.message };
+  }
+}
+
+/**
+ * Dispara a solicitação de credenciamento do hóspede (/credenciamento/:code) ou seus lembretes
+ * para o Solicitante (Agência B2B, Empresa ou Terceiro PF) via WhatsApp validado na Z-API.
  */
 export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDatabase, reservation, options = {}) {
   try {
@@ -15185,28 +15559,166 @@ export async function dispatchRequesterGuestCredentialRequest(dbOrGetter, saveDa
     }
 
     const recipients = getReservationRecipients(reservation, db);
-    const hasRequester = Boolean(
-      recipients.requester?.isDifferentFromGuest &&
-      (recipients.requester?.phone || recipients.requester?.email)
-    );
-    if (!hasRequester) {
+    if (!recipients.requester?.isDifferentFromGuest) {
       return { dispatched: false, reason: "no_separate_requester_contact" };
     }
 
-    const baseUrl = options.baseUrl || "https://corpflats.com.br";
+    const waValidation = await resolveValidRequesterWhatsApp(db, reservation, options);
+    if (!waValidation.valid || !waValidation.phone) {
+      return {
+        dispatched: false,
+        reason: "no_valid_requester_whatsapp",
+        candidatesTested: waValidation.candidatesTested || []
+      };
+    }
+
+    const validPhone = waValidation.phone;
+    const baseUrl = String(options.baseUrl || db?.settings?.baseUrl || "https://corpflats.com.br")
+      .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
+      .replace(/\/+$/, "");
+    const isReminder = Boolean(options.isReminder);
+    const reminderKind = String(options.reminderKind || "");
+    const stageKey = String(options.stageKey || (isReminder ? `reminder_${reminderKind || Date.now()}` : "initial"));
+    const rCode = String(reservation.code || reservation.reservationCode || reservation.id || "").trim();
+    const b2bNum = String(reservation.b2bReservationNumber || reservation.externalReservationNumber || "").trim();
+    const refNumber = b2bNum || rCode;
+    const credUrl = `${baseUrl}/credenciamento/${encodeURIComponent(rCode)}`;
+
+    if (isReminder) {
+      const rCodeUpper = rCode.toUpperCase();
+      const rIdStr = reservation.id !== undefined && reservation.id !== null ? String(reservation.id) : "";
+      const trigEvent = `b2b_agency_credential_${stageKey}`;
+
+      const alreadySentStage = (db.whatsappHistory || []).some(h => {
+        if (!h || h.status === "failed") return false;
+        const hCode = String(h.reservationCode || "").trim().toUpperCase();
+        const hId = h.reservationId ? String(h.reservationId) : "";
+        const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+        return isSameRes && h.triggerEvent === trigEvent;
+      });
+      if (alreadySentStage && !options.force) {
+        return { dispatched: false, skipped: true, reason: "stage_already_sent", requesterPhone: validPhone };
+      }
+
+      const recipientDisplay = recipients.requester.name || reservation.agencyName || reservation.companyName || "Solicitante";
+      const isPendingG = isPendingGuestName(reservation.guestName);
+      const guestRef = !isPendingG ? ` do(a) hóspede *${reservation.guestName}*` : "";
+      const checkinBr = formatDateBrSimple(reservation.checkinDate);
+      const checkoutBr = formatDateBrSimple(reservation.checkoutDate);
+      const flatNum = String(reservation.flatNumber || reservation.flatId || "").replace(/^flat\s*/i, "").trim();
+      const isCheckinDay =
+        reminderKind === "checkin_morning" ||
+        reminderKind === "checkin_noon" ||
+        reminderKind === "sameday_2h";
+
+      const reminderText = isCheckinDay
+        ? `Olá, *${recipientDisplay}*! Tudo bem? 👋\n\n` +
+          `⏰ *Lembrete Importante — Check-in Hoje (${checkinBr}):*\n` +
+          `Vimos que os dados completos${guestRef} da reserva *#${refNumber}* (*Flat ${flatNum}*, Edifício Soho Residence) *ainda não foram preenchidos*.\n\n` +
+          `⚠️ Para que a recepção/portaria 24h possa localizar a reserva e autorizar a entrada do hóspede hoje sem atrasos, pedimos por gentileza o preenchimento imediato pelo link seguro abaixo (sem exibição de valores financeiros):\n\n` +
+          `👉 ${credUrl}\n\n` +
+          `Assim que preenchido, enviaremos automaticamente ao WhatsApp do hóspede todas as instruções de chegada e acesso ao flat!`
+        : `Olá, *${recipientDisplay}*! Tudo bem? 👋\n\n` +
+          `🔔 *Lembrete — Preenchimento dos Dados do Hóspede:*\n` +
+          `Vimos que ainda não foram preenchidos os dados completos${guestRef} referentes à reserva *#${refNumber}* no *Edifício Soho Residence* (*Flat ${flatNum}*, período de *${checkinBr} a ${checkoutBr}*).\n\n` +
+          `⚠️ Lembramos que o cadastro prévio (*Nome Completo, CPF/Passaporte, WhatsApp e E-mail*) é indispensável para gerarmos a autorização de entrada na portaria 24h.\n\n` +
+          `Você pode preencher agora (ou encaminhar este link direto ao hóspede, pois não exibe valores financeiros):\n` +
+          `👉 ${credUrl}`;
+
+      const buttons = [
+        { id: "btn_b2b_cred_rem", type: "URL", label: "🔐 Preencher Dados do Hóspede", url: credUrl }
+      ];
+
+      const waResult = await sendZapiMessage(db.zapiConfig, {
+        phone: validPhone,
+        message: reminderText,
+        footer: "CorpFlats • Edifício Soho Residence",
+        buttons,
+        recipientRole: "solicitante",
+        triggerEvent: trigEvent,
+        db
+      });
+
+      const sentAtWa = new Date().toISOString();
+      if (!Array.isArray(db.whatsappHistory)) db.whatsappHistory = [];
+      db.whatsappHistory.push({
+        id: `cred_rem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        reservationCode: rCode,
+        reservationId: reservation.id || null,
+        title: isCheckinDay
+          ? "Solicitante • Lembrete Check-in Hoje (Dados do Hóspede)"
+          : "Solicitante • Lembrete 24h (Dados do Hóspede)",
+        guestName: reservation.guestName || "A Definir",
+        guestPhone: validPhone,
+        recipientType: "requester",
+        recipientRole: "solicitante",
+        recipientName: recipientDisplay,
+        triggerEvent: trigEvent,
+        message: reminderText,
+        buttons,
+        status: waResult?.success !== false ? "sent" : "failed",
+        method: waResult?.method || "zapi",
+        error: waResult?.error || null,
+        sentAt: sentAtWa
+      });
+
+      appendMessageToConversation(db, {
+        phone: validPhone,
+        senderName: "CorpFlats",
+        senderPhone: db?.zapiConfig?.instanceId || "",
+        fromMe: true,
+        text: reminderText,
+        type: "text",
+        buttons,
+        triggerEvent: trigEvent,
+        reservationCode: rCode,
+        status: waResult?.success !== false ? "read" : "failed",
+        timestamp: sentAtWa,
+        messageId: waResult?.messageId || `msg_cred_rem_${Date.now()}`
+      });
+
+      if (waResult?.success !== false) {
+        reservation.b2bCredentialWhatsappLastReminderAt = sentAtWa;
+        reservation.b2bCredentialWhatsappRecipient = validPhone;
+        if (typeof saveDatabase === "function") saveDatabase("requester_credential_whatsapp_reminder");
+      }
+
+      return {
+        dispatched: waResult?.success !== false,
+        requesterName: recipientDisplay,
+        requesterPhone: validPhone,
+        requesterEmail: recipients.requester.email || "",
+        sentAt: sentAtWa
+      };
+    }
+
     await triggerImmediateWhatsApp(
       db,
       saveDatabase,
       "b2b_agency_credential_request",
-      { ...reservation, _forceInitialWelcome: true, _allowScheduledTemplateImmediate: true },
+      {
+        ...reservation,
+        validatedRequesterWhatsapp: validPhone,
+        requesterPhone: validPhone,
+        _onlyRequesterTarget: true,
+        _skipEmailMirror: true,
+        _forceInitialWelcome: true,
+        _allowScheduledTemplateImmediate: true
+      },
       baseUrl
     );
+
+    const nowIso = new Date().toISOString();
+    reservation.b2bCredentialWhatsappSentAt = reservation.b2bCredentialWhatsappSentAt || nowIso;
+    reservation.b2bCredentialWhatsappRecipient = validPhone;
+    if (typeof saveDatabase === "function") saveDatabase("requester_credential_whatsapp_sent");
 
     return {
       dispatched: true,
       requesterName: recipients.requester.name,
-      requesterPhone: recipients.requester.phone || "",
-      requesterEmail: recipients.requester.email || ""
+      requesterPhone: validPhone,
+      requesterEmail: recipients.requester.email || "",
+      sentAt: nowIso
     };
   } catch (err) {
     console.warn("[Requester Credential Dispatch Error]:", err.message);

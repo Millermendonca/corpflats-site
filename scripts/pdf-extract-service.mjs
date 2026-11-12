@@ -1,10 +1,12 @@
 /**
- * Utilitário de Extração de Texto de Arquivos PDF (Zero-Dependency)
+ * Utilitário Avançado de Extração Integral de Texto de Arquivos PDF (Zero-Dependency)
  * Módulo: pdf-extract-service.mjs
  *
- * Suporta descompressão nativa de streams PDF (/FlateDecode via zlib),
- * extração de operadores de texto (BT...ET, Tj, TJ, ', \"),
- * decodificação de strings literais com escapes octais/latin1 e hexadecimais (incluindo UTF-16BE).
+ * Lê 100% das páginas e objetos do documento PDF, incluindo:
+ * - Descompressão nativa de streams PDF (/FlateDecode via zlib) e Object Streams (/Type /ObjStm PDF 1.5+);
+ * - Tabelas de mapeamento de glifos /ToUnicode CMap (beginbfchar / beginbfrange para CIDFonts / Identity-H);
+ * - Rastreamento de fonte ativa (/Tf) e posicionamento geométrico (Td, TD, Tm, T*) preservando linhas e tabelas;
+ * - Decodificação de strings literais com escapes octais/UTF-8/Windows-1252 e hexadecimais (incluindo UTF-16BE).
  */
 
 import zlib from "node:zlib";
@@ -22,9 +24,6 @@ const WIN1252_MAP = {
   0x9C: "\u0153", 0x9E: "\u017E", 0x9F: "\u0178"
 };
 
-/**
- * Converte um byte isolado em caractere respeitando Windows-1252 / ISO-8859-1
- */
 function decodeByte(b) {
   if (b >= 0x80 && b <= 0x9f && WIN1252_MAP[b]) {
     return WIN1252_MAP[b];
@@ -33,9 +32,105 @@ function decodeByte(b) {
 }
 
 /**
- * Decodifica uma string literal PDF com suporte a escapes e UTF-16BE
+ * Converte hex Unicode de destino CMap (ex: "0041" ou "00660069" ou "D83DDE00") em string JS
  */
-function decodePdfLiteralString(rawStr) {
+function hexToUnicodeString(hexStr) {
+  const clean = String(hexStr || "").replace(/[^0-9a-fA-F]/g, "");
+  if (!clean) return "";
+  if (clean.length === 2) {
+    return decodeByte(parseInt(clean, 16));
+  }
+  const padded = clean.length % 4 === 0 ? clean : clean.padStart(Math.ceil(clean.length / 4) * 4, "0");
+  let out = "";
+  for (let i = 0; i + 3 < padded.length; i += 4) {
+    out += String.fromCharCode(parseInt(padded.slice(i, i + 4), 16));
+  }
+  return out;
+}
+
+/**
+ * Extrai tabela CMap (/ToUnicode) de um stream contendo beginbfchar / beginbfrange
+ */
+function parseToUnicodeCMap(cmapStream) {
+  if (!cmapStream || (!cmapStream.includes("beginbfchar") && !cmapStream.includes("beginbfrange"))) {
+    return null;
+  }
+
+  const map = new Map();
+  let codeBytesLen = 0;
+
+  const codeSpaceMatch = cmapStream.match(/begincodespacerange[\s\S]*?<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>[\s\S]*?endcodespacerange/);
+  if (codeSpaceMatch) {
+    codeBytesLen = Math.max(1, Math.floor(codeSpaceMatch[1].length / 2));
+  }
+
+  const bfCharRegex = /beginbfchar([\s\S]*?)endbfchar/g;
+  let m;
+  while ((m = bfCharRegex.exec(cmapStream)) !== null) {
+    const body = m[1];
+    const pairRe = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g;
+    let pm;
+    while ((pm = pairRe.exec(body)) !== null) {
+      const srcHex = pm[1].toUpperCase();
+      if (!codeBytesLen) codeBytesLen = Math.max(1, Math.floor(srcHex.length / 2));
+      const dstStr = hexToUnicodeString(pm[2]);
+      if (dstStr) map.set(srcHex, dstStr);
+    }
+  }
+
+  const bfRangeRegex = /beginbfrange([\s\S]*?)endbfrange/g;
+  while ((m = bfRangeRegex.exec(cmapStream)) !== null) {
+    const body = m[1];
+    const rangeRe = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(?:<([0-9a-fA-F]+)>|\[([\s\S]*?)\])/g;
+    let rm;
+    while ((rm = rangeRe.exec(body)) !== null) {
+      const startHex = rm[1].toUpperCase();
+      const endHex = rm[2].toUpperCase();
+      const hexWidth = startHex.length;
+      if (!codeBytesLen) codeBytesLen = Math.max(1, Math.floor(hexWidth / 2));
+      const startCode = parseInt(startHex, 16);
+      const endCode = parseInt(endHex, 16);
+      if (isNaN(startCode) || isNaN(endCode) || endCode < startCode || endCode - startCode > 4096) continue;
+
+      if (rm[3] !== undefined) {
+        const baseDstHex = rm[3];
+        if (baseDstHex.length <= 4) {
+          let dstCode = parseInt(baseDstHex, 16);
+          for (let c = startCode; c <= endCode; c++, dstCode++) {
+            const key = c.toString(16).toUpperCase().padStart(hexWidth, "0");
+            map.set(key, String.fromCodePoint(dstCode));
+          }
+        } else {
+          const prefix = hexToUnicodeString(baseDstHex.slice(0, -4));
+          let lastCode = parseInt(baseDstHex.slice(-4), 16);
+          for (let c = startCode; c <= endCode; c++, lastCode++) {
+            const key = c.toString(16).toUpperCase().padStart(hexWidth, "0");
+            map.set(key, prefix + String.fromCharCode(lastCode));
+          }
+        }
+      } else if (rm[4] !== undefined) {
+        const items = [];
+        const itemRe = /<([0-9a-fA-F]+)>/g;
+        let im;
+        while ((im = itemRe.exec(rm[4])) !== null) {
+          items.push(hexToUnicodeString(im[1]));
+        }
+        for (let idx = 0; idx < items.length && startCode + idx <= endCode; idx++) {
+          const key = (startCode + idx).toString(16).toUpperCase().padStart(hexWidth, "0");
+          if (items[idx]) map.set(key, items[idx]);
+        }
+      }
+    }
+  }
+
+  if (map.size === 0) return null;
+  return { map, codeBytesLen: codeBytesLen || 2 };
+}
+
+/**
+ * Decodifica uma string literal PDF com suporte a escapes, CMap opcional, UTF-16BE, UTF-8 e Windows-1252
+ */
+function decodePdfLiteralString(rawStr, activeCMap = null) {
   const bytes = [];
   for (let i = 0; i < rawStr.length; i++) {
     const ch = rawStr[i];
@@ -59,7 +154,6 @@ function decodePdfLiteralString(rawStr) {
         }
         bytes.push(parseInt(oct, 8));
       } else if (next === "\r" || next === "\n") {
-        // Line continuation, ignore
         if (next === "\r" && i + 1 < rawStr.length && rawStr[i + 1] === "\n") i++;
       } else {
         bytes.push(next.charCodeAt(0));
@@ -69,7 +163,6 @@ function decodePdfLiteralString(rawStr) {
     }
   }
 
-  // Checa se possui BOM UTF-16BE (0xFE, 0xFF)
   if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
     let out = "";
     for (let i = 2; i + 1 < bytes.length; i += 2) {
@@ -79,7 +172,27 @@ function decodePdfLiteralString(rawStr) {
     return out;
   }
 
-  // Tenta UTF-8 válido se houver sequências multibyte
+  if (activeCMap && activeCMap.map && activeCMap.map.size > 0) {
+    const step = activeCMap.codeBytesLen === 2 && bytes.length % 2 === 0 ? 2 : 1;
+    let cmapOut = "";
+    let hits = 0;
+    const totalGlyphs = Math.floor(bytes.length / step);
+    for (let i = 0; i + step - 1 < bytes.length; i += step) {
+      const hexKey = step === 2
+        ? ((bytes[i] << 8) | bytes[i + 1]).toString(16).toUpperCase().padStart(4, "0")
+        : bytes[i].toString(16).toUpperCase().padStart(2, "0");
+      if (activeCMap.map.has(hexKey)) {
+        cmapOut += activeCMap.map.get(hexKey);
+        hits++;
+      } else if (step === 1) {
+        cmapOut += decodeByte(bytes[i]);
+      }
+    }
+    if (totalGlyphs > 0 && hits / totalGlyphs >= 0.6) {
+      return cmapOut;
+    }
+  }
+
   const buf = Buffer.from(bytes);
   try {
     const utf8Str = buf.toString("utf8");
@@ -88,7 +201,6 @@ function decodePdfLiteralString(rawStr) {
     }
   } catch {}
 
-  // Fallback seguro: Windows-1252 / Latin1
   let res = "";
   for (const b of bytes) {
     res += decodeByte(b);
@@ -97,18 +209,46 @@ function decodePdfLiteralString(rawStr) {
 }
 
 /**
- * Decodifica uma string hexadecimal PDF (<48656c6c6f>)
+ * Decodifica uma string hexadecimal PDF (<48656c6c6f> ou CIDFont <00120034> via /ToUnicode CMap)
  */
-function decodePdfHexString(hex) {
-  const clean = hex.replace(/[^0-9a-fA-F]/g, "");
+function decodePdfHexString(hex, activeCMap = null, fallbackCMap = null) {
+  const clean = hex.replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+  if (!clean) return "";
+
+  const tryDecodeWithCMap = (cmapObj) => {
+    if (!cmapObj || !cmapObj.map || cmapObj.map.size === 0) return null;
+    const hexStep = cmapObj.codeBytesLen === 1 ? 2 : 4;
+    if (clean.length < hexStep) return null;
+    let out = "";
+    let hits = 0;
+    let count = 0;
+    for (let i = 0; i < clean.length; i += hexStep) {
+      const chunk = clean.slice(i, i + hexStep).padEnd(hexStep, "0");
+      count++;
+      if (cmapObj.map.has(chunk)) {
+        out += cmapObj.map.get(chunk);
+        hits++;
+      } else if (hexStep === 4 && chunk === "0020") {
+        out += " ";
+        hits++;
+      } else if (hexStep === 2) {
+        out += decodeByte(parseInt(chunk, 16));
+      }
+    }
+    if (count > 0 && hits / count >= 0.5) return out;
+    return null;
+  };
+
+  const fromActive = tryDecodeWithCMap(activeCMap);
+  if (fromActive !== null) return fromActive;
+
+  const fromFallback = tryDecodeWithCMap(fallbackCMap);
+  if (fromFallback !== null) return fromFallback;
+
   const bytes = [];
   for (let i = 0; i < clean.length; i += 2) {
     const pair = clean.slice(i, i + 2);
-    if (pair.length === 1) {
-      bytes.push(parseInt(pair + "0", 16));
-    } else {
-      bytes.push(parseInt(pair, 16));
-    }
+    bytes.push(parseInt(pair.length === 1 ? pair + "0" : pair, 16));
   }
 
   if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
@@ -118,6 +258,25 @@ function decodePdfHexString(hex) {
       out += String.fromCharCode(code);
     }
     return out;
+  }
+
+  // CIDFont UTF-16BE sem BOM (ex: <00410042> -> "AB")
+  if (bytes.length >= 2 && bytes.length % 2 === 0) {
+    let zeroHighCount = 0;
+    const pairs = bytes.length / 2;
+    for (let i = 0; i < bytes.length; i += 2) {
+      if (bytes[i] === 0x00 && bytes[i + 1] >= 0x20) zeroHighCount++;
+    }
+    if (zeroHighCount / pairs >= 0.6) {
+      let out = "";
+      for (let i = 0; i + 1 < bytes.length; i += 2) {
+        const code = (bytes[i] << 8) | bytes[i + 1];
+        if (code >= 0x20 || code === 0x09 || code === 0x0a) {
+          out += String.fromCharCode(code);
+        }
+      }
+      return out;
+    }
   }
 
   const buf = Buffer.from(bytes);
@@ -137,14 +296,13 @@ function decodePdfHexString(hex) {
 
 /**
  * Extrai texto contido dentro de operadores PDF (BT...ET e blocos de texto)
- * Utiliza tokenizer linear O(N) com suporte a parênteses aninhados e proteção contra ReDoS.
+ * preservando alinhamento de linhas via coordenadas Y (Td / TD / Tm) e fontes (/Tf + CMap).
  */
-function parsePdfContentStream(streamText) {
+function parsePdfContentStream(streamText, fontCMaps = new Map(), globalCMap = null) {
   if (!streamText || typeof streamText !== "string") return "";
 
-  // Guard contra comprimentos patológicos e streams que não contenham operadores de texto
-  if (streamText.length > 5000000) {
-    streamText = streamText.slice(0, 5000000);
+  if (streamText.length > 25000000) {
+    streamText = streamText.slice(0, 25000000);
   }
   if (
     !streamText.includes("Tj") &&
@@ -163,18 +321,82 @@ function parsePdfContentStream(streamText) {
 
   const processBlock = (block) => {
     let currentLine = "";
+    let activeFontName = null;
+    let lastTmY = null;
+    let numQueue = [];
     const len = block.length;
     let i = 0;
 
+    const flushLine = () => {
+      if (currentLine.trim()) {
+        lines.push(currentLine.replace(/[ \t]+/g, " ").trim());
+      }
+      currentLine = "";
+    };
+
+    const ensureSpace = () => {
+      if (currentLine && !currentLine.endsWith(" ")) {
+        currentLine += " ";
+      }
+    };
+
+    const getActiveCMap = () => (activeFontName && fontCMaps.get(activeFontName)) || null;
+
     while (i < len) {
-      // Pula espaços e quebras de linha
       while (i < len && block.charCodeAt(i) <= 32) i++;
       if (i >= len) break;
 
       const ch = block[i];
 
+      // 0. Nome PDF (ex: /F1 10 Tf)
+      if (ch === "/") {
+        i++;
+        const nStart = i;
+        while (
+          i < len &&
+          block.charCodeAt(i) > 32 &&
+          !"()<>[]{}/%".includes(block[i])
+        ) {
+          i++;
+        }
+        const pdfName = block.slice(nStart, i);
+        // Avança sobre tamanho da fonte para checar operador Tf
+        let look = i;
+        while (look < len && block.charCodeAt(look) <= 32) look++;
+        const sStart = look;
+        if (look < len && ("+-0123456789.".includes(block[look]))) {
+          while (look < len && "+-0123456789.".includes(block[look])) look++;
+          while (look < len && block.charCodeAt(look) <= 32) look++;
+          if (block.startsWith("Tf", look) && (look + 2 >= len || block.charCodeAt(look + 2) <= 32 || "()<>[]{}/".includes(block[look + 2]))) {
+            activeFontName = pdfName;
+            numQueue = [];
+            i = look + 2;
+            continue;
+          }
+        }
+        void sStart;
+        continue;
+      }
+
+      // 0b. Números precedendo operadores Td / TD / Tm
+      if (
+        (ch >= "0" && ch <= "9") ||
+        ((ch === "-" || ch === "+" || ch === ".") && i + 1 < len && ((block[i + 1] >= "0" && block[i + 1] <= "9") || block[i + 1] === "."))
+      ) {
+        const nStart = i;
+        i++;
+        while (i < len && ((block[i] >= "0" && block[i] <= "9") || block[i] === ".")) i++;
+        const parsedNum = parseFloat(block.slice(nStart, i));
+        if (!isNaN(parsedNum)) {
+          numQueue.push(parsedNum);
+          if (numQueue.length > 8) numQueue.shift();
+        }
+        continue;
+      }
+
       // 1. Literal string: (...)
       if (ch === "(") {
+        numQueue = [];
         i++;
         const start = i;
         let depth = 1;
@@ -194,16 +416,15 @@ function parsePdfContentStream(streamText) {
         }
         const strContent = block.slice(start, depth === 0 ? i - 1 : i);
 
-        // Pula espaços após a string para verificar o operador
         while (i < len && block.charCodeAt(i) <= 32) i++;
 
         if (block.startsWith("Tj", i)) {
-          currentLine += decodePdfLiteralString(strContent);
+          currentLine += decodePdfLiteralString(strContent, getActiveCMap());
           i += 2;
         } else if (block[i] === "'" || block[i] === '"') {
-          currentLine += decodePdfLiteralString(strContent);
-          if (currentLine.trim()) lines.push(currentLine.trim());
-          currentLine = "";
+          flushLine();
+          currentLine += decodePdfLiteralString(strContent, getActiveCMap());
+          flushLine();
           i++;
         }
         continue;
@@ -211,6 +432,7 @@ function parsePdfContentStream(streamText) {
 
       // 2. Hex string: <...> (ignora dicionários <<...>>)
       if (ch === "<") {
+        numQueue = [];
         if (i + 1 < len && block[i + 1] === "<") {
           i += 2;
           continue;
@@ -227,12 +449,12 @@ function parsePdfContentStream(streamText) {
         while (i < len && block.charCodeAt(i) <= 32) i++;
 
         if (block.startsWith("Tj", i)) {
-          currentLine += decodePdfHexString(hexContent);
+          currentLine += decodePdfHexString(hexContent, getActiveCMap(), globalCMap);
           i += 2;
         } else if (block[i] === "'" || block[i] === '"') {
-          currentLine += decodePdfHexString(hexContent);
-          if (currentLine.trim()) lines.push(currentLine.trim());
-          currentLine = "";
+          flushLine();
+          currentLine += decodePdfHexString(hexContent, getActiveCMap(), globalCMap);
+          flushLine();
           i++;
         }
         continue;
@@ -240,6 +462,7 @@ function parsePdfContentStream(streamText) {
 
       // 3. Array TJ: [...] TJ
       if (ch === "[") {
+        numQueue = [];
         i++;
         const arrStart = i;
         let closeIdx = -1;
@@ -266,7 +489,6 @@ function parsePdfContentStream(streamText) {
         }
 
         if (closeIdx === -1) {
-          // Bracket não fechado: encerra varredura do bloco (não há ']' restante)
           i = len;
           break;
         }
@@ -278,7 +500,7 @@ function parsePdfContentStream(streamText) {
 
         if (block.startsWith("TJ", i)) {
           i += 2;
-          // Parseia os elementos internos do array TJ de forma linear
+          const activeCMap = getActiveCMap();
           let k = 0;
           const aLen = arrayContent.length;
           while (k < aLen) {
@@ -297,23 +519,21 @@ function parsePdfContentStream(streamText) {
                 else k++;
               }
               const itemStr = arrayContent.slice(sStart, sDepth === 0 ? k - 1 : k);
-              currentLine += decodePdfLiteralString(itemStr);
+              currentLine += decodePdfLiteralString(itemStr, activeCMap);
             } else if (kc === "<") {
               k++;
               let hEnd = arrayContent.indexOf(">", k);
               if (hEnd === -1) hEnd = aLen;
               const itemHex = arrayContent.slice(k, hEnd);
-              currentLine += decodePdfHexString(itemHex);
+              currentLine += decodePdfHexString(itemHex, activeCMap, globalCMap);
               k = hEnd + 1;
             } else if ((kc >= "0" && kc <= "9") || kc === "-" || kc === "+") {
               const nStart = k;
               k++;
               while (k < aLen && ((arrayContent[k] >= "0" && arrayContent[k] <= "9") || arrayContent[k] === ".")) k++;
               const num = parseFloat(arrayContent.slice(nStart, k));
-              if (!isNaN(num) && num <= -120) {
-                if (currentLine && !currentLine.endsWith(" ")) {
-                  currentLine += " ";
-                }
+              if (!isNaN(num) && num <= -100) {
+                ensureSpace();
               }
             } else {
               k++;
@@ -323,36 +543,64 @@ function parsePdfContentStream(streamText) {
         continue;
       }
 
-      // 4. Operadores de linha / posicionamento
-      if (block.startsWith("T*", i)) {
-        if (currentLine.trim()) lines.push(currentLine.trim());
-        currentLine = "";
+      // 4. Operadores de linha / posicionamento geométrico
+      const isDelimiterAfter2 = i + 2 >= len || block.charCodeAt(i + 2) <= 32 || "()<>[]{}/".includes(block[i + 2]);
+
+      if (block.startsWith("T*", i) && isDelimiterAfter2) {
+        flushLine();
+        numQueue = [];
         i += 2;
         continue;
       }
-      if (
-        (block.startsWith("Td", i) || block.startsWith("TD", i) || block.startsWith("Tm", i)) &&
-        (i + 2 >= len || block.charCodeAt(i + 2) <= 32)
-      ) {
-        if (currentLine.trim()) lines.push(currentLine.trim());
-        currentLine = "";
+      if ((block.startsWith("Td", i) || block.startsWith("TD", i)) && isDelimiterAfter2) {
+        const dy = numQueue.length >= 2 ? numQueue[numQueue.length - 1] : null;
+        const dx = numQueue.length >= 2 ? numQueue[numQueue.length - 2] : null;
+        if (dy === null || Math.abs(dy) > 1.5) {
+          flushLine();
+          if (lastTmY !== null && dy !== null) lastTmY += dy;
+        } else if (dx !== null && dx > 1.5) {
+          ensureSpace();
+        }
+        numQueue = [];
         i += 2;
         continue;
       }
-      if (block.startsWith("ET", i) && (i + 2 >= len || block.charCodeAt(i + 2) <= 32)) {
-        if (currentLine.trim()) lines.push(currentLine.trim());
-        currentLine = "";
+      if (block.startsWith("Tm", i) && isDelimiterAfter2) {
+        const newY = numQueue.length >= 6 ? numQueue[numQueue.length - 1] : null;
+        if (newY !== null) {
+          if (lastTmY !== null && Math.abs(newY - lastTmY) <= 2.0) {
+            ensureSpace();
+          } else {
+            flushLine();
+          }
+          lastTmY = newY;
+        } else {
+          flushLine();
+        }
+        numQueue = [];
         i += 2;
+        continue;
+      }
+      if (block.startsWith("ET", i) && isDelimiterAfter2) {
+        flushLine();
+        numQueue = [];
+        i += 2;
+        continue;
+      }
+
+      // Outros operadores consomem a fila numérica
+      if ((ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z")) {
+        while (i < len && ((block[i] >= "a" && block[i] <= "z") || (block[i] >= "A" && block[i] <= "Z") || block[i] === "*")) {
+          i++;
+        }
+        numQueue = [];
         continue;
       }
 
       i++;
     }
 
-    if (currentLine.trim()) {
-      lines.push(currentLine.trim());
-      currentLine = "";
-    }
+    flushLine();
   };
 
   const btRegex = /BT\b([\s\S]*?)\bET/g;
@@ -364,7 +612,6 @@ function parsePdfContentStream(streamText) {
     processBlock(btMatch[1]);
   }
 
-  // Se o stream não continha BT...ET explícito, tenta processar o stream inteiro
   if (!hasBt) {
     processBlock(streamText);
   }
@@ -373,10 +620,21 @@ function parsePdfContentStream(streamText) {
 }
 
 /**
- * Localiza e extrai os streams binários contidos no buffer do arquivo PDF
+ * Localiza e extrai todos os objetos e streams binários contidos no PDF (incluindo /ObjStm)
  */
-function extractStreamsFromPdf(pdfBuffer) {
+function extractPdfObjectsAndStreams(pdfBuffer) {
   const decompressedStreams = [];
+  const objById = new Map();
+  const rawPdfLatin1 = pdfBuffer.toString("latin1");
+
+  // Indexa cabeçalhos de objetos indiretos "N G obj" para resolver referências /ToUnicode
+  const objRegex = /(?:^|[\r\n\s])(\d+)\s+\d+\s+obj\b/g;
+  const objOffsets = [];
+  let om;
+  while ((om = objRegex.exec(rawPdfLatin1)) !== null) {
+    objOffsets.push({ id: Number(om[1]), start: om.index });
+  }
+
   const streamToken = Buffer.from("stream");
   const endStreamToken = Buffer.from("endstream");
 
@@ -385,7 +643,25 @@ function extractStreamsFromPdf(pdfBuffer) {
     const streamPos = pdfBuffer.indexOf(streamToken, offset);
     if (streamPos === -1) break;
 
-    // Encontra o início real dos dados após "stream" e \r?\n
+    // Evita falso positivo dentro da palavra "endstream"
+    if (streamPos >= 3 && pdfBuffer.subarray(streamPos - 3, streamPos).toString("latin1") === "end") {
+      offset = streamPos + streamToken.length;
+      continue;
+    }
+
+    // Descobre qual objeto indireto contém este stream e lê seu dicionário << ... >>
+    let ownerId = null;
+    let dictHeader = "";
+    const dictSearchStart = Math.max(0, streamPos - 1024);
+    const headerSlice = rawPdfLatin1.slice(dictSearchStart, streamPos);
+    const lastObjInSlice = [...headerSlice.matchAll(/(\d+)\s+\d+\s+obj\b/g)].pop();
+    if (lastObjInSlice) {
+      ownerId = Number(lastObjInSlice[1]);
+      dictHeader = headerSlice.slice(lastObjInSlice.index);
+    } else {
+      dictHeader = headerSlice;
+    }
+
     let dataStart = streamPos + streamToken.length;
     if (pdfBuffer[dataStart] === 0x0d && pdfBuffer[dataStart + 1] === 0x0a) {
       dataStart += 2;
@@ -396,14 +672,12 @@ function extractStreamsFromPdf(pdfBuffer) {
     const endPos = pdfBuffer.indexOf(endStreamToken, dataStart);
     if (endPos === -1) break;
 
-    // Remove eventual quebra de linha antes de "endstream"
     let dataEnd = endPos;
     if (dataEnd > dataStart && pdfBuffer[dataEnd - 1] === 0x0a) dataEnd--;
     if (dataEnd > dataStart && pdfBuffer[dataEnd - 1] === 0x0d) dataEnd--;
 
     const streamData = pdfBuffer.subarray(dataStart, dataEnd);
 
-    // Tenta descompressão via zlib
     let decomp = null;
     try {
       decomp = zlib.inflateSync(streamData);
@@ -414,27 +688,121 @@ function extractStreamsFromPdf(pdfBuffer) {
         try {
           decomp = zlib.unzipSync(streamData);
         } catch {
-          // Stream pode não estar comprimido
           decomp = streamData;
         }
       }
     }
 
     if (decomp && decomp.length > 0) {
-      decompressedStreams.push(decomp.toString("latin1"));
+      const contentStr = decomp.toString("latin1");
+      decompressedStreams.push({ ownerId, dictHeader, contentStr });
+      if (ownerId !== null) {
+        objById.set(ownerId, { dict: dictHeader, stream: contentStr });
+      }
+
+      // Desempacota PDF 1.5+ Object Streams (/Type /ObjStm) para capturar dicionários de Fontes/Páginas
+      if (/\/Type\s*\/ObjStm\b/.test(dictHeader)) {
+        const nMatch = dictHeader.match(/\/N\s+(\d+)/);
+        const firstMatch = dictHeader.match(/\/First\s+(\d+)/);
+        if (nMatch && firstMatch) {
+          const nObjs = parseInt(nMatch[1], 10);
+          const firstOffset = parseInt(firstMatch[1], 10);
+          if (nObjs > 0 && nObjs <= 5000 && firstOffset > 0 && firstOffset < contentStr.length) {
+            const indexPart = contentStr.slice(0, firstOffset).trim().split(/\s+/);
+            const bodyPart = contentStr.slice(firstOffset);
+            const pairs = [];
+            for (let p = 0; p + 1 < indexPart.length && pairs.length < nObjs; p += 2) {
+              const oid = parseInt(indexPart[p], 10);
+              const relOff = parseInt(indexPart[p + 1], 10);
+              if (!isNaN(oid) && !isNaN(relOff)) pairs.push({ oid, relOff });
+            }
+            for (let idx = 0; idx < pairs.length; idx++) {
+              const startOff = pairs[idx].relOff;
+              const endOff = idx + 1 < pairs.length ? pairs[idx + 1].relOff : bodyPart.length;
+              if (startOff >= 0 && startOff < bodyPart.length && endOff > startOff) {
+                const subDict = bodyPart.slice(startOff, endOff);
+                if (!objById.has(pairs[idx].oid)) {
+                  objById.set(pairs[idx].oid, { dict: subDict, stream: "" });
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
     offset = endPos + endStreamToken.length;
   }
 
-  return decompressedStreams;
+  // Registra também objetos sem stream (dicionários de Fontes e Resources)
+  for (let idx = 0; idx < objOffsets.length; idx++) {
+    const cur = objOffsets[idx];
+    if (objById.has(cur.id)) continue;
+    const nextStart = idx + 1 < objOffsets.length ? objOffsets[idx + 1].start : Math.min(rawPdfLatin1.length, cur.start + 4096);
+    const slice = rawPdfLatin1.slice(cur.start, Math.min(nextStart, cur.start + 8192));
+    objById.set(cur.id, { dict: slice, stream: "" });
+  }
+
+  return { decompressedStreams, objById };
 }
 
 /**
- * Extrai todo o texto legível de um Buffer ou string de arquivo PDF.
+ * Constrói o mapa de CMaps /ToUnicode por nome de fonte (/F1, /C2_0, etc.) e CMap global consolidado
+ */
+function buildFontCMapRegistry(decompressedStreams, objById) {
+  const cmapByObjId = new Map();
+  const mergedMap = new Map();
+  let mergedBytesLen = 2;
+
+  for (const s of decompressedStreams) {
+    const parsedCMap = parseToUnicodeCMap(s.contentStr);
+    if (parsedCMap) {
+      if (s.ownerId !== null) {
+        cmapByObjId.set(s.ownerId, parsedCMap);
+      }
+      mergedBytesLen = parsedCMap.codeBytesLen;
+      for (const [k, v] of parsedCMap.map.entries()) {
+        if (!mergedMap.has(k)) mergedMap.set(k, v);
+      }
+    }
+  }
+
+  // Vincula objeto de Fonte (que possui /ToUnicode X 0 R) -> CMap
+  const fontObjToCMap = new Map();
+  for (const [oid, objData] of objById.entries()) {
+    const tuMatch = objData.dict.match(/\/ToUnicode\s+(\d+)\s+\d+\s+R/);
+    if (tuMatch) {
+      const cmapObjId = Number(tuMatch[1]);
+      if (cmapByObjId.has(cmapObjId)) {
+        fontObjToCMap.set(oid, cmapByObjId.get(cmapObjId));
+      }
+    }
+  }
+
+  // Vincula nome de recurso da fonte (/F1 X 0 R) -> CMap
+  const fontCMaps = new Map();
+  for (const [, objData] of objById.entries()) {
+    if (!objData.dict.includes("/Font")) continue;
+    const refRe = /\/([A-Za-z0-9_.+-]+)\s+(\d+)\s+\d+\s+R/g;
+    let rm;
+    while ((rm = refRe.exec(objData.dict)) !== null) {
+      const fontResName = rm[1];
+      const targetOid = Number(rm[2]);
+      if (fontObjToCMap.has(targetOid)) {
+        fontCMaps.set(fontResName, fontObjToCMap.get(targetOid));
+      }
+    }
+  }
+
+  const globalCMap = mergedMap.size > 0 ? { map: mergedMap, codeBytesLen: mergedBytesLen } : null;
+  return { fontCMaps, globalCMap };
+}
+
+/**
+ * Extrai todo o texto legível de TODAS as páginas de um Buffer ou string de arquivo PDF.
  *
  * @param {Buffer|Uint8Array|string} input - Conteúdo binário ou base64 do PDF
- * @returns {string} Texto completo extraído e normalizado
+ * @returns {string} Texto completo extraído e normalizado de todas as páginas
  */
 export function extractTextFromPdfBuffer(input) {
   if (!input) return "";
@@ -457,21 +825,29 @@ export function extractTextFromPdfBuffer(input) {
   if (!buf || buf.length < 10) return "";
 
   const textSections = [];
+  const { decompressedStreams, objById } = extractPdfObjectsAndStreams(buf);
+  const { fontCMaps, globalCMap } = buildFontCMapRegistry(decompressedStreams, objById);
 
-  // 1. Extração via streams descompactados (/FlateDecode e outros)
-  const streams = extractStreamsFromPdf(buf);
-  for (const streamContent of streams) {
-    const parsedText = parsePdfContentStream(streamContent);
+  // 1. Extração completa de todos os streams de todas as páginas (ignora streams que são apenas CMaps/FontFiles)
+  for (const s of decompressedStreams) {
+    if (
+      s.contentStr.includes("begincmap") ||
+      /\/Subtype\s*\/(?:Image|Type1C|CIDFontType0C|OpenType)\b/.test(s.dictHeader) ||
+      /\/Type\s*\/(?:XRef|ObjStm|Metadata)\b/.test(s.dictHeader)
+    ) {
+      continue;
+    }
+    const parsedText = parsePdfContentStream(s.contentStr, fontCMaps, globalCMap);
     if (parsedText && parsedText.trim()) {
       textSections.push(parsedText.trim());
     }
   }
 
-  // 2. Extração de textos fora de streams (ex: metadados /Info, strings em objetos simples)
+  // 2. Fallback para textos fora de streams comprimidos
   const rawText = buf.toString("latin1");
   if (textSections.length === 0) {
     if (rawText.includes("Tj") || rawText.includes("TJ") || rawText.includes("T*")) {
-      const rawParsed = parsePdfContentStream(rawText);
+      const rawParsed = parsePdfContentStream(rawText, fontCMaps, globalCMap);
       if (rawParsed && rawParsed.trim()) {
         textSections.push(rawParsed.trim());
       }
@@ -493,13 +869,10 @@ export function extractTextFromPdfBuffer(input) {
     }
   }
 
-  // Combina e higieniza quebras de linha e espaçamentos repetidos
-  const joined = textSections
+  return textSections
     .join("\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\r\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-
-  return joined;
 }

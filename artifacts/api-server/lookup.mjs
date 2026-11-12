@@ -650,16 +650,16 @@ const KNOWN_CNPJ_DIRECTORY = {
   "35402759000185": {
     razaoSocial: "Bimbo do Brasil Ltda",
     nomeFantasia: "Bimbo do Brasil",
-    logradouro: "Rua Engenheiro Luís Carlos Berrini",
-    numero: "105",
+    logradouro: "Rua Érico Veríssimo",
+    numero: "342",
     complemento: "",
-    bairro: "Cidade Monções",
-    cep: "04571010",
+    bairro: "Jardim Cambará",
+    cep: "05560000",
     cidade: "São Paulo",
     uf: "SP",
     codigoMunicipio: "3550308",
     telefone: "1131361600",
-    email: "atendimento@globalis.com.br"
+    email: "nfebimbobr@grupobimbo.com"
   },
   "34061157000156": {
     razaoSocial: "Trident Energy do Brasil Ltda",
@@ -715,7 +715,7 @@ const KNOWN_CNPJ_DIRECTORY = {
     uf: "SP",
     codigoMunicipio: "3550308",
     telefone: "1123942122",
-    email: "conciliacao@copastur.com.br"
+    email: ""
   },
   "60422177000159": {
     razaoSocial: "Avipam Turismo e Tecnologia Ltda",
@@ -743,7 +743,7 @@ const KNOWN_CNPJ_DIRECTORY = {
     uf: "SC",
     codigoMunicipio: "4208203",
     telefone: "4721038400",
-    email: "faturamento@tripservice.com.br"
+    email: ""
   },
   "23098636000142": {
     razaoSocial: "Paytrack Tecnologia em Viagens e Despesas Corporativas Ltda",
@@ -771,7 +771,7 @@ const KNOWN_CNPJ_DIRECTORY = {
     uf: "SP",
     codigoMunicipio: "3550308",
     telefone: "1131361600",
-    email: "atendimento@globalis.com.br"
+    email: ""
   },
   "31370836000101": {
     razaoSocial: "Turicenter Turismo Ltda - Flytour Serviços de Viagens",
@@ -968,9 +968,16 @@ export function enrichCrmEntityWithCnpjData(entity, cnpjData) {
     entity.ibgeCode = ibge;
     entity.codigoMunicipio = ibge;
   }
-  if (cnpjData.email && !entity.financialEmail && !entity.email) {
-    entity.financialEmail = cnpjData.email;
-    entity.email = cnpjData.email;
+  if (cnpjData.email) {
+    const cleanEm = String(cnpjData.email).trim().toLowerCase();
+    const localPart = cleanEm.split("@")[0] || "";
+    const isBillingMailbox = /^(?:conciliacao|faturamento|nf|nfe|nfse|notafiscal|notas?fiscais|nfebimbo|fiscal|financeiro|contasapagar)\b/i.test(localPart);
+    if (!entity.financialEmail) {
+      entity.financialEmail = cleanEm;
+    }
+    if (!entity.email && !isBillingMailbox) {
+      entity.email = cleanEm;
+    }
   }
   if (cnpjData.telefone && !entity.phone && !entity.telefone) {
     entity.phone = cnpjData.telefone;

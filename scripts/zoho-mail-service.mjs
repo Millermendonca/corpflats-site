@@ -25,7 +25,8 @@ import { extractTextFromPdfBuffer } from "./pdf-extract-service.mjs";
 import {
   detectB2bEmailIntent,
   matchReservationForCancellation,
-  executeAutonomousB2bCancellation
+  executeAutonomousB2bCancellation,
+  resolveB2bManagerWhatsApp
 } from "./b2b-cancellation-service.mjs";
 import {
   lookupCnpj,
@@ -33,6 +34,14 @@ import {
   isGenericPelincaCompanyAddress,
   enrichCrmEntityWithCnpjData
 } from "./lookup.mjs";
+import {
+  isMissingGuestDataForCredential,
+  getReservationRecipients,
+  resolveValidRequesterWhatsApp,
+  dispatchRequesterGuestCredentialRequest,
+  sendCredentialContingencyManagerAlert,
+  sendZapiMessage
+} from "./zapi-service.mjs";
 
 // ── Cache em memória para Ciclo de Vida OAuth2 Zoho ───────────────────────────
 const zohoTokenCache = {
@@ -1119,6 +1128,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       const cleanFromEmail = cleanAddressField(zm.fromAddress || zm.sender || "");
       const cleanRecipient = cleanAddressField(zm.toAddress || "");
       const cleanCc = cleanAddressField(zm.ccAddress || "");
+      const cleanReplyTo = cleanAddressField(zm.replyTo || zm.replyToAddress || "");
       const cleanSubject = decodeZohoEntities(zm.subject || "(Sem assunto)");
       const cleanSnippet = decodeZohoEntities(zm.summary || "");
 
@@ -1134,6 +1144,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         fromEmail: cleanFromEmail,
         recipient: cleanRecipient,
         cc: cleanCc,
+        replyTo: cleanReplyTo,
         subject: cleanSubject,
         snippet: cleanSnippet,
         bodyHtml: existingMsg ? existingMsg.bodyHtml : "",
@@ -1147,12 +1158,16 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         created_at: isoDate,
         source: "zoho_api"
       };
-      const subjResMatch = String(mapped.subject || "").match(/Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*(\d{7,10})/i);
-      const subjResNum = subjResMatch ? subjResMatch[1].trim() : "";
+      const subjResMatch =
+        String(mapped.subject || "").match(/Confirma[cç][aã]o\s+(?:d[ae]\s+)?(?:Reserva\s*)?[\s:\-#]*(\d{7,10})/i) ||
+        String(mapped.subject || "").match(/Reserva(?:\s+B2B)?\s*[\s:\-#]+(\d{7,10})/i) ||
+        String(mapped.subject || "").match(/\b(25\d{6})\b/);
+      const subjResNum = subjResMatch ? String(subjResMatch[1] || "").trim() : "";
       const isB2bConfirmationEmail =
         mapped.direction === "inbound" &&
         (String(mapped.fromEmail || "").toLowerCase().includes("b2breservas") ||
-          Boolean(subjResNum));
+          Boolean(subjResNum) ||
+          /\b(?:b2b\s*reservas|ordem\s+de\s+hospedagem|conf_reserva\.php)\b/i.test(`${mapped.subject || ""} ${mapped.snippet || ""}`));
 
       const hasCompleteB2bReservation =
         subjResNum &&
@@ -1168,8 +1183,10 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
               r.agencyName &&
               r.agencyCnpj &&
               r.agencyAgentEmail &&
-              r.agencyAgentPhone &&
               r.companyName &&
+              r.companyCnpj &&
+              Array.isArray(r.nfDeliveryEmails) &&
+              r.nfDeliveryEmails.length > 0 &&
               (String(r.agencyName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase() ||
                 String(r.agencyTradeName || "").trim().toUpperCase() !== String(r.companyName || "").trim().toUpperCase()) &&
               !String(r.companyName || "").includes("HOTEL CORPFLATS") &&
@@ -1323,6 +1340,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       if (needsB2bParse) {
         try {
           let fetchedHtml = mapped.bodyHtml || "";
+          let contentFetchFailed = false;
           if (!fetchedHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
             try {
               const contentRes = await callZohoMailApi(
@@ -1332,13 +1350,17 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
               if (contentRes.ok && contentRes.data?.content) {
                 fetchedHtml = contentRes.data.content;
                 mapped.bodyHtml = fetchedHtml;
+              } else {
+                contentFetchFailed = true;
               }
             } catch {
-              // Ignora falha pontual de conteúdo na sincronização
+              contentFetchFailed = true;
             }
           }
 
           let attachmentPdfText = "";
+          const attachmentPdfBuffers = [];
+          let attFetchFailed = false;
           if (mapped.hasAttachments && mapped.zohoMessageId && mapped.zohoFolderId) {
             try {
               const attRes = await callZohoMailApi(
@@ -1346,6 +1368,7 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
                 `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/attachmentinfo`
               );
               const rawAtts = extractAttList(attRes);
+              if (!attRes.ok) attFetchFailed = true;
               if (rawAtts.length > 0) {
                 mapped.attachments = rawAtts.map(a => ({
                   id: a.attachmentId || a.id,
@@ -1366,21 +1389,33 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
                         { responseType: "buffer" }
                       );
                       if (fileRes.ok && Buffer.isBuffer(fileRes.data)) {
+                        attachmentPdfBuffers.push(fileRes.data);
                         const pdfText = extractTextFromPdfBuffer(fileRes.data);
                         if (pdfText) attachmentPdfText += `\n${pdfText}`;
+                      } else {
+                        attFetchFailed = true;
                       }
-                    } catch {}
+                    } catch {
+                      attFetchFailed = true;
+                    }
                   }
                 }
               }
-            } catch {}
+            } catch {
+              attFetchFailed = true;
+            }
           }
 
           const combinedRawText = [mapped.snippet || "", attachmentPdfText].filter(Boolean).join("\n");
           const parsedB2b = await fetchAndParseB2bVoucher({
             rawText: combinedRawText,
             htmlText: fetchedHtml || "",
-            subject: mapped.subject || ""
+            subject: mapped.subject || "",
+            fromEmail: mapped.fromEmail || "",
+            cc: mapped.cc || "",
+            replyTo: mapped.replyTo || "",
+            pdfBuffers: attachmentPdfBuffers,
+            db
           });
           if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
             const ingestRes = ingestB2bVoucherIntoDb(db, parsedB2b, {
@@ -1392,7 +1427,14 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
               addedOrUpdated++;
             }
           }
-          mapped.b2bParsed = true;
+          const gotCompleteAgency = Boolean(
+            parsedB2b.agencyName &&
+            parsedB2b.agencyAgentName &&
+            (parsedB2b.agencyAgentEmail || parsedB2b.agencyAgentPhone)
+          );
+          if ((!contentFetchFailed && !attFetchFailed) || gotCompleteAgency) {
+            mapped.b2bParsed = true;
+          }
         } catch (b2bErr) {
           console.warn("[B2B Sync Parse] Aviso ao processar voucher B2B:", b2bErr?.message || b2bErr);
         }
@@ -2926,14 +2968,10 @@ export function buildComposerReservationTemplate(db, { templateKey, reservationI
       settings: db.settings,
       db
     });
-    const toEmail =
-      r.agencyAgentEmail ||
-      agency?.financialEmail ||
-      (Array.isArray(r.nfDeliveryEmails) && r.nfDeliveryEmails[0]) ||
-      r.guestEmail ||
-      "";
+    const toEmail = resolveB2bCredentialTargetEmail(r, db, "");
     return {
       to: toEmail,
+      cc: "",
       subject: rendered.subject,
       bodyHtml: rendered.bodyHtml,
       bodyText: rendered.bodyText,
@@ -3004,14 +3042,468 @@ function parseB2bMoney(raw = "") {
  * Comissão, Centro de Custo e Regra de Nota Fiscal.
  * Aceita objeto `{ rawText, text, htmlText, html, subject }` ou argumentos posicionais `(rawText, htmlText, subject)`.
  */
+function isNonAgencySystemEmailAddress(email = "") {
+  const e = String(email || "").trim().toLowerCase();
+  if (!e || !e.includes("@")) return true;
+  return (
+    e.includes("corpflats.com.br") ||
+    e.includes("promenade.com.br") ||
+    e.includes("b2breservas.com.br") ||
+    e.includes("omnibees.com") ||
+    e.includes("booking.com") ||
+    e.includes("airbnb.com") ||
+    e.includes("expedia.com") ||
+    e.includes("decolar.com") ||
+    e.includes("channex.io") ||
+    e.includes("zoho.com") ||
+    e.startsWith("no-reply@") ||
+    e.startsWith("noreply@") ||
+    e.startsWith("nao-responda@") ||
+    e.startsWith("mailer-daemon@")
+  );
+}
+
+function extractHeaderAgencyEmails(...headerValues) {
+  const out = [];
+  const seen = new Set();
+  for (const val of headerValues) {
+    if (!val) continue;
+    const matches = String(val).match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+    for (const m of matches) {
+      const clean = m.trim().toLowerCase();
+      if (isNonAgencySystemEmailAddress(clean)) continue;
+      if (isPureBillingMailbox(clean)) continue;
+      if (!seen.has(clean)) {
+        seen.add(clean);
+        out.push(clean);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Identifica caixas de e-mail exclusivas de Nota Fiscal, Faturamento ou Conciliação,
+ * que NUNCA devem receber solicitações de dados do hóspede (/credenciamento).
+ */
+export function isPureBillingMailbox(email = "") {
+  const clean = String(email || "").trim().toLowerCase();
+  if (!clean || !clean.includes("@")) return false;
+  if (clean.endsWith("@b2breservas.com.br")) return true;
+  const localPart = clean.split("@")[0] || "";
+  return /^(?:conciliacao|faturamento|faturamentodpr|nf|nfe|nfse|notafiscal|notas?fiscais|nfebimbo[a-z0-9_.-]*|fiscal|financeiro|contasapagar|cobranca|envionf|envionotas|recebimentonf)(?:$|[._\-0-9])/i.test(
+    localPart
+  );
+}
+
+/**
+ * Resolve de forma determinística e isolada o destinatário do e-mail de Credenciamento do Hóspede B2B.
+ * REGRA DE OURO: Envia EXCLUSIVAMENTE ao e-mail do Solicitante ("Reservado por" / Emissor).
+ * NUNCA faz fallback nem cópia (CC) para E-mails de Envio da NFS-e, Faturamento ou Conciliação.
+ */
+export function resolveB2bCredentialTargetEmail(reservation, db = null, explicitToEmail = "") {
+  if (!reservation) return "";
+  const cleanDigits = v => String(v || "").replace(/\D/g, "");
+  const resAgCnpj = cleanDigits(reservation.agencyCnpj);
+  const resAgNameLower = String(reservation.agencyTradeName || reservation.agencyName || "").trim().toLowerCase();
+  const linkedAgency = Array.isArray(db?.agencies)
+    ? db.agencies.find(a => {
+        if (!a) return false;
+        if (reservation.agencyId && String(a.id) === String(reservation.agencyId)) return true;
+        if (resAgCnpj && resAgCnpj.length === 14 && cleanDigits(a.cnpj) === resAgCnpj) return true;
+        if (
+          resAgNameLower &&
+          (String(a.tradeName || "").trim().toLowerCase() === resAgNameLower ||
+            String(a.corporateName || "").trim().toLowerCase() === resAgNameLower)
+        ) {
+          return true;
+        }
+        return false;
+      })
+    : null;
+  const resCompCnpj = cleanDigits(reservation.companyCnpj);
+  const linkedCompany = Array.isArray(db?.companies)
+    ? db.companies.find(c => {
+        if (!c) return false;
+        if (reservation.companyId && String(c.id) === String(reservation.companyId)) return true;
+        if (resCompCnpj && resCompCnpj.length === 14 && cleanDigits(c.cnpj) === resCompCnpj) return true;
+        return false;
+      })
+    : null;
+
+  const norm = v => String(v || "").trim().toLowerCase();
+  const explicitRequesterEmails = new Set(
+    [reservation.agencyAgentEmail, reservation.requesterInfo?.email, reservation.requesterEmail]
+      .map(norm)
+      .filter(e => e && e.includes("@") && !isNonAgencySystemEmailAddress(e) && !isPureBillingMailbox(e))
+  );
+
+  const nfForbiddenSet = new Set(
+    [
+      ...(Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails : []),
+      linkedCompany?.financialEmail,
+      linkedCompany?.emailFinanceiro,
+      linkedCompany?.email
+    ]
+      .map(norm)
+      .filter(Boolean)
+  );
+
+  const agFinancialNorm = norm(linkedAgency?.financialEmail || linkedAgency?.emailFinanceiro || "");
+
+  const isAllowedSolicitanteEmail = (rawCand, { isFallbackCrm = false } = {}) => {
+    const c = norm(rawCand);
+    if (!c || !c.includes("@")) return false;
+    if (isNonAgencySystemEmailAddress(c)) return false;
+    if (isPureBillingMailbox(c)) return false;
+    // Se estiver na lista de NF/empresa e NÃO for o e-mail explícito do solicitante na reserva, bloqueia!
+    if (nfForbiddenSet.has(c) && !explicitRequesterEmails.has(c)) return false;
+    if (isFallbackCrm) {
+      if (nfForbiddenSet.has(c)) return false;
+      // Se o e-mail operacional da agência for idêntico ao e-mail financeiro/documentação e não estiver salvo na reserva, bloqueia se houver e-mail financeiro dedicado distinto nos agentes
+      if (agFinancialNorm && c === agFinancialNorm && /^atendimentonacional@/i.test(c)) return false;
+    }
+    return true;
+  };
+
+  if (explicitToEmail && isAllowedSolicitanteEmail(explicitToEmail)) {
+    return norm(explicitToEmail);
+  }
+
+  for (const primary of [
+    reservation.agencyAgentEmail,
+    reservation.requesterInfo?.email,
+    reservation.requesterEmail
+  ]) {
+    if (isAllowedSolicitanteEmail(primary)) {
+      return norm(primary);
+    }
+  }
+
+  // Fallback único permitido: e-mail operacional da agência no CRM (desde que NÃO seja financeiro/NF/conciliação)
+  if (linkedAgency?.email && isAllowedSolicitanteEmail(linkedAgency.email, { isFallbackCrm: true })) {
+    return norm(linkedAgency.email);
+  }
+
+  return "";
+}
+
+/**
+ * Emite alerta imediato e deduplicado ao WhatsApp do gestor quando uma reserva B2B
+ * entra sem e-mail do solicitante (e sem contato do hóspede) ou sem e-mail de envio da NFS-e,
+ * evitando qualquer chute/invenção de endereço de e-mail.
+ */
+export async function notifyManagerB2bMissingDataAlert(db, reservation, missingFields = []) {
+  if (!db || !reservation || !Array.isArray(missingFields) || missingFields.length === 0) {
+    return { alerted: false };
+  }
+  const key = String(
+    reservation.code || reservation.b2bReservationNumber || reservation.externalReservationNumber || reservation.id || ""
+  )
+    .trim()
+    .toUpperCase();
+  if (!key) return { alerted: false };
+
+  if (!Array.isArray(db.processedB2bMissingDataAlerts)) db.processedB2bMissingDataAlerts = [];
+  if (!Array.isArray(db.b2bMissingDataAlerts)) db.b2bMissingDataAlerts = [];
+
+  const dedupeSig = `${key}:${missingFields.slice().sort().join(",")}`;
+  if (db.processedB2bMissingDataAlerts.includes(dedupeSig)) {
+    return { alerted: false, deduplicated: true };
+  }
+  db.processedB2bMissingDataAlerts.unshift(dedupeSig);
+  if (db.processedB2bMissingDataAlerts.length > 500) {
+    db.processedB2bMissingDataAlerts.length = 500;
+  }
+
+  const summaryMsg =
+    `⚠️ * Revisão Manual B2B Necessária (${reservation.code || `#${reservation.b2bReservationNumber}`})*\n` +
+    `Hóspede: *${reservation.guestName || "Não informado"}*\n` +
+    `Período: ${reservation.checkinDate || "?"} a ${reservation.checkoutDate || "?"} (Flat ${reservation.flatNumber || "?"})\n` +
+    `Agência / Empresa: ${reservation.agencyTradeName || reservation.agencyName || "—"} / ${reservation.companyName || "—"}\n` +
+    `Campos ausentes no voucher: *${missingFields.join(", ")}*\n` +
+    `A reserva foi confirmada no mapa para bloquear o flat, e o disparo automático foi retido com segurança (nenhum e-mail foi inventado).`;
+
+  const alertRecord = {
+    id: `b2b_missing_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    reservationCode: reservation.code || "",
+    b2bReservationNumber: reservation.b2bReservationNumber || "",
+    guestName: reservation.guestName || "",
+    missingFields,
+    message: summaryMsg,
+    createdAt: new Date().toISOString(),
+    whatsappSent: false
+  };
+  db.b2bMissingDataAlerts.unshift(alertRecord);
+  if (db.b2bMissingDataAlerts.length > 200) {
+    db.b2bMissingDataAlerts.length = 200;
+  }
+
+  const zapiReady = Boolean(
+    db?.zapiConfig?.instanceId &&
+    db?.zapiConfig?.token &&
+    process.env.NODE_ENV !== "test"
+  );
+  if (zapiReady) {
+    try {
+      const managerPhone = resolveB2bManagerWhatsApp(db);
+      if (managerPhone) {
+        await sendZapiMessage(db, managerPhone, summaryMsg);
+        alertRecord.whatsappSent = true;
+      }
+    } catch (err) {
+      console.warn("[B2B Missing Data Alert] Falha ao enviar alerta WhatsApp ao gestor:", err?.message || err);
+    }
+  }
+
+  return { alerted: true, alertRecord };
+}
+
+/**
+ * Extrai dados específicos da seção "Reservado por" (Nome, E-mail e Telefone do Solicitante)
+ * em qualquer formato de voucher B2B Reservas (linha única, tabela HTML ou bloco multilinhas).
+ */
+function extractReservadoPorInfo(fullScan = "") {
+  const result = { name: "", email: "", phone: "" };
+  if (!fullScan) return result;
+
+  const stopSectionRe =
+    /^(?:Observa[cç][oõ\ufffd?]?es|Pol[ií\ufffd?]?tica|Garantia|Forma\s+de\s+[Pp]agamento|Dados\s+para|Instru[cç][oõ\ufffd?]?es|Para\s*:|H[oó\ufffd?]?spedes?|Per[ií\ufffd?]?odo|Check-?in|Check-?out|Valor|Tarifa|Di[aá\ufffd?]?ria|Comiss[aã\ufffd?]?o|Powered\s+by|_{4,})/i;
+
+  const blockMatch = fullScan.match(
+    /(?:^|\n)[^\S\r\n]*Reservado\s+por\b[^\S\r\n]*[:\-]?[^\S\r\n]*([^\r\n]*(?:\n[^\r\n]+){0,6})/i
+  );
+  if (!blockMatch) return result;
+
+  const rawLines = blockMatch[1]
+    .split(/\n/)
+    .map(l => l.trim())
+    .filter(Boolean);
+
+  const relevantLines = [];
+  for (let idx = 0; idx < rawLines.length; idx++) {
+    const ln = rawLines[idx];
+    if (idx > 0 && stopSectionRe.test(ln)) break;
+    relevantLines.push(ln);
+  }
+
+  const blockText = relevantLines.join("\n");
+  const emailMatches = blockText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+  const validEmail = emailMatches
+    .map(e => e.trim().toLowerCase())
+    .find(e => !isNonAgencySystemEmailAddress(e) && !isPureBillingMailbox(e));
+  if (validEmail) {
+    result.email = validEmail;
+  }
+
+  const phoneMatch = blockText.match(
+    /(?:Telefone|Tel|Fone|Celular|WhatsApp)?\s*[:\-]?\s*(\(?\d{2}\)?\s*9?\d{4}[-.\s]?\d{4}(?:\s*[/e]\s*\(?\d{2}\)?\s*9?\d{4}[-.\s]?\d{4})?)/i
+  );
+  if (phoneMatch) {
+    result.phone = phoneMatch[1].replace(/[^\d+()-\s/]/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  for (const ln of relevantLines) {
+    const cleaned = cleanB2bFieldValue(
+      ln
+        .replace(/^(?:Nome|Solicitante|Consultor(?:\(a\))?|Agente|Atendente)\s*[:\-]+\s*/i, "")
+        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "")
+        .replace(/(?:E-?mail|Telefone|Tel|Fone|Celular|WhatsApp)\s*[:\-]*.*/i, "")
+        .replace(/\(?\d{2}\)?\s*9?\d{4}[-.\s]?\d{4}.*$/, "")
+        .replace(/^[:\-\s|/]+|[:\-\s|/]+$/g, "")
+    );
+    if (
+      cleaned &&
+      cleaned.length >= 2 &&
+      !cleaned.includes("@") &&
+      !/^(?:E-?mail|Telefone|Tel|Fone|CNPJ|CPF|Nome|Dados|Instru[cç][oõ]es)$/i.test(cleaned)
+    ) {
+      result.name = cleaned;
+      break;
+    }
+  }
+
+  return result;
+}
+
+const KNOWN_CITY_UF_IBGE = {
+  "SAO PAULO": { city: "São Paulo", uf: "SP", ibge: "3550308", cepPrefix: "0" },
+  "CAMPINAS": { city: "Campinas", uf: "SP", ibge: "3509502", cepPrefix: "1" },
+  "BARUERI": { city: "Barueri", uf: "SP", ibge: "3505708", cepPrefix: "0" },
+  "OSASCO": { city: "Osasco", uf: "SP", ibge: "3534401", cepPrefix: "0" },
+  "SANTO ANDRE": { city: "Santo André", uf: "SP", ibge: "3547809", cepPrefix: "0" },
+  "SAO BERNARDO DO CAMPO": { city: "São Bernardo do Campo", uf: "SP", ibge: "3548708", cepPrefix: "0" },
+  "RIO DE JANEIRO": { city: "Rio de Janeiro", uf: "RJ", ibge: "3304557", cepPrefix: "2" },
+  "MACAE": { city: "Macaé", uf: "RJ", ibge: "3302403", cepPrefix: "2" },
+  "CAMPOS DOS GOYTACAZES": { city: "Campos dos Goytacazes", uf: "RJ", ibge: "3301009", cepPrefix: "2" },
+  "SAO JOAO DA BARRA": { city: "São João da Barra", uf: "RJ", ibge: "3305000", cepPrefix: "2" },
+  "NITEROI": { city: "Niterói", uf: "RJ", ibge: "3303302", cepPrefix: "2" },
+  "CURITIBA": { city: "Curitiba", uf: "PR", ibge: "4106902", cepPrefix: "8" },
+  "BELO HORIZONTE": { city: "Belo Horizonte", uf: "MG", ibge: "3106200", cepPrefix: "3" },
+  "PORTO ALEGRE": { city: "Porto Alegre", uf: "RS", ibge: "4314902", cepPrefix: "9" },
+  "SALVADOR": { city: "Salvador", uf: "BA", ibge: "2927408", cepPrefix: "4" },
+  "BRASILIA": { city: "Brasília", uf: "DF", ibge: "5300108", cepPrefix: "7" },
+  "ITAJAI": { city: "Itajaí", uf: "SC", ibge: "4208203", cepPrefix: "8" },
+  "BLUMENAU": { city: "Blumenau", uf: "SC", ibge: "4202404", cepPrefix: "8" },
+  "FLORIANOPOLIS": { city: "Florianópolis", uf: "SC", ibge: "4205407", cepPrefix: "8" },
+  "RECIFE": { city: "Recife", uf: "PE", ibge: "2611606", cepPrefix: "5" },
+  "FORTALEZA": { city: "Fortaleza", uf: "CE", ibge: "2304400", cepPrefix: "6" },
+  "GOIANIA": { city: "Goiânia", uf: "GO", ibge: "5208707", cepPrefix: "7" },
+  "VITORIA": { city: "Vitória", uf: "ES", ibge: "3205309", cepPrefix: "2" }
+};
+
+/**
+ * Extrai endereço fiscal completo (logradouro, número, complemento, bairro, CEP de 7 ou 8 dígitos,
+ * cidade, UF e IBGE) tanto de campos rotulados quanto da linha compacta padrão do B2B Reservas:
+ * Ex: "RUA ERICO VERISSIMO, 342, 0, , Bairro: JARDIM CAMBARA, CEP: 0556000, SAO PAULO"
+ */
+function parseB2bFiscalAddressBlock(sectionText = "") {
+  const out = {
+    address: "",
+    number: "",
+    complement: "",
+    neighborhood: "",
+    cep: "",
+    city: "",
+    state: "",
+    ibgeCode: "",
+    found: false
+  };
+  if (!sectionText) return out;
+
+  const normCityKey = (s = "") =>
+    String(s || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const toTitlePt = (s = "") =>
+    String(s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/(?:^|\s)\S/g, m => m.toUpperCase())
+      .replace(/\b(De|Da|Do|Dos|Das|E)\b/g, m => m.toLowerCase());
+
+  // 1. Formato inline clássico B2B Reservas: "<RUA>, <NUM>, <COMPL>, Bairro: <BAIRRO>, CEP: <CEP>, <CIDADE>"
+  const inlineB2bAddr = sectionText.match(
+    /(?:^|\n)\s*(?:Endere[cç]o\s*[:\-]+\s*)?([A-Za-zÀ-ÿ0-9.'º°\-/\s]{4,90}?)\s*,\s*(?:n[º°.]?\s*)?(\d+[A-Za-z0-9/-]*|S\/N)\s*,\s*([^,\n]*?)\s*(?:,\s*)*Bairro\s*[:\-]*\s*([^,\n]+?)\s*,\s*CEP\s*[:\-]*\s*(\d{4,5}-?\d{3}|\d{7,8})\s*(?:,\s*([A-Za-zÀ-ÿ\s'.-]+?)(?:\s*[/\-]\s*([A-Z]{2}))?)?(?=\s*(?:\n|$))/i
+  );
+
+  if (inlineB2bAddr) {
+    const rawStreet = inlineB2bAddr[1].trim();
+    if (!/pelinca/i.test(rawStreet) && !/^(?:Nome|CNPJ|Raz[aã]o|Enviar|Instru[cç][oõ]es)/i.test(rawStreet)) {
+      out.address = rawStreet === rawStreet.toUpperCase() ? toTitlePt(rawStreet) : rawStreet;
+      out.number = inlineB2bAddr[2].trim();
+      const rawCompl = String(inlineB2bAddr[3] || "").replace(/^[,;\s-]+|[,;\s-]+$/g, "").trim();
+      if (rawCompl && !/^(?:0|00|s\/c|sem\s+complemento|-)$/i.test(rawCompl)) {
+        out.complement = rawCompl;
+      }
+      const rawBairro = inlineB2bAddr[4].trim();
+      out.neighborhood = rawBairro === rawBairro.toUpperCase() ? toTitlePt(rawBairro) : rawBairro;
+      out.cep = inlineB2bAddr[5].replace(/\D/g, "");
+      if (inlineB2bAddr[6]) {
+        const rawCity = inlineB2bAddr[6].trim();
+        out.city = rawCity === rawCity.toUpperCase() ? toTitlePt(rawCity) : rawCity;
+      }
+      if (inlineB2bAddr[7]) {
+        out.state = inlineB2bAddr[7].trim().toUpperCase();
+      }
+      out.found = true;
+    }
+  }
+
+  // 2. Campos rotulados individuais (fallback ou complemento)
+  if (!out.address) {
+    const addrMatch = sectionText.match(
+      /(?:Endere[cç]o(?:\s+da\s+Empresa|\s+do\s+Tomador|\s+para\s+Faturamento)?|Logradouro)\s*[:\-]+\s*([^\n|]+)/i
+    );
+    if (addrMatch) {
+      const rawAddr = cleanB2bFieldValue(addrMatch[1]);
+      if (rawAddr && !/pelinca/i.test(rawAddr)) {
+        const parts = rawAddr.match(/^([^,]+?)(?:,\s*(?:n[º°.]?\s*)?(\d+[A-Za-z0-9/-]*|S\/N))?(?:\s*[-,]\s*(.+))?$/i);
+        out.address = (parts ? parts[1] : rawAddr).trim();
+        if (parts?.[2]) out.number = parts[2].trim();
+        if (parts?.[3] && !out.neighborhood) {
+          const tail = parts[3].trim();
+          if (!/^(?:0|Bairro)/i.test(tail)) out.neighborhood = tail;
+        }
+        out.found = true;
+      }
+    }
+  }
+
+  if (!out.neighborhood) {
+    const bMatch = sectionText.match(/Bairro\s*[:\-]+\s*([^\n|,;]+)/i);
+    if (bMatch) {
+      const bVal = cleanB2bFieldValue(bMatch[1]);
+      out.neighborhood = bVal === bVal.toUpperCase() ? toTitlePt(bVal) : bVal;
+    }
+  }
+
+  if (!out.cep) {
+    const cMatch = sectionText.match(/CEP\s*[:\-]*\s*(\d{5}-?\d{3}|\d{7,8})\b/i);
+    if (cMatch) {
+      out.cep = cMatch[1].replace(/\D/g, "");
+    }
+  }
+
+  if (!out.city) {
+    const csMatch = sectionText.match(
+      /(?:Cidade|Munic[ií]pio)\s*[:\-]+\s*([A-Za-zÀ-ÿ\s'.-]+?)(?:\s*[/\-]\s*([A-Z]{2}))?(?=\s*(?:\n|\||CEP|CNPJ|$))/i
+    );
+    if (csMatch) {
+      const cVal = cleanB2bFieldValue(csMatch[1]);
+      out.city = cVal === cVal.toUpperCase() ? toTitlePt(cVal) : cVal;
+      if (csMatch[2] && !out.state) out.state = csMatch[2].trim().toUpperCase();
+    }
+  }
+
+  if (!out.state) {
+    const ufMatch = sectionText.match(/\b(?:UF|Estado)\s*[:\-]+\s*([A-Z]{2})\b/i);
+    if (ufMatch) out.state = ufMatch[1].trim().toUpperCase();
+  }
+
+  // Enriquecimento de UF, IBGE e normalização de CEP truncado de 7 dígitos (ex: "0556000" em São Paulo -> "05560000")
+  const cityHit = out.city ? KNOWN_CITY_UF_IBGE[normCityKey(out.city)] : null;
+  if (cityHit) {
+    out.city = cityHit.city;
+    if (!out.state) out.state = cityHit.uf;
+    if (!out.ibgeCode) out.ibgeCode = cityHit.ibge;
+  }
+
+  if (out.cep.length === 7) {
+    if (out.state === "SP" || cityHit?.uf === "SP") {
+      out.cep = out.cep.startsWith("0") ? `${out.cep}0` : `0${out.cep}`;
+    } else {
+      out.cep = `${out.cep}0`;
+    }
+  }
+
+  return out;
+}
+
 export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
+  const extraMeta =
+    typeof subjectArg === "object" && subjectArg !== null ? subjectArg : {};
   const opts =
     typeof input === "string"
-      ? { rawText: input, htmlText: htmlArg || "", subject: subjectArg || "" }
+      ? {
+          rawText: input,
+          htmlText: htmlArg || "",
+          subject: typeof subjectArg === "string" ? subjectArg : (extraMeta.subject || ""),
+          ...extraMeta
+        }
       : (input || {});
   const rawText = opts.rawText || opts.text || "";
   const htmlText = opts.htmlText || opts.html || htmlArg || "";
-  const subject = opts.subject || subjectArg || "";
+  const subject = opts.subject || (typeof subjectArg === "string" ? subjectArg : "") || "";
+  const headerAgencyEmails = extractHeaderAgencyEmails(
+    opts.replyTo,
+    opts.cc,
+    opts.fromEmail || opts.fromAddress || opts.from
+  );
   const combinedHtml = String(htmlText || "");
   const structuredHtmlLines = htmlToStructuredLines(combinedHtml);
   const cleanText = [structuredHtmlLines, String(rawText || "").replace(/\r/g, "\n")]
@@ -3264,41 +3756,140 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
 
   // Bloco de cabeçalho superior do PDF da B2B Reservas ("Unidade: ... Para: HOTEL CORPFLATS")
   const b2bPdfHeaderBlockMatch = fullScan.match(
-    /(?:^|\n)\s*Unidade\s*[:\-]+\s*[^\r\n]+[\s\S]{1,450}?(?=(?:\n\s*Para\s*[:\-]|\n\s*DADOS\s+DA\s+HOSPEDAGEM|$))/i
+    /(?:^|\n)\s*Unidade\s*[:\-]+\s*[^\r\n]+[\s\S]{1,800}?(?=(?:\n\s*Para\s*[:\-]|\n\s*DADOS\s+DA\s+HOSPEDAGEM|$))/i
   );
   const b2bPdfHeaderBlock = b2bPdfHeaderBlockMatch ? b2bPdfHeaderBlockMatch[0] : "";
 
-  // Bloco inferior de encaminhamento de documentação e emissão de Nota Fiscal nos PDFs B2B Reservas
+  // Blocos completos de encaminhamento de documentação, instruções de envio e emissão de Nota Fiscal (sem truncamento de página)
   const docForwardMatch = fullScan.match(
-    /Dados\s+para\s+encaminhamento\s+da\s+documenta[cç][aã\ufffd?]?o\s*\n+\s*([^\r\n]+)/i
+    /Dados\s+para\s+encaminhamento\s+da\s+documenta[cç][aã\ufffd?]?o[^\r\n]*\n+\s*([^\r\n]+)/i
   );
   const docForwardLine = docForwardMatch ? cleanB2bFieldValue(docForwardMatch[1]) : "";
+  const docForwardSectionMatch = fullScan.match(
+    /Dados\s+para\s+encaminhamento\s+da\s+documenta[cç][aã\ufffd?]?o[\s\S]*?(?=(?:Dados\s+para\s+emiss[aã\ufffd?]?o\s+d[aeo]\s+nota\s+fiscal|_{5,}|Powered\s+by|$))/i
+  );
+  const docForwardSectionText = docForwardSectionMatch ? docForwardSectionMatch[0] : "";
+
+  const instrucoesEnvioDocMatch = fullScan.match(
+    /Instru[cç][oõ\ufffd?]?es\s+para\s+envio\s+da\s+documenta[cç][aã\ufffd?]?o[\s\S]*?(?=(?:Dados\s+para\s+emiss[aã\ufffd?]?o\s+d[aeo]\s+nota\s+fiscal|_{5,}|Powered\s+by|$))/i
+  );
+  const instrucoesEnvioDocText = instrucoesEnvioDocMatch ? instrucoesEnvioDocMatch[0] : "";
 
   const nfSectionMatch = fullScan.match(
-    /Dados\s+para\s+emiss[aã\ufffd?]?o\s+da\s+Nota\s+Fiscal[\s\S]{1,600}?(?=(?:_{5,}|Powered\s+by|$))/i
+    /(?:Dados\s+para\s+emiss[aã\ufffd?]?o\s+d[aeo]\s+nota\s+fiscal|DADOS\s+PARA\s+NOTA\s+FISCAL)[\s\S]*?(?=(?:_{5,}|Powered\s+by|$))/i
   );
   const nfSectionText = nfSectionMatch ? nfSectionMatch[0] : "";
 
-  // 6. Agência, Unidade POS, Emissor, Empresa e Centro de Custo
-  const agencyMatch =
-    fullScan.match(/(?:^|\n)[^\S\r\n]*(?:Ag[eê\ufffd?]?ncia|Agencia)(?:\s+(?:Solicitante|de\s+Viagens))?\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i) ||
-    fullScan.match(/(?<!Dados\s+da\s+)\b(?:Ag[eê\ufffd?]?ncia|Agencia)(?:\s+(?:Solicitante|de\s+Viagens))?\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i);
+  // Regras numeradas de faturamento na página 2 dos vouchers B2B ("1. Emitir uma nota fiscal para cada UH...")
+  const numberedFiscalRulesMatch = fullScan.match(
+    /1\.\s*Emitir\s+uma\s+nota\s+fiscal\s+para\s+cada\s+UH[\s\S]*?(?=(?:Dados\s+para\s+encaminhamento|Instru[cç][oõ\ufffd?]?es\s+para\s+envio|Dados\s+para\s+emiss[aã\ufffd?]?o|Powered\s+by|$))/i
+  );
+  const numberedFiscalRulesText = numberedFiscalRulesMatch ? numberedFiscalRulesMatch[0].replace(/\s+/g, " ").trim() : "";
+
+  const isFieldLabelOnly = (val = "") =>
+    /^(?:Telefone|Tel|Fone|Celular|WhatsApp|E-?mail|CNPJ|CPF|Unidade|Filial|Ponto\s+de\s+Venda|Empresa|Cliente|Nome|Raz[aã]o\s+Social|H[oó\ufffd?]?spede|Passageiro|Endere[cç]o|Cidade|CEP|Per[ií\ufffd?]?odo|Check-?in|Check-?out|Entrada|Sa[ií\ufffd?]?da|Tarifa|Valor|Total|Dados\s+(?:d[aeo]|para)|Instru[cç][oõ\ufffd?]?es|Enviar\s+notas)/i.test(
+      String(val || "").trim()
+    );
+
+  // Extração dedicada do bloco "Reservado por" (Solicitante real da reserva)
+  const reservadoPorInfo = extractReservadoPorInfo(fullScan);
+
+  // 6. Agência, Unidade POS, Emissor, Empresa e Centro de Custo (suporta rótulo + valor na mesma linha ou na linha seguinte, e múltiplos blocos Agência)
+  const isTechnicalIntegratorAgencyPlaceholder = (val = "") =>
+    /^(?:sistema[_\s-]*integrador|integrador|b2b[_\s-]*reservas|portal[_\s-]*b2b|ota[_\s-]*ws|booking[_\s-]*ws|n\/?a|nao\s+informado|não\s+informado|-+)$/i.test(
+      String(val || "").trim()
+    );
+
+  const extractBestAgencyName = (scanText) => {
+    const candidates = [];
+    const patterns = [
+      {
+        qualified: true,
+        re: /(?<!Dados\s+da\s+)\b(?:Ag[eê\ufffd?]?ncia|Agencia)\s+(?:Solicitante|de\s+Viagens|Emissora)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/gi
+      },
+      {
+        qualified: true,
+        re: /(?:^|\n)[^\S\r\n]*(?:Ag[eê\ufffd?]?ncia|Agencia)\s+(?:Solicitante|de\s+Viagens|Emissora)\s*[:\-]*\s*\n+\s*([^\r\n:]{3,90})/gi
+      },
+      {
+        qualified: false,
+        re: /(?:^|\n)[^\S\r\n]*(?:Ag[eê\ufffd?]?ncia|Agencia)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/gi
+      },
+      {
+        qualified: false,
+        re: /(?<!Dados\s+da\s+)(?<!CNPJ\s+)(?<!CNPJ\s+da\s+)(?<!Telefone\s+)(?<!Telefone\s+da\s+)(?<!E-?mail\s+)(?<!E-?mail\s+da\s+)\b(?:Ag[eê\ufffd?]?ncia|Agencia)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/gi
+      },
+      {
+        qualified: false,
+        re: /(?:^|\n)[^\S\r\n]*(?:Ag[eê\ufffd?]?ncia|Agencia)\s*[:\-]*\s*\n+\s*([^\r\n:]{3,90})/gi
+      }
+    ];
+    for (const { qualified, re } of patterns) {
+      for (const m of scanText.matchAll(re)) {
+        let cleaned = cleanB2bFieldValue(m[1] || "");
+        cleaned = cleaned
+          .replace(/^(?:Ag[eê\ufffd?]?ncia|Agencia)(?:\s+(?:Solicitante|de\s+Viagens|Emissora))?\s*[:\-]+\s*/i, "")
+          .trim();
+        if (!cleaned || isFieldLabelOnly(cleaned) || isTechnicalIntegratorAgencyPlaceholder(cleaned)) {
+          continue;
+        }
+        candidates.push({ value: cleaned, qualified });
+      }
+    }
+    const qualifiedHit = candidates.find(c => c.qualified);
+    return (qualifiedHit || candidates[0])?.value || "";
+  };
+
+  let agencyName = extractBestAgencyName(fullScan);
   const posMatch = fullScan.match(/(?:Unidade(?:\s*[\/\-]?\s*POS)?|Filial|Ponto\s+de\s+Venda)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i);
-  const agentMatch =
-    fullScan.match(/(?:^|\n)[^\S\r\n]*(?:Emissor|Agente(?:\s+Emissor)?|Solicitante)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i) ||
-    fullScan.match(/(?<!Dados\s+da\s+Ag[eê\ufffd?]?ncia\s+)\b(?:Emissor|Agente(?:\s+Emissor)?|Solicitante)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i);
+  const agentLabelPattern =
+    "(?:Emissor(?:\\(a\\))?|Agente(?:\\s+(?:Emissor|Solicitante|de\\s+Viagens|Respons[aá]vel))?|Consultor(?:\\(a\\))?(?:\\s+(?:de\\s+Viagens|Respons[aá]vel|Solicitante|Comercial|Corporativo))?|Atendente(?:\\s+Respons[aá]vel)?|Reservado\\s+por|Emitido\\s+por|Solicitante(?:\\s+da\\s+Reserva|\\s+Respons[aá]vel)?)";
+  const agentSameLineMatch =
+    fullScan.match(new RegExp(`(?:^|\\n)[^\\S\\r\\n]*${agentLabelPattern}\\s*[:\\-]+[^\\S\\r\\n]*([^\\r\\n]+)`, "i")) ||
+    fullScan.match(
+      new RegExp(
+        `(?<!(?:Ag[eê\\ufffd?]?ncia|Agencia|Dados\\s+da\\s+Ag[eê\\ufffd?]?ncia|Dados\\s+do|CNPJ|Empresa|Telefone|Tel|Fone|Celular|WhatsApp|Contato|E-?mail)\\s+)\\b${agentLabelPattern}\\s*[:\\-]+[^\\S\\r\\n]*([^\\r\\n]+)`,
+        "i"
+      )
+    );
+  const agentNextLineMatch =
+    fullScan.match(new RegExp(`(?:^|\\n)[^\\S\\r\\n]*${agentLabelPattern}\\s*[:\\-]*\\s*\\n+\\s*([^\\r\\n:]{2,70})`, "i"));
+  const nfExplicitCompanyMatch = nfSectionText.match(/(?:Raz[aã\ufffd?]?o\s+Social|Nome(?:\s+Empresarial)?|Cliente)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i);
   const companyMatch =
+    nfExplicitCompanyMatch ||
     fullScan.match(/Empresa(?:\s+Cliente)?\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i) ||
-    nfSectionText.match(/(?:Raz[aã\ufffd?]?o\s+Social|Cliente)\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i) ||
+    docForwardSectionText.match(/(?:^|\n)\s*Cliente\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i) ||
     fullScan.match(/(?:^|\n)\s*Cliente\s*[:\-]+[^\S\r\n]*([^\r\n]+)/i);
   const costCenterMatch = fullScan.match(/(?:Centro\s+de\s+Custo|Cliente\s+Id)\s*[:\-]+[^\S\r\n]*([A-Za-z0-9._-]+)/i);
 
-  let agencyName = agencyMatch ? cleanB2bFieldValue(agencyMatch[1]) : "";
-  if (agencyName) {
-    agencyName = agencyName.replace(/^(?:Ag[eê\ufffd?]?ncia|Agencia)(?:\s+(?:Solicitante|de\s+Viagens))?\s*[:\-]+\s*/i, "").trim();
-  }
   const agencyPosUnit = posMatch ? cleanB2bFieldValue(posMatch[1]) : "";
-  const agencyAgentName = agentMatch ? cleanB2bFieldValue(agentMatch[1]) : "";
+  let agencyAgentName = reservadoPorInfo.name || (agentSameLineMatch ? cleanB2bFieldValue(agentSameLineMatch[1]) : "");
+  if (agencyAgentName && agencyAgentName.includes("@")) {
+    agencyAgentName = agencyAgentName.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "").replace(/^[:\-\s|/]+|[:\-\s|/]+$/g, "").trim();
+  }
+  if ((!agencyAgentName || isFieldLabelOnly(agencyAgentName)) && agentNextLineMatch) {
+    const nextLineVal = cleanB2bFieldValue(agentNextLineMatch[1]);
+    if (nextLineVal && !isFieldLabelOnly(nextLineVal) && !nextLineVal.includes("@")) {
+      agencyAgentName = nextLineVal;
+    }
+  }
+  if (isFieldLabelOnly(agencyAgentName)) {
+    agencyAgentName = "";
+  }
+  if (agencyAgentName && agencyName && agencyAgentName.toLowerCase() === agencyName.toLowerCase()) {
+    agencyAgentName = "";
+  }
+  // Se o emissor técnico for ARGO.GLOBALIS mas houver nome real em "Reservado por", prioriza o nome real; caso contrário preserva o emissor
+  const rawTechEmissor = agentSameLineMatch ? cleanB2bFieldValue(agentSameLineMatch[1]) : "";
+  if (
+    !agencyAgentName &&
+    rawTechEmissor &&
+    !isFieldLabelOnly(rawTechEmissor) &&
+    (!agencyName || rawTechEmissor.toLowerCase() !== agencyName.toLowerCase())
+  ) {
+    agencyAgentName = rawTechEmissor;
+  }
+
   let companyName = companyMatch ? cleanB2bFieldValue(companyMatch[1]) : "";
 
   if (!companyName || /^CLIENTES\s*-\s*NET$/i.test(companyName)) {
@@ -3317,12 +3908,23 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
         agencyName = part1.charAt(0).toUpperCase() + part1.slice(1).toLowerCase();
         companyName = rest.join(" - ").trim() || companyName;
       }
-    } else if (knownTmcRegex.test(companyName) || knownTmcRegex.test(agencyAgentName) || knownTmcRegex.test(agencyPosUnit) || knownTmcRegex.test(docForwardLine)) {
+    } else if (
+      knownTmcRegex.test(companyName) ||
+      knownTmcRegex.test(agencyAgentName) ||
+      knownTmcRegex.test(rawTechEmissor) ||
+      knownTmcRegex.test(agencyPosUnit) ||
+      knownTmcRegex.test(docForwardLine) ||
+      knownTmcRegex.test(reservadoPorInfo.email) ||
+      /@globalis\.com\.br/i.test(fullScan)
+    ) {
       const tmcMatch =
         companyName.match(knownTmcRegex) ||
         agencyAgentName.match(knownTmcRegex) ||
+        rawTechEmissor.match(knownTmcRegex) ||
         agencyPosUnit.match(knownTmcRegex) ||
-        docForwardLine.match(knownTmcRegex);
+        docForwardLine.match(knownTmcRegex) ||
+        reservadoPorInfo.email.match(knownTmcRegex) ||
+        fullScan.match(/\b(GLOBALIS)\b/i);
       if (tmcMatch) {
         const rawTmc = tmcMatch[1].trim().toUpperCase();
         if (rawTmc === "GLOBALIS") {
@@ -3362,6 +3964,19 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     companyName = "Carrefour Comércio e Indústria Ltda";
   }
 
+  // Blocos estritos de Agência / Solicitante (NÃO inclui seção de envio de NF/documentação para jamais contaminar agencyAgentEmail!)
+  const strictAgencyBlocksList = [];
+  if (b2bPdfHeaderBlock) strictAgencyBlocksList.push(b2bPdfHeaderBlock);
+  for (const m of fullScan.matchAll(
+    /(?:Dados\s+(?:da\s+)?Ag[eê\ufffd?]?ncia|Dados\s+do\s+Solicitante|(?:^|\n)\s*Ag[eê\ufffd?]?ncia(?:\s+(?:Solicitante|de\s+Viagens|Emissora))?\s*[:\-\n]|Solicitante\s*:)[\s\S]{1,650}?(?=(?:Dados\s+(?:da\s+)?Empresa|Dados\s+para\s+encaminhamento|Instru[cç][oõ\ufffd?]?es\s+para\s+envio|Dados\s+para\s+emiss[aã\ufffd?]?o|Instru[cç][oõ\ufffd?]?es\s+(?:de|para)\s+Faturamento|FORMA\s+DE\s+PAGAMENTO|Tarifa\s*:|Di[aá\ufffd?]?ria\s+M[eé\ufffd?]?dia|$))/gi
+  )) {
+    if (m[0]) strictAgencyBlocksList.push(m[0]);
+  }
+
+  if (!agencyName && docForwardLine && !isFieldLabelOnly(docForwardLine) && !docForwardLine.includes("@")) {
+    agencyName = docForwardLine;
+  }
+
   // Extração determinística de CNPJs (Agência vs Empresa)
   const cnpjPattern = /\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/;
   let agencyCnpj = "";
@@ -3371,21 +3986,23 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   if (directAgencyCnpjMatch) {
     agencyCnpj = formatCnpj(directAgencyCnpjMatch[1]);
   } else {
-    const agencyBlockMatch = fullScan.match(/(?:Dados\s+(?:da\s+)?Ag[eê\ufffd?]?ncia|Ag[eê\ufffd?]?ncia(?:\s+Solicitante)?|Solicitante)[\s\S]{1,400}?(?=(?:Dados\s+(?:da\s+)?Empresa|Empresa(?:\s+Cliente)?|Faturad[ao]|H[oó\ufffd?]?spede|Passageiro|Tarifa|Di[aá\ufffd?]?ria|Total|$))/i);
-    if (agencyBlockMatch) {
-      const blockCnpj = agencyBlockMatch[0].match(cnpjPattern);
-      if (blockCnpj) agencyCnpj = formatCnpj(blockCnpj[0]);
+    for (const blk of strictAgencyBlocksList) {
+      const blockCnpj = blk.match(cnpjPattern);
+      if (blockCnpj) {
+        agencyCnpj = formatCnpj(blockCnpj[0]);
+        break;
+      }
     }
   }
 
   let companyCnpj = "";
   const directCompanyCnpjMatch =
-    fullScan.match(/(?:CNPJ\s+(?:da\s+)?Empresa|CNPJ\s+Cliente|CNPJ\s+Faturamento|CNPJ\s+Tomador|Empresa[^\n]*\bCNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i) ||
-    nfSectionText.match(/(?:Cnpj\s*\/\s*CPF|CNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i);
+    nfSectionText.match(/(?:Cnpj\s*\/\s*CPF|CNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i) ||
+    fullScan.match(/(?:CNPJ\s+(?:da\s+)?Empresa|CNPJ\s+Cliente|CNPJ\s+Faturamento|CNPJ\s+Tomador|Empresa[^\n]*\bCNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i);
   if (directCompanyCnpjMatch) {
     companyCnpj = formatCnpj(directCompanyCnpjMatch[1]);
   } else {
-    const companyBlockMatch = fullScan.match(/(?:Dados\s+(?:da\s+)?Empresa|Empresa(?:\s+Cliente)?|Faturad[ao]\s+Para|Tomador|Instru[cç][oõ\ufffd?]?es\s+(?:de|para)\s+Faturamento)[\s\S]{1,400}?(?=(?:H[oó\ufffd?]?spede|Passageiro|Tarifa|Di[aá\ufffd?]?ria|Total|Valores|Pol[ií\ufffd?]?tica|$))/i);
+    const companyBlockMatch = fullScan.match(/(?:Dados\s+(?:da\s+)?Empresa|Empresa(?:\s+Cliente)?|Faturad[ao]\s+Para|Tomador|Instru[cç][oõ\ufffd?]?es\s+(?:de|para)\s+Faturamento)[\s\S]{1,500}?(?=(?:H[oó\ufffd?]?spede|Passageiro|Tarifa|Di[aá\ufffd?]?ria|Total|Valores|Pol[ií\ufffd?]?tica|$))/i);
     if (companyBlockMatch) {
       const blockCnpj = companyBlockMatch[0].match(cnpjPattern);
       if (blockCnpj && (!agencyCnpj || formatCnpj(blockCnpj[0]) !== agencyCnpj)) {
@@ -3394,8 +4011,19 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     }
   }
 
-  // Fallback se houver CNPJs no texto não capturados pelos blocos
-  const allFoundCnpjs = Array.from(new Set((fullScan.match(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g) || []).map(formatCnpj)));
+  // Se o CNPJ da agência ainda estiver vazio e a seção de encaminhamento trouxer um CNPJ diferente do tomador (ex: agência emissora), aproveita com segurança
+  if (!agencyCnpj && docForwardSectionText) {
+    const docBlkCnpj = docForwardSectionText.match(/(?:Cnpj\s*\/\s*CPF|CNPJ)\s*[:\-]?\s*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i);
+    if (docBlkCnpj) {
+      const formattedDocCnpj = formatCnpj(docBlkCnpj[1]);
+      if (!companyCnpj || formattedDocCnpj !== companyCnpj) {
+        agencyCnpj = formattedDocCnpj;
+      }
+    }
+  }
+
+  // Fallback se houver CNPJs formatados no texto não capturados pelos blocos
+  const allFoundCnpjs = Array.from(new Set((fullScan.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g) || []).map(formatCnpj)));
   if (!agencyCnpj && allFoundCnpjs.length > 0) {
     const unassigned = allFoundCnpjs.find(c => c !== companyCnpj);
     if (unassigned) {
@@ -3417,21 +4045,35 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     }
   }
 
-  // Telefone da Agência / Agente (estritamente ancorado à agência para evitar poluição com telefone do hóspede)
-  let agencyAgentPhone = "";
+  // Telefone da Agência / Solicitante (prioriza "Reservado por" e blocos estritos da agência)
+  let agencyAgentPhone = reservadoPorInfo.phone || "";
   const explicitAgencyPhoneMatch =
-    fullScan.match(/(?:Telefone|Tel|Fone|Contato)\s+(?:da\s+)?Ag[eê\ufffd?]?ncia\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
-    fullScan.match(/(?:Telefone|Tel|Fone|Contato)\s+(?:do\s+Agente|do\s+Emissor|do\s+Solicitante|Agente|Emissor|Solicitante)\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
-    fullScan.match(/Ag[eê\ufffd?]?ncia[^\n]*(?:Tel|Telefone|Fone)\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
-    fullScan.match(/(?:Agente|Emissor)[^\n]*(?:Tel|Telefone|Fone)\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
-    b2bPdfHeaderBlock.match(/(?:Telefone|Tel|Fone)\s*[:\-]+\s*([+()\d\s\-\/\.]{8,35})/i);
-  if (explicitAgencyPhoneMatch) {
+    fullScan.match(/(?:Telefone|Tel|Fone|Celular|WhatsApp|Contato)\s+(?:da\s+)?Ag[eê\ufffd?]?ncia\s*[:\-\n]*\s*([+()\d\s\-\/\.]{8,35})/i) ||
+    fullScan.match(/(?:Telefone|Tel|Fone|Celular|WhatsApp|Contato)\s+(?:do\s+Agente|do\s+Consultor|do\s+Emissor|do\s+Solicitante|Agente|Consultor|Emissor|Solicitante)\s*[:\-\n]*\s*([+()\d\s\-\/\.]{8,35})/i) ||
+    fullScan.match(/Ag[eê\ufffd?]?ncia[^\n]*(?:Tel|Telefone|Fone|Celular|WhatsApp)\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
+    fullScan.match(/(?:Agente|Consultor|Emissor)[^\n]*(?:Tel|Telefone|Fone|Celular|WhatsApp)\s*[:\-]?\s*([+()\d\s\-\/\.]{8,35})/i) ||
+    b2bPdfHeaderBlock.match(/(?:Telefone|Tel|Fone|Celular|WhatsApp)\s*[:\-\n]+\s*([+()\d\s\-\/\.]{8,35})/i);
+  if (!agencyAgentPhone && explicitAgencyPhoneMatch) {
     agencyAgentPhone = formatPhone(explicitAgencyPhoneMatch[1]);
-  } else {
-    const agencyBlockMatch = fullScan.match(/(?:Dados\s+(?:da\s+)?Ag[eê\ufffd?]?ncia|Ag[eê\ufffd?]?ncia(?:\s+Solicitante)?|Solicitante\s*:)[\s\S]{1,500}?(?=(?:Dados\s+(?:da\s+)?Empresa|Empresa(?:\s+Cliente)?|Faturad[ao]|H[oó\ufffd?]?spede|Passageiro|Tarifa|Di[aá\ufffd?]?ria|Total|$))/i);
-    if (agencyBlockMatch) {
-      const blockPhone = agencyBlockMatch[0].match(/(?:Telefone|Tel|Fone|Contato)?\s*[:\-]?\s*(\(?\d{2}\)?\s*9?\d{4}[-.\s]?\d{4}(?:\s*[/e]\s*\(?\d{2}\)?\s*9?\d{4}[-.\s]?\d{4})?)/i);
-      if (blockPhone) agencyAgentPhone = formatPhone(blockPhone[1]);
+  }
+  if (!agencyAgentPhone) {
+    for (const blk of strictAgencyBlocksList) {
+      const labeledBlkPhone = blk.match(/(?:Telefone|Tel|Fone|Celular|WhatsApp|Contato)\s*[:\-\n]+\s*([+()\d\s\-\/\.]{8,35})/i);
+      if (labeledBlkPhone) {
+        const cand = formatPhone(labeledBlkPhone[1]);
+        if (cand && cand.replace(/\D/g, "").length >= 10) {
+          agencyAgentPhone = cand;
+          break;
+        }
+      }
+      const blockPhone = blk.match(/(?:Telefone|Tel|Fone|Celular|WhatsApp|Contato)?\s*[:\-]?\s*(\(?\d{2}\)?\s*9?\d{4}[-.\s]?\d{4}(?:\s*[/e]\s*\(?\d{2}\)?\s*9?\d{4}[-.\s]?\d{4})?)/i);
+      if (blockPhone) {
+        const cand = formatPhone(blockPhone[1]);
+        if (cand && cand.replace(/\D/g, "").length >= 10) {
+          agencyAgentPhone = cand;
+          break;
+        }
+      }
     }
   }
 
@@ -3464,51 +4106,50 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   const b2bVcnToken = vcnTokenMatch ? vcnTokenMatch[1].trim().toUpperCase() : "";
   const b2bPaymentType = /FATURAD[AO]/i.test(fullScan) && !b2bCardMasked && !b2bVcnToken ? "FATURADO" : "VIRTUAL_CARD";
 
-  // 8. Regra de Nota Fiscal e E-mails
-  const allEmails = Array.from(
-    new Set(
-      (fullScan.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [])
-        .map(e => e.trim().toLowerCase())
-        .filter(
-          e =>
-            !e.includes("corpflats.com.br") &&
-            !e.includes("promenade.com.br") &&
-            !e.includes("b2breservas.com.br")
-        )
-    )
-  );
-
+  // 8. Segregação Estrita de E-mails: Solicitante ("Reservado por") vs Envio de NFS-e (2 Camadas)
   let agencyAgentEmail = "";
-  const explicitAgencyEmailMatch =
-    fullScan.match(/(?:E-?mail\s+(?:da\s+)?Ag[eê\ufffd?]?ncia|E-?mail\s+(?:do\s+)?Agente|E-?mail\s+(?:do\s+)?Emissor|E-?mail\s+(?:do\s+)?Solicitante)\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) ||
-    fullScan.match(/Ag[eê\ufffd?]?ncia[^\n]*\bE-?mail\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) ||
-    fullScan.match(/(?:Agente|Emissor)[^\n]*\bE-?mail\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) ||
-    b2bPdfHeaderBlock.match(/\bE-?mail\s*[:\-]+\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
-  if (explicitAgencyEmailMatch) {
-    agencyAgentEmail = explicitAgencyEmailMatch[1].trim().toLowerCase();
-  } else {
-    const agencyBlockMatch = fullScan.match(/(?:Dados\s+(?:da\s+)?Ag[eê\ufffd?]?ncia|Ag[eê\ufffd?]?ncia(?:\s+Solicitante)?|Solicitante\s*:)[\s\S]{1,500}?(?=(?:Dados\s+(?:da\s+)?Empresa|Empresa(?:\s+Cliente)?|Faturad[ao]|H[oó\ufffd?]?spede|Passageiro|Tarifa|Di[aá\ufffd?]?ria|Total|$))/i);
-    if (agencyBlockMatch) {
-      const blockEmail = agencyBlockMatch[0].match(/(?:E-?mail)?\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
-      if (blockEmail) agencyAgentEmail = blockEmail[1].trim().toLowerCase();
+  if (reservadoPorInfo.email && !isNonAgencySystemEmailAddress(reservadoPorInfo.email)) {
+    agencyAgentEmail = reservadoPorInfo.email;
+  }
+
+  if (!agencyAgentEmail) {
+    const explicitAgencyEmailMatch =
+      fullScan.match(/(?:E-?mail\s+(?:do\s+)?(?:Solicitante|Agente|Consultor|Emissor|Atendente)|E-?mail\s+(?:da\s+)?Ag[eê\ufffd?]?ncia)\s*[:\-\n]*\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) ||
+      fullScan.match(/(?:Solicitante|Agente|Consultor|Emissor)[^\n]*\bE-?mail\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) ||
+      fullScan.match(/Ag[eê\ufffd?]?ncia[^\n]*\bE-?mail\s*[:\-]?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i) ||
+      b2bPdfHeaderBlock.match(/\bE-?mail\s*[:\-\n]+\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
+    if (explicitAgencyEmailMatch && !isNonAgencySystemEmailAddress(explicitAgencyEmailMatch[1])) {
+      agencyAgentEmail = explicitAgencyEmailMatch[1].trim().toLowerCase();
     }
   }
 
-  // Enriquecimento determinístico para BOOKING_WS sem PDF anexo (ex: Globalis/Bimbo #25150895, Paytrack/União Química #25111834, Copastur/Atacadão #25252964)
-  if (agencyName === "Globalis Viagens" && /^ARGO\.GLOBALIS$/i.test(agencyAgentName)) {
+  if (!agencyAgentEmail) {
+    for (const blk of strictAgencyBlocksList) {
+      const blkEmails = blk.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+      const validBlkEmail = blkEmails.find(em => !isNonAgencySystemEmailAddress(em));
+      if (validBlkEmail) {
+        agencyAgentEmail = validBlkEmail.trim().toLowerCase();
+        break;
+      }
+    }
+  }
+
+  if (!agencyAgentEmail && headerAgencyEmails.length > 0) {
+    agencyAgentEmail = headerAgencyEmails[0];
+  }
+
+  // Identificação determinística de CNPJs corporativos conhecidos quando ausentes em snippets curtos (ZERO invenção de e-mails!)
+  if (agencyName === "Globalis Viagens") {
     if (!agencyCnpj) agencyCnpj = "19.933.930/0001-75";
     if (!agencyAgentPhone) agencyAgentPhone = "(11) 3136-1600";
-    if (!agencyAgentEmail) agencyAgentEmail = "atendimento@globalis.com.br";
     if (/Bimbo/i.test(companyName) && !companyCnpj) companyCnpj = "35.402.759/0001-85";
-  } else if (agencyName === "Paytrack" && /PAYTRACK/i.test(agencyAgentName)) {
+  } else if (agencyName === "Paytrack" && /PAYTRACK/i.test(agencyAgentName || rawTechEmissor)) {
     if (!agencyCnpj) agencyCnpj = "23.098.636/0001-42";
     if (!agencyAgentPhone) agencyAgentPhone = "(47) 3037-6800";
-    if (!agencyAgentEmail) agencyAgentEmail = "atendimento@paytrack.com.br";
     if (/Uni[aã]o\s+Qu[ií]mica/i.test(companyName) && !companyCnpj) companyCnpj = "60.665.981/0001-18";
   } else if (agencyName === "Flytour Riocentro" && /^TRIDENT\s*-\s*FLYTOUR/i.test(agencyPosUnit)) {
     if (!agencyCnpj) agencyCnpj = "31.370.836/0001-01";
     if (!agencyAgentPhone) agencyAgentPhone = "(21) 3400-7810";
-    if (!agencyAgentEmail) agencyAgentEmail = "roque.miguez@flytour.com.br";
     if (/Trident/i.test(companyName) && !companyCnpj) companyCnpj = "34.061.157/0001-56";
   } else if (agencyName === "Flytour Curitiba (DPR Turismo)" && !companyCnpj && agencyCnpj) {
     companyCnpj = agencyCnpj;
@@ -3522,40 +4163,23 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     companyName = "ATACADAO DISTR COM E IND MATRIZ";
   }
 
-  // Extração de endereço do tomador / empresa a partir da seção fiscal do voucher ou diretório CNPJ
-  const nfAddressMatch = (nfSectionText || fullScan).match(/(?:Endere[cç]o(?:\s+da\s+Empresa|\s+do\s+Tomador|\s+para\s+Faturamento)?|Logradouro)\s*[:\-]+\s*([^\n|]+)/i);
-  const nfBairroMatch = (nfSectionText || fullScan).match(/Bairro\s*[:\-]+\s*([^\n|,;]+)/i);
-  const nfCepMatch = (nfSectionText || fullScan).match(/CEP\s*[:\-]*\s*(\d{5}-?\d{3})/i);
-  const nfCityStateMatch = (nfSectionText || fullScan).match(/(?:Cidade|Munic[ií]pio)\s*[:\-]+\s*([A-Za-zÀ-ÿ\s'.-]+?)(?:\s*[\/\-]\s*([A-Z]{2}))?(?=\s*(?:\n|\||CEP|CNPJ|$))/i);
-  const nfUfMatch = (nfSectionText || fullScan).match(/\b(?:UF|Estado)\s*[:\-]+\s*([A-Z]{2})\b/i);
+  // Soberania absoluta do endereço fiscal impresso no voucher ("Dados para emissão de/da nota fiscal")
+  const voucherFiscalAddr = parseB2bFiscalAddressBlock(nfSectionText || docForwardSectionText || "");
+  const fallbackFullScanAddr = !voucherFiscalAddr.found ? parseB2bFiscalAddressBlock(fullScan) : { found: false };
+  const activeVoucherAddr = voucherFiscalAddr.found ? voucherFiscalAddr : fallbackFullScanAddr;
+  const _explicitCompanyAddress = Boolean(activeVoucherAddr.found && activeVoucherAddr.address);
 
   const knownCompanyDir = resolveKnownCnpjDirectory(companyCnpj);
   const knownAgencyDir = resolveKnownCnpjDirectory(agencyCnpj);
 
-  let companyAddress = knownCompanyDir?.logradouro || "";
-  let companyNumber = knownCompanyDir?.numero || "";
-  let companyComplement = knownCompanyDir?.complemento || "";
-  let companyNeighborhood = knownCompanyDir?.bairro || "";
-  let companyCity = knownCompanyDir?.cidade || "";
-  let companyState = knownCompanyDir?.uf || "";
-  let companyCep = knownCompanyDir?.cep || "";
-  let companyIbgeCode = knownCompanyDir?.codigoMunicipio || "";
-
-  if (!companyAddress && nfAddressMatch) {
-    const rawAddr = cleanB2bFieldValue(nfAddressMatch[1]);
-    if (rawAddr && !/pelinca|av\.?\s*Rio\s+Branco/i.test(rawAddr)) {
-      const addrParts = rawAddr.match(/^([^,]+?)(?:,\s*(?:n[º°.]?\s*)?(\d+[A-Za-z0-9\/-]*|S\/N))?(?:\s*[-,]\s*(.+))?$/i);
-      companyAddress = (addrParts ? addrParts[1] : rawAddr).trim();
-      if (addrParts?.[2]) companyNumber = addrParts[2].trim();
-      if (addrParts?.[3] && !nfBairroMatch) companyNeighborhood = addrParts[3].trim();
-    }
-  }
-  if (!companyNeighborhood && nfBairroMatch) companyNeighborhood = cleanB2bFieldValue(nfBairroMatch[1]);
-  if (!companyCep && nfCepMatch) companyCep = nfCepMatch[1].replace(/\D/g, "");
-  if (!companyCity && nfCityStateMatch) companyCity = cleanB2bFieldValue(nfCityStateMatch[1]);
-  if (!companyState && (nfCityStateMatch?.[2] || nfUfMatch?.[1])) {
-    companyState = String(nfCityStateMatch?.[2] || nfUfMatch?.[1] || "").trim().toUpperCase();
-  }
+  const companyAddress = activeVoucherAddr.address || knownCompanyDir?.logradouro || "";
+  const companyNumber = activeVoucherAddr.number || (activeVoucherAddr.address ? "S/N" : (knownCompanyDir?.numero || ""));
+  const companyComplement = activeVoucherAddr.address ? (activeVoucherAddr.complement || "") : (knownCompanyDir?.complemento || "");
+  const companyNeighborhood = activeVoucherAddr.neighborhood || knownCompanyDir?.bairro || "";
+  const companyCity = activeVoucherAddr.city || knownCompanyDir?.cidade || "";
+  const companyState = activeVoucherAddr.state || knownCompanyDir?.uf || "";
+  const companyCep = activeVoucherAddr.cep || knownCompanyDir?.cep || "";
+  const companyIbgeCode = activeVoucherAddr.ibgeCode || knownCompanyDir?.codigoMunicipio || "";
 
   const agencyAddress = knownAgencyDir?.logradouro || "";
   const agencyNumber = knownAgencyDir?.numero || "";
@@ -3580,7 +4204,7 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   }
   const b2bNetAmount = +(totalAmount - b2bCommissionAmount).toFixed(2);
 
-  // Instruções Integrais de Faturamento / NFS-e
+  // Instruções Integrais de Faturamento / NFS-e (incluindo regras numeradas + instruções de envio da documentação)
   let invoicingInstructions = "";
   const invoiceInstructionsMatch =
     fullScan.match(/(?:Instru[cç][oõ\ufffd?]?es\s+(?:de|para)\s+Faturamento|Instru[cç][oõ\ufffd?]?es\s+(?:de|para)\s+Emiss[aã\ufffd?]?o\s+de\s+(?:Nota\s+Fiscal|NF|NFS-e)|Regras\s+de\s+Faturamento|Observa[cç][oõ\ufffd?]?es\s+de\s+Faturamento|Dados\s+para\s+Faturamento|Informa[cç][oõ\ufffd?]?es\s+de\s+Faturamento|Faturamento\s*\/\s*Nota\s+Fiscal)\s*[:\-]+\s*([^]*?)(?=(?:\n\s*\n\s*[A-ZÁÉÍÓÚ][a-záéíóú\s]+:|\n\s*(?:Pol[ií\ufffd?]?tica|Cancelamento|Observa[cç][oõ\ufffd?]?es\s+Gerais|Termos|Contrato|Check-?in)|$))/i) ||
@@ -3591,14 +4215,72 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
   } else {
     const obsMatch = fullScan.match(/\bObserva[cç][aã\ufffd?]?o\s*[:\-]+\s*([\s\S]{5,500}?)(?=(?:\n\s*(?:Pens[aã\ufffd?]?o|FORMA\s+DE\s+PAGAMENTO|Garantia|Valor\s+m[eé\ufffd?]?dio|_{5,})|$))/i);
     const obsText = obsMatch ? cleanB2bFieldValue(obsMatch[1].replace(/\s+/g, " ")) : "";
+    const envioDocClean = instrucoesEnvioDocText
+      .replace(/^Instru[cç][oõ\ufffd?]?es\s+para\s+envio\s+da\s+documenta[cç][aã\ufffd?]?o\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
     const nfClean = nfSectionText
-      .replace(/^Dados\s+para\s+emiss[aã\ufffd?]?o\s+da\s+Nota\s+Fiscal\s*/i, "")
+      .replace(/^(?:Dados\s+para\s+emiss[aã\ufffd?]?o\s+d[aeo]\s+nota\s+fiscal|DADOS\s+PARA\s+NOTA\s+FISCAL)\s*:?\s*/i, "")
       .replace(/\s+/g, " ")
       .trim();
     const parts = [];
     if (obsText && !/^GERACAO\s+DE\s+RESERVA$/i.test(obsText)) parts.push(obsText);
+    if (numberedFiscalRulesText) parts.push(numberedFiscalRulesText);
+    if (envioDocClean) parts.push(envioDocClean);
     if (nfClean) parts.push(nfClean);
     if (parts.length > 0) invoicingInstructions = parts.join(" | ");
+  }
+
+  // Extração em 2 Camadas para nfDeliveryEmails (ZERO despejo de allEmails!)
+  const extractValidDocEmails = (txt = "") =>
+    Array.from(
+      new Set(
+        (String(txt || "").match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [])
+          .map(e => e.trim().toLowerCase())
+          .filter(e => !isNonAgencySystemEmailAddress(e))
+      )
+    );
+
+  // Camada 1 (Soberana): Instrução explícita "Enviar notas fiscais para ...", "Encaminhar NF para ...", "NF emitida ... envio para ..."
+  const tier1NfEmailsSet = new Set();
+  const tier1Patterns = [
+    /(?:Enviar|Encaminhar|Remeter|Mandar)\s+(?:as?\s+|os?\s+)?(?:notas?\s+fiscais?(?:\s+eletr[oô]nicas?)?|nfs?-?e|nf(?:\s+e\s+documenta[cç][aã]o|\s+com\s+[^\r\n]{1,35})?|faturamento)\s+(?:exclusivamente\s+|somente\s+|apenas\s+)?(?:para(?:\s+o\s+e-?mail)?|ao\s+e-?mail|no\s+e-?mail)\s*[:\-]?\s*([^\r\n]+)/gi,
+    /(?:E-?mails?\s+(?:para\s+|de\s+)?(?:envio\s+d[ae]s?\s+)?(?:notas?\s+fiscais?|nfs?-?e|faturamento))\s*[:\-]+\s*([^\r\n]+)/gi,
+    /(?:NF\s+emitida\s+para\s+[^\r\n]*?\benvio\s+para)\s+([^\r\n]+)/gi,
+    /(?:Enviar\s+PDF\s+e\s+XML\s+para)\s*[:\-]?\s*([^\r\n]+)/gi
+  ];
+  for (const pat of tier1Patterns) {
+    for (const m of fullScan.matchAll(pat)) {
+      for (const em of extractValidDocEmails(m[1])) {
+        tier1NfEmailsSet.add(em);
+      }
+    }
+  }
+
+  const _explicitTier1NfEmails = tier1NfEmailsSet.size > 0;
+  let nfDeliveryEmails = Array.from(tier1NfEmailsSet);
+
+  // Camada 2 (Fallback estrito aos blocos fiscais/documentação somente quando não há instrução explícita na Camada 1)
+  if (nfDeliveryEmails.length === 0) {
+    const fiscalScopes = [
+      instrucoesEnvioDocText,
+      docForwardSectionText,
+      nfSectionText,
+      invoiceInstructionsMatch ? (invoiceInstructionsMatch[1] || invoiceInstructionsMatch[0]) : ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const scopeEmails = extractValidDocEmails(fiscalScopes);
+    const withoutSolicitante =
+      reservadoPorInfo.email && scopeEmails.length > 1
+        ? scopeEmails.filter(e => e !== reservadoPorInfo.email)
+        : scopeEmails;
+    nfDeliveryEmails = withoutSolicitante;
+  }
+
+  // Se porventura nenhum bloco de agência preencheu agencyAgentEmail e o único e-mail na docForwardSection era um agente humano (não caixa pura de NF), não contamina quando for caixa pura de NF
+  if (agencyAgentEmail && _explicitTier1NfEmails && tier1NfEmailsSet.has(agencyAgentEmail) && isPureBillingMailbox(agencyAgentEmail)) {
+    agencyAgentEmail = "";
   }
 
   const nfHideFromGuest =
@@ -3622,6 +4304,7 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     _explicitInvoiceRecipient = true;
   } else if (
     nfHideFromGuest ||
+    Boolean(nfSectionText && companyCnpj) ||
     /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF|NFS-E)?\s+(?:PARA|CONTRA|EM\s+NOME\s+DO\s+CNPJ)\s*[:\-]?\s*(?:A\s+)?(?:EMPRESA|ABAIXO)?/i.test(fullScan) ||
     /EMITIR\s+(?:A\s+)?(?:NOTA(?:\s+FISCAL)?|NF)\s+PARA\s*:/i.test(fullScan) ||
     /Tomador(?:\s+da\s+Nota)?\s*[:\-]+\s*(?:Emitir\s+nota\s+para\s+a\s+)?Empresa/i.test(fullScan) ||
@@ -3682,40 +4365,343 @@ export function parseB2bVoucherText(input = {}, htmlArg = "", subjectArg = "") {
     b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
     invoiceRecipientType,
     invoicingInstructions,
-    nfDeliveryEmails: allEmails,
+    nfDeliveryEmails,
     nfHideFromGuest,
     _explicitCheckout,
     _explicitRatePolicy,
     _explicitInvoiceRecipient,
-    _explicitNfHide
+    _explicitNfHide,
+    _explicitCompanyAddress,
+    _explicitTier1NfEmails
   };
 }
 
+const B2B_VOUCHER_EXTRACTION_SCHEMA = {
+  type: "object",
+  properties: {
+    b2bReservationNumber: { type: "string" },
+    b2bLocatorRloc: { type: "string" },
+    b2bOriginType: { type: "string", enum: ["BOOKING_WS", "OTA_WS"] },
+    guestName: { type: "string" },
+    checkinDate: { type: "string", description: "YYYY-MM-DD" },
+    checkoutDate: { type: "string", description: "YYYY-MM-DD" },
+    nights: { type: "integer" },
+    dailyRate: { type: "number" },
+    totalAmount: { type: "number" },
+    hasBreakfast: { type: "boolean" },
+    b2bRatePolicy: { type: "string", enum: ["NET", "COMISSIONADA"] },
+    b2bCommissionPct: { type: "number" },
+    b2bCommissionAmount: { type: "number" },
+    agencyName: { type: "string" },
+    agencyCnpj: { type: "string" },
+    agencyPosUnit: { type: "string" },
+    agencyAgentName: { type: "string", description: "Nome em 'Reservado por' ou Emissor" },
+    agencyAgentEmail: { type: "string", description: "E-mail EXCLUSIVO do Solicitante / 'Reservado por'. NUNCA colocar e-mail de envio de nota fiscal aqui." },
+    agencyAgentPhone: { type: "string" },
+    companyName: { type: "string", description: "Nome/Razão Social em 'Dados para emissão de nota fiscal' ou Empresa Cliente" },
+    companyCnpj: { type: "string", description: "CNPJ em 'Dados para emissão de nota fiscal' ou CNPJ da Empresa" },
+    companyAddress: { type: "string" },
+    companyNumber: { type: "string" },
+    companyComplement: { type: "string" },
+    companyNeighborhood: { type: "string" },
+    companyCep: { type: "string" },
+    companyCity: { type: "string" },
+    companyState: { type: "string" },
+    costCenter: { type: "string" },
+    b2bPaymentType: { type: "string", enum: ["VIRTUAL_CARD", "FATURADO"] },
+    b2bCardBrand: { type: "string" },
+    b2bCardMasked: { type: "string" },
+    b2bVcnToken: { type: "string" },
+    b2bAuthorizedExpenses: { type: "string" },
+    invoiceRecipientType: { type: "string", enum: ["company", "agency", "guest"] },
+    invoicingInstructions: { type: "string" },
+    nfDeliveryEmails: {
+      type: "array",
+      items: { type: "string" },
+      description: "E-mails para envio da Nota Fiscal. Se houver instrução explícita como 'Enviar notas fiscais para X', retorne EXCLUSIVAMENTE [X], ignorando e-mails genéricos abaixo do endereço ou o e-mail de 'Reservado por'."
+    },
+    nfHideFromGuest: { type: "boolean" }
+  },
+  required: [
+    "b2bReservationNumber",
+    "guestName",
+    "checkinDate",
+    "checkoutDate",
+    "agencyName",
+    "agencyAgentEmail",
+    "companyName",
+    "companyCnpj",
+    "nfDeliveryEmails"
+  ]
+};
+
 /**
- * Faz o download do voucher (HTML ou PDF) a partir do link web e consolida o enriquecimento
- * cadastral da agência, empresa, comissão e regras de NFS-e.
+ * Motor Multimodal Avançado Gemini (gemini-3.8-flash via Interactions API) para leitura integral
+ * de todas as páginas de PDFs, imagens/screenshots e HTML de vouchers B2B Reservas com JSON Schema estrito.
+ */
+export async function extractB2bVoucherWithGeminiAI({
+  rawText = "",
+  htmlText = "",
+  subject = "",
+  pdfBuffers = [],
+  images = [],
+  apiKey = ""
+} = {}) {
+  if (!apiKey) return null;
+
+  const inputParts = [];
+
+  if (Array.isArray(pdfBuffers)) {
+    for (const buf of pdfBuffers) {
+      if (Buffer.isBuffer(buf) && buf.length > 0 && buf.length <= 15 * 1024 * 1024) {
+        inputParts.push({
+          type: "document",
+          mime_type: "application/pdf",
+          data: buf.toString("base64")
+        });
+      }
+    }
+  }
+
+  if (Array.isArray(images)) {
+    for (const img of images) {
+      if (!img?.data) continue;
+      const cleanBase64 = String(img.data).replace(/^data:[^;]+;base64,/, "").trim();
+      if (cleanBase64) {
+        inputParts.push({
+          type: "image",
+          mime_type: img.mimeType || "image/jpeg",
+          data: cleanBase64
+        });
+      }
+    }
+  }
+
+  const textContext = [
+    subject ? `ASSUNTO: ${subject}` : "",
+    rawText ? `TEXTO EXTRAÍDO:\n${rawText}` : "",
+    htmlText ? `HTML EXTRAÍDO:\n${htmlToStructuredLines(htmlText)}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  inputParts.push({
+    type: "text",
+    text:
+      `Leia 100% de todas as páginas e seções deste voucher/documento de hospedagem corporativa B2B e extraia todos os campos com precisão absoluta.\n` +
+      `REGRAS CRÍTICAS ANTI-ERRO:\n` +
+      `1. agencyAgentEmail: Preencha SOMENTE com o e-mail do solicitante em "Reservado por" (ou E-mail do Agente/Emissor). NUNCA coloque e-mail de envio de nota fiscal ou conciliação aqui. Se não existir no documento, retorne "".\n` +
+      `2. nfDeliveryEmails: Leia a seção "Instruções para envio da documentação" / "Dados para encaminhamento da documentação". Quando houver instrução explícita (ex: "Enviar notas fiscais para nfebimbobr@grupobimbo.com"), retorne EXCLUSIVAMENTE o(s) e-mail(s) dessa instrução, ignorando e-mails secundários de agência impressos abaixo do endereço e ignorando o e-mail de "Reservado por". Se não houver e-mail de NF no documento, retorne [].\n` +
+      `3. Dados para emissão de nota fiscal: Os dados impressos no voucher (Nome/Razão Social, CNPJ e Endereço completo com Rua, Número, Bairro, CEP e Cidade) são SOBERANOS. Ignore complementos fictícios como ", 0".\n` +
+      `4. NUNCA invente e-mails, CNPJs ou valores.\n\n` +
+      (textContext || "Analise o documento/imagem anexado.")
+  });
+
+  try {
+    const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+        "Api-Revision": "2026-05-20"
+      },
+      body: JSON.stringify({
+        model: "gemini-3.8-flash",
+        store: false,
+        input: inputParts,
+        response_format: {
+          type: "text",
+          mime_type: "application/json",
+          schema: B2B_VOUCHER_EXTRACTION_SCHEMA
+        }
+      }),
+      signal: AbortSignal.timeout(25000)
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const outputs = Array.isArray(data?.outputs) ? data.outputs : [];
+    const textItem = [...outputs].reverse().find(o => o?.type === "text" && o?.text);
+    if (!textItem?.text) return null;
+    return JSON.parse(textItem.text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Consolida e valida cruzadamente o resultado determinístico com o resultado multimodal da IA,
+ * aplicando todas as travas de segurança (soberania do voucher, isolamento de e-mails e zero invenção).
+ */
+function mergeAiAndDeterministicB2bVoucher(det, ai) {
+  if (!ai || typeof ai !== "object") return det;
+  const out = { ...det };
+
+  const formatCnpjLocal = (str = "") => {
+    const d = String(str || "").replace(/\D/g, "");
+    return d.length === 14
+      ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12, 14)}`
+      : "";
+  };
+
+  const pickStr = (detVal, aiVal) => {
+    const d = String(detVal || "").trim();
+    const a = String(aiVal || "").trim();
+    return d || a;
+  };
+
+  out.b2bReservationNumber = pickStr(det.b2bReservationNumber, ai.b2bReservationNumber);
+  out.b2bLocatorRloc = pickStr(det.b2bLocatorRloc, ai.b2bLocatorRloc || out.b2bReservationNumber);
+  out.guestName = pickStr(det.guestName, ai.guestName);
+  out.checkinDate = /^\d{4}-\d{2}-\d{2}$/.test(det.checkinDate || "")
+    ? det.checkinDate
+    : (/^\d{4}-\d{2}-\d{2}$/.test(ai.checkinDate || "") ? ai.checkinDate : "");
+  out.checkoutDate = /^\d{4}-\d{2}-\d{2}$/.test(det.checkoutDate || "")
+    ? det.checkoutDate
+    : (/^\d{4}-\d{2}-\d{2}$/.test(ai.checkoutDate || "") ? ai.checkoutDate : "");
+
+  if ((!out.nights || out.nights <= 1) && Number(ai.nights) > 0 && !det._explicitCheckout) {
+    out.nights = Math.round(Number(ai.nights));
+    out._explicitCheckout = true;
+  }
+  if (!out.dailyRate && Number(ai.dailyRate) > 0) out.dailyRate = Number(ai.dailyRate);
+  if (!out.totalAmount && Number(ai.totalAmount) > 0) out.totalAmount = Number(ai.totalAmount);
+  if (out.dailyRate === 0 && out.totalAmount > 0 && out.nights > 0) {
+    out.dailyRate = +(out.totalAmount / out.nights).toFixed(2);
+  } else if (out.totalAmount === 0 && out.dailyRate > 0 && out.nights > 0) {
+    out.totalAmount = +(out.dailyRate * out.nights).toFixed(2);
+  }
+
+  if (!det._explicitRatePolicy && ai.b2bRatePolicy) {
+    out.b2bRatePolicy = ai.b2bRatePolicy === "COMISSIONADA" ? "COMISSIONADA" : "NET";
+    out.b2bCommissionPct = Number(ai.b2bCommissionPct) || 0;
+    out.b2bCommissionAmount =
+      Number(ai.b2bCommissionAmount) ||
+      +(((out.totalAmount || 0) * out.b2bCommissionPct) / 100).toFixed(2);
+    out.b2bNetAmount = +((out.totalAmount || 0) - out.b2bCommissionAmount).toFixed(2);
+  }
+
+  out.agencyName = pickStr(det.agencyName, ai.agencyName);
+  out.agencyCnpj = det.agencyCnpj || formatCnpjLocal(ai.agencyCnpj);
+  out.agencyPosUnit = pickStr(det.agencyPosUnit, ai.agencyPosUnit);
+  if (ai.agencyAgentName && (!out.agencyAgentName || /^ARGO\./i.test(out.agencyAgentName))) {
+    out.agencyAgentName = String(ai.agencyAgentName).trim();
+  }
+  out.agencyAgentPhone = pickStr(det.agencyAgentPhone, ai.agencyAgentPhone);
+
+  // Isolamento estrito de agencyAgentEmail (Solicitante / "Reservado por")
+  const aiSolicitanteEmail = String(ai.agencyAgentEmail || "").trim().toLowerCase();
+  if (
+    !out.agencyAgentEmail &&
+    aiSolicitanteEmail &&
+    aiSolicitanteEmail.includes("@") &&
+    !isNonAgencySystemEmailAddress(aiSolicitanteEmail) &&
+    !isPureBillingMailbox(aiSolicitanteEmail) &&
+    !(Array.isArray(out.nfDeliveryEmails) && out._explicitTier1NfEmails && out.nfDeliveryEmails.includes(aiSolicitanteEmail))
+  ) {
+    out.agencyAgentEmail = aiSolicitanteEmail;
+  }
+
+  // Isolamento estrito de nfDeliveryEmails (Camada 1 determinística é soberana se presente)
+  if (!out._explicitTier1NfEmails && Array.isArray(ai.nfDeliveryEmails) && ai.nfDeliveryEmails.length > 0) {
+    const cleanAiNf = Array.from(
+      new Set(
+        ai.nfDeliveryEmails
+          .map(e => String(e || "").trim().toLowerCase())
+          .filter(e => e && e.includes("@") && !isNonAgencySystemEmailAddress(e))
+      )
+    );
+    if (cleanAiNf.length > 0) {
+      out.nfDeliveryEmails =
+        out.agencyAgentEmail && cleanAiNf.length > 1
+          ? cleanAiNf.filter(e => e !== out.agencyAgentEmail)
+          : cleanAiNf;
+    }
+  }
+
+  // Soberania fiscal do voucher para Empresa Tomadora e Endereço
+  if (ai.companyName && !out.companyName) {
+    out.companyName = String(ai.companyName).trim();
+  }
+  if (ai.companyCnpj && !out.companyCnpj) {
+    out.companyCnpj = formatCnpjLocal(ai.companyCnpj);
+  }
+  if (!out._explicitCompanyAddress && ai.companyAddress && !/pelinca/i.test(ai.companyAddress)) {
+    out.companyAddress = String(ai.companyAddress).trim();
+    if (ai.companyNumber) out.companyNumber = String(ai.companyNumber).trim();
+    if (ai.companyComplement && !/^(?:0|00|-)$/i.test(String(ai.companyComplement).trim())) {
+      out.companyComplement = String(ai.companyComplement).trim();
+    }
+    if (ai.companyNeighborhood) out.companyNeighborhood = String(ai.companyNeighborhood).trim();
+    if (ai.companyCity) out.companyCity = String(ai.companyCity).trim();
+    if (ai.companyState) out.companyState = String(ai.companyState).trim().toUpperCase();
+    if (ai.companyCep) {
+      let cepDigits = String(ai.companyCep).replace(/\D/g, "");
+      if (cepDigits.length === 7) {
+        cepDigits = out.companyState === "SP" && cepDigits.startsWith("0") ? `${cepDigits}0` : `${cepDigits}0`;
+      }
+      out.companyCep = cepDigits;
+    }
+    out._explicitCompanyAddress = true;
+  }
+
+  out.costCenter = pickStr(det.costCenter, ai.costCenter);
+  out.b2bCardBrand = pickStr(det.b2bCardBrand, ai.b2bCardBrand);
+  out.b2bCardMasked = pickStr(det.b2bCardMasked, ai.b2bCardMasked);
+  out.b2bVcnToken = pickStr(det.b2bVcnToken, ai.b2bVcnToken);
+  out.invoicingInstructions = pickStr(det.invoicingInstructions, ai.invoicingInstructions);
+  if (!det._explicitInvoiceRecipient && ai.invoiceRecipientType) {
+    out.invoiceRecipientType = ai.invoiceRecipientType;
+  }
+  if (!det._explicitNfHide && typeof ai.nfHideFromGuest === "boolean") {
+    out.nfHideFromGuest = ai.nfHideFromGuest;
+  }
+
+  return out;
+}
+
+/**
+ * Faz o download integral do voucher (HTML ou todas as páginas do PDF) a partir do link web,
+ * executa extração híbrida (Parser Determinístico Multi-Página + Gemini Multimodal JSON Schema quando disponível)
+ * e consolida dados cadastrais das 4 pontas respeitando a soberania absoluta do voucher.
  */
 export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectArg = "") {
-  let parsed = parseB2bVoucherText(input, htmlArg, subjectArg);
   const isStringInput = typeof input === "string";
-  const forceFetch = isStringInput ? false : Boolean(input?.forceFetch);
+  const baseOpts = isStringInput
+    ? { rawText: input, htmlText: htmlArg || "", subject: subjectArg || "" }
+    : { ...(input || {}) };
 
-  const needsEnrichment =
-    parsed.voucherUrl &&
-    (!parsed.agencyCnpj ||
-      !parsed.agencyAgentPhone ||
-      !parsed.companyCnpj ||
-      !parsed.invoicingInstructions ||
-      !parsed.b2bCommissionAmount ||
-      !parsed.checkoutDate ||
-      !parsed.agencyName ||
-      !parsed.companyName ||
-      parsed.agencyName.toLowerCase() === parsed.companyName.toLowerCase() ||
-      !parsed.dailyRate ||
-      !parsed.b2bCardMasked ||
-      forceFetch);
+  const collectedPdfBuffers = Array.isArray(baseOpts.pdfBuffers) ? [...baseOpts.pdfBuffers] : [];
+  if (Buffer.isBuffer(baseOpts.pdfBuffer)) {
+    collectedPdfBuffers.push(baseOpts.pdfBuffer);
+  }
+  if (baseOpts.pdfBase64) {
+    const cleanB64 = String(baseOpts.pdfBase64).replace(/^data:application\/pdf;base64,/i, "").trim();
+    if (cleanB64) {
+      const pdfBuf = Buffer.from(cleanB64, "base64");
+      collectedPdfBuffers.push(pdfBuf);
+      const pdfTxt = extractTextFromPdfBuffer(pdfBuf);
+      if (pdfTxt) {
+        baseOpts.rawText = [baseOpts.rawText || baseOpts.text || "", pdfTxt].filter(Boolean).join("\n");
+      }
+    }
+  }
 
-  if (needsEnrichment) {
+  const collectedImages = Array.isArray(baseOpts.images) ? [...baseOpts.images] : [];
+  if (baseOpts.imageBase64) {
+    collectedImages.push({
+      data: baseOpts.imageBase64,
+      mimeType: baseOpts.imageMimeType || baseOpts.mimeType || "image/jpeg"
+    });
+  }
+
+  let parsed = parseB2bVoucherText(baseOpts, htmlArg, subjectArg);
+
+  // SEMPRE lê o link completo do voucher (voucherUrl) quando presente para nunca perder páginas ou rodapés fiscais
+  const shouldFetchVoucherUrl =
+    Boolean(parsed.voucherUrl && /^https?:\/\//i.test(parsed.voucherUrl)) &&
+    baseOpts.skipRemoteFetch !== true;
+
+  if (shouldFetchVoucherUrl) {
     try {
       const resp = await fetch(parsed.voucherUrl, {
         headers: {
@@ -3728,49 +4714,82 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
         const cType = String(resp.headers.get("content-type") || "").toLowerCase();
         let fetchedText = "";
         let fetchedHtml = "";
-        if (cType.includes("application/pdf") || parsed.voucherUrl.toLowerCase().endsWith(".pdf")) {
-          const ab = await resp.arrayBuffer();
-          fetchedText = extractTextFromPdfBuffer(Buffer.from(ab));
+        const ab = await resp.arrayBuffer();
+        const rawBuf = Buffer.from(ab);
+        if (cType.includes("application/pdf") || parsed.voucherUrl.toLowerCase().endsWith(".pdf") || rawBuf.slice(0, 5).toString("latin1") === "%PDF-") {
+          collectedPdfBuffers.push(rawBuf);
+          fetchedText = extractTextFromPdfBuffer(rawBuf);
         } else {
-          fetchedHtml = await resp.text();
+          let decoded = new TextDecoder("utf-8", { fatal: false }).decode(ab);
+          if (
+            decoded.includes("\ufffd") ||
+            cType.includes("iso-8859-1") ||
+            cType.includes("windows-1252") ||
+            cType.includes("latin1") ||
+            /charset\s*=\s*["']?(?:iso-8859-1|windows-1252|latin1)/i.test(decoded)
+          ) {
+            try {
+              decoded = new TextDecoder("windows-1252").decode(ab);
+            } catch {}
+          }
+          fetchedHtml = decoded;
         }
-        const opts = isStringInput
-          ? {
-              rawText: `${input}\n${fetchedText}`.trim(),
-              htmlText: `${htmlArg || ""}\n${fetchedHtml}`.trim(),
-              subject: subjectArg || "",
-              voucherUrl: parsed.voucherUrl
-            }
-          : {
-              ...(input || {}),
-              rawText: `${input?.rawText || input?.text || ""}\n${fetchedText}`.trim(),
-              htmlText: `${input?.htmlText || input?.html || ""}\n${fetchedHtml}`.trim(),
-              voucherUrl: parsed.voucherUrl
-            };
-        parsed = parseB2bVoucherText(opts);
+        baseOpts.rawText = `${baseOpts.rawText || baseOpts.text || ""}\n${fetchedText}`.trim();
+        baseOpts.htmlText = `${baseOpts.htmlText || baseOpts.html || ""}\n${fetchedHtml}`.trim();
+        baseOpts.voucherUrl = parsed.voucherUrl;
+        parsed = parseB2bVoucherText(baseOpts);
       }
     } catch {
       // Mantém dados extraídos localmente se o portal externo estiver inacessível
     }
   }
 
-  // Enriquecimento automático de endereço fiscal via CNPJ (Receita Federal / BrasilAPI) quando o voucher traz CNPJ mas não traz logradouro
+  // Motor Multimodal Gemini AI (acionado quando há chave configurada para imagens, PDFs ou validação completa de documentos)
+  const resolvedGeminiKey = String(
+    baseOpts.geminiApiKey ||
+      baseOpts.db?.whatsappAiSettings?.geminiApiKey ||
+      baseOpts.db?.settings?.geminiApiKey ||
+      process.env.GEMINI_API_KEY ||
+      ""
+  ).trim();
+  const allowAiCall =
+    Boolean(resolvedGeminiKey) &&
+    baseOpts.skipAi !== true &&
+    (process.env.NODE_ENV !== "test" || baseOpts.forceAiInTest === true);
+
+  if (allowAiCall && (collectedImages.length > 0 || collectedPdfBuffers.length > 0 || baseOpts.rawText || baseOpts.htmlText)) {
+    const aiExtracted = await extractB2bVoucherWithGeminiAI({
+      rawText: baseOpts.rawText || baseOpts.text || "",
+      htmlText: baseOpts.htmlText || baseOpts.html || "",
+      subject: baseOpts.subject || subjectArg || "",
+      pdfBuffers: collectedPdfBuffers,
+      images: collectedImages,
+      apiKey: resolvedGeminiKey
+    });
+    if (aiExtracted) {
+      parsed = mergeAiAndDeterministicB2bVoucher(parsed, aiExtracted);
+    }
+  }
+
+  // Enriquecimento complementar via CNPJ SOMENTE para campos ausentes no voucher (o voucher é 100% soberano!)
   const cleanCompCnpj = String(parsed.companyCnpj || "").replace(/\D/g, "");
   if (cleanCompCnpj.length === 14 && (!parsed.companyAddress || !parsed.companyCep || !parsed.companyCity)) {
     try {
-      const cnpjInfo = await lookupCnpj(cleanCompCnpj);
+      const cnpjInfo = await lookupCnpj(cleanCompCnpj, baseOpts.db);
       if (cnpjInfo && !cnpjInfo.error) {
         if (!parsed.companyName && (cnpjInfo.razaoSocial || cnpjInfo.nomeFantasia)) {
           parsed.companyName = cnpjInfo.razaoSocial || cnpjInfo.nomeFantasia;
         }
-        if (cnpjInfo.logradouro) parsed.companyAddress = cnpjInfo.logradouro;
-        if (cnpjInfo.numero) parsed.companyNumber = cnpjInfo.numero;
-        if (cnpjInfo.complemento && !parsed.companyComplement) parsed.companyComplement = cnpjInfo.complemento;
-        if (cnpjInfo.bairro) parsed.companyNeighborhood = cnpjInfo.bairro;
-        if (cnpjInfo.cidade) parsed.companyCity = cnpjInfo.cidade;
-        if (cnpjInfo.uf) parsed.companyState = cnpjInfo.uf;
-        if (cnpjInfo.cep) parsed.companyCep = String(cnpjInfo.cep).replace(/\D/g, "");
-        if (cnpjInfo.codigoMunicipio) parsed.companyIbgeCode = String(cnpjInfo.codigoMunicipio).replace(/\D/g, "");
+        if (!parsed.companyAddress && cnpjInfo.logradouro) parsed.companyAddress = cnpjInfo.logradouro;
+        if (!parsed.companyNumber && cnpjInfo.numero) parsed.companyNumber = cnpjInfo.numero;
+        if (!parsed.companyComplement && cnpjInfo.complemento) parsed.companyComplement = cnpjInfo.complemento;
+        if (!parsed.companyNeighborhood && cnpjInfo.bairro) parsed.companyNeighborhood = cnpjInfo.bairro;
+        if (!parsed.companyCity && cnpjInfo.cidade) parsed.companyCity = cnpjInfo.cidade;
+        if (!parsed.companyState && cnpjInfo.uf) parsed.companyState = cnpjInfo.uf;
+        if (!parsed.companyCep && cnpjInfo.cep) parsed.companyCep = String(cnpjInfo.cep).replace(/\D/g, "");
+        if (!parsed.companyIbgeCode && cnpjInfo.codigoMunicipio) {
+          parsed.companyIbgeCode = String(cnpjInfo.codigoMunicipio).replace(/\D/g, "");
+        }
       }
     } catch {
       // Silencioso: fallback determinístico ou lookup posterior tratará se a API externa oscilar
@@ -3780,16 +4799,18 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
   const cleanAgCnpj = String(parsed.agencyCnpj || "").replace(/\D/g, "");
   if (cleanAgCnpj.length === 14 && (!parsed.agencyAddress || !parsed.agencyCep || !parsed.agencyCity)) {
     try {
-      const agCnpjInfo = await lookupCnpj(cleanAgCnpj);
+      const agCnpjInfo = await lookupCnpj(cleanAgCnpj, baseOpts.db);
       if (agCnpjInfo && !agCnpjInfo.error) {
-        if (agCnpjInfo.logradouro) parsed.agencyAddress = agCnpjInfo.logradouro;
-        if (agCnpjInfo.numero) parsed.agencyNumber = agCnpjInfo.numero;
-        if (agCnpjInfo.complemento && !parsed.agencyComplement) parsed.agencyComplement = agCnpjInfo.complemento;
-        if (agCnpjInfo.bairro) parsed.agencyNeighborhood = agCnpjInfo.bairro;
-        if (agCnpjInfo.cidade) parsed.agencyCity = agCnpjInfo.cidade;
-        if (agCnpjInfo.uf) parsed.agencyState = agCnpjInfo.uf;
-        if (agCnpjInfo.cep) parsed.agencyCep = String(agCnpjInfo.cep).replace(/\D/g, "");
-        if (agCnpjInfo.codigoMunicipio) parsed.agencyIbgeCode = String(agCnpjInfo.codigoMunicipio).replace(/\D/g, "");
+        if (!parsed.agencyAddress && agCnpjInfo.logradouro) parsed.agencyAddress = agCnpjInfo.logradouro;
+        if (!parsed.agencyNumber && agCnpjInfo.numero) parsed.agencyNumber = agCnpjInfo.numero;
+        if (!parsed.agencyComplement && agCnpjInfo.complemento) parsed.agencyComplement = agCnpjInfo.complemento;
+        if (!parsed.agencyNeighborhood && agCnpjInfo.bairro) parsed.agencyNeighborhood = agCnpjInfo.bairro;
+        if (!parsed.agencyCity && agCnpjInfo.cidade) parsed.agencyCity = agCnpjInfo.cidade;
+        if (!parsed.agencyState && agCnpjInfo.uf) parsed.agencyState = agCnpjInfo.uf;
+        if (!parsed.agencyCep && agCnpjInfo.cep) parsed.agencyCep = String(agCnpjInfo.cep).replace(/\D/g, "");
+        if (!parsed.agencyIbgeCode && agCnpjInfo.codigoMunicipio) {
+          parsed.agencyIbgeCode = String(agCnpjInfo.codigoMunicipio).replace(/\D/g, "");
+        }
       }
     } catch {
       // Silencioso
@@ -3801,11 +4822,7 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
 
 /**
  * Interface unificada para extração de dados estruturados de voucher B2B
- * Suporta Buffer (PDF), URL externa HTTP, objeto com anexo ou texto bruto.
- * Conforme especificação em PROJECT.md (M2).
- *
- * @param {Buffer|string|{ buffer?: Buffer, mimeType?: string, url?: string, text?: string, rawText?: string, html?: string }} source
- * @returns {Promise<Object>} Dados estruturados do voucher (hóspede, datas, agência, faturamento, NFS-e)
+ * Suporta Buffer (PDF), Imagem, URL externa HTTP, objeto com múltiplos anexos ou texto bruto.
  */
 export async function extractVoucherData(source = {}) {
   if (!source) return parseB2bVoucherText({});
@@ -3813,18 +4830,37 @@ export async function extractVoucherData(source = {}) {
   // 1. Entrada direta em Buffer ou objeto com { buffer }
   if (Buffer.isBuffer(source) || source?.buffer) {
     const buf = Buffer.isBuffer(source) ? source : source.buffer;
+    const mime = String(source?.mimeType || "").toLowerCase();
+    if (mime.startsWith("image/")) {
+      return fetchAndParseB2bVoucher({
+        ...source,
+        images: [{ data: buf.toString("base64"), mimeType: mime }]
+      });
+    }
     const extractedText = extractTextFromPdfBuffer(buf);
-    return parseB2bVoucherText(extractedText);
+    return fetchAndParseB2bVoucher({
+      ...(Buffer.isBuffer(source) ? {} : source),
+      rawText: extractedText,
+      pdfBuffers: [buf]
+    });
   }
 
   // 2. Entrada de string (texto de voucher ou base64)
   if (typeof source === "string") {
     const trimmed = source.trim();
     if (trimmed.startsWith("JVBER") || trimmed.startsWith("data:application/pdf;base64,")) {
-      const extractedText = extractTextFromPdfBuffer(trimmed);
-      return parseB2bVoucherText(extractedText);
+      const cleanB64 = trimmed.replace(/^data:application\/pdf;base64,/i, "");
+      const buf = Buffer.from(cleanB64, "base64");
+      const extractedText = extractTextFromPdfBuffer(buf);
+      return fetchAndParseB2bVoucher({ rawText: extractedText, pdfBuffers: [buf] });
     }
-    return parseB2bVoucherText(source);
+    if (trimmed.startsWith("data:image/")) {
+      const mimeMatch = trimmed.match(/^data:(image\/[^;]+);base64,/i);
+      return fetchAndParseB2bVoucher({
+        images: [{ data: trimmed, mimeType: mimeMatch ? mimeMatch[1] : "image/jpeg" }]
+      });
+    }
+    return fetchAndParseB2bVoucher(source);
   }
 
   // 3. Entrada com URL para crawling HTTP
@@ -3833,24 +4869,41 @@ export async function extractVoucherData(source = {}) {
     return fetchAndParseB2bVoucher({ ...source, voucherUrl: url, forceFetch: true });
   }
 
-  // 4. Entrada com texto / html / anexo estruturado
+  // 4. Entrada com texto / html / anexos estruturados (lê TODOS os PDFs e imagens anexados)
   if (source.attachments && Array.isArray(source.attachments)) {
-    const pdfAtt = source.attachments.find(
-      a =>
-        a &&
-        (a.contentType === "application/pdf" ||
-          String(a.filename || a.name || "").toLowerCase().endsWith(".pdf"))
-    );
-    if (pdfAtt && (pdfAtt.content || pdfAtt.buffer || pdfAtt.data)) {
-      const rawPdf = pdfAtt.content || pdfAtt.buffer || pdfAtt.data;
-      const pdfText = extractTextFromPdfBuffer(rawPdf);
-      const combined = `${source.text || source.rawText || ""}\n${pdfText}`.trim();
-      return parseB2bVoucherText(combined, source.html || source.htmlText, source.subject);
+    const pdfTexts = [];
+    const pdfBuffers = [];
+    const images = [];
+    for (const a of source.attachments) {
+      if (!a) continue;
+      const mime = String(a.contentType || a.mimeType || "").toLowerCase();
+      const fname = String(a.filename || a.name || "").toLowerCase();
+      const rawContent = a.content || a.buffer || a.data;
+      if (!rawContent) continue;
+      if (mime === "application/pdf" || fname.endsWith(".pdf")) {
+        const buf = Buffer.isBuffer(rawContent)
+          ? rawContent
+          : Buffer.from(String(rawContent).replace(/^data:[^;]+;base64,/, ""), "base64");
+        pdfBuffers.push(buf);
+        const txt = extractTextFromPdfBuffer(buf);
+        if (txt) pdfTexts.push(txt);
+      } else if (mime.startsWith("image/") || /\.(?:png|jpe?g|webp)$/i.test(fname)) {
+        const b64 = Buffer.isBuffer(rawContent) ? rawContent.toString("base64") : String(rawContent);
+        images.push({ data: b64, mimeType: mime || "image/jpeg" });
+      }
     }
+    const combined = [source.text || source.rawText || "", ...pdfTexts].filter(Boolean).join("\n").trim();
+    return fetchAndParseB2bVoucher({
+      ...source,
+      rawText: combined,
+      htmlText: source.html || source.htmlText || "",
+      pdfBuffers,
+      images
+    });
   }
 
-  // 5. Fallback para parseB2bVoucherText
-  return parseB2bVoucherText(source);
+  // 5. Fallback híbrido completo
+  return fetchAndParseB2bVoucher(source);
 }
 
 /**
@@ -3956,6 +5009,15 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     });
   }
 
+  if (!agency && parsed.agencyAgentEmail) {
+    const emLower = String(parsed.agencyAgentEmail).trim().toLowerCase();
+    agency = db.agencies.find(a =>
+      String(a.email || "").trim().toLowerCase() === emLower ||
+      String(a.financialEmail || "").trim().toLowerCase() === emLower ||
+      (Array.isArray(a.agents) && a.agents.some(ag => String(ag?.email || "").trim().toLowerCase() === emLower))
+    );
+  }
+
   if (parsed.agencyName || agency) {
     const knownAgDir = resolveKnownCnpjDirectory(parsed.agencyCnpj || agency?.cnpj || "");
     const agCnpjData = {
@@ -3976,8 +5038,10 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
         corporateName: parsed.agencyName,
         tradeName: parsed.agencyName,
         cnpj: parsed.agencyCnpj || "",
-        email: parsed.agencyAgentEmail || parsed.nfDeliveryEmails?.[0] || "",
-        financialEmail: parsed.agencyAgentEmail || parsed.nfDeliveryEmails?.[0] || "",
+        email: parsed.agencyAgentEmail || "",
+        financialEmail:
+          parsed.nfDeliveryEmails?.[0] ||
+          (isPureBillingMailbox(parsed.agencyAgentEmail) ? parsed.agencyAgentEmail : ""),
         phone: parsed.agencyAgentPhone || "",
         address: agCnpjData.logradouro || "",
         logradouro: agCnpjData.logradouro || "",
@@ -4001,7 +5065,7 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
         defaultRecipientType: parsed.invoiceRecipientType || "company",
         posUnits: parsed.agencyPosUnit ? [{ name: parsed.agencyPosUnit, city: "", state: "" }] : [],
         agents: parsed.agencyAgentName
-          ? [{ name: parsed.agencyAgentName, email: parsed.agencyAgentEmail || parsed.nfDeliveryEmails?.[0] || "", phone: parsed.agencyAgentPhone || "", posUnit: parsed.agencyPosUnit || "" }]
+          ? [{ name: parsed.agencyAgentName, email: parsed.agencyAgentEmail || "", phone: parsed.agencyAgentPhone || "", posUnit: parsed.agencyPosUnit || "" }]
           : [],
         clientCompanies: parsed.companyName ? [parsed.companyName] : [],
         notes: "Agência cadastrada automaticamente via leitura de voucher B2B.",
@@ -4019,11 +5083,11 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       if (parsed.agencyAgentPhone && !agency.phone) {
         agency.phone = parsed.agencyAgentPhone;
       }
-      if (parsed.agencyAgentEmail && !agency.email) {
+      if (parsed.agencyAgentEmail && !agency.email && !isPureBillingMailbox(parsed.agencyAgentEmail)) {
         agency.email = parsed.agencyAgentEmail;
       }
-      if (parsed.agencyAgentEmail && !agency.financialEmail) {
-        agency.financialEmail = parsed.agencyAgentEmail;
+      if (parsed.nfDeliveryEmails?.[0] && !agency.financialEmail) {
+        agency.financialEmail = parsed.nfDeliveryEmails[0];
       }
       if (parsed.agencyPosUnit) {
         if (!Array.isArray(agency.posUnits)) agency.posUnits = [];
@@ -4036,13 +5100,15 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
         if (!existingAgent) {
           agency.agents.push({
             name: parsed.agencyAgentName,
-            email: parsed.agencyAgentEmail || parsed.nfDeliveryEmails?.[0] || "",
+            email: parsed.agencyAgentEmail || "",
             phone: parsed.agencyAgentPhone || "",
             posUnit: parsed.agencyPosUnit || ""
           });
         } else if (typeof existingAgent === "object") {
           if (parsed.agencyAgentPhone && !existingAgent.phone) existingAgent.phone = parsed.agencyAgentPhone;
-          if (parsed.agencyAgentEmail && !existingAgent.email) existingAgent.email = parsed.agencyAgentEmail;
+          if (parsed.agencyAgentEmail && (!existingAgent.email || isPureBillingMailbox(existingAgent.email))) {
+            existingAgent.email = parsed.agencyAgentEmail;
+          }
         }
       }
       if (parsed.companyName) {
@@ -4129,7 +5195,33 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       if (parsed.companyCnpj && !company.cnpj) {
         company.cnpj = parsed.companyCnpj;
       }
-      if (compCnpjData.logradouro || compCnpjData.cep || compCnpjData.cidade) {
+      if (parsed._explicitCompanyAddress && parsed.companyAddress) {
+        // Soberania absoluta do endereço fiscal impresso no voucher sobre dicionário/Receita anterior
+        company.address = parsed.companyAddress;
+        company.logradouro = parsed.companyAddress;
+        company.endereco = parsed.companyAddress;
+        company.number = parsed.companyNumber || "S/N";
+        company.numero = parsed.companyNumber || "S/N";
+        company.complement = parsed.companyComplement || "";
+        company.complemento = parsed.companyComplement || "";
+        if (parsed.companyNeighborhood) {
+          company.neighborhood = parsed.companyNeighborhood;
+          company.bairro = parsed.companyNeighborhood;
+        }
+        if (parsed.companyCep) company.cep = parsed.companyCep;
+        if (parsed.companyCity) {
+          company.city = parsed.companyCity;
+          company.cidade = parsed.companyCity;
+        }
+        if (parsed.companyState) {
+          company.state = parsed.companyState;
+          company.uf = parsed.companyState;
+        }
+        if (parsed.companyIbgeCode) {
+          company.ibgeCode = parsed.companyIbgeCode;
+          company.codigoMunicipio = parsed.companyIbgeCode;
+        }
+      } else if (compCnpjData.logradouro || compCnpjData.cep || compCnpjData.cidade) {
         enrichCrmEntityWithCnpjData(company, compCnpjData);
       }
       if (parsed.invoicingInstructions) {
@@ -4139,7 +5231,7 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       if (parsed.agencyAgentPhone && !company.phone) {
         company.phone = parsed.agencyAgentPhone;
       }
-      if (parsed.nfDeliveryEmails?.[0] && !company.financialEmail) {
+      if (parsed.nfDeliveryEmails?.[0] && (!company.financialEmail || parsed._explicitTier1NfEmails)) {
         company.financialEmail = parsed.nfDeliveryEmails[0];
         company.emailFinanceiro = parsed.nfDeliveryEmails[0];
       }
@@ -4329,10 +5421,32 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     }
   }
 
+  const firstCrmAgent = Array.isArray(agency?.agents)
+    ? agency.agents.find(ag => ag && typeof ag === "object" && (ag.name || ag.email || ag.phone || ag.whatsapp))
+    : null;
+
   let created = false;
+  const resolvedOperationalFirstAgentEmail =
+    firstCrmAgent?.email && !isPureBillingMailbox(firstCrmAgent.email) ? firstCrmAgent.email : "";
+  const resolvedOperationalAgencyEmail =
+    agency?.email && !isPureBillingMailbox(agency.email) ? agency.email : "";
+
   if (!reservation) {
     const flat = findAvailableFlatForPeriod(db, checkinDate, checkoutDate);
     const nextResId = db.reservations.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0) + 1;
+    const initialSolicitanteEmail =
+      parsed.agencyAgentEmail ||
+      resolvedOperationalFirstAgentEmail ||
+      resolvedOperationalAgencyEmail ||
+      "";
+    const initialAgentName = parsed.agencyAgentName || firstCrmAgent?.name || "";
+    const initialAgentPhone =
+      parsed.agencyAgentPhone ||
+      firstCrmAgent?.whatsapp ||
+      firstCrmAgent?.phone ||
+      agency?.whatsapp ||
+      agency?.phone ||
+      "";
 
     reservation = {
       id: nextResId,
@@ -4347,23 +5461,28 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       companyId: company?.id || null,
       companyName: company?.tradeName || parsed.companyName || "",
       companyCnpj: parsed.companyCnpj || company?.cnpj || "",
-      companyAddress: company?.address || parsed.companyAddress || "",
-      companyNumber: company?.number || parsed.companyNumber || "",
-      companyComplement: company?.complement || parsed.companyComplement || "",
-      companyNeighborhood: company?.neighborhood || parsed.companyNeighborhood || "",
-      companyCep: company?.cep || parsed.companyCep || "",
-      companyCity: company?.city || parsed.companyCity || "",
-      companyState: company?.state || parsed.companyState || "",
-      companyIbgeCode: company?.ibgeCode || parsed.companyIbgeCode || "",
+      companyAddress: parsed._explicitCompanyAddress ? (parsed.companyAddress || "") : (company?.address || parsed.companyAddress || ""),
+      companyNumber: parsed._explicitCompanyAddress ? (parsed.companyNumber || "S/N") : (company?.number || parsed.companyNumber || ""),
+      companyComplement: parsed._explicitCompanyAddress ? (parsed.companyComplement || "") : (company?.complement || parsed.companyComplement || ""),
+      companyNeighborhood: parsed._explicitCompanyAddress ? (parsed.companyNeighborhood || "") : (company?.neighborhood || parsed.companyNeighborhood || ""),
+      companyCep: parsed._explicitCompanyAddress ? (parsed.companyCep || "") : (company?.cep || parsed.companyCep || ""),
+      companyCity: parsed._explicitCompanyAddress ? (parsed.companyCity || "") : (company?.city || parsed.companyCity || ""),
+      companyState: parsed._explicitCompanyAddress ? (parsed.companyState || "") : (company?.state || parsed.companyState || ""),
+      companyIbgeCode: parsed._explicitCompanyAddress ? (parsed.companyIbgeCode || "") : (company?.ibgeCode || parsed.companyIbgeCode || ""),
       agencyId: agency?.id || null,
       agencyName: agency?.tradeName || parsed.agencyName || "",
       agencyTradeName: agency?.tradeName || parsed.agencyName || "",
       agencyCorporateName: agency?.corporateName || parsed.agencyName || "",
       agencyCnpj: parsed.agencyCnpj || agency?.cnpj || "",
       agencyPosUnit: parsed.agencyPosUnit || "",
-      agencyAgentName: parsed.agencyAgentName || "",
-      agencyAgentEmail: parsed.agencyAgentEmail || parsed.nfDeliveryEmails?.[0] || agency?.financialEmail || agency?.email || "",
-      agencyAgentPhone: parsed.agencyAgentPhone || agency?.phone || "",
+      agencyAgentName: initialAgentName,
+      agencyAgentEmail: initialSolicitanteEmail,
+      agencyAgentPhone: initialAgentPhone,
+      requesterInfo: {
+        name: initialAgentName || agency?.tradeName || parsed.agencyName || "",
+        phone: initialAgentPhone,
+        email: initialSolicitanteEmail
+      },
       invoicingInstructions: parsed.invoicingInstructions || "",
       checkinDate,
       checkoutDate,
@@ -4460,16 +5579,28 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
       ) {
         reservation.agencyAgentName = parsed.agencyAgentName;
       }
+    } else if (!reservation.agencyAgentName && firstCrmAgent?.name) {
+      reservation.agencyAgentName = firstCrmAgent.name;
     }
     if (parsed.agencyAgentPhone) {
       reservation.agencyAgentPhone = parsed.agencyAgentPhone;
-    } else if (agency?.phone && !reservation.agencyAgentPhone) {
-      reservation.agencyAgentPhone = agency.phone;
+    } else if (!reservation.agencyAgentPhone) {
+      const crmAgPhone = firstCrmAgent?.whatsapp || firstCrmAgent?.phone || agency?.whatsapp || agency?.phone || "";
+      if (crmAgPhone) reservation.agencyAgentPhone = crmAgPhone;
     }
-    const agentEmailCandidate = parsed.agencyAgentEmail || parsed.nfDeliveryEmails?.[0] || agency?.financialEmail || agency?.email || "";
-    if (agentEmailCandidate && (!reservation.agencyAgentEmail || parsed.agencyAgentEmail)) {
+    const agentEmailCandidate =
+      parsed.agencyAgentEmail ||
+      resolvedOperationalFirstAgentEmail ||
+      resolvedOperationalAgencyEmail ||
+      "";
+    if (agentEmailCandidate && (!reservation.agencyAgentEmail || parsed.agencyAgentEmail || isPureBillingMailbox(reservation.agencyAgentEmail))) {
       reservation.agencyAgentEmail = agentEmailCandidate;
     }
+    reservation.requesterInfo = {
+      name: reservation.agencyAgentName || reservation.agencyTradeName || reservation.agencyName || "",
+      phone: reservation.agencyAgentPhone || "",
+      email: reservation.agencyAgentEmail || ""
+    };
 
     if (company?.id) {
       reservation.companyId = company.id;
@@ -4481,16 +5612,37 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     if (parsed.companyCnpj) {
       reservation.companyCnpj = parsed.companyCnpj;
     }
-    const resolvedCompAddr = company?.address || parsed.companyAddress || "";
-    if (resolvedCompAddr && (!reservation.companyAddress || isGenericPelincaCompanyAddress({ address: reservation.companyAddress, cep: reservation.companyCep }))) {
+    const resolvedCompAddr = parsed._explicitCompanyAddress
+      ? (parsed.companyAddress || "")
+      : (company?.address || parsed.companyAddress || "");
+    if (
+      resolvedCompAddr &&
+      (parsed._explicitCompanyAddress ||
+        !reservation.companyAddress ||
+        isGenericPelincaCompanyAddress({ address: reservation.companyAddress, cep: reservation.companyCep }))
+    ) {
       reservation.companyAddress = resolvedCompAddr;
-      reservation.companyNumber = company?.number || parsed.companyNumber || reservation.companyNumber || "";
-      reservation.companyComplement = company?.complement || parsed.companyComplement || reservation.companyComplement || "";
-      reservation.companyNeighborhood = company?.neighborhood || parsed.companyNeighborhood || reservation.companyNeighborhood || "";
-      reservation.companyCep = company?.cep || parsed.companyCep || reservation.companyCep || "";
-      reservation.companyCity = company?.city || parsed.companyCity || reservation.companyCity || "";
-      reservation.companyState = company?.state || parsed.companyState || reservation.companyState || "";
-      reservation.companyIbgeCode = company?.ibgeCode || parsed.companyIbgeCode || reservation.companyIbgeCode || "";
+      reservation.companyNumber = parsed._explicitCompanyAddress
+        ? (parsed.companyNumber || "S/N")
+        : (company?.number || parsed.companyNumber || reservation.companyNumber || "");
+      reservation.companyComplement = parsed._explicitCompanyAddress
+        ? (parsed.companyComplement || "")
+        : (company?.complement || parsed.companyComplement || reservation.companyComplement || "");
+      reservation.companyNeighborhood = parsed._explicitCompanyAddress
+        ? (parsed.companyNeighborhood || "")
+        : (company?.neighborhood || parsed.companyNeighborhood || reservation.companyNeighborhood || "");
+      reservation.companyCep = parsed._explicitCompanyAddress
+        ? (parsed.companyCep || "")
+        : (company?.cep || parsed.companyCep || reservation.companyCep || "");
+      reservation.companyCity = parsed._explicitCompanyAddress
+        ? (parsed.companyCity || "")
+        : (company?.city || parsed.companyCity || reservation.companyCity || "");
+      reservation.companyState = parsed._explicitCompanyAddress
+        ? (parsed.companyState || "")
+        : (company?.state || parsed.companyState || reservation.companyState || "");
+      reservation.companyIbgeCode = parsed._explicitCompanyAddress
+        ? (parsed.companyIbgeCode || "")
+        : (company?.ibgeCode || parsed.companyIbgeCode || reservation.companyIbgeCode || "");
     }
     if (parsed.costCenter) {
       reservation.costCenter = parsed.costCenter;
@@ -4546,11 +5698,15 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     reservation.invoiceRecipientType = resolvedRecipientType;
     reservation.nfRecipientType = resolvedRecipientType;
     if (Array.isArray(parsed.nfDeliveryEmails) && parsed.nfDeliveryEmails.length > 0) {
-      const mergedEmails = new Set([
-        ...(Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails : []),
-        ...parsed.nfDeliveryEmails
-      ]);
-      reservation.nfDeliveryEmails = Array.from(mergedEmails);
+      if (parsed._explicitTier1NfEmails) {
+        reservation.nfDeliveryEmails = Array.from(new Set(parsed.nfDeliveryEmails));
+      } else {
+        const existingCleanNf = (Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails : []).filter(
+          e => e && String(e).trim().toLowerCase() !== "conciliacao@b2breservas.com.br"
+        );
+        const mergedEmails = new Set([...existingCleanNf, ...parsed.nfDeliveryEmails]);
+        reservation.nfDeliveryEmails = Array.from(mergedEmails);
+      }
     }
     if (parsed.nfHideFromGuest === true || parsed._explicitNfHide === true || reservation.nfHideFromGuest === undefined) {
       reservation.nfHideFromGuest = Boolean(parsed.nfHideFromGuest);
@@ -4563,6 +5719,18 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
         reservation.guestPhone && reservation.guestDocument ? "completed" : "pending_agency";
     }
     reservation.updatedAt = new Date().toISOString();
+  }
+
+  // Trava Anti-Erro (Decisão 3): Alerta imediato ao WhatsApp do gestor se faltar e-mail do solicitante ou de NFS-e (sem inventar e-mails!)
+  const missingCriticalEmails = [];
+  if (isMissingGuestDataForCredential(reservation) && !resolveB2bCredentialTargetEmail(reservation, db)) {
+    missingCriticalEmails.push("E-mail do Solicitante (Reservado por)");
+  }
+  if (!Array.isArray(reservation.nfDeliveryEmails) || reservation.nfDeliveryEmails.length === 0) {
+    missingCriticalEmails.push("E-mail p/ Envio da NFS-e");
+  }
+  if (missingCriticalEmails.length > 0) {
+    notifyManagerB2bMissingDataAlert(db, reservation, missingCriticalEmails).catch(() => {});
   }
 
   // Se a reserva possuir confirmedFiscalData ou invoiceDetails poluídos com o fallback "Av. Pelinca" para um CNPJ real, corrige imediatamente
@@ -4600,17 +5768,24 @@ export function ingestB2bVoucherIntoDb(db, parsed, { saveDatabase, autoSendCrede
     }
   }
 
-  // Disparo cordial automático se a reserva B2B ainda estiver sem telefone ou CPF do hóspede
-  if (
-    autoSendCredentialEmail &&
-    (!reservation.guestPhone || !reservation.guestDocument) &&
-    !hasB2bCredentialEmailAlreadyBeenSent(db, reservation)
-  ) {
-    dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
-      trigger: "b2b_auto_credential_request"
-    }).catch(err => {
-      console.warn("[B2B Auto Credential] Aviso ao disparar e-mail de credenciamento à agência:", err.message);
-    });
+  // Disparo cordial automático (E-mail + WhatsApp validado) se a reserva B2B ainda estiver sem dados do hóspede
+  if (autoSendCredentialEmail && isMissingGuestDataForCredential(reservation)) {
+    if (!hasB2bCredentialEmailAlreadyBeenSent(db, reservation, "initial")) {
+      dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
+        trigger: "b2b_auto_credential_request",
+        stageKey: "initial"
+      }).catch(err => {
+        console.warn("[B2B Auto Credential] Aviso ao disparar e-mail de credenciamento à agência:", err.message);
+      });
+    }
+    if (!reservation.b2bCredentialWhatsappSentAt) {
+      dispatchRequesterGuestCredentialRequest(db, saveDatabase, reservation, {
+        stageKey: "initial",
+        isReminder: false
+      }).catch(err => {
+        console.warn("[B2B Auto Credential] Aviso ao disparar WhatsApp de credenciamento à agência:", err.message);
+      });
+    }
   }
 
   // Se a empresa ou agência possui CNPJ de 14 dígitos mas ainda está sem endereço real, consulta Receita Federal / BrasilAPI em background
@@ -4696,7 +5871,7 @@ export async function enrichB2bIngestedEntitiesCnpj(db, { company, agency, reser
   return updated;
 }
 
-// Trava em memória contra disparos concorrentes de credenciamento B2B para a mesma reserva
+// Trava em memória contra disparos concorrentes de credenciamento para a mesma reserva
 const inFlightB2bCredentialLocks = new Set();
 let isRunningPendingB2bDispatches = false;
 let lastPendingB2bDispatchCheckAt = 0;
@@ -4711,6 +5886,19 @@ function getB2bReservationLockKeys(reservation) {
   if (resCode) keys.push(`CODE:${resCode}`);
   if (b2bNum) keys.push(`B2B:${b2bNum}`);
   return keys;
+}
+
+function getCommCredentialStageKey(c) {
+  if (c?.metadata?.stageKey) return String(c.metadata.stageKey).trim();
+  const trig = String(c?.metadata?.trigger || "").toLowerCase();
+  if (trig.includes("reminder_")) {
+    const idx = trig.indexOf("reminder_");
+    return trig.slice(idx);
+  }
+  const subj = String(c?.subject || "").toLowerCase();
+  if (subj.includes("check-in hoje")) return "reminder_checkin";
+  if (subj.includes("lembrete")) return "reminder_legacy";
+  return "initial";
 }
 
 function isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) {
@@ -4732,6 +5920,7 @@ function isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) {
   return (
     trig.includes("b2b") ||
     trig.includes("credenciamento") ||
+    trig.includes("credential") ||
     subj.includes("credenciamento") ||
     subj.includes("dados do hóspede") ||
     subj.includes("dados do hospede")
@@ -4739,19 +5928,39 @@ function isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) {
 }
 
 /**
- * Verifica de forma determinística e abrangente se o e-mail de Confirmação & Dados do Hóspede
- * já foi enviado (ou está registrado) para esta reserva B2B, evitando qualquer reenvio duplicado.
+ * Verifica de forma determinística e por estágio (`stageKey`: "initial", "reminder_24h_1", etc.)
+ * se o e-mail de Confirmação / Lembrete de Dados do Hóspede já foi enviado para esta reserva.
  */
-export function hasB2bCredentialEmailAlreadyBeenSent(db, reservation) {
+export function hasB2bCredentialEmailAlreadyBeenSent(db, reservation, stageKey = "initial") {
   if (!reservation) return false;
-  if (reservation.b2bCredentialEmailSentAt) return true;
   if (reservation.b2bCredentialCompletedAt || reservation.credentialStatus === "completed") return true;
+
+  const targetStage = String(stageKey || "initial").trim();
+  if (reservation.credentialSentStages?.[targetStage]?.emailSentAt) {
+    return true;
+  }
 
   const resCodeUpper = String(reservation.code || "").trim().toUpperCase();
   const resIdStr = String(reservation.id || "").trim();
   const b2bNum = String(reservation.b2bReservationNumber || reservation.externalReservationNumber || "").trim();
 
-  // 1. Verifica se alguma reserva irmã com o mesmo código ou número B2B já possui o carimbo de envio
+  if (targetStage !== "initial") {
+    if (Array.isArray(db?.reservationCommunications)) {
+      const stageComm = db.reservationCommunications.find(
+        c =>
+          c &&
+          c.status !== "failed" &&
+          isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) &&
+          getCommCredentialStageKey(c) === targetStage
+      );
+      if (stageComm) return true;
+    }
+    return false;
+  }
+
+  if (reservation.b2bCredentialEmailSentAt) return true;
+
+  // 1. Verifica se alguma reserva irmã com o mesmo código ou número B2B já possui o carimbo inicial
   if (Array.isArray(db?.reservations) && (b2bNum || resCodeUpper)) {
     const siblingSent = db.reservations.find(
       other =>
@@ -4771,13 +5980,14 @@ export function hasB2bCredentialEmailAlreadyBeenSent(db, reservation) {
     }
   }
 
-  // 2. Verifica em db.reservationCommunications
+  // 2. Verifica em db.reservationCommunications (estágio inicial)
   if (Array.isArray(db?.reservationCommunications)) {
     const comm = db.reservationCommunications.find(
       c =>
         c &&
         c.status !== "failed" &&
-        isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum)
+        isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum) &&
+        getCommCredentialStageKey(c) === "initial"
     );
     if (comm) {
       reservation.b2bCredentialEmailSentAt =
@@ -4815,8 +6025,8 @@ export function hasB2bCredentialEmailAlreadyBeenSent(db, reservation) {
 }
 
 /**
- * Remove registros duplicados de e-mails de credenciamento B2B para a mesma reserva em db.reservationCommunications,
- * preservando apenas o envio mais recente e garantindo o carimbo b2bCredentialEmailSentAt na reserva.
+ * Remove registros duplicados de e-mails de credenciamento por estágio (`stageKey`),
+ * preservando o envio inicial + cada lembrete legítimo (24h, manhã check-in, 12h check-in).
  */
 export function deduplicateB2bCredentialCommunications(db) {
   if (!db || !Array.isArray(db.reservationCommunications)) return 0;
@@ -4834,6 +6044,7 @@ export function deduplicateB2bCredentialCommunications(db) {
     const isB2bCred =
       trig.includes("b2b") ||
       trig.includes("credenciamento") ||
+      trig.includes("credential") ||
       subj.includes("credenciamento") ||
       subj.includes("dados do hóspede") ||
       subj.includes("dados do hospede");
@@ -4843,7 +6054,7 @@ export function deduplicateB2bCredentialCommunications(db) {
       continue;
     }
 
-    const dedupKey = String(
+    const baseKey = String(
       c.metadata?.b2bReservationNumber ||
       c.metadata?.reservationCode ||
       c.reservation_id ||
@@ -4853,10 +6064,13 @@ export function deduplicateB2bCredentialCommunications(db) {
       .trim()
       .toUpperCase();
 
-    if (!dedupKey) {
+    if (!baseKey) {
       filtered.push(c);
       continue;
     }
+
+    const stagePart = getCommCredentialStageKey(c).toUpperCase();
+    const dedupKey = `${baseKey}::${stagePart}`;
 
     if (seenKeys.has(dedupKey)) {
       removed++;
@@ -4872,8 +6086,56 @@ export function deduplicateB2bCredentialCommunications(db) {
   return removed;
 }
 
+function resolveRequesterTargetEmail(db, reservation, toEmail = "") {
+  const linkedAgency = reservation?.agencyId
+    ? (db?.agencies || []).find(a => String(a.id) === String(reservation.agencyId))
+    : null;
+  const linkedCompany = reservation?.companyId
+    ? (db?.companies || []).find(c => String(c.id) === String(reservation.companyId))
+    : null;
+
+  const isB2b =
+    String(reservation?.channel || "").toLowerCase().includes("b2b") ||
+    Boolean(reservation?.b2bReservationNumber) ||
+    reservation?.requesterType === "agency_b2b";
+
+  if (isB2b) {
+    const strictTarget = resolveB2bCredentialTargetEmail(reservation, db, toEmail);
+    return {
+      targetEmail: strictTarget,
+      linkedAgency,
+      linkedCompany,
+      agencyNfEmails: []
+    };
+  }
+
+  const firstCompanyAgent = Array.isArray(linkedCompany?.agents)
+    ? linkedCompany.agents.find(ag => ag && ag.email && String(ag.email).includes("@") && !isPureBillingMailbox(ag.email))
+    : null;
+
+  const rawCandidates = [
+    toEmail,
+    reservation?.requesterInfo?.email,
+    reservation?.requesterEmail,
+    reservation?.agencyAgentEmail,
+    reservation?.companyData?.companyEmail,
+    firstCompanyAgent?.email,
+    linkedCompany?.email
+  ];
+  const validNonB2bTarget = rawCandidates
+    .map(v => String(v || "").trim().toLowerCase())
+    .find(e => e && e.includes("@") && !isNonAgencySystemEmailAddress(e) && !isPureBillingMailbox(e)) || "";
+
+  return {
+    targetEmail: validNonB2bTarget,
+    linkedAgency,
+    linkedCompany,
+    agencyNfEmails: []
+  };
+}
+
 /**
- * Dispara o e-mail cordial de Confirmação B2B + Link Seguro de Credenciamento do Hóspede (/credenciamento/:code)
+ * Dispara o e-mail cordial de Confirmação / Lembrete + Link Seguro de Credenciamento do Hóspede (/credenciamento/:code)
  * Prioriza Zoho Mail REST API (quando OAuth2 estiver conectado) e faz fallback automático para Nodemailer SMTP,
  * registrando imediatamente no Histórico de Comunicações da Reserva e na pasta Enviados do E-mail Hub.
  */
@@ -4885,12 +6147,21 @@ export async function dispatchB2bAgencyCredentialEmail(
     toEmail = "",
     baseUrl = "https://corpflats.com.br",
     trigger = "b2b_agency_credential_request",
-    force = false
+    force = false,
+    isReminder = false,
+    reminderKind = "",
+    reminderNumber = 1,
+    stageKey = "",
+    nowIsoOverride = ""
   } = {}
 ) {
   if (!db || !reservation) {
     return { ok: false, error: "Reserva não informada." };
   }
+
+  const resolvedStageKey = String(
+    stageKey || (isReminder ? `reminder_${reminderKind || reminderNumber}` : "initial")
+  ).trim();
 
   const lockKeys = getB2bReservationLockKeys(reservation);
   if (lockKeys.some(k => inFlightB2bCredentialLocks.has(k))) {
@@ -4898,58 +6169,45 @@ export async function dispatchB2bAgencyCredentialEmail(
       ok: true,
       skipped: true,
       reason: "already_in_flight",
+      stageKey: resolvedStageKey,
       sentTo: reservation.b2bCredentialEmailRecipient || ""
     };
   }
 
-  if (!force && hasB2bCredentialEmailAlreadyBeenSent(db, reservation)) {
+  if (!force && hasB2bCredentialEmailAlreadyBeenSent(db, reservation, resolvedStageKey)) {
     return {
       ok: true,
       skipped: true,
       alreadySent: true,
-      sentAt: reservation.b2bCredentialEmailSentAt,
+      stageKey: resolvedStageKey,
+      sentAt:
+        reservation.credentialSentStages?.[resolvedStageKey]?.emailSentAt ||
+        reservation.b2bCredentialEmailSentAt,
       sentTo: reservation.b2bCredentialEmailRecipient || ""
     };
   }
 
-  const linkedAgency = reservation.agencyId
-    ? (db.agencies || []).find(a => String(a.id) === String(reservation.agencyId))
-    : null;
-  const linkedCompany = reservation.companyId
-    ? (db.companies || []).find(c => String(c.id) === String(reservation.companyId))
-    : null;
+  const { targetEmail, linkedAgency, linkedCompany } = resolveRequesterTargetEmail(
+    db,
+    reservation,
+    toEmail
+  );
   const flat = (db.flats || []).find(
     f => Number(f.id) === Number(reservation.flatId) || String(f.number) === String(reservation.flatNumber)
   );
 
-  const nfEmails = Array.isArray(reservation.nfDeliveryEmails) ? reservation.nfDeliveryEmails : [];
-  const guestEmailLower = String(reservation.guestEmail || "").trim().toLowerCase();
-  const agencyNfEmails = nfEmails.filter(
-    e => e && String(e).includes("@") && String(e).trim().toLowerCase() !== guestEmailLower
-  );
-
-  const targetEmail = String(
-    toEmail ||
-      reservation.agencyAgentEmail ||
-      reservation.requesterInfo?.email ||
-      reservation.requesterEmail ||
-      linkedAgency?.financialEmail ||
-      linkedAgency?.email ||
-      linkedCompany?.email ||
-      linkedCompany?.financialEmail ||
-      linkedCompany?.emailFinanceiro ||
-      agencyNfEmails[0] ||
-      nfEmails[0] ||
-      ""
-  ).trim();
-
   if (!targetEmail || !targetEmail.includes("@")) {
-    return { ok: false, error: "E-mail do solicitante ou agência não informado na reserva." };
+    await notifyManagerB2bMissingDataAlert(db, reservation, ["E-mail do Solicitante (Reservado por)"]).catch(() => {});
+    return {
+      ok: false,
+      blockedMissingSolicitanteEmail: true,
+      error:
+        "E-mail do solicitante ('Reservado por') não informado no voucher/reserva. Por segurança, nunca enviamos solicitação de dados do hóspede para e-mails de NFS-e ou conciliação."
+    };
   }
 
-  const ccList = agencyNfEmails.filter(
-    e => String(e).trim().toLowerCase() !== targetEmail.toLowerCase()
-  );
+  // REGRA IMUTÁVEL: Zero cópia (CC) para e-mails de envio de NFS-e ou conciliação!
+  const ccList = [];
 
   const hostBase = String(baseUrl || "https://corpflats.com.br")
     .replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br")
@@ -4964,18 +6222,26 @@ export async function dispatchB2bAgencyCredentialEmail(
     settings: db.settings,
     baseUrl: hostBase,
     credentialUrl,
-    db
+    db,
+    isReminder,
+    reminderKind,
+    reminderNumber
   });
 
   // Marca lock em memória e carimbo na reserva ANTES do await de rede para impedir disparos paralelos
   for (const k of lockKeys) inFlightB2bCredentialLocks.add(k);
   const previousSentAt = reservation.b2bCredentialEmailSentAt || null;
-  const preSendIso = new Date().toISOString();
-  reservation.b2bCredentialEmailSentAt = preSendIso;
-  reservation.b2bCredentialEmailRecipient = ccList.length > 0 ? `${targetEmail}, ${ccList.join(", ")}` : targetEmail;
+  const previousStageEntry = reservation.credentialSentStages?.[resolvedStageKey]
+    ? { ...reservation.credentialSentStages[resolvedStageKey] }
+    : null;
+  const preSendIso = nowIsoOverride || new Date().toISOString();
+  if (!isReminder || !reservation.b2bCredentialEmailSentAt) {
+    reservation.b2bCredentialEmailSentAt = preSendIso;
+  }
+  reservation.b2bCredentialEmailRecipient = targetEmail;
 
   try {
-    // Se já existia um registro anterior para o credenciamento desta reserva (ex: falha ou reenvio manual), remove antes para evitar duplicidade
+    // Remove apenas eventual tentativa anterior com falha (ou reenvio forçado) do MESMO estágio
     if (Array.isArray(db.reservationCommunications)) {
       const resCodeUpper = String(reservation.code || "").trim().toUpperCase();
       const resIdStr = String(reservation.id || "").trim();
@@ -4983,7 +6249,8 @@ export async function dispatchB2bAgencyCredentialEmail(
       db.reservationCommunications = db.reservationCommunications.filter(c => {
         if (!c || c.type !== "email") return true;
         if (!force && c.status !== "failed") return true;
-        return !isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum);
+        if (!isB2bCredentialCommMatch(c, resCodeUpper, resIdStr, b2bNum)) return true;
+        return getCommCredentialStageKey(c) !== resolvedStageKey;
       });
     }
 
@@ -4999,17 +6266,41 @@ export async function dispatchB2bAgencyCredentialEmail(
       trigger
     });
 
-    const nowIso = new Date().toISOString();
+    const nowIso = nowIsoOverride || new Date().toISOString();
     if (!sendRes?.ok || sendRes?.communication?.status === "failed") {
       reservation.b2bCredentialEmailSentAt = previousSentAt;
+      if (reservation.credentialSentStages) {
+        if (previousStageEntry) reservation.credentialSentStages[resolvedStageKey] = previousStageEntry;
+        else delete reservation.credentialSentStages[resolvedStageKey];
+      }
     } else {
-      reservation.b2bCredentialEmailSentAt = nowIso;
+      if (!isReminder || !previousSentAt) {
+        reservation.b2bCredentialEmailSentAt = nowIso;
+      } else {
+        reservation.b2bCredentialEmailSentAt = previousSentAt;
+      }
+      reservation.credentialLastEmailSentAt = nowIso;
+      reservation.credentialFirstRequestSentAt = reservation.credentialFirstRequestSentAt || nowIso;
+      reservation.credentialLastRequestSentAt = nowIso;
+      if (!reservation.credentialSentStages || typeof reservation.credentialSentStages !== "object") {
+        reservation.credentialSentStages = {};
+      }
+      reservation.credentialSentStages[resolvedStageKey] = {
+        ...(reservation.credentialSentStages[resolvedStageKey] || {}),
+        sentAt: reservation.credentialSentStages[resolvedStageKey]?.sentAt || nowIso,
+        emailSentAt: nowIso,
+        recipient: targetEmail
+      };
     }
 
     if (sendRes?.communication) {
       sendRes.communication.metadata = {
         ...(sendRes.communication.metadata || {}),
         trigger,
+        stageKey: resolvedStageKey,
+        isReminder: Boolean(isReminder),
+        reminderKind: reminderKind || "",
+        reminderNumber: Number(reminderNumber) || 0,
         credentialUrl: rendered.credentialUrl || credentialUrl,
         agencyName: reservation.agencyTradeName || reservation.agencyName || linkedAgency?.tradeName || "",
         b2bReservationNumber: reservation.b2bReservationNumber || reservation.externalReservationNumber || "",
@@ -5018,17 +6309,19 @@ export async function dispatchB2bAgencyCredentialEmail(
     }
 
     if (typeof saveDatabase === "function") {
-      saveDatabase("b2b_credential_email_sent");
+      saveDatabase(isReminder ? "b2b_credential_email_reminder_sent" : "b2b_credential_email_sent");
     }
 
     return {
       ok: Boolean(sendRes?.ok),
       success: Boolean(sendRes?.ok),
+      stageKey: resolvedStageKey,
+      isReminder: Boolean(isReminder),
       sentTo: reservation.b2bCredentialEmailRecipient,
       recipient: targetEmail,
       cc: ccList,
       credentialUrl: rendered.credentialUrl || credentialUrl,
-      sentAt: reservation.b2bCredentialEmailSentAt || nowIso,
+      sentAt: nowIso,
       method: sendRes?.method || "smtp_engine",
       communicationId: sendRes?.communication?.id || null,
       communication: sendRes?.communication || null
@@ -5041,44 +6334,269 @@ export async function dispatchB2bAgencyCredentialEmail(
   }
 }
 
+export function getBrtDateParts(dateInput = new Date()) {
+  const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(d);
+  const map = {};
+  for (const p of parts) {
+    map[p.type] = p.value;
+  }
+  const hour = Number(map.hour || 0);
+  const minute = Number(map.minute || 0);
+  return {
+    dateIso: `${map.year}-${map.month}-${map.day}`,
+    hour,
+    minute,
+    minutesOfDay: hour * 60 + minute
+  };
+}
+
 /**
- * Varre todas as reservas B2B ativas que ainda estão sem WhatsApp/CPF do hóspede
- * e garante que o e-mail cordial de solicitação de credenciamento (/credenciamento/:code)
- * tenha sido enviado e registrado uma única vez para a agência responsável.
+ * Avalia deterministicamente qual ação da régua de credenciamento do hóspede deve ocorrer agora (em BRT):
+ *  - Envio inicial imediato (`stageKey: "initial"`)
+ *  - Antes do dia do check-in (`hoje < checkinDate`): 1 lembrete a cada 24h após o envio anterior (`reminder_24h_N`)
+ *  - No dia do check-in (`D0`, reserva criada antes de `D0`): lembrete às 08:00 BRT (`reminder_checkin_morning`),
+ *    lembrete às 12:00 BRT (`reminder_checkin_noon`) e alerta urgente ao gestor às 13:00 BRT se continuar pendente
+ *  - Reserva same-day (`D0`): envio inicial imediato; se inicial < 11:00 BRT -> lembrete às 12:00 BRT + alerta às 13:00 BRT;
+ *    se inicial >= 11:00 BRT -> lembrete +2h (`reminder_sameday_2h`) + alerta +1h após o lembrete.
+ */
+export function evaluateCredentialScheduleDecision(reservation, nowInput = new Date()) {
+  if (!reservation) return { action: "none", reason: "no_reservation" };
+  const nowDate = nowInput instanceof Date ? nowInput : new Date(nowInput);
+  const nowMs = nowDate.getTime();
+  const nowBrt = getBrtDateParts(nowDate);
+  const checkinIso = String(reservation.checkinDate || "").slice(0, 10);
+  const checkoutIso = String(reservation.checkoutDate || "").slice(0, 10);
+
+  if (checkoutIso && checkoutIso < nowBrt.dateIso) {
+    return { action: "none", reason: "past_checkout" };
+  }
+
+  const sentStages = reservation.credentialSentStages && typeof reservation.credentialSentStages === "object"
+    ? reservation.credentialSentStages
+    : {};
+
+  const initialIso =
+    reservation.credentialFirstRequestSentAt ||
+    sentStages.initial?.sentAt ||
+    sentStages.initial?.emailSentAt ||
+    sentStages.initial?.whatsappSentAt ||
+    reservation.b2bCredentialEmailSentAt ||
+    reservation.b2bCredentialWhatsappSentAt ||
+    "";
+
+  if (!initialIso) {
+    return {
+      action: "send_stage",
+      stageKey: "initial",
+      isReminder: false,
+      reminderKind: "",
+      reminderNumber: 0
+    };
+  }
+
+  const initialDate = new Date(initialIso);
+  const initialMs = initialDate.getTime();
+  const initialBrt = getBrtDateParts(initialDate);
+  const isSameDayBooking = Boolean(checkinIso && initialBrt.dateIso >= checkinIso);
+
+  const stage24hEntries = Object.entries(sentStages)
+    .filter(([k, v]) => k.startsWith("reminder_24h_") && (v?.sentAt || v?.emailSentAt || v?.whatsappSentAt))
+    .map(([k, v]) => ({
+      key: k,
+      num: Number(k.replace("reminder_24h_", "")) || 1,
+      ms: new Date(v.sentAt || v.emailSentAt || v.whatsappSentAt).getTime()
+    }))
+    .sort((a, b) => a.num - b.num);
+
+  const totalRemindersSent = Object.entries(sentStages).filter(
+    ([k, v]) => k !== "initial" && (v?.sentAt || v?.emailSentAt || v?.whatsappSentAt)
+  ).length;
+
+  // 1. Antes do dia do check-in: 1 lembrete a cada 24h após o envio anterior até D-1
+  if (checkinIso && nowBrt.dateIso < checkinIso) {
+    const last24h = stage24hEntries.length > 0 ? stage24hEntries[stage24hEntries.length - 1] : null;
+    const referenceMs = last24h ? last24h.ms : initialMs;
+    if (nowMs - referenceMs >= 24 * 60 * 60 * 1000) {
+      const nextNum = (last24h ? last24h.num : 0) + 1;
+      return {
+        action: "send_stage",
+        stageKey: `reminder_24h_${nextNum}`,
+        isReminder: true,
+        reminderKind: "24h",
+        reminderNumber: nextNum
+      };
+    }
+    if (!reservation.b2bCredentialWhatsappSentAt && !reservation.credentialInitialWaEvaluatedAt) {
+      return { action: "catchup_initial_whatsapp", stageKey: "initial" };
+    }
+    return { action: "none", reason: "waiting_next_24h_window" };
+  }
+
+  // 2. Dia do check-in (D0)
+  if (checkinIso && nowBrt.dateIso === checkinIso) {
+    if (!isSameDayBooking) {
+      const hasMorning = Boolean(
+        sentStages.reminder_checkin_morning?.sentAt ||
+        sentStages.reminder_checkin_morning?.emailSentAt ||
+        sentStages.reminder_checkin_morning?.whatsappSentAt
+      );
+      const hasNoon = Boolean(
+        sentStages.reminder_checkin_noon?.sentAt ||
+        sentStages.reminder_checkin_noon?.emailSentAt ||
+        sentStages.reminder_checkin_noon?.whatsappSentAt
+      );
+
+      if (nowBrt.minutesOfDay >= 8 * 60 && nowBrt.minutesOfDay < 12 * 60 && !hasMorning) {
+        return {
+          action: "send_stage",
+          stageKey: "reminder_checkin_morning",
+          isReminder: true,
+          reminderKind: "checkin_morning",
+          reminderNumber: totalRemindersSent + 1
+        };
+      }
+
+      if (nowBrt.minutesOfDay >= 12 * 60 && !hasNoon) {
+        return {
+          action: "send_stage",
+          stageKey: "reminder_checkin_noon",
+          isReminder: true,
+          reminderKind: "checkin_noon",
+          reminderNumber: totalRemindersSent + 1
+        };
+      }
+
+      if (nowBrt.minutesOfDay >= 13 * 60 && hasNoon && !reservation.credentialCheckinUrgentAlertSentAt) {
+        return { action: "manager_overdue_alert", reason: "checkin_13h_overdue" };
+      }
+
+      if (!reservation.b2bCredentialWhatsappSentAt && !reservation.credentialInitialWaEvaluatedAt) {
+        return { action: "catchup_initial_whatsapp", stageKey: "initial" };
+      }
+      return { action: "none", reason: "waiting_checkin_day_slot" };
+    }
+
+    // Reserva criada no próprio dia do check-in (Same-Day D0)
+    if (initialBrt.minutesOfDay < 11 * 60) {
+      const hasNoon = Boolean(
+        sentStages.reminder_checkin_noon?.sentAt ||
+        sentStages.reminder_checkin_noon?.emailSentAt ||
+        sentStages.reminder_checkin_noon?.whatsappSentAt
+      );
+      if (nowBrt.minutesOfDay >= 12 * 60 && !hasNoon) {
+        return {
+          action: "send_stage",
+          stageKey: "reminder_checkin_noon",
+          isReminder: true,
+          reminderKind: "checkin_noon",
+          reminderNumber: totalRemindersSent + 1
+        };
+      }
+      if (nowBrt.minutesOfDay >= 13 * 60 && hasNoon && !reservation.credentialCheckinUrgentAlertSentAt) {
+        return { action: "manager_overdue_alert", reason: "sameday_13h_overdue" };
+      }
+    } else {
+      const samedayStage = sentStages.reminder_sameday_2h;
+      const hasSameday2h = Boolean(
+        samedayStage?.sentAt || samedayStage?.emailSentAt || samedayStage?.whatsappSentAt
+      );
+      if (!hasSameday2h && nowMs - initialMs >= 2 * 60 * 60 * 1000) {
+        return {
+          action: "send_stage",
+          stageKey: "reminder_sameday_2h",
+          isReminder: true,
+          reminderKind: "sameday_2h",
+          reminderNumber: totalRemindersSent + 1
+        };
+      }
+      if (hasSameday2h && !reservation.credentialCheckinUrgentAlertSentAt) {
+        const remSentMs = new Date(
+          samedayStage.sentAt || samedayStage.emailSentAt || samedayStage.whatsappSentAt
+        ).getTime();
+        if (nowMs - remSentMs >= 60 * 60 * 1000) {
+          return { action: "manager_overdue_alert", reason: "sameday_post_reminder_1h_overdue" };
+        }
+      }
+    }
+
+    if (!reservation.b2bCredentialWhatsappSentAt && !reservation.credentialInitialWaEvaluatedAt) {
+      return { action: "catchup_initial_whatsapp", stageKey: "initial" };
+    }
+    return { action: "none", reason: "waiting_sameday_slot" };
+  }
+
+  // 3. Após o dia do check-in (estadia em andamento ainda sem credenciamento)
+  if (!reservation.credentialCheckinUrgentAlertSentAt) {
+    return { action: "manager_overdue_alert", reason: "post_checkin_overdue" };
+  }
+
+  return { action: "none", reason: "completed_all_stages" };
+}
+
+/**
+ * Motor unificado de disparos e lembretes de credenciamento (/credenciamento/:code) para TODAS as reservas
+ * confirmadas aguardando preenchimento do hóspede (Agências B2B, Empresas e Solicitantes Terceiros),
+ * operando simultaneamente via E-mail e WhatsApp validado + contingência para o Gestor.
  */
 export async function ensurePendingB2bAgencyCredentialDispatches(
   db,
   saveDatabase,
-  { baseUrl = "https://corpflats.com.br", forceCheck = false } = {}
+  {
+    baseUrl = "https://corpflats.com.br",
+    forceCheck = false,
+    nowOverride = null,
+    allowSimulatedSend = false,
+    phoneExistsChecker = null
+  } = {}
 ) {
-  if (!db || !Array.isArray(db.reservations)) return { dispatched: 0 };
+  if (!db || !Array.isArray(db.reservations)) return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0 };
   if (!Array.isArray(db.reservationCommunications)) db.reservationCommunications = [];
 
   if (isRunningPendingB2bDispatches) {
-    return { dispatched: 0, skipped: true };
+    return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0, skipped: true };
   }
-  if (!forceCheck && Date.now() - lastPendingB2bDispatchCheckAt < 60000) {
-    return { dispatched: 0, throttled: true };
+  if (!forceCheck && !nowOverride && Date.now() - lastPendingB2bDispatchCheckAt < 55000) {
+    return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0, throttled: true };
   }
 
-  const canSendReal = Boolean(getZohoOAuthConfig(db).isConfigured || getSmtpConfig(db).isConfigured);
-  if (!canSendReal) return { dispatched: 0 };
+  const canSendEmailReal = Boolean(
+    getZohoOAuthConfig(db).isConfigured || getSmtpConfig(db).isConfigured || allowSimulatedSend
+  );
+  const canSendWaReal = Boolean(
+    (db?.zapiConfig?.enabled !== false && db?.zapiConfig?.instanceId && db?.zapiConfig?.token) ||
+    process.env.ZAPI_INSTANCE_ID ||
+    allowSimulatedSend
+  );
+
+  if (!canSendEmailReal && !canSendWaReal) {
+    return { dispatched: 0, remindersDispatched: 0, managerAlerts: 0 };
+  }
 
   isRunningPendingB2bDispatches = true;
-  lastPendingB2bDispatchCheckAt = Date.now();
+  if (!nowOverride) {
+    lastPendingB2bDispatchCheckAt = Date.now();
+  }
   let dispatched = 0;
-  let didBackfillSentAt = false;
+  let remindersDispatched = 0;
+  let managerAlerts = 0;
+  let didMutateState = false;
+
+  const evalDate = nowOverride ? (nowOverride instanceof Date ? nowOverride : new Date(nowOverride)) : new Date();
+  const evalIso = evalDate.toISOString();
+  const todayBrIso = getBrtDateParts(evalDate).dateIso;
 
   try {
     const removedDups = deduplicateB2bCredentialCommunications(db);
-    if (removedDups > 0) didBackfillSentAt = true;
-
-    const todayBrIso = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Sao_Paulo",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit"
-    }).format(new Date());
+    if (removedDups > 0) didMutateState = true;
 
     for (const r of db.reservations) {
       if (!r) continue;
@@ -5095,64 +6613,419 @@ export async function ensurePendingB2bAgencyCredentialDispatches(
         continue;
       }
 
-      const isB2b = String(r.channel || "").toLowerCase().includes("b2b") || Boolean(r.b2bReservationNumber);
-      if (!isB2b) continue;
-
-      // Não envia solicitação de dados para reservas passadas (cujo check-out já ocorreu)
       if (r.checkoutDate && String(r.checkoutDate).slice(0, 10) < todayBrIso) continue;
-
-      const cleanPhone = String(r.guestPhone || "").replace(/\D/g, "");
-      const cleanDoc = String(r.guestDocument || "").replace(/\D/g, "");
-      if (cleanPhone.length >= 10 && cleanDoc.length >= 5) continue;
       if (r.b2bCredentialCompletedAt || r.credentialStatus === "completed") continue;
+      if (!isMissingGuestDataForCredential(r)) continue;
 
+      const isB2b =
+        String(r.channel || "").toLowerCase().includes("b2b") ||
+        Boolean(r.b2bReservationNumber) ||
+        r.requesterType === "agency_b2b";
+      const recips = getReservationRecipients(r, db);
+      const isSeparateRequester = Boolean(
+        isB2b ||
+        (r.requesterType && r.requesterType !== "guest") ||
+        recips.requester?.isDifferentFromGuest
+      );
+      if (!isSeparateRequester) continue;
+
+      // Sincroniza eventual envio inicial legado registrado apenas em communications/Zoho Sent
       const hadSentAtBefore = Boolean(r.b2bCredentialEmailSentAt);
-      if (hasB2bCredentialEmailAlreadyBeenSent(db, r)) {
-        if (!hadSentAtBefore && r.b2bCredentialEmailSentAt) {
-          didBackfillSentAt = true;
+      if (!hadSentAtBefore && hasB2bCredentialEmailAlreadyBeenSent(db, r, "initial") && r.b2bCredentialEmailSentAt) {
+        r.credentialFirstRequestSentAt = r.credentialFirstRequestSentAt || r.b2bCredentialEmailSentAt;
+        didMutateState = true;
+      }
+
+      const decision = evaluateCredentialScheduleDecision(r, evalDate);
+      if (decision.action === "none") continue;
+
+      if (decision.action === "catchup_initial_whatsapp") {
+        if (canSendWaReal) {
+          r.credentialInitialWaEvaluatedAt = evalIso;
+          didMutateState = true;
+          const waCatchup = await dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, {
+            baseUrl,
+            stageKey: "initial",
+            isReminder: false,
+            ...(phoneExistsChecker ? { phoneExistsChecker } : {})
+          });
+          if (waCatchup?.dispatched) {
+            if (!r.credentialSentStages || typeof r.credentialSentStages !== "object") r.credentialSentStages = {};
+            r.credentialSentStages.initial = {
+              ...(r.credentialSentStages.initial || {}),
+              sentAt: r.credentialSentStages.initial?.sentAt || r.b2bCredentialEmailSentAt || evalIso,
+              whatsappSentAt: evalIso,
+              whatsappRecipient: waCatchup.requesterPhone || ""
+            };
+            dispatched++;
+          }
         }
         continue;
       }
 
-      const resCode = String(r.code || "").trim().toUpperCase();
-      const resId = String(r.id || "").trim();
-      const b2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
-
-      const existingFailedComm = db.reservationCommunications.find(
-        c => c && c.status === "failed" && isB2bCredentialCommMatch(c, resCode, resId, b2bNum)
-      );
-
-      if (existingFailedComm) {
-        const lastTryMs = existingFailedComm.metadata?.lastAutoRetryAt
-          ? new Date(existingFailedComm.metadata.lastAutoRetryAt).getTime()
-          : new Date(existingFailedComm.created_at || existingFailedComm.createdAt || 0).getTime();
-        if (!canSendReal || Date.now() - lastTryMs < 900000) {
-          continue;
-        }
+      if (decision.action === "manager_overdue_alert") {
+        const alertRes = await sendCredentialContingencyManagerAlert(
+          db,
+          saveDatabase,
+          r,
+          "checkin_day_overdue",
+          { baseUrl, reason: decision.reason }
+        );
+        if (alertRes?.sent) managerAlerts++;
+        continue;
       }
 
-      try {
-        const res = await dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
-          baseUrl,
-          trigger: "b2b_auto_credential_request",
-          force: false
-        });
-        if (res && res.ok && !res.skipped) {
-          dispatched++;
+      if (decision.action === "send_stage") {
+        const { stageKey, isReminder, reminderKind, reminderNumber } = decision;
+        const { targetEmail } = resolveRequesterTargetEmail(db, r);
+        const hasEmailTarget = Boolean(targetEmail && targetEmail.includes("@"));
+
+        // Verifica se este estágio falhou por e-mail há menos de 15 min para evitar flood de retentativa SMTP
+        const resCode = String(r.code || "").trim().toUpperCase();
+        const resId = String(r.id || "").trim();
+        const b2bNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
+        const existingFailedComm = db.reservationCommunications.find(
+          c =>
+            c &&
+            c.status === "failed" &&
+            isB2bCredentialCommMatch(c, resCode, resId, b2bNum) &&
+            getCommCredentialStageKey(c) === stageKey
+        );
+        const emailRetryThrottled = Boolean(
+          existingFailedComm &&
+          evalDate.getTime() -
+            new Date(
+              existingFailedComm.metadata?.lastAutoRetryAt ||
+                existingFailedComm.created_at ||
+                existingFailedComm.createdAt ||
+                0
+            ).getTime() <
+            900000
+        );
+
+        let emailSucceeded = false;
+        let waSucceeded = false;
+
+        if (hasEmailTarget && canSendEmailReal && !emailRetryThrottled) {
+          try {
+            const emailRes = await dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+              baseUrl,
+              trigger: isReminder ? `b2b_credential_${stageKey}` : "b2b_auto_credential_request",
+              force: false,
+              isReminder,
+              reminderKind,
+              reminderNumber,
+              stageKey,
+              nowIsoOverride: evalIso
+            });
+            if (emailRes?.ok && !emailRes?.skipped) {
+              emailSucceeded = true;
+            }
+          } catch (err) {
+            console.warn(`[Credential Sync] Falha de e-mail (${stageKey}) na reserva ${r.code}:`, err.message);
+          }
         }
-      } catch (err) {
-        console.warn(`[B2B Credential Sync] Falha ao disparar credenciamento para reserva ${r.code}:`, err.message);
+
+        let waRes = null;
+        if (canSendWaReal) {
+          try {
+            waRes = await dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, {
+              baseUrl,
+              isReminder,
+              reminderKind,
+              reminderNumber,
+              stageKey,
+              ...(phoneExistsChecker ? { phoneExistsChecker } : {})
+            });
+            if (waRes?.dispatched) {
+              waSucceeded = true;
+              r.credentialInitialWaEvaluatedAt = r.credentialInitialWaEvaluatedAt || evalIso;
+              if (!r.credentialSentStages || typeof r.credentialSentStages !== "object") {
+                r.credentialSentStages = {};
+              }
+              r.credentialSentStages[stageKey] = {
+                ...(r.credentialSentStages[stageKey] || {}),
+                sentAt: r.credentialSentStages[stageKey]?.sentAt || evalIso,
+                whatsappSentAt: evalIso,
+                whatsappRecipient: waRes.requesterPhone || ""
+              };
+              r.credentialFirstRequestSentAt = r.credentialFirstRequestSentAt || evalIso;
+              r.credentialLastRequestSentAt = evalIso;
+              didMutateState = true;
+            } else if (waRes?.reason === "no_valid_requester_whatsapp") {
+              r.credentialInitialWaEvaluatedAt = r.credentialInitialWaEvaluatedAt || evalIso;
+            }
+          } catch (err) {
+            console.warn(`[Credential Sync] Falha de WhatsApp (${stageKey}) na reserva ${r.code}:`, err.message);
+          }
+        }
+
+        if (emailSucceeded || waSucceeded) {
+          if (isReminder) remindersDispatched++;
+          else dispatched++;
+        } else if (!hasEmailTarget && (!waRes || !waRes.dispatched)) {
+          // Contingência imediata: Reserva sem NENHUM e-mail e sem NENHUM WhatsApp válido da agência/solicitante
+          const waCheck = waRes || (await resolveValidRequesterWhatsApp(db, r, phoneExistsChecker ? { phoneExistsChecker } : {}));
+          if (!waCheck?.valid) {
+            const alertRes = await sendCredentialContingencyManagerAlert(
+              db,
+              saveDatabase,
+              r,
+              "missing_contact",
+              { baseUrl }
+            );
+            if (alertRes?.sent) managerAlerts++;
+          }
+        }
       }
     }
 
-    if (didBackfillSentAt && typeof saveDatabase === "function") {
-      saveDatabase("b2b_credential_dedup_reconcile");
+    if (didMutateState && typeof saveDatabase === "function") {
+      saveDatabase("b2b_credential_schedule_sync");
     }
   } finally {
     isRunningPendingB2bDispatches = false;
   }
 
-  return { dispatched };
+  return { dispatched, remindersDispatched, managerAlerts };
+}
+
+/**
+ * Auto-Reparo Pós-Hidratação para Reservas B2B Incompletas:
+ * Localiza reservas B2B ativas que chegaram sem nome/e-mail/telefone da agência ou agente,
+ * reprocessando mensagens em cache do Zoho (buscando corpo/PDF se ausentes), URL do voucher e CRM `db.agencies`.
+ */
+export async function repairIncompleteB2bReservations(db, saveDatabase) {
+  if (!db || !Array.isArray(db.reservations)) return { repairedCount: 0, repairedCodes: [] };
+  const repairedCodes = [];
+  const oauthConfigured = Boolean(getZohoOAuthConfig(db).isConfigured);
+  let resolvedInboxFolderId = "";
+
+  const extractAttListLocal = resObj => {
+    if (!resObj?.ok || !resObj.data) return [];
+    if (Array.isArray(resObj.data)) return resObj.data;
+    if (Array.isArray(resObj.data.attachments)) return resObj.data.attachments;
+    return [];
+  };
+
+  for (const r of db.reservations) {
+    if (!r) continue;
+    const st = String(r.status || "").toLowerCase().trim();
+    if (st === "cancelada" || st === "cancelled") continue;
+
+    const isB2b =
+      String(r.channel || "").toLowerCase().includes("b2b") ||
+      Boolean(r.b2bReservationNumber) ||
+      r.requesterType === "agency_b2b";
+    if (!isB2b) continue;
+
+    const missingCoreAgencyData =
+      !r.agencyName ||
+      !r.agencyAgentName ||
+      (!r.agencyAgentEmail && !r.agencyAgentPhone);
+    if (!missingCoreAgencyData) continue;
+
+    const beforeSig = JSON.stringify([
+      r.agencyId || "",
+      r.agencyName || "",
+      r.agencyCnpj || "",
+      r.agencyAgentName || "",
+      r.agencyAgentEmail || "",
+      r.agencyAgentPhone || ""
+    ]);
+
+    const resNum = String(r.b2bReservationNumber || r.externalReservationNumber || "").trim();
+
+    // 1. Procura mensagem original correspondente em db.zohoMessagesCache
+    if (resNum && Array.isArray(db.zohoMessagesCache)) {
+      const candidateMsgs = db.zohoMessagesCache.filter(m => {
+        if (!m || m.direction === "outbound" || m.folder === "sent" || m.b2bCancelled) return false;
+        const hay = `${m.subject || ""} ${m.snippet || ""} ${m.bodyHtml || ""}`;
+        if (!hay.includes(resNum)) return false;
+        return !/cancelamento|cancelada|cancelled/i.test(String(m.subject || ""));
+      });
+
+      for (const msg of candidateMsgs) {
+        let htmlText = msg.bodyHtml || "";
+        let pdfText = "";
+        const pdfBuffers = [];
+
+        if (oauthConfigured && msg.zohoMessageId) {
+          if (!resolvedInboxFolderId) {
+            try {
+              const fMap = await resolveZohoFolders(db);
+              resolvedInboxFolderId = fMap.inbox || fMap.inboxFolderIds?.[0] || "";
+            } catch {}
+          }
+          const folderId = msg.zohoFolderId || resolvedInboxFolderId;
+          if (!htmlText && folderId) {
+            try {
+              const cRes = await callZohoMailApi(
+                db,
+                `/accounts/{accountId}/folders/${folderId}/messages/${msg.zohoMessageId}/content`
+              );
+              if (cRes.ok && cRes.data?.content) {
+                htmlText = cRes.data.content;
+                msg.bodyHtml = htmlText;
+              }
+            } catch {}
+          }
+          if (msg.hasAttachments && folderId) {
+            try {
+              const attRes = await callZohoMailApi(
+                db,
+                `/accounts/{accountId}/folders/${folderId}/messages/${msg.zohoMessageId}/attachmentinfo`
+              );
+              const atts = extractAttListLocal(attRes);
+              for (const att of atts) {
+                const attId = att?.attachmentId || att?.id;
+                const fname = String(att?.attachmentName || att?.filename || "");
+                const mime = String(att?.contentType || "");
+                if (attId && (fname.toLowerCase().endsWith(".pdf") || mime.toLowerCase() === "application/pdf")) {
+                  try {
+                    const fileRes = await callZohoMailApi(
+                      db,
+                      `/accounts/{accountId}/folders/${folderId}/messages/${msg.zohoMessageId}/attachments/${attId}`,
+                      { responseType: "buffer" }
+                    );
+                    if (fileRes.ok && Buffer.isBuffer(fileRes.data)) {
+                      pdfBuffers.push(fileRes.data);
+                      const extracted = extractTextFromPdfBuffer(fileRes.data);
+                      if (extracted) pdfText += `\n${extracted}`;
+                    }
+                  } catch {}
+                }
+              }
+            } catch {}
+          }
+        }
+
+        try {
+          const parsed = await fetchAndParseB2bVoucher({
+            rawText: [msg.snippet || "", pdfText].filter(Boolean).join("\n"),
+            htmlText,
+            subject: msg.subject || "",
+            fromEmail: msg.fromEmail || msg.fromAddress || "",
+            cc: msg.cc || msg.ccAddress || "",
+            replyTo: msg.replyTo || msg.replyToAddress || "",
+            voucherUrl: r.voucherUrl || r.b2bVoucherUrl || "",
+            pdfBuffers,
+            db
+          });
+          if (parsed.b2bReservationNumber || resNum) {
+            if (!parsed.b2bReservationNumber) parsed.b2bReservationNumber = resNum;
+            if (!parsed.guestName) parsed.guestName = r.guestName;
+            if (!parsed.checkinDate) parsed.checkinDate = r.checkinDate;
+            ingestB2bVoucherIntoDb(db, parsed, {
+              saveDatabase: null,
+              autoSendCredentialEmail: false
+            });
+          }
+        } catch {}
+      }
+    }
+
+    // 2. Se ainda faltar contato e houver URL do voucher salva na reserva, tenta enriquecer pelo link web
+    const stillMissingContact = !r.agencyName || !r.agencyAgentName || (!r.agencyAgentEmail && !r.agencyAgentPhone);
+    const savedVoucherUrl = r.voucherUrl || r.b2bVoucherUrl || "";
+    if (stillMissingContact && savedVoucherUrl && process.env.NODE_ENV !== "test") {
+      try {
+        const parsedFromUrl = await fetchAndParseB2bVoucher({
+          rawText: "",
+          voucherUrl: savedVoucherUrl,
+          forceFetch: true,
+          db
+        });
+        if (parsedFromUrl.agencyName && !r.agencyName) {
+          r.agencyName = parsedFromUrl.agencyName;
+          r.agencyTradeName = parsedFromUrl.agencyName;
+        }
+        if (parsedFromUrl.agencyCnpj && !r.agencyCnpj) r.agencyCnpj = parsedFromUrl.agencyCnpj;
+        if (parsedFromUrl.agencyAgentName && !r.agencyAgentName) r.agencyAgentName = parsedFromUrl.agencyAgentName;
+        if (parsedFromUrl.agencyAgentEmail && !r.agencyAgentEmail) r.agencyAgentEmail = parsedFromUrl.agencyAgentEmail;
+        if (parsedFromUrl.agencyAgentPhone && !r.agencyAgentPhone) r.agencyAgentPhone = parsedFromUrl.agencyAgentPhone;
+      } catch {}
+    }
+
+    // 3. Reconciliação final com CRM `db.agencies` (por ID, CNPJ, Nome ou E-mail de Agente)
+    if (Array.isArray(db.agencies) && db.agencies.length > 0) {
+      const rCnpjDigits = String(r.agencyCnpj || "").replace(/\D/g, "");
+      const rAgNameLower = String(r.agencyName || r.agencyTradeName || "").trim().toLowerCase();
+      const rAgEmailLower = String(r.agencyAgentEmail || "").trim().toLowerCase();
+
+      const matchedAgency = db.agencies.find(a => {
+        if (!a) return false;
+        if (r.agencyId && String(a.id) === String(r.agencyId)) return true;
+        if (rCnpjDigits && String(a.cnpj || "").replace(/\D/g, "") === rCnpjDigits) return true;
+        if (
+          rAgNameLower &&
+          (String(a.tradeName || "").trim().toLowerCase() === rAgNameLower ||
+            String(a.corporateName || "").trim().toLowerCase() === rAgNameLower)
+        ) {
+          return true;
+        }
+        if (
+          rAgEmailLower &&
+          (String(a.email || "").trim().toLowerCase() === rAgEmailLower ||
+            String(a.financialEmail || "").trim().toLowerCase() === rAgEmailLower ||
+            (Array.isArray(a.agents) && a.agents.some(ag => String(ag?.email || "").trim().toLowerCase() === rAgEmailLower)))
+        ) {
+          return true;
+        }
+        return false;
+      });
+
+      if (matchedAgency) {
+        if (!r.agencyId) r.agencyId = matchedAgency.id;
+        if (!r.agencyName) r.agencyName = matchedAgency.tradeName || matchedAgency.corporateName || "";
+        if (!r.agencyTradeName) r.agencyTradeName = matchedAgency.tradeName || r.agencyName || "";
+        if (!r.agencyCorporateName) r.agencyCorporateName = matchedAgency.corporateName || r.agencyName || "";
+        if (!r.agencyCnpj && matchedAgency.cnpj) r.agencyCnpj = matchedAgency.cnpj;
+        const currentEmailLower = String(r.agencyAgentEmail || "").trim().toLowerCase();
+        const emailMatchedAg =
+          currentEmailLower && Array.isArray(matchedAgency.agents)
+            ? matchedAgency.agents.find(
+                ag => ag && typeof ag === "object" && String(ag.email || "").trim().toLowerCase() === currentEmailLower
+              )
+            : null;
+        const firstAg =
+          emailMatchedAg ||
+          (Array.isArray(matchedAgency.agents)
+            ? matchedAgency.agents.find(ag => ag && typeof ag === "object" && (ag.name || ag.email || ag.phone || ag.whatsapp))
+            : null);
+        if (!r.agencyAgentName && firstAg?.name) r.agencyAgentName = firstAg.name;
+        if (!r.agencyAgentEmail) {
+          const candAgEmail = firstAg?.email || matchedAgency.email || "";
+          if (candAgEmail && !isPureBillingMailbox(candAgEmail)) {
+            r.agencyAgentEmail = candAgEmail;
+          }
+        }
+        if (!r.agencyAgentPhone) {
+          r.agencyAgentPhone = firstAg?.whatsapp || firstAg?.phone || matchedAgency.whatsapp || matchedAgency.phone || "";
+        }
+      }
+    }
+
+    const afterSig = JSON.stringify([
+      r.agencyId || "",
+      r.agencyName || "",
+      r.agencyCnpj || "",
+      r.agencyAgentName || "",
+      r.agencyAgentEmail || "",
+      r.agencyAgentPhone || ""
+    ]);
+
+    if (afterSig !== beforeSig) {
+      r.updatedAt = new Date().toISOString();
+      repairedCodes.push(r.code || String(r.id));
+    }
+  }
+
+  if (repairedCodes.length > 0 && typeof saveDatabase === "function") {
+    saveDatabase("b2b_incomplete_reservations_repaired");
+  }
+
+  return { repairedCount: repairedCodes.length, repairedCodes };
 }
 
 /**
@@ -5170,10 +7043,15 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
   let directIngest = null;
   const rawSubj = String(payload?.subject || payload?.Subject || payload?.data?.subject || "").trim();
   const rawFrom = String(payload?.fromAddress || payload?.sender || payload?.From || payload?.data?.fromAddress || "").trim();
-  const rawHtml = String(payload?.content || payload?.html || payload?.bodyHtml || payload?.data?.content || "").trim();
+  const rawCc = String(payload?.ccAddress || payload?.cc || payload?.Cc || payload?.data?.ccAddress || "").trim();
+  const rawReplyTo = String(payload?.replyTo || payload?.replyToAddress || payload?.ReplyTo || payload?.data?.replyTo || "").trim();
+  let rawHtml = String(payload?.content || payload?.html || payload?.bodyHtml || payload?.data?.content || "").trim();
   const rawText = String(payload?.summary || payload?.text || payload?.bodyText || payload?.data?.summary || "").trim();
+  const rawWebhookMsgId = String(payload?.messageId || payload?.id || payload?.data?.messageId || "").trim();
+  const rawWebhookFolderId = String(payload?.folderId || payload?.data?.folderId || "").trim();
 
   let attachmentPdfText = "";
+  const attachmentPdfBuffers = [];
   const attachments = Array.isArray(payload?.attachments)
     ? payload.attachments
     : Array.isArray(payload?.data?.attachments)
@@ -5193,15 +7071,66 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
         pdfBuf = Buffer.from(att.data, "base64");
       }
       if (pdfBuf) {
+        attachmentPdfBuffers.push(pdfBuf);
         const extracted = extractTextFromPdfBuffer(pdfBuf);
         if (extracted) attachmentPdfText += `\n${extracted}`;
       }
     }
   }
 
+  // Quando o Webhook do Zoho envia apenas metadados/resumo (sem HTML completo ou sem bytes do PDF anexo),
+  // busca o conteúdo integral e os PDFs via API antes da ingestão direta B2B
+  if (rawWebhookMsgId && getZohoOAuthConfig(db).isConfigured && (!rawHtml || !attachmentPdfText)) {
+    try {
+      let targetFolderId = rawWebhookFolderId;
+      if (!targetFolderId) {
+        const fMap = await resolveZohoFolders(db);
+        targetFolderId = fMap.inbox || fMap.inboxFolderIds?.[0] || "";
+      }
+      if (targetFolderId) {
+        if (!rawHtml) {
+          const contentRes = await callZohoMailApi(
+            db,
+            `/accounts/{accountId}/folders/${targetFolderId}/messages/${rawWebhookMsgId}/content`
+          );
+          if (contentRes.ok && contentRes.data?.content) {
+            rawHtml = contentRes.data.content;
+          }
+        }
+        if (!attachmentPdfText) {
+          const attInfoRes = await callZohoMailApi(
+            db,
+            `/accounts/{accountId}/folders/${targetFolderId}/messages/${rawWebhookMsgId}/attachmentinfo`
+          );
+          const attList = Array.isArray(attInfoRes?.data)
+            ? attInfoRes.data
+            : Array.isArray(attInfoRes?.data?.attachments)
+              ? attInfoRes.data.attachments
+              : [];
+          for (const att of attList) {
+            const attId = att?.attachmentId || att?.id;
+            const fname = String(att?.attachmentName || att?.filename || "");
+            const mime = String(att?.contentType || "");
+            if (attId && (fname.toLowerCase().endsWith(".pdf") || mime.toLowerCase() === "application/pdf")) {
+              const fileRes = await callZohoMailApi(
+                db,
+                `/accounts/{accountId}/folders/${targetFolderId}/messages/${rawWebhookMsgId}/attachments/${attId}`,
+                { responseType: "buffer" }
+              );
+              if (fileRes.ok && Buffer.isBuffer(fileRes.data)) {
+                attachmentPdfBuffers.push(fileRes.data);
+                const extracted = extractTextFromPdfBuffer(fileRes.data);
+                if (extracted) attachmentPdfText += `\n${extracted}`;
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
   const combinedRawText = [rawText, attachmentPdfText].filter(Boolean).join("\n");
 
-  const rawWebhookMsgId = String(payload?.messageId || payload?.id || payload?.data?.messageId || "").trim();
   const webhookZId = rawWebhookMsgId ? `zoho_${rawWebhookMsgId}` : "";
   const webhookCancelSig = buildZohoB2bCancelSignature(rawSubj, rawFrom);
   const webhookCancelKeys = [webhookZId, webhookCancelSig].filter(Boolean);
@@ -5210,6 +7139,8 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
     ...(webhookZId ? { id: webhookZId, zohoMessageId: rawWebhookMsgId } : {}),
     subject: rawSubj,
     from: rawFrom,
+    cc: rawCc,
+    replyTo: rawReplyTo,
     html: rawHtml,
     text: combinedRawText,
     summary: rawText,
@@ -5234,15 +7165,20 @@ export async function handleZohoIncomingWebhook(db, saveDatabase, payload = {}) 
     const isB2bCandidate =
       (rawSubj &&
         (rawFrom.toLowerCase().includes("b2breservas") ||
-          /Confirma[cç][aã]o\s+d[ae]\s+Reserva\s*[-:]?\s*\d{7,10}/i.test(rawSubj))) ||
-      /Confirma[cç][aã]o\s+d[ae]\s+Reserva|\bVOUCHER\b/i.test(combinedRawText);
+          /(?:Confirma[cç][aã]o\s+d[ae]\s+Reserva|Reserva\s+Confirmada|\bVoucher\b)[\s\S]*?\b\d{6,12}\b/i.test(rawSubj))) ||
+      /Confirma[cç][aã]o\s+d[ae]\s+Reserva|\bVOUCHER\b|b2breservas\.com\.br/i.test(`${combinedRawText}\n${rawHtml}`);
 
     if (isB2bCandidate) {
       try {
         const parsedB2b = await fetchAndParseB2bVoucher({
           rawText: combinedRawText,
           htmlText: rawHtml,
-          subject: rawSubj
+          subject: rawSubj,
+          fromEmail: rawFrom,
+          cc: rawCc,
+          replyTo: rawReplyTo,
+          pdfBuffers: attachmentPdfBuffers,
+          db
         });
         if (parsedB2b.b2bReservationNumber && parsedB2b.guestName && parsedB2b.checkinDate) {
           directIngest = ingestB2bVoucherIntoDb(db, parsedB2b, {

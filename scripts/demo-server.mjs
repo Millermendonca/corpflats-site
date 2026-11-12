@@ -130,6 +130,7 @@ import {
   isValidBrazilianCpf,
   isPendingGuestName,
   isMissingGuestDataForCredential,
+  cancelPendingCredentialReminders,
   dispatchRequesterGuestCredentialRequest,
   dispatchCatchUpGuestRulerMessages,
   reservationHasAnyContact,
@@ -204,11 +205,13 @@ import {
   createWebmailCustomFolder,
   createWebmailLabel,
   buildComposerReservationTemplate,
+  isPureBillingMailbox,
   parseB2bVoucherText,
   fetchAndParseB2bVoucher,
   ingestB2bVoucherIntoDb,
   dispatchB2bAgencyCredentialEmail,
   ensurePendingB2bAgencyCredentialDispatches,
+  repairIncompleteB2bReservations,
   handleZohoIncomingWebhook,
   ensureZohoWebhookRegistered
 } from "./zoho-mail-service.mjs";
@@ -9055,7 +9058,7 @@ export function ensureB2bSeedData(targetDb = db) {
       municipalRegistration: "",
       financialEmail: "conciliacao@copastur.com.br",
       emailFinanceiro: "conciliacao@copastur.com.br",
-      email: "conciliacao@copastur.com.br",
+      email: "",
       phone: "(21) 3812-1128 / (11) 2394-2122",
       telefone: "(21) 3812-1128 / (11) 2394-2122",
       contactPerson: "Mateus Mizumoto (Vibra) / Fernanda Oliveira (Carrefour)",
@@ -9175,7 +9178,7 @@ export function ensureB2bSeedData(targetDb = db) {
       municipalRegistration: "",
       financialEmail: "faturamento@tripservice.com.br",
       emailFinanceiro: "faturamento@tripservice.com.br",
-      email: "faturamento@tripservice.com.br",
+      email: "",
       phone: "(47) 2103-8400",
       telefone: "(47) 2103-8400",
       contactPerson: "Cristiane / Fernanda Vieira (Unidade POS: TRIPSERVICE - CBO HOLDING S.A.)",
@@ -9287,9 +9290,9 @@ export function ensureB2bSeedData(targetDb = db) {
       cnpj: "19.933.930/0001-75",
       stateRegistration: "Isento",
       municipalRegistration: "",
-      financialEmail: "atendimento@globalis.com.br",
-      emailFinanceiro: "atendimento@globalis.com.br",
-      email: "atendimento@globalis.com.br",
+      financialEmail: "atendimentonacional@globalis.com.br",
+      emailFinanceiro: "atendimentonacional@globalis.com.br",
+      email: "",
       phone: "(11) 3136-1600",
       telefone: "(11) 3136-1600",
       contactPerson: "ARGO.GLOBALIS (Unidade POS: BIMBO)",
@@ -9316,7 +9319,7 @@ export function ensureB2bSeedData(targetDb = db) {
       posUnits: [
         {
           name: "BIMBO",
-          email: "atendimento@globalis.com.br",
+          email: "viagens.bimbo@globalis.com.br",
           phone: "(11) 3136-1600",
           agents: ["ARGO.GLOBALIS"]
         }
@@ -9324,13 +9327,13 @@ export function ensureB2bSeedData(targetDb = db) {
       agents: [
         {
           name: "ARGO.GLOBALIS",
-          email: "atendimento@globalis.com.br",
+          email: "viagens.bimbo@globalis.com.br",
           phone: "(11) 3136-1600",
           posUnit: "BIMBO"
         }
       ],
       clientCompanies: ["Bimbo do Brasil Ltda"],
-      notes: "Agência B2B corporativa • Unidade POS: BIMBO (Emissor: ARGO.GLOBALIS). Atendimento Bimbo do Brasil Ltda.",
+      notes: "Agência B2B corporativa • Unidade POS: BIMBO (Reservado por: viagens.bimbo@globalis.com.br). Atendimento Bimbo do Brasil Ltda (NFS-e para nfebimbobr@grupobimbo.com).",
       createdAt: "2026-10-29T10:00:00.000Z"
     },
     {
@@ -9682,25 +9685,30 @@ export function ensureB2bSeedData(targetDb = db) {
       cnpj: "35.402.759/0001-85",
       stateRegistration: "Isento",
       municipalRegistration: "",
-      financialEmail: "atendimento@globalis.com.br",
-      emailFinanceiro: "atendimento@globalis.com.br",
+      financialEmail: "nfebimbobr@grupobimbo.com",
+      emailFinanceiro: "nfebimbobr@grupobimbo.com",
+      email: "nfebimbobr@grupobimbo.com",
       phone: "(11) 3136-1600",
       telefone: "(11) 3136-1600",
       contactPerson: "ARGO.GLOBALIS (Globalis Viagens)",
-      billingTerms: "B2B via Globalis Viagens • Tarifa NET",
-      address: "Rua Engenheiro Luís Carlos Berrini",
-      logradouro: "Rua Engenheiro Luís Carlos Berrini",
-      number: "105",
+      billingTerms: "B2B via Globalis Viagens • Tarifa NET • Enviar notas fiscais para nfebimbobr@grupobimbo.com",
+      address: "Rua Érico Veríssimo",
+      logradouro: "Rua Érico Veríssimo",
+      endereco: "Rua Érico Veríssimo",
+      number: "342",
+      numero: "342",
       complement: "",
-      neighborhood: "Cidade Monções",
-      cep: "04571010",
+      complemento: "",
+      neighborhood: "Jardim Cambará",
+      bairro: "Jardim Cambará",
+      cep: "05560000",
       city: "São Paulo",
       cidade: "São Paulo",
       state: "SP",
       uf: "SP",
       ibgeCode: "3550308",
       codigoMunicipio: "3550308",
-      notes: "Empresa corporativa atendida pela agência Globalis Viagens (Unidade POS: BIMBO).",
+      notes: "Empresa corporativa atendida pela agência Globalis Viagens (Unidade POS: BIMBO • Envio exclusivo de NFS-e: nfebimbobr@grupobimbo.com).",
       createdAt: "2026-10-29T10:00:00.000Z"
     },
     {
@@ -10269,7 +10277,7 @@ export function ensureB2bSeedData(targetDb = db) {
       agencyKey: "Globalis Viagens",
       agencyPosUnit: "BIMBO",
       agencyAgentName: "ARGO.GLOBALIS",
-      agencyAgentEmail: "atendimento@globalis.com.br",
+      agencyAgentEmail: "viagens.bimbo@globalis.com.br",
       agencyAgentPhone: "(11) 3136-1600",
       companyKey: "Bimbo do Brasil Ltda",
       costCenter: "",
@@ -10281,10 +10289,10 @@ export function ensureB2bSeedData(targetDb = db) {
       b2bConciliationUrl: "http://portal.b2breservas.com.br/content/conf_reserva.php?cd_reserva=26ef50aa73b3be4c4ef0b60d157d768a3e1330bc1c549dd0385e6a41227fd5a3",
       b2bAuthorizedExpenses: "DEBITAR SOMENTE DIARIAS",
       invoiceRecipientType: "company",
-      invoicingInstructions: "Emitir NF para Bimbo do Brasil Ltda (CNPJ: 35.402.759/0001-85) e enviar para atendimento@globalis.com.br e conciliacao@b2breservas.com.br. Não entregar NF ao hóspede (Tarifa NET).",
-      nfDeliveryEmails: ["atendimento@globalis.com.br", "conciliacao@b2breservas.com.br"],
+      invoicingInstructions: "Emitir NF para Bimbo do Brasil Ltda (CNPJ: 35.402.759/0001-85 • Rua Érico Veríssimo, 342, Jardim Cambará, CEP 05560-000, São Paulo/SP) e enviar notas fiscais exclusivamente para nfebimbobr@grupobimbo.com. Não entregar NF ao hóspede (Tarifa NET).",
+      nfDeliveryEmails: ["nfebimbobr@grupobimbo.com"],
       nfHideFromGuest: true,
-      notes: "Reserva B2B #25150895 (RLOC: 25150895) • Origem: BOOKING_WS • Agência: Globalis Viagens (Unidade POS: BIMBO | Emissor: ARGO.GLOBALIS) • Empresa: Bimbo do Brasil Ltda (CNPJ: 35.402.759/0001-85) • Cartão Virtual Mastercard 555047xxxxxx9104 (Token VCN: G3KLP91) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • Enviar NF para atendimento@globalis.com.br."
+      notes: "Reserva B2B #25150895 (RLOC: 25150895) • Origem: BOOKING_WS • Agência: Globalis Viagens (Unidade POS: BIMBO | Reservado por: viagens.bimbo@globalis.com.br) • Empresa: Bimbo do Brasil Ltda (CNPJ: 35.402.759/0001-85 • Rua Érico Veríssimo, 342, Jardim Cambará, CEP 05560-000, São Paulo/SP) • Cartão Virtual Mastercard 555047xxxxxx9104 (Token VCN: G3KLP91) • Despesas Autorizadas: DEBITAR SOMENTE DIARIAS • Enviar notas fiscais para nfebimbobr@grupobimbo.com."
     },
     {
       b2bReservationNumber: "25201908",
@@ -10411,6 +10419,114 @@ export function ensureB2bSeedData(targetDb = db) {
     }
   ];
 
+  // Migração idempotente única (V2): corrige dados soberanos do voucher Bimbo/Globalis (#25150895) e higieniza e-mails operacionais de agências no CRM
+  if (!targetDb.settings || typeof targetDb.settings !== "object") targetDb.settings = {};
+  if (!targetDb.settings.b2bBimboVoucherFixV2) {
+    const bimboComp = (targetDb.companies || []).find(
+      c => c && (String(c.cnpj || "").replace(/\D/g, "") === "35402759000185" || /bimbo\s+do\s+brasil/i.test(c.corporateName || c.name || ""))
+    );
+    if (bimboComp) {
+      bimboComp.financialEmail = "nfebimbobr@grupobimbo.com";
+      bimboComp.emailFinanceiro = "nfebimbobr@grupobimbo.com";
+      bimboComp.email = "nfebimbobr@grupobimbo.com";
+      bimboComp.address = "Rua Érico Veríssimo";
+      bimboComp.logradouro = "Rua Érico Veríssimo";
+      bimboComp.endereco = "Rua Érico Veríssimo";
+      bimboComp.number = "342";
+      bimboComp.numero = "342";
+      bimboComp.complement = "";
+      bimboComp.complemento = "";
+      bimboComp.neighborhood = "Jardim Cambará";
+      bimboComp.bairro = "Jardim Cambará";
+      bimboComp.cep = "05560000";
+      bimboComp.city = "São Paulo";
+      bimboComp.cidade = "São Paulo";
+      bimboComp.state = "SP";
+      bimboComp.uf = "SP";
+      bimboComp.ibgeCode = "3550308";
+      bimboComp.codigoMunicipio = "3550308";
+    }
+
+    for (const agItem of targetDb.agencies || []) {
+      if (!agItem) continue;
+      const agCnpjDigits = String(agItem.cnpj || "").replace(/\D/g, "");
+      if (agCnpjDigits === "19933930000175") {
+        agItem.financialEmail = "atendimentonacional@globalis.com.br";
+        agItem.emailFinanceiro = "atendimentonacional@globalis.com.br";
+        if (agItem.email === "atendimento@globalis.com.br" || agItem.email === "atendimentonacional@globalis.com.br") {
+          agItem.email = "";
+        }
+        if (Array.isArray(agItem.posUnits)) {
+          for (const pu of agItem.posUnits) {
+            if (pu && typeof pu === "object" && String(pu.name || "").toUpperCase() === "BIMBO") {
+              pu.email = "viagens.bimbo@globalis.com.br";
+            }
+          }
+        }
+        if (Array.isArray(agItem.agents)) {
+          for (const aObj of agItem.agents) {
+            if (aObj && typeof aObj === "object" && String(aObj.posUnit || "").toUpperCase() === "BIMBO") {
+              aObj.email = "viagens.bimbo@globalis.com.br";
+            }
+          }
+        }
+      } else if (isPureBillingMailbox(agItem.email)) {
+        if (!agItem.financialEmail) agItem.financialEmail = agItem.email;
+        agItem.email = "";
+      }
+    }
+
+    const existingBimboRes = (targetDb.reservations || []).find(
+      r =>
+        r &&
+        (r.code === "RES-113-B2B-25150895" ||
+          String(r.b2bReservationNumber || "") === "25150895" ||
+          String(r.externalReservationNumber || "") === "25150895")
+    );
+    if (existingBimboRes) {
+      existingBimboRes.agencyAgentEmail = "viagens.bimbo@globalis.com.br";
+      existingBimboRes.requesterInfo = {
+        ...(existingBimboRes.requesterInfo || {}),
+        name: existingBimboRes.agencyAgentName || "ARGO.GLOBALIS",
+        phone: existingBimboRes.agencyAgentPhone || "(11) 3136-1600",
+        email: "viagens.bimbo@globalis.com.br"
+      };
+      existingBimboRes.nfDeliveryEmails = ["nfebimbobr@grupobimbo.com"];
+      existingBimboRes.b2bCredentialEmailRecipient = "viagens.bimbo@globalis.com.br";
+      existingBimboRes.invoicingInstructions =
+        "Emitir NF para Bimbo do Brasil Ltda (CNPJ: 35.402.759/0001-85 • Rua Érico Veríssimo, 342, Jardim Cambará, CEP 05560-000, São Paulo/SP) e enviar notas fiscais exclusivamente para nfebimbobr@grupobimbo.com. Não entregar NF ao hóspede (Tarifa NET).";
+      existingBimboRes.companyAddress = "Rua Érico Veríssimo";
+      existingBimboRes.companyNumber = "342";
+      existingBimboRes.companyComplement = "";
+      existingBimboRes.companyNeighborhood = "Jardim Cambará";
+      existingBimboRes.companyCep = "05560000";
+      existingBimboRes.companyCity = "São Paulo";
+      existingBimboRes.companyState = "SP";
+      existingBimboRes.companyIbgeCode = "3550308";
+      for (const ovKey of ["confirmedFiscalData", "invoiceDetails"]) {
+        const ov = existingBimboRes[ovKey];
+        if (ov && /berrini|pelinca/i.test(String(ov.tomadorEndereco || ""))) {
+          ov.tomadorEndereco = "Rua Érico Veríssimo";
+          ov.tomadorNumero = "342";
+          ov.tomadorComplemento = "";
+          ov.tomadorBairro = "Jardim Cambará";
+          ov.tomadorCep = "05560000";
+          ov.tomadorCidade = "São Paulo";
+          ov.tomadorUf = "SP";
+          ov.tomadorCodigoMunicipio = "3550308";
+          ov.tomadorEmail = "nfebimbobr@grupobimbo.com";
+        }
+      }
+      if (!existingBimboRes.b2bCredentialEmailSentAt) {
+        existingBimboRes.b2bCredentialEmailSentAt = "2026-10-29T13:30:00.000Z";
+      }
+      existingBimboRes._manualEditProtected = true;
+    }
+
+    targetDb.settings.b2bBimboVoucherFixV2 = true;
+    changed = true;
+  }
+
   // Verifica lista de números B2B explicitamente excluídos para não recriar se o admin deletar manualmente
   const deletedB2bCodes = Array.isArray(targetDb.deletedB2bSeeds) ? targetDb.deletedB2bSeeds : [];
 
@@ -10428,15 +10544,28 @@ export function ensureB2bSeedData(targetDb = db) {
     );
     if (existingRes) {
       let resUpdated = false;
+      const hasManualEdit = Boolean(
+        existingRes._manualEditProtected ||
+        (Array.isArray(existingRes.auditLogs) &&
+          existingRes.auditLogs.some(l => l && l.actor && l.actor.type !== "system" && l.actor.role !== "system"))
+      );
       const setField = (key, val) => {
-        if (val !== undefined && val !== null && val !== "" && existingRes[key] !== val) {
+        if (val === undefined || val === null || val === "") return;
+        if (hasManualEdit) {
+          if (existingRes[key] === undefined || existingRes[key] === null || existingRes[key] === "") {
+            existingRes[key] = val;
+            resUpdated = true;
+          }
+          return;
+        }
+        if (existingRes[key] !== val) {
           existingRes[key] = val;
           resUpdated = true;
         }
       };
 
-      // Corrige nome invertido ou em caixa alta do voucher (ex: "SANTOS NILTON" -> "Nilton Santos")
-      if (sr.guestName && existingRes.guestName !== sr.guestName) {
+      // Corrige nome invertido ou em caixa alta do voucher (apenas se não houver edição manual protegida)
+      if (!hasManualEdit && sr.guestName && existingRes.guestName !== sr.guestName) {
         existingRes.guestName = sr.guestName;
         if (Array.isArray(existingRes.guests) && existingRes.guests[0]) {
           existingRes.guests[0].name = sr.guestName;
@@ -10444,13 +10573,14 @@ export function ensureB2bSeedData(targetDb = db) {
         resUpdated = true;
       }
 
-      // Corrige datas, quantidade de diárias e tarifas se divergentes do voucher oficial
+      // Corrige datas, quantidade de diárias e tarifas se divergentes do voucher oficial (apenas se não houver edição manual protegida)
       if (
-        existingRes.checkinDate !== sr.checkinDate ||
-        existingRes.checkoutDate !== sr.checkoutDate ||
-        Number(existingRes.nights) !== sr.nights ||
-        Number(existingRes.dailyRate) !== sr.dailyRate ||
-        Number(existingRes.totalAmount) !== sr.totalAmount
+        !hasManualEdit &&
+        (existingRes.checkinDate !== sr.checkinDate ||
+          existingRes.checkoutDate !== sr.checkoutDate ||
+          Number(existingRes.nights) !== sr.nights ||
+          Number(existingRes.dailyRate) !== sr.dailyRate ||
+          Number(existingRes.totalAmount) !== sr.totalAmount)
       ) {
         existingRes.checkinDate = sr.checkinDate;
         existingRes.checkoutDate = sr.checkoutDate;
@@ -10491,16 +10621,24 @@ export function ensureB2bSeedData(targetDb = db) {
       setField("agencyAgentName", sr.agencyAgentName);
       setField("agencyAgentEmail", sr.agencyAgentEmail);
       setField("agencyAgentPhone", sr.agencyAgentPhone);
-      if (
-        !existingRes.requesterInfo ||
-        existingRes.requesterInfo.name !== (sr.agencyAgentName || ag?.tradeName || sr.agencyKey) ||
-        existingRes.requesterInfo.email !== sr.agencyAgentEmail ||
-        existingRes.requesterInfo.phone !== sr.agencyAgentPhone
+      const safeOperationalAgEmail = ag?.email && !isPureBillingMailbox(ag.email) ? ag.email : "";
+      if (!existingRes.requesterInfo) {
+        existingRes.requesterInfo = {
+          name: existingRes.agencyAgentName || sr.agencyAgentName || ag?.tradeName || sr.agencyKey,
+          phone: existingRes.agencyAgentPhone || sr.agencyAgentPhone || ag?.phone || "",
+          email: existingRes.agencyAgentEmail || sr.agencyAgentEmail || safeOperationalAgEmail || ""
+        };
+        resUpdated = true;
+      } else if (
+        !hasManualEdit &&
+        (existingRes.requesterInfo.name !== (sr.agencyAgentName || ag?.tradeName || sr.agencyKey) ||
+          existingRes.requesterInfo.email !== sr.agencyAgentEmail ||
+          existingRes.requesterInfo.phone !== sr.agencyAgentPhone)
       ) {
         existingRes.requesterInfo = {
           name: sr.agencyAgentName || ag?.tradeName || sr.agencyKey,
           phone: sr.agencyAgentPhone || ag?.phone || "",
-          email: sr.agencyAgentEmail || ag?.financialEmail || ag?.email || ""
+          email: sr.agencyAgentEmail || safeOperationalAgEmail || ""
         };
         resUpdated = true;
       }
@@ -10513,19 +10651,19 @@ export function ensureB2bSeedData(targetDb = db) {
       }
 
       setField("b2bRatePolicy", sr.b2bRatePolicy);
-      if (existingRes.b2bCommissionPct !== sr.b2bCommissionPct) {
+      if (!hasManualEdit && existingRes.b2bCommissionPct !== sr.b2bCommissionPct) {
         existingRes.b2bCommissionPct = sr.b2bCommissionPct;
         resUpdated = true;
       }
-      if (existingRes.b2bCommissionAmount !== sr.b2bCommissionAmount) {
+      if (!hasManualEdit && existingRes.b2bCommissionAmount !== sr.b2bCommissionAmount) {
         existingRes.b2bCommissionAmount = sr.b2bCommissionAmount;
         resUpdated = true;
       }
-      if (existingRes.b2bNetRate !== netRateCalc) {
+      if (!hasManualEdit && existingRes.b2bNetRate !== netRateCalc) {
         existingRes.b2bNetRate = netRateCalc;
         resUpdated = true;
       }
-      if (existingRes.b2bNetAmount !== sr.b2bNetAmount) {
+      if (!hasManualEdit && existingRes.b2bNetAmount !== sr.b2bNetAmount) {
         existingRes.b2bNetAmount = sr.b2bNetAmount;
         resUpdated = true;
       }
@@ -10546,17 +10684,17 @@ export function ensureB2bSeedData(targetDb = db) {
       setField("invoicingInstructions", sr.invoicingInstructions);
       if (Array.isArray(sr.nfDeliveryEmails) && sr.nfDeliveryEmails.length > 0) {
         const curEmails = Array.isArray(existingRes.nfDeliveryEmails) ? existingRes.nfDeliveryEmails : [];
-        if (JSON.stringify(curEmails) !== JSON.stringify(sr.nfDeliveryEmails)) {
+        if ((!hasManualEdit || curEmails.length === 0) && JSON.stringify(curEmails) !== JSON.stringify(sr.nfDeliveryEmails)) {
           existingRes.nfDeliveryEmails = sr.nfDeliveryEmails;
           resUpdated = true;
         }
       }
-      if (existingRes.nfHideFromGuest !== sr.nfHideFromGuest) {
+      if (!hasManualEdit && existingRes.nfHideFromGuest !== sr.nfHideFromGuest) {
         existingRes.nfHideFromGuest = sr.nfHideFromGuest;
         resUpdated = true;
       }
 
-      if (!existingRes.notes || existingRes.notes.includes("Agência:  | Empresa: ") || existingRes.notes.includes("Agência: BIMBO")) {
+      if (!existingRes.notes || (!hasManualEdit && (existingRes.notes.includes("Agência:  | Empresa: ") || existingRes.notes.includes("Agência: BIMBO")))) {
         existingRes.notes = sr.notes;
         resUpdated = true;
       }
@@ -10567,7 +10705,7 @@ export function ensureB2bSeedData(targetDb = db) {
 
       if (!existingRes.b2bCredentialEmailSentAt) {
         existingRes.b2bCredentialEmailSentAt = "2026-10-24T13:30:00.000Z";
-        existingRes.b2bCredentialEmailRecipient = Array.isArray(sr.nfDeliveryEmails) ? sr.nfDeliveryEmails.join(", ") : (sr.agencyAgentEmail || "");
+        existingRes.b2bCredentialEmailRecipient = existingRes.agencyAgentEmail || sr.agencyAgentEmail || "";
         resUpdated = true;
       }
 
@@ -10690,7 +10828,7 @@ export function ensureB2bSeedData(targetDb = db) {
       requesterInfo: {
         name: sr.agencyAgentName || ag?.tradeName || sr.agencyKey,
         phone: sr.agencyAgentPhone || ag?.phone || "",
-        email: sr.agencyAgentEmail || ag?.financialEmail || ag?.email || ""
+        email: sr.agencyAgentEmail || (ag?.email && !isPureBillingMailbox(ag.email) ? ag.email : "")
       },
       status: "confirmada",
       paymentStatus: "pendente",
@@ -10743,7 +10881,7 @@ export function ensureB2bSeedData(targetDb = db) {
       nfDeliveryEmails: sr.nfDeliveryEmails,
       nfHideFromGuest: sr.nfHideFromGuest,
       b2bCredentialEmailSentAt: "2026-10-24T13:30:00.000Z",
-      b2bCredentialEmailRecipient: Array.isArray(sr.nfDeliveryEmails) ? sr.nfDeliveryEmails.join(", ") : (sr.agencyAgentEmail || ""),
+      b2bCredentialEmailRecipient: sr.agencyAgentEmail || "",
       b2bCredentialCompletedAt: "2026-10-26T20:00:00.000Z",
       credentialStatus: "completed",
       notes: sr.notes,
@@ -10820,9 +10958,14 @@ export function ensureB2bSeedData(targetDb = db) {
         r.agencyAgentName = agMatch.agents[0].name;
         rChanged = true;
       }
-      if (!r.agencyAgentEmail && (agMatch.agents?.[0]?.email || agMatch.financialEmail || agMatch.email)) {
-        r.agencyAgentEmail = agMatch.agents?.[0]?.email || agMatch.financialEmail || agMatch.email;
-        rChanged = true;
+      if (!r.agencyAgentEmail && !r._manualEditProtected) {
+        const safeCandidate =
+          (agMatch.agents?.[0]?.email && !isPureBillingMailbox(agMatch.agents[0].email) ? agMatch.agents[0].email : "") ||
+          (agMatch.email && !isPureBillingMailbox(agMatch.email) ? agMatch.email : "");
+        if (safeCandidate) {
+          r.agencyAgentEmail = safeCandidate;
+          rChanged = true;
+        }
       }
       if (!r.agencyAgentPhone && (agMatch.agents?.[0]?.phone || agMatch.phone)) {
         r.agencyAgentPhone = agMatch.agents?.[0]?.phone || agMatch.phone;
@@ -11457,13 +11600,17 @@ async function _loadDatabaseImpl() {
               ensureZohoWebhookRegistered(db, saveDatabase, {
                 baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
               })
-                .then(() => {
+                .then(async () => {
                   if (ensureB2bSeedData(db)) {
                     saveDatabase("b2b_post_zoho_sync");
                   }
                   reconcileCrmCnpjAddresses(db).catch(() => {});
+                  await repairIncompleteB2bReservations(db, saveDatabase).catch(err => {
+                    console.warn("[B2B Auto-Repair Post-Hydration] Aviso:", err?.message || err);
+                  });
                   return ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
-                    baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
+                    baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br",
+                    forceCheck: true
                   });
                 })
                 .catch(err => {
@@ -17794,6 +17941,7 @@ async function logAuditEvent(arg1, arg2) {
 }
 globalThis.__corpflatsLogAuditEvent = logAuditEvent;
 globalThis.__corpflatsIsDbHydrated = () => !pgPool || pgHydratedSuccessfully;
+globalThis.__corpflatsCreateNotification = createNotification;
 
 // ── Central Notification Engine ─────────────────────────────────────────────
 function createNotification(arg1, arg2, arg3) {
@@ -31349,8 +31497,67 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       isWorkTrip = false,
       companyData = null,
       vehicle = null,
-      extras = null
+      extras = null,
+      requesterType = "guest",
+      requesterName = "",
+      requesterPhone = "",
+      requesterEmail = "",
+      requesterDocument = "",
+      requesterInfo = null
     } = req.body;
+
+    const normalizedRequesterType = String(
+      requesterType || (requesterInfo ? (requesterInfo.type || "other_person") : "guest")
+    ).trim().toLowerCase() || "guest";
+    const isSeparateRequester = normalizedRequesterType !== "guest";
+
+    const reqNameClean = String(
+      requesterName ||
+      requesterInfo?.name ||
+      companyData?.contactPerson ||
+      companyData?.companyName ||
+      ""
+    ).trim();
+    const reqEmailClean = String(
+      requesterEmail ||
+      requesterInfo?.email ||
+      companyData?.companyEmail ||
+      ""
+    ).trim().toLowerCase();
+    const reqPhoneRaw = String(
+      requesterPhone ||
+      requesterInfo?.whatsapp ||
+      requesterInfo?.phone ||
+      companyData?.companyPhone ||
+      ""
+    ).trim();
+    const reqPhoneDigits = reqPhoneRaw.replace(/\D/g, "");
+    const isIntlReqPhone = reqPhoneRaw.startsWith("+") && !reqPhoneDigits.startsWith("55");
+    const reqDocClean = String(
+      requesterDocument ||
+      requesterInfo?.cpf ||
+      requesterInfo?.document ||
+      companyData?.cnpj ||
+      ""
+    ).trim();
+
+    if (isSeparateRequester) {
+      if (!reqNameClean) {
+        return res.status(400).json({ error: "Nome do solicitante / responsável pela reserva é obrigatório." });
+      }
+      if (!reqEmailClean || !reqEmailClean.includes("@") || !reqEmailClean.includes(".")) {
+        return res.status(400).json({ error: "E-mail válido do solicitante é obrigatório para envio da confirmação e do link de dados do hóspede." });
+      }
+      if (!reqPhoneDigits || reqPhoneDigits.length < (isIntlReqPhone ? 8 : 10)) {
+        return res.status(400).json({ error: "WhatsApp / Telefone válido do solicitante com DDD (ou DDI internacional com +) é obrigatório." });
+      }
+    }
+
+    const rawGuestNameStr = String(guestName || "").trim();
+    const isGuestPendingDirect = isSeparateRequester && isPendingGuestName(rawGuestNameStr);
+    const resolvedGuestName = isGuestPendingDirect
+      ? "A Definir (Aguardando Solicitante)"
+      : rawGuestNameStr;
 
     const rawDocStr = String(guestDocument || "").trim();
     const cleanDoc = normalizeDoc(rawDocStr);
@@ -31364,42 +31571,51 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     const cleanPhone = rawPhoneStr.replace(/\D/g, "");
     const isIntlDirectPhone = rawPhoneStr.startsWith("+") && !cleanPhone.startsWith("55");
     const cleanEmailEarly = String(guestEmail || "").trim().toLowerCase();
-    const existingGuestWithDoc = (db.guests || []).find(g =>
-      (g.docPhotoUrl || g.documentPhotoUrl) &&
-      areGuestNamesCompatible(guestName, g.fullName || g.name) && (
-        (cleanDoc && normalizeDoc(g.documentNumber || g.document || "") === cleanDoc) ||
-        (cleanPhone && cleanPhone.length >= 8 && (g.phone || "").replace(/\D/g, "") === cleanPhone) ||
-        (cleanEmailEarly && (g.email || "").trim().toLowerCase() === cleanEmailEarly)
-      )
-    );
-    const existingAccWithDoc = (db.guestAccounts || []).find(a =>
-      (a.docPhotoUrl || a.documentPhotoUrl) &&
-      areGuestNamesCompatible(guestName, a.name) && (
-        (cleanDoc && normalizeDoc(a.document || "") === cleanDoc) ||
-        (cleanPhone && cleanPhone.length >= 8 && (a.phone || "").replace(/\D/g, "") === cleanPhone) ||
-        (cleanEmailEarly && (a.email || "").trim().toLowerCase() === cleanEmailEarly)
-      )
-    );
+    const existingGuestWithDoc = !isGuestPendingDirect
+      ? (db.guests || []).find(g =>
+          (g.docPhotoUrl || g.documentPhotoUrl) &&
+          areGuestNamesCompatible(rawGuestNameStr, g.fullName || g.name) && (
+            (cleanDoc && normalizeDoc(g.documentNumber || g.document || "") === cleanDoc) ||
+            (cleanPhone && cleanPhone.length >= 8 && (g.phone || "").replace(/\D/g, "") === cleanPhone) ||
+            (cleanEmailEarly && (g.email || "").trim().toLowerCase() === cleanEmailEarly)
+          )
+        )
+      : null;
+    const existingAccWithDoc = !isGuestPendingDirect
+      ? (db.guestAccounts || []).find(a =>
+          (a.docPhotoUrl || a.documentPhotoUrl) &&
+          areGuestNamesCompatible(rawGuestNameStr, a.name) && (
+            (cleanDoc && normalizeDoc(a.document || "") === cleanDoc) ||
+            (cleanPhone && cleanPhone.length >= 8 && (a.phone || "").replace(/\D/g, "") === cleanPhone) ||
+            (cleanEmailEarly && (a.email || "").trim().toLowerCase() === cleanEmailEarly)
+          )
+        )
+      : null;
     const savedDocUrlFromProfile = existingGuestWithDoc?.docPhotoUrl || existingGuestWithDoc?.documentPhotoUrl || existingAccWithDoc?.docPhotoUrl || existingAccWithDoc?.documentPhotoUrl || null;
     const hasDocFile = Boolean(req.body.guestDocumentFile || req.body.docPhotoBase64 || req.body.docPhotoUrl || savedDocUrlFromProfile);
 
-    if (!guestName || !String(guestName).trim()) {
-      return res.status(400).json({ error: "Nome completo é obrigatório para finalizar a reserva." });
-    }
     const isDocValid = isForeignPassport
       ? cleanDoc.length >= 5
       : (cleanDocDigits.length === 11 && !/^(\d)\1{10}$/.test(cleanDocDigits));
-    if (!isDocValid) {
-      return res.status(400).json({ error: "CPF válido (11 dígitos) ou número de Passaporte válido é obrigatório para finalizar a reserva." });
-    }
-    if (!guestEmail || !String(guestEmail).includes("@") || !String(guestEmail).includes(".")) {
-      return res.status(400).json({ error: "E-mail válido é obrigatório para emissão do voucher da reserva." });
-    }
-    if (!cleanPhone || cleanPhone.length < (isIntlDirectPhone ? 8 : 10)) {
-      return res.status(400).json({ error: "Telefone / WhatsApp válido com DDD (ou DDI internacional com +) é obrigatório para finalizar a reserva." });
-    }
-    if (!hasDocFile) {
-      return res.status(400).json({ error: "O anexo do documento oficial com foto (RG, CNH ou Passaporte em PDF ou Imagem) é obrigatório para finalizar a reserva." });
+
+    if (!isSeparateRequester) {
+      if (!rawGuestNameStr) {
+        return res.status(400).json({ error: "Nome completo é obrigatório para finalizar a reserva." });
+      }
+      if (!isDocValid) {
+        return res.status(400).json({ error: "CPF válido (11 dígitos) ou número de Passaporte válido é obrigatório para finalizar a reserva." });
+      }
+      if (!cleanEmailEarly || !cleanEmailEarly.includes("@") || !cleanEmailEarly.includes(".")) {
+        return res.status(400).json({ error: "E-mail válido é obrigatório para emissão do voucher da reserva." });
+      }
+      if (!cleanPhone || cleanPhone.length < (isIntlDirectPhone ? 8 : 10)) {
+        return res.status(400).json({ error: "Telefone / WhatsApp válido com DDD (ou DDI internacional com +) é obrigatório para finalizar a reserva." });
+      }
+      if (!hasDocFile) {
+        return res.status(400).json({ error: "O anexo do documento oficial com foto (RG, CNH ou Passaporte em PDF ou Imagem) é obrigatório para finalizar a reserva." });
+      }
+    } else if (rawDocStr && !isDocValid) {
+      return res.status(400).json({ error: "O CPF ou Passaporte do hóspede informado é inválido (você também pode deixar em branco para preencher depois pelo link)." });
     }
     if (!checkinDate || !checkoutDate) {
       return res.status(400).json({ error: "Datas de check-in e check-out são obrigatórias." });
@@ -31615,6 +31831,13 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       }
     }
 
+    const actorDisplayName = (!isGuestPendingDirect && rawGuestNameStr) ? rawGuestNameStr : (reqNameClean || "Solicitante");
+    const payerName = (!isGuestPendingDirect && rawGuestNameStr) ? rawGuestNameStr : (reqNameClean || "Solicitante CorpFlats");
+    const payerDoc = rawDocStr || reqDocClean || "";
+    const payerEmail = cleanEmailEarly || reqEmailClean || "";
+    const payerPhone = rawPhoneStr || reqPhoneRaw || "";
+    const directBaseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+
     const reservation = {
       id: newResId,
       code: resCode,
@@ -31624,15 +31847,36 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       allocatedFlatNumbers: flatNumbersList,
       flatsCount: allocatedFlats.length,
       roomsData: roomsList,
-      guestName: guestName.trim(),
-      guestPhone: guestPhone.trim(),
-      guestEmail: guestEmail.trim().toLowerCase(),
-      guestDocument: (guestDocument || "").trim(),
+      guestName: resolvedGuestName,
+      guestPending: isGuestPendingDirect,
+      guestPhone: rawPhoneStr,
+      guestEmail: cleanEmailEarly,
+      guestDocument: rawDocStr,
       guestDocType: isForeignPassport ? "Passaporte" : "CPF",
       guestAddress: (guestAddress || "").trim(),
       guestCity: (guestCity || "").trim(),
       guestState: (guestState || "").trim() || "RJ",
       guestCep: (guestCep || "").trim(),
+      requesterType: normalizedRequesterType,
+      ...(isSeparateRequester
+        ? {
+            requesterName: reqNameClean,
+            requesterPhone: reqPhoneRaw,
+            requesterEmail: reqEmailClean,
+            requesterInfo: {
+              type: normalizedRequesterType,
+              name: reqNameClean,
+              phone: reqPhoneRaw,
+              whatsapp: reqPhoneRaw,
+              email: reqEmailClean,
+              cpf: reqDocClean
+            },
+            credentialStatus:
+              !isGuestPendingDirect && cleanPhone.length >= 10 && cleanDoc.length >= 5
+                ? "completed"
+                : "pending_agency"
+          }
+        : {}),
       checkinDate,
       checkoutDate,
       guestCount: totalGuestsCount,
@@ -31667,13 +31911,13 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       paidAmount: paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito" ? 0 : resolvedPixTotalAmount,
       paymentStatus: paymentMethod === "pix" ? "pendente_pix" : (paymentMethod === "card" || paymentMethod === "cartao_credito" ? "pendente_cartao" : "pago_total"),
       paymentMethod: paymentMethod === "card" ? "cartao_credito" : (paymentMethod || "pix"),
-      isWorkTrip: Boolean(isWorkTrip),
-      companyData: isWorkTrip ? companyData : null,
-      vehicle: vehicle || consumePendingVehicleForPhone(db, guestPhone) || null,
+      isWorkTrip: Boolean(isWorkTrip || normalizedRequesterType === "company"),
+      companyData: (isWorkTrip || normalizedRequesterType === "company") ? companyData : null,
+      vehicle: vehicle || consumePendingVehicleForPhone(db, payerPhone) || null,
       calendarSequence: 0,
       createdBy: {
-        userName: guestName.trim(),
-        role: "guest",
+        userName: actorDisplayName,
+        role: isSeparateRequester ? "requester" : "guest",
         source: "Site CorpFlats (Motor de Reservas)",
         createdAt: new Date().toISOString()
       },
@@ -31692,16 +31936,19 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       action: "created",
       actor: {
         id: null,
-        name: guestName.trim(),
-        role: "guest",
-        type: "guest"
+        name: actorDisplayName,
+        role: isSeparateRequester ? "requester" : "guest",
+        type: isSeparateRequester ? "requester" : "guest"
       },
       source: "Site CorpFlats (Motor de Reservas)",
-      description: "Reserva criada pelo hóspede no site direto",
+      description: isSeparateRequester
+        ? `Reserva criada pelo solicitante (${reqNameClean}) no site direto`
+        : "Reserva criada pelo hóspede no site direto",
       changes: [
         { field: "flatNumber", label: "Apartamento", oldValue: null, newValue: `Flat(s) ${flatNumbersStr}` },
         { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${checkinDate} a ${checkoutDate}` },
-        { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: guestName.trim() },
+        { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: resolvedGuestName },
+        ...(isSeparateRequester ? [{ field: "requesterName", label: "Solicitante", oldValue: null, newValue: reqNameClean }] : []),
         { field: "channel", label: "Canal de Origem", oldValue: null, newValue: "site_direto" },
         { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(totalAmount).toFixed(2)}` },
         { field: "paymentMethod", label: "Forma de Pagamento", oldValue: null, newValue: paymentMethod },
@@ -31709,56 +31956,13 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       ]
     });
 
-    // Salva ou recupera o hóspede no CRM com identificador único intransferível
+    // Salva ou recupera o hóspede no CRM apenas quando o hóspede já foi identificado (evita criar hóspede fantasma "A Definir")
     if (!db.guests) db.guests = [];
-    const cleanEmail = (guestEmail || "").trim().toLowerCase();
-
-    let guest = db.guests.find(g =>
-      areGuestNamesCompatible(guestName, g.fullName || g.name) && (
-        (cleanDoc && normalizeDoc(g.documentNumber || g.document || "") === cleanDoc) ||
-        (cleanPhone && (g.phone || "").replace(/\D/g, "") === cleanPhone) ||
-        (cleanEmail && (g.email || "").trim().toLowerCase() === cleanEmail)
-      )
-    );
-
+    const cleanEmail = cleanEmailEarly;
     const directDocType = isForeignPassport ? "Passaporte" : "CPF";
-    if (!guest) {
-      const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
-      guest = {
-        id: nextGuestId,
-        guestCode: `HOSP-${String(nextGuestId).padStart(5, "0")}`,
-        name: guestName.trim(),
-        fullName: guestName.trim(),
-        phone: guestPhone.trim(),
-        email: cleanEmail,
-        docType: directDocType,
-        document: (guestDocument || "").trim(),
-        documentNumber: (guestDocument || "").trim(),
-        address: (guestAddress || "").trim(),
-        city: (guestCity || "").trim(),
-        state: (guestState || "").trim() || "RJ",
-        cep: (guestCep || "").trim(),
-        createdAt: new Date().toISOString()
-      };
-      db.guests.push(guest);
-    } else {
-      if (!guest.guestCode) guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
-      if (guestDocument && !guest.document) {
-        guest.document = guestDocument.trim();
-        guest.documentNumber = guestDocument.trim();
-        guest.docType = directDocType;
-      }
-      if (guestPhone) guest.phone = guestPhone.trim();
-      if (guestEmail) guest.email = cleanEmail;
-      if (guestName && (!guest.name || guestName.trim().length >= guest.name.length)) guest.name = guestName.trim();
-      if (guestName && (!guest.fullName || guestName.trim().length >= guest.fullName.length)) guest.fullName = guestName.trim();
-      if (guestAddress && !guest.address) guest.address = guestAddress.trim();
-      if (guestCity && !guest.city) guest.city = guestCity.trim();
-      if (guestState && !guest.state) guest.state = guestState.trim();
-      if (guestCep && !guest.cep) guest.cep = guestCep.trim();
-    }
+    let guest = null;
 
-    let docPhotoUrl = req.body.docPhotoUrl || savedDocUrlFromProfile || guest.docPhotoUrl || null;
+    let docPhotoUrl = req.body.docPhotoUrl || savedDocUrlFromProfile || null;
     const docPhotoBase64 = req.body.guestDocumentFile || req.body.docPhotoBase64;
     if (docPhotoBase64 && !req.body.docPhotoUrl) {
       try {
@@ -31768,47 +31972,115 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         docPhotoUrl = docPhotoBase64;
       }
     }
-    if (docPhotoUrl) {
-      reservation.docPhotoUrl = docPhotoUrl;
-      guest.docPhotoUrl = docPhotoUrl;
-    }
-    if (req.body.hasMinor !== undefined) {
-      reservation.hasMinor = Boolean(req.body.hasMinor);
-      guest.isMinor = Boolean(req.body.hasMinor);
-    }
-    if (req.body.minorAge) {
-      reservation.minorAge = Number(req.body.minorAge);
-      guest.minorAge = Number(req.body.minorAge);
-    }
-    if (req.body.isCamposResident !== undefined) {
-      reservation.isCamposResident = Boolean(req.body.isCamposResident);
-      guest.isCamposResident = Boolean(req.body.isCamposResident);
-      if (reservation.isCamposResident) {
-        reservation.riskAttentionAlert = true;
-        reservation.riskAttentionReason = req.body.riskAttentionReason || "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ";
-        guest.riskAttentionAlert = true;
-        guest.riskAttentionReason = reservation.riskAttentionReason;
+
+    if (!isGuestPendingDirect) {
+      guest = db.guests.find(g =>
+        areGuestNamesCompatible(rawGuestNameStr, g.fullName || g.name) && (
+          (cleanDoc && normalizeDoc(g.documentNumber || g.document || "") === cleanDoc) ||
+          (cleanPhone && (g.phone || "").replace(/\D/g, "") === cleanPhone) ||
+          (cleanEmail && (g.email || "").trim().toLowerCase() === cleanEmail)
+        )
+      );
+
+      if (!guest) {
+        const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+        guest = {
+          id: nextGuestId,
+          guestCode: `HOSP-${String(nextGuestId).padStart(5, "0")}`,
+          name: rawGuestNameStr,
+          fullName: rawGuestNameStr,
+          phone: rawPhoneStr,
+          email: cleanEmail,
+          docType: directDocType,
+          document: rawDocStr,
+          documentNumber: rawDocStr,
+          address: (guestAddress || "").trim(),
+          city: (guestCity || "").trim(),
+          state: (guestState || "").trim() || "RJ",
+          cep: (guestCep || "").trim(),
+          createdAt: new Date().toISOString()
+        };
+        db.guests.push(guest);
+      } else {
+        if (!guest.guestCode) guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
+        if (rawDocStr && !guest.document) {
+          guest.document = rawDocStr;
+          guest.documentNumber = rawDocStr;
+          guest.docType = directDocType;
+        }
+        if (rawPhoneStr) guest.phone = rawPhoneStr;
+        if (cleanEmail) guest.email = cleanEmail;
+        if (rawGuestNameStr && (!guest.name || rawGuestNameStr.length >= guest.name.length)) guest.name = rawGuestNameStr;
+        if (rawGuestNameStr && (!guest.fullName || rawGuestNameStr.length >= guest.fullName.length)) guest.fullName = rawGuestNameStr;
+        if (guestAddress && !guest.address) guest.address = guestAddress.trim();
+        if (guestCity && !guest.city) guest.city = guestCity.trim();
+        if (guestState && !guest.state) guest.state = guestState.trim();
+        if (guestCep && !guest.cep) guest.cep = guestCep.trim();
+      }
+
+      if (!docPhotoUrl && guest.docPhotoUrl) {
+        docPhotoUrl = guest.docPhotoUrl;
+      }
+      if (docPhotoUrl) {
+        reservation.docPhotoUrl = docPhotoUrl;
+        guest.docPhotoUrl = docPhotoUrl;
+      }
+      if (req.body.hasMinor !== undefined) {
+        reservation.hasMinor = Boolean(req.body.hasMinor);
+        guest.isMinor = Boolean(req.body.hasMinor);
+      }
+      if (req.body.minorAge) {
+        reservation.minorAge = Number(req.body.minorAge);
+        guest.minorAge = Number(req.body.minorAge);
+      }
+      if (req.body.isCamposResident !== undefined) {
+        reservation.isCamposResident = Boolean(req.body.isCamposResident);
+        guest.isCamposResident = Boolean(req.body.isCamposResident);
+        if (reservation.isCamposResident) {
+          reservation.riskAttentionAlert = true;
+          reservation.riskAttentionReason = req.body.riskAttentionReason || "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ";
+          guest.riskAttentionAlert = true;
+          guest.riskAttentionReason = reservation.riskAttentionReason;
+        }
+      }
+
+      reservation.guestId = guest.id;
+      reservation.guestCode = guest.guestCode;
+      reservation.guestDocument = rawDocStr || guest.document || "";
+
+      syncBidirectionalGuestProfile(db, guest, {
+        name: rawGuestNameStr,
+        phone: rawPhoneStr,
+        email: cleanEmail,
+        document: reservation.guestDocument,
+        address: (guestAddress || "").trim(),
+        city: (guestCity || "").trim(),
+        state: (guestState || "").trim() || "RJ",
+        cep: (guestCep || "").trim(),
+        docPhotoUrl: docPhotoUrl || guest.docPhotoUrl || undefined,
+        vehicle: vehicle || undefined,
+        companyData: (isWorkTrip || normalizedRequesterType === "company") && companyData ? companyData : undefined
+      });
+    } else {
+      reservation.guestId = null;
+      reservation.guestCode = null;
+      if (docPhotoUrl) {
+        reservation.docPhotoUrl = docPhotoUrl;
+      }
+      if (req.body.hasMinor !== undefined) {
+        reservation.hasMinor = Boolean(req.body.hasMinor);
+      }
+      if (req.body.minorAge) {
+        reservation.minorAge = Number(req.body.minorAge);
+      }
+      if (req.body.isCamposResident !== undefined) {
+        reservation.isCamposResident = Boolean(req.body.isCamposResident);
+        if (reservation.isCamposResident) {
+          reservation.riskAttentionAlert = true;
+          reservation.riskAttentionReason = req.body.riskAttentionReason || "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ";
+        }
       }
     }
-
-    reservation.guestId = guest.id;
-    reservation.guestCode = guest.guestCode;
-    reservation.guestDocument = (guestDocument || "").trim() || guest.document || "";
-
-    syncBidirectionalGuestProfile(db, guest, {
-      name: guestName.trim(),
-      phone: guestPhone.trim(),
-      email: cleanEmail,
-      document: reservation.guestDocument,
-      address: (guestAddress || "").trim(),
-      city: (guestCity || "").trim(),
-      state: (guestState || "").trim() || "RJ",
-      cep: (guestCep || "").trim(),
-      docPhotoUrl: docPhotoUrl || guest.docPhotoUrl || undefined,
-      vehicle: vehicle || undefined,
-      companyData: isWorkTrip && companyData ? companyData : undefined
-    });
-
 
     // Inicializa estrutura isolada de múltiplos hóspedes com dados cadastrais preenchidos,
     // exigindo nova assinatura/check-in digital para cada nova hospedagem contratada.
@@ -31816,28 +32088,28 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     reservation.guests = [
       {
         index: 1,
-        guestId: guest.id,
-        guestCode: guest.guestCode,
-        name: guest.name || guestName.trim(),
-        cpf: reservation.guestDocument || guest.document || "",
-        phone: guest.phone || guestPhone.trim(),
-        email: guest.email || cleanEmail,
-        birthDate: guest.birthDate || "",
-        gender: guest.gender || "masculino",
-        address: guest.address || (guestAddress || "").trim(),
-        city: guest.city || (guestCity || "").trim(),
-        state: guest.state || (guestState || "").trim() || "RJ",
-        cep: guest.cep || (guestCep || "").trim(),
-        docPhotoUrl: docPhotoUrl || guest.docPhotoUrl || null,
-        selfieUrl: guest.photoUrl || null,
+        guestId: guest ? guest.id : null,
+        guestCode: guest ? guest.guestCode : null,
+        name: isGuestPendingDirect ? "" : (guest?.name || rawGuestNameStr),
+        cpf: reservation.guestDocument || guest?.document || "",
+        phone: guest?.phone || rawPhoneStr,
+        email: guest?.email || cleanEmail,
+        birthDate: guest?.birthDate || "",
+        gender: guest?.gender || "masculino",
+        address: guest?.address || (guestAddress || "").trim(),
+        city: guest?.city || (guestCity || "").trim(),
+        state: guest?.state || (guestState || "").trim() || "RJ",
+        cep: guest?.cep || (guestCep || "").trim(),
+        docPhotoUrl: docPhotoUrl || guest?.docPhotoUrl || null,
+        selfieUrl: guest?.photoUrl || null,
         signatureUrl: null,
-        isMinor: Boolean(reservation.hasMinor || guest.isMinor),
-        minorAge: reservation.minorAge || guest.minorAge || null,
-        minorKinship: guest.minorKinship || "",
-        minorAuthDocUrl: guest.minorAuthDocUrl || null,
-        riskAttentionAlert: Boolean(reservation.riskAttentionAlert || guest.riskAttentionAlert),
-        riskAttentionReason: reservation.riskAttentionReason || guest.riskAttentionReason || "",
-        aiVerification: guest.aiVerification || null,
+        isMinor: Boolean(reservation.hasMinor || guest?.isMinor),
+        minorAge: reservation.minorAge || guest?.minorAge || null,
+        minorKinship: guest?.minorKinship || "",
+        minorAuthDocUrl: guest?.minorAuthDocUrl || null,
+        riskAttentionAlert: Boolean(reservation.riskAttentionAlert || guest?.riskAttentionAlert),
+        riskAttentionReason: reservation.riskAttentionReason || guest?.riskAttentionReason || "",
+        aiVerification: guest?.aiVerification || null,
         hasCompletedCheckin: false,
         checkinCompletedAt: null
       }
@@ -31859,13 +32131,18 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       });
     }
 
-    reservation.selfieUrl = guest.photoUrl || null;
-    reservation.docPhotoUrl = guest.docPhotoUrl || docPhotoUrl || null;
+    reservation.selfieUrl = guest?.photoUrl || null;
+    reservation.docPhotoUrl = guest?.docPhotoUrl || docPhotoUrl || null;
     reservation.signatureUrl = null;
     reservation.fnhrCompleted = false;
 
     // ── Integração Automática SERPRO FNRH se Modo Gov.br Estiver Ativo ────────
-    if (reservation.status !== "pre_reserva" && db.settings?.checkinProvider === "gov_fnrh") {
+    if (
+      reservation.status !== "pre_reserva" &&
+      !reservation.guestPending &&
+      !isMissingGuestDataForCredential(reservation) &&
+      db.settings?.checkinProvider === "gov_fnrh"
+    ) {
       try {
         const serproRes = await fnrhSerproService.registerReservation(reservation, db.settings);
         if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
@@ -31902,8 +32179,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     if (sessionId) {
       linkedCart = db.abandonedCarts.find(c => c.sessionId === sessionId);
     }
-    if (!linkedCart && guestPhone) {
-      linkedCart = db.abandonedCarts.find(c => c.guestPhone === guestPhone && c.status !== "concluido");
+    if (!linkedCart && payerPhone) {
+      linkedCart = db.abandonedCarts.find(c => c.guestPhone === payerPhone && c.status !== "concluido");
     }
     if (linkedCart) {
       linkedCart.status = "concluido";
@@ -31920,8 +32197,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       step: 5,
       stepName: "booking_confirmed",
       reservationCode: resCode,
-      guestName: guestName.trim(),
-      guestPhone: guestPhone.trim(),
+      guestName: actorDisplayName,
+      guestPhone: payerPhone,
       totalAmount: Number(totalAmount),
       timestamp: new Date().toISOString()
     });
@@ -31936,8 +32213,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         const pixResult = await createInterPixCob({
           amount: resolvedPixTotalAmount,
           description: `Reserva CorpFlats ${resCode}`,
-          debtorName: guestName,
-          debtorDocument: guestDocument,
+          debtorName: payerName,
+          debtorDocument: payerDoc,
           reservationCode: resCode
         });
         pixData = {
@@ -31979,8 +32256,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         mpPreference = await createMercadoPagoPreference({
           reservationCode: resCode,
           amount: cardChargeAmount,
-          guestName: guestName.trim(),
-          guestEmail: guestEmail.trim(),
+          guestName: payerName,
+          guestEmail: payerEmail,
           nights: nightsCount,
           flatNumber: flatNumbersStr
         });
@@ -31995,14 +32272,32 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     }
 
     if (reservation.status === "pre_reserva") {
-      triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", reservation);
+      triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", reservation, directBaseUrl);
+    } else if (isSeparateRequester && isMissingGuestDataForCredential(reservation)) {
+      dispatchRequesterGuestCredentialRequest(db, saveDatabase, reservation, { baseUrl: directBaseUrl }).catch(err => {
+        console.warn("[Direct Booking Credential WhatsApp] Aviso:", err.message);
+      });
+      dispatchB2bAgencyCredentialEmail(db, saveDatabase, reservation, {
+        baseUrl: directBaseUrl,
+        trigger: "b2b_agency_credential_request"
+      }).catch(err => {
+        console.warn("[Direct Booking Credential Email] Aviso:", err.message);
+      });
+      if (cleanPhone.length >= 10) {
+        triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation, directBaseUrl);
+      }
     } else {
-      triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation);
+      triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation, directBaseUrl);
     }
 
-    // Gatilho E-mail Recepção: Apenas se a reserva estiver confirmada (paga) E for para o dia de hoje (same-day check-in).
-    // Pré-reservas aguardam a confirmação do pagamento; reservas futuras aguardam a rotina matinal das 07:00 do dia de chegada.
-    if (reservation.status !== "pre_reserva" && !isPreReservationBlocked(reservation) && isReservationForToday(reservation)) {
+    // Gatilho E-mail Recepção: Apenas se a reserva estiver confirmada (paga), para hoje E com hóspede já identificado.
+    if (
+      reservation.status !== "pre_reserva" &&
+      !isPreReservationBlocked(reservation) &&
+      !reservation.guestPending &&
+      !isMissingGuestDataForCredential(reservation) &&
+      isReservationForToday(reservation)
+    ) {
       try {
         const flat = (db.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber));
         const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
@@ -33855,6 +34150,10 @@ app.post("/api/pms/reservations", async (req, res) => {
       const nextAgId = db.agencies.length > 0 ? Math.max(...db.agencies.map(a => Number(a.id) || 0)) + 1 : 1;
       const agCorpName = String(agencyName || agencyTradeName).trim();
       const agTrName = String(agencyTradeName || agencyName).trim();
+      const rawFirstNfEmail = Array.isArray(req.body?.nfDeliveryEmails)
+        ? String(req.body.nfDeliveryEmails[0] || "").trim()
+        : String(req.body?.nfDeliveryEmails || "").split(",")[0].trim();
+      const cleanAgAgentEmail = String(agencyAgentEmail || "").trim();
       resolvedAgency = {
         id: nextAgId,
         corporateName: agCorpName,
@@ -33862,8 +34161,9 @@ app.post("/api/pms/reservations", async (req, res) => {
         tradeName: agTrName,
         nomeFantasia: agTrName,
         cnpj: agencyCnpj ? String(agencyCnpj).trim() : "Isento / Não informado",
-        financialEmail: String(agencyAgentEmail || "").trim(),
-        emailFinanceiro: String(agencyAgentEmail || "").trim(),
+        email: !isPureBillingMailbox(cleanAgAgentEmail) ? cleanAgAgentEmail : "",
+        financialEmail: rawFirstNfEmail || (isPureBillingMailbox(cleanAgAgentEmail) ? cleanAgAgentEmail : ""),
+        emailFinanceiro: rawFirstNfEmail || (isPureBillingMailbox(cleanAgAgentEmail) ? cleanAgAgentEmail : ""),
         phone: String(agencyAgentPhone || "").trim(),
         telefone: String(agencyAgentPhone || "").trim(),
         contactPerson: String(agencyAgentName || "").trim(),
@@ -35891,7 +36191,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
     "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterInfo",
-    "companyId", "companyName", "companyCnpj", "costCenter",
+    "companyId", "companyName", "companyCnpj", "companyAddress", "companyNumber", "companyComplement", "companyNeighborhood", "companyCep", "companyCity", "companyState", "companyIbgeCode", "costCenter",
     "agencyId", "agencyName", "agencyTradeName", "agencyCorporateName", "agencyCnpj", "agencyPosUnit", "agencyAgentName", "agencyAgentEmail", "agencyAgentPhone",
     "b2bReservationNumber", "externalReservationNumber", "b2bLocatorRloc", "b2bOriginType",
     "b2bRatePolicy", "b2bCommissionPct", "b2bCommissionAmount", "b2bNetRate", "b2bNetAmount",
@@ -35913,6 +36213,16 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldRatesSumBeforeEdit = oldDailyRatesBeforeEdit.reduce((acc, d) => acc + (Number(d.rate ?? d.amount) || 0), 0);
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+  r._manualEditProtected = true;
+  if ((r.channel === "b2b" || r.requesterType === "agency_b2b") && req.body.agencyAgentEmail !== undefined) {
+    const cleanEditedSolicitante = String(req.body.agencyAgentEmail || "").trim();
+    r.requesterInfo = {
+      ...(r.requesterInfo || {}),
+      name: r.agencyAgentName || r.requesterInfo?.name || r.agencyTradeName || "",
+      phone: r.agencyAgentPhone || r.requesterInfo?.phone || "",
+      email: cleanEditedSolicitante
+    };
   }
   if (
     req.body.financialResponsible !== undefined ||
@@ -37616,6 +37926,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
+  if (!isMissingGuestDataForCredential(r)) {
+    r.credentialStatus = "completed";
+    r.b2bCredentialCompletedAt = r.b2bCredentialCompletedAt || new Date().toISOString();
+    cancelPendingCredentialReminders(db, r);
+  }
+
   if ((oldStatus === "pre_reserva" || oldStatus === "expirada") && r.status === "confirmada") {
     if (!r.guestPending) {
       dispatchConfirmedReservationToReceptionAndGarage(r, "pms_pre_reservation_confirmed").catch(() => {});
@@ -37680,6 +37996,27 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       }
     }
   } else {
+    // Se a reserva já estava confirmada e o gestor acabou de inserir/atualizar os contatos do Solicitante/Agência
+    // enquanto os dados do hóspede continuam pendentes, dispara imediatamente o pedido inicial de credenciamento (E-mail + WhatsApp)
+    if (r.status === "confirmada" && isMissingGuestDataForCredential(r)) {
+      const recipsAfterEdit = getReservationRecipients(r, db);
+      if (recipsAfterEdit.requester?.isDifferentFromGuest) {
+        if (!r.b2bCredentialWhatsappSentAt) {
+          dispatchRequesterGuestCredentialRequest(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
+            console.warn("[PMS Edit Credential WhatsApp] Aviso:", err.message);
+          });
+        }
+        if (!r.b2bCredentialEmailSentAt) {
+          dispatchB2bAgencyCredentialEmail(db, saveDatabase, r, {
+            baseUrl: editBaseUrl,
+            trigger: "b2b_agency_credential_request"
+          }).catch(err => {
+            console.warn("[PMS Edit Credential Email] Aviso:", err.message);
+          });
+        }
+      }
+    }
+
     // Verifica se houve extensão de estadia ou acréscimo de saldo pendente (additional_daily_pending)
     const isB2bChannel = String(r.channel || "").toLowerCase().includes("b2b");
     const totalAmt = Number(r.totalAmount) || 0;
@@ -39537,6 +39874,7 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
     r.credentialSourceMode = sourceMode === "guest" ? "guest" : "agency";
     r.b2bCredentialCompletedAt = new Date().toISOString();
     r.updatedAt = r.b2bCredentialCompletedAt;
+    cancelPendingCredentialReminders(db, r);
 
     if (!Array.isArray(r.guests) || r.guests.length === 0) {
       r.guests = [{
@@ -39692,14 +40030,59 @@ app.post(["/api/pms/agency-guest-credential/:code", "/api/agency-guest-credentia
   }
 });
 
-// Endpoint: Parser de Voucher B2B (BOOKING_WS / OTA_WS) a partir de Texto ou E-mail
+// Endpoint: Parser Inteligente Multimodal de Voucher B2B (BOOKING_WS / OTA_WS) — PDF Multipágina, Imagem, Link Web ou Texto/HTML
 app.post(["/api/pms/b2b/parse-voucher", "/api/b2b/parse-voucher"], async (req, res) => {
   try {
-    const { text, rawText, htmlText, html, subject } = req.body || {};
+    const {
+      text,
+      rawText,
+      htmlText,
+      html,
+      subject,
+      voucherUrl,
+      fileBase64,
+      mimeType,
+      pdfBase64: explicitPdfBase64,
+      imageBase64: explicitImageBase64,
+      autoLinkCrm = true
+    } = req.body || {};
+
+    let resolvedPdfBase64 = explicitPdfBase64 || "";
+    let resolvedImageBase64 = explicitImageBase64 || "";
+    let resolvedImageMime = String(mimeType || "").trim() || "image/png";
+
+    if (fileBase64) {
+      const cleanB64 = String(fileBase64).replace(/^data:[^;]+;base64,/i, "").trim();
+      const mimeLower = String(mimeType || "").toLowerCase();
+      if (mimeLower.includes("pdf") || cleanB64.startsWith("JVBER")) {
+        resolvedPdfBase64 = cleanB64;
+      } else {
+        resolvedImageBase64 = cleanB64;
+        if (!mimeLower.startsWith("image/")) resolvedImageMime = "image/jpeg";
+      }
+    }
+
+    const pdfBuffers = [];
+    if (resolvedPdfBase64) {
+      try {
+        const cleanPdf = String(resolvedPdfBase64).replace(/^data:[^;]+;base64,/i, "").trim();
+        if (cleanPdf) pdfBuffers.push(Buffer.from(cleanPdf, "base64"));
+      } catch {}
+    }
+    const imageParts = [];
+    if (resolvedImageBase64) {
+      const cleanImg = String(resolvedImageBase64).replace(/^data:[^;]+;base64,/i, "").trim();
+      if (cleanImg) imageParts.push({ mimeType: resolvedImageMime, dataBase64: cleanImg });
+    }
+
     const parsed = await fetchAndParseB2bVoucher({
       rawText: text || rawText || "",
       htmlText: htmlText || html || "",
-      subject: subject || ""
+      subject: subject || "",
+      voucherUrl: voucherUrl || "",
+      pdfBuffers,
+      imageParts,
+      db
     });
     const hasValidField = Boolean(
       parsed &&
@@ -39713,9 +40096,144 @@ app.post(["/api/pms/b2b/parse-voucher", "/api/b2b/parse-voucher"], async (req, r
         parsed.voucherUrl)
     );
     if (!hasValidField) {
-      return res.status(400).json({ error: "Não foi possível identificar um voucher B2B válido no texto informado." });
+      return res.status(400).json({ error: "Não foi possível identificar um voucher B2B válido no documento ou texto informado." });
     }
-    return res.json({ ok: true, success: true, parsed });
+
+    let linkedAgencyId = null;
+    let linkedCompanyId = null;
+    if (autoLinkCrm !== false) {
+      if (!Array.isArray(db.agencies)) db.agencies = [];
+      if (!Array.isArray(db.companies)) db.companies = [];
+      const cleanDigits = v => String(v || "").replace(/\D/g, "");
+      let didMutateCrm = false;
+
+      if (parsed.agencyName || parsed.agencyCnpj) {
+        const agDoc = cleanDigits(parsed.agencyCnpj);
+        let ag = agDoc ? db.agencies.find(a => a && cleanDigits(a.cnpj) === agDoc) : null;
+        if (!ag && parsed.agencyName) {
+          const agLow = parsed.agencyName.trim().toLowerCase();
+          ag = db.agencies.find(
+            a =>
+              a &&
+              (String(a.tradeName || "").trim().toLowerCase() === agLow ||
+                String(a.corporateName || "").trim().toLowerCase() === agLow)
+          );
+        }
+        if (!ag && parsed.agencyName) {
+          const nextAgId = db.agencies.reduce((m, a) => Math.max(m, Number(a?.id) || 0), 0) + 1;
+          const safeOpEmail = parsed.agencyAgentEmail && !isPureBillingMailbox(parsed.agencyAgentEmail) ? parsed.agencyAgentEmail : "";
+          ag = {
+            id: nextAgId,
+            corporateName: parsed.agencyName,
+            razaoSocial: parsed.agencyName,
+            tradeName: parsed.agencyName,
+            nomeFantasia: parsed.agencyName,
+            cnpj: parsed.agencyCnpj || "",
+            email: safeOpEmail,
+            financialEmail: parsed.nfDeliveryEmails?.[0] || "",
+            emailFinanceiro: parsed.nfDeliveryEmails?.[0] || "",
+            phone: parsed.agencyAgentPhone || "",
+            telefone: parsed.agencyAgentPhone || "",
+            defaultRatePolicy: parsed.b2bRatePolicy || "COMISSIONADA",
+            defaultCommissionPct: parsed.b2bCommissionPct ?? (parsed.b2bRatePolicy === "NET" ? 0 : 12),
+            defaultInvoiceRecipient: parsed.invoiceRecipientType || "company",
+            posUnits: parsed.agencyPosUnit ? [{ name: parsed.agencyPosUnit, email: safeOpEmail, phone: parsed.agencyAgentPhone || "" }] : [],
+            agents: parsed.agencyAgentName
+              ? [{ name: parsed.agencyAgentName, email: safeOpEmail, phone: parsed.agencyAgentPhone || "", posUnit: parsed.agencyPosUnit || "" }]
+              : [],
+            clientCompanies: parsed.companyName ? [parsed.companyName] : [],
+            createdAt: new Date().toISOString()
+          };
+          db.agencies.push(ag);
+          didMutateCrm = true;
+        }
+        if (ag) linkedAgencyId = ag.id;
+      }
+
+      if (parsed.companyName || parsed.companyCnpj) {
+        const compDoc = cleanDigits(parsed.companyCnpj);
+        let comp = compDoc ? db.companies.find(c => c && cleanDigits(c.cnpj) === compDoc) : null;
+        if (!comp && parsed.companyName) {
+          const cLow = parsed.companyName.trim().toLowerCase();
+          comp = db.companies.find(
+            c =>
+              c &&
+              (String(c.tradeName || "").trim().toLowerCase() === cLow ||
+                String(c.corporateName || "").trim().toLowerCase() === cLow)
+          );
+        }
+        if (!comp && parsed.companyName) {
+          const nextCompId = db.companies.reduce((m, c) => Math.max(m, Number(c?.id) || 0), 0) + 1;
+          comp = {
+            id: nextCompId,
+            name: parsed.companyName,
+            corporateName: parsed.companyName,
+            razaoSocial: parsed.companyName,
+            tradeName: parsed.companyName,
+            nomeFantasia: parsed.companyName,
+            cnpj: parsed.companyCnpj || "",
+            email: parsed.nfDeliveryEmails?.[0] || "",
+            financialEmail: parsed.nfDeliveryEmails?.[0] || "",
+            emailFinanceiro: parsed.nfDeliveryEmails?.[0] || "",
+            address: parsed.companyAddress || "",
+            logradouro: parsed.companyAddress || "",
+            endereco: parsed.companyAddress || "",
+            number: parsed.companyNumber || "",
+            numero: parsed.companyNumber || "",
+            complement: parsed.companyComplement || "",
+            complemento: parsed.companyComplement || "",
+            neighborhood: parsed.companyNeighborhood || "",
+            bairro: parsed.companyNeighborhood || "",
+            cep: parsed.companyCep || "",
+            city: parsed.companyCity || "",
+            cidade: parsed.companyCity || "",
+            state: parsed.companyState || "",
+            uf: parsed.companyState || "",
+            ibgeCode: parsed.companyIbgeCode || "",
+            codigoMunicipio: parsed.companyIbgeCode || "",
+            billingTerms: parsed.invoicingInstructions || "",
+            invoicingInstructions: parsed.invoicingInstructions || "",
+            createdAt: new Date().toISOString()
+          };
+          db.companies.push(comp);
+          didMutateCrm = true;
+        } else if (comp) {
+          if (parsed._explicitCompanyAddress && parsed.companyAddress) {
+            comp.address = parsed.companyAddress;
+            comp.logradouro = parsed.companyAddress;
+            comp.endereco = parsed.companyAddress;
+            comp.number = parsed.companyNumber || "S/N";
+            comp.numero = parsed.companyNumber || "S/N";
+            comp.complement = parsed.companyComplement || "";
+            comp.complemento = parsed.companyComplement || "";
+            if (parsed.companyNeighborhood) { comp.neighborhood = parsed.companyNeighborhood; comp.bairro = parsed.companyNeighborhood; }
+            if (parsed.companyCep) comp.cep = parsed.companyCep;
+            if (parsed.companyCity) { comp.city = parsed.companyCity; comp.cidade = parsed.companyCity; }
+            if (parsed.companyState) { comp.state = parsed.companyState; comp.uf = parsed.companyState; }
+            if (parsed.companyIbgeCode) { comp.ibgeCode = parsed.companyIbgeCode; comp.codigoMunicipio = parsed.companyIbgeCode; }
+            didMutateCrm = true;
+          }
+          if (parsed._explicitTier1NfEmails && parsed.nfDeliveryEmails?.[0]) {
+            comp.financialEmail = parsed.nfDeliveryEmails[0];
+            comp.emailFinanceiro = parsed.nfDeliveryEmails[0];
+            didMutateCrm = true;
+          }
+        }
+        if (comp) linkedCompanyId = comp.id;
+      }
+
+      if (didMutateCrm && typeof saveDatabase === "function") {
+        saveDatabase("b2b_parse_voucher_crm_sync");
+      }
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      parsed,
+      agencyId: linkedAgencyId,
+      companyId: linkedCompanyId
+    });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -83735,16 +84253,45 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
         ensureZohoWebhookRegistered(db, saveDatabase, {
           baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
         })
-          .then(() =>
-            ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
-              baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
-            })
-          )
+          .then(async () => {
+            await repairIncompleteB2bReservations(db, saveDatabase).catch(() => {});
+            return ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
+              baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br",
+              forceCheck: true
+            });
+          })
           .catch(err => {
             console.warn("[B2B Boot Credential Sync] Aviso:", err.message);
           });
       }
     }, 3000);
+
+    // Motor periódico de Credenciamento e Lembretes (24h, Manhã Check-in 08h, Meio-dia 12h, Contingência 13h)
+    setTimeout(() => {
+      setInterval(() => {
+        if (pgPool && !pgHydratedSuccessfully) return;
+        ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
+          baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
+        }).catch(err => {
+          console.warn("[Credential Reminder Scheduler] Aviso:", err?.message || err);
+        });
+      }, 60000);
+    }, 25000);
+
+    // Sincronização periódica de segurança da Caixa de Entrada Zoho (captura vouchers B2B caso webhook oscile)
+    setTimeout(() => {
+      setInterval(() => {
+        if (pgPool && !pgHydratedSuccessfully) return;
+        syncZohoMessagesToCache(db, { folder: "inbox", limit: 30, saveDatabase })
+          .then(() => repairIncompleteB2bReservations(db, saveDatabase))
+          .then(() =>
+            ensurePendingB2bAgencyCredentialDispatches(db, saveDatabase, {
+              baseUrl: process.env.SERVER_BASE_URL || "https://corpflats.com.br"
+            })
+          )
+          .catch(() => {});
+      }, 180000);
+    }, 90000);
   }
 });
 httpServer.on("error", (err) => {

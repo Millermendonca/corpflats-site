@@ -30,8 +30,18 @@ import {
   parseB2bVoucherText,
   fetchAndParseB2bVoucher,
   ingestB2bVoucherIntoDb,
-  handleZohoIncomingWebhook
+  handleZohoIncomingWebhook,
+  evaluateCredentialScheduleDecision,
+  repairIncompleteB2bReservations
 } from '../artifacts/api-server/zoho-mail-service.mjs';
+
+import {
+  resolveValidRequesterWhatsApp,
+  cancelPendingCredentialReminders
+} from '../artifacts/api-server/zapi-service.mjs';
+
+import { renderB2bAgencyCredentialRequestEmail } from '../artifacts/api-server/mail-service.mjs';
+import { gerarLinkReservaTool } from '../artifacts/api-server/agent-architecture.mjs';
 
 import { extractTextFromPdfBuffer } from '../artifacts/api-server/pdf-extract-service.mjs';
 
@@ -673,6 +683,325 @@ Observação: NÃO ENTREGAR A NOTA FISCAL AO HÓSPEDE NO BALCÃO.
       assert.strictEqual(parsed.costCenter, '211505');
       assert.strictEqual(parsed.b2bCardBrand, 'American Express');
       assert.strictEqual(parsed.b2bVcnToken, 'H4FJSKB');
+    });
+  });
+
+  describe('10. Auto-Reparo B2B, WhatsApp da Agência, Régua de Lembretes BRT e Hóspede Opcional para Solicitante Terceiro', () => {
+    it('10.1 Deve extrair dados da agência em rótulos multi-linha, múltiplos blocos "Agência" e cabeçalhos Reply-To/CC', () => {
+      const multiLineHtmlVoucher = `
+Confirmação da Reserva: 25300111
+Hóspede: Marcelo Tavares
+Entrada: 20/11/2026
+Saída: 22/11/2026
+Valor Total: R$ 640,00
+
+Dados da Reserva:
+Agência:
+sistema_integrador
+
+Dados da Agência Solicitante:
+Agência Solicitante:
+Kontik Franstur Viagens e Turismo Ltda
+CNPJ Agência:
+73.431.686/0001-64
+Consultor Responsável:
+Patrícia Vasconcelos
+Telefone Agência:
+(71) 3417-2000 / (71) 99988-7766
+`;
+      const parsed = parseB2bVoucherText(multiLineHtmlVoucher, '', {
+        fromAddress: 'reserva@b2breservas.com.br',
+        replyTo: 'Patrícia Vasconcelos <patricia.vasconcelos@kontik.com.br>',
+        cc: 'financeiro@kontik.com.br'
+      });
+
+      assert.strictEqual(parsed.b2bReservationNumber, '25300111');
+      assert.strictEqual(parsed.agencyName, 'Kontik Franstur Viagens e Turismo Ltda');
+      assert.strictEqual(parsed.agencyCnpj, '73.431.686/0001-64');
+      assert.strictEqual(parsed.agencyAgentName, 'Patrícia Vasconcelos');
+      assert.strictEqual(parsed.agencyAgentPhone, '(71) 3417-2000 / (71) 99988-7766');
+      assert.strictEqual(parsed.agencyAgentEmail, 'patricia.vasconcelos@kontik.com.br');
+    });
+
+    it('10.2 repairIncompleteB2bReservations deve curar reserva B2B incompleta usando zohoMessagesCache e db.agencies', async () => {
+      const mockDb = createCleanMockDb();
+      mockDb.agencies.push({
+        id: 2,
+        tradeName: 'Kontik Viagens',
+        corporateName: 'Kontik Franstur Viagens e Turismo Ltda',
+        cnpj: '73.431.686/0001-64',
+        email: 'corporativo@kontik.com.br',
+        phone: '(71) 3417-2000',
+        agents: [
+          {
+            name: 'Patrícia Vasconcelos',
+            email: 'patricia.vasconcelos@kontik.com.br',
+            phone: '(71) 99988-7766'
+          }
+        ]
+      });
+
+      mockDb.reservations.push({
+        id: 901,
+        code: 'CF-B2B901',
+        status: 'confirmada',
+        channel: 'b2b',
+        requesterType: 'agency_b2b',
+        b2bReservationNumber: '25300901',
+        flatId: 1,
+        flatNumber: '113',
+        guestName: 'Ricardo Almeida',
+        checkinDate: '2026-11-25',
+        checkoutDate: '2026-11-27',
+        agencyName: '',
+        agencyCnpj: '',
+        agencyAgentName: '',
+        agencyAgentEmail: '',
+        agencyAgentPhone: ''
+      });
+
+      mockDb.zohoMessagesCache.push({
+        id: 'zmsg_901',
+        direction: 'inbound',
+        folder: 'inbox',
+        subject: 'Confirmação da Reserva: 25300901 - Ricardo Almeida',
+        fromAddress: 'reserva@b2breservas.com.br',
+        replyTo: 'patricia.vasconcelos@kontik.com.br',
+        bodyHtml: `
+          <p>Confirmação da Reserva: 25300901</p>
+          <p>Hóspede: Ricardo Almeida</p>
+          <p>Entrada: 25/11/2026 a 27/11/2026</p>
+          <p>Valor Total: R$ 640,00</p>
+          <p>Agência Solicitante: Kontik Franstur Viagens e Turismo Ltda</p>
+          <p>CNPJ Agência: 73.431.686/0001-64</p>
+        `
+      });
+
+      const repairRes = await repairIncompleteB2bReservations(mockDb, () => {});
+      assert.strictEqual(repairRes.repairedCount, 1);
+
+      const healed = mockDb.reservations.find(r => r.code === 'CF-B2B901');
+      assert.ok(healed);
+      assert.ok(healed.agencyName.includes('Kontik'));
+      assert.strictEqual(healed.agencyAgentName, 'Patrícia Vasconcelos');
+      assert.strictEqual(healed.agencyAgentEmail, 'patricia.vasconcelos@kontik.com.br');
+      assert.strictEqual(healed.agencyAgentPhone, '(71) 99988-7766');
+    });
+
+    it('10.3 resolveValidRequesterWhatsApp deve validar fixo WhatsApp Business via phoneExistsChecker e rejeitar fixo sem WhatsApp', async () => {
+      const mockDb = createCleanMockDb();
+      const resWithBusinessLandline = {
+        id: 902,
+        code: 'CF-B2B902',
+        status: 'confirmada',
+        channel: 'b2b',
+        requesterType: 'agency_b2b',
+        guestName: 'A Definir',
+        agencyName: 'Flytour Corporate',
+        agencyAgentPhone: '(11) 4004-0022'
+      };
+
+      const validCheck = await resolveValidRequesterWhatsApp(mockDb, resWithBusinessLandline, {
+        forceRefresh: true,
+        phoneExistsChecker: async (phone) => ({
+          checked: true,
+          exists: phone === '551140040022',
+          phone: '551140040022'
+        })
+      });
+      assert.strictEqual(validCheck.valid, true);
+      assert.strictEqual(validCheck.phone, '551140040022');
+      assert.strictEqual(resWithBusinessLandline.validatedRequesterWhatsapp, '551140040022');
+
+      const resWithoutWa = {
+        id: 903,
+        code: 'CF-B2B903',
+        status: 'confirmada',
+        channel: 'b2b',
+        requesterType: 'agency_b2b',
+        guestName: 'A Definir',
+        agencyName: 'Agência Sem WhatsApp',
+        agencyAgentPhone: '(11) 3333-4444'
+      };
+
+      const invalidCheck = await resolveValidRequesterWhatsApp(mockDb, resWithoutWa, {
+        forceRefresh: true,
+        phoneExistsChecker: async () => ({
+          checked: true,
+          exists: false
+        })
+      });
+      assert.strictEqual(invalidCheck.valid, false);
+      assert.strictEqual(invalidCheck.phone, '');
+    });
+
+    it('10.4 evaluateCredentialScheduleDecision deve respeitar 24h até D-1, manhã + 12:00 no D0, same-day (+2h) e alerta de contingência', () => {
+      const res = {
+        code: 'CF-CRED1',
+        status: 'confirmada',
+        checkinDate: '2026-11-20',
+        checkoutDate: '2026-11-22',
+        credentialSentStages: {}
+      };
+
+      // 1) Sem envio inicial -> stageKey = initial
+      const d0 = evaluateCredentialScheduleDecision(res, new Date('2026-11-17T13:00:00-03:00'));
+      assert.strictEqual(d0.action, 'send_stage');
+      assert.strictEqual(d0.stageKey, 'initial');
+      assert.strictEqual(d0.isReminder, false);
+
+      // Marca envio inicial em 17/11 às 13:00 BRT
+      res.credentialFirstRequestSentAt = '2026-11-17T16:00:00.000Z';
+      res.b2bCredentialWhatsappSentAt = '2026-11-17T16:00:00.000Z';
+      res.credentialSentStages.initial = { sentAt: '2026-11-17T16:00:00.000Z' };
+
+      // 2) 23h depois -> aguarda completar 24h
+      const dWait = evaluateCredentialScheduleDecision(res, new Date('2026-11-18T12:00:00-03:00'));
+      assert.strictEqual(dWait.action, 'none');
+
+      // 3) 24h depois (18/11 às 13:05 BRT) -> reminder_24h_1
+      const dRem1 = evaluateCredentialScheduleDecision(res, new Date('2026-11-18T13:05:00-03:00'));
+      assert.strictEqual(dRem1.action, 'send_stage');
+      assert.strictEqual(dRem1.stageKey, 'reminder_24h_1');
+      assert.strictEqual(dRem1.reminderKind, '24h');
+      assert.strictEqual(dRem1.reminderNumber, 1);
+      res.credentialSentStages.reminder_24h_1 = { sentAt: '2026-11-18T16:05:00.000Z' };
+
+      // 4) Dia do check-in (20/11) às 08:15 BRT -> reminder_checkin_morning
+      const dMorning = evaluateCredentialScheduleDecision(res, new Date('2026-11-20T08:15:00-03:00'));
+      assert.strictEqual(dMorning.action, 'send_stage');
+      assert.strictEqual(dMorning.stageKey, 'reminder_checkin_morning');
+      assert.strictEqual(dMorning.reminderKind, 'checkin_morning');
+      res.credentialSentStages.reminder_checkin_morning = { sentAt: '2026-11-20T11:15:00.000Z' };
+
+      // 5) Dia do check-in (20/11) às 12:00 BRT -> reminder_checkin_noon
+      const dNoon = evaluateCredentialScheduleDecision(res, new Date('2026-11-20T12:00:00-03:00'));
+      assert.strictEqual(dNoon.action, 'send_stage');
+      assert.strictEqual(dNoon.stageKey, 'reminder_checkin_noon');
+      assert.strictEqual(dNoon.reminderKind, 'checkin_noon');
+      res.credentialSentStages.reminder_checkin_noon = { sentAt: '2026-11-20T15:00:00.000Z' };
+
+      // 6) Dia do check-in (20/11) às 13:05 BRT ainda pendente -> manager_overdue_alert
+      const dOverdue = evaluateCredentialScheduleDecision(res, new Date('2026-11-20T13:05:00-03:00'));
+      assert.strictEqual(dOverdue.action, 'manager_overdue_alert');
+
+      // 7) Reserva Same-Day criada às 11:30 BRT -> lembrete +2h (13:30 BRT) e alerta +1h (14:30 BRT)
+      const sameDayRes = {
+        code: 'CF-SAMEDAY',
+        status: 'confirmada',
+        checkinDate: '2026-11-20',
+        checkoutDate: '2026-11-21',
+        credentialFirstRequestSentAt: '2026-11-20T14:30:00.000Z', // 11:30 BRT
+        b2bCredentialWhatsappSentAt: '2026-11-20T14:30:00.000Z',
+        credentialSentStages: {
+          initial: { sentAt: '2026-11-20T14:30:00.000Z' }
+        }
+      };
+      const sdWait = evaluateCredentialScheduleDecision(sameDayRes, new Date('2026-11-20T12:30:00-03:00'));
+      assert.strictEqual(sdWait.action, 'none');
+
+      const sd2h = evaluateCredentialScheduleDecision(sameDayRes, new Date('2026-11-20T13:31:00-03:00'));
+      assert.strictEqual(sd2h.action, 'send_stage');
+      assert.strictEqual(sd2h.stageKey, 'reminder_sameday_2h');
+      sameDayRes.credentialSentStages.reminder_sameday_2h = { sentAt: '2026-11-20T16:31:00.000Z' };
+
+      const sdAlert = evaluateCredentialScheduleDecision(sameDayRes, new Date('2026-11-20T14:35:00-03:00'));
+      assert.strictEqual(sdAlert.action, 'manager_overdue_alert');
+    });
+
+    it('10.5 renderB2bAgencyCredentialRequestEmail e cancelPendingCredentialReminders devem operar com hóspede "A Definir" e encerrar fila ao concluir', () => {
+      const pendingRes = {
+        id: 910,
+        code: 'CF-PEND910',
+        guestName: 'A Definir (Aguardando Solicitante)',
+        guestPending: true,
+        requesterType: 'other_person',
+        requesterName: 'Marina Oliveira',
+        checkinDate: '2026-11-20',
+        checkoutDate: '2026-11-22',
+        flatNumber: '211'
+      };
+      const emailOut = renderB2bAgencyCredentialRequestEmail({
+        reservation: pendingRes,
+        flat: { number: '211' },
+        credentialUrl: 'https://corpflats.com.br/credenciamento/CF-PEND910',
+        isReminder: true,
+        reminderKind: 'checkin_noon',
+        reminderNumber: 2
+      });
+      assert.ok(emailOut.subject.includes('URGENTE') || emailOut.subject.includes('Check-in Hoje'));
+      assert.ok(!emailOut.subject.includes('A Definir (Aguardando Solicitante)'));
+      assert.ok(emailOut.bodyHtml.includes('https://corpflats.com.br/credenciamento/CF-PEND910'));
+
+      const mockDb = {
+        whatsappQueue: [
+          { id: 'q1', reservationCode: 'CF-PEND910', triggerEvent: 'b2b_agency_credential_reminder_24h_1', status: 'pending' },
+          { id: 'q2', reservationCode: 'CF-OTHER', triggerEvent: 'b2b_agency_credential_reminder_24h_1', status: 'pending' }
+        ]
+      };
+      const cancelled = cancelPendingCredentialReminders(mockDb, pendingRes);
+      assert.strictEqual(cancelled, 1);
+      assert.strictEqual(mockDb.whatsappQueue[0].status, 'cancelled');
+      assert.strictEqual(mockDb.whatsappQueue[1].status, 'pending');
+    });
+
+    it('10.6 gerarLinkReservaTool deve tornar dados do hóspede opcionais quando reserva_para_terceiro=true', async () => {
+      const mockDb = createCleanMockDb();
+      const context = {
+        data_hora_atual: '2026-11-12T10:00:00-03:00',
+        telefone_remetente: '5522999112233',
+        estado_atual: 'COMERCIAL_VENDAS',
+        runtime: {
+          db: mockDb,
+          saveDatabase: async () => {}
+        }
+      };
+
+      // Etapa 1: Simulação sem nome_hospede (apenas nome_solicitante)
+      const simRes = await gerarLinkReservaTool.execute(
+        {
+          data_checkin: '2026-12-01',
+          data_checkout: '2026-12-03',
+          reserva_para_terceiro: true,
+          nome_solicitante: 'Marina RH Empresa',
+          email_solicitante: 'rh@empresa.com.br',
+          quantidade_hospedes: 1,
+          incluir_cafe: true,
+          confirmacao_hospede: false
+        },
+        context
+      );
+      assert.strictEqual(simRes.status, 'SIMULACAO_AGUARDANDO_CONFIRMACAO');
+      assert.strictEqual(simRes.dados.reserva_para_terceiro, true);
+      assert.strictEqual(simRes.dados.nome_solicitante, 'Marina RH Empresa');
+
+      // Etapa 2: Efetivação sem nome_hospede
+      const execRes = await gerarLinkReservaTool.execute(
+        {
+          data_checkin: '2026-12-01',
+          data_checkout: '2026-12-03',
+          reserva_para_terceiro: true,
+          nome_solicitante: 'Marina RH Empresa',
+          email_solicitante: 'rh@empresa.com.br',
+          quantidade_hospedes: 1,
+          incluir_cafe: true,
+          confirmacao_hospede: true
+        },
+        context
+      );
+      assert.strictEqual(execRes.status, 'SUCESSO_EXECUTADO');
+      assert.strictEqual(execRes.dados.hospede_pendente, true);
+      assert.strictEqual(mockDb.guests.length, 0, 'Não deve criar hóspede fantasma com telefone do solicitante');
+
+      const created = mockDb.reservations.find(r => r.code === execRes.dados.codigo_pre_reserva);
+      assert.ok(created);
+      assert.strictEqual(created.guestPending, true);
+      assert.strictEqual(created.guestPhone, '');
+      assert.strictEqual(created.requesterType, 'other_person');
+      assert.strictEqual(created.requesterName, 'Marina RH Empresa');
+      assert.strictEqual(created.requesterPhone, '5522999112233');
+      assert.strictEqual(created.requesterEmail, 'rh@empresa.com.br');
+      assert.strictEqual(created.credentialStatus, 'pending_agency');
     });
   });
 

@@ -1412,6 +1412,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [formVoucherUrl, setFormVoucherUrl] = useState("")
   const [showVoucherParser, setShowVoucherParser] = useState(false)
   const [voucherTextToParse, setVoucherTextToParse] = useState("")
+  const [voucherFilePayload, setVoucherFilePayload] = useState<{ fileBase64: string; fileName: string; mimeType: string } | null>(null)
   const [parsingVoucher, setParsingVoucher] = useState(false)
   const [sendingB2bCredentialEmail, setSendingB2bCredentialEmail] = useState(false)
 
@@ -4012,12 +4013,19 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
             String(a.corporateName || "").trim().toLowerCase() === rawResAgName
           ))
         )
+    const isPureBillingUi = (em: string) => {
+      const c = String(em || "").trim().toLowerCase()
+      if (!c.includes("@")) return false
+      if (c.endsWith("@b2breservas.com.br")) return true
+      return /^(?:conciliacao|faturamento|faturamentodpr|nf|nfe|nfse|notafiscal|notas?fiscais|nfebimbo[a-z0-9_.-]*|fiscal|financeiro|contasapagar|cobranca|envionf|envionotas|recebimentonf)(?:$|[._\-0-9])/i.test(c.split("@")[0] || "")
+    }
+    const safeLoadedAgEmail = matchedAgency?.email && !isPureBillingUi(matchedAgency.email) ? matchedAgency.email : ""
     setFormAgencyId(resItem.agencyId ? String(resItem.agencyId) : (matchedAgency ? String(matchedAgency.id) : ""))
     setFormAgencyName(resItem.agencyTradeName || resItem.agencyName || matchedAgency?.tradeName || matchedAgency?.corporateName || "")
     setFormAgencyCnpj(resItem.agencyCnpj || matchedAgency?.cnpj || "")
     setFormAgencyPosUnit(resItem.agencyPosUnit || matchedAgency?.posUnits?.[0]?.name || matchedAgency?.posUnits?.[0] || "")
     setFormAgencyAgentName(resItem.agencyAgentName || matchedAgency?.agents?.[0]?.name || "")
-    setFormAgencyAgentEmail(resItem.agencyAgentEmail || matchedAgency?.financialEmail || matchedAgency?.email || "")
+    setFormAgencyAgentEmail(resItem.agencyAgentEmail || resItem.requesterInfo?.email || safeLoadedAgEmail || "")
     setFormAgencyAgentPhone(resItem.agencyAgentPhone || matchedAgency?.phone || "")
     setFormCostCenter(resItem.costCenter || matchedCompany?.defaultCostCenter || "")
     setFormB2bReservationNumber(resItem.b2bReservationNumber || resItem.externalReservationNumber || "")
@@ -4044,13 +4052,14 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setFormNfDeliveryEmails(
       Array.isArray(resItem.nfDeliveryEmails)
         ? resItem.nfDeliveryEmails.join(", ")
-        : (resItem.nfDeliveryEmails || (isB2bRes ? (resItem.agencyAgentEmail || "conciliacao@b2breservas.com.br") : ""))
+        : (resItem.nfDeliveryEmails || "")
     )
     setFormNfHideFromGuest(resItem.nfHideFromGuest !== undefined ? Boolean(resItem.nfHideFromGuest) : isB2bRes)
     setFormInvoicingInstructions(resItem.invoicingInstructions || "")
     setFormVoucherUrl(resItem.voucherUrl || resItem.b2bVoucherUrl || "")
     setShowVoucherParser(false)
     setVoucherTextToParse("")
+    setVoucherFilePayload(null)
     setNewAgencyInlineOpen(false)
     setGuestSearchFilter("")
 
@@ -4963,20 +4972,28 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       }
       const firstPos = Array.isArray(ag.posUnits) && ag.posUnits[0] ? (ag.posUnits[0]?.name || ag.posUnits[0]) : ""
       if (firstPos && !formAgencyPosUnit) setFormAgencyPosUnit(firstPos)
+      const isBillingEmailLocal = (em: string) => {
+        const c = String(em || "").trim().toLowerCase()
+        if (!c.includes("@")) return false
+        if (c.endsWith("@b2breservas.com.br")) return true
+        return /^(?:conciliacao|faturamento|faturamentodpr|nf|nfe|nfse|notafiscal|notas?fiscais|nfebimbo[a-z0-9_.-]*|fiscal|financeiro|contasapagar|cobranca|envionf|envionotas|recebimentonf)(?:$|[._\-0-9])/i.test(c.split("@")[0] || "")
+      }
       const firstAgent = Array.isArray(ag.agents) && ag.agents[0] ? ag.agents[0] : null
+      const safeFirstAgentEmail = firstAgent?.email && !isBillingEmailLocal(firstAgent.email) ? firstAgent.email : ""
+      const safeAgOpEmail = ag.email && !isBillingEmailLocal(ag.email) ? ag.email : ""
       if (firstAgent) {
         if (!formAgencyAgentName) setFormAgencyAgentName(firstAgent.name || "")
-        if (!formAgencyAgentEmail) setFormAgencyAgentEmail(firstAgent.email || ag.email || "")
+        if (!formAgencyAgentEmail && (safeFirstAgentEmail || safeAgOpEmail)) {
+          setFormAgencyAgentEmail(safeFirstAgentEmail || safeAgOpEmail)
+        }
         if (!formAgencyAgentPhone) setFormAgencyAgentPhone(firstAgent.phone || ag.phone || "")
       } else {
-        if (!formAgencyAgentEmail && ag.email) setFormAgencyAgentEmail(ag.email)
+        if (!formAgencyAgentEmail && safeAgOpEmail) setFormAgencyAgentEmail(safeAgOpEmail)
         if (!formAgencyAgentPhone && ag.phone) setFormAgencyAgentPhone(ag.phone)
       }
-      const deliveryList = new Set<string>(["conciliacao@b2breservas.com.br"])
-      if (ag.financialEmail) deliveryList.add(ag.financialEmail)
-      if (ag.email) deliveryList.add(ag.email)
-      if (firstAgent?.email) deliveryList.add(firstAgent.email)
-      setFormNfDeliveryEmails(Array.from(deliveryList).join(", "))
+      if (!formNfDeliveryEmails.trim() && ag.financialEmail) {
+        setFormNfDeliveryEmails(ag.financialEmail)
+      }
       setFormNfHideFromGuest(true)
     }
   }
@@ -4997,7 +5014,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
           tradeName: newAgencyName.trim(),
           cnpj: newAgencyCnpj.trim(),
           email: newAgencyEmail.trim(),
-          financialEmail: newAgencyEmail.trim() || "conciliacao@b2breservas.com.br",
+          financialEmail: "",
           phone: newAgencyPhone.trim(),
           defaultRatePolicy: formB2bRatePolicy,
           defaultCommissionPct: Number(formB2bCommissionPct) || 0,
@@ -5029,8 +5046,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   }
 
   const handleParseVoucherText = async () => {
-    if (!voucherTextToParse.trim()) {
-      toast({ title: "Texto vazio", description: "Cole o texto do e-mail ou voucher da B2B Reservas.", variant: "destructive" })
+    if (!voucherTextToParse.trim() && !voucherFilePayload) {
+      toast({ title: "Voucher vazio", description: "Anexe o PDF/Imagem completo do voucher ou cole o texto do e-mail da B2B Reservas.", variant: "destructive" })
       return
     }
     setParsingVoucher(true)
@@ -5039,11 +5056,16 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ text: voucherTextToParse })
+        body: JSON.stringify({
+          text: voucherTextToParse,
+          fileBase64: voucherFilePayload?.fileBase64 || "",
+          mimeType: voucherFilePayload?.mimeType || "",
+          autoLinkCrm: true
+        })
       })
       const json = await resp.json().catch(() => ({}))
       if (!resp.ok || !json.parsed) {
-        toast({ title: "Não foi possível extrair dados", description: json.error || "Verifique o texto colado.", variant: "destructive" })
+        toast({ title: "Não foi possível extrair dados", description: json.error || "Verifique o arquivo ou texto informado.", variant: "destructive" })
         return
       }
       const p = json.parsed
@@ -5057,27 +5079,38 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       if (p.guestName) setFormGuestName(p.guestName)
       if (p.agencyName) {
         setFormAgencyName(p.agencyName)
-        const cleanAgCnpj = String(p.agencyCnpj || "").replace(/\D/g, "")
-        const matchedAg = agencies.find((a: any) =>
-          (cleanAgCnpj && String(a.cnpj || "").replace(/\D/g, "") === cleanAgCnpj) ||
-          (a.tradeName || "").toLowerCase().includes(p.agencyName.toLowerCase()) ||
-          (a.corporateName || "").toLowerCase().includes(p.agencyName.toLowerCase())
-        )
-        if (matchedAg) setFormAgencyId(String(matchedAg.id))
+        if (json.agencyId) {
+          setFormAgencyId(String(json.agencyId))
+          fetchAgencies()
+        } else {
+          const cleanAgCnpj = String(p.agencyCnpj || "").replace(/\D/g, "")
+          const matchedAg = agencies.find((a: any) =>
+            (cleanAgCnpj && String(a.cnpj || "").replace(/\D/g, "") === cleanAgCnpj) ||
+            (a.tradeName || "").toLowerCase().includes(p.agencyName.toLowerCase()) ||
+            (a.corporateName || "").toLowerCase().includes(p.agencyName.toLowerCase())
+          )
+          if (matchedAg) setFormAgencyId(String(matchedAg.id))
+        }
       }
       if (p.agencyCnpj) setFormAgencyCnpj(p.agencyCnpj)
       if (p.agencyPosUnit) setFormAgencyPosUnit(p.agencyPosUnit)
       if (p.agencyAgentName) setFormAgencyAgentName(p.agencyAgentName)
-      if (p.agencyAgentEmail) setFormAgencyAgentEmail(p.agencyAgentEmail)
-      else if (Array.isArray(p.nfDeliveryEmails) && p.nfDeliveryEmails[0]) setFormAgencyAgentEmail(p.nfDeliveryEmails[0])
+      setFormAgencyAgentEmail(p.agencyAgentEmail || "")
       if (p.agencyAgentPhone) setFormAgencyAgentPhone(p.agencyAgentPhone)
       if (p.companyName) {
         setFormCompanyName(p.companyName)
-        const matchedComp = companies.find((c: any) =>
-          (c.tradeName || "").toLowerCase().includes(p.companyName.toLowerCase()) ||
-          (c.corporateName || "").toLowerCase().includes(p.companyName.toLowerCase())
-        )
-        if (matchedComp) setFormCompanyId(String(matchedComp.id))
+        if (json.companyId) {
+          setFormCompanyId(String(json.companyId))
+          fetchCompanies()
+        } else {
+          const cleanCompCnpj = String(p.companyCnpj || "").replace(/\D/g, "")
+          const matchedComp = companies.find((c: any) =>
+            (cleanCompCnpj && String(c.cnpj || "").replace(/\D/g, "") === cleanCompCnpj) ||
+            (c.tradeName || "").toLowerCase().includes(p.companyName.toLowerCase()) ||
+            (c.corporateName || "").toLowerCase().includes(p.companyName.toLowerCase())
+          )
+          if (matchedComp) setFormCompanyId(String(matchedComp.id))
+        }
       }
       if (p.costCenter) setFormCostCenter(p.costCenter)
       if (p.hasBreakfast !== undefined) setFormIncludeBreakfast(Boolean(p.hasBreakfast))
@@ -5092,9 +5125,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       if (p.invoicingInstructions) setFormInvoicingInstructions(p.invoicingInstructions)
       if (p.voucherUrl || p.b2bVoucherUrl) setFormVoucherUrl(p.voucherUrl || p.b2bVoucherUrl)
       if (p.invoiceRecipientType) setFormInvoiceRecipientType(p.invoiceRecipientType)
-      if (Array.isArray(p.nfDeliveryEmails) && p.nfDeliveryEmails.length > 0) {
-        setFormNfDeliveryEmails(p.nfDeliveryEmails.join(", "))
-      }
+      setFormNfDeliveryEmails(Array.isArray(p.nfDeliveryEmails) ? p.nfDeliveryEmails.join(", ") : "")
       setFormNfHideFromGuest(Boolean(p.nfHideFromGuest))
       if (p.dailyRate || p.totalAmount) {
         const cin = p.checkinDate || formCheckin
@@ -5107,6 +5138,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         setFormTotalAmount(String(tot))
         setPackageTotalInput(String(tot))
       }
+      setVoucherFilePayload(null)
       setShowVoucherParser(false)
       toast({
         title: "Voucher B2B Interpretado!",
@@ -9186,19 +9218,63 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
                   {/* Leitor Inteligente de Voucher B2B */}
                   {showVoucherParser && (
-                    <div className="p-3 bg-purple-950/90 text-white border border-purple-500/40 rounded-xl space-y-2 animate-in fade-in">
-                      <div className="flex items-center justify-between">
+                    <div className="p-3 bg-purple-950/90 text-white border border-purple-500/40 rounded-xl space-y-2.5 animate-in fade-in">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
                         <span className="text-xs font-bold text-purple-200 flex items-center gap-1.5">
                           <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                          Leitor Inteligente de Voucher / E-mail B2B Reservas
+                          Leitor Inteligente Multimodal de Voucher B2B (PDF Multipágina, Imagem ou Texto)
                         </span>
-                        <Badge className="bg-purple-600 text-white text-[9px]">BOOKING_WS & OTA_WS</Badge>
+                        <Badge className="bg-purple-600 text-white text-[9px]">LEITURA 100% INTEGRAL • BOOKING_WS & OTA_WS</Badge>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 flex-wrap p-2 rounded-lg bg-slate-900/80 border border-purple-500/30">
+                        <label className="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-semibold text-purple-200 hover:text-white">
+                          <input
+                            type="file"
+                            accept=".pdf,application/pdf,image/*"
+                            className="hidden"
+                            onChange={e => {
+                              const file = e.target.files?.[0]
+                              if (!file) return
+                              const reader = new FileReader()
+                              reader.onload = () => {
+                                const resStr = String(reader.result || "")
+                                const base64Part = resStr.includes(",") ? resStr.split(",")[1] : resStr
+                                setVoucherFilePayload({
+                                  fileBase64: base64Part,
+                                  fileName: file.name,
+                                  mimeType: file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg")
+                                })
+                              }
+                              reader.readAsDataURL(file)
+                              e.target.value = ""
+                            }}
+                          />
+                          <span className="px-2 py-1 rounded-md bg-purple-600/40 border border-purple-400/40">
+                            📎 Anexar PDF Completo ou Print do Voucher
+                          </span>
+                        </label>
+                        {voucherFilePayload ? (
+                          <div className="flex items-center gap-1.5 text-[11px] text-emerald-300 font-medium">
+                            <span className="truncate max-w-[220px]">✅ {voucherFilePayload.fileName}</span>
+                            <button
+                              type="button"
+                              onClick={() => setVoucherFilePayload(null)}
+                              className="text-rose-300 hover:text-rose-200 text-[10px] underline"
+                            >
+                              remover
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[10.5px] text-purple-300/80">
+                            Lê todas as páginas do PDF (Solicitante, VCN, CNPJ, Endereço e E-mail exclusivo de NF)
+                          </span>
+                        )}
                       </div>
                       <Textarea
                         value={voucherTextToParse}
                         onChange={e => setVoucherTextToParse(e.target.value)}
                         rows={4}
-                        placeholder="Cole aqui o corpo do e-mail ou texto do PDF da B2B Reservas (Nº da Reserva, RLOC, Agência, CNPJ, Empresa, Hóspede, Cartão Virtual VCN, Tarifas)..."
+                        placeholder="Ou cole aqui o corpo completo do e-mail / texto do PDF / link do voucher da B2B Reservas..."
                         className="text-xs bg-slate-900/90 border-purple-500/40 text-slate-100 placeholder:text-slate-400"
                       />
                       <div className="flex justify-end gap-2">
@@ -9206,7 +9282,10 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           type="button"
                           size="sm"
                           variant="ghost"
-                          onClick={() => setShowVoucherParser(false)}
+                          onClick={() => {
+                            setVoucherFilePayload(null)
+                            setShowVoucherParser(false)
+                          }}
                           className="h-7 text-xs text-purple-200 hover:text-white"
                         >
                           Cancelar
@@ -9218,7 +9297,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           onClick={handleParseVoucherText}
                           className="h-7 text-xs font-bold bg-purple-500 hover:bg-purple-400 text-white"
                         >
-                          {parsingVoucher ? "Interpretando..." : "⚡ Extrair e Preencher Reserva 4-Pontas"}
+                          {parsingVoucher ? "Lendo documento completo..." : "⚡ Extrair e Preencher Reserva 4-Pontas"}
                         </Button>
                       </div>
                     </div>
@@ -10218,7 +10297,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           </div>
                         )}
                       </div>
-                      <Input value={formGuest1Cpf} onChange={e => setFormGuest1Cpf(e.target.value)} placeholder="CPF / Documento" className="text-xs h-8" />
+                      <Input
+                        value={formGuest1Cpf}
+                        onChange={e => setFormGuest1Cpf(e.target.value)}
+                        placeholder={formRequesterType !== "guest" ? "CPF / Documento (Opcional agora)" : "CPF / Documento"}
+                        className="text-xs h-8"
+                      />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1">
@@ -10241,7 +10325,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                 verifyGuestPhoneWhatsApp(formGuestPhone)
                               }
                             }}
-                            placeholder="WhatsApp / Celular" 
+                            placeholder={formRequesterType !== "guest" ? "WhatsApp do Hóspede (Opcional agora)" : "WhatsApp / Celular"} 
                             className={`text-xs h-8 ${phoneVerification && phoneVerification.checked && phoneVerification.exists === false ? "border-amber-500 bg-amber-500/5 focus-visible:ring-amber-500" : (phoneVerification && phoneVerification.checked && phoneVerification.exists ? "border-emerald-500/80 bg-emerald-500/5" : "")}`} 
                           />
                           {phoneVerification?.checking && (
@@ -10263,16 +10347,28 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           </div>
                         )}
                       </div>
-                      <Input type="email" value={formGuestEmail} onChange={e => setFormGuestEmail(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
+                      <Input
+                        type="email"
+                        value={formGuestEmail}
+                        onChange={e => setFormGuestEmail(e.target.value)}
+                        placeholder={formRequesterType !== "guest" ? "E-mail do Hóspede (Opcional agora)" : "E-mail"}
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        className="text-xs h-8"
+                      />
                     </div>
                   </div>
 
                   {/* Documento com Foto do Hóspede Oficial (Foto / PDF) */}
                   <div className="p-3 bg-muted/40 border border-border/80 rounded-xl space-y-2 animate-in fade-in">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
                         <FileText className="w-3.5 h-3.5 text-primary" />
-                        <span>Documento com Foto (RG, CNH, Passaporte - Foto ou PDF)</span>
+                        <span>
+                          Documento com Foto (RG, CNH, Passaporte - Foto ou PDF)
+                          {formRequesterType !== "guest" ? " — Opcional agora" : ""}
+                        </span>
                       </Label>
                       <div className="flex items-center gap-1.5">
                         {formHasMinor && (

@@ -1050,6 +1050,8 @@ export const gerarLinkReservaTool = {
   name: 'gerar_link_reserva',
   description:
     'Gera a pré-reserva com bloqueio temporário de 30 minutos no calendário e fornece o link de pagamento / chave PIX Copia e Cola. ' +
+    'Quando o cliente no WhatsApp estiver reservando para outra pessoa ou empresa (solicitante diferente do hóspede), ' +
+    'os dados do hóspede são opcionais na criação (podem ser preenchidos depois via link seguro). ' +
     'Exige duas etapas: passe confirmacao_hospede=FALSE para simular e confirmar os dados com o cliente, e TRUE após o de acordo dele.',
   allowedStates: ['COMERCIAL_VENDAS'],
   parametersSchema: {
@@ -1057,7 +1059,24 @@ export const gerarLinkReservaTool = {
     properties: {
       data_checkin: { type: 'STRING', description: 'Data de entrada no formato YYYY-MM-DD.' },
       data_checkout: { type: 'STRING', description: 'Data de saída no formato YYYY-MM-DD.' },
-      nome_hospede: { type: 'STRING', description: 'Nome completo do titular da reserva.' },
+      nome_hospede: {
+        type: 'STRING',
+        description:
+          'Nome completo do hóspede titular. Obrigatório quando o próprio hóspede reserva para si; opcional quando reserva_para_terceiro=TRUE.',
+      },
+      reserva_para_terceiro: {
+        type: 'BOOLEAN',
+        description:
+          'Passe TRUE quando quem está conversando no WhatsApp (empresa, agência, secretária ou terceiro) NÃO é o próprio hóspede.',
+      },
+      nome_solicitante: {
+        type: 'STRING',
+        description: 'Nome do solicitante ou empresa responsável pela reserva quando reserva_para_terceiro=TRUE.',
+      },
+      email_solicitante: {
+        type: 'STRING',
+        description: 'E-mail opcional do solicitante ou empresa para envio simultâneo da confirmação e link de dados do hóspede.',
+      },
       quantidade_hospedes: { type: 'NUMBER', description: 'Quantidade de hóspedes (padrão: 1).' },
       incluir_cafe: { type: 'BOOLEAN', description: 'TRUE para plano com café da manhã incluso, FALSE para somente hospedagem.' },
       confirmacao_hospede: {
@@ -1076,7 +1095,13 @@ export const gerarLinkReservaTool = {
       const diarias = diffDays(checkin, checkout);
       const hospedes = Math.max(1, Number(args.quantidade_hospedes || 1));
       const comCafe = args.incluir_cafe !== false;
-      const nomeTitular = String(args.nome_hospede || context.hospede?.nome || '').trim();
+      const paraTerceiro = Boolean(args.reserva_para_terceiro);
+      const rawNomeHospede = String(args.nome_hospede || (!paraTerceiro ? context.hospede?.nome || '' : '')).trim();
+      const nomeSolicitante = String(args.nome_solicitante || (paraTerceiro ? context.hospede?.nome || '' : '')).trim();
+      const emailSolicitante = String(args.email_solicitante || '').trim().toLowerCase();
+      const hospedePendente = paraTerceiro && !rawNomeHospede;
+      const nomeTitular = hospedePendente ? 'A Definir (Aguardando Solicitante)' : rawNomeHospede;
+      const nomePagador = rawNomeHospede || nomeSolicitante || 'Solicitante CorpFlats';
 
       if (!checkin || !checkout || diarias <= 0) {
         const msg =
@@ -1094,15 +1119,26 @@ export const gerarLinkReservaTool = {
         ? Number((diarias * (diariaBase + hospedes * 35.0)).toFixed(2))
         : Number((diarias * diariaBase + 70.0).toFixed(2));
 
-      if (!args.confirmacao_hospede || !nomeTitular) {
-        const faltaNome = !nomeTitular
-          ? 'Peça também o *nome completo* do titular para vincular à pré-reserva.'
-          : `Confirme se a reserva pode ser emitida em nome de *${nomeTitular}*.`;
+      const faltaIdentificacaoObrigatoria = paraTerceiro ? !nomeSolicitante : !rawNomeHospede;
+      if (!args.confirmacao_hospede || faltaIdentificacaoObrigatoria) {
+        let orientacaoIdentificacao = '';
+        if (paraTerceiro) {
+          orientacaoIdentificacao = !nomeSolicitante
+            ? 'Como a reserva é para outra pessoa/empresa, peça apenas o *nome do solicitante (ou empresa)* para vincular à pré-reserva — explique que os dados do hóspede são opcionais agora e poderão ser preenchidos depois pelo link seguro enviado após a confirmação.'
+            : rawNomeHospede
+              ? `Confirme se podemos gerar a pré-reserva solicitada por *${nomeSolicitante}* para o hóspede *${rawNomeHospede}*.`
+              : `Confirme se podemos gerar a pré-reserva em nome do solicitante *${nomeSolicitante}* (os dados do hóspede poderão ser preenchidos depois pelo link seguro que enviaremos após a confirmação).`;
+        } else {
+          orientacaoIdentificacao = !rawNomeHospede
+            ? 'Peça também o *nome completo* do titular para vincular à pré-reserva (ou informe que, se estiver reservando para outra pessoa/empresa, basta informar o nome do solicitante e preencher o hóspede depois via link).'
+            : `Confirme se a reserva pode ser emitida em nome de *${rawNomeHospede}*.`;
+        }
+
         const msg =
           `Informe ao cliente o resumo para bloqueio da pré-reserva: período de ${checkin} a ${checkout} (${diarias} diária(s)), ` +
           `total de hóspedes: *${hospedes}* (${hospedes === 1 ? '1 pessoa' : `${hospedes} pessoas`}), canal da reserva: *WhatsApp*, ` +
           `plano ${comCafe ? 'COM café da manhã (isento de taxa de limpeza)' : 'Somente Hospedagem'}, ` +
-          `no valor total de *R$ ${valorTotal.toFixed(2)}*. ${faltaNome}`;
+          `no valor total de *R$ ${valorTotal.toFixed(2)}*. ${orientacaoIdentificacao}`;
         return {
           status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
           dados: {
@@ -1113,7 +1149,9 @@ export const gerarLinkReservaTool = {
             canal_reserva: 'WhatsApp',
             incluir_cafe: comCafe,
             valor_total: valorTotal,
-            nome_hospede: nomeTitular || null,
+            reserva_para_terceiro: paraTerceiro,
+            nome_solicitante: nomeSolicitante || null,
+            nome_hospede: rawNomeHospede || null,
           },
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
@@ -1188,7 +1226,7 @@ export const gerarLinkReservaTool = {
             db?.settings?.interConfig,
             cleanTxId,
             valorTotal,
-            nomeTitular,
+            nomePagador,
             '',
             `Reserva ${codigoPreReserva} - Flat ${selectedFlat.number || selectedFlat.id}`
           );
@@ -1218,25 +1256,50 @@ export const gerarLinkReservaTool = {
         if (!Array.isArray(db.preReservations)) db.preReservations = [];
 
         const cleanPhone = normalizePhoneDigits(context.telefone_remetente);
-        let guestRecord = db.guests.find((g) => cleanPhone && phonesMatch(g.phone || '', cleanPhone));
-        if (!guestRecord) {
-          const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
-          guestRecord = {
-            id: nextGuestId,
-            name: nomeTitular,
-            phone: cleanPhone,
-            email: '',
-            document: '',
-            cpf: '',
-            notes: '',
-            totalStays: 1,
-            lastStay: checkin,
-            createdAt: nowIso,
-          };
-          db.guests.push(guestRecord);
-        } else if (nomeTitular) {
-          guestRecord.name = nomeTitular;
-          guestRecord.lastStay = checkin;
+        let guestRecord = null;
+        if (!paraTerceiro) {
+          guestRecord = db.guests.find((g) => cleanPhone && phonesMatch(g.phone || '', cleanPhone));
+          if (!guestRecord) {
+            const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
+            guestRecord = {
+              id: nextGuestId,
+              name: nomeTitular,
+              phone: cleanPhone,
+              email: '',
+              document: '',
+              cpf: '',
+              notes: '',
+              totalStays: 1,
+              lastStay: checkin,
+              createdAt: nowIso,
+            };
+            db.guests.push(guestRecord);
+          } else if (nomeTitular) {
+            guestRecord.name = nomeTitular;
+            guestRecord.lastStay = checkin;
+          }
+        } else if (!hospedePendente && rawNomeHospede) {
+          guestRecord = db.guests.find(
+            (g) => g && g.name && String(g.name).trim().toLowerCase() === rawNomeHospede.toLowerCase()
+          );
+          if (!guestRecord) {
+            const nextGuestId = db.guests.length > 0 ? Math.max(...db.guests.map((g) => Number(g.id) || 0)) + 1 : 1;
+            guestRecord = {
+              id: nextGuestId,
+              name: rawNomeHospede,
+              phone: '',
+              email: '',
+              document: '',
+              cpf: '',
+              notes: '',
+              totalStays: 1,
+              lastStay: checkin,
+              createdAt: nowIso,
+            };
+            db.guests.push(guestRecord);
+          } else {
+            guestRecord.lastStay = checkin;
+          }
         }
 
         const nextResId = db.reservations.length > 0
@@ -1253,10 +1316,10 @@ export const gerarLinkReservaTool = {
 
         const preparedGuests = Array.from({ length: hospedes }, (_, idx) => ({
           index: idx + 1,
-          guestId: idx === 0 ? guestRecord.id : null,
-          name: idx === 0 ? nomeTitular : `Hóspede ${idx + 1}`,
+          guestId: idx === 0 && guestRecord ? guestRecord.id : null,
+          name: idx === 0 ? (hospedePendente ? '' : nomeTitular) : `Hóspede ${idx + 1}`,
           cpf: '',
-          phone: idx === 0 ? cleanPhone : '',
+          phone: idx === 0 && !paraTerceiro ? cleanPhone : '',
           email: '',
           hasCompletedCheckin: false,
           checkinCompletedAt: null,
@@ -1268,13 +1331,30 @@ export const gerarLinkReservaTool = {
           reservationCode: codigoPreReserva,
           flatId: selectedFlat.id || selectedFlat.number,
           flatNumber: String(selectedFlat.number || selectedFlat.id),
-          guestId: guestRecord.id,
+          guestId: guestRecord ? guestRecord.id : null,
           guestName: nomeTitular,
-          guestPhone: cleanPhone,
+          guestPending: hospedePendente,
+          guestPhone: paraTerceiro ? '' : cleanPhone,
           phone: cleanPhone,
           guestEmail: '',
           guestDocument: '',
           guestCpf: '',
+          requesterType: paraTerceiro ? 'other_person' : 'guest',
+          ...(paraTerceiro
+            ? {
+                requesterName: nomeSolicitante,
+                requesterPhone: context.telefone_remetente,
+                requesterEmail: emailSolicitante,
+                requesterInfo: {
+                  type: 'other_person',
+                  name: nomeSolicitante,
+                  phone: context.telefone_remetente,
+                  whatsapp: context.telefone_remetente,
+                  email: emailSolicitante,
+                },
+                credentialStatus: hospedePendente ? 'pending_agency' : 'completed',
+              }
+            : {}),
           checkinDate: checkin,
           checkoutDate: checkout,
           checkinTime: '14:00',
@@ -1332,7 +1412,9 @@ export const gerarLinkReservaTool = {
           flatId: newReservation.flatId,
           flatNumber: newReservation.flatNumber,
           guestName: nomeTitular,
-          guestPhone: context.telefone_remetente,
+          guestPhone: paraTerceiro ? '' : context.telefone_remetente,
+          requesterName: paraTerceiro ? nomeSolicitante : '',
+          requesterPhone: paraTerceiro ? context.telefone_remetente : '',
           checkinDate: checkin,
           checkoutDate: checkout,
           guests: hospedes,
@@ -1370,11 +1452,19 @@ export const gerarLinkReservaTool = {
       const infoVeiculo = veiculoVinculado?.plate
         ? ` Informe também que o veículo placa *${veiculoVinculado.plate}* informado anteriormente já foi vinculado automaticamente à reserva.`
         : '';
+      const destinatarioResumo = paraTerceiro
+        ? (rawNomeHospede
+            ? `solicitada por *${nomeSolicitante}* para o hóspede *${rawNomeHospede}*`
+            : `em nome do solicitante *${nomeSolicitante}* (hóspede a definir após confirmação)`)
+        : `para *${nomeTitular}*`;
+      const notaCredenciamento = hospedePendente
+        ? ' Avise também que, assim que o pagamento for confirmado, enviaremos automaticamente o link seguro de credenciamento para preencher os dados do hóspede antes do check-in.'
+        : '';
       const msg =
-        `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* (Flat ${selectedFlat.number || selectedFlat.id}) foi bloqueada por 30 minutos para *${nomeTitular}* (${checkin} a ${checkout}), ` +
+        `Confirme com entusiasmo que a pré-reserva *${codigoPreReserva}* (Flat ${selectedFlat.number || selectedFlat.id}) foi bloqueada por 30 minutos ${destinatarioResumo} (${checkin} a ${checkout}), ` +
         `incluindo obrigatoriamente no resumo o *Total de Hóspedes: ${hospedes}* e o *Canal da Reserva: WhatsApp*, ` +
         `no valor de *R$ ${valorTotal.toFixed(2)}* no PIX (ou *R$ ${cardTotalAmount.toFixed(2)}* no Cartão de Crédito). ` +
-        `A mensagem oficial da reserva com botões interativos, código PIX Copia e Cola (\`${chavePix}\`) e link de pagamento por Cartão (${linkPagamento}) já foi enviada.${infoVeiculo}`;
+        `A mensagem oficial da reserva com botões interativos, código PIX Copia e Cola (\`${chavePix}\`) e link de pagamento por Cartão (${linkPagamento}) já foi enviada.${notaCredenciamento}${infoVeiculo}`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -1382,6 +1472,9 @@ export const gerarLinkReservaTool = {
           codigo_pre_reserva: codigoPreReserva,
           flat_number: String(selectedFlat.number || selectedFlat.id),
           nome_hospede: nomeTitular,
+          reserva_para_terceiro: paraTerceiro,
+          nome_solicitante: paraTerceiro ? nomeSolicitante : null,
+          hospede_pendente: hospedePendente,
           data_checkin: checkin,
           data_checkout: checkout,
           quantidade_hospedes: hospedes,
@@ -1400,7 +1493,7 @@ export const gerarLinkReservaTool = {
       await notifyAdminWhatsApp({
         nivel_urgencia: 'MEDIA',
         categoria: 'ERRO_SISTEMA_TOOL',
-        hospede_nome: args.nome_hospede || context.hospede?.nome || 'Lead Comercial',
+        hospede_nome: args.nome_hospede || args.nome_solicitante || context.hospede?.nome || 'Lead Comercial',
         telefone: context.telefone_remetente,
         resumo: `Falha técnica ao executar gerar_link_reserva: ${error.message}`,
         context,

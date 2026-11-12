@@ -83,6 +83,7 @@ const FunnelDocumentUploadCard = memo(function FunnelDocumentUploadCard({
   aiInspectionResult,
   isInspectingDoc,
   docInspectionError,
+  isOptional = false,
   onOpenFilePicker,
   onClearDocFile,
 }: {
@@ -92,6 +93,7 @@ const FunnelDocumentUploadCard = memo(function FunnelDocumentUploadCard({
   aiInspectionResult: any
   isInspectingDoc: boolean
   docInspectionError: string | null
+  isOptional?: boolean
   onOpenFilePicker: () => void
   onClearDocFile: () => void
 }) {
@@ -101,14 +103,26 @@ const FunnelDocumentUploadCard = memo(function FunnelDocumentUploadCard({
         <div>
           <Label className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
             <ShieldCheck className="w-4 h-4 text-[#0F3D4C] shrink-0" />
-            <span>Documento Oficial com Foto (RG, CNH ou Passaporte) *</span>
+            <span>
+              Documento Oficial com Foto (RG, CNH ou Passaporte)
+              {!isOptional && <span aria-hidden="true"> *</span>}
+            </span>
           </Label>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-            Aceitamos PDF ou foto legível para liberação de portaria.
+            {isOptional
+              ? "Opcional agora — poderá ser enviado depois pelo link seguro após a confirmação."
+              : "Aceitamos PDF ou foto legível para liberação de portaria."}
           </p>
         </div>
-        <Badge variant="outline" className="text-[9px] font-bold border-[#C5A059]/60 text-[#0F3D4C] dark:text-[#E5C98B] shrink-0">
-          Obrigatório
+        <Badge
+          variant="outline"
+          className={`text-[9px] font-bold shrink-0 ${
+            isOptional
+              ? "border-amber-400/70 text-amber-800 dark:text-amber-300 bg-amber-50/70 dark:bg-amber-950/40"
+              : "border-[#C5A059]/60 text-[#0F3D4C] dark:text-[#E5C98B]"
+          }`}
+        >
+          {isOptional ? "Opcional agora" : "Obrigatório"}
         </Badge>
       </div>
 
@@ -652,6 +666,14 @@ export function BookingFunnelModal({
     }
   }
 
+  // Solicitante vs Hóspede (quando quem reserva não é o próprio hóspede)
+  const [requesterType, setRequesterType] = useState<"guest" | "other_person">("guest")
+  const [requesterName, setRequesterName] = useState(() => guestAccount?.name || getCachedProfile()?.name || "")
+  const [requesterPhone, setRequesterPhone] = useState(() => maskPhone(guestAccount?.phone || getCachedProfile()?.phone || ""))
+  const [requesterEmail, setRequesterEmail] = useState(() => guestAccount?.email || getCachedProfile()?.email || (typeof window !== "undefined" ? localStorage.getItem("corpflats_guest_email") || "" : ""))
+  const [requesterDocument, setRequesterDocument] = useState(() => maskCpf(guestAccount?.document || getCachedProfile()?.document || ""))
+  const isSeparateRequester = requesterType !== "guest"
+
   // Guest Details com inicialização a partir de guestAccount ou cache local
   const [guestName, setGuestName] = useState(() => guestAccount?.name || getCachedProfile()?.name || "")
   const [guestPhone, setGuestPhone] = useState(() => maskPhone(guestAccount?.phone || getCachedProfile()?.phone || ""))
@@ -664,6 +686,49 @@ export function BookingFunnelModal({
   const [loadingFunnelCep, setLoadingFunnelCep] = useState(false)
   const [isSavingPostRegistration, setIsSavingPostRegistration] = useState(false)
   const [postRegistrationSaved, setPostRegistrationSaved] = useState(false)
+
+  const handleSelectRequesterMode = (nextMode: "guest" | "other_person") => {
+    if (nextMode === requesterType) return
+    const acc = guestAccount || getCachedProfile()
+    if (nextMode === "other_person") {
+      if (!requesterName.trim() && guestName.trim()) setRequesterName(guestName)
+      if (!requesterPhone.trim() && guestPhone.trim()) setRequesterPhone(guestPhone)
+      if (!requesterEmail.trim() && guestEmail.trim()) setRequesterEmail(guestEmail)
+      if (!requesterDocument.trim() && guestDocument.trim()) setRequesterDocument(guestDocument)
+      // Se os campos de hóspede continham os próprios dados do solicitante logado/em cache, limpa-os para não enviar o solicitante como hóspede
+      const isSelfPrefilled = Boolean(
+        (acc?.name && guestName.trim() === String(acc.name).trim()) ||
+        (acc?.email && guestEmail.trim().toLowerCase() === String(acc.email).trim().toLowerCase()) ||
+        (guestName.trim() && guestName.trim() === (requesterName.trim() || guestName.trim()))
+      )
+      if (isSelfPrefilled) {
+        setGuestName("")
+        setGuestPhone("")
+        setGuestEmail("")
+        setGuestDocument("")
+        setGuestAddress("")
+        setGuestCity("")
+        setGuestCep("")
+      }
+      if (docFileName === "documento_salvo_no_cadastro") {
+        setDocFileBase64("")
+        setDocFileName("")
+        setAiInspectionResult(null)
+        setDocInspectionError(null)
+      }
+    } else {
+      if (!guestName.trim() && (acc?.name || requesterName.trim())) setGuestName(acc?.name || requesterName)
+      if (!guestPhone.trim() && (acc?.phone || requesterPhone.trim())) setGuestPhone(maskPhone(acc?.phone || requesterPhone))
+      if (!guestEmail.trim() && (acc?.email || requesterEmail.trim())) setGuestEmail(acc?.email || requesterEmail)
+      if (!guestDocument.trim() && (acc?.document || requesterDocument.trim())) setGuestDocument(maskCpf(acc?.document || requesterDocument))
+      if (!docFileBase64 && acc?.docPhotoUrl) {
+        setDocFileBase64(acc.docPhotoUrl)
+        setDocFileName("documento_salvo_no_cadastro")
+        setDocFileType(acc.docPhotoUrl.startsWith("data:application/pdf") || acc.docPhotoUrl.toLowerCase().includes(".pdf") ? "pdf" : "image")
+      }
+    }
+    setRequesterType(nextMode)
+  }
 
   // Anexo de Documento Oficial Obrigatório & Inspeção de IA (pré-carregado se já salvo anteriormente)
   const [docFileBase64, setDocFileBase64] = useState<string>(() => guestAccount?.docPhotoUrl || getCachedProfile()?.docPhotoUrl || "")
@@ -861,18 +926,24 @@ export function BookingFunnelModal({
   useEffect(() => {
     const acc = guestAccount || getCachedProfile()
     if (acc) {
-      if (acc.name && (!guestName || guestName !== acc.name)) setGuestName(acc.name)
-      if (acc.phone) setGuestPhone(maskPhone(acc.phone))
-      if (acc.email && (!guestEmail || guestEmail !== acc.email)) setGuestEmail(acc.email)
-      if (acc.document) setGuestDocument(maskCpf(acc.document))
-      if (acc.address && (!guestAddress || guestAddress !== acc.address)) setGuestAddress(acc.address)
-      if (acc.city && (!guestCity || guestCity !== acc.city)) setGuestCity(acc.city)
-      if (acc.state && (!guestState || guestState !== acc.state)) setGuestState(acc.state)
-      if (acc.cep && (!guestCep || guestCep !== acc.cep)) setGuestCep(acc.cep)
-      if (acc.docPhotoUrl && !docFileBase64) {
-        setDocFileBase64(acc.docPhotoUrl)
-        setDocFileName("documento_salvo_no_cadastro")
-        setDocFileType(acc.docPhotoUrl.startsWith("data:application/pdf") || acc.docPhotoUrl.toLowerCase().includes(".pdf") ? "pdf" : "image")
+      if (acc.name && !requesterName) setRequesterName(acc.name)
+      if (acc.phone && !requesterPhone) setRequesterPhone(maskPhone(acc.phone))
+      if (acc.email && !requesterEmail) setRequesterEmail(acc.email)
+      if (acc.document && !requesterDocument) setRequesterDocument(maskCpf(acc.document))
+      if (!isSeparateRequester) {
+        if (acc.name && (!guestName || guestName !== acc.name)) setGuestName(acc.name)
+        if (acc.phone) setGuestPhone(maskPhone(acc.phone))
+        if (acc.email && (!guestEmail || guestEmail !== acc.email)) setGuestEmail(acc.email)
+        if (acc.document) setGuestDocument(maskCpf(acc.document))
+        if (acc.address && (!guestAddress || guestAddress !== acc.address)) setGuestAddress(acc.address)
+        if (acc.city && (!guestCity || guestCity !== acc.city)) setGuestCity(acc.city)
+        if (acc.state && (!guestState || guestState !== acc.state)) setGuestState(acc.state)
+        if (acc.cep && (!guestCep || guestCep !== acc.cep)) setGuestCep(acc.cep)
+        if (acc.docPhotoUrl && !docFileBase64) {
+          setDocFileBase64(acc.docPhotoUrl)
+          setDocFileName("documento_salvo_no_cadastro")
+          setDocFileType(acc.docPhotoUrl.startsWith("data:application/pdf") || acc.docPhotoUrl.toLowerCase().includes(".pdf") ? "pdf" : "image")
+        }
       }
       if (acc.vehicle?.plate) {
         setHasVehicle(true)
@@ -1084,10 +1155,11 @@ export function BookingFunnelModal({
           sessionId,
           step: stepNum,
           stepName: stepNameStr,
-          guestName: guestName.trim(),
-          guestPhone: guestPhone.trim(),
-          guestEmail: guestEmail.trim(),
-          guestDocument: guestDocument.trim(),
+          guestName: guestName.trim() || requesterName.trim(),
+          guestPhone: guestPhone.trim() || requesterPhone.trim(),
+          guestEmail: guestEmail.trim() || requesterEmail.trim(),
+          guestDocument: guestDocument.trim() || requesterDocument.trim(),
+          requesterType,
           checkinDate: checkin,
           checkoutDate: checkout,
           flatsCount,
@@ -1151,6 +1223,49 @@ export function BookingFunnelModal({
       }
       setCurrentStep(2)
     } else if (currentStep === 2) {
+      if (isSeparateRequester) {
+        if (!requesterName.trim()) {
+          alert("Por favor, informe o nome do solicitante ou responsável pela reserva.")
+          return
+        }
+        const cleanReqPhone = requesterPhone.replace(/\D/g, "")
+        const isIntlReqPhone = requesterPhone.trim().startsWith("+") && !cleanReqPhone.startsWith("55")
+        if (!requesterPhone.trim() || cleanReqPhone.length < (isIntlReqPhone ? 8 : 10)) {
+          alert("Por favor, informe um WhatsApp/telefone válido do solicitante com DDD (ou DDI internacional com +).")
+          return
+        }
+        if (!requesterEmail.trim() || !requesterEmail.includes("@") || !requesterEmail.includes(".")) {
+          alert("Por favor, informe um e-mail válido do solicitante para envio do voucher e do link de cadastro do hóspede.")
+          return
+        }
+        const rawOptionalGuestDoc = guestDocument.trim()
+        if (rawOptionalGuestDoc && !isPlausibleCpfOrPassport(rawOptionalGuestDoc)) {
+          alert("O CPF ou Passaporte do hóspede informado parece inválido. Corrija-o ou deixe em branco para preencher posteriormente pelo link.")
+          return
+        }
+        if (docFileBase64) {
+          if (isInspectingDoc) {
+            alert("Aguarde a análise do documento oficial por Inteligência Artificial...")
+            return
+          }
+          if (aiInspectionResult && aiInspectionResult.isOfficialDocument === false) {
+            alert("O arquivo anexado não foi reconhecido como documento oficial de identificação com foto. Remova o anexo para enviar depois via link ou anexe um RG, CNH ou Passaporte.")
+            return
+          }
+          if (aiInspectionResult && aiInspectionResult.isLegible === false) {
+            alert(`O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Remova o anexo para enviar depois via link ou envie uma foto nítida.`)
+            return
+          }
+          if (aiInspectionResult?.isMinor && !minorNoticeAcknowledged) {
+            setShowMinorNoticeModal(true)
+            return
+          }
+        }
+        sendFunnelTelemetry(3, "identificacao_lead", "em_andamento")
+        setCurrentStep(3)
+        return
+      }
+
       if (!guestName.trim()) {
         alert("Por favor, informe seu nome completo.")
         return
@@ -1273,8 +1388,29 @@ export function BookingFunnelModal({
   const handleConfirmReservation = async () => {
     setIsProcessing(true)
     try {
+      const resolvedRequesterType = isSeparateRequester
+        ? (isWorkTrip && companyName.trim() ? "company" : "other_person")
+        : "guest"
+
       const payload = {
         sessionId,
+        requesterType: resolvedRequesterType,
+        ...(isSeparateRequester
+          ? {
+              requesterName: requesterName.trim(),
+              requesterPhone: requesterPhone.trim(),
+              requesterEmail: requesterEmail.trim(),
+              requesterDocument: requesterDocument.trim(),
+              requesterInfo: {
+                type: resolvedRequesterType,
+                name: requesterName.trim(),
+                phone: requesterPhone.trim(),
+                whatsapp: requesterPhone.trim(),
+                email: requesterEmail.trim(),
+                document: requesterDocument.trim()
+              }
+            }
+          : {}),
         guestName: guestName.trim(),
         guestPhone: guestPhone.trim(),
         guestEmail: guestEmail.trim(),
@@ -1284,8 +1420,8 @@ export function BookingFunnelModal({
         guestCity: guestCity.trim(),
         guestState: guestState.trim(),
         guestCep: guestCep.trim(),
-        guestDocumentFile: docFileBase64,
-        docPhotoBase64: docFileBase64,
+        guestDocumentFile: docFileBase64 || "",
+        docPhotoBase64: docFileBase64 || "",
         hasMinor: Boolean(aiInspectionResult?.isMinor),
         minorAge: aiInspectionResult?.calculatedAge || null,
         isCamposResident: Boolean(aiInspectionResult?.isCamposResident),
@@ -1326,8 +1462,8 @@ export function BookingFunnelModal({
               ...(guestAccount?.companyData || {}),
               cnpj: companyCnpj,
               companyName,
-              companyEmail: companyEmail || guestAccount?.companyData?.companyEmail || "",
-              companyPhone: companyPhone || guestAccount?.companyData?.companyPhone || ""
+              companyEmail: companyEmail || (isSeparateRequester ? requesterEmail.trim() : "") || guestAccount?.companyData?.companyEmail || "",
+              companyPhone: companyPhone || (isSeparateRequester ? requesterPhone.trim() : "") || guestAccount?.companyData?.companyPhone || ""
             }
           : null,
         vehicle: hasVehicle
@@ -1742,105 +1878,302 @@ export function BookingFunnelModal({
               </div>
             )}
 
-            {/* Formulário Principal de Contato */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Nome Completo *
-                </Label>
-                <Input
-                  value={guestName}
-                  onChange={e => setGuestName(e.target.value)}
-                  placeholder="Ex: Carlos Eduardo Silveira"
-                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
-                />
-              </div>
+            {/* Seletor Semântico: Para quem é a hospedagem? */}
+            <fieldset className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-2">
+              <legend className="text-xs font-bold text-slate-900 dark:text-slate-100 px-1">
+                Para quem é a hospedagem?
+              </legend>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label
+                  htmlFor="funnel-req-guest"
+                  className={`p-2.5 rounded-xl border-2 cursor-pointer flex items-start gap-2.5 transition-all text-left ${
+                    !isSeparateRequester
+                      ? "border-[#0F3D4C] bg-white dark:bg-slate-900 ring-1 ring-[#C5A059]/30 shadow-2xs"
+                      : "border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/50 hover:border-slate-300"
+                  }`}
+                >
+                  <input
+                    id="funnel-req-guest"
+                    type="radio"
+                    name="requesterType"
+                    value="guest"
+                    checked={!isSeparateRequester}
+                    onChange={() => handleSelectRequesterMode("guest")}
+                    className="mt-0.5 accent-[#0F3D4C] shrink-0"
+                  />
+                  <span className="min-w-0">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                      Para mim (Sou o Hóspede)
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block leading-snug">
+                      Vou me hospedar pessoalmente.
+                    </span>
+                  </span>
+                </label>
 
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  WhatsApp / Celular com DDD *
-                </Label>
-                <Input
-                  type="tel"
-                  inputMode="tel"
-                  value={guestPhone}
-                  onChange={e => setGuestPhone(maskPhone(e.target.value))}
-                  placeholder="(22) 99999-9999"
-                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold text-slate-900 dark:text-slate-100"
-                />
+                <label
+                  htmlFor="funnel-req-other"
+                  className={`p-2.5 rounded-xl border-2 cursor-pointer flex items-start gap-2.5 transition-all text-left ${
+                    isSeparateRequester
+                      ? "border-[#0F3D4C] bg-white dark:bg-slate-900 ring-1 ring-[#C5A059]/30 shadow-2xs"
+                      : "border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/50 hover:border-slate-300"
+                  }`}
+                >
+                  <input
+                    id="funnel-req-other"
+                    type="radio"
+                    name="requesterType"
+                    value="other_person"
+                    checked={isSeparateRequester}
+                    onChange={() => handleSelectRequesterMode("other_person")}
+                    className="mt-0.5 accent-[#0F3D4C] shrink-0"
+                  />
+                  <span className="min-w-0">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                      Para outra pessoa / Empresa
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block leading-snug">
+                      Sou solicitante; posso preencher o hóspede depois via link.
+                    </span>
+                  </span>
+                </label>
               </div>
+            </fieldset>
 
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  E-mail *
-                </Label>
-                <Input
-                  type="email"
-                  value={guestEmail}
-                  onChange={e => setGuestEmail(e.target.value)}
-                  placeholder="seu@email.com"
-                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
-                />
+            {/* Bloco do Solicitante (quando quem reserva não é o próprio hóspede) */}
+            {isSeparateRequester && (
+              <div className="p-3.5 rounded-2xl border border-[#0F3D4C]/30 bg-[#0F3D4C]/[0.04] dark:bg-slate-800/60 space-y-3 animate-in fade-in">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-[#0F3D4C] dark:text-[#E5C98B] flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>Dados do Solicitante / Responsável pela Reserva</span>
+                  </span>
+                  <Badge variant="outline" className="text-[9px] font-bold border-[#C5A059]/60 text-[#0F3D4C] dark:text-[#E5C98B]">
+                    Obrigatório
+                  </Badge>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="funnel-requester-name" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Nome do Solicitante ou Empresa <span aria-hidden="true">*</span>
+                    </Label>
+                    <Input
+                      id="funnel-requester-name"
+                      name="requesterName"
+                      autoComplete="name"
+                      required
+                      value={requesterName}
+                      onChange={e => setRequesterName(e.target.value)}
+                      placeholder="Ex: Maria Oliveira / RH Empresa"
+                      className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label htmlFor="funnel-requester-phone" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      WhatsApp / Telefone com DDD <span aria-hidden="true">*</span>
+                    </Label>
+                    <Input
+                      id="funnel-requester-phone"
+                      name="requesterPhone"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      required
+                      value={requesterPhone}
+                      onChange={e => setRequesterPhone(maskPhone(e.target.value))}
+                      placeholder="(22) 99999-9999"
+                      className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900 font-bold text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label htmlFor="funnel-requester-email" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      E-mail do Solicitante <span aria-hidden="true">*</span>
+                    </Label>
+                    <Input
+                      id="funnel-requester-email"
+                      name="requesterEmail"
+                      type="email"
+                      autoComplete="email"
+                      autoCorrect="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      required
+                      value={requesterEmail}
+                      onChange={e => setRequesterEmail(e.target.value)}
+                      placeholder="solicitante@empresa.com.br"
+                      className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label htmlFor="funnel-requester-doc" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      CPF ou CNPJ do Solicitante (Opcional)
+                    </Label>
+                    <Input
+                      id="funnel-requester-doc"
+                      name="requesterDocument"
+                      autoCorrect="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      value={requesterDocument}
+                      onChange={e => setRequesterDocument(maskCpf(e.target.value))}
+                      placeholder="000.000.000-00"
+                      className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug bg-white/80 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700">
+                  Assim que a reserva for confirmada, enviaremos no seu <strong>E-mail</strong> e <strong>WhatsApp</strong> o link exclusivo para cadastrar ou encaminhar ao hóspede antes do check-in.
+                </p>
               </div>
+            )}
 
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  CPF ou Passaporte *
-                </Label>
-                <Input
-                  value={guestDocument}
-                  onChange={e => setGuestDocument(maskCpf(e.target.value))}
-                  placeholder="000.000.000-00 ou Passaporte"
-                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
-                />
-              </div>
+            {/* Formulário Principal de Dados do Hóspede */}
+            <div className="space-y-2.5">
+              {isSeparateRequester && (
+                <div className="flex items-center justify-between gap-2 flex-wrap pt-1">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
+                    <span>Dados do Hóspede</span>
+                  </span>
+                  <Badge variant="secondary" className="text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300/60">
+                    Opcional agora — pode preencher depois pelo link
+                  </Badge>
+                </div>
+              )}
 
-              <div className="space-y-1">
-                <Label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                  <span>CEP Residencial (Opcional)</span>
-                  {loadingFunnelCep && <span className="text-[10px] text-[#0F3D4C] font-normal">Buscando...</span>}
-                </Label>
-                <Input
-                  value={guestCep}
-                  onChange={async e => {
-                    const val = e.target.value.replace(/\D/g, "");
-                    setGuestCep(val);
-                    if (val.length === 8) {
-                      setLoadingFunnelCep(true);
-                      try {
-                        const res = await fetch(`/api/lookup-cep/${val}`);
-                        if (res.ok) {
-                          const data = await res.json();
-                          if (data.logradouro) setGuestAddress(`${data.logradouro}, ${data.bairro || ''}`.trim());
-                          if (data.cidade) setGuestCity(data.cidade);
-                          if (data.uf) setGuestState(data.uf);
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="funnel-guest-name" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {isSeparateRequester ? "Nome Completo do Hóspede (Opcional)" : <>Nome Completo <span aria-hidden="true">*</span></>}
+                  </Label>
+                  <Input
+                    id="funnel-guest-name"
+                    name="guestName"
+                    autoComplete={isSeparateRequester ? "off" : "name"}
+                    required={!isSeparateRequester}
+                    value={guestName}
+                    onChange={e => setGuestName(e.target.value)}
+                    placeholder={isSeparateRequester ? "Preencher agora ou deixar para o link" : "Ex: Carlos Eduardo Silveira"}
+                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="funnel-guest-phone" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {isSeparateRequester ? "WhatsApp do Hóspede (Opcional)" : <>WhatsApp / Celular com DDD <span aria-hidden="true">*</span></>}
+                  </Label>
+                  <Input
+                    id="funnel-guest-phone"
+                    name="guestPhone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete={isSeparateRequester ? "off" : "tel"}
+                    required={!isSeparateRequester}
+                    value={guestPhone}
+                    onChange={e => setGuestPhone(maskPhone(e.target.value))}
+                    placeholder="(22) 99999-9999"
+                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold text-slate-900 dark:text-slate-100"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="funnel-guest-email" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {isSeparateRequester ? "E-mail do Hóspede (Opcional)" : <>E-mail <span aria-hidden="true">*</span></>}
+                  </Label>
+                  <Input
+                    id="funnel-guest-email"
+                    name="guestEmail"
+                    type="email"
+                    autoComplete={isSeparateRequester ? "off" : "email"}
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    required={!isSeparateRequester}
+                    value={guestEmail}
+                    onChange={e => setGuestEmail(e.target.value)}
+                    placeholder="seu@email.com"
+                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="funnel-guest-doc" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {isSeparateRequester ? "CPF ou Passaporte do Hóspede (Opcional)" : <>CPF ou Passaporte <span aria-hidden="true">*</span></>}
+                  </Label>
+                  <Input
+                    id="funnel-guest-doc"
+                    name="guestDocument"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    required={!isSeparateRequester}
+                    value={guestDocument}
+                    onChange={e => setGuestDocument(maskCpf(e.target.value))}
+                    placeholder="000.000.000-00 ou Passaporte"
+                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="funnel-guest-cep" className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                    <span>CEP Residencial (Opcional)</span>
+                    {loadingFunnelCep && <span className="text-[10px] text-[#0F3D4C] font-normal">Buscando...</span>}
+                  </Label>
+                  <Input
+                    id="funnel-guest-cep"
+                    name="guestCep"
+                    inputMode="numeric"
+                    autoComplete={isSeparateRequester ? "off" : "postal-code"}
+                    value={guestCep}
+                    onChange={async e => {
+                      const val = e.target.value.replace(/\D/g, "");
+                      setGuestCep(val);
+                      if (val.length === 8) {
+                        setLoadingFunnelCep(true);
+                        try {
+                          const res = await fetch(`/api/lookup-cep/${val}`);
+                          if (res.ok) {
+                            const data = await res.json();
+                            if (data.logradouro) setGuestAddress(`${data.logradouro}, ${data.bairro || ''}`.trim());
+                            if (data.cidade) setGuestCity(data.cidade);
+                            if (data.uf) setGuestState(data.uf);
+                          }
+                        } catch {}
+                        finally {
+                          setLoadingFunnelCep(false);
                         }
-                      } catch {}
-                      finally {
-                        setLoadingFunnelCep(false);
                       }
-                    }
-                  }}
-                  placeholder="00000-000"
-                  maxLength={9}
-                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
-                />
-              </div>
+                    }}
+                    placeholder="00000-000"
+                    maxLength={9}
+                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
+                  />
+                </div>
 
-              <div className="space-y-1 sm:col-span-2">
-                <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Endereço Residencial (Opcional)
-                </Label>
-                <Input
-                  value={guestAddress}
-                  onChange={e => setGuestAddress(e.target.value)}
-                  placeholder="Rua, número, bairro e cidade"
-                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
-                />
+                <div className="space-y-1 sm:col-span-2">
+                  <Label htmlFor="funnel-guest-address" className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Endereço Residencial (Opcional)
+                  </Label>
+                  <Input
+                    id="funnel-guest-address"
+                    name="guestAddress"
+                    autoComplete={isSeparateRequester ? "off" : "street-address"}
+                    value={guestAddress}
+                    onChange={e => setGuestAddress(e.target.value)}
+                    placeholder="Rua, número, bairro e cidade"
+                    className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Anexo Obrigatório de Documento Oficial com Foto (IA Multimodal) */}
+            {/* Anexo de Documento Oficial com Foto (Obrigatório para o próprio hóspede; Opcional para solicitante terceiro) */}
             <div className="p-3.5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40 space-y-3">
               <input
                 ref={docFileInputRef}
@@ -1856,6 +2189,7 @@ export function BookingFunnelModal({
                 aiInspectionResult={aiInspectionResult}
                 isInspectingDoc={isInspectingDoc}
                 docInspectionError={docInspectionError}
+                isOptional={isSeparateRequester}
                 onOpenFilePicker={handleOpenDocPicker}
                 onClearDocFile={handleClearDocFile}
               />
@@ -2087,7 +2421,7 @@ export function BookingFunnelModal({
                 {paymentMethod === "pix" && !isPixPaid ? (
                   <>Escaneie o QR Code ou copie o código abaixo para confirmação imediata.</>
                 ) : (
-                  <>Seu voucher foi enviado para <strong className="break-all">{guestEmail}</strong>.</>
+                  <>Seu voucher foi enviado para <strong className="break-all">{isSeparateRequester ? requesterEmail : guestEmail}</strong>.</>
                 )}
               </p>
             </div>
@@ -2099,9 +2433,17 @@ export function BookingFunnelModal({
                   {confirmedReservation.code || confirmedReservation.reservationCode}
                 </span>
               </div>
+              {isSeparateRequester && requesterName.trim() && (
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-500 shrink-0">Solicitante:</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100 text-right break-words">{requesterName.trim()}</span>
+                </div>
+              )}
               <div className="flex justify-between items-center gap-2">
                 <span className="text-slate-500 shrink-0">Hóspede:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100 text-right break-words">{guestName}</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100 text-right break-words">
+                  {guestName.trim() || "A Definir (link enviado ao solicitante)"}
+                </span>
               </div>
               <div className="flex justify-between items-center gap-2">
                 <span className="text-slate-500 shrink-0">Período:</span>
@@ -2124,6 +2466,17 @@ export function BookingFunnelModal({
                 )}
               </div>
             </div>
+
+            {isSeparateRequester && (!guestName.trim() || !docFileBase64 || confirmedReservation.guestPending) && (
+              <div className="p-3.5 rounded-2xl border border-[#C5A059]/50 bg-[#0F3D4C]/[0.05] dark:bg-slate-800/60 text-left text-xs text-slate-700 dark:text-slate-200 space-y-1">
+                <span className="font-bold text-[#0F3D4C] dark:text-[#E5C98B] block">
+                  📋 Cadastro Posterior do Hóspede
+                </span>
+                <p className="text-[11px] leading-relaxed">
+                  Assim que o pagamento for confirmado, enviaremos automaticamente para seu <strong>WhatsApp</strong> e <strong>E-mail</strong> o link seguro de credenciamento para preencher (ou encaminhar ao hóspede) os dados e o documento oficial antes do check-in.
+                </p>
+              </div>
+            )}
 
             {/* Se Pagamento foi PIX */}
             {paymentMethod === "pix" && (
@@ -2228,7 +2581,7 @@ export function BookingFunnelModal({
                 reservation={{
                   id: confirmedReservation.id,
                   reservationCode: confirmedReservation.code || confirmedReservation.reservationCode,
-                  guestName,
+                  guestName: guestName.trim() || requesterName.trim() || "Hóspede CorpFlats",
                   flatNumber: confirmedReservation.flatNumber,
                   checkinDate: checkin,
                   checkoutDate: checkout,
