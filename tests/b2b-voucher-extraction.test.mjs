@@ -30,6 +30,8 @@ import {
   parseB2bVoucherText,
   fetchAndParseB2bVoucher,
   ingestB2bVoucherIntoDb,
+  dispatchB2bAgencyCredentialEmail,
+  resolveB2bCredentialTargetEmail,
   handleZohoIncomingWebhook,
   evaluateCredentialScheduleDecision,
   repairIncompleteB2bReservations
@@ -1002,6 +1004,253 @@ Telefone Agência:
       assert.strictEqual(created.requesterPhone, '5522999112233');
       assert.strictEqual(created.requesterEmail, 'rh@empresa.com.br');
       assert.strictEqual(created.credentialStatus, 'pending_agency');
+    });
+  });
+
+  describe('11. Isolamento Absoluto de E-mail do Solicitante vs NFS-e & Extração Integral Multipágina B2B', () => {
+    it('11.1 Voucher Multipágina Bimbo / Globalis (#25150895) deve isolar "Reservado por", NF exclusiva Tier 1 e Endereço Soberano', () => {
+      const multiPageVoucherText = `
+CONFIRMAÇÃO DE RESERVA: 25150895 - RLOC: 25150895 BOOKING_WS
+Unidade: BIMBO
+Emissor: ARGO.GLOBALIS
+Reservado por: viagens.bimbo@globalis.com.br
+Tel: (11) 3136-1600
+Cnpj: 19.933.930/0001-75
+Para: HOTEL CORPFLATS
+Período de 12/11/2026 a 13/11/2026
+Valor médio da Diária para o período: BRL 280,00 + 0,00% ISS
+Comissão: 0,00 %
+Política: Tarifa NET
+Hóspedes (1 ADT): (LEITE JUNIOR/EDSON JOSE)
+Garantia de No Show / Forma de Pagamento: CARTÃO VIRTUAL: DEBITAR SOMENTE DIARIAS | Bandeira: MASTERCARD | TOKEN: G3KLP91
+
+1. Emitir uma nota fiscal para cada UH (Unidade Habitacional).
+2. Nas notas fiscais deverão constar:
+   1. Nome de Hóspede
+   2. Descrição das despesas
+   3. Código Identificador (RLOC)
+   4. Período de Hospedagem (IN/OUT)
+3. Em caso de No Show, especificar na nota fiscal/hospedagem.
+
+Dados para encaminhamento da documentação / Emissão de Nota Fiscal / Hospedagem
+Instruções para envio da documentação
+Enviar notas fiscais para nfebimbobr@grupobimbo.com
+Nome: BIMBO DO BRASIL LTDA
+RUA ERICO VERISSIMO, 342, 0, , Bairro: JARDIM CAMBARA, CEP: 0556000, SAO PAULO
+atendimentonacional@globalis.com.br
+
+Dados para emissão de nota fiscal
+Nome: BIMBO DO BRASIL LTDA
+CNPJ: 35402759000185
+RUA ERICO VERISSIMO, 342, 0, , Bairro: JARDIM CAMBARA, CEP: 0556000, SAO PAULO
+Powered by B2B Reserv@S
+`;
+      const parsed = parseB2bVoucherText(multiPageVoucherText);
+      assert.strictEqual(parsed.b2bReservationNumber, '25150895');
+      assert.strictEqual(parsed.guestName, 'Edson Jose Leite Junior');
+      assert.strictEqual(parsed.agencyName, 'Globalis Viagens');
+      assert.strictEqual(parsed.agencyAgentEmail, 'viagens.bimbo@globalis.com.br');
+      assert.deepStrictEqual(
+        parsed.nfDeliveryEmails,
+        ['nfebimbobr@grupobimbo.com'],
+        'Deve capturar EXCLUSIVAMENTE o e-mail explícito de envio de NF (Tier 1), sem misturar atendimentonacional@ ou viagens.bimbo@'
+      );
+      assert.strictEqual(parsed.companyName, 'Bimbo do Brasil Ltda');
+      assert.strictEqual(parsed.companyCnpj, '35.402.759/0001-85');
+      assert.match(parsed.companyAddress, /erico\s+verissimo/i);
+      assert.strictEqual(parsed.companyNumber, '342');
+      assert.strictEqual(parsed.companyComplement, '');
+      assert.match(parsed.companyNeighborhood, /jardim\s+cambara/i);
+      assert.strictEqual(parsed.companyCep, '05560000', 'CEP truncado de 7 dígitos (0556000) deve ser normalizado para 05560000');
+      assert.strictEqual(parsed.companyCity, 'São Paulo');
+      assert.strictEqual(parsed.companyState, 'SP');
+      assert.strictEqual(parsed.companyIbgeCode, '3550308');
+
+      // Valida soberania do voucher sobre endereço antigo no CRM
+      const mockDb = createCleanMockDb();
+      mockDb.companies.push({
+        id: 77,
+        name: 'Bimbo do Brasil Ltda',
+        corporateName: 'Bimbo do Brasil Ltda',
+        tradeName: 'Bimbo do Brasil',
+        cnpj: '35.402.759/0001-85',
+        address: 'Rua Engenheiro Luís Carlos Berrini',
+        number: '105',
+        neighborhood: 'Cidade Monções',
+        cep: '04571010',
+        city: 'São Paulo',
+        state: 'SP',
+        financialEmail: 'antigo@errado.com'
+      });
+
+      const ing = ingestB2bVoucherIntoDb(mockDb, parsed, { autoSendCredentialEmail: false });
+      assert.strictEqual(ing.ok, true);
+      assert.strictEqual(ing.reservation.agencyAgentEmail, 'viagens.bimbo@globalis.com.br');
+      assert.strictEqual(ing.reservation.requesterInfo.email, 'viagens.bimbo@globalis.com.br');
+      assert.deepStrictEqual(ing.reservation.nfDeliveryEmails, ['nfebimbobr@grupobimbo.com']);
+      assert.match(ing.company.address, /erico\s+verissimo/i);
+      assert.strictEqual(ing.company.number, '342');
+      assert.strictEqual(ing.company.cep, '05560000');
+      assert.strictEqual(ing.company.financialEmail, 'nfebimbobr@grupobimbo.com');
+      assert.match(ing.reservation.companyAddress, /erico\s+verissimo/i);
+      assert.strictEqual(ing.reservation.companyCep, '05560000');
+    });
+
+    it('11.2 dispatchB2bAgencyCredentialEmail NUNCA deve enviar nem copiar (CC) para e-mails de NFS-e / conciliação', async () => {
+      const mockDb = createCleanMockDb();
+      mockDb.agencies.push({
+        id: 50,
+        tradeName: 'Globalis Viagens',
+        corporateName: 'Globalis Brasil Viagens Corporativas Ltda',
+        cnpj: '19.933.930/0001-75',
+        email: '',
+        financialEmail: 'atendimentonacional@globalis.com.br',
+        agents: [{ name: 'ARGO.GLOBALIS', email: 'viagens.bimbo@globalis.com.br' }]
+      });
+      mockDb.companies.push({
+        id: 60,
+        tradeName: 'Bimbo do Brasil',
+        corporateName: 'Bimbo do Brasil Ltda',
+        cnpj: '35.402.759/0001-85',
+        financialEmail: 'nfebimbobr@grupobimbo.com'
+      });
+
+      const reservation = {
+        id: 901,
+        code: 'RES-113-B2B-25150895',
+        b2bReservationNumber: '25150895',
+        flatId: 1,
+        flatNumber: '113',
+        channel: 'b2b',
+        requesterType: 'agency_b2b',
+        guestName: 'Edson Jose Leite Junior',
+        checkinDate: '2026-11-12',
+        checkoutDate: '2026-11-13',
+        agencyId: 50,
+        agencyName: 'Globalis Viagens',
+        agencyAgentEmail: 'viagens.bimbo@globalis.com.br',
+        companyId: 60,
+        companyName: 'Bimbo do Brasil Ltda',
+        nfDeliveryEmails: ['nfebimbobr@grupobimbo.com', 'conciliacao@b2breservas.com.br']
+      };
+
+      const sendResult = await dispatchB2bAgencyCredentialEmail(mockDb, () => {}, reservation, {
+        force: true
+      });
+      assert.strictEqual(sendResult.recipient, 'viagens.bimbo@globalis.com.br');
+      assert.deepStrictEqual(sendResult.cc, [], 'CC deve ser SEMPRE vazio em solicitações de credenciamento B2B');
+      assert.strictEqual(reservation.b2bCredentialEmailRecipient, 'viagens.bimbo@globalis.com.br');
+
+      // Caso sem e-mail do solicitante (apenas e-mails de NF e financeiro presentes): DEVE BLOQUEAR e gerar alerta!
+      const reservationMissingSolicitante = {
+        ...reservation,
+        id: 902,
+        code: 'RES-211-B2B-99998888',
+        b2bReservationNumber: '99998888',
+        agencyAgentEmail: '',
+        requesterInfo: { name: 'ARGO.GLOBALIS', email: '' },
+        b2bCredentialEmailSentAt: null
+      };
+      const blockedRes = await dispatchB2bAgencyCredentialEmail(mockDb, () => {}, reservationMissingSolicitante, {
+        force: true
+      });
+      assert.strictEqual(blockedRes.ok, false);
+      assert.strictEqual(blockedRes.blockedMissingSolicitanteEmail, true);
+      assert.ok(
+        Array.isArray(mockDb.b2bMissingDataAlerts) &&
+          mockDb.b2bMissingDataAlerts.some(a => a.reservationCode === 'RES-211-B2B-99998888'),
+        'Deve registrar alerta de dados ausentes para o gestor sem inventar e-mails'
+      );
+
+      // Caso com fallback operacional válido no CRM da agência (não-financeiro)
+      mockDb.agencies.push({
+        id: 51,
+        tradeName: 'Agência Operacional Teste',
+        corporateName: 'Agência Operacional Teste Ltda',
+        cnpj: '11.222.333/0001-81',
+        email: 'atendimento.corporativo@agenciateste.com.br',
+        financialEmail: 'faturamento@agenciateste.com.br'
+      });
+      const fallbackTarget = resolveB2bCredentialTargetEmail(
+        {
+          channel: 'b2b',
+          requesterType: 'agency_b2b',
+          agencyId: 51,
+          agencyAgentEmail: '',
+          nfDeliveryEmails: ['faturamento@agenciateste.com.br']
+        },
+        mockDb
+      );
+      assert.strictEqual(fallbackTarget, 'atendimento.corporativo@agenciateste.com.br');
+    });
+
+    it('11.3 Extrator PDF Multipágina (/ToUnicode + ordenação de páginas) deve ler 100% de todas as páginas', async () => {
+      const pdfChunks = [];
+      const pdfBuf = await new Promise((resolve, reject) => {
+        const doc = new PDFDocument({ autoFirstPage: false });
+        doc.on('data', chunk => pdfChunks.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(pdfChunks)));
+        doc.on('error', reject);
+
+        // Página 1
+        doc.addPage();
+        doc.fontSize(11).text('CONFIRMACAO DE RESERVA: 25150895 - RLOC: 25150895 BOOKING_WS');
+        doc.text('Reservado por: viagens.bimbo@globalis.com.br');
+        doc.text('Hospedes (1 ADT): (LEITE JUNIOR/EDSON JOSE)');
+        doc.text('Periodo de 12/11/2026 a 13/11/2026');
+        doc.text('Valor medio da Diaria para o periodo: BRL 280,00');
+
+        // Página 2
+        doc.addPage();
+        doc.fontSize(11).text('Instrucoes para envio da documentacao');
+        doc.text('Enviar notas fiscais para nfebimbobr@grupobimbo.com');
+        doc.text('Dados para emissao de nota fiscal');
+        doc.text('Nome: BIMBO DO BRASIL LTDA');
+        doc.text('CNPJ: 35402759000185');
+        doc.text('RUA ERICO VERISSIMO, 342, 0, , Bairro: JARDIM CAMBARA, CEP: 0556000, SAO PAULO');
+
+        doc.end();
+      });
+
+      const extractedFullText = extractTextFromPdfBuffer(pdfBuf);
+      assert.ok(extractedFullText.includes('viagens.bimbo@globalis.com.br'), 'Página 1 deve ser extraída');
+      assert.ok(extractedFullText.includes('nfebimbobr@grupobimbo.com'), 'Página 2 deve ser extraída integralmente');
+
+      const parsedFromPdf = await fetchAndParseB2bVoucher({
+        rawText: '',
+        pdfBuffers: [pdfBuf],
+        skipRemoteFetch: true
+      });
+      assert.strictEqual(parsedFromPdf.agencyAgentEmail, 'viagens.bimbo@globalis.com.br');
+      assert.deepStrictEqual(parsedFromPdf.nfDeliveryEmails, ['nfebimbobr@grupobimbo.com']);
+      assert.strictEqual(parsedFromPdf.companyCnpj, '35.402.759/0001-85');
+      assert.strictEqual(parsedFromPdf.companyNumber, '342');
+      assert.strictEqual(parsedFromPdf.companyCep, '05560000');
+
+      // Teste sintético de stream /ToUnicode CMap (glifo customizado -> Unicode)
+      const syntheticCmapPdf = Buffer.from(
+        `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 6 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type0 /ToUnicode 5 0 R >> endobj
+5 0 obj << /Length 120 >> stream
+/CIDInit /ProcSet findresource begin
+1 beginbfchar
+<0001> <004E>
+endbfchar
+1 beginbfrange
+<0002> <0003> <0046>
+endbfrange
+endstream endobj
+6 0 obj << /Length 42 >> stream
+BT /F1 12 Tf 72 720 Td <000100020003> Tj ET
+endstream endobj
+%%EOF`,
+        'latin1'
+      );
+      const cmapDecoded = extractTextFromPdfBuffer(syntheticCmapPdf);
+      assert.ok(cmapDecoded.includes('NFG'), `Deve decodificar glifos via /ToUnicode CMap, obteve: ${cmapDecoded}`);
     });
   });
 

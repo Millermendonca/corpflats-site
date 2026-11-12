@@ -4677,16 +4677,30 @@ export async function fetchAndParseB2bVoucher(input = {}, htmlArg = "", subjectA
   if (baseOpts.pdfBase64) {
     const cleanB64 = String(baseOpts.pdfBase64).replace(/^data:application\/pdf;base64,/i, "").trim();
     if (cleanB64) {
-      const pdfBuf = Buffer.from(cleanB64, "base64");
-      collectedPdfBuffers.push(pdfBuf);
-      const pdfTxt = extractTextFromPdfBuffer(pdfBuf);
-      if (pdfTxt) {
-        baseOpts.rawText = [baseOpts.rawText || baseOpts.text || "", pdfTxt].filter(Boolean).join("\n");
+      collectedPdfBuffers.push(Buffer.from(cleanB64, "base64"));
+    }
+  }
+  for (const pdfBuf of collectedPdfBuffers) {
+    if (!Buffer.isBuffer(pdfBuf)) continue;
+    const pdfTxt = extractTextFromPdfBuffer(pdfBuf);
+    if (pdfTxt) {
+      const curRaw = String(baseOpts.rawText || baseOpts.text || "");
+      const sampleLine = pdfTxt.split("\n").map(l => l.trim()).find(l => l.length >= 12) || pdfTxt.trim().slice(0, 30);
+      if (!sampleLine || !curRaw.includes(sampleLine)) {
+        baseOpts.rawText = [curRaw, pdfTxt].filter(Boolean).join("\n");
       }
     }
   }
 
-  const collectedImages = Array.isArray(baseOpts.images) ? [...baseOpts.images] : [];
+  const collectedImages = [
+    ...(Array.isArray(baseOpts.images) ? baseOpts.images : []),
+    ...(Array.isArray(baseOpts.imageParts)
+      ? baseOpts.imageParts.map(ip => ({
+          data: ip?.data || ip?.dataBase64 || "",
+          mimeType: ip?.mimeType || "image/jpeg"
+        }))
+      : [])
+  ].filter(img => img && img.data);
   if (baseOpts.imageBase64) {
     collectedImages.push({
       data: baseOpts.imageBase64,
