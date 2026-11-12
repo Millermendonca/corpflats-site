@@ -23,7 +23,14 @@ import {
   ChevronUp,
   Volume2,
   Radio,
-  BellRing
+  BellRing,
+  Maximize2,
+  Minimize2,
+  Lock,
+  ShieldCheck,
+  Smartphone,
+  Download,
+  LogOut
 } from "lucide-react";
 import {
   testVoiceAnnouncement,
@@ -140,6 +147,11 @@ export interface MinibarProduct {
   defaultQuantity?: number;
 }
 
+const ANSERVE_TOKEN_KEY = "corpflats_anserve_token";
+const ANSERVE_SHIFT_DATE_KEY = "corpflats_anserve_shift_date";
+const ANSERVE_SHIFT_STARTED_AT_KEY = "corpflats_anserve_shift_started_at";
+const ANSERVE_KIOSK_MODE_KEY = "corpflats_anserve_kiosk_mode";
+
 function getTodayYmdBr(): string {
   try {
     return new Intl.DateTimeFormat("en-CA", {
@@ -150,6 +162,31 @@ function getTodayYmdBr(): string {
     }).format(new Date());
   } catch {
     return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function getCurrentTimeBr(): string {
+  try {
+    return new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(new Date());
+  } catch {
+    return new Date().toTimeString().slice(0, 5);
+  }
+}
+
+function isStandaloneDisplayMode(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return Boolean(
+      window.matchMedia?.("(display-mode: fullscreen)")?.matches ||
+      window.matchMedia?.("(display-mode: standalone)")?.matches ||
+      (window.navigator as any)?.standalone
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -164,10 +201,90 @@ export default function AnserveRestockPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  // Token / PIN auth state for quick access
-  const [localToken, setLocalToken] = useState<string | null>(() => {
+  // Data atual reativa (fuso Brasília) para expiração automática na virada do dia / início de turno
+  const [todayYmd, setTodayYmd] = useState<string>(() => getTodayYmdBr());
+
+  // Modo Aparelho Dedicado / Quiosque (?kiosk=1, PWA standalone ou ativado no dispositivo)
+  const [isKioskMode, setIsKioskMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
     try {
-      return localStorage.getItem("corpflats_anserve_token");
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("kiosk") === "0") {
+        localStorage.removeItem(ANSERVE_KIOSK_MODE_KEY);
+        return false;
+      }
+      if (sp.get("kiosk") === "1" || sp.get("dedicated") === "1") {
+        localStorage.setItem(ANSERVE_KIOSK_MODE_KEY, "true");
+        return true;
+      }
+      if (localStorage.getItem(ANSERVE_KIOSK_MODE_KEY) === "true") {
+        return true;
+      }
+      return isStandaloneDisplayMode();
+    } catch {
+      return false;
+    }
+  });
+
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [kioskModalOpen, setKioskModalOpen] = useState<boolean>(false);
+  const [kioskGuideOsTab, setKioskGuideOsTab] = useState<"android" | "ios">("android");
+  const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
+
+  const [shiftExpiredBanner, setShiftExpiredBanner] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("token")) return false;
+      const existingToken = localStorage.getItem(ANSERVE_TOKEN_KEY);
+      const savedShift = localStorage.getItem(ANSERVE_SHIFT_DATE_KEY);
+      return Boolean(existingToken && savedShift !== getTodayYmdBr());
+    } catch {
+      return false;
+    }
+  });
+
+  const [shiftDate, setShiftDate] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const savedShift = localStorage.getItem(ANSERVE_SHIFT_DATE_KEY);
+      return savedShift === getTodayYmdBr() ? savedShift : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [shiftStartedAt, setShiftStartedAt] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const savedShift = localStorage.getItem(ANSERVE_SHIFT_DATE_KEY);
+      if (savedShift !== getTodayYmdBr()) return null;
+      return localStorage.getItem(ANSERVE_SHIFT_STARTED_AT_KEY);
+    } catch {
+      return null;
+    }
+  });
+
+  // Token / PIN auth state for quick access — válido estritamente para o turno de hoje
+  const [localToken, setLocalToken] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("token")) return sp.get("token");
+      const tok = localStorage.getItem(ANSERVE_TOKEN_KEY);
+      const savedShift = localStorage.getItem(ANSERVE_SHIFT_DATE_KEY);
+      if (tok && savedShift === getTodayYmdBr()) {
+        return tok;
+      }
+      if (tok) {
+        localStorage.removeItem(ANSERVE_TOKEN_KEY);
+        localStorage.removeItem(ANSERVE_SHIFT_DATE_KEY);
+        localStorage.removeItem(ANSERVE_SHIFT_STARTED_AT_KEY);
+        localStorage.removeItem("corpflats_anserve_user_name");
+        localStorage.removeItem("corpflats_anserve_user_id");
+        localStorage.removeItem("corpflats_anserve_username");
+      }
+      return null;
     } catch {
       return null;
     }
@@ -182,6 +299,8 @@ export default function AnserveRestockPage() {
   >([]);
   const [selectedRestockerId, setSelectedRestockerId] = useState<number | null>(() => {
     try {
+      const savedShift = localStorage.getItem(ANSERVE_SHIFT_DATE_KEY);
+      if (savedShift !== getTodayYmdBr()) return null;
       const savedId = localStorage.getItem("corpflats_anserve_user_id");
       return savedId ? Number(savedId) : null;
     } catch {
@@ -261,14 +380,199 @@ export default function AnserveRestockPage() {
     });
   };
 
-  // Determine authorized user
-  const isAuthorizedRole = useMemo(() => {
+  // Tela Inteira (Fullscreen API) e Instalação PWA Dedicada
+  const requestAppFullscreen = async () => {
+    if (typeof document === "undefined") return;
+    try {
+      const docEl = document.documentElement as any;
+      if (!document.fullscreenElement && !(document as any).webkitFullscreenElement) {
+        if (docEl.requestFullscreen) {
+          await docEl.requestFullscreen();
+        } else if (docEl.webkitRequestFullscreen) {
+          await docEl.webkitRequestFullscreen();
+        }
+      }
+    } catch {}
+  };
+
+  const toggleAppFullscreen = async () => {
+    if (typeof document === "undefined") return;
+    try {
+      const doc = document as any;
+      if (document.fullscreenElement || doc.webkitFullscreenElement) {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen();
+        }
+      } else {
+        await requestAppFullscreen();
+      }
+    } catch {}
+  };
+
+  const handleToggleKioskPreference = (enable: boolean) => {
+    setIsKioskMode(enable);
+    try {
+      if (enable) {
+        localStorage.setItem(ANSERVE_KIOSK_MODE_KEY, "true");
+        requestAppFullscreen();
+      } else {
+        localStorage.removeItem(ANSERVE_KIOSK_MODE_KEY);
+      }
+    } catch {}
+    toast({
+      title: enable ? "🔒 Modo Aparelho Dedicado Ativado" : "Modo Aparelho Dedicado Desativado",
+      description: enable
+        ? "Menus externos foram bloqueados e o login diário da operadora será exigido a cada turno."
+        : "Navegação padrão restaurada neste navegador."
+    });
+  };
+
+  const handleInstallDedicatedPwa = async () => {
+    if (!deferredInstallPrompt) {
+      toast({
+        title: "Instalação pelo menu do navegador",
+        description:
+          "No Android toque em ⋮ → 'Instalar aplicativo' (ou 'Adicionar à tela inicial'). No iPhone/iPad toque em Compartilhar → 'Adicionar à Tela de Início'."
+      });
+      return;
+    }
+    try {
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      if (choice?.outcome === "accepted") {
+        setDeferredInstallPrompt(null);
+        handleToggleKioskPreference(true);
+      }
+    } catch {}
+  };
+
+  // Configura manifesto PWA dedicado, listener de Tela Cheia e relógio de virada de turno (meia-noite)
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    const manifestLink = document.getElementById("app-manifest") as HTMLLinkElement | null;
+    const prevManifestHref = manifestLink?.getAttribute("href") || "/manifest-chat.json";
+    if (manifestLink) {
+      manifestLink.setAttribute("href", "/manifest-repositora.json");
+    }
+
+    const syncFullscreenState = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement));
+    };
+    syncFullscreenState();
+
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredInstallPrompt(e);
+    };
+
+    const checkDayRollover = () => {
+      const currentBrDay = getTodayYmdBr();
+      setTodayYmd((prev) => (prev === currentBrDay ? prev : currentBrDay));
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (!document.hidden) {
+        checkDayRollover();
+      }
+    };
+
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    document.addEventListener("webkitfullscreenchange", syncFullscreenState as EventListener);
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    window.addEventListener("pageshow", handleVisibilityOrFocus);
+    const dayTimer = setInterval(checkDayRollover, 20000);
+
+    return () => {
+      if (manifestLink && prevManifestHref) {
+        manifestLink.setAttribute("href", prevManifestHref);
+      }
+      document.removeEventListener("fullscreenchange", syncFullscreenState);
+      document.removeEventListener("webkitfullscreenchange", syncFullscreenState as EventListener);
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      window.removeEventListener("pageshow", handleVisibilityOrFocus);
+      clearInterval(dayTimer);
+    };
+  }, []);
+
+  // Trava do botão "Voltar" do navegador/Android quando em Modo Aparelho Dedicado
+  useEffect(() => {
+    if (!isKioskMode || typeof window === "undefined") return;
+    const lockHistory = () => {
+      try {
+        window.history.pushState({ kioskLocked: true }, "", window.location.href);
+      } catch {}
+    };
+    lockHistory();
+    const onPopState = () => {
+      lockHistory();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+    };
+  }, [isKioskMode]);
+
+  // Determine authorized user & Daily Shift enforcement
+  const isManagerRole = useMemo(() => {
     if (!user) return false;
     const r = user.role;
-    return r === "dev" || r === "admin" || r === "anserve_gestor" || r === "anserve_repositora";
+    return r === "dev" || r === "admin" || r === "anserve_gestor";
   }, [user]);
 
-  const isAuthenticated = isAuthorizedRole || Boolean(localToken);
+  const hasValidDailyShift = Boolean(localToken && shiftDate === todayYmd) || Boolean(
+    user?.role === "anserve_repositora" && (user as any)?.shiftDate === todayYmd
+  );
+
+  // Em Modo Quiosque/Dedicado sempre exige o login diário da operadora no turno de hoje;
+  // fora do Modo Quiosque (ex: PC do gestor), gestores/admins acessam direto e repositoras exigem turno do dia.
+  const isAuthenticated = isKioskMode ? hasValidDailyShift : (isManagerRole || hasValidDailyShift);
+  const isDedicatedScreen = isKioskMode || !isManagerRole;
+
+  // Expiração automática na virada do dia ou quando há sessão antiga sem turno válido de hoje
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const savedShift = localStorage.getItem(ANSERVE_SHIFT_DATE_KEY);
+    const savedTok = localStorage.getItem(ANSERVE_TOKEN_KEY);
+    const userShift = (user as any)?.shiftDate;
+
+    const localExpired = Boolean((localToken || savedTok) && savedShift !== todayYmd);
+    const cookieRestockerExpired = Boolean(
+      user?.role === "anserve_repositora" && (!userShift || userShift !== todayYmd) && savedShift !== todayYmd
+    );
+
+    if (localExpired || cookieRestockerExpired) {
+      try {
+        localStorage.removeItem(ANSERVE_TOKEN_KEY);
+        localStorage.removeItem(ANSERVE_SHIFT_DATE_KEY);
+        localStorage.removeItem(ANSERVE_SHIFT_STARTED_AT_KEY);
+        localStorage.removeItem("corpflats_anserve_user_name");
+        localStorage.removeItem("corpflats_anserve_user_id");
+        localStorage.removeItem("corpflats_anserve_username");
+        localStorage.removeItem("gfm_auth_user_session_v1");
+        sessionStorage.removeItem("gfm_auth_user_session_v1");
+      } catch {}
+      if (user?.role === "anserve_repositora") {
+        fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
+        queryClient.setQueryData(getGetMeQueryKey(), null);
+      }
+      setLocalToken(null);
+      setShiftDate(null);
+      setShiftStartedAt(null);
+      setShiftExpiredBanner(true);
+      setSemConsumoModalFlat(null);
+      setLaunchModalFlat(null);
+      if (restockersList.length > 1) {
+        setSelectedRestockerId(null);
+      }
+    }
+  }, [todayYmd, localToken, user, restockersList.length, queryClient]);
 
   // Fetch active restockers list so the PIN screen can show the selector
   const fetchRestockersList = async () => {
@@ -295,7 +599,14 @@ export default function AnserveRestockPage() {
     const pinParam = sp.get("pin");
 
     if (tokenParam) {
-      localStorage.setItem("corpflats_anserve_token", tokenParam);
+      const currentDay = getTodayYmdBr();
+      const currentTime = getCurrentTimeBr();
+      localStorage.setItem(ANSERVE_TOKEN_KEY, tokenParam);
+      localStorage.setItem(ANSERVE_SHIFT_DATE_KEY, currentDay);
+      localStorage.setItem(ANSERVE_SHIFT_STARTED_AT_KEY, currentTime);
+      setShiftDate(currentDay);
+      setShiftStartedAt(currentTime);
+      setShiftExpiredBanner(false);
       setLocalToken(tokenParam);
     } else if (pinParam) {
       handlePinSubmit(pinParam);
@@ -365,13 +676,13 @@ export default function AnserveRestockPage() {
     }
   }, [isAuthenticated, localToken]);
 
-  // Handle PIN authentication submission
+  // Handle PIN authentication submission (Início de Turno Diário)
   const handlePinSubmit = async (pinValue?: string) => {
     const pin = pinValue || pinInput;
     if (!pin || pin.length < 4) return;
 
-    if (restockersList.length > 1 && !selectedRestockerId && pin === "1234") {
-      setPinError("Por favor, selecione qual repositora está trabalhando na lista acima antes de digitar o PIN.");
+    if (restockersList.length > 1 && !selectedRestockerId) {
+      setPinError("👆 Selecione primeiro qual operadora está iniciando o turno de hoje na lista acima.");
       setPinInput("");
       return;
     }
@@ -392,8 +703,16 @@ export default function AnserveRestockPage() {
       const data = await res.json();
 
       if (res.ok && data.success) {
+        const resolvedShiftDate = String(data.shiftDate || getTodayYmdBr());
+        const startedTimeBr = getCurrentTimeBr();
+        localStorage.setItem(ANSERVE_SHIFT_DATE_KEY, resolvedShiftDate);
+        localStorage.setItem(ANSERVE_SHIFT_STARTED_AT_KEY, startedTimeBr);
+        setShiftDate(resolvedShiftDate);
+        setShiftStartedAt(startedTimeBr);
+        setShiftExpiredBanner(false);
+
         if (data.token) {
-          localStorage.setItem("corpflats_anserve_token", data.token);
+          localStorage.setItem(ANSERVE_TOKEN_KEY, data.token);
           setLocalToken(data.token);
         }
         if (data.user) {
@@ -411,8 +730,8 @@ export default function AnserveRestockPage() {
           queryClient.setQueryData(getGetMeQueryKey(), data.user);
         }
         toast({
-          title: "Acesso liberado!",
-          description: `Bem-vinda, ${data.user?.name || "Repositora"}!`
+          title: `Turno de hoje iniciado! (${formatYmdToBr(resolvedShiftDate)})`,
+          description: `Bom trabalho, ${data.user?.name || "Repositora"}!`
         });
         setPinInput("");
         unlockSpeechAudio();
@@ -430,27 +749,56 @@ export default function AnserveRestockPage() {
     }
   };
 
-  // Trocar de repositora / bloquear tela por PIN
-  const handleSwitchRestocker = async () => {
+  // Encerrar turno / Trocar de operadora / Preparar aparelho dedicado
+  const handleSwitchRestocker = async (opts?: { expired?: boolean; lockForDedicatedDevice?: boolean }) => {
     try {
-      localStorage.removeItem("corpflats_anserve_token");
+      localStorage.removeItem(ANSERVE_TOKEN_KEY);
+      localStorage.removeItem(ANSERVE_SHIFT_DATE_KEY);
+      localStorage.removeItem(ANSERVE_SHIFT_STARTED_AT_KEY);
       localStorage.removeItem("corpflats_anserve_user_name");
       localStorage.removeItem("corpflats_anserve_user_id");
       localStorage.removeItem("corpflats_anserve_username");
-      if (user?.role === "anserve_repositora") {
+      if (user?.role === "anserve_repositora" || opts?.lockForDedicatedDevice) {
+        localStorage.removeItem("gfm_auth_user_session_v1");
+        sessionStorage.removeItem("gfm_auth_user_session_v1");
         await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
         queryClient.setQueryData(getGetMeQueryKey(), null);
       }
     } catch {}
     setLocalToken(null);
+    setShiftDate(null);
+    setShiftStartedAt(null);
+    if (opts?.expired) {
+      setShiftExpiredBanner(true);
+    }
+    if (restockersList.length > 1) {
+      setSelectedRestockerId(null);
+    }
     setPinInput("");
     setPinError(null);
     fetchRestockersList();
   };
 
+  const handleLockDeviceReadyForOperator = async () => {
+    setIsKioskMode(true);
+    try {
+      localStorage.setItem(ANSERVE_KIOSK_MODE_KEY, "true");
+    } catch {}
+    await requestAppFullscreen();
+    setKioskModalOpen(false);
+    await handleSwitchRestocker({ lockForDedicatedDevice: true });
+    toast({
+      title: "📱 Aparelho Bloqueado para a Repositora!",
+      description: "Tela inteira dedicada ativada. A operadora já pode selecionar o nome e digitar o PIN para iniciar o turno."
+    });
+  };
+
   // Numeric keypad button press
   const handleKeypadPress = (num: string) => {
     if (pinInput.length >= 4) return;
+    if (isKioskMode) {
+      requestAppFullscreen();
+    }
     const nextPin = pinInput + num;
     setPinInput(nextPin);
     if (nextPin.length === 4) {
@@ -467,8 +815,6 @@ export default function AnserveRestockPage() {
     setPinInput("");
     setPinError(null);
   };
-
-  const todayYmd = useMemo(() => getTodayYmdBr(), []);
 
   const isInspectedToday = (f: FlatStatusItem): boolean => {
     if (f.lastInspection?.launchDate === todayYmd) return true;
@@ -646,6 +992,14 @@ export default function AnserveRestockPage() {
         });
         setSemConsumoModalFlat(null);
         fetchData();
+      } else if (res.status === 401 || data?.code === "SHIFT_EXPIRED") {
+        setSemConsumoModalFlat(null);
+        await handleSwitchRestocker({ expired: true });
+        toast({
+          title: "Turno anterior encerrado",
+          description: "Selecione a operadora de hoje e digite o PIN para iniciar o turno.",
+          variant: "destructive"
+        });
       } else {
         toast({
           title: "Erro ao registrar passagem",
@@ -741,6 +1095,14 @@ export default function AnserveRestockPage() {
         });
         setLaunchModalFlat(null);
         fetchData();
+      } else if (res.status === 401 || data?.code === "SHIFT_EXPIRED") {
+        setLaunchModalFlat(null);
+        await handleSwitchRestocker({ expired: true });
+        toast({
+          title: "Turno anterior encerrado",
+          description: "Selecione a operadora de hoje e digite o PIN para iniciar o turno.",
+          variant: "destructive"
+        });
       } else {
         toast({
           title: "Erro ao lançar consumo",
@@ -759,19 +1121,240 @@ export default function AnserveRestockPage() {
     }
   };
 
-  // PIN Keypad Screen (if not logged in)
+  const kioskSetupDialogNode = (
+    <Dialog open={kioskModalOpen} onOpenChange={setKioskModalOpen}>
+      <DialogContent className="sm:max-w-xl max-h-[92vh] overflow-y-auto rounded-3xl p-5 sm:p-6">
+        <DialogHeader>
+          <DialogTitle className="text-base font-black flex items-center gap-2">
+            <Smartphone className="w-5 h-5 text-sky-500" />
+            <span>Aparelho Dedicado & Bloqueio em Tela Cheia (Modo Quiosque)</span>
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            Configure o celular ou tablet da repositora para acessar exclusivamente esta tela em tela inteira e exigir login da operadora todo dia ao iniciar o turno.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1 text-xs">
+          {/* Passo 1: Trava no Sistema + Instalação PWA */}
+          <div className="p-3.5 rounded-2xl bg-sky-500/10 border border-sky-500/25 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-sky-500 shrink-0" />
+                <span className="font-black text-foreground">
+                  1. Modo Quiosque no Sistema (Sem Menus & Turno Diário)
+                </span>
+              </div>
+              <Badge
+                className={
+                  isKioskMode
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-black"
+                    : "bg-slate-500/15 text-muted-foreground border-border text-[10px] font-bold"
+                }
+              >
+                {isKioskMode ? "ATIVO NESTE APARELHO" : "DESATIVADO"}
+              </Badge>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Remove todos os menus externos do sistema, trava o botão Voltar, ativa tela inteira automática e exige que a operadora selecione o nome e digite o PIN <strong>todo dia ao iniciar o turno</strong>.
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleLockDeviceReadyForOperator}
+                className="rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white h-9"
+              >
+                <Lock className="w-3.5 h-3.5 mr-1.5" />
+                Ativar Quiosque & Ir para Tela de Turno
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleInstallDedicatedPwa}
+                className="rounded-xl text-xs font-bold h-9 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+              >
+                <Download className="w-3.5 h-3.5 mr-1.5" />
+                {deferredInstallPrompt ? "Instalar App Dedicado Agora" : "Como Instalar sem Barra do Navegador"}
+              </Button>
+
+              {isKioskMode && isManagerRole && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleToggleKioskPreference(false)}
+                  className="rounded-xl text-xs font-bold h-9 text-muted-foreground"
+                >
+                  Desativar neste PC
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Passo 2: Trava Física dos Botões do Sistema Operacional (Android / iOS) */}
+          <div className="p-3.5 rounded-2xl bg-card border border-border space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="font-black text-foreground flex items-center gap-1.5">
+                <Lock className="w-4 h-4 text-amber-500" />
+                2. Travar os Botões do Aparelho (Impedir sair do App)
+              </span>
+
+              <div className="flex items-center gap-1 bg-muted p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setKioskGuideOsTab("android")}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                    kioskGuideOsTab === "android"
+                      ? "bg-sky-600 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  🤖 Android / Tablet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKioskGuideOsTab("ios")}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                    kioskGuideOsTab === "ios"
+                      ? "bg-sky-600 text-white shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  🍎 iPhone / iPad
+                </button>
+              </div>
+            </div>
+
+            {kioskGuideOsTab === "android" ? (
+              <div className="space-y-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                <div className="p-2.5 rounded-xl bg-muted/50 border border-border space-y-1">
+                  <span className="font-black text-foreground block">
+                    Opção A — Nativa e Gratuita do Android ("Fixar Aplicativo / Janela"):
+                  </span>
+                  <ol className="list-decimal pl-4 space-y-1">
+                    <li>
+                      No Chrome do aparelho, abra <code className="text-sky-600 dark:text-sky-400 font-bold">corpflats.com.br/frigobar-reposicao?kiosk=1</code> e toque em <strong>⋮ → Instalar aplicativo</strong> (cria o app <em>Repositora</em> em tela cheia sem barra de endereço).
+                    </li>
+                    <li>
+                      Vá em <strong>Configurações do Android → Segurança e privacidade → Mais configurações de segurança → Fixar aplicativo</strong> (ou <em>Fixar janela</em>).
+                    </li>
+                    <li>
+                      Ative a função e marque <strong>"Solicitar PIN/Senha do aparelho antes de desfixar"</strong> (senha que somente a gerência sabe).
+                    </li>
+                    <li>
+                      Abra o app <strong>Repositora</strong>, toque no botão de <strong>Apps Recentes ( III )</strong>, toque no <strong>ícone do app no topo</strong> e escolha <strong>"Fixar este aplicativo"</strong>.
+                    </li>
+                  </ol>
+                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold pt-1">
+                    ✓ Pronto! Os botões Início, Voltar, Trocar de App e Configurações ficam 100% bloqueados pela sua senha.
+                  </p>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20 space-y-1">
+                  <span className="font-black text-foreground block">
+                    Opção B — Quiosque Hoteleiro Profissional (Fully Kiosk Browser):
+                  </span>
+                  <p>
+                    Para bloqueio corporativo permanente (liga direto na tela mesmo se reiniciar a bateria): instale o app <strong>Fully Kiosk Browser</strong> na Play Store, defina a Start URL <code className="font-bold">https://corpflats.com.br/frigobar-reposicao?kiosk=1</code> e ative o <strong>Kiosk Mode</strong> com PIN do gestor.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-xl bg-muted/50 border border-border space-y-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                <span className="font-black text-foreground block">
+                  Acesso Guiado Nativo da Apple (iPhone & iPad):
+                </span>
+                <ol className="list-decimal pl-4 space-y-1">
+                  <li>
+                    No Safari, abra <code className="text-sky-600 dark:text-sky-400 font-bold">corpflats.com.br/frigobar-reposicao?kiosk=1</code>, toque em <strong>Compartilhar → Adicionar à Tela de Início</strong>.
+                  </li>
+                  <li>
+                    Abra <strong>Ajustes → Acessibilidade → Acesso Guiado</strong>, ative a chave e defina um <strong>Código de Acesso Guiado</strong> exclusivo da gerência.
+                  </li>
+                  <li>
+                    Abra o app <strong>Repositora</strong> na tela inicial e <strong>aperte 3 vezes o botão lateral</strong> para iniciar o Acesso Guiado.
+                  </li>
+                </ol>
+                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold pt-1">
+                  ✓ O iPhone/iPad fica 100% travado apenas nesta tela em tela inteira até você digitar a senha!
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setKioskModalOpen(false)}
+            className="rounded-xl text-xs font-bold"
+          >
+            Fechar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  // PIN Keypad Screen — Login Diário Obrigatório no Início do Turno
   if (!isAuthenticated && !authLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
+      <div className="min-h-[100dvh] bg-slate-950 text-white flex flex-col items-center justify-center p-4 select-none">
+        {/* Barra Superior Discreta do Modo Aparelho Dedicado */}
+        <div className="w-full max-w-sm flex items-center justify-between gap-2 mb-3 px-1">
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-sky-500/15 border border-sky-500/30 text-[10px] font-black text-sky-300">
+              🌅 Turno {formatYmdToBr(todayYmd)}
+            </span>
+            {isKioskMode && (
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-bold text-emerald-300">
+                <Lock className="w-2.5 h-2.5" /> Dedicado
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={toggleAppFullscreen}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-300 transition-all"
+              title="Alternar Tela Inteira"
+            >
+              {isFullscreen ? <Minimize2 className="w-3 h-3 text-sky-400" /> : <Maximize2 className="w-3 h-3 text-sky-400" />}
+              <span>{isFullscreen ? "Sair Tela Cheia" : "Tela Inteira"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setKioskModalOpen(true)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-300 transition-all"
+              title="Configurar Aparelho Dedicado / Modo Quiosque"
+            >
+              <Smartphone className="w-3 h-3 text-amber-400" />
+              <span>Quiosque</span>
+            </button>
+          </div>
+        </div>
+
         <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col items-center">
           <div className="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-400 flex items-center justify-center mb-3">
             <Package className="w-7 h-7" />
           </div>
 
-          <h1 className="text-xl font-black text-center text-white">Portal da Repositora</h1>
+          <h1 className="text-xl font-black text-center text-white">Início de Turno • Repositora</h1>
           <p className="text-xs text-slate-400 text-center mt-1 mb-4">
-            CorpFlats Soho Residence & Anserve. Selecione seu nome e digite seu PIN de 4 dígitos.
+            CorpFlats Soho Residence & Anserve • Selecione a operadora do dia e digite seu PIN de 4 dígitos.
           </p>
+
+          {shiftExpiredBanner && (
+            <div className="w-full mb-4 p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[11px] font-bold text-center leading-snug">
+              🌅 Novo dia de trabalho ({formatYmdToBr(todayYmd)})! O turno anterior foi encerrado automaticamente. Identifique-se abaixo para iniciar seu turno.
+            </div>
+          )}
 
           {/* Seletor de Funcionária */}
           {restockersList.length > 0 && (
@@ -779,7 +1362,7 @@ export default function AnserveRestockPage() {
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5 text-sky-400" />
-                  Qual repositora está trabalhando hoje?
+                  Qual repositora está iniciando o turno hoje?
                 </span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/25">
                   {restockersList.length} {restockersList.length === 1 ? "cadastrada" : "cadastradas"}
@@ -853,7 +1436,7 @@ export default function AnserveRestockPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-3 gap-3 w-full max-w-[260px] mb-4">
+          <div className="grid grid-cols-3 gap-3 w-full max-w-[260px] mb-2">
             {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((num) => (
               <button
                 key={num}
@@ -891,100 +1474,140 @@ export default function AnserveRestockPage() {
             </button>
           </div>
         </div>
+        {kioskSetupDialogNode}
       </div>
     );
   }
 
-  return (
-    <Shell>
-      <div className="max-w-6xl mx-auto px-4 py-4 md:py-6 space-y-5 pb-24">
-        <MinibarEcosystemNav currentScreen="reposicao" />
+  const pageMainContent = (
+    <div className={`max-w-6xl mx-auto px-4 py-4 md:py-6 space-y-5 ${isDedicatedScreen ? "pb-10" : "pb-24"}`}>
+      {!isDedicatedScreen && <MinibarEcosystemNav currentScreen="reposicao" />}
 
-        {/* Top Header */}
-        <div className="bg-card border border-border p-4 md:p-6 rounded-3xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
-              <Package className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-lg md:text-xl font-black text-foreground">
-                  Lançamento Diário & Reposição — Anserve
-                </h1>
-                <Badge className="bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30 text-[10px] font-bold">
-                  19 Flats Soho
-                </Badge>
-                <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-bold">
-                  👩‍💼 {inspectorName || user?.name || "Repositora Anserve"}
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Flats que já saíram hoje aparecem no topo para conferência final imediata.
-              </p>
-            </div>
+      {/* Top Header */}
+      <div className="bg-card border border-border p-4 md:p-6 rounded-3xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-sky-500/10 border border-sky-500/20 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
+            <Package className="w-6 h-6" />
           </div>
-
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleSwitchRestocker}
-              className="rounded-xl text-xs font-bold h-9 border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
-            >
-              <Users className="w-3.5 h-3.5 mr-1.5" />
-              Trocar Repositora / PIN
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleToggleRadioAndPush}
-              className={`rounded-xl text-xs font-bold h-9 ${
-                radioModeOn && pushPermState === "granted"
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
-                  : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20"
-              }`}
-              title="Ativa Web Push Real + Modo Rádio para falar em voz alta mesmo com a tela bloqueada"
-            >
-              {radioModeOn && pushPermState === "granted" ? (
-                <>
-                  <Radio className="w-3.5 h-3.5 mr-1.5 animate-pulse" />
-                  Rádio + Push Ativo
-                </>
-              ) : (
-                <>
-                  <BellRing className="w-3.5 h-3.5 mr-1.5" />
-                  {pushPermState !== "granted" ? "Ativar Push + Tela Bloqueada" : "Modo Rádio Pausado"}
-                </>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-lg md:text-xl font-black text-foreground">
+                Lançamento Diário & Reposição — Anserve
+              </h1>
+              <Badge className="bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30 text-[10px] font-bold">
+                19 Flats Soho
+              </Badge>
+              <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] font-bold">
+                👩‍💼 {inspectorName || user?.name || "Repositora Anserve"}
+              </Badge>
+              <Badge className="bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/30 text-[10px] font-bold">
+                🌅 Turno {formatYmdToBr(shiftDate || todayYmd)}
+                {shiftStartedAt ? ` • ${shiftStartedAt}` : ""}
+              </Badge>
+              {isKioskMode && (
+                <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px] font-bold">
+                  🔒 Aparelho Dedicado
+                </Badge>
               )}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                testVoiceAnnouncement("1004");
-                toast({
-                  title: "Voz de Check-out Ativa",
-                  description: 'Sintetizando: "Check-out flat 1004"'
-                });
-              }}
-              className="rounded-xl text-xs font-bold h-9 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
-              title="Testar síntese de voz nativa Web Speech"
-            >
-              <Volume2 className="w-3.5 h-3.5 mr-1.5" />
-              Testar Voz
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchData}
-              disabled={refreshing}
-              className="rounded-xl text-xs font-bold h-9"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${refreshing ? "animate-spin" : ""}`} />
-              Atualizar
-            </Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Flats que já saíram hoje aparecem no topo para conferência final imediata. O turno encerra automaticamente na virada do dia.
+            </p>
           </div>
         </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={toggleAppFullscreen}
+            className="rounded-xl text-xs font-bold h-9 border-sky-500/30 text-sky-700 dark:text-sky-300 hover:bg-sky-500/10"
+            title="Ativar ou sair do modo Tela Inteira"
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5 mr-1.5" />
+                Sair Tela Cheia
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 mr-1.5" />
+                Tela Inteira
+              </>
+            )}
+          </Button>
+          {(!isKioskMode || isManagerRole) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setKioskModalOpen(true)}
+              className="rounded-xl text-xs font-bold h-9 border-indigo-500/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/10"
+              title="Configurar bloqueio de aparelho dedicado em modo quiosque"
+            >
+              <Smartphone className="w-3.5 h-3.5 mr-1.5" />
+              Aparelho Dedicado
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleSwitchRestocker()}
+            className="rounded-xl text-xs font-bold h-9 border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
+          >
+            <LogOut className="w-3.5 h-3.5 mr-1.5" />
+            Encerrar Turno / Trocar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleToggleRadioAndPush}
+            className={`rounded-xl text-xs font-bold h-9 ${
+              radioModeOn && pushPermState === "granted"
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20"
+            }`}
+            title="Ativa Web Push Real + Modo Rádio para falar em voz alta mesmo com a tela bloqueada"
+          >
+            {radioModeOn && pushPermState === "granted" ? (
+              <>
+                <Radio className="w-3.5 h-3.5 mr-1.5 animate-pulse" />
+                Rádio + Push Ativo
+              </>
+            ) : (
+              <>
+                <BellRing className="w-3.5 h-3.5 mr-1.5" />
+                {pushPermState !== "granted" ? "Ativar Push + Tela Bloqueada" : "Modo Rádio Pausado"}
+              </>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              testVoiceAnnouncement("1004");
+              toast({
+                title: "Voz de Check-out Ativa",
+                description: 'Sintetizando: "Check-out flat 1004"'
+              });
+            }}
+            className="rounded-xl text-xs font-bold h-9 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+            title="Testar síntese de voz nativa Web Speech"
+          >
+            <Volume2 className="w-3.5 h-3.5 mr-1.5" />
+            Testar Voz
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchData}
+            disabled={refreshing}
+            className="rounded-xl text-xs font-bold h-9"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${refreshing ? "animate-spin" : ""}`} />
+            Atualizar
+          </Button>
+        </div>
+      </div>
 
         {/* Painel Ao Vivo: Resumo de Check-outs de Hoje (Mesmo Resumo Enviado ao WhatsApp de Trabalho) */}
         {checkoutSummary && (() => {
@@ -1752,7 +2375,13 @@ export default function AnserveRestockPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
-    </Shell>
+      {kioskSetupDialogNode}
+    </div>
   );
+
+  if (isDedicatedScreen) {
+    return <div className="min-h-[100dvh] bg-background text-foreground">{pageMainContent}</div>;
+  }
+
+  return <Shell>{pageMainContent}</Shell>;
 }

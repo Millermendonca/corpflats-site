@@ -133,7 +133,9 @@ export function FloatingNewReservationButton() {
     location.startsWith('/portaria') ||
     location.startsWith('/tablet') ||
     location.startsWith('/recepcao') ||
-    location.startsWith('/reception');
+    location.startsWith('/reception') ||
+    location.startsWith('/frigobar-reposicao') ||
+    location.startsWith('/anserve/reposicao');
 
   if (!isAdminUser || isHiddenRoute) {
     return null;

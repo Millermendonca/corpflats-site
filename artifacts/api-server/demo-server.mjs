@@ -18445,11 +18445,18 @@ export function getAuthUser(req) {
     if (!data || data.v !== AUTH_SESSION_VERSION) return null; // Invalida qualquer sessão legada ou sem assinatura HMAC
     const found = db.users.find(u => u.id === data.id);
     if (!found) return null;
+    if (data.shiftDate && found.role === "anserve_repositora") {
+      const todayBr = getBrasiliaNow().date;
+      if (String(data.shiftDate) !== String(todayBr)) {
+        return null; // Turno do dia anterior encerrado — exige novo login da operadora no início do turno de hoje
+      }
+    }
     return {
       id: found.id,
       username: found.username,
       name: found.name || found.username,
       role: found.role,
+      shiftDate: data.shiftDate || null,
       allowedModules: resolveEffectiveAllowedModules(found)
     };
   } catch {
@@ -19667,10 +19674,13 @@ app.post("/api/auth/login", (req, res) => {
     return res.status(401).json({ error: "Senha incorreta." });
   }
 
+  const isRepositoraShift = found.role === "anserve_repositora";
+  const shiftDate = isRepositoraShift ? getBrasiliaNow().date : undefined;
   const userPayload = {
     id: found.id,
     username: found.username,
     role: found.role,
+    ...(shiftDate ? { shiftDate } : {}),
     v: AUTH_SESSION_VERSION
   };
   const token = createAuthToken(userPayload);
@@ -19679,7 +19689,7 @@ app.post("/api/auth/login", (req, res) => {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 dias
+    maxAge: isRepositoraShift ? 18 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000 // Turno diário para repositora; 30 dias para demais perfis
   });
   const mustChange = !!found.must_change_password;
   const expired = typeof isPasswordExpired === "function" ? isPasswordExpired(found) : false;
@@ -19699,6 +19709,7 @@ app.post("/api/auth/login", (req, res) => {
     username: found.username,
     role: found.role,
     name: found.name || found.username,
+    ...(shiftDate ? { shiftDate } : {}),
     allowedModules: resolveEffectiveAllowedModules(found),
     mustChangePassword: mustChange,
     passwordExpired: expired
@@ -74573,7 +74584,14 @@ function serveSpaWithMetadata(distFolder, req, res) {
       return res.send(redirectHtml);
     }
 
-    if (rawPath.startsWith("/whatsapp-chat") || rawPath.startsWith("/chat-whatsapp") || rawPath.startsWith("/whatsapp-web") || rawPath === "/chat") { title = "CF WhatsApp • Chat & Sofia IA"; desc = "WhatsApp Corporativo CorpFlats com Assistente Sofia IA em tempo real."; }
+    const isRestockerKiosk = rawPath.startsWith("/frigobar-reposicao") || rawPath.startsWith("/anserve/reposicao");
+    if (isRestockerKiosk) {
+      title = "Repositora • Frigobar CorpFlats & Anserve";
+      desc = "Terminal dedicado de conferência diária e reposição de frigobar.";
+    } else if (rawPath.startsWith("/whatsapp-chat") || rawPath.startsWith("/chat-whatsapp") || rawPath.startsWith("/whatsapp-web") || rawPath === "/chat") {
+      title = "CF WhatsApp • Chat & Sofia IA";
+      desc = "WhatsApp Corporativo CorpFlats com Assistente Sofia IA em tempo real.";
+    }
     const pageUrl = `https://corpflats.com.br${req.originalUrl || req.url || req.path}`;
 
     html = html
@@ -74591,6 +74609,13 @@ function serveSpaWithMetadata(distFolder, req, res) {
       .replace(/<meta\s+name=["']twitter:title["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:title" content="${title}" />`)
       .replace(/<meta\s+name=["']twitter:description["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:description" content="${desc}" />`)
       .replace(/<meta\s+name=["']twitter:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:image" content="${image}" />`);
+
+    if (isRestockerKiosk) {
+      html = html
+        .replace(/href=["']\/manifest-chat\.json["']/i, 'href="/manifest-repositora.json"')
+        .replace(/<meta\s+name=["']apple-mobile-web-app-title["']\s+content=["'].*?["']\s*\/?>/i, '<meta name="apple-mobile-web-app-title" content="Repositora" />')
+        .replace(/<meta\s+name=["']theme-color["']([^>]*?)content=["'].*?["']/i, '<meta name="theme-color"$1content="#020617"');
+    }
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -81570,10 +81595,26 @@ app.post("/api/minibar/inspections", async (req, res) => {
     const isPinValid = Boolean(matchedPinUser) || (pinStr && pinStr === String(db.minibarSettings?.anservePin || "1234"));
     const testToken = req.headers["x-test-token"] || req.headers["authorization"];
     const isTestAuthorized = testToken === "test-token" || testToken === "Bearer test-token";
-    const isStaff = isMinibarStaff(user) || isPinValid || Boolean(tokenHeader) || isTestAuthorized;
+    const todayBrForShift = getBrasiliaNow().date;
+    const decodedAnsToken = tokenHeader ? verifyAuthToken(String(tokenHeader).trim()) : null;
+    const isAnsTokenShiftExpired = Boolean(
+      decodedAnsToken &&
+      decodedAnsToken.role === "anserve_repositora" &&
+      decodedAnsToken.shiftDate &&
+      String(decodedAnsToken.shiftDate) !== String(todayBrForShift)
+    );
+    const isValidAnsToken = Boolean(tokenHeader) && !isAnsTokenShiftExpired;
+    const isStaff = isMinibarStaff(user) || isPinValid || isValidAnsToken || isTestAuthorized;
     const isTestBypass = (process.env.NODE_ENV === "test" && req.headers["x-enforce-auth"] !== "true");
 
     if (!isStaff && !isTestBypass) {
+      if (isAnsTokenShiftExpired && !user) {
+        return res.status(401).json({
+          success: false,
+          code: "SHIFT_EXPIRED",
+          error: "O turno anterior encerrou na virada do dia. Selecione a operadora e digite seu PIN para iniciar o turno de hoje."
+        });
+      }
       if (!user && !pinHeader && !tokenHeader) {
         return res.status(401).json({ success: false, error: "Autenticação obrigatória. Faça login com PIN ou perfil autorizado." });
       }
@@ -83171,7 +83212,9 @@ app.post("/api/minibar/auth-pin", (req, res) => {
       return res.status(403).json({ success: false, error: "Este cadastro de repositora está inativo." });
     }
 
-    matchedUser.lastLoginAt = new Date().toISOString();
+    const shiftStartedAt = new Date().toISOString();
+    const shiftDate = getBrasiliaNow().date;
+    matchedUser.lastLoginAt = shiftStartedAt;
 
     // Dispara Resumo Diário de Check-outs no 1º login do dia de qualquer Repositora para o WhatsApp Exclusivo de Trabalho
     if (matchedUser.role === "anserve_repositora") {
@@ -83185,6 +83228,7 @@ app.post("/api/minibar/auth-pin", (req, res) => {
       id: matchedUser.id,
       username: matchedUser.username,
       role: matchedUser.role,
+      ...(matchedUser.role === "anserve_repositora" ? { shiftDate } : {}),
       v: AUTH_SESSION_VERSION
     });
 
@@ -83192,16 +83236,20 @@ app.post("/api/minibar/auth-pin", (req, res) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 7 * 24 * 3600 * 1000
+      path: "/",
+      maxAge: matchedUser.role === "anserve_repositora" ? 18 * 3600 * 1000 : 7 * 24 * 3600 * 1000
     });
 
     res.json({
       success: true,
+      shiftDate,
+      shiftStartedAt,
       user: {
         id: matchedUser.id,
         username: matchedUser.username,
         name: matchedUser.name || matchedUser.username,
         role: matchedUser.role,
+        shiftDate,
         allowedModules: getDefaultModulesForRole(matchedUser.role)
       },
       token

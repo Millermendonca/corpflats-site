@@ -176,6 +176,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
         unsubscribeWebPush().catch(() => {})
         try {
           localStorage.removeItem("corpflats_anserve_token")
+          localStorage.removeItem("corpflats_anserve_shift_date")
+          localStorage.removeItem("corpflats_anserve_shift_started_at")
           localStorage.removeItem("corpflats_anserve_user_name")
           localStorage.removeItem("corpflats_anserve_user_id")
           localStorage.removeItem("corpflats_anserve_username")
@@ -284,7 +286,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const isAnservePinRoute = location === "/frigobar-reposicao" || location === "/anserve/reposicao"
   const hasLocalAnservePinToken = (() => {
     try {
-      return typeof window !== "undefined" && Boolean(localStorage.getItem("corpflats_anserve_token"))
+      if (typeof window === "undefined") return false
+      const tok = localStorage.getItem("corpflats_anserve_token")
+      if (!tok) return false
+      const shiftDate = localStorage.getItem("corpflats_anserve_shift_date")
+      const todayBr = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).format(new Date())
+      return shiftDate === todayBr
     } catch {
       return false
     }
