@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
   MessageCircle, MessageSquare, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen, FileText,
-  Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw
+  Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw, RotateCcw
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -19,6 +19,7 @@ interface ReservationHoverCardProps {
   flat: any
   isBeingDragged?: boolean
   onOpenDetails: (resItem: any) => void
+  onUndoEarlyCheckout?: (resItem: any) => void | Promise<void>
   channelCfg?: { label: string; bg: string; text: string; border: string }
   isMensalista?: boolean
   isOpenMobile?: boolean
@@ -74,6 +75,7 @@ export function ReservationHoverCard({
   flat,
   isBeingDragged = false,
   onOpenDetails,
+  onUndoEarlyCheckout,
   channelCfg,
   isMensalista = false,
   isOpenMobile = false,
@@ -83,6 +85,7 @@ export function ReservationHoverCard({
   const { toast } = useToast()
   const { data: settings } = useGetSettings()
   const [isOpen, setIsOpen] = useState(false)
+  const [undoingEarly, setUndoingEarly] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [copiedCheckinLink, setCopiedCheckinLink] = useState(false)
 
@@ -583,13 +586,37 @@ export function ReservationHoverCard({
           )}
 
           {resItem.earlyCheckout ? (
-            <div className="mt-1.5 flex flex-col gap-0.5 px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-400 dark:border-amber-700 rounded-lg text-amber-950 dark:text-amber-100 text-[10.5px] font-bold shadow-2xs">
-              <div className="flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-                <span>
-                  ⚡ Check-out Antecipado em {format(parseISO(resItem.earlyCheckoutDate || resItem.checkoutDate), "dd/MM")}
-                  {resItem.earlyCheckoutTime ? ` às ${resItem.earlyCheckoutTime}` : ""}
-                </span>
+            <div className="mt-1.5 flex flex-col gap-1 px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-400 dark:border-amber-700 rounded-lg text-amber-950 dark:text-amber-100 text-[10.5px] font-bold shadow-2xs">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Zap className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <span className="truncate">
+                    ⚡ Check-out Antecipado em {format(parseISO(resItem.earlyCheckoutDate || resItem.checkoutDate), "dd/MM")}
+                    {resItem.earlyCheckoutTime ? ` às ${resItem.earlyCheckoutTime}` : ""}
+                  </span>
+                </div>
+                {onUndoEarlyCheckout && (
+                  <button
+                    type="button"
+                    disabled={undoingEarly}
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      setUndoingEarly(true)
+                      try {
+                        await onUndoEarlyCheckout(resItem)
+                        setIsOpen(false)
+                        onCloseMobile?.()
+                      } finally {
+                        setUndoingEarly(false)
+                      }
+                    }}
+                    className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-amber-500 text-amber-950 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-[10px] font-black transition-colors cursor-pointer disabled:opacity-60"
+                    title="Restaurar data original de saída e reativar estadia"
+                  >
+                    <RotateCcw className={`w-2.5 h-2.5 ${undoingEarly ? "animate-spin" : ""}`} />
+                    <span>{undoingEarly ? "Restaurando..." : "Desfazer"}</span>
+                  </button>
+                )}
               </div>
               <span className="text-[10px] font-medium text-amber-800 dark:text-amber-300 pl-5">
                 Informado por: <strong>{resItem.earlyCheckoutReportedBy || resItem.checkoutReportedBy || "Portaria / Governança"}</strong>

@@ -638,6 +638,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [isReactivatingRes, setIsReactivatingRes] = useState(false)
   const [maintModalFlat, setMaintModalFlat] = useState<any | null>(null)
   const [maintActionBusyId, setMaintActionBusyId] = useState<number | null>(null)
+  const [undoingEarlyCheckoutId, setUndoingEarlyCheckoutId] = useState<number | string | null>(null)
 
   const handleToggleMaintenanceBlocker = async (issue: any) => {
     setMaintActionBusyId(issue.id)
@@ -4285,7 +4286,8 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (isUnpaidPreReserva ? "pendente" : (resItem.paymentStatus || "pendente")))
     const isExpiredRes = resItem.status === "expirada"
-    setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid || isB2bRes) ? "confirmada" : (isExpiredRes ? "pre_reserva" : (resItem.status || "pre_reserva")))
+    const isPreOrExpiredStatus = resItem.status === "pre_reserva" || isExpiredRes
+    setFormStatus((isPreOrExpiredStatus && !isResCurrentlyPaid && !isB2bRes && !isFatResEarly) ? "pre_reserva" : "confirmada")
     setIsReactivatingRes(isExpiredRes)
     setReactivationFlatSwitchedInfo(null)
     setFormSendExpirationReminder(isExpiredRes ? true : resItem.sendExpirationReminder !== false)
@@ -5783,14 +5785,24 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       // - Pré-Reserva: nenhum valor pago (pagamentos zerados, status pendente)
       // - Qualquer valor pago > 0 ou Reserva B2B: reserva é Confirmada
       let statusToSave: string = formStatus
+      if (selectedRes && formStatus === "confirmada") {
+        const prevStLower = String(selectedRes.status || "").toLowerCase()
+        const isStillCheckedOut = Boolean(selectedRes.earlyCheckout || selectedRes.checkoutDone) &&
+          (!formCheckout || !selectedRes.checkoutDate || formCheckout <= selectedRes.checkoutDate)
+        if ((prevStLower === "completed" || prevStLower === "checked_out") && isStillCheckedOut) {
+          statusToSave = selectedRes.status
+        } else if (prevStLower === "in_house" || prevStLower === "hospedado" || prevStLower === "checkin") {
+          statusToSave = selectedRes.status
+        }
+      }
       if (!isOta) {
         if (isB2b) {
-          statusToSave = "confirmada"
+          if (statusToSave === "pre_reserva") statusToSave = "confirmada"
         } else if (formStatus === "pre_reserva") {
           normalizedPayments = []
           resolvedPaidAmount = 0
           resolvedPaymentStatus = "pendente"
-        } else if (resolvedPaidAmount > 0) {
+        } else if (resolvedPaidAmount > 0 && statusToSave === "pre_reserva") {
           statusToSave = "confirmada"
         }
       }
@@ -6114,6 +6126,58 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       fetchData()
       notifyCalendarUpdated()
     } catch {}
+  }
+
+  const handleUndoEarlyCheckout = async (targetRes: any, options?: { closeModal?: boolean }) => {
+    if (!targetRes?.id) return
+    setUndoingEarlyCheckoutId(targetRes.id)
+    try {
+      const resp = await fetch(`/api/pms/reservations/${targetRes.id}/undo-checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include"
+      })
+      const json = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(json.error || "Falha ao desfazer check-out antecipado.")
+      const restored = json.reservation
+      if (restored && selectedRes && String(selectedRes.id) === String(targetRes.id)) {
+        setSelectedRes(restored)
+        setFormCheckout(restored.checkoutDate)
+        setFormNotes(restored.notes || "")
+        setFormStatus("confirmada")
+        const unitRate = Number(formDailyRate) || Number(restored.dailyRate) || 250
+        const rebuiltRates = buildReservationDailyRates(
+          restored.checkinDate,
+          restored.checkoutDate,
+          unitRate,
+          restored.channel || formChannel || "whatsapp",
+          Array.isArray(restored.dailyRates) ? restored.dailyRates : formDailyRates
+        )
+        setFormDailyRates(rebuiltRates)
+      }
+      const hasConflicts = Array.isArray(json.conflicts) && json.conflicts.length > 0
+      const restoredBr = restored?.checkoutDate ? format(parseISO(restored.checkoutDate), "dd/MM/yyyy") : ""
+      toast({
+        title: "Check-out antecipado desfeito! ↩️",
+        description: hasConflicts
+          ? `Saída restaurada${restoredBr ? ` para ${restoredBr}` : ""}. ⚠️ Há outra reserva nas datas restauradas do Flat ${targetRes.flatNumber} — confira no mapa.`
+          : `Saída do Flat ${targetRes.flatNumber} restaurada${restoredBr ? ` para ${restoredBr}` : ""} e cafés futuros reativados.`
+      })
+      setMobileCardResId(null)
+      await fetchData(false)
+      notifyCalendarUpdated()
+      if (options?.closeModal !== false) {
+        setResModalOpen(false)
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro ao desfazer check-out",
+        description: err?.message || "Tente novamente.",
+        variant: "destructive"
+      })
+    } finally {
+      setUndoingEarlyCheckoutId(null)
+    }
   }
 
   const handleSaveBlock = async (e: React.FormEvent) => {
@@ -7486,6 +7550,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                 flat={flat}
                                 isBeingDragged={Boolean(resDragState && (resDragState.hasMoved || resDragState.isLongPressReady))}
                                 onOpenDetails={handleOpenEditRes}
+                                onUndoEarlyCheckout={(r) => handleUndoEarlyCheckout(r, { closeModal: false })}
                                 channelCfg={channelCfg}
                                 isMensalista={isMensalista}
                                 isOpenMobile={mobileCardResId === resItem.id}
@@ -7672,22 +7737,48 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                   left: `${ghostPos.left}px`,
                                   width: `${ghostPos.width}px`,
                                   top: hasOverlappingNewBooking ? "0px" : "7px",
-                                  height: hasOverlappingNewBooking ? "11px" : "34px",
+                                  height: hasOverlappingNewBooking ? "13px" : "34px",
                                 }}
-                                className={`pointer-events-none select-none overflow-hidden flex items-center px-1.5 transition-all ${
+                                className={`pointer-events-none select-none overflow-hidden flex items-center justify-between gap-1.5 px-1.5 transition-all ${
                                   hasOverlappingNewBooking
-                                    ? "rounded-md border border-dashed border-amber-500/80 bg-amber-500/20 text-amber-950 dark:text-amber-200 z-20 text-[8.5px] font-extrabold opacity-80"
-                                    : "rounded-xl border-2 border-dashed border-amber-500/80 dark:border-amber-400/80 bg-amber-500/15 dark:bg-amber-500/20 text-amber-950 dark:text-amber-100 z-5 text-[10px] font-bold opacity-55"
+                                    ? "rounded-md border border-dashed border-amber-500/80 bg-amber-500/20 text-amber-950 dark:text-amber-200 z-20 text-[8.5px] font-extrabold opacity-90"
+                                    : "rounded-xl border-2 border-dashed border-amber-500/80 dark:border-amber-400/80 bg-amber-500/15 dark:bg-amber-500/20 text-amber-950 dark:text-amber-100 z-10 text-[10px] font-bold opacity-80"
                                 }`}
                               >
-                                <span className="truncate flex items-center gap-1">
+                                <span
+                                  onPointerDown={!pos ? (e) => e.stopPropagation() : undefined}
+                                  onMouseDown={!pos ? (e) => e.stopPropagation() : undefined}
+                                  onClick={!pos ? (e) => {
+                                    e.stopPropagation()
+                                    handleOpenEditRes(resItem)
+                                  } : undefined}
+                                  className={`truncate flex items-center gap-1 min-w-0 ${!pos ? "pointer-events-auto cursor-pointer hover:underline" : ""}`}
+                                  title={!pos ? `Abrir detalhes da reserva de ${resItem.guestName}` : undefined}
+                                >
                                   <span>⚡</span>
-                                  <span>
+                                  <span className="truncate">
                                     {hasOverlappingNewBooking
                                       ? `Antecipado: ${resItem.guestName} (previsto até ${format(parseISO(resItem.originalCheckoutDate), "dd/MM")})`
                                       : `Check-out antecipado • ${resItem.guestName} (liberado p/ nova reserva até ${format(parseISO(resItem.originalCheckoutDate), "dd/MM")})`}
                                   </span>
                                 </span>
+                                {!hasOverlappingNewBooking && ghostPos.width >= 56 && (
+                                  <button
+                                    type="button"
+                                    disabled={undoingEarlyCheckoutId === resItem.id}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleUndoEarlyCheckout(resItem, { closeModal: false })
+                                    }}
+                                    className="pointer-events-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/95 dark:bg-slate-900/95 border border-amber-500 text-amber-950 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/70 text-[9.5px] font-black shadow-2xs transition-colors cursor-pointer disabled:opacity-60"
+                                    title={`Desfazer check-out antecipado de ${resItem.guestName} e restaurar saída original (${format(parseISO(resItem.originalCheckoutDate), "dd/MM")})`}
+                                  >
+                                    <RotateCcw className={`w-2.5 h-2.5 ${undoingEarlyCheckoutId === resItem.id ? "animate-spin" : ""}`} />
+                                    <span>{undoingEarlyCheckoutId === resItem.id ? "..." : "Desfazer"}</span>
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -11587,38 +11678,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           type="button"
                           size="sm"
                           variant="outline"
-                          onClick={async () => {
-                            try {
-                              const resp = await fetch(`/api/pms/reservations/${selectedRes.id}/undo-checkout`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                credentials: "include"
-                              });
-                              const json = await resp.json().catch(() => ({}));
-                              if (!resp.ok) throw new Error(json.error || "Falha ao desfazer check-out antecipado.");
-                              if (json.reservation) {
-                                setSelectedRes(json.reservation);
-                                setFormCheckout(json.reservation.checkoutDate);
-                                setFormNotes(json.reservation.notes || "");
-                              }
-                              toast({
-                                title: "Check-out antecipado desfeito! ↩️",
-                                description: `A saída original foi restaurada e os cafés futuros foram reativados.`
-                              });
-                              fetchData(false);
-                              notifyCalendarUpdated();
-                            } catch (err: any) {
-                              toast({
-                                title: "Erro ao desfazer check-out",
-                                description: err.message || "Tente novamente.",
-                                variant: "destructive"
-                              });
-                            }
-                          }}
-                          className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-amber-400 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50"
+                          disabled={undoingEarlyCheckoutId === selectedRes.id}
+                          onClick={() => handleUndoEarlyCheckout(selectedRes, { closeModal: true })}
+                          className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-amber-400 text-amber-950 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50"
                         >
-                          <RotateCcw className="w-3 h-3" />
-                          <span>Desfazer Check-out Antecipado</span>
+                          <RotateCcw className={`w-3 h-3 ${undoingEarlyCheckoutId === selectedRes.id ? "animate-spin" : ""}`} />
+                          <span>{undoingEarlyCheckoutId === selectedRes.id ? "Restaurando..." : "Desfazer Check-out Antecipado"}</span>
                         </Button>
                       </div>
                     </div>

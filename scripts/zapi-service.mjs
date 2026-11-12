@@ -14552,6 +14552,9 @@ export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, 
     reservation.status = "completed";
   }
   reservation.checkoutDone = true;
+  delete reservation._checkoutUndoneDate;
+  delete reservation._checkoutUndoneAt;
+  reservation._earlyCheckoutUndone = false;
   reservation.checkoutMethod = reservation.checkoutMethod
     ? (reservation.checkoutMethod.includes(source) ? reservation.checkoutMethod : `${reservation.checkoutMethod} + ${source}`)
     : source;

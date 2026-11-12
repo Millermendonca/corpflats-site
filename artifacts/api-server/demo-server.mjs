@@ -21265,7 +21265,7 @@ app.patch("/api/flats/:id", (req, res) => {
       r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
       r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
       (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
-      r.checkoutDate === todayStr
+      (r.checkoutDate === todayStr || r.earlyCheckoutDate === todayStr)
     );
     if (checkoutRes) {
       if (!req.body.isOccupied) {
@@ -21285,12 +21285,12 @@ app.patch("/api/flats/:id", (req, res) => {
           console.warn("[Flat Vacancy Checkout Trigger Error]:", e.message);
         });
       } else {
-        checkoutRes.checkoutDone = false;
-        if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
-          checkoutRes.status = checkoutRes.previousStatus || "confirmada";
-        }
-        checkoutRes.actualCheckoutAt = null;
-        checkoutRes.actualCheckoutTime = null;
+        undoReservationCheckoutAndRestoreStay(db, checkoutRes, {
+          actorUser: authUser,
+          source: "Governança / Card Ocupado",
+          nowIso: now,
+          todayStr
+        });
       }
       checkoutRes.updatedAt = now;
     } else if (!req.body.isOccupied) {
@@ -22609,6 +22609,7 @@ function getRequestsForDate(dateStr, isNested = false) {
       !isFutureDate &&
       isExplicitlyVacantCheckout &&
       !pmsRes.checkoutDone &&
+      pmsRes._checkoutUndoneDate !== dateStr &&
       pmsRes.status !== "expirada" &&
       pmsRes.status !== "pre_reserva" &&
       pmsRes.status !== "pendente" &&
@@ -22639,7 +22640,6 @@ function getRequestsForDate(dateStr, isNested = false) {
   // Helper: Descarta automaticamente cards de checkout órfãos (reserva cancelada, expirada, no_show, excluída ou remarcada)
   const isOrphanCheckoutRequest = (r, fNumber) => {
     if (!r || r.source !== "checkout" || r.status === "clean" || r.isVacantExplicitlySet || r.markedByAdmin || r.revertedToDirtyAt) return false;
-    if (String(fNumber) === "509" && r.requestDate === "2026-10-28") return false;
     const hasActiveCheckoutOnReqDate = (db.reservations || []).some(res =>
       res.status !== "cancelada" &&
       res.status !== "cancelado" &&
@@ -22743,8 +22743,8 @@ function getRequestsForDate(dateStr, isNested = false) {
         );
         // Só descarta se a solicitação for de uma estadia anterior à chegada do hóspede atual
         if (currentStayRes && r.requestDate < currentStayRes.checkinDate) return false;
-        // Se for checkout puramente automático sem camas/instruções gerado para data intermediária que não coincide com a saída, descarta (preservando flat 509)
-        if (String(r.flatNumber) !== "509" && r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation && (!currentStayRes || r.requestDate !== currentStayRes.checkoutDate)) return false;
+        // Se for checkout puramente automático sem camas/instruções gerado para data intermediária que não coincide com a saída, descarta
+        if (r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation && (!currentStayRes || r.requestDate !== currentStayRes.checkoutDate)) return false;
       }
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout" && !(r.source === "service_order" && r.serviceOrderId && r.requestDate >= "2026-11-01") && !(r.manualAdminNote && r.adminNote)) return false;
@@ -24470,8 +24470,13 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
         r.status !== "cancelada" && r.status !== "cancelled" && r.status !== "cancelado" &&
         r.status !== "expirada" && r.status !== "pre_reserva" && r.status !== "pendente" && r.status !== "no_show" &&
         (r.flatId === item.flatId || String(r.flatNumber) === String(item.flatNumber || relatedFlat?.number || "")) &&
-        r.checkoutDate <= todayRefVacant &&
-        (r.checkoutDate === targetDate || r.checkoutDate === (date || todayRefVacant))
+        (r.checkoutDate <= todayRefVacant || r.earlyCheckoutDate <= todayRefVacant) &&
+        (
+          r.checkoutDate === targetDate ||
+          r.checkoutDate === (date || todayRefVacant) ||
+          r.earlyCheckoutDate === targetDate ||
+          r.earlyCheckoutDate === (date || todayRefVacant)
+        )
       ) : null;
       if (checkoutRes) {
         if (isVacant) {
@@ -24491,12 +24496,12 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
             console.warn("[Cleaning Card Vacant Checkout Trigger Error]:", e.message);
           });
         } else {
-          checkoutRes.checkoutDone = false;
-          if (checkoutRes.status === "completed" || checkoutRes.status === "checked_out") {
-            checkoutRes.status = checkoutRes.previousStatus || "confirmada";
-          }
-          checkoutRes.actualCheckoutAt = null;
-          checkoutRes.actualCheckoutTime = null;
+          undoReservationCheckoutAndRestoreStay(db, checkoutRes, {
+            actorUser: userAuth,
+            source: "Governança / Card Ocupado",
+            nowIso: now,
+            todayStr: todayRefVacant
+          });
         }
         checkoutRes.updatedAt = now;
       } else if (isVacant) {
@@ -33015,6 +33020,10 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
     const isPaid = r.paymentStatus === "pago_total" ||
       r.paymentStatus === "pago" ||
       Number(r.paidAmount) > 0 ||
+      Boolean(r.actualCheckinAt) ||
+      Boolean(r._earlyCheckoutUndone) ||
+      r.status === "in_house" ||
+      (typeof isFaturadoBoletoReservation === "function" && isFaturadoBoletoReservation(r)) ||
       (typeof hasRealPaymentEvidence === "function" && hasRealPaymentEvidence(r));
     if (isPaid) continue;
 
@@ -33285,47 +33294,6 @@ app.get("/api/pms/calendar", (req, res) => {
       hasImpeditiveMaintenance
     };
   });
-  const flat509Cal = (db.flats || []).find(f => String(f.number) === "509");
-  const res509Cal = (db.reservations || []).find(r =>
-    (String(r.flatNumber) === "509" || (flat509Cal && Number(r.flatId) === Number(flat509Cal.id))) &&
-    r.checkinDate <= "2026-10-26" &&
-    r.checkoutDate >= "2026-10-27" &&
-    r.status !== "cancelada" &&
-    r.status !== "cancelled" &&
-    !r.earlyCheckout &&
-    !r._earlyCheckoutUndone
-  );
-  if (res509Cal) {
-    const clean509 = (db.cleaningRequests || []).find(cr =>
-      (String(cr.flatNumber) === "509" || cr.flatId === res509Cal.flatId) &&
-      cr.requestDate >= "2026-10-26"
-    );
-    const repSource = clean509?.vacantSource || "whatsapp_concierge";
-    const repLabel = formatCheckoutReporterLabel(repSource, clean509?.vacantSetBy || "Portaria / Governança");
-    const origOut = res509Cal.originalCheckoutDate || res509Cal.checkoutDate;
-    res509Cal.originalCheckoutDate = origOut;
-    res509Cal.previousCheckoutDate = origOut;
-    if (res509Cal.originalTotalAmount === undefined && Number(res509Cal.totalAmount) > 0) {
-      res509Cal.originalTotalAmount = Number(res509Cal.totalAmount);
-    }
-    res509Cal.earlyCheckout = true;
-    res509Cal.earlyCheckoutDate = "2026-10-26";
-    res509Cal.earlyCheckoutTime = res509Cal.actualCheckoutTime || "21:00";
-    res509Cal.earlyCheckoutReportedBy = repLabel;
-    res509Cal.checkoutReportedBy = repLabel;
-    res509Cal.checkoutDone = true;
-    res509Cal.status = "completed";
-    res509Cal.actualCheckoutAt = res509Cal.actualCheckoutAt || "2026-10-26T23:59:00.000Z";
-    res509Cal.checkoutDate = "2026-10-26";
-    const note509 = `Check-out antecipado em 26/10/2026 informado por ${repLabel} (saída original prevista: ${formatDateBr(origOut)}/2026)`;
-    res509Cal.earlyCheckoutNote = note509;
-    const curNotes = String(res509Cal.notes || "").trim();
-    if (!curNotes.includes("Check-out antecipado em")) {
-      res509Cal.notes = curNotes ? `${curNotes}\n• ${note509}` : `• ${note509}`;
-    }
-    saveDatabase();
-  }
-
   // Expira automaticamente pré-reservas cujo prazo (expiresAt) já venceu antes de montar o calendário
   sweepExpiredPreReservations(db, saveDatabase);
 
@@ -33391,6 +33359,10 @@ app.get("/api/pms/calendar", (req, res) => {
       !cr.cleaningRequest?.isInstructionOnly &&
       cr.source !== "manual_instruction" &&
       cr.cleaningRequest?.source !== "manual_instruction" &&
+      cr.source !== "stayover" &&
+      cr.cleaningRequest?.source !== "stayover" &&
+      cr.cleaningType !== "stayover" &&
+      cr.cleaningRequest?.cleaningType !== "stayover" &&
       cr.type !== "bed_adjustment_only" &&
       cr.type !== "instruction" &&
       cr.cleaningRequest?.type !== "bed_adjustment_only" &&
@@ -35791,9 +35763,29 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const wasFlatLocked = Boolean(r.isFlatLocked || r.flatLocked);
   const oldFlatLockReason = r.flatLockReason || "";
 
+  const wasEarlyCheckoutBeforePut = Boolean(r.earlyCheckout || r.earlyCheckoutDate || r.earlyCheckoutAt);
+  const originalCheckoutBeforePut = resolveOriginalCheckoutDateForUndo(db, r);
+  const isUndoingEarlyCheckoutOnPut = Boolean(
+    wasEarlyCheckoutBeforePut &&
+    req.body.earlyCheckout !== true &&
+    (
+      req.body.earlyCheckout === false ||
+      (req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout) ||
+      (req.body.status && ["confirmada", "in_house", "hospedado"].includes(String(req.body.status).toLowerCase()))
+    )
+  );
+
   // Se datas ou flat mudarem na edição e o hóspede já havia assinado o check-in, invalida assinatura para nova conferência legal,
-  // preservando 100% dos dados cadastrais do hóspede no cadastro e na reserva.
-  const isDatesOrFlatChanged = Boolean(
+  // preservando 100% dos dados cadastrais do hóspede no cadastro e na reserva (exceto quando está apenas restaurando saída original de check-out antecipado).
+  const isRestoringExactOriginalDatesOnSameFlat = Boolean(
+    isUndoingEarlyCheckoutOnPut &&
+    (!req.body.checkinDate || req.body.checkinDate === oldCheckin) &&
+    (req.body.flatId === undefined || Number(req.body.flatId) === Number(oldFlatId)) &&
+    (req.body.flatNumber === undefined || String(req.body.flatNumber) === String(r.flatNumber)) &&
+    originalCheckoutBeforePut &&
+    (req.body.checkoutDate === originalCheckoutBeforePut || (!req.body.checkoutDate && req.body.earlyCheckout === false))
+  );
+  const isDatesOrFlatChanged = !isRestoringExactOriginalDatesOnSameFlat && Boolean(
     (req.body.checkinDate && oldCheckin && req.body.checkinDate !== oldCheckin) ||
     (req.body.checkoutDate && oldCheckout && req.body.checkoutDate !== oldCheckout) ||
     (req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId)) ||
@@ -35806,8 +35798,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     nextStatusOnPut === "cancelada" ||
     nextStatusOnPut === "cancelled" ||
     nextStatusOnPut === "no_show" ||
-    req.body.earlyCheckout ||
-    r.earlyCheckout
+    req.body.earlyCheckout === true ||
+    (r.earlyCheckout && !isUndoingEarlyCheckoutOnPut)
   );
   const targetFlatIdOnPut = req.body.flatId !== undefined ? Number(req.body.flatId) : Number(r.flatId);
   const targetFlatObjOnPut = (db.flats || []).find(f => f.id === targetFlatIdOnPut);
@@ -36065,9 +36057,25 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   } else if (explicitGuestId !== undefined) {
     r.guestId = explicitGuestId;
   }
-  if (r.earlyCheckout && r.originalCheckoutDate && r.checkoutDate >= r.originalCheckoutDate && req.body.earlyCheckout === undefined) {
-    r.earlyCheckout = false;
-    r.originalCheckoutDate = null;
+  if (isUndoingEarlyCheckoutOnPut) {
+    const explicitTargetOut = (req.body.checkoutDate && req.body.checkoutDate > oldCheckout)
+      ? req.body.checkoutDate
+      : (originalCheckoutBeforePut || r.checkoutDate);
+    undoReservationCheckoutAndRestoreStay(db, r, {
+      explicitCheckoutDate: explicitTargetOut,
+      preserveIncomingRates: Array.isArray(req.body.dailyRates) && req.body.dailyRates.length > 0,
+      preserveIncomingStatus: req.body.status !== undefined && !["completed", "checked_out"].includes(String(req.body.status).toLowerCase()),
+      actorUser: getAuthUser(req),
+      source: req.body.source || "PMS Calendário (Edição Manual)"
+    });
+  } else if (r.earlyCheckout && r.originalCheckoutDate && r.checkoutDate >= r.originalCheckoutDate && req.body.earlyCheckout === undefined) {
+    undoReservationCheckoutAndRestoreStay(db, r, {
+      explicitCheckoutDate: r.checkoutDate,
+      preserveIncomingRates: Array.isArray(req.body.dailyRates) && req.body.dailyRates.length > 0,
+      preserveIncomingStatus: req.body.status !== undefined && !["completed", "checked_out"].includes(String(req.body.status).toLowerCase()),
+      actorUser: getAuthUser(req),
+      source: req.body.source || "PMS Calendário (Edição Manual)"
+    });
   }
 
   if (req.body.b2bReservationNumber !== undefined && !req.body.externalReservationNumber) {
@@ -36626,7 +36634,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           r.reminderLeadLabel = remInfo.reminderLeadLabel;
         }
       }
-    } else if (r.status === "confirmada") {
+    } else if (r.status === "confirmada" || r.status === "in_house" || r.status === "hospedado") {
       r.expiresAt = null;
       r.reminderAt = null;
       delete r.expiredAt;
@@ -37677,9 +37685,9 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const totalAmt = Number(r.totalAmount) || 0;
     const paidAmt = Number(r.paidAmount) || 0;
     const pendingAmt = Math.max(0, Math.round((totalAmt - paidAmt) * 100) / 100);
-    const hadCheckoutExtension = Boolean(req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout);
+    const hadCheckoutExtension = !isRestoringExactOriginalDatesOnSameFlat && Boolean(req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout);
     const hadCheckoutExtensionWithPending = Boolean(hadCheckoutExtension && !isB2bChannel && pendingAmt > 0.01);
-    const hadPendingIncrease = !isB2bChannel && pendingAmt > 0.01 && (
+    const hadPendingIncrease = !isRestoringExactOriginalDatesOnSameFlat && !isB2bChannel && pendingAmt > 0.01 && (
       r.paymentStatus === "pendente" ||
       r.paymentStatus === "parcial" ||
       r.paymentStatus === "sinal_pago" ||
@@ -47936,6 +47944,430 @@ app.patch("/api/pms/reservations/:id/auto-invoice", (req, res) => {
   res.json({ success: true, autoEmitInvoice: r.autoEmitInvoice });
 });
 
+function resolveOriginalCheckoutDateForUndo(db, r) {
+  if (!r) return null;
+  const curOut = String(r.checkoutDate || "").slice(0, 10);
+  const isValidFutureCandidate = (cand) => {
+    const s = String(cand || "").trim().slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) && (!curOut || s > curOut);
+  };
+
+  if (isValidFutureCandidate(r.originalCheckoutDate)) {
+    return String(r.originalCheckoutDate).slice(0, 10);
+  }
+  if (isValidFutureCandidate(r.previousCheckoutDate)) {
+    return String(r.previousCheckoutDate).slice(0, 10);
+  }
+
+  if (Array.isArray(r.auditLogs)) {
+    for (const log of r.auditLogs) {
+      if (!log) continue;
+      if (isValidFutureCandidate(log.details?.originalCheckoutDate)) {
+        return String(log.details.originalCheckoutDate).slice(0, 10);
+      }
+      if (log.action === "early_checkout" && Array.isArray(log.changes)) {
+        const outChange = log.changes.find(ch => ch && ch.field === "checkoutDate");
+        const oldValMatch = String(outChange?.oldValue || "").match(/(\d{4}-\d{2}-\d{2})/);
+        if (oldValMatch && isValidFutureCandidate(oldValMatch[1])) {
+          return oldValMatch[1];
+        }
+        const newValOrigMatch = String(outChange?.newValue || "").match(/Original:\s*(\d{4}-\d{2}-\d{2})/i);
+        if (newValOrigMatch && isValidFutureCandidate(newValOrigMatch[1])) {
+          return newValOrigMatch[1];
+        }
+      }
+    }
+  }
+
+  const noteText = `${r.earlyCheckoutNote || ""}\n${r.notes || ""}`;
+  const brMatch = noteText.match(/sa[íi]da\s+original\s+prevista:\s*(\d{2})\/(\d{2})(?:\/(\d{4}))?/i);
+  if (brMatch) {
+    const dd = brMatch[1];
+    const mm = brMatch[2];
+    let yyyy = brMatch[3];
+    if (!yyyy) {
+      const baseYear = Number(String(curOut || r.checkinDate || getBrasiliaNow().date).slice(0, 4)) || new Date().getFullYear();
+      const baseMonth = Number(String(curOut || r.checkinDate || "2026-01-01").slice(5, 7)) || 1;
+      yyyy = String(Number(mm) < baseMonth ? baseYear + 1 : baseYear);
+    }
+    const parsedIso = `${yyyy}-${mm}-${dd}`;
+    if (isValidFutureCandidate(parsedIso)) {
+      return parsedIso;
+    }
+  }
+
+  if (Array.isArray(r.dailyRates) && r.dailyRates.length > 0) {
+    const validDates = r.dailyRates
+      .map(d => String(d?.date || "").slice(0, 10))
+      .filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s))
+      .sort();
+    if (validDates.length > 0) {
+      const lastNight = validDates[validDates.length - 1];
+      const nextDay = new Date(lastNight + "T12:00:00Z");
+      if (!isNaN(nextDay.getTime())) {
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+        const candFromRates = nextDay.toISOString().slice(0, 10);
+        if (isValidFutureCandidate(candFromRates)) {
+          return candFromRates;
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(db?.breakfastOrders)) {
+    for (const o of db.breakfastOrders) {
+      if (!o) continue;
+      const matchesOrder =
+        (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+        (o.reservationId && Number(o.reservationId) === Number(r.id));
+      if (matchesOrder && isValidFutureCandidate(o.checkoutWarningInfo?.originalCheckoutDate)) {
+        return String(o.checkoutWarningInfo.originalCheckoutDate).slice(0, 10);
+      }
+    }
+  }
+
+  if (r.originalCheckoutDate && /^\d{4}-\d{2}-\d{2}$/.test(String(r.originalCheckoutDate).slice(0, 10))) {
+    return String(r.originalCheckoutDate).slice(0, 10);
+  }
+  return curOut || null;
+}
+
+export function undoReservationCheckoutAndRestoreStay(db, r, options = {}) {
+  if (!db || !r) return { wasEarlyCheckout: false, restoredCheckoutDate: null };
+
+  ensureReservationAuditLogs(r);
+  const nowIso = options.nowIso || new Date().toISOString();
+  const todayStr = options.todayStr || getBrasiliaNow().date;
+  const oldCheckoutDate = r.checkoutDate;
+  const oldEarlyCheckoutDate = r.earlyCheckoutDate || null;
+  const oldStatus = r.status;
+
+  const resolvedOriginalCheckout = options.explicitCheckoutDate
+    ? String(options.explicitCheckoutDate).slice(0, 10)
+    : resolveOriginalCheckoutDateForUndo(db, r);
+
+  const wasEarlyCheckout = Boolean(
+    r.earlyCheckout ||
+    r.earlyCheckoutDate ||
+    r.earlyCheckoutAt ||
+    r.earlyCheckoutReleasedAt ||
+    (resolvedOriginalCheckout && oldCheckoutDate && resolvedOriginalCheckout > oldCheckoutDate)
+  );
+  const restoredCheckoutDate = (wasEarlyCheckout && resolvedOriginalCheckout)
+    ? resolvedOriginalCheckout
+    : (options.explicitCheckoutDate || r.checkoutDate);
+
+  if (!options.preserveIncomingStatus) {
+    const prevSt = String(r.previousStatus || "").toLowerCase();
+    const isValidPrevActiveStatus =
+      Boolean(r.previousStatus) &&
+      !["completed", "checked_out", "cancelada", "cancelado", "cancelled", "expirada", "pre_reserva", "pendente", "no_show"].includes(prevSt);
+    if (isValidPrevActiveStatus) {
+      r.status = (r.checkinDate <= todayStr && restoredCheckoutDate >= todayStr && r.actualCheckinAt)
+        ? "in_house"
+        : r.previousStatus;
+    } else if (r.checkinDate && r.checkinDate > todayStr) {
+      r.status = "confirmada";
+    } else {
+      r.status = "in_house";
+    }
+  }
+  if (["completed", "checked_out", "expirada", "pre_reserva"].includes(String(r.previousStatus || "").toLowerCase())) {
+    delete r.previousStatus;
+  }
+
+  r.checkoutDone = false;
+  r.actualCheckoutAt = null;
+  r.actualCheckoutTime = null;
+  r.checkedOutAt = null;
+  r.digitalCheckoutAt = null;
+  r.checkoutMethod = null;
+  r.checkoutReportedBy = null;
+  r.checkoutReportedAt = null;
+  r.finalMinibarInspectionAt = null;
+  r._checkoutUndoneDate = todayStr;
+  r._checkoutUndoneAt = nowIso;
+  if (r.status !== "pre_reserva") {
+    r.expiresAt = null;
+    r.reminderAt = null;
+    delete r.expiredAt;
+    delete r.expiredWhatsappSentAt;
+    delete r.preReservationReminderSentAt;
+  }
+
+  if (wasEarlyCheckout || r.earlyCheckout || r.earlyCheckoutNote || (r.notes && String(r.notes).includes("Check-out antecipado em"))) {
+    r.checkoutDate = restoredCheckoutDate;
+    if (r.notes) {
+      let cleanedNotes = String(r.notes);
+      if (r.earlyCheckoutNote) {
+        cleanedNotes = cleanedNotes.replace(
+          new RegExp(`(?:^|\\n)\\s*•?\\s*${String(r.earlyCheckoutNote).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "g"),
+          ""
+        );
+      }
+      cleanedNotes = cleanedNotes
+        .replace(/(?:^|\n)\s*•?\s*Check-out antecipado em [^\n]+/g, "")
+        .trim();
+      r.notes = cleanedNotes;
+    }
+    r.earlyCheckout = false;
+    r.originalCheckoutDate = null;
+    r.earlyCheckoutDate = null;
+    r.earlyCheckoutTime = null;
+    r.earlyCheckoutAt = null;
+    r.earlyCheckoutReleasedAt = null;
+    r.earlyCheckoutReportedBy = null;
+    r.earlyCheckoutNote = null;
+    r.earlyCheckoutAdminNotifiedAt = null;
+    r._earlyCheckoutUndone = true;
+    r.calendarSequence = (r.calendarSequence || 0) + 1;
+
+    if (!options.preserveIncomingRates) {
+      if (Number(r.originalTotalAmount) > 0) {
+        if (Number(r.totalAmount || 0) < Number(r.originalTotalAmount)) {
+          r.totalAmount = Number(r.originalTotalAmount);
+        }
+        delete r.originalTotalAmount;
+      }
+      if (r.checkinDate && r.checkoutDate && r.checkoutDate > r.checkinDate && Array.isArray(r.dailyRates) && r.dailyRates.length > 0) {
+        const d1 = new Date(r.checkinDate + "T12:00:00Z");
+        const d2 = new Date(r.checkoutDate + "T12:00:00Z");
+        const expectedNights = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000));
+        if (r.dailyRates.length < expectedNights) {
+          const rateMap = new Map();
+          r.dailyRates.forEach(d => {
+            if (d && d.date) rateMap.set(String(d.date).slice(0, 10), d);
+          });
+          const chargesSum = Array.isArray(r.charges)
+            ? r.charges.reduce((acc, c) => acc + (Number(c?.amount) || 0), 0)
+            : (Number(r.cleaningFee) || 0);
+          const existingAvg = Math.round((r.dailyRates.reduce((acc, d) => acc + (Number(d?.rate ?? d?.amount) || 0), 0) / r.dailyRates.length) * 100) / 100;
+          const inferredUnit = Number(r.dailyRate) > 0
+            ? Number(r.dailyRate)
+            : (existingAvg > 0
+                ? existingAvg
+                : (Number(r.totalAmount) > chargesSum ? Math.round(((Number(r.totalAmount) - chargesSum) / expectedNights) * 100) / 100 : 250));
+          const rebuilt = [];
+          for (let i = 0; i < expectedNights; i++) {
+            const dStr = new Date(d1.getTime() + i * 86400000).toISOString().slice(0, 10);
+            const ex = rateMap.get(dStr);
+            if (ex) {
+              rebuilt.push(ex);
+            } else {
+              const prev = rebuilt.length > 0 ? rebuilt[rebuilt.length - 1] : null;
+              rebuilt.push({
+                date: dStr,
+                rate: prev && Number(prev.rate ?? prev.amount) > 0 ? Number(prev.rate ?? prev.amount) : inferredUnit,
+                channel: (prev && prev.channel) || r.channel || "whatsapp"
+              });
+            }
+          }
+          r.dailyRates = rebuilt;
+        }
+      }
+    }
+
+    if (!options.skipAuditLog) {
+      const authUser = options.actorUser || null;
+      addReservationAuditLog(r, {
+        action: "undo_early_checkout",
+        actor: {
+          id: authUser?.id || null,
+          name: authUser?.name || authUser?.username || "Administrador / Recepção",
+          role: authUser?.role || "admin",
+          type: "user"
+        },
+        source: options.source || "PMS / Recepção",
+        description: `Check-out antecipado desfeito. Saída restaurada de ${oldCheckoutDate} para ${restoredCheckoutDate}.`,
+        changes: [
+          { field: "checkoutDate", label: "Data de Check-out", oldValue: oldCheckoutDate, newValue: restoredCheckoutDate },
+          { field: "status", label: "Status da Reserva", oldValue: oldStatus || "completed", newValue: r.status }
+        ]
+      });
+    }
+  } else if (!options.skipAuditLog) {
+    const authUser = options.actorUser || null;
+    addReservationAuditLog(r, {
+      action: "undo_checkout",
+      actor: {
+        id: authUser?.id || null,
+        name: authUser?.name || authUser?.username || "Administrador / Recepção",
+        role: authUser?.role || "admin",
+        type: "user"
+      },
+      source: options.source || "PMS / Recepção",
+      description: `Check-out do Apt ${r.flatNumber} desfeito e estadia reativada.`,
+      changes: [
+        { field: "status", label: "Status da Reserva", oldValue: oldStatus || "completed", newValue: r.status }
+      ]
+    });
+  }
+  r.updatedAt = nowIso;
+
+  const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+  if (flat && (!r.checkinDate || r.checkinDate <= todayStr) && (!r.checkoutDate || r.checkoutDate >= todayStr)) {
+    flat.isOccupied = true;
+    flat.updatedAt = nowIso;
+  }
+
+  const targetFlatNum = String(r.flatNumber || flat?.number || "");
+  if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
+  let hasActiveCheckoutCardOnRestoredDate = false;
+  let softDeletedCheckoutCardOnRestoredDate = null;
+
+  for (const c of db.cleaningRequests) {
+    if (!c) continue;
+    const sameFlat = (r.flatId && Number(c.flatId) === Number(r.flatId)) || (targetFlatNum && String(c.flatNumber) === targetFlatNum);
+    if (!sameFlat) continue;
+    const isInst = Boolean(
+      c.isInstructionOnly ||
+      c.isBedAdjustmentOnly ||
+      c.source === "manual_instruction" ||
+      c.type === "instruction" ||
+      c.type === "bed_adjustment_only"
+    );
+    if (isInst) continue;
+    const isStayoverOrService = Boolean(
+      c.source === "stayover" ||
+      c.cleaningType === "stayover" ||
+      c.type === "stayover" ||
+      c.source === "service_order" ||
+      c.cleaningType === "service_order"
+    );
+    if (isStayoverOrService) continue;
+
+    const reqDate = c.requestDate || c.effectiveDate;
+    if ((c.isDeleted || c.status === "deleted") && reqDate === r.checkoutDate && reqDate >= todayStr) {
+      softDeletedCheckoutCardOnRestoredDate = c;
+      continue;
+    }
+    if (c.isDeleted || c.status === "deleted") continue;
+
+    const isIntermediateUndoDate = Boolean(
+      reqDate &&
+      r.checkoutDate &&
+      reqDate < r.checkoutDate &&
+      (reqDate === oldCheckoutDate || reqDate === oldEarlyCheckoutDate || reqDate === todayStr || (r.checkinDate && reqDate > r.checkinDate))
+    );
+
+    if (isIntermediateUndoDate) {
+      const hasOtherActiveCheckoutOnDate = (db.reservations || []).some(other =>
+        other &&
+        other.id !== r.id &&
+        !["cancelada", "cancelado", "cancelled", "expirada", "pre_reserva", "pendente", "no_show"].includes(String(other.status || "").toLowerCase()) &&
+        ((r.flatId && Number(other.flatId) === Number(r.flatId)) || String(other.flatNumber || "") === targetFlatNum) &&
+        (other.checkoutDate === reqDate || other.earlyCheckoutDate === reqDate)
+      );
+      if (!hasOtherActiveCheckoutOnDate) {
+        c.isVacant = false;
+        c.isVacantExplicitlySet = false;
+        c.vacantSource = null;
+        c.vacantSetAt = null;
+        c.vacantSetBy = null;
+        c.updatedAt = nowIso;
+        if (c.status !== "clean" && c.status !== "cleaning_now" && c.status !== "in_progress") {
+          c.isDeleted = true;
+          c.status = "deleted";
+          c.deletedAt = nowIso;
+          c.deletedBy = "undo_early_checkout";
+        }
+      }
+    } else if (reqDate === r.checkoutDate && reqDate >= todayStr) {
+      hasActiveCheckoutCardOnRestoredDate = true;
+      c.isVacant = false;
+      c.isVacantExplicitlySet = false;
+      c.vacantSource = null;
+      c.vacantSetAt = null;
+      c.vacantSetBy = null;
+      if (c.status === "will_clean" || (reqDate === todayStr && (c.status === "clean" || c.status === "cleaning_now" || c.status === "in_progress"))) {
+        c.status = "dirty";
+        c.willCleanAt = null;
+        c.cleaningStartedAt = null;
+        c.completedAt = null;
+        c.durationMinutes = null;
+      }
+      c.updatedAt = nowIso;
+    }
+  }
+
+  if (
+    r.checkoutDate &&
+    r.checkoutDate >= todayStr &&
+    !hasActiveCheckoutCardOnRestoredDate &&
+    !["cancelada", "cancelado", "cancelled", "expirada", "pre_reserva", "pendente", "no_show"].includes(String(r.status || "").toLowerCase())
+  ) {
+    if (softDeletedCheckoutCardOnRestoredDate) {
+      softDeletedCheckoutCardOnRestoredDate.isDeleted = false;
+      softDeletedCheckoutCardOnRestoredDate.status = "dirty";
+      softDeletedCheckoutCardOnRestoredDate.leavingGuest = r.guestName || softDeletedCheckoutCardOnRestoredDate.leavingGuest || "Hóspede";
+      softDeletedCheckoutCardOnRestoredDate.isVacant = false;
+      softDeletedCheckoutCardOnRestoredDate.isVacantExplicitlySet = false;
+      softDeletedCheckoutCardOnRestoredDate.vacantSource = null;
+      softDeletedCheckoutCardOnRestoredDate.vacantSetAt = null;
+      softDeletedCheckoutCardOnRestoredDate.vacantSetBy = null;
+      delete softDeletedCheckoutCardOnRestoredDate.deletedAt;
+      delete softDeletedCheckoutCardOnRestoredDate.deletedBy;
+      delete softDeletedCheckoutCardOnRestoredDate.deletedReservationId;
+      softDeletedCheckoutCardOnRestoredDate.updatedAt = nowIso;
+    } else if (targetFlatNum) {
+      const maxCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(x => Number(x?.id) || 0)) : 0;
+      db.cleaningRequests.unshift({
+        id: maxCleanId + 1,
+        flatId: r.flatId || flat?.id || null,
+        flatNumber: targetFlatNum,
+        requestDate: r.checkoutDate,
+        source: "checkout",
+        status: "dirty",
+        assignedUserId: null,
+        assignedUsername: null,
+        isVacant: false,
+        isVacantExplicitlySet: false,
+        isPriority: false,
+        leavingGuest: r.guestName || "Hóspede",
+        arrivingGuest: null,
+        adminNote: null,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      });
+    }
+  }
+
+  // Reativar pedidos de café da manhã vinculados caso tenham sido cancelados por checkout / check-out antecipado
+  if (Array.isArray(db.breakfastOrders)) {
+    db.breakfastOrders.forEach(o => {
+      if (!o) return;
+      const isMatch =
+        (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+        (o.reservationId && Number(o.reservationId) === Number(r.id)) ||
+        (!o.reservationCode && !o.reservationId && String(o.roomNumber) === targetFlatNum && o.date >= r.checkinDate && o.date <= r.checkoutDate);
+      if (
+        isMatch &&
+        o.status === "cancelled" &&
+        !o.cancelledManually &&
+        o.date >= todayStr &&
+        o.date <= r.checkoutDate &&
+        (
+          o.cancelledByCheckout ||
+          o.checkoutWarningInfo ||
+          /check-out|antecipad|reduzida|removida/i.test(String(o.cancelReason || ""))
+        )
+      ) {
+        o.status = "pending";
+        o.cancelReason = null;
+        o.cancelledByCheckout = false;
+        o.checkoutWarningInfo = null;
+        o.updatedAt = nowIso;
+      }
+    });
+  }
+
+  try {
+    ensureReservationScheduledEmails(db, null, r);
+  } catch (_) {}
+
+  return { wasEarlyCheckout, restoredCheckoutDate, oldCheckoutDate };
+}
+
 const handleUndoCheckout = (req, res) => {
   const isReceptionUndo = String(req.path || "").startsWith("/api/reception/");
   const authUser = getAuthUser(req);
@@ -47943,101 +48375,63 @@ const handleUndoCheckout = (req, res) => {
     return res.status(401).json({ error: "Não autenticado." });
   }
 
-  const rawId = req.params.reservationId || req.params.id;
+  const rawId = String(req.params.reservationId || req.params.id || "").trim();
   const id = Number(rawId);
-  const r = (db.reservations || []).find(x => x.id === id || String(x.id) === String(rawId));
+  const upperRawId = rawId.toUpperCase();
+  const r = (db.reservations || []).find(x =>
+    x && (
+      (!isNaN(id) && x.id === id) ||
+      String(x.id) === rawId ||
+      (x.code && String(x.code).toUpperCase() === upperRawId) ||
+      (x.reservationCode && String(x.reservationCode).toUpperCase() === upperRawId)
+    )
+  );
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
-  ensureReservationAuditLogs(r);
-  const wasEarlyCheckout = Boolean(r.earlyCheckout && r.originalCheckoutDate);
-  const restoredCheckoutDate = wasEarlyCheckout ? r.originalCheckoutDate : r.checkoutDate;
-  const oldCheckoutDate = r.checkoutDate;
+  undoReservationCheckoutAndRestoreStay(db, r, {
+    actorUser: authUser,
+    source: isReceptionUndo ? "Recepção / Portaria" : "PMS / Recepção"
+  });
 
-  r.status = (r.previousStatus && r.previousStatus !== "completed" && r.previousStatus !== "checked_out") ? r.previousStatus : "in_house";
-  r.checkoutDone = false;
-  r.actualCheckoutAt = null;
-  r.actualCheckoutTime = null;
-  if (wasEarlyCheckout) {
-    r.checkoutDate = restoredCheckoutDate;
-    if (r.earlyCheckoutNote && r.notes) {
-      r.notes = String(r.notes)
-        .replace(new RegExp(`\\n?•\\s*${r.earlyCheckoutNote.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "g"), "")
-        .replace(/\n?•\s*Check-out antecipado em [^\n]+/g, "")
-        .trim();
-    } else if (r.notes) {
-      r.notes = String(r.notes).replace(/\n?•\s*Check-out antecipado em [^\n]+/g, "").trim();
-    }
-    r.earlyCheckout = false;
-    r.originalCheckoutDate = null;
-    r.earlyCheckoutDate = null;
-    r.earlyCheckoutTime = null;
-    r.earlyCheckoutReportedBy = null;
-    r.earlyCheckoutNote = null;
-    r._earlyCheckoutUndone = true;
-
-    addReservationAuditLog(r, {
-      action: "undo_early_checkout",
-      actor: {
-        id: authUser?.id || null,
-        name: authUser?.name || authUser?.username || "Administrador / Recepção",
-        role: authUser?.role || "admin",
-        type: "user"
-      },
-      source: "PMS / Recepção",
-      description: `Check-out antecipado desfeito. Saída restaurada de ${oldCheckoutDate} para ${restoredCheckoutDate}.`,
-      changes: [
-        { field: "checkoutDate", label: "Data de Check-out", oldValue: oldCheckoutDate, newValue: restoredCheckoutDate },
-        { field: "status", label: "Status da Reserva", oldValue: "completed", newValue: r.status }
-      ]
-    });
-  }
-  r.updatedAt = new Date().toISOString();
-
-  const flat = db.flats.find(f => f.id === r.flatId);
-  if (flat) {
-    flat.isOccupied = true;
-    flat.updatedAt = new Date().toISOString();
-  }
-
-  const today = getTodayStr();
-  const cleanReq = (db.cleaningRequests || []).find(c =>
-    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
-    (c.requestDate === today || c.requestDate === r.checkoutDate || c.requestDate === oldCheckoutDate)
-  );
-  if (cleanReq && cleanReq.status !== "cleaning_now" && cleanReq.status !== "in_progress" && cleanReq.status !== "clean") {
-    cleanReq.isVacant = false;
-    cleanReq.isVacantExplicitlySet = false;
-    cleanReq.vacantSource = null;
-    cleanReq.updatedAt = new Date().toISOString();
-  }
-
-  // Reativar pedidos de café da manhã vinculados caso tenham sido cancelados por checkout
-  if (db.breakfastOrders) {
-    const todayStr = getBrasiliaNow().date;
-    db.breakfastOrders.forEach(o => {
-      const isMatch = (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
-                      o.reservationId === r.id ||
-                      (String(o.roomNumber) === String(r.flatNumber) && o.date >= r.checkinDate && o.date <= r.checkoutDate);
-      if (isMatch && o.status === "cancelled" && o.date >= todayStr && (
-        o.cancelledByCheckout ||
-        o.cancelReason?.includes("Early check-out") ||
-        o.cancelReason?.includes("early check-out") ||
-        o.cancelReason?.toLowerCase().includes("check-out")
-      )) {
-        o.status = "pending";
-        o.cancelReason = null;
-        o.cancelledByCheckout = false;
-        o.checkoutWarningInfo = null;
-        o.updatedAt = new Date().toISOString();
-      }
-    });
+  const undoConflicts = typeof findActiveOverbookingConflicts === "function"
+    ? findActiveOverbookingConflicts(db, {
+        flatId: r.flatId,
+        flatNumber: r.flatNumber,
+        checkinDate: r.checkinDate,
+        checkoutDate: r.checkoutDate,
+        excludeResId: r.id
+      })
+    : [];
+  if (undoConflicts.length > 0) {
+    r.isOverbooking = true;
+    r.conflictWarning = `Conflito de reserva no Flat ${r.flatNumber}`;
+    r.conflictDetails = undoConflicts;
+  } else {
+    r.isOverbooking = false;
+    delete r.conflictWarning;
+    delete r.conflictDetails;
   }
 
   saveDatabase();
+  const responseRes = isReceptionUndo
+    ? buildSanitizedReceptionItem(r)
+    : {
+        ...r,
+        code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
+        checkoutDone: false,
+        isCheckedOutToday: false,
+        earlyCheckout: false,
+        originalCheckoutDate: null,
+        earlyCheckoutDate: null,
+        earlyCheckoutTime: null,
+        earlyCheckoutReportedBy: null,
+        earlyCheckoutNote: null
+      };
   res.json({
     success: true,
     message: `Check-out do Apt ${r.flatNumber} desfeito com sucesso!`,
-    reservation: isReceptionUndo ? buildSanitizedReceptionItem(r) : r
+    conflicts: undoConflicts,
+    reservation: responseRes
   });
 };
 app.post("/api/reception/undo-checkout/:reservationId", handleUndoCheckout);
@@ -59326,50 +59720,8 @@ app.get("/api/breakfast/orders", (req, res) => {
   const nowBrl = getBrasiliaNow();
   const todayStr = nowBrl.date;
 
-  // Reconciliação retroativa do Flat 509 (check-out antecipado ocorrido em 26/10 antes da implantação do novo fluxo)
-  let syncedRetroactive509 = false;
-  const flat509Obj = (db.flats || []).find(f => String(f.number) === "509");
-  const res509 = (db.reservations || []).find(r =>
-    (String(r.flatNumber) === "509" || (flat509Obj && Number(r.flatId) === Number(flat509Obj.id))) &&
-    r.checkinDate <= "2026-10-26" &&
-    r.checkoutDate >= "2026-10-27" &&
-    r.status !== "cancelada" &&
-    r.status !== "cancelled" &&
-    !r.earlyCheckout &&
-    !r._earlyCheckoutUndone
-  );
-  if (res509) {
-    const clean509 = (db.cleaningRequests || []).find(cr =>
-      (String(cr.flatNumber) === "509" || cr.flatId === res509.flatId) &&
-      cr.requestDate >= "2026-10-26"
-    );
-    const repSource = clean509?.vacantSource || "whatsapp_concierge";
-    const repLabel = formatCheckoutReporterLabel(repSource, clean509?.vacantSetBy || "Portaria / Governança");
-    const origOut = res509.originalCheckoutDate || res509.checkoutDate;
-    res509.originalCheckoutDate = origOut;
-    res509.previousCheckoutDate = origOut;
-    if (res509.originalTotalAmount === undefined && Number(res509.totalAmount) > 0) {
-      res509.originalTotalAmount = Number(res509.totalAmount);
-    }
-    res509.earlyCheckout = true;
-    res509.earlyCheckoutDate = "2026-10-26";
-    res509.earlyCheckoutTime = res509.actualCheckoutTime || "21:00";
-    res509.earlyCheckoutReportedBy = repLabel;
-    res509.checkoutReportedBy = repLabel;
-    res509.checkoutDone = true;
-    res509.status = "completed";
-    res509.actualCheckoutAt = res509.actualCheckoutAt || "2026-10-26T23:59:00.000Z";
-    res509.checkoutDate = "2026-10-26";
-    const note509 = `Check-out antecipado em 26/10/2026 informado por ${repLabel} (saída original prevista: ${formatDateBr(origOut)}/2026)`;
-    res509.earlyCheckoutNote = note509;
-    const curNotes = String(res509.notes || "").trim();
-    if (!curNotes.includes("Check-out antecipado em")) {
-      res509.notes = curNotes ? `${curNotes}\n• ${note509}` : `• ${note509}`;
-    }
-    syncedRetroactive509 = true;
-  }
-
   // Reconciliação em tempo real com o calendário PMS
+  let syncedRetroactive509 = false;
   let restoredAnyOrder = false;
   allOrders.forEach(order => {
     if (!order.status) order.status = "pending";
