@@ -1526,7 +1526,12 @@ export const atualizarDadosHospedeTool = {
       email: {
         type: 'STRING',
         description:
-          'Endereço de e-mail correto informado ou confirmado pelo hóspede (se ele confirmar a sugestão em alerta_email_incorreto.email_sugerido dizendo "sim", passe esse e-mail sugerido aqui).',
+          'Endereço de e-mail correto informado ou confirmado pelo hóspede (se ele confirmar a sugestão em alerta_email_incorreto.email_sugerido dizendo "sim", passe esse e-mail sugerido; se ele repetir ou disser que o próprio e-mail atual já está correto / "é esse mesmo", passe o e-mail atual aqui ou use confirmar_email_atual: true).',
+      },
+      confirmar_email_atual: {
+        type: 'BOOLEAN',
+        description:
+          'Passe TRUE quando houver alerta_email_incorreto ativo e o hóspede responder que o e-mail já cadastrado na reserva está correto ("esse mesmo", "está certo", "já recebi o e-mail"), mesmo sem redigitar o endereço.',
       },
       horario_previsto_chegada: { type: 'STRING', description: 'Horário previsto de chegada para o check-in no formato HH:MM.' },
       placa_veiculo: { type: 'STRING', description: 'Placa do veículo caso o hóspede vá utilizar a garagem (ex: ABC1D23).' },
@@ -1548,8 +1553,21 @@ export const atualizarDadosHospedeTool = {
       const camposAtualizados = [];
 
       let validatedEmail = '';
-      if (args.email !== undefined && String(args.email).trim() !== '') {
-        const emailValidation = await validateGuestEmailAddress(args.email, {
+      const fallbackCurrentEmail =
+        args.confirmar_email_atual === true && (!args.email || String(args.email).trim() === '')
+          ? String(
+              reserva?.alerta_email_incorreto?.email_invalido ||
+                reserva?.email_cadastrado ||
+                ''
+            ).trim()
+          : '';
+      const rawCandidateEmail =
+        args.email !== undefined && String(args.email).trim() !== ''
+          ? String(args.email).trim()
+          : fallbackCurrentEmail;
+
+      if (rawCandidateEmail !== '') {
+        const emailValidation = await validateGuestEmailAddress(rawCandidateEmail, {
           checkDns: true,
           stripTrailingPunctuation: true,
         });
@@ -1558,13 +1576,13 @@ export const atualizarDadosHospedeTool = {
             ? ` Pergunte gentilmente se o endereço correto seria *${emailValidation.suggestedEmail}*.`
             : ' Peça com cordialidade que ele confira a digitação e envie o endereço de e-mail correto novamente.';
           const msgInvalido =
-            `Explique educadamente ao hóspede que o sistema verificou o endereço "${String(args.email).trim()}" e identificou que ele continua inválido (${emailValidation.message}). ` +
+            `Explique educadamente ao hóspede que o sistema verificou o endereço "${rawCandidateEmail}" e identificou que ele continua inválido (${emailValidation.message}). ` +
             `Por segurança, a alteração ainda não foi salva.${sugestaoMsg}`;
           return {
             status: 'BLOQUEADO_PELA_REGRA',
             codigo_regra_bloqueio: 'EMAIL_INVALIDO',
             dados: {
-              email_informado: String(args.email).trim(),
+              email_informado: rawCandidateEmail,
               motivo: emailValidation.message,
               email_sugerido: emailValidation.suggestedEmail || null,
             },
@@ -1784,7 +1802,13 @@ export const atualizarDadosHospedeTool = {
 
       let detalheEmail = '';
       if (validatedEmail && emailResendSummary) {
-        if (emailResendSummary.resentCount > 0) {
+        if (emailResendSummary.sameEmailConfirmed) {
+          detalheEmail =
+            ` Peça desculpas gentilmente pelo alarme falso de falha na entrega, agradeça pela confirmação e tranquilize o hóspede informando que o e-mail *${validatedEmail}* já está confirmado como válido e ativo no sistema` +
+            (emailResendSummary.resentCount > 0
+              ? `, e que ${emailResendSummary.resentCount} mensagem(ns) retida(s) (${emailResendSummary.resentSubjects.join(', ')}) já foram liberadas para ele!`
+              : `, com o alerta de erro já removido da reserva!`);
+        } else if (emailResendSummary.resentCount > 0) {
           detalheEmail =
             ` Informe com cordialidade que o e-mail já foi alterado no sistema para *${validatedEmail}* e que ` +
             `${emailResendSummary.resentCount} e-mail(s) pendente(s) recente(s) (${emailResendSummary.resentSubjects.join(', ')}) já foram reenviados agora mesmo!`;
@@ -1806,8 +1830,10 @@ export const atualizarDadosHospedeTool = {
           : ` Caso o hóspede ainda precise preencher a FNRH e enviar a foto do documento/assinatura digital do pré-check-in, o link oficial é: ${linkPreCheckin}.`;
 
       const msg =
-        `Confirme com cordialidade que os dados da reserva *${reserva.id}* (${reserva.nome_imovel}) foram atualizados no sistema: ` +
-        `${camposAtualizados.join(' | ')}.${detalheGaragem}${detalheEmail}${preCheckinSuffix}`;
+        emailResendSummary?.sameEmailConfirmed && camposAtualizados.length === 1 && validatedEmail
+          ? `Confirme com muita cordialidade na reserva *${reserva.id}* (${reserva.nome_imovel}):${detalheEmail}${preCheckinSuffix}`
+          : `Confirme com cordialidade que os dados da reserva *${reserva.id}* (${reserva.nome_imovel}) foram atualizados no sistema: ` +
+            `${camposAtualizados.join(' | ')}.${detalheGaragem}${detalheEmail}${preCheckinSuffix}`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -1815,6 +1841,7 @@ export const atualizarDadosHospedeTool = {
           reserva_id: reserva.id,
           campos_atualizados: camposAtualizados,
           email_atualizado: validatedEmail || undefined,
+          email_confirmado_sem_alteracao: Boolean(emailResendSummary?.sameEmailConfirmed),
           emails_pendentes_reenviados: emailResendSummary?.resentCount ?? 0,
           assuntos_reenviados: emailResendSummary?.resentSubjects ?? [],
           agendamentos_atualizados: emailResendSummary?.updatedScheduledCount ?? 0,
@@ -4942,7 +4969,7 @@ export function buildStateRoutedPrompt(context, manualImovel = '') {
     ``,
     `# DIRETRIZES OBRIGATÓRIAS DE EXECUÇÃO E USO DE FERRAMENTAS (TOOL CALLING)`,
     `1. **Intenção -> Ferramenta:** Sempre que o hóspede pedir algo que envolva datas (\`alterar_datas_reserva\`, \`estender_estadia\`), horários (\`solicitar_early_checkin\`, \`solicitar_late_checkout\`), disponibilidade (\`consultar_disponibilidade\`), valores/descontos (\`calcular_orcamento\`), fotos (\`enviar_midia_unidade\`), reserva (\`gerar_link_reserva\`), veículo/cadastro/correção de e-mail (\`atualizar_dados_hospede\`), cartão NFC/acesso (\`resolver_problema_cartao_nfc\`), visitas (\`autorizar_visita_temporaria\`), cancelamento (\`processar_cancelamento\`), governança (\`solicitar_limpeza_extra\`), manutenção (\`abrir_chamado_manutencao\`), achados e perdidos (\`consultar_achados_e_perdidos\`) ou nota fiscal/recibo (\`gerenciar_nota_fiscal_nfse\`), chame a ferramenta adequada antes de responder.`,
-    `2. **Continuidade Multi-Turn (Respostas Curtas do Hóspede):** Quando o hóspede responder a uma pergunta anterior sua na conversa (ex: você perguntou "até que data gostaria de ficar?" e ele respondeu "até amanhã só", ou o sistema avisou sobre \`alerta_email_incorreto\` e o hóspede enviou o e-mail correto ou confirmou \`email_sugerido\` dizendo "sim, é esse mesmo"), mantenha 100% do contexto e acione IMEDIATAMENTE a ferramenta correspondente (\`estender_estadia\` ou \`atualizar_dados_hospede\` passando \`email\`).`,
+    `2. **Continuidade Multi-Turn (Respostas Curtas do Hóspede):** Quando o hóspede responder a uma pergunta anterior sua na conversa (ex: você perguntou "até que data gostaria de ficar?" e ele respondeu "até amanhã só", ou o sistema avisou sobre \`alerta_email_incorreto\` e o hóspede enviou um novo e-mail, confirmou \`email_sugerido\`, ou afirmou que o e-mail já cadastrado está correto / "é esse mesmo"), mantenha 100% do contexto e acione IMEDIATAMENTE a ferramenta correspondente (\`estender_estadia\` ou \`atualizar_dados_hospede\` passando \`email\` ou \`confirmar_email_atual: true\`).`,
     `3. **Proibição de Repetir "Olá, [Nome]!" e Apresentação em Conversa em Andamento:** Se já houver mensagens recentes trocadas no histórico da conversa, NUNCA repita "Olá, [Nome]!", "Bom dia, [Nome]!" e NUNCA se apresente novamente dizendo "Sou a Sofia, concierge virtual da CorpFlats". Continue o diálogo diretamente do ponto onde parou, como uma pessoa real no WhatsApp.`,
     `4. **Acesso via Cartão NFC (Zero Senha de Porta):** Na CorpFlats (Soho Residence) o acesso aos flats é feito exclusivamente por **Cartão NFC** retirado na recepção 24h. NUNCA mencione "senha da porta" ou "senha da fechadura eletrônica".`,
     `5. **Simulação antes da Efetivação:** Para alterações que envolvam custos ou mudanças de data, chame a ferramenta primeiro em modo de simulação/consulta (\`confirmacao_hospede: false\` ou \`efetivar_alteracao: false\`), informe as condições ao hóspede e só efetive após o "sim" explícito dele.`,

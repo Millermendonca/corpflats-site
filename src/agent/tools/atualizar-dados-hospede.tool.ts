@@ -10,6 +10,7 @@ import {
 export interface AtualizarDadosHospedeArgs {
   cpf_cnpj?: string;
   email?: string;
+  confirmar_email_atual?: boolean;
   horario_previsto_chegada?: string;
   placa_veiculo?: string;
   marca_veiculo?: string;
@@ -38,7 +39,12 @@ export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHosped
       email: {
         type: 'string',
         description:
-          'Endereço de e-mail correto informado ou confirmado pelo hóspede (inclusive quando ele confirmar a sugestão de e-mail corrigido).',
+          'Endereço de e-mail correto informado ou confirmado pelo hóspede (inclusive quando ele confirmar a sugestão ou repetir que o e-mail já cadastrado está correto).',
+      },
+      confirmar_email_atual: {
+        type: 'boolean',
+        description:
+          'Passe TRUE quando houver alerta_email_incorreto ativo e o hóspede informar que o e-mail já cadastrado na reserva está correto ("esse mesmo", "está certo", "já recebi"), mesmo sem redigitar o endereço.',
       },
       horario_previsto_chegada: {
         type: 'string',
@@ -78,8 +84,21 @@ export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHosped
       const db = context.runtime?.db;
 
       let validatedEmail = '';
-      if (args.email !== undefined && String(args.email).trim() !== '') {
-        const emailValidation = await validateGuestEmailAddress(args.email, {
+      const fallbackCurrentEmail =
+        args.confirmar_email_atual === true && (!args.email || String(args.email).trim() === '')
+          ? String(
+              reserva?.alerta_email_incorreto?.email_invalido ||
+                reserva?.email_cadastrado ||
+                ''
+            ).trim()
+          : '';
+      const rawCandidateEmail =
+        args.email !== undefined && String(args.email).trim() !== ''
+          ? String(args.email).trim()
+          : fallbackCurrentEmail;
+
+      if (rawCandidateEmail !== '') {
+        const emailValidation = await validateGuestEmailAddress(rawCandidateEmail, {
           checkDns: true,
           stripTrailingPunctuation: true,
         });
@@ -88,13 +107,13 @@ export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHosped
             ? ` Pergunte de forma gentil se o endereço correto seria *${emailValidation.suggestedEmail}*.`
             : ' Peça por gentileza que ele confira a digitação e envie o e-mail completo novamente.';
           const msgInvalido =
-            `Explique educadamente ao hóspede que o sistema verificou o endereço "${String(args.email).trim()}" e identificou um erro (${emailValidation.message}). ` +
+            `Explique educadamente ao hóspede que o sistema verificou o endereço "${rawCandidateEmail}" e identificou um erro (${emailValidation.message}). ` +
             `Por segurança, a alteração ainda não foi gravada.${sugestaoMsg}`;
           return {
             status: 'BLOQUEADO_PELA_REGRA',
             codigo_regra_bloqueio: 'EMAIL_INVALIDO',
             dados: {
-              email_informado: String(args.email).trim(),
+              email_informado: rawCandidateEmail,
               motivo: emailValidation.message,
               email_sugerido: emailValidation.suggestedEmail || null,
             },
@@ -173,7 +192,13 @@ export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHosped
 
       let detalheEmail = '';
       if (validatedEmail && emailResendSummary) {
-        if (emailResendSummary.resentCount > 0) {
+        if (emailResendSummary.sameEmailConfirmed) {
+          detalheEmail =
+            ` Peça desculpas gentilmente pelo alarme falso de falha na entrega, agradeça pela confirmação e tranquilize o hóspede informando que o e-mail *${validatedEmail}* está confirmado como válido e ativo no sistema` +
+            (emailResendSummary.resentCount > 0
+              ? `, e que ${emailResendSummary.resentCount} mensagem(ns) retida(s) (${emailResendSummary.resentSubjects.join(', ')}) já foram liberadas!`
+              : `, com o alerta de erro já removido da reserva!`);
+        } else if (emailResendSummary.resentCount > 0) {
           detalheEmail =
             ` Informe também que ${emailResendSummary.resentCount} e-mail(s) pendente(s) recente(s) ` +
             `(${emailResendSummary.resentSubjects.join(', ')}) já foram reenviados agora mesmo para *${validatedEmail}*!`;
@@ -187,8 +212,10 @@ export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHosped
       }
 
       const msg =
-        `Confirme com cordialidade que os dados da reserva *${reserva.id}* (${reserva.nome_imovel}) foram atualizados no sistema: ` +
-        `${camposAtualizados.join(' | ')}.${detalheEmail}`;
+        emailResendSummary?.sameEmailConfirmed && camposAtualizados.length === 1 && validatedEmail
+          ? `Confirme com muita cordialidade na reserva *${reserva.id}* (${reserva.nome_imovel}):${detalheEmail}`
+          : `Confirme com cordialidade que os dados da reserva *${reserva.id}* (${reserva.nome_imovel}) foram atualizados no sistema: ` +
+            `${camposAtualizados.join(' | ')}.${detalheEmail}`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -196,6 +223,7 @@ export const atualizarDadosHospedeTool: AgentToolDefinition<AtualizarDadosHosped
           reserva_id: reserva.id,
           campos_atualizados: camposAtualizados,
           email_atualizado: validatedEmail || undefined,
+          email_confirmado_sem_alteracao: Boolean(emailResendSummary?.sameEmailConfirmed),
           emails_pendentes_reenviados: emailResendSummary?.resentCount ?? 0,
           assuntos_reenviados: emailResendSummary?.resentSubjects ?? [],
           agendamentos_atualizados: emailResendSummary?.updatedScheduledCount ?? 0,

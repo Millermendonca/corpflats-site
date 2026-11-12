@@ -6,9 +6,10 @@ import {
   isInternalOrThirdPartyOperationalEmail,
   notifyGuestInvalidEmailViaWhatsApp,
   updateGuestEmailAndResendRecentPending,
+  reconcileFalsePositiveEmailAlerts,
   sendEmailAsync
 } from "../artifacts/api-server/mail-service.mjs";
-import { processInboundBounceForGuestEmail } from "../artifacts/api-server/zoho-mail-service.mjs";
+import { processInboundBounceForGuestEmail, matchEmailWithReservation } from "../artifacts/api-server/zoho-mail-service.mjs";
 import {
   injectSessionContext,
   executeRegisteredAgentTool
@@ -420,6 +421,176 @@ test("3. Rejeição SMTP 550 e Bounce Zoho Mail acionam solicitação de correç
     assert.equal(toolRes.dados.emails_pendentes_reenviados, 1);
     assert.equal(db.reservations[0].guestEmail, "fernanda.real@outlook.com");
     assert.equal(db.reservations[0].guestEmailInvalid, false);
+  } finally {
+    globalThis.__corpflatsSendZapiMessage = prevSendZapi;
+    globalThis.__corpflatsEvaluateZapiChannelPolicy = prevEvalPolicy;
+  }
+});
+
+test("4. Anti-Falso-Positivo (Caso Junior Flat 1304): não acusa e-mail entregue em bounces sem o endereço do hóspede, DSN de atraso ou rate-limit SMTP, e trata confirmação do mesmo e-mail", async () => {
+  // 4.1 Erros de remetente/rate-limit/relay 550/553/ENOTFOUND do próprio servidor SMTP NÃO são erro de destinatário
+  assert.equal(
+    isRecipientDeliverySmtpError({ responseCode: 550, message: "550 5.4.6 Unusual sending activity detected" }),
+    false
+  );
+  assert.equal(
+    isRecipientDeliverySmtpError({ responseCode: 553, message: "553 Relaying disallowed as contato@corpflats.com.br" }),
+    false
+  );
+  assert.equal(
+    isRecipientDeliverySmtpError({ code: "ENOTFOUND", message: "getaddrinfo ENOTFOUND smtp.zoho.com" }),
+    false
+  );
+
+  const waCalls = [];
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const tenMinAgoIso = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
+  const fiveMinAgoIso = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+  const todayStr = nowIso.slice(0, 10);
+
+  const db = {
+    settings: {
+      receptionEmail: "soho@promenade.com.br",
+      garageEmail: "promenadesoho@pfbestacionamentos.com.br",
+      emailSettings: { enabled: true }
+    },
+    reservations: [
+      {
+        id: 13040,
+        code: "RES-1304-13040",
+        flatNumber: "1304",
+        guestName: "Junior Pelicioni",
+        guestPhone: "556283384241",
+        guestEmail: "junior_pelicioni@hotmail.com",
+        checkinDate: todayStr,
+        checkoutDate: todayStr,
+        status: "confirmada",
+        auditLogs: []
+      }
+    ],
+    reservationCommunications: [
+      {
+        id: "comm_junior_sent",
+        reservation_id: "RES-1304-13040",
+        type: "email",
+        direction: "outbound",
+        recipient: "junior_pelicioni@hotmail.com",
+        subject: "Confirmação de Reserva - Flat 1304",
+        body: "<p>Sua reserva no Flat 1304 está confirmada!</p>",
+        status: "sent",
+        metadata: { sentAt: tenMinAgoIso, trigger: "reservation_created", recipientType: "guest" },
+        created_at: tenMinAgoIso
+      }
+    ],
+    zohoMessagesCache: [],
+    whatsappHistory: [],
+    whatsappConversations: []
+  };
+
+  const prevSendZapi = globalThis.__corpflatsSendZapiMessage;
+  const prevEvalPolicy = globalThis.__corpflatsEvaluateZapiChannelPolicy;
+  globalThis.__corpflatsSendZapiMessage = async (phone, message) => {
+    waCalls.push({ phone, message });
+    return { success: true, messageId: `wa_fp_${waCalls.length}` };
+  };
+  globalThis.__corpflatsEvaluateZapiChannelPolicy = () => ({ allowed: true });
+
+  try {
+    // 4.2 Bounce genérico sem o e-mail do hóspede no snippet (ou vindo de e-mail operacional do Flat 1304) NÃO acusa Junior!
+    const bounceWithoutGuestEmail = {
+      fromEmail: "mailer-daemon@mail.zoho.com",
+      subject: "Undelivered Mail Returned to Sender - Flat 1304",
+      snippet: "This message was created automatically by mail delivery software. Delivery failed to soho@promenade.com.br (550 mailbox full)",
+      direction: "inbound",
+      created_at: nowIso
+    };
+    const matchedSummary = matchEmailWithReservation(db, bounceWithoutGuestEmail);
+    const bounceRes1 = await processInboundBounceForGuestEmail(db, () => {}, bounceWithoutGuestEmail, matchedSummary);
+    assert.equal(bounceRes1.ignoredReason, "no_explicit_bounced_email_in_message");
+    assert.equal(waCalls.length, 0);
+    assert.equal(db.reservationCommunications[0].status, "sent");
+    assert.equal(Boolean(db.reservations[0].guestEmailInvalid), false);
+
+    // 4.3 DSN de atraso temporário (Delay / Greylisting Hotmail) NÃO acusa Junior!
+    const delayedDsn = {
+      fromEmail: "postmaster@hotmail.com",
+      subject: "Delivery Status Notification (Delay)",
+      snippet: "Action: delayed - Delivery to junior_pelicioni@hotmail.com is delayed. Will continue trying.",
+      direction: "inbound",
+      created_at: nowIso
+    };
+    const bounceRes2 = await processInboundBounceForGuestEmail(db, () => {}, delayedDsn, matchedSummary);
+    assert.equal(bounceRes2.ignoredReason, "non_permanent_delay_or_relay_dsn");
+    assert.equal(waCalls.length, 0);
+
+    // 4.4 Oscilação/rejeição SMTP secundária quando um e-mail já foi entregue a junior_pelicioni@hotmail.com NÃO notifica!
+    const smtpFalseAlarm = await notifyGuestInvalidEmailViaWhatsApp({
+      db,
+      saveDatabase: () => {},
+      reservation: db.reservations[0],
+      invalidEmail: "junior_pelicioni@hotmail.com",
+      reason: "550 Temporary policy rejection",
+      source: "smtp_rejection"
+    });
+    assert.equal(smtpFalseAlarm.notified, false);
+    assert.equal(smtpFalseAlarm.reason, "email_already_delivered_recently");
+    assert.equal(waCalls.length, 0);
+
+    // 4.5 Se a reserva estava com alerta aberto e o hóspede responde "Junior_pelicioni@hotmail.com / Esse mesmo",
+    // a Tool confirma o mesmo e-mail sem duplicar o envio que já foi entregue e pede desculpas pelo alarme falso
+    db.reservations[0].guestEmailInvalid = true;
+    db.reservations[0].emailCorrectionRequest = {
+      status: "awaiting_reply",
+      invalidEmail: "junior_pelicioni@hotmail.com",
+      guestIndex: 1,
+      source: "zoho_bounce",
+      notifiedAt: tenMinAgoIso,
+      phone: "556283384241",
+      whatsappSent: true
+    };
+    db.reservationCommunications[0].status = "bounced";
+
+    const sessionCtx = injectSessionContext({
+      db,
+      phone: "556283384241",
+      runtime: { db, saveDatabase: () => {} }
+    });
+    assert.equal(sessionCtx.reserva_ativa.alerta_email_incorreto?.status, "AGUARDANDO_CORRECAO");
+
+    const confirmToolRes = await executeRegisteredAgentTool(
+      "atualizar_dados_hospede",
+      { email: "Junior_pelicioni@hotmail.com", confirmar_email_atual: true },
+      sessionCtx
+    );
+    assert.equal(confirmToolRes.status, "SUCESSO_EXECUTADO");
+    assert.equal(confirmToolRes.dados.email_confirmado_sem_alteracao, true);
+    assert.equal(confirmToolRes.dados.emails_pendentes_reenviados, 0);
+    assert.equal(db.reservations[0].guestEmailInvalid, false);
+    assert.equal(db.reservations[0].emailCorrectionRequest.status, "resolved_confirmed_same");
+    assert.equal(db.reservationCommunications[0].status, "sent");
+    assert.match(confirmToolRes.instrucao_para_ia, /alarme falso/i);
+
+    // 4.6 Reconciliador automático limpa reservas legadas presas onde o hóspede já confirmou no histórico do WhatsApp
+    db.reservations[0].guestEmailInvalid = true;
+    db.reservations[0].emailCorrectionRequest.status = "awaiting_reply";
+    db.reservationCommunications[0].status = "bounced";
+    db.whatsappConversations.push({
+      id: "conv_junior",
+      phone: "556283384241",
+      messages: [
+        {
+          fromMe: false,
+          text: "Junior_pelicioni@hotmail.com\nEsse mesmo",
+          timestamp: fiveMinAgoIso
+        }
+      ]
+    });
+    const recRes = reconcileFalsePositiveEmailAlerts(db, () => {});
+    assert.equal(recRes.reconciled, 1);
+    assert.equal(db.reservations[0].guestEmailInvalid, false);
+    assert.equal(db.reservations[0].emailCorrectionRequest.status, "resolved_confirmed_same");
+    assert.equal(db.reservationCommunications[0].status, "sent");
   } finally {
     globalThis.__corpflatsSendZapiMessage = prevSendZapi;
     globalThis.__corpflatsEvaluateZapiChannelPolicy = prevEvalPolicy;

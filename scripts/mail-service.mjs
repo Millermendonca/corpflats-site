@@ -1594,13 +1594,21 @@ export function renderB2bAgencyCredentialRequestEmail({
   settings = null,
   baseUrl = "",
   credentialUrl = "",
+  isReminder = false,
+  reminderKind = "",
+  reminderNumber = 1,
   db = null
 } = {}) {
   const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
   const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
   const flatDisplay = cleanFlat ? `Flat ${cleanFlat}` : "Flat Designado";
   const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
-  const guestName = reservation?.guestName || "Hóspede Titular";
+  const rawGuestName = String(reservation?.guestName || "").trim();
+  const isPendingGuest =
+    !rawGuestName ||
+    Boolean(reservation?.guestPending) ||
+    /^(h[óo]spede(\s*\d+|\s+a\s+definir.*|\s+titular|\s+b2b)?|a\s+definir.*)$/i.test(rawGuestName);
+  const guestName = isPendingGuest ? "A Definir (Pendente)" : rawGuestName;
   const checkinDateBr = formatDateBr(reservation?.checkinDate);
   const checkoutDateBr = formatDateBr(reservation?.checkoutDate);
   const checkinTime = settings?.checkinTime || reservation?.checkinTime || "14:00";
@@ -1612,7 +1620,7 @@ export function renderB2bAgencyCredentialRequestEmail({
   const reqContactName = reservation?.requesterInfo?.name || reservation?.requesterName || "";
   const agencyName = agency?.tradeName || agency?.corporateName || reservation?.agencyName || companyName || reqContactName || "Solicitante";
   const agencyPosUnit = reservation?.agencyPosUnit || "";
-  const agentName = (reservation?.agencyAgentName && reservation.agencyAgentName !== "WEBSERVICE")
+  const agentName = (reservation?.agencyAgentName && !/^(WEBSERVICE|SISTEMA|ARGO\.)/i.test(String(reservation.agencyAgentName).trim()))
     ? reservation.agencyAgentName
     : (reqContactName && reqContactName !== agencyName ? reqContactName : "");
 
@@ -1633,21 +1641,61 @@ export function renderB2bAgencyCredentialRequestEmail({
     ? `Reserva #${b2bNumber}${rloc && rloc !== b2bNumber ? ` (RLOC: ${rloc})` : ""}`
     : `Reserva #${resCode}`;
 
-  const subject = `[CONFIRMAÇÃO & DADOS DO HÓSPEDE] ${refLabel} - ${guestName} (${checkinDateBr} a ${checkoutDateBr})`;
+  const isCheckinDayReminder =
+    isReminder &&
+    (reminderKind === "checkin_morning" || reminderKind === "checkin_noon" || reminderKind === "sameday_2h");
 
-  const greetingName = agentName ? `Olá, <strong>${escapeHtml(agentName)}</strong> (${escapeHtml(agencyName)})` : `Olá, <strong>${escapeHtml(agencyName)}</strong>`;
+  const guestSubjectPart = !isPendingGuest ? ` - ${guestName}` : "";
+  const subject = isReminder
+    ? isCheckinDayReminder
+      ? `[LEMBRETE URGENTE • CHECK-IN HOJE] Dados do Hóspede Pendentes - ${refLabel}${guestSubjectPart} (${checkinDateBr})`
+      : `[LEMBRETE • DADOS DO HÓSPEDE PENDENTES] ${refLabel}${guestSubjectPart} (${checkinDateBr} a ${checkoutDateBr})`
+    : `[CONFIRMAÇÃO & DADOS DO HÓSPEDE] ${refLabel}${guestSubjectPart} (${checkinDateBr} a ${checkoutDateBr})`;
+
+  const greetingName = agentName
+    ? `Olá, <strong>${escapeHtml(agentName)}</strong>${agencyName && agencyName !== agentName ? ` (${escapeHtml(agencyName)})` : ""}`
+    : `Olá, <strong>${escapeHtml(agencyName)}</strong>`;
+
+  const guestIntroFragment = !isPendingGuest
+    ? `do(a) hóspede <strong>${escapeHtml(guestName)}</strong>`
+    : `solicitada por você`;
+
+  const headerTitle = isReminder
+    ? (isCheckinDayReminder
+        ? "⏰ Check-in Hoje • Preenchimento Urgente dos Dados do Hóspede"
+        : "🔔 Lembrete • Preenchimento Pendente dos Dados do Hóspede")
+    : "Reserva Confirmada • Dados do Hóspede para Liberação na Recepção";
+
+  const introParagraphsHtml = isReminder
+    ? isCheckinDayReminder
+      ? `
+      <p style="font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;">
+        ${greetingName}, tudo bem? O check-in da <strong>${escapeHtml(refLabel)}</strong> ${guestIntroFragment}${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}) acontece <strong>hoje (${checkinDateBr}, a partir das ${checkinTime})</strong>, e vimos que os dados completos do hóspede <strong>ainda não foram preenchidos</strong> em nosso sistema.
+      </p>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Pedimos por gentileza o preenchimento imediato pelo link seguro abaixo para que possamos liberar a entrada na portaria 24h e enviar as instruções de acesso ao hóspede sem atrasos na chegada.
+      </p>`
+      : `
+      <p style="font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;">
+        ${greetingName}, tudo bem? Passando para lembrar que vimos que os dados completos do hóspede da <strong>${escapeHtml(refLabel)}</strong> ${guestIntroFragment}${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}, período de <strong>${checkinDateBr} a ${checkoutDateBr}</strong>) <strong>ainda não foram preenchidos</strong>.
+      </p>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Utilize o link seguro abaixo (ou encaminhe-o diretamente ao hóspede) para concluir o cadastro antecipado e garantir a liberação automática na recepção.
+      </p>`
+    : `
+      <p style="font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;">
+        ${greetingName}, tudo bem? Confirmamos com muita satisfação a reserva ${guestIntroFragment}${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}), para o período de <strong>${checkinDateBr} a ${checkoutDateBr}</strong>.
+      </p>
+      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
+        Como ainda não temos os dados completos e o contato direto do hóspede na reserva, disponibilizamos abaixo o nosso <strong>Link Seguro para Preenchimento dos Dados do Hóspede</strong>.
+      </p>`;
 
   const contentHtml = `
     <div style="margin-bottom: 24px;">
       <h1 style="font-size: 20px; font-weight: 600; line-height: 1.3; color: #111827; margin: 0 0 10px 0;">
-        Reserva Confirmada • Dados do Hóspede para Liberação na Recepção
+        ${headerTitle}
       </h1>
-      <p style="font-size: 15px; color: #374151; margin: 0 0 12px 0; line-height: 1.6;">
-        ${greetingName}, tudo bem? Confirmamos com muita satisfação a reserva do(a) hóspede <strong>${escapeHtml(guestName)}</strong>${companyName ? ` (<strong>${escapeHtml(companyName)}</strong>)` : ""} no <strong>${escapeHtml(buildingName)}</strong> (${escapeHtml(flatDisplay)}), para o período de <strong>${checkinDateBr} a ${checkoutDateBr}</strong>.
-      </p>
-      <p style="font-size: 15px; color: #374151; margin: 0; line-height: 1.6;">
-        Como ainda não temos o contato direto do hóspede na reserva, disponibilizamos abaixo o nosso <strong>Link Seguro para Preenchimento dos Dados do Hóspede</strong>.
-      </p>
+      ${introParagraphsHtml}
     </div>
 
     <!-- Alerta de Obrigatoriedade de Credenciamento Prévio -->
@@ -1656,7 +1704,7 @@ export function renderB2bAgencyCredentialRequestEmail({
         ⚠️ IMPORTANTE: LIBERAÇÃO ANTECIPADA OBRIGATÓRIA NA RECEPÇÃO / PORTARIA 24H
       </div>
       <p style="color: #78350F; font-size: 13.5px; margin: 0; line-height: 1.55;">
-        O preenchimento antecipado pelo link abaixo (informando <strong>Nome Completo, CPF, WhatsApp e E-mail do hóspede</strong>) é <strong>indispensável para gerar a autorização de entrada na portaria do edifício</strong>.<br/><br/>
+        O preenchimento antecipado pelo link abaixo (informando <strong>Nome Completo, CPF/Passaporte, WhatsApp e E-mail do hóspede</strong>) é <strong>indispensável para gerar a autorização de entrada na portaria do edifício</strong>.<br/><br/>
         Ressaltamos gentilmente que <strong>esses dados não podem ser informados apenas na hora no balcão</strong>, pois nossa operação é digital e, sem o cadastro prévio pelo link, o sistema da recepção/portaria não conseguirá localizar a reserva nem autorizar a entrada do hóspede no condomínio.
       </p>
     </div>
@@ -1701,12 +1749,19 @@ export function renderB2bAgencyCredentialRequestEmail({
     </p>
   `;
 
-  const badge = `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;">Reserva • Dados do Hóspede</span>`;
+  const badge = isReminder
+    ? `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: ${isCheckinDayReminder ? "#FEF2F2" : "#FFFBEB"}; color: ${isCheckinDayReminder ? "#B91C1C" : "#B45309"}; border: 1px solid ${isCheckinDayReminder ? "#FECACA" : "#FDE68A"};">${isCheckinDayReminder ? "Check-in Hoje • Dados Pendentes" : `Lembrete${reminderNumber > 1 ? ` #${reminderNumber}` : ""} • Dados do Hóspede`}</span>`
+    : `<span class="badge badge-checkin" style="display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE;">Reserva • Dados do Hóspede</span>`;
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+  const textIntro = isReminder
+    ? (isCheckinDayReminder
+        ? `O check-in da ${refLabel}${!isPendingGuest ? ` (${guestName})` : ""} no ${buildingName} (${flatDisplay}) acontece HOJE (${checkinDateBr}, a partir das ${checkinTime}), e vimos que os dados completos do hóspede ainda não foram preenchidos.`
+        : `Passando para lembrar que vimos que os dados completos do hóspede da ${refLabel}${!isPendingGuest ? ` (${guestName})` : ""} no ${buildingName} (${flatDisplay}), período de ${checkinDateBr} a ${checkoutDateBr}, ainda não foram preenchidos.`)
+    : `Confirmamos a reserva ${refLabel}${!isPendingGuest ? ` para o(a) hóspede ${guestName}` : ""} no ${buildingName} (${flatDisplay}), período de ${checkinDateBr} a ${checkoutDateBr} • Total de Hóspedes: ${resolveEmailGuestCount(reservation)} • Canal: ${formatEmailChannelLabel(reservation)}.`;
   const bodyText = [
     `Olá, ${agentName || agencyName}!`,
-    `Confirmamos a reserva ${refLabel} para o(a) hóspede ${guestName} no ${buildingName} (${flatDisplay}), período de ${checkinDateBr} a ${checkoutDateBr} • Total de Hóspedes: ${resolveEmailGuestCount(reservation)} • Canal: ${formatEmailChannelLabel(reservation)}.`,
-    `IMPORTANTE: Para gerar a liberação de entrada na recepção/portaria do prédio, é obrigatório o preenchimento antecipado dos dados do hóspede (Nome Completo, CPF, WhatsApp e E-mail) através do nosso link seguro abaixo. Não é possível informar apenas na hora no balcão, pois sem o cadastro prévio pelo link a portaria não conseguirá localizar a reserva nem autorizar a entrada.`,
+    textIntro,
+    `IMPORTANTE: Para gerar a liberação de entrada na recepção/portaria do prédio, é obrigatório o preenchimento antecipado dos dados do hóspede (Nome Completo, CPF/Passaporte, WhatsApp e E-mail) através do nosso link seguro abaixo. Não é possível informar apenas na hora no balcão, pois sem o cadastro prévio pelo link a portaria não conseguirá localizar a reserva nem autorizar a entrada.`,
     `Link Seguro para Preenchimento dos Dados do Hóspede (sem exibição de valores financeiros): ${finalCredentialUrl}`,
     `Muito obrigado pela atenção! Equipe CorpFlats`
   ].join("\n\n");
@@ -2059,7 +2114,19 @@ export function sendEmailAsync({
         } catch (_) {}
       }
       // Se a rejeição SMTP indicar endereço/domínio de destinatário inexistente em e-mail de hóspede, avisa via WhatsApp
-      if (isRecipientDeliverySmtpError(err) && db && reservationId && String(reservationId) !== "0") {
+      const normRecip = String(recipient || "").trim().toLowerCase();
+      const acceptedLower = Array.isArray(err?.accepted)
+        ? err.accepted.map(e => String(e || "").replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase()).filter(Boolean)
+        : [];
+      const rejectedLower = Array.isArray(err?.rejected)
+        ? err.rejected.map(e => String(e || "").replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase()).filter(Boolean)
+        : [];
+      const recipientActuallyRejected =
+        normRecip &&
+        !acceptedLower.includes(normRecip) &&
+        (rejectedLower.length === 0 || rejectedLower.includes(normRecip));
+
+      if (recipientActuallyRejected && isRecipientDeliverySmtpError(err, normRecip) && db && reservationId && String(reservationId) !== "0") {
         try {
           const resKeyUpper = String(reservationId).trim().toUpperCase();
           const matchedRes = (db.reservations || []).find(
@@ -2070,7 +2137,7 @@ export function sendEmailAsync({
               db,
               saveDatabase,
               reservation: matchedRes,
-              invalidEmail: String(recipient || "").trim().toLowerCase(),
+              invalidEmail: normRecip,
               reason: err.message || String(err),
               source: "smtp_rejection",
               overrides
@@ -2880,7 +2947,7 @@ export async function validateGuestEmailAddress(rawEmail, options = {}) {
       }
       return { valid: false, isEmpty: false, normalizedEmail, reason: "domain_not_found", message: msg, suggestedEmail: null };
     }
-    if (code === "ENODATA" || code === "ESERVFAIL") {
+    if (code === "ENODATA") {
       try {
         const resolveAddrPromises = [];
         if (typeof resolver.resolve4 === "function") resolveAddrPromises.push(resolver.resolve4(rawDomain));
@@ -2914,7 +2981,7 @@ export async function validateGuestEmailAddress(rawEmail, options = {}) {
         }
       }
     }
-    // Em falhas transitórias de rede/timeout DNS, opera em fail-open para nunca acusar falso positivo
+    // Em falhas transitórias de rede/timeout DNS (ESERVFAIL, ETIMEOUT, etc.), opera em fail-open para nunca acusar falso positivo
     return { valid: true, isEmpty: false, normalizedEmail, reason: null, message: null, suggestedEmail: null, dnsSkipped: true };
   }
 
@@ -2922,20 +2989,26 @@ export async function validateGuestEmailAddress(rawEmail, options = {}) {
 }
 
 /**
- * Identifica se um erro retornado pelo servidor SMTP refere-se a destinatário/domínio inválido
- * (ignorando erros internos de autenticação/conexão do servidor de envio).
+ * Identifica se um erro retornado pelo servidor SMTP refere-se de forma inequívoca a destinatário/domínio inválido
+ * (ignorando erros de remetente, rate-limit, anti-spam, relay, política do servidor de envio ou conexão).
  */
-export function isRecipientDeliverySmtpError(err) {
+export function isRecipientDeliverySmtpError(err, recipientEmail = "") {
   if (!err) return false;
   const rawMsg = `${err.message || ""} ${err.response || ""} ${err.code || ""}`;
-  if (/SMTP n[aã]o configurado|Credenciais de SMTP|535\b|Authentication Failed|Access Restricted|ECONNREFUSED|ETIMEDOUT|ESOCKET/i.test(rawMsg)) {
+  if (
+    /SMTP n[aã]o configurado|Credenciais de SMTP|535\b|5\.7\.\d+|5\.4\.6|Authentication Failed|Access Restricted|Relaying disallowed|relay not permitted|unusual sending|rate limit|sending limit|daily limit|quota|too many|spam|unsolicited|sender|from address|policy|blocked|blacklist|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ESOCKET|EAI_AGAIN|getaddrinfo\s+ENOTFOUND|ENOTFOUND\s+smtp\./i.test(
+      rawMsg
+    )
+  ) {
     return false;
   }
   const respCode = Number(err.responseCode || 0);
-  if ([501, 510, 511, 512, 513, 550, 551, 553].includes(respCode)) {
+  if ([510, 511, 512, 513].includes(respCode)) {
     return true;
   }
-  return /\b(?:550|551|553|501|511|5\.1\.1|5\.1\.2|5\.1\.3|5\.1\.10)\b|user unknown|invalid recipient|bad recipient|recipient address rejected|no such user|mailbox unavailable|address syntax|domain not found|does not exist|invalid mailbox|unrouteable address|ENOTFOUND/i.test(rawMsg);
+  return /\b(?:510|511|512|513|5\.1\.[1236]|5\.1\.10)\b|user unknown|invalid recipient|bad recipient|recipient address rejected|no such user|mailbox unavailable|mailbox not found|bad recipient address syntax|address syntax|domain not found|recipient.*does not exist|does not exist.*recipient|user.*does not exist|account.*does not exist|invalid mailbox|unrouteable address/i.test(
+    rawMsg
+  );
 }
 
 /**
@@ -3083,6 +3156,28 @@ export async function notifyGuestInvalidEmailViaWhatsApp({
   // Se o hóspede já atualizou o e-mail para outro endereço válido, ignora bounces atrasados do e-mail antigo
   if (currentGuestEmail && currentGuestEmail !== normInvalid && !reservation.guestEmailInvalid) {
     return { notified: false, reason: "email_already_corrected" };
+  }
+
+  // Se o hóspede já confirmou explicitamente que este endereço está correto, não incomoda novamente
+  if (
+    Array.isArray(reservation.confirmedValidEmails) &&
+    reservation.confirmedValidEmails.some(em => String(em || "").trim().toLowerCase() === normInvalid)
+  ) {
+    return { notified: false, reason: "already_confirmed_valid_by_guest" };
+  }
+
+  // Em rejeição de transporte SMTP, se outro e-mail recente já foi aceito/enviado para o mesmo endereço,
+  // trata-se de oscilação/rate-limit do relay de envio e nunca de endereço inexistente do hóspede
+  if (source === "smtp_rejection" && Array.isArray(db.reservationCommunications)) {
+    const recentSuccessExists = db.reservationCommunications.some(c => {
+      if (!c || c.direction === "inbound" || c.status !== "sent") return false;
+      if (String(c.recipient || "").trim().toLowerCase() !== normInvalid) return false;
+      const sentMs = new Date(c.metadata?.sentAt || c.created_at || c.createdAt || 0).getTime();
+      return sentMs > 0 && nowMs - sentMs <= 72 * 3600 * 1000;
+    });
+    if (recentSuccessExists) {
+      return { notified: false, reason: "email_already_delivered_recently" };
+    }
   }
 
   // Se não veio sugestão pronta, verifica se há erro conhecido de digitação para sugerir
@@ -3335,12 +3430,27 @@ export async function updateGuestEmailAndResendRecentPending({
   const safeIdx = Math.max(1, Number(guestIndex) || 1);
 
   const previousInvalidEmails = new Set();
+  const targetAffectedEmails = new Set([cleanNewEmail]);
+  let sameEmailConfirmed = false;
   const collectOld = (val) => {
     const v = String(val || "").trim().toLowerCase();
-    if (v && v !== cleanNewEmail) previousInvalidEmails.add(v);
+    if (!v) return;
+    targetAffectedEmails.add(v);
+    if (v !== cleanNewEmail) {
+      previousInvalidEmails.add(v);
+    }
   };
 
   if (reservation) {
+    const prevFlaggedEmail = String(
+      reservation.emailCorrectionRequest?.invalidEmail ||
+      (reservation.guestEmailInvalid ? reservation.guestEmail : "") ||
+      ""
+    ).trim().toLowerCase();
+    if (prevFlaggedEmail && prevFlaggedEmail === cleanNewEmail) {
+      sameEmailConfirmed = true;
+    }
+
     collectOld(reservation.emailCorrectionRequest?.invalidEmail);
     if (Array.isArray(reservation.notifiedInvalidEmails)) {
       for (const item of reservation.notifiedInvalidEmails) collectOld(item?.email);
@@ -3372,10 +3482,18 @@ export async function updateGuestEmailAndResendRecentPending({
     }
 
     reservation.guestEmailInvalid = false;
+    if (sameEmailConfirmed) {
+      if (!Array.isArray(reservation.confirmedValidEmails)) {
+        reservation.confirmedValidEmails = [];
+      }
+      if (!reservation.confirmedValidEmails.includes(cleanNewEmail)) {
+        reservation.confirmedValidEmails.push(cleanNewEmail);
+      }
+    }
     if (reservation.emailCorrectionRequest) {
       reservation.emailCorrectionRequest = {
         ...reservation.emailCorrectionRequest,
-        status: "resolved",
+        status: sameEmailConfirmed ? "resolved_confirmed_same" : "resolved",
         correctedEmail: cleanNewEmail,
         resolvedAt: nowIso
       };
@@ -3384,16 +3502,18 @@ export async function updateGuestEmailAndResendRecentPending({
     if (Array.isArray(reservation.auditLogs)) {
       reservation.auditLogs.unshift({
         id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        action: "guest_email_corrected",
+        action: sameEmailConfirmed ? "guest_email_confirmed_valid" : "guest_email_corrected",
         timestamp: nowIso,
         actor: { name: "Sofia IA / Autoatendimento", role: "system", type: "ai" },
         source: "WhatsApp / Check-in",
-        description: `E-mail do hóspede atualizado para ${cleanNewEmail}`,
+        description: sameEmailConfirmed
+          ? `Hóspede confirmou que o e-mail cadastrado (${cleanNewEmail}) está correto`
+          : `E-mail do hóspede atualizado para ${cleanNewEmail}`,
         changes: [
           {
             field: "guestEmail",
             label: "E-mail do Hóspede",
-            oldValue: Array.from(previousInvalidEmails)[0] || "",
+            oldValue: Array.from(previousInvalidEmails)[0] || cleanNewEmail,
             newValue: cleanNewEmail
           }
         ]
@@ -3635,6 +3755,18 @@ export async function updateGuestEmailAndResendRecentPending({
         continue;
       }
 
+      // Se o hóspede confirmou que o próprio e-mail atual está correto e o registro já havia sido entregue via SMTP
+      // antes de um falso bounce, restaura o status "sent" sem disparar cópia duplicada
+      if (sameEmailConfirmed && c.status === "bounced" && cRecipient === cleanNewEmail && Boolean(c.metadata?.sentAt)) {
+        c.status = "sent";
+        if (c.metadata) {
+          delete c.metadata.bouncedAt;
+          delete c.metadata.bounceSubject;
+        }
+        if (dedupKey) alreadySentKeysToNewEmail.add(dedupKey);
+        continue;
+      }
+
       if (c.metadata?.supersededByResend) continue;
 
       const createdMs = new Date(c.created_at || c.createdAt || c.metadata?.queuedAt || 0).getTime();
@@ -3646,7 +3778,7 @@ export async function updateGuestEmailAndResendRecentPending({
       if (!isFailedOrPending) continue;
 
       const belongsToGuestTarget =
-        previousInvalidEmails.has(cRecipient) ||
+        targetAffectedEmails.has(cRecipient) ||
         c.metadata?.awaitingEmailCorrection === true ||
         (c.metadata?.channel === "whatsapp_mirror" && (c.metadata?.recipientType || "guest") === "guest");
 
@@ -3756,12 +3888,115 @@ export async function updateGuestEmailAndResendRecentPending({
   return {
     ok: true,
     newEmail: cleanNewEmail,
+    sameEmailConfirmed,
     previousInvalidEmails: Array.from(previousInvalidEmails),
     resentCount,
     resentSubjects,
     updatedScheduledCount,
     skippedTooOldCount
   };
+}
+
+/**
+ * Reconcilia automaticamente alertas de e-mail incorreto gerados por falso positivo (ex: bounce sem menção
+ * ao e-mail do hóspede ou quando o hóspede já respondeu no WhatsApp confirmando o mesmo endereço).
+ */
+export function reconcileFalsePositiveEmailAlerts(db, saveDatabase = null) {
+  if (!db || !Array.isArray(db.reservations)) return { reconciled: 0 };
+  let reconciled = 0;
+  const nowIso = new Date().toISOString();
+  const zohoCache = Array.isArray(db.zohoMessagesCache) ? db.zohoMessagesCache : [];
+  const comms = Array.isArray(db.reservationCommunications) ? db.reservationCommunications : [];
+  const convs = Array.isArray(db.whatsappConversations) ? db.whatsappConversations : [];
+
+  for (const r of db.reservations) {
+    if (!r || (!r.guestEmailInvalid && r.emailCorrectionRequest?.status !== "awaiting_reply")) continue;
+    const req = r.emailCorrectionRequest;
+    const normFlagged = String(req?.invalidEmail || r.guestEmail || "").trim().toLowerCase();
+    if (!normFlagged) continue;
+
+    const cleanPhone = normalizePhoneSimple(req?.phone || r.whatsappPhone || r.guestPhone || r.phone || "");
+    const notifiedMs = req?.notifiedAt ? new Date(req.notifiedAt).getTime() : 0;
+
+    // 1. Verifica se o hóspede já respondeu no WhatsApp após o alerta repetindo/confirmando o mesmo endereço
+    let guestConfirmedSameInWa = false;
+    if (cleanPhone.length >= 8 && notifiedMs > 0) {
+      const matchedConv = convs.find(c => {
+        const p = normalizePhoneSimple(c?.phone);
+        return p && (p.endsWith(cleanPhone.slice(-8)) || cleanPhone.endsWith(p.slice(-8)));
+      });
+      if (matchedConv && Array.isArray(matchedConv.messages)) {
+        guestConfirmedSameInWa = matchedConv.messages.some(m => {
+          if (!m || m.fromMe) return false;
+          const mMs = new Date(m.timestamp || m.createdAt || 0).getTime();
+          if (mMs > 0 && mMs < notifiedMs - 5000) return false;
+          if (mMs > 0 && Date.now() - mMs < 2 * 60 * 1000) return false;
+          const txt = String(m.text || m.message || "").toLowerCase();
+          return txt.includes(normFlagged);
+        });
+      }
+    }
+
+    // 2. Verifica se foi um falso positivo de zoho_bounce (nenhum bounce no cache cita o e-mail do hóspede)
+    let isFalseZohoBounce = false;
+    if (!guestConfirmedSameInWa && req?.source === "zoho_bounce" && zohoCache.length > 0) {
+      const anyBounceMentionsGuest = zohoCache.some(m => {
+        if (!m || m.direction !== "inbound") return false;
+        const blob = `${m.subject || ""}\n${m.snippet || ""}\n${m.bodyText || ""}\n${m.bodyHtml || ""}`.toLowerCase();
+        return blob.includes(normFlagged);
+      });
+      if (!anyBounceMentionsGuest) {
+        isFalseZohoBounce = true;
+      }
+    }
+
+    // 3. Verifica se foi um falso positivo de smtp_rejection quando outro e-mail ao mesmo destinatário já foi entregue
+    let isFalseSmtpRejection = false;
+    if (!guestConfirmedSameInWa && !isFalseZohoBounce && req?.source === "smtp_rejection") {
+      isFalseSmtpRejection = comms.some(c => {
+        if (!c || c.direction === "inbound" || c.status !== "sent") return false;
+        return String(c.recipient || "").trim().toLowerCase() === normFlagged;
+      });
+    }
+
+    if (guestConfirmedSameInWa || isFalseZohoBounce || isFalseSmtpRejection) {
+      r.guestEmailInvalid = false;
+      if (!Array.isArray(r.confirmedValidEmails)) r.confirmedValidEmails = [];
+      if (guestConfirmedSameInWa && !r.confirmedValidEmails.includes(normFlagged)) {
+        r.confirmedValidEmails.push(normFlagged);
+      }
+      if (r.emailCorrectionRequest) {
+        r.emailCorrectionRequest = {
+          ...r.emailCorrectionRequest,
+          status: guestConfirmedSameInWa ? "resolved_confirmed_same" : "cancelled_false_positive",
+          correctedEmail: normFlagged,
+          resolvedAt: nowIso
+        };
+      }
+
+      const resCodeUpper = String(r.code || "").trim().toUpperCase();
+      const resIdStr = r.id != null ? String(r.id) : "";
+      for (const c of comms) {
+        if (!c || c.direction === "inbound") continue;
+        const cResUpper = String(c.reservation_id || "").trim().toUpperCase();
+        const sameRes = (resCodeUpper && cResUpper === resCodeUpper) || (resIdStr && String(c.reservation_id) === resIdStr);
+        if (!sameRes) continue;
+        if (String(c.recipient || "").trim().toLowerCase() === normFlagged && c.status === "bounced" && c.metadata?.sentAt) {
+          c.status = "sent";
+          delete c.metadata.bouncedAt;
+          delete c.metadata.bounceSubject;
+        }
+      }
+
+      r.updatedAt = nowIso;
+      reconciled++;
+    }
+  }
+
+  if (reconciled > 0 && typeof saveDatabase === "function") {
+    saveDatabase("reconcile_false_positive_email_alerts");
+  }
+  return { reconciled };
 }
 
 

@@ -18,7 +18,8 @@ import {
   ensureReservationAttachmentsReady,
   validateGuestEmailAddress,
   isInternalOrThirdPartyOperationalEmail,
-  notifyGuestInvalidEmailViaWhatsApp
+  notifyGuestInvalidEmailViaWhatsApp,
+  reconcileFalsePositiveEmailAlerts
 } from "./mail-service.mjs";
 import { extractTextFromPdfBuffer } from "./pdf-extract-service.mjs";
 import {
@@ -693,28 +694,6 @@ export function matchEmailWithReservation(db, item) {
           if (checkinIso && r.checkinDate && r.checkinDate !== checkinIso) return false;
           return true;
         });
-      }
-    }
-  }
-
-  // 6. Correlação de Bounce (mailer-daemon / Undelivered Mail) pelo horário do disparo imediatamente anterior
-  if (!matched && item.direction === "inbound") {
-    const fromLower = String(item.fromEmail || "").toLowerCase();
-    const subjLower = String(item.subject || "").toLowerCase();
-    if (fromLower.includes("mailer-daemon") || subjLower.includes("undelivered")) {
-      const bounceMs = new Date(item.created_at || 0).getTime();
-      if (bounceMs > 0 && Array.isArray(db.reservationCommunications)) {
-        const recentComm = db.reservationCommunications.find(c => {
-          if (!c || c.type !== "email" || c.direction === "inbound" || !c.reservation_id) return false;
-          const cMs = new Date(c.created_at || 0).getTime();
-          return bounceMs >= cMs && bounceMs - cMs <= 3 * 60 * 1000;
-        });
-        if (recentComm?.reservation_id) {
-          const targetId = String(recentComm.reservation_id).toUpperCase();
-          matched = reservations.find(
-            r => String(r.id).toUpperCase() === targetId || (r.code && String(r.code).toUpperCase() === targetId)
-          );
-        }
       }
     }
   }
@@ -1421,6 +1400,25 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
         mapped.b2bParsed = true;
       }
 
+      const isPotentialInboundBounce =
+        !existingMsg?.guestBounceProcessed &&
+        mapped.direction === "inbound" &&
+        isLikelyInboundBounceEnvelope(mapped);
+
+      if (isPotentialInboundBounce && !mapped.bodyHtml && mapped.zohoMessageId && mapped.zohoFolderId) {
+        try {
+          const bounceContentRes = await callZohoMailApi(
+            db,
+            `/accounts/{accountId}/folders/${mapped.zohoFolderId}/messages/${mapped.zohoMessageId}/content`
+          );
+          if (bounceContentRes.ok && bounceContentRes.data?.content) {
+            mapped.bodyHtml = bounceContentRes.data.content;
+          }
+        } catch {
+          // Segue com snippet caso o endpoint de conteúdo oscile
+        }
+      }
+
       const matchedRes = matchEmailWithReservation(db, mapped);
       mapped.labels = inferZohoSmartLabels(
         mapped,
@@ -1453,6 +1451,8 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
       }
     }
 
+    reconcileFalsePositiveEmailAlerts(db, saveDatabase);
+
     if (b2bCancelProcessedMutated && typeof saveDatabase === "function") {
       saveDatabase("zoho_b2b_cancel_processed");
     }
@@ -1465,30 +1465,39 @@ export async function syncZohoMessagesToCache(db, { folder = "inbox", search = "
   }
 }
 
+function isLikelyInboundBounceEnvelope(msgItem = {}) {
+  const fromLower = String(msgItem.fromEmail || msgItem.from || "").toLowerCase();
+  const subjLower = String(msgItem.subject || "").toLowerCase();
+  if (/dmarc|tlsrpt|aggregate\s+report|report\s+domain|automatic\s+reply|out\s+of\s+office|respostas?\s+autom[aá]ticas?/i.test(`${fromLower} ${subjLower}`)) {
+    return false;
+  }
+  return (
+    fromLower.includes("mailer-daemon") ||
+    fromLower.includes("mail delivery") ||
+    (fromLower.includes("postmaster") && /undeliver|delivery|failure|failed|returned|falha|entreg/i.test(subjLower)) ||
+    subjLower.includes("undelivered") ||
+    subjLower.includes("undeliverable") ||
+    subjLower.includes("delivery status notification") ||
+    subjLower.includes("delivery failure") ||
+    subjLower.includes("mail delivery failed") ||
+    subjLower.includes("returned mail") ||
+    subjLower.includes("falha na entrega") ||
+    subjLower.includes("não foi possível entregar") ||
+    subjLower.includes("nao foi possivel entregar")
+  );
+}
+
 /**
- * Detecta mensagens de devolução (bounce / mailer-daemon / Undelivered Mail) recentes,
+ * Detecta mensagens de devolução permanente (hard bounce / mailer-daemon / Undelivered Mail) recentes,
+ * exige que o endereço de e-mail do hóspede esteja explicitamente citado no corpo da falha (sem suposição por horário/reserva),
  * marca a comunicação original como "bounced" e avisa o hóspede no WhatsApp para corrigir o e-mail.
  */
 export async function processInboundBounceForGuestEmail(db, saveDatabase, msgItem = {}, matchedResSummary = null) {
   try {
     if (!db || !msgItem) return { isBounce: false };
-    const fromLower = String(msgItem.fromEmail || msgItem.from || "").toLowerCase();
-    const subjLower = String(msgItem.subject || "").toLowerCase();
-    const isBounce =
-      fromLower.includes("mailer-daemon") ||
-      fromLower.includes("postmaster") ||
-      fromLower.includes("mail delivery") ||
-      subjLower.includes("undelivered") ||
-      subjLower.includes("undeliverable") ||
-      subjLower.includes("delivery status notification") ||
-      subjLower.includes("delivery failure") ||
-      subjLower.includes("mail delivery failed") ||
-      subjLower.includes("returned mail") ||
-      subjLower.includes("falha na entrega") ||
-      subjLower.includes("não foi possível entregar") ||
-      subjLower.includes("nao foi possivel entregar");
-
-    if (!isBounce) return { isBounce: false };
+    if (!isLikelyInboundBounceEnvelope(msgItem)) {
+      return { isBounce: false };
+    }
 
     const msgMs = new Date(msgItem.created_at || msgItem.date || Date.now()).getTime();
     const nowMs = Date.now();
@@ -1501,47 +1510,102 @@ export async function processInboundBounceForGuestEmail(db, saveDatabase, msgIte
       .replace(/<[^>]+>/g, " ");
     const combinedText = `${msgItem.subject || ""}\n${msgItem.snippet || ""}\n${msgItem.bodyText || ""}\n${rawBodyPlain}`;
 
+    // Ignora relatórios DMARC/TLS e DSNs meramente informativos ou de atraso temporário (Delay / Greylisting / Relay / Delivered)
+    const isNonFailureDsn =
+      /delivery\s+status\s+notification\s*\(\s*(?:delay|relay|success)\s*\)/i.test(combinedText) ||
+      /action\s*:\s*(?:delayed|relayed|delivered|expanded)\b/i.test(combinedText) ||
+      /(?:delivery\s+is\s+delayed|will\s+continue\s+trying|keep\s+trying\s+to\s+deliver|warning:\s+message\s+delayed)/i.test(combinedText);
+
+    const hasPermanentFailureSignal =
+      /action\s*:\s*failed\b/i.test(combinedText) ||
+      /\b(?:55[0-4]|51[0-3]|5\.[1247]\.\d+)\b/i.test(combinedText) ||
+      /(?:undelivered|undeliverable|delivery\s+failed|delivery\s+failure|mail\s+delivery\s+failed|returned\s+mail|permanent\s+error|permanently\s+failed|user\s+unknown|no\s+such\s+user|recipient\s+address\s+rejected|mailbox\s+unavailable|does\s+not\s+exist|domain\s+not\s+found|unrouteable|invalid\s+recipient|falha\s+na\s+entrega|n[aã]o\s+foi\s+poss[ií]vel\s+entregar)/i.test(
+        combinedText
+      );
+
+    if (isNonFailureDsn && !/action\s*:\s*failed\b/i.test(combinedText)) {
+      return { isBounce: true, ignoredReason: "non_permanent_delay_or_relay_dsn" };
+    }
+    if (!hasPermanentFailureSignal) {
+      return { isBounce: true, ignoredReason: "missing_permanent_failure_signal" };
+    }
+
     const ownEmailLower = String(getSmtpConfig(db)?.fromEmail || "contato@corpflats.com.br").trim().toLowerCase();
+    const senderLower = String(msgItem.fromEmail || msgItem.from || "").replace(/.*<([^>]+)>.*/, "$1").trim().toLowerCase();
     const extractedEmails = new Set();
     const emailMatches = combinedText.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,24}/gi) || [];
     for (const rawEm of emailMatches) {
       const em = String(rawEm).trim().toLowerCase().replace(/[.,;:!?)]+$/g, "");
-      if (!em || em === ownEmailLower) continue;
-      if (em.includes("mailer-daemon") || em.includes("postmaster") || em.includes("corpflats.com.br")) continue;
+      if (!em || em === ownEmailLower || em === senderLower) continue;
+      if (
+        em.includes("mailer-daemon") ||
+        em.includes("postmaster") ||
+        em.includes("noreply") ||
+        em.includes("no-reply") ||
+        em.includes("corpflats.com.br") ||
+        em.includes("zoho.com") ||
+        em.includes("zohomail.com")
+      ) {
+        continue;
+      }
       if (isInternalOrThirdPartyOperationalEmail(em, null, db)) continue;
       extractedEmails.add(em);
     }
 
+    // NUNCA adivinha nem assume o e-mail do hóspede da reserva se o endereço não constar explicitamente na mensagem de erro
+    if (extractedEmails.size === 0) {
+      return { isBounce: true, ignoredReason: "no_explicit_bounced_email_in_message" };
+    }
+
     const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+    const comms = Array.isArray(db.reservationCommunications) ? db.reservationCommunications : [];
     let targetRes = null;
     let bouncedEmail = "";
     let matchedGuestIdx = 1;
 
-    for (const candidateEmail of extractedEmails) {
-      const found = reservations.find(r => {
-        if (!r || r.status === "cancelada" || r.status === "cancelled") return false;
-        if (String(r.guestEmail || "").trim().toLowerCase() === candidateEmail) return true;
-        if (Array.isArray(r.guests) && r.guests.some(g => String(g?.email || "").trim().toLowerCase() === candidateEmail)) return true;
-        return false;
+    const reservationMatchesCandidate = (r, candidateEmail) => {
+      if (!r || r.status === "cancelada" || r.status === "cancelled") return false;
+      if (String(r.guestEmail || "").trim().toLowerCase() === candidateEmail) return true;
+      if (Array.isArray(r.guests) && r.guests.some(g => String(g?.email || "").trim().toLowerCase() === candidateEmail)) return true;
+      return false;
+    };
+
+    const hasRecentOutboundToEmail = (r, candidateEmail) => {
+      if (comms.length === 0) return true;
+      const rCodeUpper = String(r.code || "").trim().toUpperCase();
+      const rIdStr = r.id != null ? String(r.id) : "";
+      return comms.some(c => {
+        if (!c || c.direction === "inbound") return false;
+        if (String(c.recipient || "").trim().toLowerCase() !== candidateEmail) return false;
+        const cResUpper = String(c.reservation_id || "").trim().toUpperCase();
+        const sameRes = !cResUpper || cResUpper === "0" || (rCodeUpper && cResUpper === rCodeUpper) || (rIdStr && String(c.reservation_id) === rIdStr);
+        if (!sameRes) return false;
+        const cMs = new Date(c.created_at || c.createdAt || c.metadata?.sentAt || 0).getTime();
+        return !cMs || nowMs - cMs <= 72 * 3600 * 1000;
       });
-      if (found) {
-        targetRes = found;
+    };
+
+    for (const candidateEmail of extractedEmails) {
+      const matchingResList = reservations.filter(r => reservationMatchesCandidate(r, candidateEmail));
+      if (matchingResList.length === 0) continue;
+
+      const preferredFromSummary = matchedResSummary
+        ? matchingResList.find(r => r.id === matchedResSummary.id || (r.code && r.code === matchedResSummary.code))
+        : null;
+
+      const chosen =
+        (preferredFromSummary && hasRecentOutboundToEmail(preferredFromSummary, candidateEmail) ? preferredFromSummary : null) ||
+        matchingResList.find(r => hasRecentOutboundToEmail(r, candidateEmail)) ||
+        null;
+
+      if (chosen) {
+        targetRes = chosen;
         bouncedEmail = candidateEmail;
-        if (Array.isArray(found.guests)) {
-          const idx = found.guests.findIndex(g => String(g?.email || "").trim().toLowerCase() === candidateEmail);
-          if (idx >= 0) matchedGuestIdx = Number(found.guests[idx]?.index) || idx + 1;
+        if (Array.isArray(chosen.guests)) {
+          const idx = chosen.guests.findIndex(g => String(g?.email || "").trim().toLowerCase() === candidateEmail);
+          if (idx >= 0) matchedGuestIdx = Number(chosen.guests[idx]?.index) || idx + 1;
         }
         break;
-      }
-    }
-
-    if (!targetRes && matchedResSummary) {
-      targetRes = reservations.find(
-        r => r && (r.id === matchedResSummary.id || (r.code && r.code === matchedResSummary.code))
-      );
-      if (targetRes) {
-        const resGuestEmail = String(targetRes.guestEmail || "").trim().toLowerCase();
-        bouncedEmail = extractedEmails.size > 0 ? Array.from(extractedEmails)[0] : resGuestEmail;
       }
     }
 
