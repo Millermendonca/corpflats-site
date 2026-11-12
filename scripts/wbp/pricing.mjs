@@ -38,7 +38,7 @@ export const DEFAULT_SEBRAE_CONFIG = {
   channelCommissionPct: 0.15, // 15%
   targetMarginPct: 0.25, // 25%
   taxRatePct: 0.06, // 6% Simples Nacional / ISS
-  breakfastSurchargePerGuest: 25.00,
+  breakfastSurchargePerGuest: 20.00,
   extraBedFee: 60.00,
   variationLimitPct: 0.30, // 30% default variation lock
   manualFloor: 189.09,
@@ -530,17 +530,51 @@ export function calculateRatePlanPrices(baseRate, options = {}) {
   };
 
   // Plano "Com café" (Bed & Breakfast: Base + R$ per guest/night)
+  const channelMultiplier = options.channelMarkupPct != null
+    ? 1 + Number(options.channelMarkupPct)
+    : 1;
+
+  const applyChannel = (val) => (channelMultiplier !== 1 ? round2(val * channelMultiplier) : round2(val));
+
+  const semCafeFinal = {
+    rate: applyChannel(semCafe.rate),
+    rdef_single: applyChannel(semCafe.rdef_single),
+    adult_1: applyChannel(semCafe.adult_1),
+    adult_2: applyChannel(semCafe.adult_2),
+    adult_3: applyChannel(semCafe.adult_3)
+  };
+
   const comCafe = {
-    rate: round2(bRate + (2 * bSurcharge)), // Standard 2 adults + 2 breakfasts
-    rdef_single: round2(Math.max(0, bRate - singleDisc) + (1 * bSurcharge)), // 1 adult + 1 breakfast
-    adult_1: round2(Math.max(0, bRate - singleDisc) + (1 * bSurcharge)),
-    adult_2: round2(bRate + (2 * bSurcharge)),
-    adult_3: round2(bRate + (3 * bSurcharge) + extraBed) // 3 adults + 3 breakfasts + extra bed
+    rate: applyChannel(bRate + (2 * bSurcharge)), // Standard 2 adults + 2 breakfasts
+    rdef_single: applyChannel(Math.max(0, bRate - singleDisc) + (1 * bSurcharge)), // 1 adult + 1 breakfast
+    adult_1: applyChannel(Math.max(0, bRate - singleDisc) + (1 * bSurcharge)),
+    adult_2: applyChannel(bRate + (2 * bSurcharge)),
+    adult_3: applyChannel(bRate + (3 * bSurcharge) + extraBed) // 3 adults + 3 breakfasts + extra bed
   };
 
   return {
-    sem_cafe: semCafe,
+    sem_cafe: semCafeFinal,
     com_cafe: comCafe
+  };
+}
+
+/**
+ * Calculates rate plan prices across Direct, Booking.com, Airbnb, Expedia, and Corporate
+ * applying each platform's configured markup/discount on top of (baseRate + breakfast + occupancy).
+ */
+export function calculateAllChannelPlanPrices(baseRate, settings = DEFAULT_SEBRAE_CONFIG, channelMarkups = {}) {
+  const bookingMarkup = Number(channelMarkups?.booking?.markupPct ?? 0);
+  const airbnbMarkup = Number(channelMarkups?.airbnb?.markupPct ?? 0);
+  const expediaMarkup = Number(channelMarkups?.expedia?.markupPct ?? 0);
+  const directMarkup = Number(channelMarkups?.direct?.markupPct ?? 0);
+  const corporateDiscount = Number(channelMarkups?.corporate?.discountPct ?? 0);
+
+  return {
+    direct: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: directMarkup }),
+    booking: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: bookingMarkup }),
+    airbnb: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: airbnbMarkup }),
+    expedia: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: expediaMarkup }),
+    corporate: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: -corporateDiscount })
   };
 }
 
@@ -585,7 +619,7 @@ export class WbpPricingManager {
       }
     }
     const state = this.getPricingState(db);
-    const { seasonalityOverrides, resetSeasonalityOverrides, ...restSettings } = newSettings || {};
+    const { seasonalityOverrides, resetSeasonalityOverrides, autoPublish, ...restSettings } = newSettings || {};
     state.settings = {
       ...state.settings,
       ...restSettings
@@ -625,7 +659,15 @@ export class WbpPricingManager {
         }
       }
     }
-    state.status = "staged";
+    if (autoPublish) {
+      state.lastPublishedRates = {};
+      state.stagedModifications = {};
+      state.confirmedVariations = {};
+      state.status = "published";
+      state.lastPublishedAt = new Date().toISOString();
+    } else {
+      state.status = "staged";
+    }
     return state.settings;
   }
 

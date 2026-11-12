@@ -239,6 +239,14 @@ const FunnelDocumentUploadCard = memo(function FunnelDocumentUploadCard({
   )
 })
 
+function formatBrl(val: number): string {
+  const num = Math.round(Number(val || 0) * 100) / 100
+  return num.toLocaleString("pt-BR", {
+    minimumFractionDigits: Number.isInteger(num) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })
+}
+
 const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
   checkin,
   checkout,
@@ -307,10 +315,10 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
             </span>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs sm:text-sm font-extrabold text-slate-900 dark:text-slate-100">
-                {ratePlan === "with_breakfast" ? "Com Café da Manhã" : "Sem Café (Econômica)"}
+                {ratePlan === "with_breakfast" ? "Com Café da Manhã" : "Somente Hospedagem (Sem Café)"}
               </span>
               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                • R$ {selectedDailyRate}/noite
+                • R$ {formatBrl(selectedDailyRate)}/noite no PIX
               </span>
             </div>
           </div>
@@ -333,6 +341,8 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
 
 const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
   rooms,
+  ratePlan,
+  occupancySecondGuestDiff,
   twinFeeUnit,
   extraBedFeeUnit,
   addRoom,
@@ -340,6 +350,8 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
   updateRoom,
 }: {
   rooms: RoomConfig[]
+  ratePlan: "with_breakfast" | "room_only"
+  occupancySecondGuestDiff: number
   twinFeeUnit: number
   extraBedFeeUnit: number
   addRoom: () => void
@@ -388,7 +400,7 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                   className="w-full h-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   <option value="queen">1 Cama Queen Casal</option>
-                  <option value="twin">2 Camas Solteiro (+R$ {twinFeeUnit})</option>
+                  <option value="twin">2 Camas Solteiro (+R$ {formatBrl(twinFeeUnit)})</option>
                 </select>
               </div>
 
@@ -400,8 +412,16 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                   className="w-full h-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   <option value="1">1 Hóspede</option>
-                  <option value="2">2 Hóspedes (Ideal)</option>
-                  <option value="3">3 Hósp. (Colchonete +R$ {extraBedFeeUnit})</option>
+                  <option value="2">
+                    {ratePlan === "with_breakfast" && occupancySecondGuestDiff > 0
+                      ? `2 Hóspedes (+R$ ${formatBrl(occupancySecondGuestDiff)}/noite)`
+                      : "2 Hóspedes"}
+                  </option>
+                  <option value="3">
+                    {ratePlan === "with_breakfast" && occupancySecondGuestDiff > 0
+                      ? `3 Hósp. (+R$ ${formatBrl(occupancySecondGuestDiff * 2)}/noite + Colchonete R$ ${formatBrl(extraBedFeeUnit)})`
+                      : `3 Hósp. (Colchonete +R$ ${formatBrl(extraBedFeeUnit)})`}
+                  </option>
                 </select>
               </div>
             </div>
@@ -417,16 +437,14 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
   flatsCount,
   ratePlan,
   subtotal,
-  discountPercent,
-  discountAmount,
   cleaningFee,
+  extraBedFee,
   lateCheckout,
   lateCheckoutTime,
   lateCheckoutFee,
   petFee,
   twinFee,
   paymentMethod,
-  pixDiscountPercent,
   pixDiscountAmount,
   totalAmount,
   policyType,
@@ -436,16 +454,14 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
   flatsCount: number
   ratePlan: "with_breakfast" | "room_only"
   subtotal: number
-  discountPercent: number
-  discountAmount: number
   cleaningFee: number
+  extraBedFee: number
   lateCheckout: boolean
   lateCheckoutTime: string
   lateCheckoutFee: number
   petFee: number
   twinFee: number
   paymentMethod: "pix" | "card"
-  pixDiscountPercent: number
   pixDiscountAmount: number
   totalAmount: number
   policyType: string
@@ -456,18 +472,20 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
       <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2 text-xs">
         <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
           <span>Diárias ({nights} {nights === 1 ? "noite" : "noites"} • {flatsCount} {flatsCount === 1 ? "flat" : "flats"} • {ratePlan === "with_breakfast" ? "Com Café" : "Sem Café"}):</span>
-          <span className="shrink-0">R$ {subtotal.toLocaleString("pt-BR")}</span>
-        </div>
-
-        <div className="flex justify-between gap-2 text-[#0F3D4C] dark:text-[#E5C98B] font-semibold">
-          <span>Desconto Reserva Direta ({discountPercent}%):</span>
-          <span className="shrink-0">- R$ {discountAmount.toLocaleString("pt-BR")}</span>
+          <span className="shrink-0">R$ {formatBrl(subtotal)}</span>
         </div>
 
         {cleaningFee > 0 && (
           <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
-            <span>Taxa de Higienização:</span>
-            <span className="shrink-0">+ R$ {cleaningFee.toLocaleString("pt-BR")}</span>
+            <span>Taxa de Limpeza:</span>
+            <span className="shrink-0">+ R$ {formatBrl(cleaningFee)}</span>
+          </div>
+        )}
+
+        {extraBedFee > 0 && (
+          <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
+            <span>Colchonete Extra (3º Hóspede):</span>
+            <span className="shrink-0">+ R$ {formatBrl(extraBedFee)}</span>
           </div>
         )}
 
@@ -477,7 +495,7 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
             {lateCheckoutFee === 0 ? (
               <span className="text-[#0F3D4C] font-semibold shrink-0">Cortesia (R$ 0)</span>
             ) : (
-              <span className="shrink-0">+ R$ {lateCheckoutFee.toLocaleString("pt-BR")}</span>
+              <span className="shrink-0">+ R$ {formatBrl(lateCheckoutFee)}</span>
             )}
           </div>
         )}
@@ -485,28 +503,28 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
         {petFee > 0 && (
           <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
             <span>Taxa de Higienização Pet:</span>
-            <span className="shrink-0">+ R$ {petFee}</span>
+            <span className="shrink-0">+ R$ {formatBrl(petFee)}</span>
           </div>
         )}
 
         {twinFee > 0 && (
           <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
             <span>Configuração 2 Camas Solteiro:</span>
-            <span className="shrink-0">+ R$ {twinFee}</span>
+            <span className="shrink-0">+ R$ {formatBrl(twinFee)}</span>
           </div>
         )}
 
-        {paymentMethod === "pix" && (
+        {paymentMethod === "pix" && pixDiscountAmount > 0 && (
           <div className="flex justify-between gap-2 text-[#0F3D4C] dark:text-[#E5C98B] font-semibold pt-1 border-t border-slate-200 dark:border-slate-700">
-            <span>Desconto PIX ({pixDiscountPercent}%):</span>
-            <span className="shrink-0">- R$ {pixDiscountAmount.toLocaleString("pt-BR")}</span>
+            <span>Desconto no PIX:</span>
+            <span className="shrink-0">- R$ {formatBrl(pixDiscountAmount)}</span>
           </div>
         )}
 
         <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center gap-2 text-sm font-black text-slate-900 dark:text-white">
           <span>Valor Final a Pagar:</span>
           <span className="text-[#091E26] dark:text-[#E5C98B] text-xl shrink-0">
-            R$ {totalAmount.toLocaleString("pt-BR")}
+            R$ {formatBrl(totalAmount)}
           </span>
         </div>
       </div>
@@ -1008,40 +1026,82 @@ export function BookingFunnelModal({
     activeAvailability?.hasLowAvailability ?? (minAvailable !== null ? minAvailable <= 5 : false)
   )
 
-  // Pricing & Calculations
+  // Pricing & Calculations (Sincronizados com SEBRAE / Calendário / Preços)
+  const flatsCount = rooms.length
+  const dynPricing = activeAvailability?.dynamicPricing
+  const breakfastSurchargePerGuest = Number(
+    dynPricing?.breakfastSurchargePerGuest ??
+    siteConfig?.pricing?.breakfastSurchargePerGuest ??
+    20
+  )
+  const cardMarkupPercent = Number(
+    dynPricing?.cardMarkupPercent ??
+    siteConfig?.pricing?.cardMarkupPercent ??
+    siteConfig?.pricing?.pixDiscountPercent ??
+    5
+  )
+  const fallbackBaseSemCafe = Number(
+    dynPricing?.avgRoomOnlyRate ??
+    siteConfig?.ratePlans?.room_only?.dailyRate ??
+    276.63
+  )
+  const perNightBaseSemCafe: number[] =
+    Array.isArray(dynPricing?.discountedSemCafeRates) && dynPricing.discountedSemCafeRates.length === nights
+      ? dynPricing.discountedSemCafeRates.map((d: any) => Number(d.rate) || fallbackBaseSemCafe)
+      : Array.from({ length: nights }, () => fallbackBaseSemCafe)
+
+  const roomOnlyPixSubtotal = Math.round(
+    perNightBaseSemCafe.reduce((acc, r) => acc + r * flatsCount, 0) * 100
+  ) / 100
+  const withBreakfastPixSubtotal = Math.round(
+    perNightBaseSemCafe.reduce(
+      (acc, r) =>
+        acc +
+        rooms.reduce(
+          (s, rm) => s + Math.round((r + Math.min(3, Math.max(1, Number(rm.adults) || 1)) * breakfastSurchargePerGuest) * 100) / 100,
+          0
+        ),
+      0
+    ) * 100
+  ) / 100
+
+  const roomOnlyAvgRate = Math.round((roomOnlyPixSubtotal / (nights * flatsCount)) * 100) / 100
+  const withBreakfastAvgRate = Math.round((withBreakfastPixSubtotal / (nights * flatsCount)) * 100) / 100
+
   const rawWithBreakfast = siteConfig?.ratePlans?.with_breakfast || {}
-  const withBreakfastConfig = { 
-    dailyRate: 225, 
-    cleaningFeeType: "per_stay", 
+  const withBreakfastConfig = {
+    dailyRate: withBreakfastAvgRate,
+    cleaningFeeType: "per_stay",
     description: "Diária com Café da Manhã servido exclusivamente no flat",
     ...rawWithBreakfast,
     cleaningFeeEnabled: Boolean(rawWithBreakfast.cleaningFeeEnabled),
     cleaningFeeAmount: Number(rawWithBreakfast.cleaningFeeAmount ?? 0)
   }
+  withBreakfastConfig.dailyRate = withBreakfastAvgRate
+
   const rawRoomOnly = siteConfig?.ratePlans?.room_only || {}
-  const roomOnlyConfig = { 
-    dailyRate: 190, 
-    cleaningFeeType: "per_stay", 
-    description: "Tarifa econômica sem café da manhã",
+  const roomOnlyConfig = {
+    dailyRate: roomOnlyAvgRate,
+    cleaningFeeType: "per_stay",
+    description: "Hospedagem em flat completo sem café da manhã",
     ...rawRoomOnly,
     cleaningFeeEnabled: rawRoomOnly.cleaningFeeEnabled !== false,
     cleaningFeeAmount: Number(rawRoomOnly.cleaningFeeAmount ?? 70)
   }
+  roomOnlyConfig.dailyRate = roomOnlyAvgRate
 
   const currentPlan = ratePlan === "with_breakfast" ? withBreakfastConfig : roomOnlyConfig
-  const selectedDailyRate = Number(currentPlan.dailyRate) || (ratePlan === "with_breakfast" ? 225 : 190)
-  const flatsCount = rooms.length
-  const subtotal = selectedDailyRate * nights * flatsCount
+  const selectedDailyRate = ratePlan === "with_breakfast" ? withBreakfastAvgRate : roomOnlyAvgRate
+  const pixAccommodationSubtotal = ratePlan === "with_breakfast" ? withBreakfastPixSubtotal : roomOnlyPixSubtotal
 
-  // Desconto Reserva Direta (15% OFF)
-  const discountPercent = siteConfig?.pricing?.directDiscountPercent ?? 15
-  const discountAmount = Math.round(subtotal * (discountPercent / 100))
+  const discountPercent = 0
+  const discountAmount = 0
 
-  // Taxa de Limpeza
+  // Taxa de Limpeza (apenas no plano Sem Café por padrão; zero menção no plano Com Café)
   const cleaningFeePerFlat = currentPlan.cleaningFeeEnabled
     ? (currentPlan.cleaningFeeType === "per_night" ? (Number(currentPlan.cleaningFeeAmount) || 0) * nights : (Number(currentPlan.cleaningFeeAmount) || 0))
     : 0
-  const cleaningFee = cleaningFeePerFlat * flatsCount
+  const cleaningFee = Math.round(cleaningFeePerFlat * flatsCount * 100) / 100
 
   // Taxa de Camas Solteiro (Twin)
   const twinCount = useMemo(() => rooms.filter(r => r.bedType === "twin").length, [rooms])
@@ -1055,15 +1115,11 @@ export function BookingFunnelModal({
 
   // Taxa Pet
   const petFeePerUnit = siteConfig?.petPolicy?.feeAmount ?? 80
-  const petFee = bringingPet 
+  const petFee = bringingPet
     ? (siteConfig?.petPolicy?.feeType === "per_night" ? petFeePerUnit * nights * petCount : petFeePerUnit * petCount)
     : 0
 
   // Upsell Domingo: Late Check-out com Tarifação Dinâmica por Horário
-  // Regras:
-  // - Até 13:00: Cortesia / Não cobrar (R$ 0)
-  // - Além de 13:00 até 18:00: R$ 50 por flat
-  // - Além de 18:00: Cobrar 1 diária adicional em vigência (selectedDailyRate) por flat
   const lateCheckoutTier = useMemo(() => {
     if (!isSundayCheckout || !lateCheckout) {
       return { feePerFlat: 0, feeTotal: 0, isFree: false, isDailyRate: false }
@@ -1088,7 +1144,7 @@ export function BookingFunnelModal({
     } else {
       return {
         feePerFlat: selectedDailyRate,
-        feeTotal: selectedDailyRate * flatsCount,
+        feeTotal: Math.round(selectedDailyRate * flatsCount * 100) / 100,
         isFree: false,
         isDailyRate: true
       }
@@ -1097,18 +1153,20 @@ export function BookingFunnelModal({
 
   const earlyCheckinFee = 0
   const lateCheckoutFee = lateCheckoutTier.feeTotal
+  const extrasTotal = Math.round((cleaningFee + twinFee + extraBedFee + petFee + earlyCheckinFee + lateCheckoutFee) * 100) / 100
 
-  // Valor Total Base (Sem desconto extra de PIX)
-  const baseTotalAmount = (subtotal - discountAmount) + cleaningFee + twinFee + extraBedFee + petFee + earlyCheckinFee + lateCheckoutFee
+  // Preço Normal Canônico = Valor Final no PIX (100% integral)
+  const pixTotalAmount = Math.round((pixAccommodationSubtotal + extrasTotal) * 100) / 100
 
-  // Desconto Exclusivo PIX (5% OFF)
-  const pixDiscountPercent = siteConfig?.pricing?.pixDiscountPercent ?? 5
-  const pixDiscountAmount = Math.round(baseTotalAmount * (pixDiscountPercent / 100))
-  const pixTotalAmount = Math.max(0, baseTotalAmount - pixDiscountAmount)
+  // Preço no Cartão = Incremento silencioso embutido (ex: +5%) exibido como preço padrão
+  const baseTotalAmount = Math.round(pixTotalAmount * (1 + cardMarkupPercent / 100) * 100) / 100
+  const pixDiscountPercent = cardMarkupPercent
+  const pixDiscountAmount = Math.round((baseTotalAmount - pixTotalAmount) * 100) / 100
+  const subtotal = Math.round((baseTotalAmount - extrasTotal) * 100) / 100
 
   // Valor Ativo
   const totalAmount = paymentMethod === "pix" ? pixTotalAmount : baseTotalAmount
-  const currentTotalDiscount = paymentMethod === "pix" ? (discountAmount + pixDiscountAmount) : discountAmount
+  const currentTotalDiscount = paymentMethod === "pix" ? pixDiscountAmount : 0
 
   // Política de Cancelamento (memoizada para evitar instanciar Date e recalcular a cada tecla)
   const cancellationPolicy = useMemo(
@@ -1580,7 +1638,7 @@ export function BookingFunnelModal({
                   </span>
                 </div>
                 <Badge className="bg-[#091E26] text-[#E5C98B] border border-[#C5A059]/40 font-bold text-[10px] shrink-0">
-                  {discountPercent}% OFF
+                  Desconto no PIX
                 </Badge>
               </div>
             )}
@@ -1598,6 +1656,8 @@ export function BookingFunnelModal({
             {/* Configuração de Camas & Lotação por Flat */}
             <FunnelRoomConfigList
               rooms={rooms}
+              ratePlan={ratePlan}
+              occupancySecondGuestDiff={breakfastSurchargePerGuest}
               twinFeeUnit={twinFeeUnit}
               extraBedFeeUnit={extraBedFeeUnit}
               addRoom={stableAddRoom}
@@ -2313,12 +2373,12 @@ export function BookingFunnelModal({
                     <div>
                       <span className="font-bold text-xs block text-slate-900 dark:text-slate-100">PIX Instantâneo</span>
                       <span className="text-[#091E26] dark:text-slate-100 font-black text-base">
-                        R$ {pixTotalAmount.toLocaleString("pt-BR")}
+                        R$ {formatBrl(pixTotalAmount)}
                       </span>
                     </div>
                   </div>
                   <p className="text-[10.5px] text-slate-600 dark:text-slate-400 font-medium mt-1.5">
-                    Economia de R$ {pixDiscountAmount.toLocaleString("pt-BR")} ({pixDiscountPercent}% OFF) • Liberação na hora
+                    Economia de R$ {formatBrl(pixDiscountAmount)} no PIX • Liberação na hora
                   </p>
                 </div>
 
@@ -2342,7 +2402,7 @@ export function BookingFunnelModal({
                     <div>
                       <span className="font-bold text-xs block text-slate-900 dark:text-slate-100">Cartão de Crédito</span>
                       <span className="text-[#091E26] dark:text-slate-100 font-black text-base">
-                        R$ {baseTotalAmount.toLocaleString("pt-BR")}
+                        R$ {formatBrl(baseTotalAmount)}
                       </span>
                     </div>
                   </div>
@@ -2359,16 +2419,14 @@ export function BookingFunnelModal({
               flatsCount={flatsCount}
               ratePlan={ratePlan}
               subtotal={subtotal}
-              discountPercent={discountPercent}
-              discountAmount={discountAmount}
               cleaningFee={cleaningFee}
+              extraBedFee={extraBedFee}
               lateCheckout={lateCheckout}
               lateCheckoutTime={lateCheckoutTime}
               lateCheckoutFee={lateCheckoutFee}
               petFee={petFee}
               twinFee={twinFee}
               paymentMethod={paymentMethod}
-              pixDiscountPercent={pixDiscountPercent}
               pixDiscountAmount={pixDiscountAmount}
               totalAmount={totalAmount}
               policyType={cancellationPolicy.policyType}
@@ -2393,7 +2451,7 @@ export function BookingFunnelModal({
               >
                 <Lock className="w-4 h-4 shrink-0 text-[#E5C98B]" />
                 <span>
-                  {isProcessing ? "Confirmando..." : (paymentMethod === "pix" ? `Pagar com PIX: R$ ${totalAmount.toLocaleString("pt-BR")}` : `Pagar com Cartão: R$ ${totalAmount.toLocaleString("pt-BR")}`)}
+                  {isProcessing ? "Confirmando..." : (paymentMethod === "pix" ? `Pagar com PIX: R$ ${formatBrl(totalAmount)}` : `Pagar com Cartão: R$ ${formatBrl(totalAmount)}`)}
                 </span>
               </Button>
             </div>

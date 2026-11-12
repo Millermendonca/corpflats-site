@@ -58,6 +58,7 @@ export interface PricingSettings {
   planCeilingCount?: number;
   seasonalityOverrides?: Record<string | number, number | { factor: number; season?: "Alta" | "Média" | "Baixa" | string; occupancyRate?: number }>;
   resetSeasonalityOverrides?: boolean;
+  autoPublish?: boolean;
   hasStagedChanges?: boolean;
   stagedChangesCount?: number;
 }

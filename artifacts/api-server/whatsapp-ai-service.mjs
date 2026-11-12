@@ -11,7 +11,7 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, isOwnHotelWhatsAppPhone, isBotMessage, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp, formatReservationChannelLabel, resolveReservationGuestCount } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, isOwnHotelWhatsAppPhone, isBotMessage, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay, evaluateZapiChannelPolicy, ensureZapiChannels, getReservationRecipients, triggerImmediateWhatsApp, formatReservationChannelLabel, resolveReservationGuestCount, computeCardAmountFromPix } from "./zapi-service.mjs";
 import { buildOfficialNfseDraftForReservation } from "./chat-service.mjs";
 
 export function isNonRequesterGuestForReservation(reservation, senderPhone = "", db = {}) {
@@ -2835,20 +2835,23 @@ function handleCalculateQuote(db, args = {}) {
   }
 
   let extraBedFee = 0;
+  const wbpCfg = db?.wbpPricing?.settings || {};
   const extraBedCfg = siteCfg.extraBedConfig || { enabled: true, feeAmount: 60 };
   if (guests > 2 && extraBedCfg.enabled) {
-    extraBedFee = Number(extraBedCfg.feeAmount || 60);
+    const ebUnit = Number(wbpCfg.extraBedFee ?? extraBedCfg.feeAmount ?? 60);
+    extraBedFee = extraBedCfg.feeType === "per_night" ? ebUnit * nights : ebUnit;
   }
 
   let breakfastFee = 0;
   if (ratePlan === "with_breakfast") {
-    const planBreakfastRate = Number(plans.with_breakfast?.dailyRate || 225);
-    const planRoomOnlyRate = Number(plans.room_only?.dailyRate || 190);
-    const breakfastDiffPerNight = Math.max(35, planBreakfastRate - planRoomOnlyRate);
-    breakfastFee = Math.round(breakfastDiffPerNight * nights * 100) / 100;
+    const bSurchargePerGuest = Number(wbpCfg.breakfastSurchargePerGuest ?? db?.tariffSettings?.breakfastSurchargePerGuest ?? 20);
+    breakfastFee = Math.round(bSurchargePerGuest * Math.max(1, guests) * nights * 100) / 100;
   }
 
-  const total = Math.round((roomTotal + cleaningFee + extraBedFee + breakfastFee) * 100) / 100;
+  const pixTotal = Math.round((roomTotal + cleaningFee + extraBedFee + breakfastFee) * 100) / 100;
+  const cardMarkupPct = Number(db?.tariffSettings?.cardMarkupPercent ?? siteCfg.pricing?.cardMarkupPercent ?? siteCfg.pricing?.pixDiscountPercent ?? 5);
+  const cardTotal = computeCardAmountFromPix(pixTotal, cardMarkupPct);
+  const total = pixTotal;
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
   return {
@@ -2861,12 +2864,19 @@ function handleCalculateQuote(db, args = {}) {
     flatId,
     channel,
     ratePlan,
-    roomTotal,
+    roomTotal: ratePlan === "with_breakfast" ? Math.round((roomTotal + breakfastFee) * 100) / 100 : roomTotal,
     cleaningFee,
     extraBedFee,
-    breakfastFee,
+    breakfastFee: 0,
     total,
-    dailyRates,
+    pixTotalAmount: pixTotal,
+    cardTotalAmount: cardTotal,
+    dailyRates: dailyRates.map(d => ({
+      ...d,
+      rate: ratePlan === "with_breakfast"
+        ? Math.round((d.rate + Number(wbpCfg.breakfastSurchargePerGuest ?? db?.tariffSettings?.breakfastSurchargePerGuest ?? 20) * Math.max(1, guests)) * 100) / 100
+        : d.rate
+    })),
     expiresAt
   };
 }

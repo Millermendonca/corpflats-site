@@ -22,6 +22,10 @@ import { SebraeCalculationResult, PricingSettings } from "./types";
 interface SebraePricingTabProps {
   settings: PricingSettings;
   calculation: SebraeCalculationResult;
+  channelMarkups?: {
+    booking?: { markupPct?: number };
+    airbnb?: { markupPct?: number };
+  };
   onUpdateSettings: (newSettings: Partial<PricingSettings>) => void;
   onSaveAndStage: () => Promise<void>;
   isSaving: boolean;
@@ -30,6 +34,7 @@ interface SebraePricingTabProps {
 export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
   settings,
   calculation,
+  channelMarkups,
   onUpdateSettings,
   onSaveAndStage,
   isSaving,
@@ -129,7 +134,7 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
       channelCommissionPct: 0.15,
       targetMarginPct: 0.25,
       taxRatePct: 0.06,
-      breakfastSurchargePerGuest: 25.00,
+      breakfastSurchargePerGuest: 20.00,
       extraBedFee: 60.00,
       variationLimitPct: 0.30,
       manualFloor: 189.09,
@@ -142,9 +147,13 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
     onUpdateSettings(defaults);
   };
 
-  const breakfastSurcharge = Number(localSettings.breakfastSurchargePerGuest ?? 25);
+  const breakfastSurcharge = Number(localSettings.breakfastSurchargePerGuest ?? 20);
   const extraBedFee = Number(localSettings.extraBedFee ?? 60);
   const baseRate = Number(calculation.tarifaMinima || 276.63);
+  const bookingMarkupDec = Number(channelMarkups?.booking?.markupPct ?? 0);
+  const airbnbMarkupDec = Number(channelMarkups?.airbnb?.markupPct ?? 0.03);
+  const bookingFactor = 1 + bookingMarkupDec;
+  const airbnbFactor = 1 + airbnbMarkupDec;
   const custoPctNum = Math.round((calculation.percentuais?.custoPct ?? 0.54) * 100);
   const comissaoPctNum = Math.round((calculation.percentuais?.comissaoPct ?? 0.15) * 100);
   const margemPctNum = Math.round((calculation.percentuais?.margemPct ?? 0.25) * 100);
@@ -606,7 +615,7 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
               </div>
               <div className="flex items-center justify-between gap-3 pt-1">
                 <Label htmlFor="breakfast-surcharge" className="text-xs text-muted-foreground">
-                  Acréscimo café por hóspede/noite:
+                  Valor interno café por hóspede/noite:
                 </Label>
                 <div className="flex items-center gap-1.5 w-28">
                   <span className="text-xs font-bold text-muted-foreground">R$</span>
@@ -622,6 +631,9 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                   />
                 </div>
               </div>
+              <p className="text-[11px] text-muted-foreground leading-tight">
+                Soma +1x para 1 hóspede e +2x para 2 hóspedes (exibido ao cliente como tarifa de ocupação, sem item avulso). Sincroniza com Site, Booking e Airbnb.
+              </p>
               <div className="flex items-center justify-between gap-3 pt-1">
                 <Label htmlFor="extra-bed-fee" className="text-xs text-muted-foreground">
                   Adicional 3º hóspede (cama extra):
@@ -640,19 +652,37 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                   />
                 </div>
               </div>
-              {/* Pricing breakdown by guest count */}
-              <div className="pt-2 border-t border-border/40 space-y-1 text-xs">
-                <div className="flex justify-between text-muted-foreground">
-                  <span>1 Hóspede (Com Café):</span>
-                  <span className="font-medium text-foreground">R$ {(baseRate + breakfastSurcharge).toFixed(2)}</span>
+              {/* Pricing breakdown by guest count + OTA sync */}
+              <div className="pt-2 border-t border-border/40 space-y-1.5 text-xs">
+                <div className="grid grid-cols-4 gap-1 text-[10px] font-bold text-muted-foreground pb-0.5">
+                  <span>Ocupação</span>
+                  <span className="text-right">Direto (PIX)</span>
+                  <span className="text-right">Booking ({bookingMarkupDec >= 0 ? `+${Math.round(bookingMarkupDec * 100)}%` : `${Math.round(bookingMarkupDec * 100)}%`})</span>
+                  <span className="text-right">Airbnb ({airbnbMarkupDec >= 0 ? `+${Math.round(airbnbMarkupDec * 100)}%` : `${Math.round(airbnbMarkupDec * 100)}%`})</span>
                 </div>
-                <div className="flex justify-between text-muted-foreground">
-                  <span>2 Hóspedes (Com Café):</span>
-                  <span className="font-medium text-foreground">R$ {(baseRate + breakfastSurcharge * 2).toFixed(2)}</span>
+                <div className="grid grid-cols-4 gap-1 text-[11px] text-muted-foreground">
+                  <span>Sem Café (1-2p)</span>
+                  <span className="text-right font-medium text-foreground">R$ {baseRate.toFixed(2)}</span>
+                  <span className="text-right font-medium text-sky-700 dark:text-sky-400">R$ {(baseRate * bookingFactor).toFixed(2)}</span>
+                  <span className="text-right font-medium text-rose-700 dark:text-rose-400">R$ {(baseRate * airbnbFactor).toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-muted-foreground">
-                  <span>3 Hóspedes (+ Cama Extra R$ {extraBedFee.toFixed(0)}):</span>
-                  <span className="font-medium text-foreground">R$ {(baseRate + breakfastSurcharge * 3 + extraBedFee).toFixed(2)}</span>
+                <div className="grid grid-cols-4 gap-1 text-[11px] text-muted-foreground">
+                  <span>Com Café (1p)</span>
+                  <span className="text-right font-medium text-foreground">R$ {(baseRate + breakfastSurcharge).toFixed(2)}</span>
+                  <span className="text-right font-medium text-sky-700 dark:text-sky-400">R$ {((baseRate + breakfastSurcharge) * bookingFactor).toFixed(2)}</span>
+                  <span className="text-right font-medium text-rose-700 dark:text-rose-400">R$ {((baseRate + breakfastSurcharge) * airbnbFactor).toFixed(2)}</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1 text-[11px] text-muted-foreground">
+                  <span>Com Café (2p)</span>
+                  <span className="text-right font-semibold text-amber-800 dark:text-amber-300">R$ {(baseRate + breakfastSurcharge * 2).toFixed(2)}</span>
+                  <span className="text-right font-semibold text-sky-700 dark:text-sky-400">R$ {((baseRate + breakfastSurcharge * 2) * bookingFactor).toFixed(2)}</span>
+                  <span className="text-right font-semibold text-rose-700 dark:text-rose-400">R$ {((baseRate + breakfastSurcharge * 2) * airbnbFactor).toFixed(2)}</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1 text-[11px] text-muted-foreground">
+                  <span>Com Café (3p)</span>
+                  <span className="text-right font-medium text-foreground">R$ {(baseRate + breakfastSurcharge * 3 + extraBedFee).toFixed(2)}</span>
+                  <span className="text-right font-medium text-sky-700 dark:text-sky-400">R$ {((baseRate + breakfastSurcharge * 3 + extraBedFee) * bookingFactor).toFixed(2)}</span>
+                  <span className="text-right font-medium text-rose-700 dark:text-rose-400">R$ {((baseRate + breakfastSurcharge * 3 + extraBedFee) * airbnbFactor).toFixed(2)}</span>
                 </div>
               </div>
             </div>
@@ -703,7 +733,7 @@ export const SebraePricingTab: React.FC<SebraePricingTabProps> = ({
                 className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs h-9 gap-1.5 shadow-xs"
               >
                 <Save className="w-3.5 h-3.5" />
-                {isSaving ? "Salvando..." : "Salvar Parâmetros SEBRAE"}
+                {isSaving ? "Salvando e Sincronizando..." : "Salvar & Sincronizar (Site + OTAs)"}
               </Button>
               <Button
                 variant="outline"

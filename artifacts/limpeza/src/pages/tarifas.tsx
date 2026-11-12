@@ -43,7 +43,7 @@ const INITIAL_SEBRAE_SETTINGS: PricingSettings = {
   channelCommissionPct: 0.15,
   targetMarginPct: 0.25,
   taxRatePct: 0.06,
-  breakfastSurchargePerGuest: 25.00,
+  breakfastSurchargePerGuest: 20.00,
   extraBedFee: 60.00,
   variationLimitPct: 0.30,
   manualFloor: 189.09,
@@ -426,27 +426,44 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     })
   }
 
-  // Salvar Engenharia SEBRAE e Gerar Pré-visualização WBP
+  // Salvar Engenharia SEBRAE e Sincronizar Automaticamente com Site + OTAs (WBP/Channex)
   const handleSaveAndStageSebrae = async () => {
     setSaving(true)
     try {
-      const res = await fetch("/api/wbp/pricing/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(sebraeSettings),
-      })
+      const payload = { ...sebraeSettings, autoPublish: true }
+      const [res] = await Promise.all([
+        fetch("/api/wbp/pricing/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }),
+        fetch("/api/tariffs/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...tariffSettings,
+            breakfastSurchargePerGuest: sebraeSettings.breakfastSurchargePerGuest,
+            extraBedFee: sebraeSettings.extraBedFee,
+            weekendMarkupPct: sebraeSettings.weekendMarkupPct,
+          }),
+        }).catch(() => null),
+      ])
+      let nextMin = calculation.tarifaMinima
+      let nextFloor = calculation.breakEvenFloor ?? 189.09
       if (res.ok) {
         const data = await res.json()
         if (data?.sebraeRate) {
+          nextMin = data.sebraeRate.tarifaMinima ?? nextMin
+          nextFloor = data.sebraeRate.breakEvenFloor ?? nextFloor
           setCalculation(prev => ({ ...prev, ...data.sebraeRate }))
         }
       }
-      setSebraeSettings(prev => ({ ...prev, hasStagedChanges: true, stagedChangesCount: 84 }))
+      setSebraeSettings(prev => ({ ...prev, hasStagedChanges: false, stagedChangesCount: 0 }))
       await loadCalendarData()
       await handleRefreshPreview()
       toast({
-        title: "Engenharia SEBRAE Salva e Sincronizada! ⚡",
-        description: `Tarifa Mínima R$ ${calculation.tarifaMinima.toFixed(2)} e Piso Break-Even R$ ${calculation.breakEvenFloor.toFixed(2)} atualizados no SSOT.`,
+        title: "Preços Salvos & Sincronizados Automaticamente! ⚡",
+        description: `Base R$ ${nextMin.toFixed(2)} + Café R$ ${(sebraeSettings.breakfastSurchargePerGuest ?? 20).toFixed(2)}/hóspede sincronizados no Site, Booking.com e Airbnb.`,
       })
     } catch {
       toast({ title: "Erro ao salvar parâmetros SEBRAE", variant: "destructive" })
@@ -749,41 +766,74 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   const handleSaveParameters = async () => {
     try {
       setSaving(true)
+      const cardMarkupVal = Number(siteConfig?.pricing?.cardMarkupPercent ?? siteConfig?.pricing?.pixDiscountPercent ?? 5)
+      const bfVal = Number(sebraeSettings.breakfastSurchargePerGuest ?? siteConfig?.pricing?.breakfastSurchargePerGuest ?? 20)
+      const extraBedVal = Number(siteConfig?.extraBedConfig?.feeAmount ?? sebraeSettings.extraBedFee ?? 60)
+
+      const normalizedSiteConfig = {
+        ...siteConfig,
+        pricing: {
+          ...(siteConfig?.pricing || {}),
+          directDiscountPercent: 0,
+          cardMarkupPercent: cardMarkupVal,
+          pixDiscountPercent: cardMarkupVal,
+          breakfastSurchargePerGuest: bfVal,
+        },
+      }
+
       const [tRes, sRes] = await Promise.all([
         fetch("/api/tariffs/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(tariffSettings)
+          body: JSON.stringify({
+            ...tariffSettings,
+            breakfastSurchargePerGuest: bfVal,
+            extraBedFee: extraBedVal,
+            directDiscountPercent: 0,
+            cardMarkupPercent: cardMarkupVal,
+            pixDiscountPercent: cardMarkupVal,
+          })
         }),
         fetch("/api/site-content", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(siteConfig)
+          body: JSON.stringify(normalizedSiteConfig)
         }),
+        fetch("/api/wbp/pricing/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...sebraeSettings,
+            breakfastSurchargePerGuest: bfVal,
+            extraBedFee: extraBedVal,
+            autoPublish: true,
+          })
+        }).catch(() => null),
         fetch("/api/settings", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            petPolicy: siteConfig.petPolicy,
-            childPolicy: siteConfig.childPolicy,
-            cancellationPolicy: siteConfig.cancellationPolicy,
-            pricing: siteConfig.pricing,
-            ratePlans: siteConfig.ratePlans,
-            bedConfig: siteConfig.bedConfig,
-            extraBedConfig: siteConfig.extraBedConfig,
+            petPolicy: normalizedSiteConfig.petPolicy,
+            childPolicy: normalizedSiteConfig.childPolicy,
+            cancellationPolicy: normalizedSiteConfig.cancellationPolicy,
+            pricing: normalizedSiteConfig.pricing,
+            ratePlans: normalizedSiteConfig.ratePlans,
+            bedConfig: normalizedSiteConfig.bedConfig,
+            extraBedConfig: normalizedSiteConfig.extraBedConfig,
           })
         }).catch(() => null)
       ])
 
       if (tRes.ok && sRes.ok) {
+        setSiteConfig(normalizedSiteConfig)
         const tData = await tRes.json()
         if (tData?.settings) setTariffSettings(tData.settings)
         if (tData?.sebraeCalculation) {
           setCalculation(prev => ({ ...prev, ...tData.sebraeCalculation }))
         }
         toast({
-          title: "Parâmetros Salvos com Sucesso! 💰",
-          description: "Regras do SEBRAE, markups de canais, descontos progressivos, corporativo B2B e políticas sincronizados com o motor."
+          title: "Parâmetros Salvos & Sincronizados! 💰",
+          description: "Café interno, acréscimo de cartão / desconto PIX, markups de Booking/Airbnb e políticas atualizados em todos os canais."
         })
         loadCalendarData()
       } else {
@@ -800,12 +850,13 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   const handleResetDefaults = () => {
     if (!window.confirm("Deseja restaurar as taxas e adicionais para os valores padrão sugeridos?")) return
 
+    const baseRef = Number(calculation.tarifaMinima || 276.63)
     const updated = {
       ...siteConfig,
       ratePlans: {
         with_breakfast: {
           name: "Com Café Incluso",
-          dailyRate: 225,
+          dailyRate: Math.round((baseRef + 20) * 100) / 100,
           cleaningFeeEnabled: false,
           cleaningFeeAmount: 0,
           cleaningFeeType: "per_stay",
@@ -813,11 +864,11 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
         },
         room_only: {
           name: "Sem Café",
-          dailyRate: 190,
+          dailyRate: Math.round(baseRef * 100) / 100,
           cleaningFeeEnabled: true,
           cleaningFeeAmount: 70,
           cleaningFeeType: "per_stay",
-          description: "Tarifa econômica sem café da manhã"
+          description: "Hospedagem em flat completo sem café da manhã"
         }
       },
       bedConfig: {
@@ -851,15 +902,18 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
         rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
       },
       pricing: {
-        directDiscountPercent: 15,
-        pixDiscountPercent: 5
+        directDiscountPercent: 0,
+        pixDiscountPercent: 5,
+        cardMarkupPercent: 5,
+        breakfastSurchargePerGuest: 20
       }
     }
 
     setSiteConfig(updated)
+    handleUpdateSebraeSettings({ breakfastSurchargePerGuest: 20, extraBedFee: 60 })
     toast({
       title: "Valores Restaurados",
-      description: "Padrões aplicados na tela. Clique em 'Salvar Todos os Parâmetros' para persistir.",
+      description: "Padrões aplicados na tela (Café R$ 20/hóspede, Cartão +5%). Clique em 'Salvar Todos os Parâmetros' para persistir.",
     })
   }
 
@@ -920,8 +974,10 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
   }
   const pricing = siteConfig?.pricing || {
-    directDiscountPercent: 15,
-    pixDiscountPercent: 5
+    directDiscountPercent: 0,
+    pixDiscountPercent: 5,
+    cardMarkupPercent: 5,
+    breakfastSurchargePerGuest: 20
   }
   const stayDiscounts = tariffSettings?.stayDiscounts || {
     weeklyPct: 0.10,
@@ -946,6 +1002,8 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   const effectiveBaseRate = tariffSettings?.mode === "manual"
     ? Number(tariffSettings?.baseDailyRate || 276.63)
     : Number(calculation.tarifaMinima || 276.63)
+  const effectiveBreakfastPerGuest = Number(sebraeSettings.breakfastSurchargePerGuest ?? pricing.breakfastSurchargePerGuest ?? 20)
+  const effectiveCardMarkupPct = Number(pricing.cardMarkupPercent ?? pricing.pixDiscountPercent ?? 5)
 
   // Cálculo do Simulador Multi-Noites & Paridade
   const simStayDiscountPct = simNights >= 30
@@ -956,11 +1014,11 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     ? (stayDiscounts.weeklyPct ?? 0.10)
     : 0
   const simBreakfastAdd = simPlan === "com_cafe"
-    ? (sebraeSettings.breakfastSurchargePerGuest ?? 25) * simGuests
+    ? effectiveBreakfastPerGuest * simGuests
     : 0
   const simExtraBedAdd = simGuests >= 3 ? (sebraeSettings.extraBedFee ?? 60) : 0
-  const simDailyBeforeDiscount = effectiveBaseRate + simBreakfastAdd
-  const simDailyAfterDiscount = simDailyBeforeDiscount * (1 - simStayDiscountPct)
+  const simDiscountedRoomBase = Math.round(effectiveBaseRate * (1 - simStayDiscountPct) * 100) / 100
+  const simDailyAfterDiscount = Math.round((simDiscountedRoomBase + simBreakfastAdd) * 100) / 100
   const simDirectTotal = Math.round((simDailyAfterDiscount * simNights + simExtraBedAdd) * 100) / 100
   const simBookingTotal = Math.round((simDirectTotal * (1 + bookingMarkupPct / 100)) * 100) / 100
   const simAirbnbTotal = Math.round((simDirectTotal * (1 + airbnbMarkupPct / 100)) * 100) / 100
@@ -1484,6 +1542,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
               <SebraePricingTab
                 settings={sebraeSettings}
                 calculation={calculation}
+                channelMarkups={tariffSettings?.channelMarkups}
                 onUpdateSettings={handleUpdateSebraeSettings}
                 onSaveAndStage={handleSaveAndStageSebrae}
                 isSaving={saving}
@@ -1628,63 +1687,60 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                   <div className="p-4 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/30 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="font-black text-xs text-emerald-900 dark:text-emerald-300">🌐 Venda Direta / Site</span>
-                      <Badge className="bg-emerald-600 text-white font-bold text-[10px]">Taxa Zero OTA</Badge>
+                      <Badge className="bg-emerald-600 text-white font-bold text-[10px]">PIX = Preço Normal</Badge>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Desc. Direto (%)</Label>
-                        <Input
-                          type="number"
-                          value={rawChannelInputs.directDiscount ?? (pricing.directDiscountPercent ?? 15)}
-                          onChange={e => {
-                            const raw = e.target.value
-                            setRawChannelInputs(prev => ({ ...prev, directDiscount: raw }))
-                            if (raw.trim() === "") return
-                            const val = Number(raw)
-                            if (!Number.isNaN(val)) {
-                              setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, directDiscountPercent: val } })
-                            }
-                          }}
-                          onBlur={() => {
-                            const raw = rawChannelInputs.directDiscount
-                            if (raw !== undefined) {
-                              const val = raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)
-                              setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, directDiscountPercent: val } })
-                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.directDiscount; return n })
-                            }
-                          }}
-                          className="h-8 font-black text-xs"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Desc. PIX (%)</Label>
-                        <Input
-                          type="number"
-                          value={rawChannelInputs.pixDiscount ?? (pricing.pixDiscountPercent ?? 5)}
-                          onChange={e => {
-                            const raw = e.target.value
-                            setRawChannelInputs(prev => ({ ...prev, pixDiscount: raw }))
-                            if (raw.trim() === "") return
-                            const val = Number(raw)
-                            if (!Number.isNaN(val)) {
-                              setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, pixDiscountPercent: val } })
-                            }
-                          }}
-                          onBlur={() => {
-                            const raw = rawChannelInputs.pixDiscount
-                            if (raw !== undefined) {
-                              const val = raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)
-                              setSiteConfig({ ...siteConfig, pricing: { ...siteConfig.pricing, pixDiscountPercent: val } })
-                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.pixDiscount; return n })
-                            }
-                          }}
-                          className="h-8 font-black text-xs"
-                        />
-                      </div>
+                    <div className="space-y-1 pt-1">
+                      <Label className="text-[11px] font-bold">Acréscimo Embutido Cartão / Desconto Âncora PIX (%)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={rawChannelInputs.cardMarkup ?? effectiveCardMarkupPct}
+                        onChange={e => {
+                          const raw = e.target.value
+                          setRawChannelInputs(prev => ({ ...prev, cardMarkup: raw }))
+                          if (raw.trim() === "") return
+                          const val = Math.max(0, Number(raw))
+                          if (!Number.isNaN(val)) {
+                            setSiteConfig({
+                              ...siteConfig,
+                              pricing: {
+                                ...siteConfig.pricing,
+                                directDiscountPercent: 0,
+                                cardMarkupPercent: val,
+                                pixDiscountPercent: val,
+                              },
+                            })
+                          }
+                        }}
+                        onBlur={() => {
+                          const raw = rawChannelInputs.cardMarkup
+                          if (raw !== undefined) {
+                            const val = raw.trim() === "" || Number.isNaN(Number(raw)) ? 5 : Math.max(0, Number(raw))
+                            setSiteConfig({
+                              ...siteConfig,
+                              pricing: {
+                                ...siteConfig.pricing,
+                                directDiscountPercent: 0,
+                                cardMarkupPercent: val,
+                                pixDiscountPercent: val,
+                              },
+                            })
+                            setRawChannelInputs(prev => { const n = { ...prev }; delete n.cardMarkup; return n })
+                          }
+                        }}
+                        className="h-8 font-black text-xs"
+                      />
                     </div>
-                    <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-emerald-200/60 flex justify-between items-center text-xs">
-                      <span className="text-slate-600 dark:text-slate-400">Tarifa Anunciada:</span>
-                      <span className="font-black font-mono text-emerald-700 dark:text-emerald-400">R$ {effectiveBaseRate.toFixed(2)}</span>
+                    <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-emerald-200/60 space-y-1 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600 dark:text-slate-400">PIX (100% Normal):</span>
+                        <span className="font-black font-mono text-emerald-700 dark:text-emerald-400">R$ {effectiveBaseRate.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="text-slate-500">Cartão (s/ citar taxa):</span>
+                        <span className="font-bold font-mono text-slate-700 dark:text-slate-300">R$ {(effectiveBaseRate * (1 + effectiveCardMarkupPct / 100)).toFixed(2)}</span>
+                      </div>
                     </div>
                   </div>
 
@@ -1776,11 +1832,19 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         />
                       </div>
                     </div>
-                    <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-sky-200/60 flex justify-between items-center text-xs">
-                      <span className="text-slate-600 dark:text-slate-400">Bruto / Líquido:</span>
-                      <span className="font-black font-mono text-sky-700 dark:text-sky-400">
-                        R$ {(effectiveBaseRate * (1 + bookingMarkupPct / 100)).toFixed(2)} / R$ {(effectiveBaseRate * (1 + bookingMarkupPct / 100) * (1 - (tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15))).toFixed(2)}
-                      </span>
+                    <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-sky-200/60 space-y-1 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600 dark:text-slate-400">Sem Café (Bruto / Líq.):</span>
+                        <span className="font-black font-mono text-sky-700 dark:text-sky-400">
+                          R$ {(effectiveBaseRate * (1 + bookingMarkupPct / 100)).toFixed(2)} / R$ {(effectiveBaseRate * (1 + bookingMarkupPct / 100) * (1 - (tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15))).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="text-slate-500">Com Café (1p / 2p):</span>
+                        <span className="font-bold font-mono text-sky-800 dark:text-sky-300">
+                          R$ {((effectiveBaseRate + effectiveBreakfastPerGuest) * (1 + bookingMarkupPct / 100)).toFixed(2)} / R$ {((effectiveBaseRate + effectiveBreakfastPerGuest * 2) * (1 + bookingMarkupPct / 100)).toFixed(2)}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -1870,11 +1934,19 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         />
                       </div>
                     </div>
-                    <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-rose-200/60 flex justify-between items-center text-xs">
-                      <span className="text-slate-600 dark:text-slate-400">Bruto / Líquido:</span>
-                      <span className="font-black font-mono text-rose-700 dark:text-rose-400">
-                        R$ {(effectiveBaseRate * (1 + airbnbMarkupPct / 100)).toFixed(2)} / R$ {(effectiveBaseRate * (1 + airbnbMarkupPct / 100) * (1 - (tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15))).toFixed(2)}
-                      </span>
+                    <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-rose-200/60 space-y-1 text-xs">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600 dark:text-slate-400">Sem Café (Bruto / Líq.):</span>
+                        <span className="font-black font-mono text-rose-700 dark:text-rose-400">
+                          R$ {(effectiveBaseRate * (1 + airbnbMarkupPct / 100)).toFixed(2)} / R$ {(effectiveBaseRate * (1 + airbnbMarkupPct / 100) * (1 - (tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15))).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="text-slate-500">Com Café (1p / 2p):</span>
+                        <span className="font-bold font-mono text-rose-800 dark:text-rose-300">
+                          R$ {((effectiveBaseRate + effectiveBreakfastPerGuest) * (1 + airbnbMarkupPct / 100)).toFixed(2)} / R$ {((effectiveBaseRate + effectiveBreakfastPerGuest * 2) * (1 + airbnbMarkupPct / 100)).toFixed(2)}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2138,126 +2210,81 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                       </div>
                       <div>
                         <CardTitle className="text-base font-black text-amber-950 dark:text-amber-200">
-                          Diária com Café da Manhã
+                          Diária com Café da Manhã (Estilo Hotel)
                         </CardTitle>
                         <CardDescription className="text-xs">
-                          Servido exclusivamente e privativamente no flat
+                          Sincronizado automaticamente com Site, Booking.com e Airbnb
                         </CardDescription>
                       </div>
                     </div>
                     <Badge className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs px-2 py-0.5">
-                      R$ {withBreakfast.dailyRate}/noite
+                      1p R$ {(effectiveBaseRate + effectiveBreakfastPerGuest).toFixed(2)} • 2p R$ {(effectiveBaseRate + effectiveBreakfastPerGuest * 2).toFixed(2)}
                     </Badge>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">Valor da Diária Base (R$ / noite)</Label>
+                    <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Valor Interno do Café por Hóspede / Noite (R$)
+                    </Label>
                     <Input
                       type="number"
-                      value={withBreakfast.dailyRate ?? 225}
+                      min="0"
+                      step="1"
+                      value={rawChannelInputs.breakfastInternal ?? effectiveBreakfastPerGuest}
                       onChange={e => {
-                        const current = siteConfig.ratePlans || {}
-                        setSiteConfig({
-                          ...siteConfig,
-                          ratePlans: {
-                            ...current,
-                            with_breakfast: { ...withBreakfast, dailyRate: Number(e.target.value) }
-                          }
-                        })
+                        const raw = e.target.value
+                        setRawChannelInputs(prev => ({ ...prev, breakfastInternal: raw }))
+                        if (raw.trim() === "") return
+                        const val = Math.max(0, Number(raw))
+                        if (!Number.isNaN(val)) {
+                          handleUpdateSebraeSettings({ breakfastSurchargePerGuest: val })
+                          setSiteConfig({
+                            ...siteConfig,
+                            pricing: { ...(siteConfig.pricing || {}), breakfastSurchargePerGuest: val },
+                            ratePlans: {
+                              ...(siteConfig.ratePlans || {}),
+                              with_breakfast: { ...withBreakfast, dailyRate: Math.round((effectiveBaseRate + val) * 100) / 100 }
+                            }
+                          })
+                        }
+                      }}
+                      onBlur={() => {
+                        const raw = rawChannelInputs.breakfastInternal
+                        if (raw !== undefined) {
+                          const val = raw.trim() === "" || Number.isNaN(Number(raw)) ? 20 : Math.max(0, Number(raw))
+                          handleUpdateSebraeSettings({ breakfastSurchargePerGuest: val })
+                          setSiteConfig({
+                            ...siteConfig,
+                            pricing: { ...(siteConfig.pricing || {}), breakfastSurchargePerGuest: val },
+                            ratePlans: {
+                              ...(siteConfig.ratePlans || {}),
+                              with_breakfast: { ...withBreakfast, dailyRate: Math.round((effectiveBaseRate + val) * 100) / 100 }
+                            }
+                          })
+                          setRawChannelInputs(prev => { const n = { ...prev }; delete n.breakfastInternal; return n })
+                        }
                       }}
                       className="font-black text-sm h-10 rounded-xl bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
                     />
+                    <p className="text-[11px] text-slate-500">
+                      Cálculo interno: soma +1x (R$ {effectiveBreakfastPerGuest.toFixed(2)}) para 1 hóspede e +2x (R$ {(effectiveBreakfastPerGuest * 2).toFixed(2)}) para 2 hóspedes sobre a diária base do calendário. Para o cliente, exibe apenas a diária final de ocupação.
+                    </p>
                   </div>
 
-                  <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label className="text-xs font-bold block">Taxa de Limpeza no Plano com Café</Label>
-                        <span className="text-[11px] text-slate-500">Cobrar taxa de limpeza neste regime?</span>
-                      </div>
-                      <div className="flex gap-1.5">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={!withBreakfast.cleaningFeeEnabled ? "default" : "outline"}
-                          onClick={() => {
-                            const current = siteConfig.ratePlans || {}
-                            setSiteConfig({
-                              ...siteConfig,
-                              ratePlans: {
-                                ...current,
-                                with_breakfast: { ...withBreakfast, cleaningFeeEnabled: false, cleaningFeeAmount: 0 }
-                              }
-                            })
-                          }}
-                          className="text-xs font-bold h-7 px-2.5 rounded-lg"
-                        >
-                          Isento (Grátis)
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={withBreakfast.cleaningFeeEnabled ? "default" : "outline"}
-                          onClick={() => {
-                            const current = siteConfig.ratePlans || {}
-                            setSiteConfig({
-                              ...siteConfig,
-                              ratePlans: {
-                                ...current,
-                                with_breakfast: { ...withBreakfast, cleaningFeeEnabled: true, cleaningFeeAmount: 70 }
-                              }
-                            })
-                          }}
-                          className="text-xs font-bold h-7 px-2.5 rounded-lg"
-                        >
-                          Cobrar Taxa
-                        </Button>
-                      </div>
+                  <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-600 dark:text-slate-400">1 Hóspede (Base + 1x Café):</span>
+                      <span className="font-black text-amber-700 dark:text-amber-400">R$ {(effectiveBaseRate + effectiveBreakfastPerGuest).toFixed(2)} / noite</span>
                     </div>
-
-                    {withBreakfast.cleaningFeeEnabled && (
-                      <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-bold">Valor (R$)</Label>
-                          <Input
-                            type="number"
-                            value={withBreakfast.cleaningFeeAmount ?? 70}
-                            onChange={e => {
-                              const current = siteConfig.ratePlans || {}
-                              setSiteConfig({
-                                ...siteConfig,
-                                ratePlans: {
-                                  ...current,
-                                  with_breakfast: { ...withBreakfast, cleaningFeeAmount: Number(e.target.value) }
-                                }
-                              })
-                            }}
-                            className="text-xs h-8 rounded-lg"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-bold">Frequência</Label>
-                          <select
-                            value={withBreakfast.cleaningFeeType || "per_stay"}
-                            onChange={e => {
-                              const current = siteConfig.ratePlans || {}
-                              setSiteConfig({
-                                ...siteConfig,
-                                ratePlans: {
-                                  ...current,
-                                  with_breakfast: { ...withBreakfast, cleaningFeeType: e.target.value }
-                                }
-                              })
-                            }}
-                            className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
-                          >
-                            <option value="per_stay">Por Estadia (1x)</option>
-                            <option value="per_night">Por Noite / Diária</option>
-                          </select>
-                        </div>
-                      </div>
-                    )}
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-600 dark:text-slate-400">2 Hóspedes (Base + 2x Café):</span>
+                      <span className="font-black text-amber-700 dark:text-amber-400">R$ {(effectiveBaseRate + effectiveBreakfastPerGuest * 2).toFixed(2)} / noite</span>
+                    </div>
+                    <div className="flex justify-between items-center pt-1 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500">
+                      <span>Modalidade de limpeza:</span>
+                      <span className="font-bold text-slate-700 dark:text-slate-300">Padrão Hotelaria (sem taxa avulsa)</span>
+                    </div>
                   </div>
 
                   <div className="space-y-1">
@@ -2270,7 +2297,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                           ...siteConfig,
                           ratePlans: {
                             ...current,
-                            with_breakfast: { ...withBreakfast, description: e.target.value }
+                            with_breakfast: { ...withBreakfast, cleaningFeeEnabled: false, cleaningFeeAmount: 0, description: e.target.value }
                           }
                         })
                       }}
@@ -2290,36 +2317,27 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                       </div>
                       <div>
                         <CardTitle className="text-base font-black text-slate-900 dark:text-slate-100">
-                          Diária Sem Café (Tarifa Econômica)
+                          Diária Sem Café (Estilo Airbnb)
                         </CardTitle>
                         <CardDescription className="text-xs">
-                          Apenas hospedagem em flat completo e climatizado
+                          Diária base SEBRAE/Calendário + Taxa de Limpeza por estadia
                         </CardDescription>
                       </div>
                     </div>
                     <Badge className="bg-slate-800 text-white font-bold text-xs px-2 py-0.5">
-                      R$ {roomOnly.dailyRate}/noite
+                      R$ {effectiveBaseRate.toFixed(2)}/noite
                     </Badge>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">Valor da Diária Base (R$ / noite)</Label>
-                    <Input
-                      type="number"
-                      value={roomOnly.dailyRate ?? 190}
-                      onChange={e => {
-                        const current = siteConfig.ratePlans || {}
-                        setSiteConfig({
-                          ...siteConfig,
-                          ratePlans: {
-                            ...current,
-                            room_only: { ...roomOnly, dailyRate: Number(e.target.value) }
-                          }
-                        })
-                      }}
-                      className="font-black text-sm h-10 rounded-xl bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
-                    />
+                  <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex justify-between items-center text-xs">
+                    <div>
+                      <span className="font-bold text-slate-800 dark:text-slate-200 block">Diária Base Sincronizada (1 ou 2 hóspedes)</span>
+                      <span className="text-[11px] text-slate-500">Segue automaticamente o SEBRAE, sazonalidade, fim de semana e calendário</span>
+                    </div>
+                    <span className="font-black font-mono text-sm text-slate-900 dark:text-slate-100 shrink-0 pl-2">
+                      R$ {effectiveBaseRate.toFixed(2)}
+                    </span>
                   </div>
 
                   <div className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">

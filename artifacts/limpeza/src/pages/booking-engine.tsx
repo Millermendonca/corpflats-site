@@ -67,7 +67,7 @@ export default function BookingEngine() {
   
   // Carrinho de Flats / Multi-Quartos (1 a N flats)
   const [rooms, setRooms] = useState<RoomConfig[]>([
-    { id: 1, bedType: "queen", adults: 2 }
+    { id: 1, bedType: "queen", adults: 1 }
   ])
   
   const [availabilityData, setAvailabilityData] = useState<any>(null)
@@ -623,42 +623,93 @@ export default function BookingEngine() {
     setRooms(rooms.map(r => r.id === id ? { ...r, [field]: value } : r))
   }
 
-  // Obtenção dinâmica do plano tarifário selecionado
+  const formatBrl = (val: number) =>
+    Number(val || 0).toLocaleString("pt-BR", {
+      minimumFractionDigits: Number.isInteger(Math.round(Number(val || 0) * 100) / 100) ? 0 : 2,
+      maximumFractionDigits: 2,
+    })
+
+  // Obtenção dinâmica do plano tarifário selecionado (sincronizado com SEBRAE / Calendário / Preços)
+  const dynPricing = availabilityData?.dynamicPricing
+  const breakfastSurchargePerGuest = Number(
+    dynPricing?.breakfastSurchargePerGuest ??
+    siteConfig?.pricing?.breakfastSurchargePerGuest ??
+    20
+  )
+  const cardMarkupPercent = Number(
+    dynPricing?.cardMarkupPercent ??
+    siteConfig?.pricing?.cardMarkupPercent ??
+    siteConfig?.pricing?.pixDiscountPercent ??
+    5
+  )
+  const fallbackBaseSemCafe = Number(
+    dynPricing?.avgRoomOnlyRate ??
+    siteConfig?.ratePlans?.room_only?.dailyRate ??
+    276.63
+  )
+  const perNightBaseSemCafe: number[] =
+    Array.isArray(dynPricing?.discountedSemCafeRates) && dynPricing.discountedSemCafeRates.length === nights
+      ? dynPricing.discountedSemCafeRates.map((d: any) => Number(d.rate) || fallbackBaseSemCafe)
+      : Array.from({ length: nights }, () => fallbackBaseSemCafe)
+
+  const roomOnlyPixSubtotal = Math.round(
+    perNightBaseSemCafe.reduce((acc, r) => acc + r * flatsCount, 0) * 100
+  ) / 100
+  const withBreakfastPixSubtotal = Math.round(
+    perNightBaseSemCafe.reduce(
+      (acc, r) =>
+        acc +
+        rooms.reduce(
+          (s, rm) => s + Math.round((r + Math.min(3, Math.max(1, Number(rm.adults) || 1)) * breakfastSurchargePerGuest) * 100) / 100,
+          0
+        ),
+      0
+    ) * 100
+  ) / 100
+
+  const roomOnlyAvgRate = Math.round((roomOnlyPixSubtotal / (nights * flatsCount)) * 100) / 100
+  const withBreakfastAvgRate = Math.round((withBreakfastPixSubtotal / (nights * flatsCount)) * 100) / 100
+
   const rawWithBreakfast = siteConfig?.ratePlans?.with_breakfast || {}
-  const withBreakfastConfig = { 
-    dailyRate: 225, 
-    cleaningFeeType: "per_stay", 
+  const withBreakfastConfig = {
+    dailyRate: withBreakfastAvgRate,
+    cleaningFeeType: "per_stay",
     description: "Diária com Café da Manhã servido exclusivamente no flat",
     ...rawWithBreakfast,
+    dailyRateComputed: withBreakfastAvgRate,
     cleaningFeeEnabled: Boolean(rawWithBreakfast.cleaningFeeEnabled),
     cleaningFeeAmount: Number(rawWithBreakfast.cleaningFeeAmount ?? 0)
   }
+  withBreakfastConfig.dailyRate = withBreakfastAvgRate
+
   const rawRoomOnly = siteConfig?.ratePlans?.room_only || {}
-  const roomOnlyConfig = { 
-    dailyRate: 190, 
-    cleaningFeeType: "per_stay", 
-    description: "Tarifa econômica sem café da manhã",
+  const roomOnlyConfig = {
+    dailyRate: roomOnlyAvgRate,
+    cleaningFeeType: "per_stay",
+    description: "Hospedagem em flat completo sem café da manhã",
     ...rawRoomOnly,
+    dailyRateComputed: roomOnlyAvgRate,
     cleaningFeeEnabled: rawRoomOnly.cleaningFeeEnabled !== false,
     cleaningFeeAmount: Number(rawRoomOnly.cleaningFeeAmount ?? 70)
   }
-  
+  roomOnlyConfig.dailyRate = roomOnlyAvgRate
+
   const currentPlan = ratePlan === "with_breakfast" ? withBreakfastConfig : roomOnlyConfig
-  const selectedDailyRate = Number(currentPlan.dailyRate) || (ratePlan === "with_breakfast" ? 225 : 190)
-  const subtotal = selectedDailyRate * nights * flatsCount
-  
-  const discountPercent = siteConfig?.pricing?.directDiscountPercent ?? 15
-  const discountAmount = Math.round(subtotal * (discountPercent / 100))
-  
+  const selectedDailyRate = ratePlan === "with_breakfast" ? withBreakfastAvgRate : roomOnlyAvgRate
+  const subtotal = ratePlan === "with_breakfast" ? withBreakfastPixSubtotal : roomOnlyPixSubtotal
+
+  const discountPercent = 0
+  const discountAmount = 0
+
   // Cálculo dinâmico da Taxa de Limpeza específica do plano por flat
   const cleaningFeePerFlat = currentPlan.cleaningFeeEnabled
     ? (currentPlan.cleaningFeeType === "per_night" ? (Number(currentPlan.cleaningFeeAmount) || 0) * nights : (Number(currentPlan.cleaningFeeAmount) || 0))
     : 0
-  const cleaningFee = cleaningFeePerFlat * flatsCount
+  const cleaningFee = Math.round(cleaningFeePerFlat * flatsCount * 100) / 100
 
   // Cálculo dinâmico da Taxa Pet
   const petFeePerUnit = siteConfig?.petPolicy?.feeAmount ?? 80
-  const petFee = bringingPet 
+  const petFee = bringingPet
     ? (siteConfig?.petPolicy?.feeType === "per_night" ? petFeePerUnit * nights * petCount : petFeePerUnit * petCount)
     : 0
 
@@ -672,18 +723,19 @@ export default function BookingEngine() {
   const extraBedFeeUnit = siteConfig?.extraBedConfig?.feeAmount ?? 60
   const extraBedFee = extraBedCount * (siteConfig?.extraBedConfig?.feeType === "per_night" ? extraBedFeeUnit * nights : extraBedFeeUnit)
 
-  // Preço Base / Cartão de Crédito
-  const baseTotalAmount = subtotal - discountAmount + cleaningFee + petFee + twinFee + extraBedFee
-  const cardTotalAmount = baseTotalAmount
+  // Preço Normal Canônico = Valor Final no PIX (100% integral)
+  const pixTotalAmount = Math.round((subtotal + cleaningFee + petFee + twinFee + extraBedFee) * 100) / 100
+  // Preço no Cartão = Incremento silencioso configurado (ex: +5%) exibido como preço padrão
+  const cardTotalAmount = Math.round(pixTotalAmount * (1 + cardMarkupPercent / 100) * 100) / 100
+  const baseTotalAmount = cardTotalAmount
 
-  // Desconto Exclusivo PIX Instantâneo
-  const pixDiscountPercent = siteConfig?.pricing?.pixDiscountPercent ?? 5
-  const pixDiscountAmount = Math.round(baseTotalAmount * (pixDiscountPercent / 100))
-  const pixTotalAmount = Math.max(0, baseTotalAmount - pixDiscountAmount)
+  // Desconto exibido ao selecionar PIX
+  const pixDiscountPercent = cardMarkupPercent
+  const pixDiscountAmount = Math.round((cardTotalAmount - pixTotalAmount) * 100) / 100
 
   // Valor ativo conforme forma de pagamento escolhida
   const totalAmount = paymentMethod === "pix" ? pixTotalAmount : cardTotalAmount
-  const currentTotalDiscount = paymentMethod === "pix" ? (discountAmount + pixDiscountAmount) : discountAmount
+  const currentTotalDiscount = paymentMethod === "pix" ? pixDiscountAmount : 0
 
   // Política de cancelamento ativa baseada em antecedência
   const cancellationPolicy = calculateCancellationPolicy(new Date(), checkin, totalAmount)
@@ -1140,13 +1192,39 @@ export default function BookingEngine() {
 
             {/* Seletor de Tarifas */}
             <div id="tarifas" className="space-y-1.5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h2 className="text-xs font-bold text-slate-900">
                   Escolha sua tarifa
                 </h2>
-                <span className="text-[10.5px] text-slate-500 font-medium">
-                  {nights} {nights === 1 ? "noite" : "noites"}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 border border-slate-200/80">
+                    <button
+                      type="button"
+                      onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 1)}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
+                        (rooms[0]?.adults ?? 1) === 1
+                          ? "bg-white text-[#091E26] shadow-2xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      1 hósp.
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 2)}
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
+                        (rooms[0]?.adults ?? 1) === 2
+                          ? "bg-white text-[#091E26] shadow-2xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      2 hósp.
+                    </button>
+                  </div>
+                  <span className="text-[10.5px] text-slate-500 font-medium">
+                    • {nights} {nights === 1 ? "noite" : "noites"}
+                  </span>
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -1172,14 +1250,14 @@ export default function BookingEngine() {
                           <span className="text-[8.5px] font-bold text-[#091E26] bg-[#C5A059]/25 border border-[#C5A059]/50 px-1.5 py-0.5 rounded leading-none">Ativa</span>
                         )}
                       </div>
-                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Café da manhã no flat</p>
+                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Café da manhã servido no flat</p>
                     </div>
                   </div>
                   <div className="text-right shrink-0 pl-2">
                     <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
-                      R$ {withBreakfastConfig.dailyRate}
+                      R$ {formatBrl(withBreakfastConfig.dailyRate)}
                     </div>
-                    <span className="text-[9px] text-slate-400 block mt-0.5">/ noite</span>
+                    <span className="text-[9px] text-slate-400 block mt-0.5">/ noite no PIX</span>
                   </div>
                 </div>
 
@@ -1205,14 +1283,14 @@ export default function BookingEngine() {
                           <span className="text-[8.5px] font-bold text-[#091E26] bg-[#C5A059]/25 border border-[#C5A059]/50 px-1.5 py-0.5 rounded leading-none">Ativa</span>
                         )}
                       </div>
-                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Tarifa econômica</p>
+                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Somente hospedagem</p>
                     </div>
                   </div>
                   <div className="text-right shrink-0 pl-2">
                     <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
-                      R$ {roomOnlyConfig.dailyRate}
+                      R$ {formatBrl(roomOnlyConfig.dailyRate)}
                     </div>
-                    <span className="text-[9px] text-slate-400 block mt-0.5">/ noite</span>
+                    <span className="text-[9px] text-slate-400 block mt-0.5">/ noite no PIX</span>
                   </div>
                 </div>
               </div>
@@ -1538,8 +1616,8 @@ export default function BookingEngine() {
             {ratePlan === "with_breakfast" ? "Com café da manhã" : "Sem café da manhã"}
           </span>
           <div className="text-xs font-bold text-slate-900">
-            R$ {ratePlan === "with_breakfast" ? withBreakfastConfig.dailyRate : roomOnlyConfig.dailyRate}
-            <span className="text-[10px] font-normal text-slate-500"> / noite</span>
+            R$ {formatBrl(ratePlan === "with_breakfast" ? withBreakfastConfig.dailyRate : roomOnlyConfig.dailyRate)}
+            <span className="text-[10px] font-normal text-slate-500"> / noite no PIX</span>
           </div>
         </div>
 

@@ -394,10 +394,13 @@ export function isPixPayloadStaleForAmount(reservationOrPayload, expectedAmount)
   return false;
 }
 
-export function computeCardAmountFromPix(pixAmount) {
+export function computeCardAmountFromPix(pixAmount, cardMarkupPercent = 5) {
   const base = Number(pixAmount) || 0;
   if (base <= 0) return 0;
-  return Math.round(base * 1.05 * 100) / 100;
+  const pct = Number.isFinite(Number(cardMarkupPercent)) && Number(cardMarkupPercent) >= 0
+    ? Number(cardMarkupPercent)
+    : 5;
+  return Math.round(base * (1 + pct / 100) * 100) / 100;
 }
 
 // ── Utilitário Canônico de Fuso Horário de Brasília (America/Sao_Paulo) ────────

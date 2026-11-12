@@ -81,22 +81,24 @@ export const calcularOrcamentoTool: AgentToolDefinition<CalcularOrcamentoArgs> =
         };
       }
 
-      const diariaBase = 237.0;
+      const diariaBase = 276.63;
       const adicionalTerceiroHospede = hospedes === 3 ? 60.0 : 0.0;
-      const valorCafePorPessoaDia = 35.0;
+      const valorCafeInternoPorPessoaDia = 20.0;
       const taxaLimpezaSemCafe = 70.0;
 
-      const diariaAcomodacao = diariaBase + adicionalTerceiroHospede;
-      const diariaComCafe = diariaAcomodacao + hospedes * valorCafePorPessoaDia;
+      const diariaAcomodacao = Number((diariaBase + adicionalTerceiroHospede).toFixed(2));
+      const diariaComCafe = Number((diariaAcomodacao + hospedes * valorCafeInternoPorPessoaDia).toFixed(2));
 
       const totalComCafe = Number((diarias * diariaComCafe).toFixed(2));
       const totalSemCafe = Number((diarias * diariaAcomodacao + taxaLimpezaSemCafe).toFixed(2));
+      const totalCartaoComCafe = Number((totalComCafe * 1.05).toFixed(2));
+      const totalCartaoSemCafe = Number((totalSemCafe * 1.05).toFixed(2));
 
       const msg =
-        `Apresente ao cliente com clareza as duas opções oficiais para ${diarias} diária(s) (${checkin} a ${checkout}) para ${hospedes} pessoa(s):\n` +
-        `1) *Plano com Café da Manhã no Flat (Recomendado):* R$ ${diariaComCafe.toFixed(2)}/diária -> *Total: R$ ${totalComCafe.toFixed(2)}* (ISENTO de taxa de limpeza!).\n` +
-        `2) *Plano Somente Hospedagem:* R$ ${diariaAcomodacao.toFixed(2)}/diária + R$ ${taxaLimpezaSemCafe.toFixed(2)} taxa única de limpeza -> *Total: R$ ${totalSemCafe.toFixed(2)}*.\n` +
-        `Pergunte qual das duas opções ele prefere para você já gerar o bloqueio da reserva e a chave PIX.`;
+        `Apresente ao cliente com clareza as duas opções oficiais para ${diarias} diária(s) (${checkin} a ${checkout}) para ${hospedes} hóspede(s), sem jamais mencionar valor separado de café nem dizer que limpeza é isenta:\n` +
+        `1) *Hospedagem com Café da Manhã servido no Flat:* R$ ${diariaComCafe.toFixed(2)}/diária -> *Total no PIX (com desconto): R$ ${totalComCafe.toFixed(2)}* (ou R$ ${totalCartaoComCafe.toFixed(2)} no Cartão).\n` +
+        `2) *Locação Somente Hospedagem (Sem Café):* R$ ${diariaAcomodacao.toFixed(2)}/diária + R$ ${taxaLimpezaSemCafe.toFixed(2)} taxa de limpeza -> *Total no PIX (com desconto): R$ ${totalSemCafe.toFixed(2)}* (ou R$ ${totalCartaoSemCafe.toFixed(2)} no Cartão).\n` +
+        `Nunca mencione acréscimo de cartão (apresente o valor do cartão naturalmente e o do PIX como desconto PIX). Pergunte qual das duas opções ele prefere para você gerar o bloqueio da reserva.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -107,12 +109,15 @@ export const calcularOrcamentoTool: AgentToolDefinition<CalcularOrcamentoArgs> =
           quantidade_hospedes: hospedes,
           opcao_com_cafe: {
             diaria: diariaComCafe,
-            taxa_limpeza: 0,
+            valor_total_pix: totalComCafe,
+            valor_total_cartao: totalCartaoComCafe,
             valor_total: totalComCafe,
           },
           opcao_sem_cafe: {
             diaria: diariaAcomodacao,
             taxa_limpeza: taxaLimpezaSemCafe,
+            valor_total_pix: totalSemCafe,
+            valor_total_cartao: totalCartaoSemCafe,
             valor_total: totalSemCafe,
           },
           moeda: 'BRL',

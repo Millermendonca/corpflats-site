@@ -373,14 +373,36 @@ export function buildChannexRestrictionsValues(startDate, endDate, db, options =
       const monthIdx = d.getUTCMonth();
       const seasonInfo = seasonality[monthIdx] || { factor: 1.0, season: "Média" };
 
-      const seasonalBaseRate = round2(sebraeBase.tarifaMinima * seasonInfo.factor);
+      const baseDailyFromMode =
+        db?.tariffSettings?.mode === "manual" && Number(db?.tariffSettings?.baseDailyRate) > 0
+          ? round2(Number(db.tariffSettings.baseDailyRate))
+          : round2(sebraeBase.tarifaMinima * seasonInfo.factor);
       const dayOfWeek = d.getUTCDay();
       const isWeekend = dayOfWeek === 5 || dayOfWeek === 6;
-      const weekendMultiplier = isWeekend ? (1 + Number(settings.weekendMarkupPct || 0.15)) : 1.0;
-      const candidateBaseRate = round2(seasonalBaseRate * weekendMultiplier);
+      const weekendPct = Number(settings.weekendMarkupPct ?? db?.tariffSettings?.weekendMarkupPct ?? 0.15);
+      const weekendMultiplier = isWeekend ? (1 + weekendPct) : 1.0;
+      let candidateBaseRate = round2(baseDailyFromMode * weekendMultiplier);
+
+      // Respect global calendar override if present in db.tariffOverrides
+      if (Array.isArray(db?.tariffOverrides) && db.tariffOverrides.length > 0) {
+        const globalOverride = db.tariffOverrides.find(
+          (o) =>
+            o &&
+            o.date === night &&
+            (!o.flatId || String(o.flatId).toLowerCase() === "all") &&
+            (!o.channel || String(o.channel).toLowerCase() === "all") &&
+            Number(o.rate) > 0
+        );
+        if (globalOverride) {
+          candidateBaseRate = round2(Number(globalOverride.rate));
+        }
+      }
 
       const calculatedPlans = calculateRatePlanPrices(candidateBaseRate, settings);
       const calculated = calculatedPlans[planId] || calculatedPlans.sem_cafe;
+
+      const bSurcharge = Number(settings.breakfastSurchargePerGuest ?? DEFAULT_SEBRAE_CONFIG.breakfastSurchargePerGuest ?? 20.00);
+      const extraBed = Number(settings.extraBedFee ?? DEFAULT_SEBRAE_CONFIG.extraBedFee ?? 60.00);
 
       const key = `${night}_${planId}`;
       let effectiveRate = calculated.rate;
@@ -390,16 +412,25 @@ export function buildChannexRestrictionsValues(startDate, endDate, db, options =
         effectiveRate = Number(pricingState.stagedModifications[key]);
       }
 
-      // Enforce SEBRAE minimum floor safety
-      const minAllowed = planId === "com_cafe"
-        ? round2(sebraeBase.tarifaMinima + 2 * Number(settings.breakfastSurchargePerGuest || 25.00))
-        : round2(sebraeBase.tarifaMinima);
-      if (effectiveRate < minAllowed) {
-        effectiveRate = minAllowed;
+      // Enforce SEBRAE minimum floor safety (unless explicit manual mode or calendar override)
+      const hasManualOverride =
+        db?.tariffSettings?.mode === "manual" ||
+        (Array.isArray(db?.tariffOverrides) &&
+          db.tariffOverrides.some(
+            (o) =>
+              o &&
+              o.date === night &&
+              (!o.flatId || String(o.flatId).toLowerCase() === "all") &&
+              (!o.channel || String(o.channel).toLowerCase() === "all")
+          ));
+      if (!hasManualOverride) {
+        const minAllowed = planId === "com_cafe"
+          ? round2(sebraeBase.tarifaMinima + 2 * bSurcharge)
+          : round2(sebraeBase.tarifaMinima);
+        if (effectiveRate < minAllowed) {
+          effectiveRate = minAllowed;
+        }
       }
-
-      const bSurcharge = Number(settings.breakfastSurchargePerGuest || 25.00);
-      const extraBed = Number(settings.extraBedFee || 60.00);
 
       let rdefSingle = calculated.rdef_single;
       let adult3 = calculated.adult_3;
@@ -477,6 +508,38 @@ export function buildChannexRestrictionsValues(startDate, endDate, db, options =
       }
     }
     result.push({ ...current });
+  }
+
+  // Optional channel-specific Channex rate plans (Booking.com / Airbnb / Expedia) with automatic platform markup
+  const channelRatePlans = options.channelRatePlans || db?.settings?.channex_config?.channelRatePlans;
+  if (channelRatePlans && typeof channelRatePlans === "object") {
+    const channelMarkups = db?.tariffSettings?.channelMarkups || {};
+    for (const [channelKey, rpMap] of Object.entries(channelRatePlans)) {
+      if (!rpMap || typeof rpMap !== "object") continue;
+      const chMarkupPct = Number(channelMarkups?.[channelKey]?.markupPct ?? 0);
+      const mult = 1 + chMarkupPct;
+      for (const planId of ["sem_cafe", "com_cafe"]) {
+        const chRatePlanId = rpMap[planId];
+        if (!chRatePlanId) continue;
+        const baseEntries = buildChannexRestrictionsValues(startDate, endDate, db, {
+          ...options,
+          planIds: [planId],
+          ratePlanIds: { [planId]: chRatePlanId },
+          channelRatePlans: null
+        });
+        for (const item of baseEntries) {
+          if (Array.isArray(item.rates)) {
+            item.rates = item.rates.map((r) => ({
+              ...r,
+              rate: round2(Number(r.rate) * mult).toFixed(2)
+            }));
+          } else if (item.rate != null) {
+            item.rate = round2(Number(item.rate) * mult).toFixed(2);
+          }
+          result.push(item);
+        }
+      }
+    }
   }
 
   return result;
@@ -1009,8 +1072,8 @@ export class WbpAriSynchronizer {
         const ceiling = this.getPlanCeiling(planId, night);
         const units = Math.max(0, Math.min(ceiling != null ? Number(ceiling) : 19, freeCanonical));
 
-        const bSurcharge = Number(settings.breakfastSurchargePerGuest || 25.00);
-        const extraBed = Number(settings.extraBedFee || 60.00);
+        const bSurcharge = Number(settings.breakfastSurchargePerGuest ?? DEFAULT_SEBRAE_CONFIG.breakfastSurchargePerGuest ?? 20.00);
+        const extraBed = Number(settings.extraBedFee ?? DEFAULT_SEBRAE_CONFIG.extraBedFee ?? 60.00);
 
         let rdefSingle = calculated.rdef_single;
         let adult3 = calculated.adult_3;

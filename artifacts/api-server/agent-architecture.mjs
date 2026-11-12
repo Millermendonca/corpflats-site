@@ -21,8 +21,9 @@
  *  13. `notificar_administrador`
  */
 
-import { triggerImmediateWhatsApp, generateStaticPixPayload, formatReservationChannelLabel, resolveReservationGuestCount } from './zapi-service.mjs';
+import { triggerImmediateWhatsApp, generateStaticPixPayload, formatReservationChannelLabel, resolveReservationGuestCount, computeCardAmountFromPix } from './zapi-service.mjs';
 import { validateGuestEmailAddress, updateGuestEmailAndResendRecentPending } from './mail-service.mjs';
+import { WbpPricingManager, calculateSebraeRate, STANDARD_SEBRAE_SEASONALITY_FACTORS } from './wbp/pricing.mjs';
 
 function normalizePhoneDigits(phone) {
   return String(phone || '').replace(/\D+/g, '');
@@ -914,10 +915,149 @@ export const consultarDisponibilidadeTool = {
   },
 };
 
+function resolveAgentLivePricingQuote(db, checkin, checkout, hospedes) {
+  const diarias = Math.max(1, diffDays(checkin, checkout));
+  const wbpState = db ? WbpPricingManager.getPricingState(db) : null;
+  const wbpSettings = wbpState?.settings || {};
+  const tarSettings = db?.tariffSettings || {};
+  const siteCfg = db?.siteConfig || {};
+
+  const valorCafeInternoPorPessoaDia = Number(
+    wbpSettings.breakfastSurchargePerGuest ??
+    tarSettings.breakfastSurchargePerGuest ??
+    siteCfg.pricing?.breakfastSurchargePerGuest ??
+    20.0
+  );
+  const extraBedUnit = Number(
+    wbpSettings.extraBedFee ??
+    siteCfg.extraBedConfig?.feeAmount ??
+    60.0
+  );
+  const extraBedType = siteCfg.extraBedConfig?.feeType || 'per_stay';
+  const adicionalTerceiroHospedeTotal = hospedes >= 3
+    ? (extraBedType === 'per_night' ? Number((extraBedUnit * diarias).toFixed(2)) : extraBedUnit)
+    : 0.0;
+
+  const roomOnlyPlanCfg = siteCfg.ratePlans?.room_only || {};
+  const taxaLimpezaSemCafe = roomOnlyPlanCfg.cleaningFeeEnabled === false
+    ? 0.0
+    : Number(roomOnlyPlanCfg.cleaningFeeAmount ?? 70.0);
+
+  const cardMarkupPercent = Number(
+    siteCfg.pricing?.cardMarkupPercent ??
+    tarSettings.cardMarkupPercent ??
+    5.0
+  );
+
+  const stayDiscounts = tarSettings.stayDiscounts || {
+    weeklyPct: 0.1,
+    biweeklyPct: 0.15,
+    monthlyPct: 0.25,
+  };
+
+  let descontoDuracaoPct = 0;
+  let faixaDescontoLabel = null;
+  if (diarias >= 30) {
+    descontoDuracaoPct = Number(stayDiscounts.monthlyPct ?? 0.25);
+    faixaDescontoLabel = 'Pacote Mensal (30+ diárias)';
+  } else if (diarias >= 15) {
+    descontoDuracaoPct = Number(stayDiscounts.biweeklyPct ?? 0.15);
+    faixaDescontoLabel = 'Pacote Quinzenal (15+ diárias)';
+  } else if (diarias >= 7) {
+    descontoDuracaoPct = Number(stayDiscounts.weeklyPct ?? 0.1);
+    faixaDescontoLabel = 'Pacote Semanal (7+ diárias)';
+  }
+
+  const sebraeCalc = wbpState ? calculateSebraeRate(wbpSettings) : { tarifaMinima: 276.63 };
+  const overrides = Array.isArray(db?.tariffOverrides) ? db.tariffOverrides : [];
+  const weekendPct = Number(tarSettings.weekendMarkupPct ?? wbpSettings.weekendMarkupPct ?? 0.15);
+
+  const baseNightlyRates = [];
+  const startObj = new Date(`${checkin}T12:00:00Z`);
+  for (let i = 0; i < diarias; i++) {
+    const curObj = new Date(startObj.getTime() + i * 86400000);
+    const dStr = curObj.toISOString().slice(0, 10);
+
+    const matchedOverride = overrides.find(
+      (o) =>
+        o &&
+        o.date === dStr &&
+        (!o.flatId || String(o.flatId).toLowerCase() === 'all') &&
+        (!o.channel || ['all', 'direct', 'whatsapp', 'site'].includes(String(o.channel).toLowerCase()))
+    );
+
+    if (matchedOverride && matchedOverride.rate != null) {
+      baseNightlyRates.push(Number(Number(matchedOverride.rate).toFixed(2)));
+      continue;
+    }
+
+    let baseNight = 276.63;
+    if (tarSettings.mode === 'manual' && tarSettings.baseDailyRate != null) {
+      baseNight = Number(tarSettings.baseDailyRate);
+    } else if (wbpState) {
+      const mIdx = curObj.getUTCMonth();
+      const customSeason = wbpState.seasonalityOverrides?.[mIdx] ?? wbpState.seasonalityOverrides?.[String(mIdx)];
+      const factor = typeof customSeason === 'number'
+        ? customSeason
+        : (customSeason?.factor != null ? Number(customSeason.factor) : (STANDARD_SEBRAE_SEASONALITY_FACTORS[mIdx]?.factor ?? 1.0));
+      baseNight = Number((sebraeCalc.tarifaMinima * factor).toFixed(2));
+    }
+
+    const dow = curObj.getUTCDay();
+    const isWeekend = dow === 5 || dow === 6;
+    const withWeekend = isWeekend ? baseNight * (1 + weekendPct) : baseNight;
+    baseNightlyRates.push(Number(withWeekend.toFixed(2)));
+  }
+
+  const somaBrutaSemCafe = Number(baseNightlyRates.reduce((acc, r) => acc + r, 0).toFixed(2));
+  const discountedNightlyRates = baseNightlyRates.map((r) =>
+    descontoDuracaoPct > 0 ? Number((r * (1 - descontoDuracaoPct)).toFixed(2)) : r
+  );
+  const somaHospedagemSemCafe = Number(discountedNightlyRates.reduce((acc, r) => acc + r, 0).toFixed(2));
+  const diariaMediaSemCafe = Number((somaHospedagemSemCafe / diarias).toFixed(2));
+
+  const comCafeNightlyRates = discountedNightlyRates.map((r) =>
+    Number((r + hospedes * valorCafeInternoPorPessoaDia).toFixed(2))
+  );
+  const somaHospedagemComCafe = Number(comCafeNightlyRates.reduce((acc, r) => acc + r, 0).toFixed(2));
+  const diariaMediaComCafe = Number((somaHospedagemComCafe / diarias).toFixed(2));
+
+  const totalComCafePix = Number((somaHospedagemComCafe + adicionalTerceiroHospedeTotal).toFixed(2));
+  const totalSemCafePix = Number((somaHospedagemSemCafe + adicionalTerceiroHospedeTotal + taxaLimpezaSemCafe).toFixed(2));
+
+  const totalComCafeCartao = computeCardAmountFromPix(totalComCafePix, cardMarkupPercent);
+  const totalSemCafeCartao = computeCardAmountFromPix(totalSemCafePix, cardMarkupPercent);
+
+  const economiaDesconto = descontoDuracaoPct > 0
+    ? Number((somaBrutaSemCafe - somaHospedagemSemCafe).toFixed(2))
+    : 0;
+
+  return {
+    diarias,
+    valorCafeInternoPorPessoaDia,
+    adicionalTerceiroHospedeTotal,
+    taxaLimpezaSemCafe,
+    cardMarkupPercent,
+    descontoDuracaoPct,
+    faixaDescontoLabel,
+    economiaDesconto,
+    diariaMediaSemCafe,
+    diariaMediaComCafe,
+    discountedNightlyRates,
+    comCafeNightlyRates,
+    totalComCafePix,
+    totalComCafeCartao,
+    descontoPixComCafe: Number((totalComCafeCartao - totalComCafePix).toFixed(2)),
+    totalSemCafePix,
+    totalSemCafeCartao,
+    descontoPixSemCafe: Number((totalSemCafeCartao - totalSemCafePix).toFixed(2)),
+  };
+}
+
 export const calcularOrcamentoTool = {
   name: 'calcular_orcamento',
   description:
-    'Calcula o orçamento oficial completo e detalhado (diárias, café da manhã servido no flat, taxa de limpeza e valor total) ' +
+    'Calcula o orçamento oficial completo e detalhado (diárias com café da manhã servido no flat ou somente hospedagem, valores no PIX com desconto e no cartão) ' +
     'para uma estadia na CorpFlats. Deve ser chamada sempre que o cliente pedir cotação ou valores para datas específicas.',
   allowedStates: ['COMERCIAL_VENDAS', 'PRE_CHECKIN', 'IN_STAY_CONCIERGE'],
   parametersSchema: {
@@ -926,7 +1066,7 @@ export const calcularOrcamentoTool = {
       data_checkin: { type: 'STRING', description: 'Data de check-in no formato YYYY-MM-DD.' },
       data_checkout: { type: 'STRING', description: 'Data de check-out no formato YYYY-MM-DD.' },
       quantidade_hospedes: { type: 'NUMBER', description: 'Quantidade total de hóspedes (padrão: 1).' },
-      incluir_cafe: { type: 'BOOLEAN', description: 'Se deve priorizar o plano com café da manhã servido no quarto (isento de taxa de limpeza).' },
+      incluir_cafe: { type: 'BOOLEAN', description: 'Se deve priorizar o plano com café da manhã servido no quarto.' },
     },
     required: ['data_checkin', 'data_checkout'],
   },
@@ -960,54 +1100,23 @@ export const calcularOrcamentoTool = {
       }
 
       const db = context.runtime?.db;
-      const stayDiscounts = db?.tariffSettings?.stayDiscounts || {
-        weeklyPct: 0.1,
-        biweeklyPct: 0.15,
-        monthlyPct: 0.25,
-      };
-
-      let descontoDuracaoPct = 0;
-      let faixaDescontoLabel = null;
-      if (diarias >= 30) {
-        descontoDuracaoPct = Number(stayDiscounts.monthlyPct ?? 0.25);
-        faixaDescontoLabel = 'Pacote Mensal (30+ diárias)';
-      } else if (diarias >= 15) {
-        descontoDuracaoPct = Number(stayDiscounts.biweeklyPct ?? 0.15);
-        faixaDescontoLabel = 'Pacote Quinzenal (15+ diárias)';
-      } else if (diarias >= 7) {
-        descontoDuracaoPct = Number(stayDiscounts.weeklyPct ?? 0.1);
-        faixaDescontoLabel = 'Pacote Semanal (7+ diárias)';
-      }
-
-      const diariaBase = 237.0;
-      const adicionalTerceiroHospede = hospedes === 3 ? 60.0 : 0.0;
-      const valorCafePorPessoaDia = 35.0;
-      const taxaLimpezaSemCafe = 70.0;
-
-      const diariaAcomodacaoBruta = diariaBase + adicionalTerceiroHospede;
-      const diariaAcomodacao =
-        descontoDuracaoPct > 0
-          ? Number((diariaAcomodacaoBruta * (1 - descontoDuracaoPct)).toFixed(2))
-          : diariaAcomodacaoBruta;
-      const diariaComCafe = Number((diariaAcomodacao + hospedes * valorCafePorPessoaDia).toFixed(2));
-
-      const totalComCafe = Number((diarias * diariaComCafe).toFixed(2));
-      const totalSemCafe = Number((diarias * diariaAcomodacao + taxaLimpezaSemCafe).toFixed(2));
-      const economiaDesconto =
-        descontoDuracaoPct > 0
-          ? Number(((diariaAcomodacaoBruta - diariaAcomodacao) * diarias).toFixed(2))
-          : 0;
+      const q = resolveAgentLivePricingQuote(db, checkin, checkout, hospedes);
 
       const textoDesconto =
-        descontoDuracaoPct > 0
-          ? `\n🎁 *Desconto Especial Aplicado (${faixaDescontoLabel} - ${Math.round(descontoDuracaoPct * 100)}% OFF na hospedagem):* Economia de R$ ${economiaDesconto.toFixed(2)} já calculada nos valores!`
+        q.descontoDuracaoPct > 0
+          ? `\n🎁 *Desconto Especial Aplicado (${q.faixaDescontoLabel} - ${Math.round(q.descontoDuracaoPct * 100)}% OFF na hospedagem):* Economia de R$ ${q.economiaDesconto.toFixed(2)} já calculada nos valores!`
+          : '';
+
+      const textoExtra3 =
+        q.adicionalTerceiroHospedeTotal > 0
+          ? ` (já inclui colchonete extra para 3º hóspede: R$ ${q.adicionalTerceiroHospedeTotal.toFixed(2)})`
           : '';
 
       const msg =
-        `Apresente ao cliente com clareza as duas opções oficiais para ${diarias} diária(s) (${checkin} a ${checkout}) para ${hospedes} pessoa(s):\n` +
-        `1) *Plano com Café da Manhã no Flat (Recomendado):* R$ ${diariaComCafe.toFixed(2)}/diária -> *Total: R$ ${totalComCafe.toFixed(2)}* (ISENTO de taxa de limpeza!).\n` +
-        `2) *Plano Somente Hospedagem:* R$ ${diariaAcomodacao.toFixed(2)}/diária + R$ ${taxaLimpezaSemCafe.toFixed(2)} taxa única de limpeza -> *Total: R$ ${totalSemCafe.toFixed(2)}*.${textoDesconto}\n` +
-        `Pergunte qual das duas opções ele prefere para você já gerar o bloqueio da reserva e a chave PIX.`;
+        `Apresente ao cliente com clareza as duas opções oficiais para ${diarias} diária(s) (${checkin} a ${checkout}) para ${hospedes} pessoa(s)${textoExtra3}:\n` +
+        `1) *Plano com Café da Manhã Incluso no Flat (Recomendado):* Diária média de R$ ${q.diariaMediaComCafe.toFixed(2)} -> *No PIX (com desconto): R$ ${q.totalComCafePix.toFixed(2)}* | Cartão: R$ ${q.totalComCafeCartao.toFixed(2)}.\n` +
+        `2) *Plano Somente Hospedagem (Sem Café):* Diária média de R$ ${q.diariaMediaSemCafe.toFixed(2)}${q.taxaLimpezaSemCafe > 0 ? ` + R$ ${q.taxaLimpezaSemCafe.toFixed(2)} taxa única de limpeza` : ''} -> *No PIX (com desconto): R$ ${q.totalSemCafePix.toFixed(2)}* | Cartão: R$ ${q.totalSemCafeCartao.toFixed(2)}.${textoDesconto}\n` +
+        `REGRAS DE APRESENTAÇÃO OBRIGATÓRIAS: NUNCA mencione valor unitário de café separado e NUNCA use expressões como "isento de taxa de limpeza", "sem taxa de limpeza" ou "acréscimo no cartão" — apresente o valor do Cartão como preço padrão e o valor do PIX como preço com Desconto no PIX. Pergunte qual opção ele prefere para já gerar a reserva.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -1016,11 +1125,25 @@ export const calcularOrcamentoTool = {
           data_checkout: checkout,
           diarias,
           quantidade_hospedes: hospedes,
-          desconto_duracao_pct: Math.round(descontoDuracaoPct * 100),
-          faixa_desconto: faixaDescontoLabel,
-          valor_desconto_aplicado: economiaDesconto,
-          opcao_com_cafe: { diaria: diariaComCafe, taxa_limpeza: 0, valor_total: totalComCafe },
-          opcao_sem_cafe: { diaria: diariaAcomodacao, taxa_limpeza: taxaLimpezaSemCafe, valor_total: totalSemCafe },
+          desconto_duracao_pct: Math.round(q.descontoDuracaoPct * 100),
+          faixa_desconto: q.faixaDescontoLabel,
+          valor_desconto_aplicado: q.economiaDesconto,
+          opcao_com_cafe: {
+            diaria: q.diariaMediaComCafe,
+            taxa_limpeza: 0,
+            valor_total: q.totalComCafePix,
+            valor_pix: q.totalComCafePix,
+            valor_cartao: q.totalComCafeCartao,
+            desconto_pix: q.descontoPixComCafe,
+          },
+          opcao_sem_cafe: {
+            diaria: q.diariaMediaSemCafe,
+            taxa_limpeza: q.taxaLimpezaSemCafe,
+            valor_total: q.totalSemCafePix,
+            valor_pix: q.totalSemCafePix,
+            valor_cartao: q.totalSemCafeCartao,
+            desconto_pix: q.descontoPixSemCafe,
+          },
           moeda: 'BRL',
         },
         instrucao_para_ia: msg,
@@ -1114,10 +1237,10 @@ export const gerarLinkReservaTool = {
         };
       }
 
-      const diariaBase = 237.0 + (hospedes === 3 ? 60.0 : 0.0);
-      const valorTotal = comCafe
-        ? Number((diarias * (diariaBase + hospedes * 35.0)).toFixed(2))
-        : Number((diarias * diariaBase + 70.0).toFixed(2));
+      const db = context.runtime?.db;
+      const q = resolveAgentLivePricingQuote(db, checkin, checkout, hospedes);
+      const valorTotal = comCafe ? q.totalComCafePix : q.totalSemCafePix;
+      const valorCartaoSimulado = comCafe ? q.totalComCafeCartao : q.totalSemCafeCartao;
 
       const faltaIdentificacaoObrigatoria = paraTerceiro ? !nomeSolicitante : !rawNomeHospede;
       if (!args.confirmacao_hospede || faltaIdentificacaoObrigatoria) {
@@ -1137,8 +1260,8 @@ export const gerarLinkReservaTool = {
         const msg =
           `Informe ao cliente o resumo para bloqueio da pré-reserva: período de ${checkin} a ${checkout} (${diarias} diária(s)), ` +
           `total de hóspedes: *${hospedes}* (${hospedes === 1 ? '1 pessoa' : `${hospedes} pessoas`}), canal da reserva: *WhatsApp*, ` +
-          `plano ${comCafe ? 'COM café da manhã (isento de taxa de limpeza)' : 'Somente Hospedagem'}, ` +
-          `no valor total de *R$ ${valorTotal.toFixed(2)}*. ${orientacaoIdentificacao}`;
+          `plano ${comCafe ? 'COM café da manhã incluso no flat' : 'Somente Hospedagem'}, ` +
+          `no valor de *R$ ${valorTotal.toFixed(2)} no PIX (com desconto)* (ou R$ ${valorCartaoSimulado.toFixed(2)} no Cartão). ${orientacaoIdentificacao}`;
         return {
           status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
           dados: {
@@ -1149,6 +1272,7 @@ export const gerarLinkReservaTool = {
             canal_reserva: 'WhatsApp',
             incluir_cafe: comCafe,
             valor_total: valorTotal,
+            valor_cartao: valorCartaoSimulado,
             reserva_para_terceiro: paraTerceiro,
             nome_solicitante: nomeSolicitante || null,
             nome_hospede: rawNomeHospede || null,
@@ -1158,7 +1282,6 @@ export const gerarLinkReservaTool = {
         };
       }
 
-      const db = context.runtime?.db;
       const baseUrl =
         db?.settings?.baseUrl ||
         (typeof process !== 'undefined' && (process.env?.APP_BASE_URL || process.env?.SERVER_BASE_URL)) ||
@@ -1240,14 +1363,15 @@ export const gerarLinkReservaTool = {
       }
 
       const linkPagamento = `${baseUrl}/minha-reserva/${encodeURIComponent(codigoPreReserva)}`;
-      const cardTotalAmount = Number((valorTotal * 1.05).toFixed(2));
-      const cleaningFee = comCafe ? 0 : 70.0;
-      const netRoomTotal = Math.max(0, valorTotal - cleaningFee);
+      const cardTotalAmount = valorCartaoSimulado;
+      const cleaningFee = comCafe ? 0 : q.taxaLimpezaSemCafe;
+      const netRoomTotal = Math.max(0, valorTotal - cleaningFee - q.adicionalTerceiroHospedeTotal);
       const dailyRate = Math.round((netRoomTotal / diarias) * 100) / 100;
       const inD = new Date(`${checkin}T12:00:00Z`);
+      const nightlyArr = comCafe ? q.comCafeNightlyRates : q.discountedNightlyRates;
       const dailyRates = Array.from({ length: diarias }, (_, i) => {
         const dStr = new Date(inD.getTime() + i * 86400000).toISOString().slice(0, 10);
-        return { date: dStr, rate: dailyRate, channel: 'whatsapp' };
+        return { date: dStr, rate: nightlyArr[i] ?? dailyRate, channel: 'whatsapp' };
       });
 
       if (db) {
