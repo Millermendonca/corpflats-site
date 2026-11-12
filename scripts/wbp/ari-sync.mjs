@@ -26,6 +26,8 @@ import {
   calculateRatePlanPrices,
   calculateSebraeRate,
   calculateHistoricalSeasonality,
+  resolveChannelEffectiveMarkupPct,
+  calculateChannelAdjustedFees,
   round2,
   DEFAULT_SEBRAE_CONFIG
 } from "./pricing.mjs";
@@ -344,6 +346,32 @@ export function buildChannexAvailabilityValues(startDate, endDate, db, options =
  * @param {object} [options]
  * @returns {Array<object>}
  */
+export function buildOtaFeeSyncSchedule(db) {
+  const pricingState = WbpPricingManager.getPricingState(db);
+  const settings = pricingState.settings || DEFAULT_SEBRAE_CONFIG;
+  const siteCfg = db?.siteConfig || {};
+  const tarSettings = db?.tariffSettings || {};
+  const baseFees = {
+    breakfastSurchargePerGuest: Number(
+      settings.breakfastSurchargePerGuest ??
+      tarSettings.breakfastSurchargePerGuest ??
+      siteCfg.pricing?.breakfastSurchargePerGuest ??
+      20
+    ),
+    cleaningFee: Number(siteCfg.ratePlans?.room_only?.cleaningFeeAmount ?? 70),
+    petFee: Number(siteCfg.petPolicy?.feeAmount ?? 80),
+    extraBedFee: Number(
+      settings.extraBedFee ??
+      tarSettings.extraBedFee ??
+      siteCfg.extraBedConfig?.feeAmount ??
+      60
+    ),
+    twinFee: Number(siteCfg.bedConfig?.twinFeeAmount ?? 30),
+    lateCheckoutFee: 50
+  };
+  return calculateChannelAdjustedFees(baseFees, tarSettings.channelMarkups || {});
+}
+
 export function buildChannexRestrictionsValues(startDate, endDate, db, options = {}) {
   const ids = resolveChannexEntityIds(db);
   const propertyId = options.propertyId || ids.propertyId;
@@ -358,6 +386,20 @@ export function buildChannexRestrictionsValues(startDate, endDate, db, options =
   const seasonality = calculateHistoricalSeasonality(reservations, {
     manualOverrides: pricingState.seasonalityOverrides || {}
   });
+
+  const applyPlatformCommission = Boolean(
+    options.otaChannelMarkupPct != null || db?.tariffSettings?.applyPlatformCommissionToOtaSync
+  );
+  const otaMarkupPct =
+    options.otaChannelMarkupPct != null
+      ? Number(options.otaChannelMarkupPct)
+      : applyPlatformCommission
+        ? resolveChannelEffectiveMarkupPct(
+            db?.tariffSettings?.channelMarkups || {},
+            options.targetChannel || "booking"
+          )
+        : 0;
+  const otaMult = 1 + otaMarkupPct;
 
   const nights = getNightsList(startDate, endDate);
   if (nights.length === 0) return [];
@@ -398,18 +440,23 @@ export function buildChannexRestrictionsValues(startDate, endDate, db, options =
         }
       }
 
-      const calculatedPlans = calculateRatePlanPrices(candidateBaseRate, settings);
+      const calculatedPlans = calculateRatePlanPrices(candidateBaseRate, {
+        ...settings,
+        channelMarkupPct: otaMarkupPct
+      });
       const calculated = calculatedPlans[planId] || calculatedPlans.sem_cafe;
 
-      const bSurcharge = Number(settings.breakfastSurchargePerGuest ?? DEFAULT_SEBRAE_CONFIG.breakfastSurchargePerGuest ?? 20.00);
-      const extraBed = Number(settings.extraBedFee ?? DEFAULT_SEBRAE_CONFIG.extraBedFee ?? 60.00);
+      const rawBSurcharge = Number(settings.breakfastSurchargePerGuest ?? DEFAULT_SEBRAE_CONFIG.breakfastSurchargePerGuest ?? 20.00);
+      const rawExtraBed = Number(settings.extraBedFee ?? DEFAULT_SEBRAE_CONFIG.extraBedFee ?? 60.00);
+      const bSurcharge = round2(rawBSurcharge * otaMult);
+      const extraBed = round2(rawExtraBed * otaMult);
 
       const key = `${night}_${planId}`;
       let effectiveRate = calculated.rate;
       if (pricingState.lastPublishedRates?.[key] != null) {
-        effectiveRate = Number(pricingState.lastPublishedRates[key]);
+        effectiveRate = round2(Number(pricingState.lastPublishedRates[key]) * (otaMarkupPct !== 0 ? otaMult : 1));
       } else if (pricingState.stagedModifications?.[key] != null) {
-        effectiveRate = Number(pricingState.stagedModifications[key]);
+        effectiveRate = round2(Number(pricingState.stagedModifications[key]) * (otaMarkupPct !== 0 ? otaMult : 1));
       }
 
       // Enforce SEBRAE minimum floor safety (unless explicit manual mode or calendar override)
@@ -425,8 +472,8 @@ export function buildChannexRestrictionsValues(startDate, endDate, db, options =
           ));
       if (!hasManualOverride) {
         const minAllowed = planId === "com_cafe"
-          ? round2(sebraeBase.tarifaMinima + 2 * bSurcharge)
-          : round2(sebraeBase.tarifaMinima);
+          ? round2((sebraeBase.tarifaMinima + 2 * rawBSurcharge) * otaMult)
+          : round2(sebraeBase.tarifaMinima * otaMult);
         if (effectiveRate < minAllowed) {
           effectiveRate = minAllowed;
         }
@@ -510,14 +557,13 @@ export function buildChannexRestrictionsValues(startDate, endDate, db, options =
     result.push({ ...current });
   }
 
-  // Optional channel-specific Channex rate plans (Booking.com / Airbnb / Expedia) with automatic platform markup
+  // Optional channel-specific Channex rate plans (Booking.com / Airbnb / Expedia) with automatic platform commission
   const channelRatePlans = options.channelRatePlans || db?.settings?.channex_config?.channelRatePlans;
   if (channelRatePlans && typeof channelRatePlans === "object") {
     const channelMarkups = db?.tariffSettings?.channelMarkups || {};
     for (const [channelKey, rpMap] of Object.entries(channelRatePlans)) {
       if (!rpMap || typeof rpMap !== "object") continue;
-      const chMarkupPct = Number(channelMarkups?.[channelKey]?.markupPct ?? 0);
-      const mult = 1 + chMarkupPct;
+      const chMarkupPct = resolveChannelEffectiveMarkupPct(channelMarkups, channelKey);
       for (const planId of ["sem_cafe", "com_cafe"]) {
         const chRatePlanId = rpMap[planId];
         if (!chRatePlanId) continue;
@@ -525,17 +571,10 @@ export function buildChannexRestrictionsValues(startDate, endDate, db, options =
           ...options,
           planIds: [planId],
           ratePlanIds: { [planId]: chRatePlanId },
+          otaChannelMarkupPct: chMarkupPct,
           channelRatePlans: null
         });
         for (const item of baseEntries) {
-          if (Array.isArray(item.rates)) {
-            item.rates = item.rates.map((r) => ({
-              ...r,
-              rate: round2(Number(r.rate) * mult).toFixed(2)
-            }));
-          } else if (item.rate != null) {
-            item.rate = round2(Number(item.rate) * mult).toFixed(2);
-          }
           result.push(item);
         }
       }
@@ -1030,7 +1069,7 @@ export class WbpAriSynchronizer {
    * Generates ARI blocks for a specified date range (WBP wire format).
    * Combines canonical availability, SEBRAE rate plans, and 7 restrictions.
    */
-  generateAriBlocks(startDate, endDate, { contiguous = true, planIds = ["sem_cafe", "com_cafe"] } = {}) {
+  generateAriBlocks(startDate, endDate, { contiguous = true, planIds = ["sem_cafe", "com_cafe"], otaChannelMarkupPct = null, targetChannel = "booking" } = {}) {
     const availMap = calculateCanonicalAvailability(startDate, addDays(endDate, 1), { db: this.db });
     const pricingState = WbpPricingManager.getPricingState(this.db);
     const settings = pricingState.settings || DEFAULT_SEBRAE_CONFIG;
@@ -1040,6 +1079,22 @@ export class WbpAriSynchronizer {
       manualOverrides: pricingState.seasonalityOverrides || {}
     });
 
+    const applyPlatformCommission = Boolean(
+      otaChannelMarkupPct != null || this.db?.tariffSettings?.applyPlatformCommissionToOtaSync
+    );
+    const otaMarkupPct =
+      otaChannelMarkupPct != null
+        ? Number(otaChannelMarkupPct)
+        : applyPlatformCommission
+          ? resolveChannelEffectiveMarkupPct(this.db?.tariffSettings?.channelMarkups || {}, targetChannel)
+          : 0;
+    const otaMult = 1 + otaMarkupPct;
+    const otaFeeSchedule = applyPlatformCommission ? buildOtaFeeSyncSchedule(this.db) : null;
+    if (this.db && otaFeeSchedule) {
+      if (!this.db.wbp_sync_status) this.db.wbp_sync_status = {};
+      this.db.wbp_sync_status.otaFeeSchedule = otaFeeSchedule;
+    }
+
     const dailyBlocks = [];
     const nights = getNightsList(startDate, endDate);
 
@@ -1048,13 +1103,33 @@ export class WbpAriSynchronizer {
       const monthIdx = d.getUTCMonth();
       const seasonInfo = seasonality[monthIdx] || { factor: 1.0, season: "Média" };
 
-      const seasonalBaseRate = round2(sebraeBase.tarifaMinima * seasonInfo.factor);
+      const baseDailyFromMode =
+        this.db?.tariffSettings?.mode === "manual" && Number(this.db?.tariffSettings?.baseDailyRate) > 0
+          ? round2(Number(this.db.tariffSettings.baseDailyRate))
+          : round2(sebraeBase.tarifaMinima * seasonInfo.factor);
       const dayOfWeek = d.getUTCDay();
       const isWeekend = dayOfWeek === 5 || dayOfWeek === 6;
       const weekendMultiplier = isWeekend ? (1 + Number(settings.weekendMarkupPct || 0.15)) : 1.0;
-      const candidateBaseRate = round2(seasonalBaseRate * weekendMultiplier);
+      let candidateBaseRate = round2(baseDailyFromMode * weekendMultiplier);
 
-      const calculatedPlans = calculateRatePlanPrices(candidateBaseRate, settings);
+      if (Array.isArray(this.db?.tariffOverrides) && this.db.tariffOverrides.length > 0) {
+        const globalOverride = this.db.tariffOverrides.find(
+          (o) =>
+            o &&
+            o.date === night &&
+            (!o.flatId || String(o.flatId).toLowerCase() === "all") &&
+            (!o.channel || String(o.channel).toLowerCase() === "all") &&
+            Number(o.rate) > 0
+        );
+        if (globalOverride) {
+          candidateBaseRate = round2(Number(globalOverride.rate));
+        }
+      }
+
+      const calculatedPlans = calculateRatePlanPrices(candidateBaseRate, {
+        ...settings,
+        channelMarkupPct: otaMarkupPct
+      });
       const freeCanonical = availMap.get(night) ?? 19;
 
       for (const planId of planIds) {
@@ -1063,17 +1138,17 @@ export class WbpAriSynchronizer {
 
         let effectiveRate = calculated.rate;
         if (pricingState.lastPublishedRates?.[key] != null) {
-          effectiveRate = Number(pricingState.lastPublishedRates[key]);
+          effectiveRate = round2(Number(pricingState.lastPublishedRates[key]) * (otaMarkupPct !== 0 ? otaMult : 1));
         } else if (pricingState.stagedModifications?.[key] != null) {
-          effectiveRate = Number(pricingState.stagedModifications[key]);
+          effectiveRate = round2(Number(pricingState.stagedModifications[key]) * (otaMarkupPct !== 0 ? otaMult : 1));
         }
 
         const restrictions = resolveRestrictions(this.db, night, planId);
         const ceiling = this.getPlanCeiling(planId, night);
         const units = Math.max(0, Math.min(ceiling != null ? Number(ceiling) : 19, freeCanonical));
 
-        const bSurcharge = Number(settings.breakfastSurchargePerGuest ?? DEFAULT_SEBRAE_CONFIG.breakfastSurchargePerGuest ?? 20.00);
-        const extraBed = Number(settings.extraBedFee ?? DEFAULT_SEBRAE_CONFIG.extraBedFee ?? 60.00);
+        const bSurcharge = round2(Number(settings.breakfastSurchargePerGuest ?? DEFAULT_SEBRAE_CONFIG.breakfastSurchargePerGuest ?? 20.00) * otaMult);
+        const extraBed = round2(Number(settings.extraBedFee ?? DEFAULT_SEBRAE_CONFIG.extraBedFee ?? 60.00) * otaMult);
 
         let rdefSingle = calculated.rdef_single;
         let adult3 = calculated.adult_3;

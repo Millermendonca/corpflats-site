@@ -81,10 +81,11 @@ export const calcularOrcamentoTool: AgentToolDefinition<CalcularOrcamentoArgs> =
         };
       }
 
-      const diariaBase = 276.63;
+      const diariaBase = 216.49;
       const adicionalTerceiroHospede = hospedes === 3 ? 60.0 : 0.0;
       const valorCafeInternoPorPessoaDia = 20.0;
       const taxaLimpezaSemCafe = 70.0;
+      const percentualComissaoPlataformas = 15.0;
 
       const diariaAcomodacao = Number((diariaBase + adicionalTerceiroHospede).toFixed(2));
       const diariaComCafe = Number((diariaAcomodacao + hospedes * valorCafeInternoPorPessoaDia).toFixed(2));
@@ -93,12 +94,14 @@ export const calcularOrcamentoTool: AgentToolDefinition<CalcularOrcamentoArgs> =
       const totalSemCafe = Number((diarias * diariaAcomodacao + taxaLimpezaSemCafe).toFixed(2));
       const totalCartaoComCafe = Number((totalComCafe * 1.05).toFixed(2));
       const totalCartaoSemCafe = Number((totalSemCafe * 1.05).toFixed(2));
+      const totalPlataformasComCafe = Number((totalComCafe * (1 + percentualComissaoPlataformas / 100)).toFixed(2));
+      const totalPlataformasSemCafe = Number((totalSemCafe * (1 + percentualComissaoPlataformas / 100)).toFixed(2));
 
       const msg =
         `Apresente ao cliente com clareza as duas opções oficiais para ${diarias} diária(s) (${checkin} a ${checkout}) para ${hospedes} hóspede(s), sem jamais mencionar valor separado de café nem dizer que limpeza é isenta:\n` +
-        `1) *Hospedagem com Café da Manhã servido no Flat:* R$ ${diariaComCafe.toFixed(2)}/diária -> *Total no PIX (com desconto): R$ ${totalComCafe.toFixed(2)}* (ou R$ ${totalCartaoComCafe.toFixed(2)} no Cartão).\n` +
-        `2) *Locação Somente Hospedagem (Sem Café):* R$ ${diariaAcomodacao.toFixed(2)}/diária + R$ ${taxaLimpezaSemCafe.toFixed(2)} taxa de limpeza -> *Total no PIX (com desconto): R$ ${totalSemCafe.toFixed(2)}* (ou R$ ${totalCartaoSemCafe.toFixed(2)} no Cartão).\n` +
-        `Nunca mencione acréscimo de cartão (apresente o valor do cartão naturalmente e o do PIX como desconto PIX). Pergunte qual das duas opções ele prefere para você gerar o bloqueio da reserva.`;
+        `1) *Hospedagem com Café da Manhã servido no Flat:* R$ ${diariaComCafe.toFixed(2)}/diária -> *Total no PIX (com desconto): R$ ${totalComCafe.toFixed(2)}* (ou R$ ${totalCartaoComCafe.toFixed(2)} no Cartão; nas plataformas Booking/Airbnb sairia R$ ${totalPlataformasComCafe.toFixed(2)}).\n` +
+        `2) *Locação Somente Hospedagem (Sem Café):* R$ ${diariaAcomodacao.toFixed(2)}/diária + R$ ${taxaLimpezaSemCafe.toFixed(2)} taxa de limpeza -> *Total no PIX (com desconto): R$ ${totalSemCafe.toFixed(2)}* (ou R$ ${totalCartaoSemCafe.toFixed(2)} no Cartão; nas plataformas Booking/Airbnb sairia R$ ${totalPlataformasSemCafe.toFixed(2)}).\n` +
+        `Nunca mencione acréscimo de cartão (apresente o valor do cartão naturalmente e o do PIX como desconto PIX, destacando também a economia em relação às plataformas). Pergunte qual das duas opções ele prefere para você gerar o bloqueio da reserva.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',

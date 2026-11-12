@@ -40,13 +40,13 @@ const INITIAL_SEBRAE_SETTINGS: PricingSettings = {
   varCleaning: 23.25,
   varLinen: 15.51,
   varUtilities: 9.00,
-  channelCommissionPct: 0.15,
+  channelCommissionPct: 0.0,
   targetMarginPct: 0.25,
   taxRatePct: 0.06,
   breakfastSurchargePerGuest: 20.00,
   extraBedFee: 60.00,
   variationLimitPct: 0.30,
-  manualFloor: 189.09,
+  manualFloor: 158.91,
   weekendMarkupPct: 0.15,
   hasPlanCeiling: false,
   planCeilingCount: 20,
@@ -66,21 +66,21 @@ const INITIAL_CALCULATION: SebraeCalculationResult = {
   fixedCostPerSoldUnit: 101.62,
   varCostPerUnit: 47.76,
   custoUH: 149.38,
-  totalDeductionsPct: 0.46,
-  divisor: 0.54,
-  tarifaMinima: 276.63,
-  breakEvenFloor: 189.09,
+  totalDeductionsPct: 0.31,
+  divisor: 0.69,
+  tarifaMinima: 216.49,
+  breakEvenFloor: 158.91,
   decomposicao: {
     custo: 149.38,
-    comissao: 41.49,
-    margem: 69.16,
-    imposto: 16.60,
+    comissao: 0,
+    margem: 54.12,
+    imposto: 12.99,
   },
-  somaDecomposicao: 276.63,
+  somaDecomposicao: 216.49,
   fecha100: true,
   percentuais: {
-    custoPct: 0.54,
-    comissaoPct: 0.15,
+    custoPct: 0.69,
+    comissaoPct: 0.0,
     margemPct: 0.25,
     impostoPct: 0.06,
   },
@@ -162,6 +162,8 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   const [simNights, setSimNights] = useState<number>(7)
   const [simPlan, setSimPlan] = useState<"sem_cafe" | "com_cafe">("sem_cafe")
   const [simGuests, setSimGuests] = useState<number>(2)
+  const [simHasPet, setSimHasPet] = useState<boolean>(false)
+  const [simIsTwin, setSimIsTwin] = useState<boolean>(false)
 
   // Modal de Ajuste Individual de Célula (Modal 5)
   const [editingCell, setEditingCell] = useState<{
@@ -850,7 +852,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   const handleResetDefaults = () => {
     if (!window.confirm("Deseja restaurar as taxas e adicionais para os valores padrão sugeridos?")) return
 
-    const baseRef = Number(calculation.tarifaMinima || 276.63)
+    const baseRef = Number(calculation.tarifaMinima || 216.49)
     const updated = {
       ...siteConfig,
       ratePlans: {
@@ -992,20 +994,39 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     customNegotiation: true,
   }
 
-  // Markups reais do SSOT para os botões e simuladores
+  // Markups / Comissões reais do SSOT para os botões, cards e simuladores (Plataformas = Preço Base + Comissão)
+  const resolveEffectiveChannelPct = (chCfg: any, fallbackComm: number) => {
+    if (!chCfg) return Math.round(fallbackComm * 1000) / 10
+    if (chCfg.extraMarkupPct !== undefined && chCfg.extraMarkupPct !== null) {
+      return Math.round(((Number(chCfg.commissionPct ?? fallbackComm) + Number(chCfg.extraMarkupPct ?? 0)) * 100) * 10) / 10
+    }
+    return Math.round(Math.max(Number(chCfg.markupPct ?? 0), Number(chCfg.commissionPct ?? fallbackComm)) * 1000) / 10
+  }
+
   const directMarkupPct = Math.round((tariffSettings?.channelMarkups?.direct?.markupPct ?? 0) * 100)
-  const bookingMarkupPct = Math.round((tariffSettings?.channelMarkups?.booking?.markupPct ?? 0) * 100)
-  const airbnbMarkupPct = Math.round((tariffSettings?.channelMarkups?.airbnb?.markupPct ?? 0.03) * 100)
-  const expediaMarkupPct = Math.round((tariffSettings?.channelMarkups?.expedia?.markupPct ?? 0.03) * 100)
+  const bookingCommPctVal = Math.round(((tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15) * 100) * 10) / 10
+  const bookingExtraPctVal = Math.round(((tariffSettings?.channelMarkups?.booking?.extraMarkupPct ?? 0) * 100) * 10) / 10
+  const bookingMarkupPct = resolveEffectiveChannelPct(tariffSettings?.channelMarkups?.booking, 0.15)
+
+  const airbnbCommPctVal = Math.round(((tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15) * 100) * 10) / 10
+  const airbnbExtraPctVal = Math.round(((tariffSettings?.channelMarkups?.airbnb?.extraMarkupPct ?? 0) * 100) * 10) / 10
+  const airbnbMarkupPct = resolveEffectiveChannelPct(tariffSettings?.channelMarkups?.airbnb, 0.15)
+
+  const expediaCommPctVal = Math.round(((tariffSettings?.channelMarkups?.expedia?.commissionPct ?? 0.18) * 100) * 10) / 10
+  const expediaMarkupPct = resolveEffectiveChannelPct(tariffSettings?.channelMarkups?.expedia, 0.18)
   const corporateDiscountPct = Math.round((tariffSettings?.channelMarkups?.corporate?.discountPct ?? 0.10) * 100)
 
   const effectiveBaseRate = tariffSettings?.mode === "manual"
-    ? Number(tariffSettings?.baseDailyRate || 276.63)
-    : Number(calculation.tarifaMinima || 276.63)
+    ? Number(tariffSettings?.baseDailyRate || 216.49)
+    : Number(calculation.tarifaMinima || 216.49)
   const effectiveBreakfastPerGuest = Number(sebraeSettings.breakfastSurchargePerGuest ?? pricing.breakfastSurchargePerGuest ?? 20)
   const effectiveCardMarkupPct = Number(pricing.cardMarkupPercent ?? pricing.pixDiscountPercent ?? 5)
+  const baseCleaningFeeVal = roomOnly.cleaningFeeEnabled !== false ? Number(roomOnly.cleaningFeeAmount ?? 70) : 0
+  const baseExtraBedFeeVal = Number(extraBedConfig.feeAmount ?? sebraeSettings.extraBedFee ?? 60)
+  const baseTwinFeeVal = Number(bedConfig.twinFeeAmount ?? 30)
+  const basePetFeeVal = Number(petPolicy.feeAmount ?? 80)
 
-  // Cálculo do Simulador Multi-Noites & Paridade
+  // Cálculo do Simulador Multi-Noites & Paridade (inclui diárias, café e todas as taxas com comissão em cada plataforma)
   const simStayDiscountPct = simNights >= 30
     ? (stayDiscounts.monthlyPct ?? 0.25)
     : simNights >= 15
@@ -1016,10 +1037,22 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
   const simBreakfastAdd = simPlan === "com_cafe"
     ? effectiveBreakfastPerGuest * simGuests
     : 0
-  const simExtraBedAdd = simGuests >= 3 ? (sebraeSettings.extraBedFee ?? 60) : 0
+  const simExtraBedAdd = simGuests >= 3
+    ? (extraBedConfig.feeType === "per_night" ? baseExtraBedFeeVal * simNights : baseExtraBedFeeVal)
+    : 0
+  const simCleaningAdd = simPlan === "sem_cafe" && roomOnly.cleaningFeeEnabled !== false
+    ? (roomOnly.cleaningFeeType === "per_night" ? baseCleaningFeeVal * simNights : baseCleaningFeeVal)
+    : 0
+  const simPetAdd = simHasPet
+    ? (petPolicy.feeType === "per_night" ? basePetFeeVal * simNights : basePetFeeVal)
+    : 0
+  const simTwinAdd = simIsTwin
+    ? (bedConfig.twinFeeType === "per_night" ? baseTwinFeeVal * simNights : baseTwinFeeVal)
+    : 0
+  const simFeesTotalBase = Math.round((simExtraBedAdd + simCleaningAdd + simPetAdd + simTwinAdd) * 100) / 100
   const simDiscountedRoomBase = Math.round(effectiveBaseRate * (1 - simStayDiscountPct) * 100) / 100
   const simDailyAfterDiscount = Math.round((simDiscountedRoomBase + simBreakfastAdd) * 100) / 100
-  const simDirectTotal = Math.round((simDailyAfterDiscount * simNights + simExtraBedAdd) * 100) / 100
+  const simDirectTotal = Math.round((simDailyAfterDiscount * simNights + simFeesTotalBase) * 100) / 100
   const simBookingTotal = Math.round((simDirectTotal * (1 + bookingMarkupPct / 100)) * 100) / 100
   const simAirbnbTotal = Math.round((simDirectTotal * (1 + airbnbMarkupPct / 100)) * 100) / 100
 
@@ -1445,12 +1478,38 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                   </div>
                 </div>
 
+                <div className="flex flex-wrap items-center gap-4 pt-1 text-xs">
+                  <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={simHasPet}
+                      onChange={e => setSimHasPet(e.target.checked)}
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span>🐾 Incluir Pet (+R$ {basePetFeeVal.toFixed(2)} base)</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={simIsTwin}
+                      onChange={e => setSimIsTwin(e.target.checked)}
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <span>🛏️ 2 Camas Solteiro Twin (+R$ {baseTwinFeeVal.toFixed(2)} base)</span>
+                  </label>
+                  {simPlan === "sem_cafe" && simCleaningAdd > 0 && (
+                    <span className="text-[11px] text-slate-500">
+                      🧹 Inclui Taxa de Limpeza (R$ {simCleaningAdd.toFixed(2)} base / R$ {(simCleaningAdd * (1 + bookingMarkupPct / 100)).toFixed(2)} Booking)
+                    </span>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
                   <div className="p-3.5 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 flex justify-between items-center">
                     <div>
-                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200 block">🌐 Site Direto ({simNights} noites)</span>
+                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200 block">🌐 Site Direto PIX ({simNights} noites)</span>
                       <span className="text-[11px] text-emerald-700 dark:text-emerald-400">
-                        R$ {simDailyAfterDiscount.toFixed(2)}/noite {simGuests === 3 ? `+ R$ ${simExtraBedAdd} cama extra` : ""}
+                        R$ {simDailyAfterDiscount.toFixed(2)}/noite {simFeesTotalBase > 0 ? `+ R$ ${simFeesTotalBase.toFixed(2)} taxas` : ""}
                       </span>
                     </div>
                     <span className="text-base font-black text-emerald-700 dark:text-emerald-400 font-mono">
@@ -1462,7 +1521,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                     <div>
                       <span className="text-xs font-bold text-sky-900 dark:text-sky-200 block">🏨 Booking.com (+{bookingMarkupPct}%)</span>
                       <span className="text-[11px] text-sky-700 dark:text-sky-400">
-                        Comissão OTA: {Math.round((tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15) * 100)}%
+                        Base + {bookingCommPctVal}% comissão (diárias e taxas)
                       </span>
                     </div>
                     <span className="text-base font-black text-sky-700 dark:text-sky-400 font-mono">
@@ -1474,7 +1533,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                     <div>
                       <span className="text-xs font-bold text-rose-900 dark:text-rose-200 block">🏠 Airbnb (+{airbnbMarkupPct}%)</span>
                       <span className="text-[11px] text-rose-700 dark:text-rose-400">
-                        Comissão OTA: {Math.round((tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15) * 100)}%
+                        Base + {airbnbCommPctVal}% comissão (diárias e taxas)
                       </span>
                     </div>
                     <span className="text-base font-black text-rose-700 dark:text-rose-400 font-mono">
@@ -1734,12 +1793,16 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                     </div>
                     <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-emerald-200/60 space-y-1 text-xs">
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-600 dark:text-slate-400">PIX (100% Normal):</span>
+                        <span className="text-slate-600 dark:text-slate-400">PIX (100% Preço Base):</span>
                         <span className="font-black font-mono text-emerald-700 dark:text-emerald-400">R$ {effectiveBaseRate.toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between items-center text-[11px]">
                         <span className="text-slate-500">Cartão (s/ citar taxa):</span>
                         <span className="font-bold font-mono text-slate-700 dark:text-slate-300">R$ {(effectiveBaseRate * (1 + effectiveCardMarkupPct / 100)).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[10.5px] pt-1 border-t border-emerald-100 dark:border-slate-800">
+                        <span className="text-emerald-700 dark:text-emerald-400">Âncora vs. OTAs no site:</span>
+                        <span className="font-semibold font-mono line-through text-slate-400">R$ {(effectiveBaseRate * (1 + Math.max(bookingMarkupPct, airbnbMarkupPct) / 100)).toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -1748,84 +1811,110 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                   <div className="p-4 rounded-2xl border border-sky-200 dark:border-sky-900/60 bg-sky-50/30 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="font-black text-xs text-sky-900 dark:text-sky-300">🏨 Booking.com</span>
-                      <Badge className="bg-sky-600 text-white font-bold text-[10px]">OTA XML</Badge>
+                      <Badge className="bg-sky-600 text-white font-bold text-[10px]">Base +{bookingMarkupPct}%</Badge>
                     </div>
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Markup Canal (%)</Label>
+                        <Label className="text-[11px] font-bold">Comissão Booking (%)</Label>
                         <Input
                           type="number"
-                          step="1"
-                          value={rawChannelInputs.bookingMarkup ?? bookingMarkupPct}
-                          onChange={e => {
-                            const raw = e.target.value
-                            setRawChannelInputs(prev => ({ ...prev, bookingMarkup: raw }))
-                            if (raw.trim() === "") return
-                            const parsed = Number(raw)
-                            if (!Number.isNaN(parsed)) {
-                              const val = parsed / 100
-                              setTariffSettings({
-                                ...tariffSettings,
-                                channelMarkups: {
-                                  ...tariffSettings?.channelMarkups,
-                                  booking: { ...tariffSettings?.channelMarkups?.booking, markupPct: val }
-                                }
-                              })
-                            }
-                          }}
-                          onBlur={() => {
-                            const raw = rawChannelInputs.bookingMarkup
-                            if (raw !== undefined) {
-                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
-                              setTariffSettings({
-                                ...tariffSettings,
-                                channelMarkups: {
-                                  ...tariffSettings?.channelMarkups,
-                                  booking: { ...tariffSettings?.channelMarkups?.booking, markupPct: val }
-                                }
-                              })
-                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.bookingMarkup; return n })
-                            }
-                          }}
-                          className="h-8 font-black text-xs"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Comissão OTA (%)</Label>
-                        <Input
-                          type="number"
-                          step="1"
-                          value={rawChannelInputs.bookingComm ?? Math.round((tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15) * 100)}
+                          step="0.5"
+                          value={rawChannelInputs.bookingComm ?? bookingCommPctVal}
                           onChange={e => {
                             const raw = e.target.value
                             setRawChannelInputs(prev => ({ ...prev, bookingComm: raw }))
                             if (raw.trim() === "") return
                             const parsed = Number(raw)
                             if (!Number.isNaN(parsed)) {
-                              const val = parsed / 100
+                              const commDec = Math.max(0, parsed) / 100
+                              const extraDec = Number(tariffSettings?.channelMarkups?.booking?.extraMarkupPct ?? 0)
+                              const totalDec = Math.round((commDec + extraDec) * 10000) / 10000
                               setTariffSettings({
                                 ...tariffSettings,
                                 channelMarkups: {
                                   ...tariffSettings?.channelMarkups,
-                                  booking: { ...tariffSettings?.channelMarkups?.booking, commissionPct: val }
+                                  booking: {
+                                    ...tariffSettings?.channelMarkups?.booking,
+                                    commissionPct: commDec,
+                                    extraMarkupPct: extraDec,
+                                    markupPct: totalDec,
+                                  }
                                 }
                               })
-                              handleUpdateSebraeSettings({ channelCommissionPct: val })
                             }
                           }}
                           onBlur={() => {
                             const raw = rawChannelInputs.bookingComm
                             if (raw !== undefined) {
-                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              const commDec = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 15 : Math.max(0, Number(raw))) / 100
+                              const extraDec = Number(tariffSettings?.channelMarkups?.booking?.extraMarkupPct ?? 0)
+                              const totalDec = Math.round((commDec + extraDec) * 10000) / 10000
                               setTariffSettings({
                                 ...tariffSettings,
                                 channelMarkups: {
                                   ...tariffSettings?.channelMarkups,
-                                  booking: { ...tariffSettings?.channelMarkups?.booking, commissionPct: val }
+                                  booking: {
+                                    ...tariffSettings?.channelMarkups?.booking,
+                                    commissionPct: commDec,
+                                    extraMarkupPct: extraDec,
+                                    markupPct: totalDec,
+                                  }
                                 }
                               })
-                              handleUpdateSebraeSettings({ channelCommissionPct: val })
                               setRawChannelInputs(prev => { const n = { ...prev }; delete n.bookingComm; return n })
+                            }
+                          }}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Adicional Extra (%)</Label>
+                        <Input
+                          type="number"
+                          step="0.5"
+                          value={rawChannelInputs.bookingExtra ?? bookingExtraPctVal}
+                          onChange={e => {
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, bookingExtra: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              const extraDec = parsed / 100
+                              const commDec = Number(tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15)
+                              const totalDec = Math.round((commDec + extraDec) * 10000) / 10000
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  booking: {
+                                    ...tariffSettings?.channelMarkups?.booking,
+                                    commissionPct: commDec,
+                                    extraMarkupPct: extraDec,
+                                    markupPct: totalDec,
+                                  }
+                                }
+                              })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.bookingExtra
+                            if (raw !== undefined) {
+                              const extraDec = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              const commDec = Number(tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15)
+                              const totalDec = Math.round((commDec + extraDec) * 10000) / 10000
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  booking: {
+                                    ...tariffSettings?.channelMarkups?.booking,
+                                    commissionPct: commDec,
+                                    extraMarkupPct: extraDec,
+                                    markupPct: totalDec,
+                                  }
+                                }
+                              })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.bookingExtra; return n })
                             }
                           }}
                           className="h-8 font-black text-xs"
@@ -1834,9 +1923,9 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                     </div>
                     <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-sky-200/60 space-y-1 text-xs">
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-600 dark:text-slate-400">Sem Café (Bruto / Líq.):</span>
+                        <span className="text-slate-600 dark:text-slate-400">Sem Café (Base +{bookingMarkupPct}%):</span>
                         <span className="font-black font-mono text-sky-700 dark:text-sky-400">
-                          R$ {(effectiveBaseRate * (1 + bookingMarkupPct / 100)).toFixed(2)} / R$ {(effectiveBaseRate * (1 + bookingMarkupPct / 100) * (1 - (tariffSettings?.channelMarkups?.booking?.commissionPct ?? 0.15))).toFixed(2)}
+                          R$ {(effectiveBaseRate * (1 + bookingMarkupPct / 100)).toFixed(2)}
                         </span>
                       </div>
                       <div className="flex justify-between items-center text-[11px]">
@@ -1845,6 +1934,11 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                           R$ {((effectiveBaseRate + effectiveBreakfastPerGuest) * (1 + bookingMarkupPct / 100)).toFixed(2)} / R$ {((effectiveBaseRate + effectiveBreakfastPerGuest * 2) * (1 + bookingMarkupPct / 100)).toFixed(2)}
                         </span>
                       </div>
+                      <div className="pt-1 border-t border-sky-100 dark:border-slate-800 text-[10px] text-slate-500 flex flex-wrap gap-x-2 gap-y-0.5">
+                        <span>Café: <strong>R$ {(effectiveBreakfastPerGuest * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong></span>
+                        <span>• Limp: <strong>R$ {(baseCleaningFeeVal * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong></span>
+                        <span>• Pet: <strong>R$ {(basePetFeeVal * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong></span>
+                      </div>
                     </div>
                   </div>
 
@@ -1852,66 +1946,34 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                   <div className="p-4 rounded-2xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/30 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="font-black text-xs text-rose-900 dark:text-rose-300">🏠 Airbnb</span>
-                      <Badge className="bg-rose-600 text-white font-bold text-[10px]">OTA XML</Badge>
+                      <Badge className="bg-rose-600 text-white font-bold text-[10px]">Base +{airbnbMarkupPct}%</Badge>
                     </div>
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Markup Canal (%)</Label>
+                        <Label className="text-[11px] font-bold">Comissão Airbnb (%)</Label>
                         <Input
                           type="number"
-                          step="1"
-                          value={rawChannelInputs.airbnbMarkup ?? airbnbMarkupPct}
-                          onChange={e => {
-                            const raw = e.target.value
-                            setRawChannelInputs(prev => ({ ...prev, airbnbMarkup: raw }))
-                            if (raw.trim() === "") return
-                            const parsed = Number(raw)
-                            if (!Number.isNaN(parsed)) {
-                              const val = parsed / 100
-                              setTariffSettings({
-                                ...tariffSettings,
-                                channelMarkups: {
-                                  ...tariffSettings?.channelMarkups,
-                                  airbnb: { ...tariffSettings?.channelMarkups?.airbnb, markupPct: val }
-                                }
-                              })
-                            }
-                          }}
-                          onBlur={() => {
-                            const raw = rawChannelInputs.airbnbMarkup
-                            if (raw !== undefined) {
-                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
-                              setTariffSettings({
-                                ...tariffSettings,
-                                channelMarkups: {
-                                  ...tariffSettings?.channelMarkups,
-                                  airbnb: { ...tariffSettings?.channelMarkups?.airbnb, markupPct: val }
-                                }
-                              })
-                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.airbnbMarkup; return n })
-                            }
-                          }}
-                          className="h-8 font-black text-xs"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Comissão OTA (%)</Label>
-                        <Input
-                          type="number"
-                          step="1"
-                          value={rawChannelInputs.airbnbComm ?? Math.round((tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15) * 100)}
+                          step="0.5"
+                          value={rawChannelInputs.airbnbComm ?? airbnbCommPctVal}
                           onChange={e => {
                             const raw = e.target.value
                             setRawChannelInputs(prev => ({ ...prev, airbnbComm: raw }))
                             if (raw.trim() === "") return
                             const parsed = Number(raw)
                             if (!Number.isNaN(parsed)) {
-                              const val = parsed / 100
+                              const commDec = Math.max(0, parsed) / 100
+                              const extraDec = Number(tariffSettings?.channelMarkups?.airbnb?.extraMarkupPct ?? 0)
+                              const totalDec = Math.round((commDec + extraDec) * 10000) / 10000
                               setTariffSettings({
                                 ...tariffSettings,
                                 channelMarkups: {
                                   ...tariffSettings?.channelMarkups,
-                                  airbnb: { ...tariffSettings?.channelMarkups?.airbnb, commissionPct: val }
+                                  airbnb: {
+                                    ...tariffSettings?.channelMarkups?.airbnb,
+                                    commissionPct: commDec,
+                                    extraMarkupPct: extraDec,
+                                    markupPct: totalDec,
+                                  }
                                 }
                               })
                             }
@@ -1919,12 +1981,19 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                           onBlur={() => {
                             const raw = rawChannelInputs.airbnbComm
                             if (raw !== undefined) {
-                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              const commDec = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 15 : Math.max(0, Number(raw))) / 100
+                              const extraDec = Number(tariffSettings?.channelMarkups?.airbnb?.extraMarkupPct ?? 0)
+                              const totalDec = Math.round((commDec + extraDec) * 10000) / 10000
                               setTariffSettings({
                                 ...tariffSettings,
                                 channelMarkups: {
                                   ...tariffSettings?.channelMarkups,
-                                  airbnb: { ...tariffSettings?.channelMarkups?.airbnb, commissionPct: val }
+                                  airbnb: {
+                                    ...tariffSettings?.channelMarkups?.airbnb,
+                                    commissionPct: commDec,
+                                    extraMarkupPct: extraDec,
+                                    markupPct: totalDec,
+                                  }
                                 }
                               })
                               setRawChannelInputs(prev => { const n = { ...prev }; delete n.airbnbComm; return n })
@@ -1933,12 +2002,65 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                           className="h-8 font-black text-xs"
                         />
                       </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Adicional Extra (%)</Label>
+                        <Input
+                          type="number"
+                          step="0.5"
+                          value={rawChannelInputs.airbnbExtra ?? airbnbExtraPctVal}
+                          onChange={e => {
+                            const raw = e.target.value
+                            setRawChannelInputs(prev => ({ ...prev, airbnbExtra: raw }))
+                            if (raw.trim() === "") return
+                            const parsed = Number(raw)
+                            if (!Number.isNaN(parsed)) {
+                              const extraDec = parsed / 100
+                              const commDec = Number(tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15)
+                              const totalDec = Math.round((commDec + extraDec) * 10000) / 10000
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  airbnb: {
+                                    ...tariffSettings?.channelMarkups?.airbnb,
+                                    commissionPct: commDec,
+                                    extraMarkupPct: extraDec,
+                                    markupPct: totalDec,
+                                  }
+                                }
+                              })
+                            }
+                          }}
+                          onBlur={() => {
+                            const raw = rawChannelInputs.airbnbExtra
+                            if (raw !== undefined) {
+                              const extraDec = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              const commDec = Number(tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15)
+                              const totalDec = Math.round((commDec + extraDec) * 10000) / 10000
+                              setTariffSettings({
+                                ...tariffSettings,
+                                channelMarkups: {
+                                  ...tariffSettings?.channelMarkups,
+                                  airbnb: {
+                                    ...tariffSettings?.channelMarkups?.airbnb,
+                                    commissionPct: commDec,
+                                    extraMarkupPct: extraDec,
+                                    markupPct: totalDec,
+                                  }
+                                }
+                              })
+                              setRawChannelInputs(prev => { const n = { ...prev }; delete n.airbnbExtra; return n })
+                            }
+                          }}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
                     </div>
                     <div className="p-2 rounded-lg bg-white/80 dark:bg-slate-900/60 border border-rose-200/60 space-y-1 text-xs">
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-600 dark:text-slate-400">Sem Café (Bruto / Líq.):</span>
+                        <span className="text-slate-600 dark:text-slate-400">Sem Café (Base +{airbnbMarkupPct}%):</span>
                         <span className="font-black font-mono text-rose-700 dark:text-rose-400">
-                          R$ {(effectiveBaseRate * (1 + airbnbMarkupPct / 100)).toFixed(2)} / R$ {(effectiveBaseRate * (1 + airbnbMarkupPct / 100) * (1 - (tariffSettings?.channelMarkups?.airbnb?.commissionPct ?? 0.15))).toFixed(2)}
+                          R$ {(effectiveBaseRate * (1 + airbnbMarkupPct / 100)).toFixed(2)}
                         </span>
                       </div>
                       <div className="flex justify-between items-center text-[11px]">
@@ -1946,6 +2068,11 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <span className="font-bold font-mono text-rose-800 dark:text-rose-300">
                           R$ {((effectiveBaseRate + effectiveBreakfastPerGuest) * (1 + airbnbMarkupPct / 100)).toFixed(2)} / R$ {((effectiveBaseRate + effectiveBreakfastPerGuest * 2) * (1 + airbnbMarkupPct / 100)).toFixed(2)}
                         </span>
+                      </div>
+                      <div className="pt-1 border-t border-rose-100 dark:border-slate-800 text-[10px] text-slate-500 flex flex-wrap gap-x-2 gap-y-0.5">
+                        <span>Café: <strong>R$ {(effectiveBreakfastPerGuest * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong></span>
+                        <span>• Limp: <strong>R$ {(baseCleaningFeeVal * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong></span>
+                        <span>• Pet: <strong>R$ {(basePetFeeVal * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong></span>
                       </div>
                     </div>
                   </div>
@@ -1963,23 +2090,28 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Markup Expedia (%)</Label>
+                        <Label className="text-[11px] font-bold">Comissão Expedia (%)</Label>
                         <Input
                           type="number"
                           step="1"
-                          value={rawChannelInputs.expediaMarkup ?? expediaMarkupPct}
+                          value={rawChannelInputs.expediaMarkup ?? expediaCommPctVal}
                           onChange={e => {
                             const raw = e.target.value
                             setRawChannelInputs(prev => ({ ...prev, expediaMarkup: raw }))
                             if (raw.trim() === "") return
                             const parsed = Number(raw)
                             if (!Number.isNaN(parsed)) {
-                              const val = parsed / 100
+                              const val = Math.max(0, parsed) / 100
                               setTariffSettings({
                                 ...tariffSettings,
                                 channelMarkups: {
                                   ...tariffSettings?.channelMarkups,
-                                  expedia: { ...tariffSettings?.channelMarkups?.expedia, markupPct: val }
+                                  expedia: {
+                                    ...tariffSettings?.channelMarkups?.expedia,
+                                    commissionPct: val,
+                                    extraMarkupPct: 0,
+                                    markupPct: val,
+                                  }
                                 }
                               })
                             }
@@ -1987,12 +2119,17 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                           onBlur={() => {
                             const raw = rawChannelInputs.expediaMarkup
                             if (raw !== undefined) {
-                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 0 : Number(raw)) / 100
+                              const val = (raw.trim() === "" || Number.isNaN(Number(raw)) ? 18 : Math.max(0, Number(raw))) / 100
                               setTariffSettings({
                                 ...tariffSettings,
                                 channelMarkups: {
                                   ...tariffSettings?.channelMarkups,
-                                  expedia: { ...tariffSettings?.channelMarkups?.expedia, markupPct: val }
+                                  expedia: {
+                                    ...tariffSettings?.channelMarkups?.expedia,
+                                    commissionPct: val,
+                                    extraMarkupPct: 0,
+                                    markupPct: val,
+                                  }
                                 }
                               })
                               setRawChannelInputs(prev => { const n = { ...prev }; delete n.expediaMarkup; return n })
@@ -2268,7 +2405,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                       className="font-black text-sm h-10 rounded-xl bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
                     />
                     <p className="text-[11px] text-slate-500">
-                      Cálculo interno: soma +1x (R$ {effectiveBreakfastPerGuest.toFixed(2)}) para 1 hóspede e +2x (R$ {(effectiveBreakfastPerGuest * 2).toFixed(2)}) para 2 hóspedes sobre a diária base do calendário. Para o cliente, exibe apenas a diária final de ocupação.
+                      Cálculo interno: soma +1x (R$ {effectiveBreakfastPerGuest.toFixed(2)}) para 1 hóspede e +2x (R$ {(effectiveBreakfastPerGuest * 2).toFixed(2)}) para 2 hóspedes sobre a diária base. Nas plataformas, recebe a comissão de cada uma (Booking +{bookingMarkupPct}%: R$ {(effectiveBreakfastPerGuest * (1 + bookingMarkupPct / 100)).toFixed(2)}/hósp. • Airbnb +{airbnbMarkupPct}%: R$ {(effectiveBreakfastPerGuest * (1 + airbnbMarkupPct / 100)).toFixed(2)}/hósp.).
                     </p>
                   </div>
 
@@ -2387,44 +2524,50 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                     </div>
 
                     {roomOnly.cleaningFeeEnabled !== false && (
-                      <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-bold">Valor (R$)</Label>
-                          <Input
-                            type="number"
-                            value={roomOnly.cleaningFeeAmount ?? 70}
-                            onChange={e => {
-                              const current = siteConfig.ratePlans || {}
-                              setSiteConfig({
-                                ...siteConfig,
-                                ratePlans: {
-                                  ...current,
-                                  room_only: { ...roomOnly, cleaningFeeAmount: Number(e.target.value) }
-                                }
-                              })
-                            }}
-                            className="text-xs h-8 rounded-lg"
-                          />
+                      <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div className="space-y-1">
+                            <Label className="text-[11px] font-bold">Valor Base Site (R$)</Label>
+                            <Input
+                              type="number"
+                              value={roomOnly.cleaningFeeAmount ?? 70}
+                              onChange={e => {
+                                const current = siteConfig.ratePlans || {}
+                                setSiteConfig({
+                                  ...siteConfig,
+                                  ratePlans: {
+                                    ...current,
+                                    room_only: { ...roomOnly, cleaningFeeAmount: Number(e.target.value) }
+                                  }
+                                })
+                              }}
+                              className="text-xs h-8 rounded-lg"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] font-bold">Frequência</Label>
+                            <select
+                              value={roomOnly.cleaningFeeType || "per_stay"}
+                              onChange={e => {
+                                const current = siteConfig.ratePlans || {}
+                                setSiteConfig({
+                                  ...siteConfig,
+                                  ratePlans: {
+                                    ...current,
+                                    room_only: { ...roomOnly, cleaningFeeType: e.target.value }
+                                  }
+                                })
+                              }}
+                              className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
+                            >
+                              <option value="per_stay">Por Estadia (1x)</option>
+                              <option value="per_night">Por Noite / Diária</option>
+                            </select>
+                          </div>
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-[11px] font-bold">Frequência</Label>
-                          <select
-                            value={roomOnly.cleaningFeeType || "per_stay"}
-                            onChange={e => {
-                              const current = siteConfig.ratePlans || {}
-                              setSiteConfig({
-                                ...siteConfig,
-                                ratePlans: {
-                                  ...current,
-                                  room_only: { ...roomOnly, cleaningFeeType: e.target.value }
-                                }
-                              })
-                            }}
-                            className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
-                          >
-                            <option value="per_stay">Por Estadia (1x)</option>
-                            <option value="per_night">Por Noite / Diária</option>
-                          </select>
+                        <div className="text-[10.5px] text-slate-500 flex flex-wrap gap-x-3">
+                          <span>🏨 Booking (+{bookingMarkupPct}%): <strong>R$ {(baseCleaningFeeVal * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong></span>
+                          <span>🏠 Airbnb (+{airbnbMarkupPct}%): <strong>R$ {(baseCleaningFeeVal * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong></span>
                         </div>
                       </div>
                     )}
@@ -2487,7 +2630,10 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <option value="per_night">Por Noite / Diária</option>
                       </select>
                     </div>
-                    <div className="text-[10.5px] text-slate-500">⏰ Corte automático às 12:00 para hoje.</div>
+                    <div className="text-[10.5px] text-slate-500 space-y-0.5">
+                      <div>🏨 Booking (+{bookingMarkupPct}%): <strong>R$ {(baseExtraBedFeeVal * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong> • 🏠 Airbnb (+{airbnbMarkupPct}%): <strong>R$ {(baseExtraBedFeeVal * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong></div>
+                      <div>⏰ Corte automático às 12:00 para hoje.</div>
+                    </div>
                   </div>
 
                   {/* Camas Twin */}
@@ -2497,7 +2643,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                       <Badge variant="outline" className="text-[10px]">R$ {bedConfig.twinFeeAmount || 30}</Badge>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Valor da Montagem (R$)</Label>
+                      <Label className="text-[11px] font-bold">Valor Base da Montagem (R$)</Label>
                       <Input
                         type="number"
                         value={bedConfig.twinFeeAmount ?? 30}
@@ -2516,7 +2662,9 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <option value="per_night">Por Noite / Diária</option>
                       </select>
                     </div>
-                    <div className="text-[10.5px] text-slate-500">Taxa única por estadia.</div>
+                    <div className="text-[10.5px] text-slate-500">
+                      🏨 Booking (+{bookingMarkupPct}%): <strong>R$ {(baseTwinFeeVal * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong> • 🏠 Airbnb (+{airbnbMarkupPct}%): <strong>R$ {(baseTwinFeeVal * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong>
+                    </div>
                   </div>
 
                   {/* Pet Friendly */}
@@ -2526,7 +2674,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                       <Badge variant="outline" className="text-[10px]">R$ {petPolicy.feeAmount || 80}</Badge>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Taxa por Pet (R$)</Label>
+                      <Label className="text-[11px] font-bold">Taxa Base por Pet (R$)</Label>
                       <Input
                         type="number"
                         value={petPolicy.feeAmount ?? 80}
@@ -2544,6 +2692,9 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                         <option value="per_stay">Por Estadia (1x)</option>
                         <option value="per_night">Por Noite / Diária</option>
                       </select>
+                    </div>
+                    <div className="text-[10.5px] text-slate-500">
+                      🏨 Booking (+{bookingMarkupPct}%): <strong>R$ {(basePetFeeVal * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong> • 🏠 Airbnb (+{airbnbMarkupPct}%): <strong>R$ {(basePetFeeVal * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong>
                     </div>
                     <div className="space-y-1">
                       <Label className="text-[11px] font-bold">Espécies / Porte Permitido</Label>

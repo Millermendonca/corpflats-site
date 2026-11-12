@@ -968,7 +968,7 @@ function resolveAgentLivePricingQuote(db, checkin, checkout, hospedes) {
     faixaDescontoLabel = 'Pacote Semanal (7+ diárias)';
   }
 
-  const sebraeCalc = wbpState ? calculateSebraeRate(wbpSettings) : { tarifaMinima: 276.63 };
+  const sebraeCalc = wbpState ? calculateSebraeRate(wbpSettings) : { tarifaMinima: 216.49 };
   const overrides = Array.isArray(db?.tariffOverrides) ? db.tariffOverrides : [];
   const weekendPct = Number(tarSettings.weekendMarkupPct ?? wbpSettings.weekendMarkupPct ?? 0.15);
 
@@ -991,7 +991,7 @@ function resolveAgentLivePricingQuote(db, checkin, checkout, hospedes) {
       continue;
     }
 
-    let baseNight = 276.63;
+    let baseNight = 216.49;
     if (tarSettings.mode === 'manual' && tarSettings.baseDailyRate != null) {
       baseNight = Number(tarSettings.baseDailyRate);
     } else if (wbpState) {

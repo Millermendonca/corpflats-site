@@ -559,22 +559,107 @@ export function calculateRatePlanPrices(baseRate, options = {}) {
 }
 
 /**
+ * Resolves the effective channel markup/commission repasse percentage (as decimal, e.g. 0.15 = +15%)
+ * so that OTA platform prices equal Base Price + Platform Commission (+ optional extra markup),
+ * while Direct Website remains 100% Base Price (0% markup, 0% -15% cut).
+ */
+export function resolveChannelEffectiveMarkupPct(channelMarkups = {}, channelKey = "direct") {
+  const raw = String(channelKey || "direct").toLowerCase().trim();
+  const norm =
+    raw === "site" || raw === "whatsapp" || raw === "direta" || raw === "direto"
+      ? "direct"
+      : raw.includes("booking")
+        ? "booking"
+        : raw.includes("airbnb")
+          ? "airbnb"
+          : raw.includes("expedia")
+            ? "expedia"
+            : raw;
+
+  if (norm === "direct") {
+    return Number(channelMarkups?.direct?.markupPct ?? 0);
+  }
+  if (norm === "corporate") {
+    return -Math.abs(Number(channelMarkups?.corporate?.discountPct ?? 0.10));
+  }
+
+  const defaultOtaCommissions = {
+    booking: 0.15,
+    airbnb: 0.15,
+    expedia: 0.18
+  };
+  const fallbackComm = defaultOtaCommissions[norm] ?? 0;
+  const cfg = channelMarkups?.[norm];
+  if (!cfg || typeof cfg !== "object") {
+    return fallbackComm;
+  }
+
+  if (cfg.extraMarkupPct !== undefined && cfg.extraMarkupPct !== null) {
+    const comm = Number(cfg.commissionPct ?? fallbackComm);
+    const extra = Number(cfg.extraMarkupPct ?? 0);
+    return Math.round((comm + extra) * 10000) / 10000;
+  }
+
+  const mPct = Number(cfg.markupPct ?? 0);
+  const cPct = Number(cfg.commissionPct ?? fallbackComm);
+  return Math.round(Math.max(mPct, cPct) * 10000) / 10000;
+}
+
+/**
+ * Applies each channel's commission/markup to all auxiliary hospitality fees
+ * (breakfast per guest, cleaning fee, pet fee, 3rd guest extra bed, twin bed setup, late check-out).
+ */
+export function calculateChannelAdjustedFees(baseFees = {}, channelMarkups = {}) {
+  const normalizedBase = {
+    breakfastSurchargePerGuest: round2(Number(baseFees.breakfastSurchargePerGuest ?? 20)),
+    cleaningFee: round2(Number(baseFees.cleaningFee ?? 70)),
+    petFee: round2(Number(baseFees.petFee ?? 80)),
+    extraBedFee: round2(Number(baseFees.extraBedFee ?? 60)),
+    twinFee: round2(Number(baseFees.twinFee ?? 30)),
+    lateCheckoutFee: round2(Number(baseFees.lateCheckoutFee ?? 50))
+  };
+
+  const buildFor = (chKey) => {
+    const pct = resolveChannelEffectiveMarkupPct(channelMarkups, chKey);
+    const mult = 1 + pct;
+    return {
+      markupPct: pct,
+      markupPercentDisplay: round2(pct * 100),
+      breakfastSurchargePerGuest: round2(normalizedBase.breakfastSurchargePerGuest * mult),
+      cleaningFee: round2(normalizedBase.cleaningFee * mult),
+      petFee: round2(normalizedBase.petFee * mult),
+      extraBedFee: round2(normalizedBase.extraBedFee * mult),
+      twinFee: round2(normalizedBase.twinFee * mult),
+      lateCheckoutFee: round2(normalizedBase.lateCheckoutFee * mult)
+    };
+  };
+
+  return {
+    base: normalizedBase,
+    direct: buildFor("direct"),
+    booking: buildFor("booking"),
+    airbnb: buildFor("airbnb"),
+    expedia: buildFor("expedia")
+  };
+}
+
+/**
  * Calculates rate plan prices across Direct, Booking.com, Airbnb, Expedia, and Corporate
- * applying each platform's configured markup/discount on top of (baseRate + breakfast + occupancy).
+ * applying each platform's configured commission/markup on top of (baseRate + breakfast + occupancy).
  */
 export function calculateAllChannelPlanPrices(baseRate, settings = DEFAULT_SEBRAE_CONFIG, channelMarkups = {}) {
-  const bookingMarkup = Number(channelMarkups?.booking?.markupPct ?? 0);
-  const airbnbMarkup = Number(channelMarkups?.airbnb?.markupPct ?? 0);
-  const expediaMarkup = Number(channelMarkups?.expedia?.markupPct ?? 0);
-  const directMarkup = Number(channelMarkups?.direct?.markupPct ?? 0);
-  const corporateDiscount = Number(channelMarkups?.corporate?.discountPct ?? 0);
+  const directMarkup = resolveChannelEffectiveMarkupPct(channelMarkups, "direct");
+  const bookingMarkup = resolveChannelEffectiveMarkupPct(channelMarkups, "booking");
+  const airbnbMarkup = resolveChannelEffectiveMarkupPct(channelMarkups, "airbnb");
+  const expediaMarkup = resolveChannelEffectiveMarkupPct(channelMarkups, "expedia");
+  const corporateMarkup = resolveChannelEffectiveMarkupPct(channelMarkups, "corporate");
 
   return {
     direct: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: directMarkup }),
     booking: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: bookingMarkup }),
     airbnb: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: airbnbMarkup }),
     expedia: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: expediaMarkup }),
-    corporate: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: -corporateDiscount })
+    corporate: calculateRatePlanPrices(baseRate, { ...settings, channelMarkupPct: corporateMarkup })
   };
 }
 

@@ -645,7 +645,7 @@ export default function BookingEngine() {
   const fallbackBaseSemCafe = Number(
     dynPricing?.avgRoomOnlyRate ??
     siteConfig?.ratePlans?.room_only?.dailyRate ??
-    276.63
+    216.49
   )
   const perNightBaseSemCafe: number[] =
     Array.isArray(dynPricing?.discountedSemCafeRates) && dynPricing.discountedSemCafeRates.length === nights
@@ -736,6 +736,18 @@ export default function BookingEngine() {
   // Valor ativo conforme forma de pagamento escolhida
   const totalAmount = paymentMethod === "pix" ? pixTotalAmount : cardTotalAmount
   const currentTotalDiscount = paymentMethod === "pix" ? pixDiscountAmount : 0
+
+  // Referência comparativa contra plataformas (Booking / Airbnb = Preço Base + Comissão da Plataforma)
+  const otaReferenceMarkupPercent = Number(
+    dynPricing?.otaComparison?.referenceMarkupPercent ??
+    siteConfig?.pricing?.otaComparison?.referenceMarkupPercent ??
+    15
+  )
+  const otaFactor = 1 + Math.max(0, otaReferenceMarkupPercent) / 100
+  const otaWithBreakfastDailyRate = Math.round(withBreakfastConfig.dailyRate * otaFactor * 100) / 100
+  const otaRoomOnlyDailyRate = Math.round(roomOnlyConfig.dailyRate * otaFactor * 100) / 100
+  const otaTotalAmount = Math.round(pixTotalAmount * otaFactor * 100) / 100
+  const otaSavingsAmount = Math.max(0, Math.round((otaTotalAmount - pixTotalAmount) * 100) / 100)
 
   // Política de cancelamento ativa baseada em antecedência
   const cancellationPolicy = calculateCancellationPolicy(new Date(), checkin, totalAmount)
@@ -1254,6 +1266,11 @@ export default function BookingEngine() {
                     </div>
                   </div>
                   <div className="text-right shrink-0 pl-2">
+                    {otaWithBreakfastDailyRate > withBreakfastConfig.dailyRate && (
+                      <div className="text-[10px] text-slate-400 line-through leading-none mb-0.5" title="Valor no Booking e Airbnb">
+                        R$ {formatBrl(otaWithBreakfastDailyRate)}
+                      </div>
+                    )}
                     <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
                       R$ {formatBrl(withBreakfastConfig.dailyRate)}
                     </div>
@@ -1287,6 +1304,11 @@ export default function BookingEngine() {
                     </div>
                   </div>
                   <div className="text-right shrink-0 pl-2">
+                    {otaRoomOnlyDailyRate > roomOnlyConfig.dailyRate && (
+                      <div className="text-[10px] text-slate-400 line-through leading-none mb-0.5" title="Valor no Booking e Airbnb">
+                        R$ {formatBrl(otaRoomOnlyDailyRate)}
+                      </div>
+                    )}
                     <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
                       R$ {formatBrl(roomOnlyConfig.dailyRate)}
                     </div>
@@ -1294,6 +1316,13 @@ export default function BookingEngine() {
                   </div>
                 </div>
               </div>
+
+              {otaSavingsAmount > 0 && (
+                <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-50/90 border border-emerald-200/80 text-[10.5px] text-emerald-800 font-semibold">
+                  <span className="truncate">Reserva direta vs. Booking / Airbnb:</span>
+                  <span className="font-extrabold shrink-0">- R$ {formatBrl(otaSavingsAmount)}</span>
+                </div>
+              )}
             </div>
 
             {/* Botão de Ação Principal (CTA) */}
@@ -1615,9 +1644,16 @@ export default function BookingEngine() {
           <span className="text-[10px] text-slate-500 font-medium block">
             {ratePlan === "with_breakfast" ? "Com café da manhã" : "Sem café da manhã"}
           </span>
-          <div className="text-xs font-bold text-slate-900">
-            R$ {formatBrl(ratePlan === "with_breakfast" ? withBreakfastConfig.dailyRate : roomOnlyConfig.dailyRate)}
-            <span className="text-[10px] font-normal text-slate-500"> / noite no PIX</span>
+          <div className="text-xs font-bold text-slate-900 flex items-baseline gap-1.5">
+            {otaReferenceMarkupPercent > 0 && (
+              <span className="text-[10px] font-normal text-slate-400 line-through">
+                R$ {formatBrl(ratePlan === "with_breakfast" ? otaWithBreakfastDailyRate : otaRoomOnlyDailyRate)}
+              </span>
+            )}
+            <span>
+              R$ {formatBrl(ratePlan === "with_breakfast" ? withBreakfastConfig.dailyRate : roomOnlyConfig.dailyRate)}
+              <span className="text-[10px] font-normal text-slate-500"> / noite no PIX</span>
+            </span>
           </div>
         </div>
 

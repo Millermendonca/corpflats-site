@@ -258,6 +258,8 @@ import {
   calculateHistoricalSeasonality,
   applyPricingLocks,
   calculateRatePlanPrices,
+  resolveChannelEffectiveMarkupPct,
+  calculateChannelAdjustedFees,
   WbpPricingManager,
   DEFAULT_SEBRAE_CONFIG,
   STANDARD_SEBRAE_SEASONALITY_FACTORS,
@@ -269,7 +271,8 @@ import {
   getWbpRestrictionsState,
   resolveRestrictions,
   buildChannexAvailabilityValues,
-  buildChannexRestrictionsValues
+  buildChannexRestrictionsValues,
+  buildOtaFeeSyncSchedule
 } from "./wbp/ari-sync.mjs";
 import {
   processIncomingOTA,
@@ -2137,9 +2140,10 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
         customNegotiation: true
       },
       channelMarkups: {
-        direct: { channelName: "Venda Direta / Site / WhatsApp", markupPct: 0.0, commissionPct: 0.0, discountPct: 0.15 },
-        booking: { channelName: "Booking.com", markupPct: 0.0, commissionPct: 0.15, discountPct: 0.0 },
-        airbnb: { channelName: "Airbnb", markupPct: 0.03, commissionPct: 0.15, discountPct: 0.0 }
+        direct: { channelName: "Venda Direta / Site / WhatsApp", markupPct: 0.0, commissionPct: 0.0, extraMarkupPct: 0.0, discountPct: 0.0 },
+        booking: { channelName: "Booking.com", markupPct: 0.15, commissionPct: 0.15, extraMarkupPct: 0.0, discountPct: 0.0 },
+        airbnb: { channelName: "Airbnb", markupPct: 0.15, commissionPct: 0.15, extraMarkupPct: 0.0, discountPct: 0.0 },
+        expedia: { channelName: "Expedia / Outras OTAs", markupPct: 0.18, commissionPct: 0.18, extraMarkupPct: 0.0, discountPct: 0.0 }
       },
       updatedAt: new Date().toISOString()
     };
@@ -2222,8 +2226,32 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
   }
 
   // 4. Comissões de Canais e Sincronização com channelMarkups / paymentMethods
-  if (partial.channelMarkups) {
-    tar.channelMarkups = { ...(tar.channelMarkups || {}), ...partial.channelMarkups };
+  if (partial.channelMarkups && typeof partial.channelMarkups === "object") {
+    if (!tar.channelMarkups) tar.channelMarkups = {};
+    for (const [chKey, chPatch] of Object.entries(partial.channelMarkups)) {
+      if (!chPatch || typeof chPatch !== "object") continue;
+      const prevCh = tar.channelMarkups[chKey] || {};
+      const mergedCh = { ...prevCh, ...chPatch };
+      if (chKey === "direct") {
+        mergedCh.discountPct = 0;
+        mergedCh.markupPct = Number(mergedCh.markupPct ?? 0);
+      } else if (["booking", "airbnb", "expedia"].includes(chKey)) {
+        const commProvided = chPatch.commissionPct !== undefined;
+        const extraProvided = chPatch.extraMarkupPct !== undefined;
+        const markupOnlyProvided = chPatch.markupPct !== undefined && !commProvided && !extraProvided;
+        if (markupOnlyProvided && prevCh.extraMarkupPct === undefined) {
+          mergedCh.markupPct = Number(chPatch.markupPct);
+        } else {
+          const commVal = Number(mergedCh.commissionPct ?? (chKey === "expedia" ? 0.18 : 0.15));
+          const extraVal = Number(mergedCh.extraMarkupPct ?? 0);
+          mergedCh.commissionPct = commVal;
+          mergedCh.commissionRate = commVal;
+          mergedCh.extraMarkupPct = extraVal;
+          mergedCh.markupPct = Math.round((commVal + extraVal) * 10000) / 10000;
+        }
+      }
+      tar.channelMarkups[chKey] = mergedCh;
+    }
   }
 
   const nestedBookingCommPct = partial.channelMarkups?.booking?.commissionPct;
@@ -2261,13 +2289,24 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
     const bRate = partial.bookingCommissionRate !== undefined ? Number(partial.bookingCommissionRate)
                 : pmBookingRate !== undefined ? Number(pmBookingRate)
                 : Math.round(bPct * 10000) / 100;
-    wbp.channelCommissionPct = bPct;
+    const shouldSyncSebraeComm =
+      partial.channelCommissionPct !== undefined ||
+      partial.bookingCommissionRate !== undefined ||
+      partial.avgChannelCommissionPct !== undefined ||
+      pmBookingRate !== undefined;
+    if (shouldSyncSebraeComm) {
+      wbp.channelCommissionPct = bPct;
+    }
     fin.avgChannelCommissionPct = bPct;
     fee.bookingCommissionRate = bRate;
     if (!tar.channelMarkups) tar.channelMarkups = {};
     if (!tar.channelMarkups.booking) tar.channelMarkups.booking = {};
     tar.channelMarkups.booking.commissionPct = bPct;
     tar.channelMarkups.booking.commissionRate = bPct;
+    if (partial.channelMarkups?.booking?.markupPct === undefined) {
+      const extraB = Number(tar.channelMarkups.booking.extraMarkupPct ?? 0);
+      tar.channelMarkups.booking.markupPct = Math.round((bPct + extraB) * 10000) / 10000;
+    }
     if (Array.isArray(db.settings.paymentMethods)) {
       const bItem = db.settings.paymentMethods.find(m => m.id === "booking");
       if (bItem) bItem.commissionRate = bRate;
@@ -2292,6 +2331,10 @@ export function syncFinancialAndTariffSettings(db, partial = {}) {
     if (!tar.channelMarkups.airbnb) tar.channelMarkups.airbnb = {};
     tar.channelMarkups.airbnb.commissionPct = aPct;
     tar.channelMarkups.airbnb.commissionRate = aPct;
+    if (partial.channelMarkups?.airbnb?.markupPct === undefined) {
+      const extraA = Number(tar.channelMarkups.airbnb.extraMarkupPct ?? 0);
+      tar.channelMarkups.airbnb.markupPct = Math.round((aPct + extraA) * 10000) / 10000;
+    }
     if (Array.isArray(db.settings.paymentMethods)) {
       const aItem = db.settings.paymentMethods.find(m => m.id === "airbnb");
       if (aItem) aItem.commissionRate = aRate;
@@ -30825,12 +30868,37 @@ export function calculateCanonicalDirectStayQuote({
   const resolvedEarlyFee = Math.max(0, Number(earlyCheckinFee) || 0);
   const extrasTotal = Math.round((cleaningFee + twinFee + extraBedFee + petFee + resolvedEarlyFee + lateCheckoutFee) * 100) / 100;
 
-  // Preço Normal Real = Valor Final PIX (100% canônico)
+  // Preço Normal Real = Valor Final PIX (100% do Preço Base, sem corte de -15%)
   const pixTotalAmount = Math.round((pixAccommodationSubtotal + extrasTotal) * 100) / 100;
   // Preço Cartão = Preço Normal + acréscimo silencioso embutido (ex: +5%)
   const cardTotalAmount = computeCardAmountFromPix(pixTotalAmount, cardMarkupPercent);
   const pixDiscountAmount = Math.round((cardTotalAmount - pixTotalAmount) * 100) / 100;
   const cardDisplaySubtotal = Math.round((cardTotalAmount - extrasTotal) * 100) / 100;
+
+  // Comparativo real contra plataformas (Booking / Airbnb = Preço Base + Comissão de cada plataforma em diárias e todas as taxas)
+  const bookingMarkupDec = resolveChannelEffectiveMarkupPct(tarSettings.channelMarkups, "booking");
+  const airbnbMarkupDec = resolveChannelEffectiveMarkupPct(tarSettings.channelMarkups, "airbnb");
+  const referenceOtaMarkupDec =
+    bookingMarkupDec > 0 && airbnbMarkupDec > 0
+      ? Math.round(((bookingMarkupDec + airbnbMarkupDec) / 2) * 10000) / 10000
+      : Math.max(bookingMarkupDec, airbnbMarkupDec);
+  const otaMultRef = 1 + referenceOtaMarkupDec;
+  const otaTotalBooking = Math.round(pixTotalAmount * (1 + bookingMarkupDec) * 100) / 100;
+  const otaTotalAirbnb = Math.round(pixTotalAmount * (1 + airbnbMarkupDec) * 100) / 100;
+  const otaReferenceTotal = Math.round(pixTotalAmount * otaMultRef * 100) / 100;
+  const otaAvgDailyRatePerFlat = Math.round(avgDailyRatePerFlat * otaMultRef * 100) / 100;
+  const otaSavingsAmount = Math.max(0, Math.round((otaReferenceTotal - pixTotalAmount) * 100) / 100);
+  const otaChannelFees = calculateChannelAdjustedFees(
+    {
+      breakfastSurchargePerGuest,
+      cleaningFee: Number(rawRoCfg.cleaningFeeAmount ?? 70),
+      petFee: petFeeUnit,
+      extraBedFee: extraBedFeeUnit,
+      twinFee: twinFeeUnit,
+      lateCheckoutFee: 50
+    },
+    tarSettings.channelMarkups
+  );
 
   return {
     nights,
@@ -30854,7 +30922,23 @@ export function calculateCanonicalDirectStayQuote({
     extrasTotal,
     pixTotalAmount,
     cardTotalAmount,
-    pixDiscountAmount
+    pixDiscountAmount,
+    otaComparison: {
+      bookingMarkupPercent: Math.round(bookingMarkupDec * 10000) / 100,
+      airbnbMarkupPercent: Math.round(airbnbMarkupDec * 10000) / 100,
+      referenceMarkupPercent: Math.round(referenceOtaMarkupDec * 10000) / 100,
+      otaAvgDailyRatePerFlat,
+      otaAccommodationSubtotal: Math.round(pixAccommodationSubtotal * otaMultRef * 100) / 100,
+      otaCleaningFee: Math.round(cleaningFee * otaMultRef * 100) / 100,
+      otaTwinFee: Math.round(twinFee * otaMultRef * 100) / 100,
+      otaExtraBedFee: Math.round(extraBedFee * otaMultRef * 100) / 100,
+      otaPetFee: Math.round(petFee * otaMultRef * 100) / 100,
+      otaTotalBooking,
+      otaTotalAirbnb,
+      otaReferenceTotal,
+      otaSavingsAmount,
+      channelFees: otaChannelFees
+    }
   };
 }
 
@@ -30971,11 +31055,22 @@ app.get("/api/site-content", (req, res) => {
     pricing: {
       ...DEFAULT_SITE_CONFIG.pricing,
       ...(current.pricing || {}),
-      directDiscountPercent: Number(current.pricing?.directDiscountPercent ?? tarSettings.directDiscountPercent ?? 0),
+      directDiscountPercent: 0,
       cardMarkupPercent: cardMarkupPct,
       pixDiscountPercent: cardMarkupPct,
       breakfastSurchargePerGuest: bfSurcharge,
-      stayDiscounts: tarSettings.stayDiscounts || { weeklyPct: 0.10, biweeklyPct: 0.15, monthlyPct: 0.25 }
+      stayDiscounts: tarSettings.stayDiscounts || { weeklyPct: 0.10, biweeklyPct: 0.15, monthlyPct: 0.25 },
+      otaComparison: (() => {
+        const bDec = resolveChannelEffectiveMarkupPct(tarSettings.channelMarkups, "booking");
+        const aDec = resolveChannelEffectiveMarkupPct(tarSettings.channelMarkups, "airbnb");
+        const refDec = bDec > 0 && aDec > 0 ? Math.round(((bDec + aDec) / 2) * 10000) / 10000 : Math.max(bDec, aDec);
+        return {
+          bookingMarkupPercent: Math.round(bDec * 10000) / 100,
+          airbnbMarkupPercent: Math.round(aDec * 10000) / 100,
+          referenceMarkupPercent: Math.round(refDec * 10000) / 100,
+          channelFees: buildOtaFeeSyncSchedule(db)
+        };
+      })()
     },
     about: { ...DEFAULT_SITE_CONFIG.about, ...(current.about || {}) },
     amenities: Array.isArray(current.amenities) && current.amenities.length > 0 ? current.amenities : DEFAULT_SITE_CONFIG.amenities,
@@ -31394,7 +31489,8 @@ app.get("/api/reservations/availability", (req, res) => {
         directDiscountPercent: 0,
         cardMarkupPercent: quoteSampleRoomOnly.cardMarkupPercent,
         pixDiscountPercent: quoteSampleRoomOnly.cardMarkupPercent,
-        breakfastSurchargePerGuest: quoteSampleRoomOnly.breakfastSurchargePerGuest
+        breakfastSurchargePerGuest: quoteSampleRoomOnly.breakfastSurchargePerGuest,
+        otaComparison: quoteSampleRoomOnly.otaComparison
       },
       dynamicPricing: {
         nights: quoteSampleRoomOnly.nights,
@@ -31405,7 +31501,13 @@ app.get("/api/reservations/availability", (req, res) => {
         cardMarkupPercent: quoteSampleRoomOnly.cardMarkupPercent,
         avgRoomOnlyRate: quoteSampleRoomOnly.avgDailyRatePerFlat,
         avgWithBreakfast1GuestRate: quoteSampleWithBf1.avgDailyRatePerFlat,
-        avgWithBreakfast2GuestsRate: quoteSampleWithBf2.avgDailyRatePerFlat
+        avgWithBreakfast2GuestsRate: quoteSampleWithBf2.avgDailyRatePerFlat,
+        otaComparison: {
+          ...quoteSampleRoomOnly.otaComparison,
+          otaAvgRoomOnlyRate: quoteSampleRoomOnly.otaComparison.otaAvgDailyRatePerFlat,
+          otaAvgWithBreakfast1GuestRate: quoteSampleWithBf1.otaComparison.otaAvgDailyRatePerFlat,
+          otaAvgWithBreakfast2GuestsRate: quoteSampleWithBf2.otaComparison.otaAvgDailyRatePerFlat
+        }
       }
     });
   } catch (err) {
@@ -33457,7 +33559,7 @@ app.all(["/api/pms/reservations/repair-incident-sept30", "/api/system/repair-inc
 let lastCalendarReconcileTime = 0;
 
 // ── Motor de Cálculo e Validade de Pré-Reservas (10min, 30min, 2h, Até 23:59, Custom) ──
-export function computePreReservationReminderSchedule(expiresAtIso, holdDurationMinutes = 0, sendExpirationReminder = true) {
+export function computePreReservationReminderSchedule(expiresAtIso, holdDurationMinutes = 0, sendExpirationReminder = true, nowOverride = null) {
   const enabled = sendExpirationReminder !== false;
   if (!enabled || !expiresAtIso) {
     return {
@@ -33468,7 +33570,7 @@ export function computePreReservationReminderSchedule(expiresAtIso, holdDuration
     };
   }
   const expMs = new Date(expiresAtIso).getTime();
-  const nowMs = Date.now();
+  const nowMs = nowOverride ? new Date(nowOverride).getTime() : Date.now();
   if (isNaN(expMs) || expMs <= nowMs) {
     return {
       sendExpirationReminder: enabled,
@@ -33526,11 +33628,15 @@ export function computePreReservationReminderSchedule(expiresAtIso, holdDuration
   };
 }
 
-export function resolvePreReservationHold(input = {}, checkinDate = "") {
-  const now = new Date();
-  const todayBrStr = typeof getTodayStr === "function"
-    ? getTodayStr()
-    : new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+export function resolvePreReservationHold(input = {}, checkinDate = "", options = {}) {
+  const now = options?.nowOverride
+    ? new Date(options.nowOverride)
+    : (typeof getEffectiveDate === "function" ? getEffectiveDate() : new Date());
+  const todayBrStr = options?.nowOverride
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(now)
+    : (typeof getTodayStr === "function"
+        ? getTodayStr()
+        : new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(now));
 
   const rawPreset = String(input.holdPreset || "").trim();
   const rawMinutes = Number(input.holdDurationMinutes);
@@ -33541,7 +33647,8 @@ export function resolvePreReservationHold(input = {}, checkinDate = "") {
     const remInfo = computePreReservationReminderSchedule(
       baseObj.expiresAt,
       baseObj.holdDurationMinutes,
-      sendExpirationReminder
+      sendExpirationReminder,
+      now
     );
     return {
       ...baseObj,
@@ -33640,10 +33747,304 @@ export function resolvePreReservationHold(input = {}, checkinDate = "") {
   });
 }
 
+// ── Prazo Inteligente para Pré-Reserva de Diária Extra (Extensão Aguardando Pagamento) ──
+// - IA do WhatsApp (source === "whatsapp_ai") -> 30m
+// - Diária extra iniciando HOJE (<= todayBrStr): >= 10:00h -> 30m; antes das 10:00h -> 2h
+// - Diária extra iniciando em data futura (> todayBrStr) -> Até 23:59 de hoje
+export function resolveStayExtensionHold(input = {}, extensionStartDate = "", options = {}) {
+  const now = options?.nowOverride
+    ? new Date(options.nowOverride)
+    : (typeof getEffectiveDate === "function" ? getEffectiveDate() : new Date());
+  const todayBrStr = options?.nowOverride
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(now)
+    : (typeof getTodayStr === "function"
+        ? getTodayStr()
+        : new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(now));
+  const brHourStr = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    hour12: false
+  }).format(now);
+  const brHour = Number(brHourStr) || 0;
+
+  const hasExplicitInput = Boolean(
+    (input.expiresAt && String(input.expiresAt).trim()) ||
+    (input.holdPreset && String(input.holdPreset).trim()) ||
+    (Number.isFinite(Number(input.holdDurationMinutes)) && Number(input.holdDurationMinutes) > 0)
+  );
+  if (hasExplicitInput) {
+    return resolvePreReservationHold(input, extensionStartDate || todayBrStr, { nowOverride: now });
+  }
+
+  const srcLower = String(options?.source || input?.source || "").toLowerCase();
+  if (srcLower === "whatsapp_ai" || srcLower.includes("sofia") || srcLower.includes("estender_estadia") || srcLower.includes("alterar_datas_reserva")) {
+    return resolvePreReservationHold(
+      { ...input, holdPreset: "30m", holdDurationMinutes: 30 },
+      extensionStartDate || todayBrStr,
+      { nowOverride: now }
+    );
+  }
+
+  const normExtStart = String(extensionStartDate || todayBrStr).substring(0, 10);
+  if (normExtStart > todayBrStr) {
+    return resolvePreReservationHold(
+      { ...input, holdPreset: "until_2359" },
+      normExtStart,
+      { nowOverride: now }
+    );
+  }
+
+  if (brHour >= 10) {
+    return resolvePreReservationHold(
+      { ...input, holdPreset: "30m", holdDurationMinutes: 30 },
+      normExtStart,
+      { nowOverride: now }
+    );
+  }
+
+  return resolvePreReservationHold(
+    { ...input, holdPreset: "2h", holdDurationMinutes: 120 },
+    normExtStart,
+    { nowOverride: now }
+  );
+}
+
+// ── Rollback Parcial Atômico de Diária Extra Expirada ou Cancelada Manualmente ──
+export function rollbackExpiredOrCancelledStayExtension(targetDb = db, r, options = {}) {
+  if (!r || !r.pendingStayExtension) return { rolledBack: false };
+  const ext = r.pendingStayExtension;
+  const reason = options?.reason || "expired";
+  const nowMs = options?.nowOverride
+    ? new Date(options.nowOverride).getTime()
+    : (targetDb?._nowOverride ? new Date(targetDb._nowOverride).getTime() : Date.now());
+  const nowIso = new Date(nowMs).toISOString();
+
+  const attemptedCheckin = r.checkinDate;
+  const attemptedCheckout = r.checkoutDate;
+  const attemptedTotal = Number(r.totalAmount) || 0;
+
+  const origCheckin = ext.oldCheckinDate || r.checkinDate;
+  const origCheckout = ext.oldCheckoutDate || r.previousCheckoutDate || r.checkoutDate;
+
+  r.checkinDate = origCheckin;
+  r.checkoutDate = origCheckout;
+  r.nights = Math.max(
+    1,
+    Math.round(
+      (new Date(`${origCheckout}T12:00:00Z`).getTime() - new Date(`${origCheckin}T12:00:00Z`).getTime()) / 86400000
+    )
+  );
+
+  if (Array.isArray(ext.oldDailyRates) && ext.oldDailyRates.length > 0) {
+    r.dailyRates = ext.oldDailyRates.map(d => ({ ...d }));
+  } else if (Array.isArray(r.dailyRates) && r.dailyRates.length > 0) {
+    r.dailyRates = r.dailyRates.filter(d => d && d.date && d.date >= origCheckin && d.date < origCheckout);
+  }
+
+  if (Array.isArray(ext.oldCharges)) {
+    r.charges = ext.oldCharges.map(c => ({ ...c }));
+  } else if (Array.isArray(r.charges)) {
+    r.charges = r.charges.filter(c => c && c.category !== "stay_extension");
+  }
+
+  if (ext.oldCleaningFee !== undefined) {
+    r.cleaningFee = Number(ext.oldCleaningFee) || 0;
+  }
+
+  const restoredPaid = ext.oldPaidAmount !== undefined
+    ? Number(ext.oldPaidAmount) || 0
+    : (Number(r.paidAmount) || 0);
+  const restoredTotal = (ext.oldTotalAmount !== undefined && Number(ext.oldTotalAmount) > 0)
+    ? Number(ext.oldTotalAmount)
+    : (restoredPaid > 0 ? restoredPaid : Math.max(0, attemptedTotal - (Number(ext.amount) || 0)));
+
+  r.totalAmount = restoredTotal;
+  r.totalPrice = restoredTotal;
+  r.paidAmount = restoredPaid;
+  r.amountPaid = restoredPaid;
+  if (typeof computeCardAmountFromPix === "function") {
+    r.cardTotalAmount = computeCardAmountFromPix(restoredTotal);
+  }
+  r.paymentStatus = (restoredTotal > 0 && restoredPaid >= restoredTotal - 0.01)
+    ? "pago_total"
+    : (ext.oldPaymentStatus || (restoredPaid > 0 ? "sinal_pago" : "pago_total"));
+
+  if (!r.pixEndToEndId) {
+    r.pixTxId = null;
+  }
+  r.pixCopiaECola = "";
+  r.pixChargedAmount = 0;
+  r.mpInitPoint = null;
+  r.mpPreferenceId = null;
+  r.mpChargedAmount = null;
+
+  // Restaura card de limpeza de check-out na Governança para a data original paga
+  if (targetDb && Array.isArray(targetDb.cleaningRequests)) {
+    const fNum = String(r.flatNumber || (targetDb.flats || []).find(f => f && f.id === r.flatId)?.number || "");
+    const existingCleanOrDirtyOnOrig = targetDb.cleaningRequests.find(c =>
+      c &&
+      !c.isDeleted &&
+      c.status !== "deleted" &&
+      !c.isInstructionOnly &&
+      c.source !== "manual_instruction" &&
+      c.type !== "bed_adjustment_only" &&
+      c.type !== "instruction" &&
+      (c.flatId === r.flatId || String(c.flatNumber) === fNum) &&
+      c.requestDate === origCheckout &&
+      c.extensionHoldReservationId !== r.id &&
+      !c.isExtendedStay
+    );
+
+    const toRemoveIds = new Set();
+    for (const c of targetDb.cleaningRequests) {
+      if (!c || c.isDeleted || c.status === "deleted") continue;
+      const sameFlat = c.flatId === r.flatId || String(c.flatNumber) === fNum;
+      const isLinkedToHold =
+        c.extensionHoldReservationId === r.id ||
+        (sameFlat && c.requestDate === attemptedCheckout && Boolean(c.originalRequestDateBeforeExtension || c.extensionHoldExpiresAt)) ||
+        (sameFlat && c.requestDate === origCheckout && Boolean(c.isExtendedStay && c.extendedUntil === attemptedCheckout));
+      if (!isLinkedToHold) continue;
+
+      const targetDateToRestore = c.originalRequestDateBeforeExtension || origCheckout;
+      if (existingCleanOrDirtyOnOrig && c.id !== existingCleanOrDirtyOnOrig.id && c.requestDate !== targetDateToRestore) {
+        toRemoveIds.add(c.id);
+        continue;
+      }
+      c.requestDate = targetDateToRestore;
+      delete c.effectiveDate;
+      delete c.isExtendedStay;
+      delete c.extendedUntil;
+      delete c.extensionHoldExpiresAt;
+      delete c.extensionHoldReservationId;
+      delete c.originalRequestDateBeforeExtension;
+      if (c.previousAdminNoteBeforeExtension !== undefined) {
+        c.adminNote = c.previousAdminNoteBeforeExtension;
+        delete c.previousAdminNoteBeforeExtension;
+      } else if (typeof c.adminNote === "string" && (c.adminNote.includes("Prorrogação") || c.adminNote.includes("prorrogou estadia"))) {
+        c.adminNote = null;
+      }
+      c.updatedAt = nowIso;
+    }
+    if (toRemoveIds.size > 0) {
+      targetDb.cleaningRequests = targetDb.cleaningRequests.filter(c => !toRemoveIds.has(c.id));
+    }
+  }
+
+  let expiredMeta = null;
+  if (reason === "expired") {
+    const derivedAddedDates = Array.isArray(ext.addedDates) && ext.addedDates.length > 0
+      ? [...ext.addedDates]
+      : (() => {
+          const arr = [];
+          if (origCheckout && attemptedCheckout && attemptedCheckout > origCheckout) {
+            const dStart = new Date(`${origCheckout}T12:00:00Z`);
+            const dEnd = new Date(`${attemptedCheckout}T12:00:00Z`);
+            const cnt = Math.max(1, Math.round((dEnd.getTime() - dStart.getTime()) / 86400000));
+            for (let i = 0; i < cnt; i++) {
+              arr.push(new Date(dStart.getTime() + i * 86400000).toISOString().substring(0, 10));
+            }
+          }
+          return arr;
+        })();
+    expiredMeta = {
+      id: `exp_ext_${r.id}_${nowMs}`,
+      parentReservationId: r.id,
+      reservationCode: r.code || null,
+      oldCheckinDate: origCheckin,
+      oldCheckoutDate: origCheckout,
+      attemptedCheckinDate: attemptedCheckin,
+      attemptedCheckoutDate: attemptedCheckout,
+      addedDates: derivedAddedDates,
+      addedDailyRates: Array.isArray(ext.addedDailyRates) ? ext.addedDailyRates.map(d => ({ ...d })) : [],
+      extraNights: Number(ext.extraNights) || Math.max(1, derivedAddedDates.length || 1),
+      extraAmount: Number(ext.amount) || Math.max(0, Math.round((attemptedTotal - restoredTotal) * 100) / 100),
+      oldTotalAmount: restoredTotal,
+      newTotalAmount: attemptedTotal,
+      expiresAt: ext.expiresAt || null,
+      expiredAt: nowIso,
+      holdPreset: ext.holdPreset || null,
+      holdDurationMinutes: ext.holdDurationMinutes || null,
+      holdDurationLabel: ext.holdDurationLabel || null,
+      source: ext.source || "pms",
+      reactivatedAt: null
+    };
+    r.expiredStayExtension = expiredMeta;
+  } else {
+    delete r.expiredStayExtension;
+  }
+
+  delete r.pendingStayExtension;
+  delete r.oldCheckoutDateBeforeExtension;
+  r.previousCheckoutDate = origCheckout;
+  r.calendarSequence = (r.calendarSequence || 0) + 1;
+  r.updatedAt = nowIso;
+
+  if (targetDb && Array.isArray(targetDb.whatsappQueue)) {
+    for (const qItem of targetDb.whatsappQueue) {
+      if (!qItem || (qItem.status !== "scheduled" && qItem.status !== "pending")) continue;
+      const sameRes = (qItem.reservationCode && r.code && qItem.reservationCode === r.code) || (qItem.reservationId && r.id && qItem.reservationId === r.id);
+      if (sameRes && (qItem.triggerEvent === "additional_daily_expiring_soon" || qItem.templateId === "tpl_additional_daily_expiring_soon")) {
+        qItem.status = "cancelled";
+        qItem.error = reason === "expired" ? "Cancelado: diária extra expirada" : "Cancelado: diária extra revertida manualmente";
+        qItem.updatedAt = nowIso;
+      }
+    }
+  }
+
+  try {
+    if (typeof addReservationAuditLog === "function") {
+      const actorObj = options?.actor
+        ? {
+            id: options.actor.id || null,
+            name: options.actor.username || options.actor.name || "Administrador",
+            role: options.actor.role || "admin",
+            type: "user"
+          }
+        : { id: null, name: "Sistema Automático", role: "system", type: "system" };
+      addReservationAuditLog(r, {
+        action: reason === "expired" ? "stay_extension_expired" : "stay_extension_cancelled",
+        actor: actorObj,
+        source: reason === "expired" ? "Motor de Validade de Diária Extra" : "PMS Calendário (Reversão de Diária Pendente)",
+        description: reason === "expired"
+          ? `Pré-reserva de +${ext.extraNights || 1} diária(s) extra(s) expirou sem pagamento (${ext.holdDurationLabel || ext.expiresAt}). Estadia restaurada automaticamente para ${origCheckin} a ${origCheckout} (Quitada).`
+          : `Diária(s) extra(s) pendente(s) revertida(s) manualmente. Estadia restaurada para ${origCheckin} a ${origCheckout}.`,
+        changes: [
+          { field: "checkoutDate", label: "Data de Check-out", oldValue: attemptedCheckout, newValue: origCheckout },
+          {
+            field: "totalAmount",
+            label: "Valor Total",
+            oldValue: `R$ ${attemptedTotal.toFixed(2).replace(".", ",")}`,
+            newValue: `R$ ${restoredTotal.toFixed(2).replace(".", ",")}`
+          }
+        ]
+      });
+    }
+  } catch (_) {}
+
+  try {
+    const minD = [origCheckin, attemptedCheckin].filter(Boolean).sort()[0];
+    const maxD = [origCheckout, attemptedCheckout].filter(Boolean).sort().reverse()[0];
+    if (minD && maxD && typeof notifyPmsMutation === "function") {
+      notifyPmsMutation(targetDb, {
+        type: reason === "expired" ? "extension_pre_reservation_expired" : "extension_pre_reservation_cancelled",
+        minDate: minD,
+        maxDate: maxD
+      });
+    }
+  } catch (_) {}
+
+  return { rolledBack: true, expiredStayExtension: expiredMeta, origCheckin, origCheckout };
+}
+
+globalThis.resolveStayExtensionHold = resolveStayExtensionHold;
+globalThis.rollbackExpiredOrCancelledStayExtension = rollbackExpiredOrCancelledStayExtension;
+
 // ── Varredura Automática de Pré-Reservas Expiradas + Lembrete Antes de Expirar ──
-export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase) {
+export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase, options = {}) {
   if (!targetDb || !Array.isArray(targetDb.reservations)) return 0;
-  const nowMs = Date.now();
+  const nowMs = options?.nowOverride
+    ? new Date(options.nowOverride).getTime()
+    : (targetDb?._nowOverride ? new Date(targetDb._nowOverride).getTime() : Date.now());
   const nowIso = new Date(nowMs).toISOString();
   let expiredCount = 0;
   let remindedCount = 0;
@@ -33783,6 +34184,93 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
           } catch (_) {}
           // NUNCA altera r.status, NUNCA envia mensagem de cancelamento/expiração de reserva!
         }
+      }
+    }
+  }
+
+  // 0b. Varredura de Pré-Reservas de Diária Extra (r.pendingStayExtension com isPreReservationHold)
+  for (const r of targetDb.reservations) {
+    if (!r || !r.pendingStayExtension) continue;
+    const ext = r.pendingStayExtension;
+    if (!ext.isPreReservationHold || ext.status !== "pending_payment" || !ext.expiresAt) continue;
+    if (r.status === "cancelada" || r.status === "cancelled" || r.status === "expirada") continue;
+
+    const pendingNow = Math.max(0, Math.round(((Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0)) * 100) / 100);
+    if (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || pendingNow <= 0.01) {
+      ext.status = "paid";
+      ext.paidAt = r.paidAt || nowIso;
+      continue;
+    }
+
+    const expMs = new Date(ext.expiresAt).getTime();
+    if (isNaN(expMs)) continue;
+
+    if (expMs > nowMs) {
+      if (ext.sendExpirationReminder !== false && !ext.reminderSentAt) {
+        if (ext.reminderAt === undefined) {
+          const fallbackRem = computePreReservationReminderSchedule(ext.expiresAt, ext.holdDurationMinutes, true, nowMs);
+          ext.reminderAt = fallbackRem.reminderAt;
+          ext.reminderLeadMinutes = fallbackRem.reminderLeadMinutes;
+          ext.reminderLeadLabel = fallbackRem.reminderLeadLabel;
+        }
+        if (ext.reminderAt) {
+          const remMs = new Date(ext.reminderAt).getTime();
+          if (!isNaN(remMs) && nowMs >= remMs && (expMs - nowMs) >= 60 * 1000) {
+            ext.reminderSentAt = nowIso;
+            r.updatedAt = nowIso;
+            remindedCount++;
+
+            try {
+              if (typeof addReservationAuditLog === "function") {
+                addReservationAuditLog(r, {
+                  action: "stay_extension_reminder_sent",
+                  actor: { id: null, name: "Sistema Automático", role: "system", type: "system" },
+                  source: "Motor de Validade de Diária Extra",
+                  description: `Lembrete de pré-reserva de diária extra expirando (${ext.reminderLeadLabel || "em breve"}) enviado automaticamente via WhatsApp.`
+                });
+              }
+            } catch (_) {}
+
+            if (typeof triggerImmediateWhatsApp === "function") {
+              triggerImmediateWhatsApp(
+                targetDb,
+                saveFn,
+                "additional_daily_expiring_soon",
+                {
+                  ...r,
+                  _reminderLeadLabel: ext.reminderLeadLabel,
+                  _nowOverride: new Date(nowMs)
+                }
+              ).catch(err => {
+                console.warn(`[Stay Extension Reminder] Erro ao disparar lembrete para ${r.code || r.id}:`, err?.message || err);
+              });
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    // Expiração parcial da diária extra quando expMs <= nowMs (mantém reserva principal intacta e confirmada)
+    const rbResult = rollbackExpiredOrCancelledStayExtension(targetDb, r, {
+      reason: "expired",
+      nowOverride: nowMs
+    });
+    if (rbResult.rolledBack) {
+      expiredCount++;
+      if (typeof triggerImmediateWhatsApp === "function") {
+        triggerImmediateWhatsApp(
+          targetDb,
+          saveFn,
+          "additional_daily_expired",
+          {
+            ...r,
+            _expiredExtension: rbResult.expiredStayExtension,
+            _nowOverride: new Date(nowMs)
+          }
+        ).catch(err => {
+          console.warn(`[Stay Extension Expire] Erro ao disparar WhatsApp de expiração parcial para ${r.code || r.id}:`, err?.message || err);
+        });
       }
     }
   }
@@ -34172,14 +34660,8 @@ app.get("/api/pms/calendar", (req, res) => {
   ];
   const isLiteMode = req.query.lite === "1";
 
-  const expiredPreReservations = (db.reservations || [])
+  const fullExpiredItems = (db.reservations || [])
     .filter(r => r && r.status === "expirada" && r.checkinDate && r.checkinDate >= todayStr)
-    .sort((a, b) => {
-      const tA = new Date(a.expiredAt || a.updatedAt || a.createdAt || 0).getTime();
-      const tB = new Date(b.expiredAt || b.updatedAt || b.createdAt || 0).getTime();
-      return tB - tA;
-    })
-    .slice(0, 50)
     .map(r => {
       const conflicts = findActiveOverbookingConflicts(db, {
         flatId: r.flatId,
@@ -34190,11 +34672,74 @@ app.get("/api/pms/calendar", (req, res) => {
       });
       return {
         ...r,
+        isExpiredExtension: false,
         code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
         isOriginalFlatAvailable: conflicts.length === 0,
         activeFlatConflicts: conflicts
       };
     });
+
+  const expiredExtensionItems = (db.reservations || [])
+    .filter(r =>
+      r &&
+      r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      r.status !== "expirada" &&
+      r.expiredStayExtension &&
+      !r.expiredStayExtension.reactivatedAt &&
+      !r.pendingStayExtension &&
+      (r.expiredStayExtension.attemptedCheckoutDate || "") > todayStr
+    )
+    .map(r => {
+      const expExt = r.expiredStayExtension;
+      const extStart = (Array.isArray(expExt.addedDates) && expExt.addedDates.length > 0)
+        ? [...expExt.addedDates].sort()[0]
+        : (expExt.oldCheckoutDate || r.checkoutDate);
+      const extEnd = expExt.attemptedCheckoutDate || r.checkoutDate;
+      const conflicts = findActiveOverbookingConflicts(db, {
+        flatId: r.flatId,
+        flatNumber: r.flatNumber,
+        checkinDate: extStart,
+        checkoutDate: extEnd,
+        excludeResId: r.id
+      });
+      return {
+        id: expExt.id || `exp_ext_${r.id}`,
+        parentReservationId: r.id,
+        isExpiredExtension: true,
+        code: r.code || r.reservationCode || `RES-${r.flatNumber || "000"}-${String(r.id).padStart(4, "0")}`,
+        guestName: r.guestName,
+        guestPhone: r.guestPhone,
+        guestEmail: r.guestEmail,
+        flatId: r.flatId,
+        flatNumber: r.flatNumber,
+        channel: r.channel,
+        checkinDate: extStart,
+        checkoutDate: extEnd,
+        originalCheckinDate: r.checkinDate,
+        originalCheckoutDate: r.checkoutDate,
+        attemptedCheckinDate: expExt.attemptedCheckinDate || r.checkinDate,
+        attemptedCheckoutDate: expExt.attemptedCheckoutDate || extEnd,
+        addedDates: Array.isArray(expExt.addedDates) ? expExt.addedDates : [],
+        addedDailyRates: Array.isArray(expExt.addedDailyRates) ? expExt.addedDailyRates : [],
+        extraNights: Number(expExt.extraNights) || 1,
+        extraAmount: Number(expExt.extraAmount) || 0,
+        totalAmount: Number(expExt.extraAmount) || 0,
+        expiredAt: expExt.expiredAt || null,
+        expiresAt: expExt.expiresAt || null,
+        holdDurationLabel: expExt.holdDurationLabel || null,
+        isOriginalFlatAvailable: conflicts.length === 0,
+        activeFlatConflicts: conflicts
+      };
+    });
+
+  const expiredPreReservations = [...fullExpiredItems, ...expiredExtensionItems]
+    .sort((a, b) => {
+      const tA = new Date(a.expiredAt || a.updatedAt || a.createdAt || 0).getTime();
+      const tB = new Date(b.expiredAt || b.updatedAt || b.createdAt || 0).getTime();
+      return tB - tA;
+    })
+    .slice(0, 50);
 
   res.json({
     startDate: start,
@@ -36422,6 +36967,65 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
 
   ensureReservationAuditLogs(r);
 
+  if (req.body.cancelPendingExtension === true) {
+    if (!r.pendingStayExtension || r.pendingStayExtension.status !== "pending_payment") {
+      return res.status(400).json({ error: "Não há diária extra pendente para cancelar/reverter nesta reserva." });
+    }
+    const rbRes = rollbackExpiredOrCancelledStayExtension(db, r, {
+      reason: "manual_cancel",
+      actor: getAuthUser(req)
+    });
+    saveDatabase("manual_cancel_pending_extension");
+    return res.json({
+      ...r,
+      cancelledPendingExtension: rbRes.rolledBack,
+      minibarOrders: getVisibleReservationMinibarOrders(r)
+    });
+  }
+
+  const priorActiveExt = (r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment")
+    ? {
+        ...r.pendingStayExtension,
+        addedDates: Array.isArray(r.pendingStayExtension.addedDates) ? [...r.pendingStayExtension.addedDates] : [],
+        addedDailyRates: Array.isArray(r.pendingStayExtension.addedDailyRates) ? r.pendingStayExtension.addedDailyRates.map(d => ({ ...d })) : [],
+        oldDailyRates: Array.isArray(r.pendingStayExtension.oldDailyRates) ? r.pendingStayExtension.oldDailyRates.map(d => ({ ...d })) : undefined,
+        oldCharges: Array.isArray(r.pendingStayExtension.oldCharges) ? r.pendingStayExtension.oldCharges.map(c => ({ ...c })) : undefined
+      }
+    : null;
+
+  const savedFnrhStateBeforePut = {
+    fnhrCompleted: r.fnhrCompleted,
+    fnhrCompletedAt: r.fnhrCompletedAt,
+    preCheckinCompleted: r.preCheckinCompleted,
+    hasPreCheckin: r.hasPreCheckin,
+    checkedInAt: r.checkedInAt,
+    hadCompletedCheckinBefore: r.hadCompletedCheckinBefore,
+    needsReSignature: r.needsReSignature,
+    reSignatureReason: r.reSignatureReason,
+    previousCheckinSignedAt: r.previousCheckinSignedAt,
+    signatureUrl: r.signatureUrl,
+    fnrhPdfUrl: r.fnrhPdfUrl,
+    fnrhDownloadUrl: r.fnrhDownloadUrl,
+    fnrhDocumentUuid: r.fnrhDocumentUuid,
+    fnrhSha256Hash: r.fnrhSha256Hash,
+    fnrhVerifyUrl: r.fnrhVerifyUrl,
+    fnrhSignedAt: r.fnrhSignedAt,
+    fnrhAuditTrail: Array.isArray(r.fnrhAuditTrail) ? [...r.fnrhAuditTrail] : r.fnrhAuditTrail,
+    guests: Array.isArray(r.guests)
+      ? r.guests.map(g => g ? ({
+          hasCompletedCheckin: g.hasCompletedCheckin,
+          checkinCompletedAt: g.checkinCompletedAt,
+          status: g.status,
+          signatureUrl: g.signatureUrl,
+          needsReSignature: g.needsReSignature,
+          previousCheckinSignedAt: g.previousCheckinSignedAt,
+          fnrhPdfUrl: g.fnrhPdfUrl,
+          fnrhDocumentUuid: g.fnrhDocumentUuid,
+          fnrhSha256Hash: g.fnrhSha256Hash
+        }) : null)
+      : null
+  };
+
   const oldCheckin = r.checkinDate;
   const oldCheckout = r.checkoutDate;
   const oldFlatId = r.flatId;
@@ -38418,15 +39022,129 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     const totalAmt = Number(r.totalAmount) || 0;
     const paidAmt = Number(r.paidAmount) || 0;
     const pendingAmt = Math.max(0, Math.round((totalAmt - paidAmt) * 100) / 100);
-    const hadCheckoutExtension = !isRestoringExactOriginalDatesOnSameFlat && Boolean(req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout);
-    const hadCheckoutExtensionWithPending = Boolean(hadCheckoutExtension && !isB2bChannel && pendingAmt > 0.01);
-    const hadPendingIncrease = !isRestoringExactOriginalDatesOnSameFlat && !isB2bChannel && pendingAmt > 0.01 && (
+
+    // Preserva linha de base original paga caso já houvesse pendingStayExtension ativo (ex.: ao alterar prazo ou adicionar mais 1 diária)
+    const baselineOldCheckin = priorActiveExt?.oldCheckinDate || oldCheckin;
+    const baselineOldCheckout = priorActiveExt?.oldCheckoutDate || oldCheckout;
+    const baselineOldDailyRates = (Array.isArray(priorActiveExt?.oldDailyRates) && priorActiveExt.oldDailyRates.length > 0)
+      ? priorActiveExt.oldDailyRates
+      : oldDailyRatesBeforeEdit;
+    const baselineOldCharges = Array.isArray(priorActiveExt?.oldCharges)
+      ? priorActiveExt.oldCharges
+      : oldChargesBeforeEdit;
+    const baselineOldCleaningFee = priorActiveExt?.oldCleaningFee !== undefined
+      ? Number(priorActiveExt.oldCleaningFee)
+      : oldCleaningFeeBeforeEdit;
+    const baselineOldTotal = priorActiveExt?.oldTotalAmount !== undefined
+      ? Number(priorActiveExt.oldTotalAmount)
+      : oldTotalAmount;
+    const baselineOldPaid = priorActiveExt?.oldPaidAmount !== undefined
+      ? Number(priorActiveExt.oldPaidAmount)
+      : oldPaidAmount;
+    const baselineOldPaymentStatus = priorActiveExt?.oldPaymentStatus || oldPaymentStatusNormalized;
+
+    const baselineDatesSet = new Set();
+    if (baselineOldDailyRates.length > 0) {
+      baselineOldDailyRates.forEach(d => { if (d && d.date) baselineDatesSet.add(String(d.date)); });
+    } else if (baselineOldCheckin && baselineOldCheckout) {
+      const dStartB = new Date(`${baselineOldCheckin}T12:00:00Z`);
+      const dEndB = new Date(`${baselineOldCheckout}T12:00:00Z`);
+      const nB = Math.max(1, Math.round((dEndB.getTime() - dStartB.getTime()) / 86400000));
+      for (let i = 0; i < nB; i++) {
+        baselineDatesSet.add(new Date(dStartB.getTime() + i * 86400000).toISOString().substring(0, 10));
+      }
+    }
+
+    const currentStayDates = [];
+    if (r.checkinDate && r.checkoutDate) {
+      const dStartCur = new Date(`${r.checkinDate}T12:00:00Z`);
+      const dEndCur = new Date(`${r.checkoutDate}T12:00:00Z`);
+      const nCur = Math.max(1, Math.round((dEndCur.getTime() - dStartCur.getTime()) / 86400000));
+      for (let i = 0; i < nCur; i++) {
+        currentStayDates.push(new Date(dStartCur.getTime() + i * 86400000).toISOString().substring(0, 10));
+      }
+    }
+
+    const addedDatesVsBaseline = currentStayDates.filter(dt => !baselineDatesSet.has(dt));
+    const addedDailyRatesVsBaseline = Array.isArray(r.dailyRates)
+      ? r.dailyRates.filter(d => d && d.date && !baselineDatesSet.has(String(d.date)))
+      : [];
+    const addedDirectDailyRatesVsBaseline = addedDailyRatesVsBaseline.filter(d => {
+      const dc = String(d?.channel || r.channel || "").toLowerCase();
+      return !dc.includes("booking") && !dc.includes("airbnb") && !dc.includes("b2b");
+    });
+
+    const hadCheckoutExtension = !isRestoringExactOriginalDatesOnSameFlat && Boolean(
+      (req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout) ||
+      (r.checkoutDate && baselineOldCheckout && r.checkoutDate > baselineOldCheckout)
+    );
+    const hadCheckinExtension = !isRestoringExactOriginalDatesOnSameFlat && Boolean(
+      (req.body.checkinDate && oldCheckin && req.body.checkinDate < oldCheckin) ||
+      (r.checkinDate && baselineOldCheckin && r.checkinDate < baselineOldCheckin)
+    );
+    const hasActiveOrNewExtraNightsWithPending = Boolean(
+      !isRestoringExactOriginalDatesOnSameFlat &&
+      !isB2bChannel &&
+      !isFaturadoPut &&
+      pendingAmt > 0.01 &&
+      addedDatesVsBaseline.length > 0 &&
+      (baselineOldPaid > 0 || oldWasAlreadyPaid || Boolean(priorActiveExt)) &&
+      (addedDirectDailyRatesVsBaseline.length > 0 || !putIsOta || hasOtaPartialPendingExtension)
+    );
+    const hadCheckoutExtensionWithPending = Boolean((hadCheckoutExtension || hadCheckinExtension) && !isB2bChannel && !isFaturadoPut && pendingAmt > 0.01);
+    const hadPendingIncrease = !isRestoringExactOriginalDatesOnSameFlat && !isB2bChannel && !isFaturadoPut && pendingAmt > 0.01 && (
       r.paymentStatus === "pendente" ||
       r.paymentStatus === "parcial" ||
       r.paymentStatus === "sinal_pago" ||
       pendingAmt > oldPendingAmount + 0.01 ||
       (req.body.totalAmount && Number(req.body.totalAmount) > totalAmt)
     );
+
+    const clearCleaningExtensionHoldMeta = () => {
+      if (!Array.isArray(db.cleaningRequests)) return;
+      const fNumNow = String(r.flatNumber || (db.flats || []).find(f => f && f.id === r.flatId)?.number || "");
+      for (const c of db.cleaningRequests) {
+        if (!c || c.isDeleted || c.status === "deleted") continue;
+        if (c.extensionHoldReservationId === r.id || ((c.flatId === r.flatId || String(c.flatNumber) === fNumNow) && c.extensionHoldExpiresAt)) {
+          delete c.originalRequestDateBeforeExtension;
+          delete c.extensionHoldReservationId;
+          delete c.extensionHoldExpiresAt;
+          delete c.isExtendedStay;
+          delete c.extendedUntil;
+          if (c.previousAdminNoteBeforeExtension !== undefined) {
+            c.adminNote = c.previousAdminNoteBeforeExtension;
+            delete c.previousAdminNoteBeforeExtension;
+          } else if (typeof c.adminNote === "string" && c.adminNote.includes("⏳ Prorrogação em Pré-Reserva")) {
+            c.adminNote = null;
+          }
+        }
+      }
+    };
+
+    const restoreDeferredFnrhSnapshot = () => {
+      const assignOrDelete = (obj, key, val) => {
+        if (val === undefined) delete obj[key];
+        else obj[key] = val;
+      };
+      const topKeys = [
+        "fnhrCompleted", "fnhrCompletedAt", "preCheckinCompleted", "hasPreCheckin",
+        "checkedInAt", "hadCompletedCheckinBefore", "needsReSignature", "reSignatureReason",
+        "previousCheckinSignedAt", "signatureUrl", "fnrhPdfUrl", "fnrhDownloadUrl",
+        "fnrhDocumentUuid", "fnrhSha256Hash", "fnrhVerifyUrl", "fnrhSignedAt", "fnrhAuditTrail"
+      ];
+      for (const k of topKeys) {
+        assignOrDelete(r, k, savedFnrhStateBeforePut[k]);
+      }
+      if (Array.isArray(r.guests) && Array.isArray(savedFnrhStateBeforePut.guests)) {
+        r.guests.forEach((g, idx) => {
+          const sg = savedFnrhStateBeforePut.guests[idx];
+          if (!g || !sg) return;
+          for (const gk of Object.keys(sg)) {
+            assignOrDelete(g, gk, sg[gk]);
+          }
+        });
+      }
+    };
 
     // Sincroniza diffs com os valores finais normalizados (ex.: quando totalAmount ou paymentStatus foram recalculados por dailyRates/extensão)
     if (Math.abs(totalAmt - oldTotalAmount) > 0.01) {
@@ -38524,39 +39242,221 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, { baseUrl: editBaseUrl }).catch(err => {
         console.warn(`[WhatsApp Catch-Up] Erro ao disparar recuperação da régua para ${r.code}:`, err.message);
       });
-    } else if ((hadCheckoutExtensionWithPending || hadPendingIncrease) && !isPreReservationBlocked(r)) {
-      console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente identificado na reserva ${r.code}. Disparando additional_daily_pending.`);
+    } else if ((hasActiveOrNewExtraNightsWithPending || hadCheckoutExtensionWithPending || hadPendingIncrease) && !isPreReservationBlocked(r)) {
+      const requestedExtHoldMode = String(req.body.extensionHoldMode || "").trim().toLowerCase();
+      let useExtensionPreResHold = false;
+      if (hasActiveOrNewExtraNightsWithPending) {
+        if (requestedExtHoldMode === "confirmada_sem_prazo" || req.body.confirmExtensionWithoutHold === true) {
+          useExtensionPreResHold = false;
+        } else if (
+          priorActiveExt &&
+          priorActiveExt.isPreReservationHold === false &&
+          !requestedExtHoldMode &&
+          req.body.holdPreset === undefined &&
+          req.body.holdDurationMinutes === undefined &&
+          req.body.expiresAt === undefined
+        ) {
+          useExtensionPreResHold = false;
+        } else {
+          useExtensionPreResHold = true;
+        }
+      }
+
+      const firstAddedDate = addedDatesVsBaseline[0] || baselineOldCheckout || r.checkoutDate;
+      const hasExplicitExtHoldInput = Boolean(
+        !priorActiveExt ||
+        !priorActiveExt.isPreReservationHold ||
+        !priorActiveExt.expiresAt ||
+        requestedExtHoldMode === "pre_reserva" && priorActiveExt.isPreReservationHold === false ||
+        req.body.holdPreset !== undefined ||
+        req.body.holdDurationMinutes !== undefined ||
+        req.body.expiresAt !== undefined ||
+        req.body.reactivateExpiredExtension ||
+        addedDatesVsBaseline.join(",") !== (priorActiveExt.addedDates || []).join(",")
+      );
+
+      let extHoldInfo = null;
+      let extHoldWasUpdated = false;
+      if (useExtensionPreResHold) {
+        if (hasExplicitExtHoldInput) {
+          extHoldInfo = resolveStayExtensionHold(req.body, firstAddedDate, { source: req.body.source });
+          extHoldWasUpdated = !priorActiveExt || priorActiveExt.expiresAt !== extHoldInfo.expiresAt || Boolean(req.body.reactivateExpiredExtension);
+        } else {
+          const sendRem = req.body.sendExpirationReminder !== undefined
+            ? Boolean(req.body.sendExpirationReminder)
+            : (priorActiveExt.sendExpirationReminder !== false);
+          const remSched = sendRem
+            ? (priorActiveExt.reminderAt !== undefined && req.body.sendExpirationReminder === undefined
+                ? {
+                    sendExpirationReminder: true,
+                    reminderAt: priorActiveExt.reminderAt,
+                    reminderLeadMinutes: priorActiveExt.reminderLeadMinutes || 0,
+                    reminderLeadLabel: priorActiveExt.reminderLeadLabel || ""
+                  }
+                : computePreReservationReminderSchedule(priorActiveExt.expiresAt, priorActiveExt.holdDurationMinutes, true))
+            : { sendExpirationReminder: false, reminderAt: null, reminderLeadMinutes: 0, reminderLeadLabel: "" };
+          extHoldInfo = {
+            expiresAt: priorActiveExt.expiresAt,
+            holdPreset: priorActiveExt.holdPreset || "2h",
+            holdDurationMinutes: priorActiveExt.holdDurationMinutes || 120,
+            holdDurationLabel: priorActiveExt.holdDurationLabel || "2 horas",
+            ...remSched
+          };
+        }
+      } else {
+        clearCleaningExtensionHoldMeta();
+      }
+
+      const sameFlatDuringHold = Number(r.flatId) === Number(oldFlatId) && String(r.flatNumber) === String(oldFlatNumber);
+      const shouldDeferFnrhInvalidation = Boolean(
+        useExtensionPreResHold &&
+        sameFlatDuringHold &&
+        !isGuestUnlinkedOrSwitched &&
+        !priorActiveExt?.fnrhAlreadyInvalidated
+      );
+
+      if (shouldDeferFnrhInvalidation) {
+        restoreDeferredFnrhSnapshot();
+      } else if (
+        !useExtensionPreResHold &&
+        priorActiveExt?.isPreReservationHold &&
+        priorActiveExt?.requiresDeferredReSignature &&
+        !r.needsReSignature
+      ) {
+        invalidateReservationCheckinSignatures(r, "Alteração do período da estadia (confirmada sem prazo)");
+        r.needsReSignature = true;
+        r.reSignatureReason = "Alteração do período da estadia";
+        if (!r.previousCheckinSignedAt) r.previousCheckinSignedAt = new Date().toISOString();
+        r.fnhrCompleted = false;
+        r.preCheckinCompleted = false;
+        r.hasPreCheckin = false;
+        r.signatureUrl = null;
+        r.checkedInAt = null;
+        delete r.fnrhPdfUrl;
+        delete r.fnrhDocumentUuid;
+        delete r.fnrhSha256Hash;
+        if (Array.isArray(r.guests)) {
+          r.guests.forEach(g => {
+            if (!g) return;
+            g.needsReSignature = true;
+            if (!g.previousCheckinSignedAt) g.previousCheckinSignedAt = r.previousCheckinSignedAt;
+            g.hasCompletedCheckin = false;
+            if (g.status === "CHECKED_IN") g.status = "PENDING";
+            g.signatureUrl = null;
+            g.checkinCompletedAt = null;
+            delete g.fnrhPdfUrl;
+            delete g.fnrhDocumentUuid;
+            delete g.fnrhSha256Hash;
+          });
+        }
+      }
+
       r.pendingStayExtension = {
         txid: r.pixTxId || null,
+        pixCopiaECola: r.pixCopiaECola || "",
         amount: pendingAmt,
-        extraNights: (hadCheckoutExtension && oldCheckout && r.checkoutDate)
-          ? Math.max(1, Math.round((new Date(`${r.checkoutDate}T12:00:00Z`).getTime() - new Date(`${oldCheckout}T12:00:00Z`).getTime()) / 86400000))
-          : 1,
-        oldCheckoutDate: oldCheckout || r.previousCheckoutDate || r.checkinDate,
+        extraNights: addedDatesVsBaseline.length > 0
+          ? addedDatesVsBaseline.length
+          : ((hadCheckoutExtension && baselineOldCheckout && r.checkoutDate)
+              ? Math.max(1, Math.round((new Date(`${r.checkoutDate}T12:00:00Z`).getTime() - new Date(`${baselineOldCheckout}T12:00:00Z`).getTime()) / 86400000))
+              : 1),
+        addedDates: addedDatesVsBaseline,
+        addedDailyRates: addedDailyRatesVsBaseline.map(d => ({ ...d })),
+        oldCheckinDate: baselineOldCheckin,
+        oldCheckoutDate: baselineOldCheckout || r.previousCheckoutDate || r.checkinDate,
+        newCheckinDate: r.checkinDate,
         newCheckoutDate: r.checkoutDate,
-        oldTotalAmount: oldTotalAmount,
+        oldDailyRates: baselineOldDailyRates.map(d => ({ ...d })),
+        oldCharges: baselineOldCharges.map(c => ({ ...c })),
+        oldCleaningFee: baselineOldCleaningFee,
+        oldTotalAmount: baselineOldTotal,
         newTotalAmount: totalAmt,
+        oldPaidAmount: baselineOldPaid,
+        oldPaymentStatus: baselineOldPaymentStatus,
         alreadyAppliedToReservation: true,
-        changes: guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs,
-        requestedAt: new Date().toISOString(),
+        isPreReservationHold: useExtensionPreResHold,
+        extensionHoldMode: useExtensionPreResHold ? "pre_reserva" : (hasActiveOrNewExtraNightsWithPending ? "confirmada_sem_prazo" : "charge_only"),
+        expiresAt: useExtensionPreResHold ? extHoldInfo.expiresAt : null,
+        holdPreset: useExtensionPreResHold ? extHoldInfo.holdPreset : null,
+        holdDurationMinutes: useExtensionPreResHold ? extHoldInfo.holdDurationMinutes : null,
+        holdDurationLabel: useExtensionPreResHold ? extHoldInfo.holdDurationLabel : null,
+        sendExpirationReminder: useExtensionPreResHold ? extHoldInfo.sendExpirationReminder : false,
+        reminderAt: useExtensionPreResHold ? extHoldInfo.reminderAt : null,
+        reminderLeadMinutes: useExtensionPreResHold ? extHoldInfo.reminderLeadMinutes : 0,
+        reminderLeadLabel: useExtensionPreResHold ? extHoldInfo.reminderLeadLabel : "",
+        reminderSentAt: extHoldWasUpdated ? null : (priorActiveExt?.reminderSentAt || null),
+        requiresDeferredReSignature: shouldDeferFnrhInvalidation
+          ? Boolean(priorActiveExt?.requiresDeferredReSignature ?? hadCheckinBeforeEdit)
+          : false,
+        fnrhAlreadyInvalidated: !shouldDeferFnrhInvalidation && Boolean(priorActiveExt?.fnrhAlreadyInvalidated || isDatesOrFlatChanged),
+        changes: (guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs).length > 0
+          ? (guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs)
+          : (priorActiveExt?.changes || []),
+        requestedAt: priorActiveExt?.requestedAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         status: "pending_payment",
-        source: "pms_admin_edit"
+        source: req.body.source || "pms_admin_edit"
       };
+      delete r.expiredStayExtension;
       delete r.extensionPaymentConfirmationSentAt;
+
+      if (useExtensionPreResHold && extHoldInfo?.expiresAt && Array.isArray(db.cleaningRequests)) {
+        const fNumHold = String(r.flatNumber || (db.flats || []).find(f => f && f.id === r.flatId)?.number || "");
+        const expTimeBr = new Intl.DateTimeFormat("pt-BR", {
+          timeZone: "America/Sao_Paulo",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false
+        }).format(new Date(extHoldInfo.expiresAt));
+        const origOutFmt = String(baselineOldCheckout || "").split("-").reverse().join("/");
+        for (const c of db.cleaningRequests) {
+          if (!c || c.isDeleted || c.status === "deleted" || c.status === "clean") continue;
+          const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+          if (isInst) continue;
+          if ((c.flatId === r.flatId || String(c.flatNumber) === fNumHold) && c.requestDate === r.checkoutDate) {
+            if (!c.originalRequestDateBeforeExtension) {
+              c.originalRequestDateBeforeExtension = baselineOldCheckout;
+            }
+            if (c.previousAdminNoteBeforeExtension === undefined) {
+              c.previousAdminNoteBeforeExtension = c.adminNote || null;
+            }
+            c.extensionHoldReservationId = r.id;
+            c.extensionHoldExpiresAt = extHoldInfo.expiresAt;
+            c.adminNote = `⏳ Prorrogação em Pré-Reserva aguardando pagamento até ${expTimeBr}${origOutFmt ? ` (Saída original: ${origOutFmt})` : ""}`;
+            c.updatedAt = new Date().toISOString();
+          }
+        }
+      }
+
       saveDatabase();
 
-      const resvWithPendingChanges = {
-        ...r,
-        _changesContext: guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs
-      };
-      triggerImmediateWhatsApp(db, saveDatabase, "additional_daily_pending", resvWithPendingChanges, editBaseUrl).catch(err => {
-        console.warn("[WhatsApp Trigger] Erro ao disparar additional_daily_pending:", err.message);
-      });
+      const shouldSendExtensionPendingWa = Boolean(
+        !priorActiveExt ||
+        extHoldWasUpdated ||
+        isDatesOrFlatChanged ||
+        Math.abs(pendingAmt - oldPendingAmount) > 0.01 ||
+        Math.abs(totalAmt - oldTotalAmount) > 0.01 ||
+        wasGuestPhoneJustAdded ||
+        (priorActiveExt.isPreReservationHold !== useExtensionPreResHold)
+      );
+
+      if (shouldSendExtensionPendingWa) {
+        console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente (${useExtensionPreResHold ? `Pré-Reserva até ${extHoldInfo?.expiresAt}` : "Sem prazo"}) na reserva ${r.code}. Disparando additional_daily_pending.`);
+        const resvWithPendingChanges = {
+          ...r,
+          _changesContext: (guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs).length > 0
+            ? (guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs)
+            : (r.pendingStayExtension?.changes || [])
+        };
+        triggerImmediateWhatsApp(db, saveDatabase, "additional_daily_pending", resvWithPendingChanges, editBaseUrl).catch(err => {
+          console.warn("[WhatsApp Trigger] Erro ao disparar additional_daily_pending:", err.message);
+        });
+      }
 
       const recipsForMod = getReservationRecipients(r, db);
       const hasSeparateReq = Boolean(recipsForMod.requester?.isDifferentFromGuest);
       const hasCompanions = Array.isArray(recipsForMod.companions) && recipsForMod.companions.length > 0;
-      if ((hasNonFinChanges || isDatesOrFlatChanged) && (hasSeparateReq || hasCompanions)) {
+      if ((hasNonFinChanges || isDatesOrFlatChanged) && (hasSeparateReq || hasCompanions) && !useExtensionPreResHold) {
         if (guestFacingDiffs.length > 0) {
           const resvForGuests = {
             ...r,
@@ -38570,7 +39470,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }
       }
 
-      if (isDatesOrFlatChanged && r.needsReSignature) {
+      if ((isDatesOrFlatChanged || r.needsReSignature) && r.needsReSignature && !useExtensionPreResHold) {
         const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br");
         dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
           origin: originHeader,
@@ -38580,11 +39480,30 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         });
       }
     } else if (!isPreReservationBlocked(r)) {
+      // Se havia pendingStayExtension ativo e o admin removeu as diárias extras (sem pagamento novo), limpa metadados e preserva FNRH original
+      const wasUnpaidExtensionManuallyRemovedOnPut = Boolean(
+        priorActiveExt &&
+        pendingAmt <= 0.01 &&
+        paidAmt <= oldPaidAmount + 0.01 &&
+        r.checkinDate === (priorActiveExt.oldCheckinDate || r.checkinDate) &&
+        r.checkoutDate === (priorActiveExt.oldCheckoutDate || r.checkoutDate)
+      );
+      if (wasUnpaidExtensionManuallyRemovedOnPut) {
+        clearCleaningExtensionHoldMeta();
+        if (Number(r.flatId) === Number(oldFlatId) && !isGuestUnlinkedOrSwitched && !priorActiveExt.fnrhAlreadyInvalidated) {
+          restoreDeferredFnrhSnapshot();
+        }
+        delete r.pendingStayExtension;
+        saveDatabase();
+      }
+
       const wasPendingExtensionJustPaidOnPut = Boolean(
         oldPendingAmount > 0.01 &&
         pendingAmt <= 0.01 &&
+        paidAmt > oldPaidAmount + 0.01 &&
         (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") &&
         (
+          priorActiveExt ||
           r.pendingStayExtension ||
           hadCheckoutExtension ||
           (r.previousCheckoutDate && r.previousCheckoutDate < r.checkoutDate) ||
@@ -38592,6 +39511,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         )
       );
       if (wasPendingExtensionJustPaidOnPut) {
+        clearCleaningExtensionHoldMeta();
         ensureExtensionPaymentConfirmationDispatched(r, {
           valorPago: oldPendingAmount,
           priorPaid: oldPaidAmount,
@@ -38601,7 +39521,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }).catch(err => {
           console.warn("[WhatsApp Trigger] Erro ao disparar confirmação de pagamento de extensão na edição:", err.message);
         });
-      } else if (guestFacingDiffs.length > 0 || isDatesOrFlatChanged) {
+      } else if (!wasUnpaidExtensionManuallyRemovedOnPut && (guestFacingDiffs.length > 0 || isDatesOrFlatChanged)) {
         if (isDatesOrFlatChanged && r.needsReSignature) {
           const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br");
           dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
@@ -39471,6 +40391,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       expiresAt: r.expiresAt || null,
       expiredAt: r.expiredAt || null,
       holdDurationLabel: r.holdDurationLabel || null,
+      pendingStayExtension: hideFinancialForGuest ? null : (r.pendingStayExtension || null),
+      expiredStayExtension: hideFinancialForGuest ? null : (r.expiredStayExtension || null),
       cancelledAt: r.cancelledAt || null,
       cancellationReason: r.cancellationReason || null,
       refundStatus: r.refundStatus || null,
@@ -53335,12 +54257,13 @@ export function getTariffSettings() {
   if (!db.tariffSettings) {
     db.tariffSettings = {
       mode: "auto", // "auto" (cálculo SEBRAE) ou "manual"
-      baseDailyRate: 276.63,
+      baseDailyRate: 216.49,
       breakfastSurchargePerGuest: 20.00,
       extraBedFee: 60.00,
       directDiscountPercent: 0,
       cardMarkupPercent: 5,
       pixDiscountPercent: 5,
+      applyPlatformCommissionToOtaSync: true,
       currency: "BRL",
       minNights: 1,
       weekendMarkupPct: 0.15,
@@ -53361,19 +54284,35 @@ export function getTariffSettings() {
           channelName: "Venda Direta / Site / WhatsApp",
           markupPct: 0.0,
           commissionPct: 0.0,
+          extraMarkupPct: 0.0,
           discountPct: 0.0
         },
         booking: {
           channelName: "Booking.com",
-          markupPct: 0.0,
+          markupPct: 0.15,
           commissionPct: 0.15,
+          extraMarkupPct: 0.0,
           discountPct: 0.0
         },
         airbnb: {
           channelName: "Airbnb",
-          markupPct: 0.03,
+          markupPct: 0.15,
           commissionPct: 0.15,
+          extraMarkupPct: 0.0,
           discountPct: 0.0
+        },
+        expedia: {
+          channelName: "Expedia / Outras OTAs",
+          markupPct: 0.18,
+          commissionPct: 0.18,
+          extraMarkupPct: 0.0,
+          discountPct: 0.0
+        },
+        corporate: {
+          channelName: "Empresas / Corporativo B2B",
+          markupPct: 0.0,
+          commissionPct: 0.0,
+          discountPct: 0.10
         }
       },
       updatedAt: new Date().toISOString()
@@ -53392,34 +54331,95 @@ export function getTariffSettings() {
     };
   }
 
-  // Migração única de unificação de preços v2 (Café interno R$ 20/hóspede, sem corte de -15%, PIX = 100% normal e Cartão +5% embutido)
+  // Migração única de unificação de preços v2 & v3 (Preço Base limpo sem -15%, Plataformas = Preço Base + Comissão em diárias e todas as taxas)
   const isNodeTestRunner =
     process.env.NODE_ENV === "test" ||
     (Array.isArray(process.execArgv) && process.execArgv.includes("--test")) ||
     (Array.isArray(process.argv) && process.argv.some(a => String(a).includes(".test.")));
 
-  if (!isNodeTestRunner && !db.tariffSettings.pricingUnifiedV2Migrated) {
+  if (!isNodeTestRunner && (!db.tariffSettings.pricingUnifiedV2Migrated || !db.tariffSettings.pricingUnifiedV3Migrated)) {
     const wbpState = WbpPricingManager.getPricingState(db);
     if (wbpState?.settings) {
-      wbpState.settings.breakfastSurchargePerGuest = 20.00;
+      wbpState.settings.breakfastSurchargePerGuest = Number(wbpState.settings.breakfastSurchargePerGuest ?? 20.00) || 20.00;
+      // Na arquitetura V3, o Preço Base Direto não embute comissão de OTA (0%); cada plataforma adiciona sua própria comissão por cima
+      wbpState.settings.channelCommissionPct = 0;
     }
-    db.tariffSettings.breakfastSurchargePerGuest = 20.00;
+    const sebraeClean = calculateSebraeRate(wbpState?.settings || { ...DEFAULT_SEBRAE_CONFIG, channelCommissionPct: 0 });
+    if (db.financialSettings) {
+      db.financialSettings.referenceBaseRate = sebraeClean.tarifaMinima;
+    }
+    if (db.tariffSettings.mode !== "manual") {
+      db.tariffSettings.baseDailyRate = sebraeClean.tarifaMinima;
+    }
+    db.tariffSettings.breakfastSurchargePerGuest = Number(db.tariffSettings.breakfastSurchargePerGuest ?? 20.00) || 20.00;
     db.tariffSettings.directDiscountPercent = 0;
-    db.tariffSettings.cardMarkupPercent = 5;
-    db.tariffSettings.pixDiscountPercent = 5;
-    if (db.tariffSettings.channelMarkups?.direct) {
-      db.tariffSettings.channelMarkups.direct.discountPct = 0.0;
-      db.tariffSettings.channelMarkups.direct.markupPct = 0.0;
-    }
+    db.tariffSettings.cardMarkupPercent = Number(db.tariffSettings.cardMarkupPercent ?? 5) || 5;
+    db.tariffSettings.pixDiscountPercent = db.tariffSettings.cardMarkupPercent;
+    db.tariffSettings.applyPlatformCommissionToOtaSync = true;
+
+    if (!db.tariffSettings.channelMarkups) db.tariffSettings.channelMarkups = {};
+    db.tariffSettings.channelMarkups.direct = {
+      ...(db.tariffSettings.channelMarkups.direct || {}),
+      channelName: "Venda Direta / Site / WhatsApp",
+      commissionPct: 0.0,
+      extraMarkupPct: 0.0,
+      markupPct: 0.0,
+      discountPct: 0.0
+    };
+
+    const prevBooking = db.tariffSettings.channelMarkups.booking || {};
+    const bComm = Number(prevBooking.commissionPct ?? 0.15) > 0 ? Number(prevBooking.commissionPct) : 0.15;
+    const bExtra = Number(prevBooking.extraMarkupPct ?? 0);
+    db.tariffSettings.channelMarkups.booking = {
+      ...prevBooking,
+      channelName: prevBooking.channelName || "Booking.com",
+      commissionPct: bComm,
+      commissionRate: bComm,
+      extraMarkupPct: bExtra,
+      markupPct: Math.round((bComm + bExtra) * 10000) / 10000,
+      discountPct: 0.0
+    };
+
+    const prevAirbnb = db.tariffSettings.channelMarkups.airbnb || {};
+    const aComm = Number(prevAirbnb.commissionPct ?? 0.15) > 0 ? Number(prevAirbnb.commissionPct) : 0.15;
+    const aExtra = Number(prevAirbnb.extraMarkupPct ?? 0);
+    db.tariffSettings.channelMarkups.airbnb = {
+      ...prevAirbnb,
+      channelName: prevAirbnb.channelName || "Airbnb",
+      commissionPct: aComm,
+      commissionRate: aComm,
+      extraMarkupPct: aExtra,
+      markupPct: Math.round((aComm + aExtra) * 10000) / 10000,
+      discountPct: 0.0
+    };
+
+    const prevExpedia = db.tariffSettings.channelMarkups.expedia || {};
+    const eComm = Number(prevExpedia.commissionPct ?? 0.18) > 0 ? Number(prevExpedia.commissionPct) : 0.18;
+    const eExtra = Number(prevExpedia.extraMarkupPct ?? 0);
+    db.tariffSettings.channelMarkups.expedia = {
+      ...prevExpedia,
+      channelName: prevExpedia.channelName || "Expedia / Outras OTAs",
+      commissionPct: eComm,
+      commissionRate: eComm,
+      extraMarkupPct: eExtra,
+      markupPct: Math.round((eComm + eExtra) * 10000) / 10000,
+      discountPct: 0.0
+    };
+
     if (!db.siteConfig) db.siteConfig = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG));
     db.siteConfig.pricing = {
       ...(db.siteConfig.pricing || {}),
       directDiscountPercent: 0,
-      cardMarkupPercent: 5,
-      pixDiscountPercent: 5,
-      breakfastSurchargePerGuest: 20.00
+      cardMarkupPercent: db.tariffSettings.cardMarkupPercent,
+      pixDiscountPercent: db.tariffSettings.pixDiscountPercent,
+      breakfastSurchargePerGuest: db.tariffSettings.breakfastSurchargePerGuest
     };
+    const effectiveBase = Number(db.tariffSettings.baseDailyRate || sebraeClean.tarifaMinima);
+    if (db.siteConfig.ratePlans?.room_only) {
+      db.siteConfig.ratePlans.room_only.dailyRate = Math.round(effectiveBase * 100) / 100;
+    }
     if (db.siteConfig.ratePlans?.with_breakfast) {
+      db.siteConfig.ratePlans.with_breakfast.dailyRate = Math.round((effectiveBase + db.tariffSettings.breakfastSurchargePerGuest) * 100) / 100;
       db.siteConfig.ratePlans.with_breakfast.cleaningFeeEnabled = false;
       db.siteConfig.ratePlans.with_breakfast.cleaningFeeAmount = 0;
       db.siteConfig.ratePlans.with_breakfast.description = "Diária com Café da Manhã servido exclusivamente no flat";
@@ -53429,9 +54429,10 @@ export function getTariffSettings() {
       db.wbpPricing.status = "published";
     }
     db.tariffSettings.pricingUnifiedV2Migrated = true;
+    db.tariffSettings.pricingUnifiedV3Migrated = true;
     try {
-      saveDatabase("pricing_unified_v2_migration");
-      setTimeout(() => triggerAutomaticPricingAriSync("pricing_unified_v2_migration"), 2000);
+      saveDatabase("pricing_unified_v3_migration");
+      setTimeout(() => triggerAutomaticPricingAriSync("pricing_unified_v3_migration"), 2000);
     } catch (_) {}
   }
 
@@ -53585,12 +54586,8 @@ export function calculateDailyRate(flatId, date, channel = "direct") {
 
   const rateBeforeChannel = baseRate + weekendMarkup;
 
-  // 4. Markup de Canal
-  const channelCfg = settings.channelMarkups?.[normChannel] ||
-                     (normChannel === "direct" ? { markupPct: 0.0 } :
-                      normChannel === "booking" ? { markupPct: 0.0 } :
-                      normChannel === "airbnb" ? { markupPct: 0.03 } : { markupPct: 0.0 });
-  const channelMarkupPct = Number(channelCfg.markupPct != null ? channelCfg.markupPct : 0);
+  // 4. Repasse Automático de Comissão por Plataforma (Site Direto = 0%; Plataformas = Preço Base + Comissão)
+  const channelMarkupPct = resolveChannelEffectiveMarkupPct(settings.channelMarkups, normChannel);
   const finalRate = rateBeforeChannel * (1 + channelMarkupPct);
 
   return Math.round(finalRate * 100) / 100;
@@ -53710,9 +54707,11 @@ app.get("/api/tariffs/calendar", (req, res) => {
   const normChan = ["whatsapp", "site", "direta", "direto"].includes(String(channel || "direct").toLowerCase().trim())
     ? "direct"
     : String(channel || "direct").toLowerCase().trim();
-  const chanMarkupPct = Number(tarSettings.channelMarkups?.[normChan]?.markupPct ?? 0);
+  const chanMarkupPct = resolveChannelEffectiveMarkupPct(tarSettings.channelMarkups, normChan);
   const bfForChannel = Math.round(bfSurchargeBase * (1 + chanMarkupPct) * 100) / 100;
   const extraBedForChannel = Math.round(extraBedBase * (1 + chanMarkupPct) * 100) / 100;
+  const allChannelFees = buildOtaFeeSyncSchedule(db);
+  const activeChannelFees = allChannelFees[normChan] || allChannelFees.direct;
 
   const daysInMonth = new Date(year, m, 0).getDate();
   const days = [];
@@ -53761,6 +54760,9 @@ app.get("/api/tariffs/calendar", (req, res) => {
     sebraeBreakEvenFloor: sebraeObj.breakEvenFloor,
     breakfastSurchargePerGuest: bfSurchargeBase,
     extraBedFee: extraBedBase,
+    channelMarkupPct: chanMarkupPct,
+    channelFees: activeChannelFees,
+    allChannelFees,
     seasonalityFactor: Number(seasonInfo.factor),
     seasonName: seasonInfo.season || "Média",
     settings: tarSettings,
@@ -55971,7 +56973,7 @@ app.get("/api/marketing/creative-generator", (req, res) => {
       {
         title: "✨ Seu Refúgio de Fim de Semana a Dois",
         hook: "Conforto absoluto, cama queen macia e o melhor descanso.",
-        body: "Flats modernos e privativos com ar-condicionado silencioso, Wi-Fi ultra-rápido e opção de café da manhã. Reserve direto pelo site e garanta até 15% de economia sem taxas de intermediários!",
+        body: "Flats modernos e privativos com ar-condicionado silencioso, Wi-Fi ultra-rápido e opção de café da manhã. Reserve direto pelo nosso site oficial pelo preço base sem comissões de plataformas!",
         cta: "Ver Disponibilidade no PIX"
       },
       {
@@ -70436,10 +71438,74 @@ async function ensureExtensionPaymentConfirmationDispatched(r, {
 
   const nowIso = new Date().toISOString();
   r.extensionPaymentConfirmationSentAt = nowIso;
+  delete r.expiredStayExtension;
   if (r.pendingStayExtension) {
     r.pendingStayExtension.status = "paid";
     r.pendingStayExtension.paidAt = r.paidAt || nowIso;
     r.pendingStayExtension.confirmationSentAt = nowIso;
+  }
+
+  // Limpa aviso temporário de pré-reserva de diária extra na Governança (efetivando limpeza na nova data de saída)
+  if (Array.isArray(db.cleaningRequests)) {
+    const fNumConf = String(r.flatNumber || (db.flats || []).find(f => f && f.id === r.flatId)?.number || "");
+    for (const c of db.cleaningRequests) {
+      if (!c || c.isDeleted || c.status === "deleted") continue;
+      if (
+        c.extensionHoldReservationId === r.id ||
+        ((c.flatId === r.flatId || String(c.flatNumber) === fNumConf) && (c.extensionHoldExpiresAt || (c.isExtendedStay && c.extendedUntil === r.checkoutDate)))
+      ) {
+        if (c.isExtendedStay && c.extendedUntil === r.checkoutDate && c.requestDate !== r.checkoutDate) {
+          c.requestDate = r.checkoutDate;
+          delete c.effectiveDate;
+        }
+        delete c.isExtendedStay;
+        delete c.extendedUntil;
+        delete c.originalRequestDateBeforeExtension;
+        delete c.extensionHoldReservationId;
+        delete c.extensionHoldExpiresAt;
+        if (c.previousAdminNoteBeforeExtension !== undefined) {
+          c.adminNote = c.previousAdminNoteBeforeExtension;
+          delete c.previousAdminNoteBeforeExtension;
+        } else if (typeof c.adminNote === "string" && (c.adminNote.includes("⏳ Prorrogação em Pré-Reserva") || c.adminNote.includes("prorrogou estadia"))) {
+          c.adminNote = null;
+        }
+        c.updatedAt = nowIso;
+      }
+    }
+  }
+
+  // Se a FNRH já estava assinada e sua re-assinatura foi diferida até o pagamento da diária extra, invalida agora para re-assinatura legal!
+  if (extMeta?.requiresDeferredReSignature && !r.needsReSignature) {
+    invalidateReservationCheckinSignatures(r, "Prorrogação de estadia confirmada mediante pagamento");
+    r.needsReSignature = true;
+    r.reSignatureReason = "Alteração do período da estadia (diária extra confirmada)";
+    if (!r.previousCheckinSignedAt) {
+      r.previousCheckinSignedAt = nowIso;
+    }
+    r.fnhrCompleted = false;
+    r.preCheckinCompleted = false;
+    r.hasPreCheckin = false;
+    r.signatureUrl = null;
+    r.checkedInAt = null;
+    delete r.fnrhPdfUrl;
+    delete r.fnrhDocumentUuid;
+    delete r.fnrhSha256Hash;
+    if (Array.isArray(r.guests)) {
+      r.guests.forEach(g => {
+        if (!g) return;
+        g.needsReSignature = true;
+        if (!g.previousCheckinSignedAt) g.previousCheckinSignedAt = r.previousCheckinSignedAt;
+        g.hasCompletedCheckin = false;
+        if (g.status === "CHECKED_IN") g.status = "PENDING";
+        g.signatureUrl = null;
+        g.checkinCompletedAt = null;
+        delete g.fnrhPdfUrl;
+        delete g.fnrhDocumentUuid;
+        delete g.fnrhSha256Hash;
+      });
+    }
+    extMeta.requiresDeferredReSignature = false;
+    extMeta.fnrhInvalidatedAt = nowIso;
   }
 
   try {
@@ -70744,6 +71810,12 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         paidAt: r.paidAt || null,
         paidAmount: Number(r.totalAmount) > 0 ? Number(r.totalAmount) : (Number(r.paidAmount) || 0),
         totalAmount: r.totalAmount || 0,
+        checkinDate: r.checkinDate,
+        checkoutDate: r.checkoutDate,
+        dailyRates: Array.isArray(r.dailyRates) ? r.dailyRates : [],
+        pendingStayExtension: r.pendingStayExtension || null,
+        expiredStayExtension: r.expiredStayExtension || null,
+        stayExtensionExpired: Boolean(r.expiredStayExtension && (!r.pendingStayExtension || r.pendingStayExtension.status !== "paid")),
         pixTxId: isSettledByCard ? null : (r.pixTxId || null),
         pixEndToEndId: r.pixEndToEndId || null,
         mpPaymentId: r.mpPaymentId || null
@@ -70899,6 +71971,11 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       totalAmount: r.totalAmount || 0,
       cardTotalAmount: computeCardAmountFromPix(r.totalAmount || 0),
       cardPendingAmount: cardPendingAmt,
+      checkinDate: r.checkinDate,
+      checkoutDate: r.checkoutDate,
+      dailyRates: Array.isArray(r.dailyRates) ? r.dailyRates : [],
+      pendingStayExtension: r.pendingStayExtension || null,
+      expiredStayExtension: r.expiredStayExtension || null,
       pixTxId: r.pixTxId || null,
       pixCopiaECola: r.pixCopiaECola || null,
       mpInitPoint: r.mpInitPoint || null,
@@ -84878,5 +85955,7 @@ export {
   normalizeChannexBookingRevision,
   isB2bReservation,
   computeLinenTracking,
-  getRequestsForDate
+  getRequestsForDate,
+  resolveStayExtensionHold,
+  rollbackExpiredOrCancelledStayExtension
 };

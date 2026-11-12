@@ -253,6 +253,7 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
   nights,
   ratePlan,
   selectedDailyRate,
+  otaSelectedDailyRate,
   onToggleRatePlan,
 }: {
   checkin: string
@@ -260,6 +261,7 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
   nights: number
   ratePlan: "with_breakfast" | "room_only"
   selectedDailyRate: number
+  otaSelectedDailyRate?: number
   onToggleRatePlan: () => void
 }) {
   return (
@@ -317,8 +319,16 @@ const FunnelStaySummaryCard = memo(function FunnelStaySummaryCard({
               <span className="text-xs sm:text-sm font-extrabold text-slate-900 dark:text-slate-100">
                 {ratePlan === "with_breakfast" ? "Com Café da Manhã" : "Somente Hospedagem (Sem Café)"}
               </span>
-              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                • R$ {formatBrl(selectedDailyRate)}/noite no PIX
+              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                <span>•</span>
+                {otaSelectedDailyRate && otaSelectedDailyRate > selectedDailyRate && (
+                  <span className="text-[11px] text-slate-400 line-through" title="Valor no Booking e Airbnb">
+                    R$ {formatBrl(otaSelectedDailyRate)}
+                  </span>
+                )}
+                <span className="text-slate-800 dark:text-slate-200 font-bold">
+                  R$ {formatBrl(selectedDailyRate)}/noite no PIX
+                </span>
               </span>
             </div>
           </div>
@@ -344,7 +354,9 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
   ratePlan,
   occupancySecondGuestDiff,
   twinFeeUnit,
+  otaTwinFeeUnit,
   extraBedFeeUnit,
+  otaExtraBedFeeUnit,
   addRoom,
   removeRoom,
   updateRoom,
@@ -353,7 +365,9 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
   ratePlan: "with_breakfast" | "room_only"
   occupancySecondGuestDiff: number
   twinFeeUnit: number
+  otaTwinFeeUnit?: number
   extraBedFeeUnit: number
+  otaExtraBedFeeUnit?: number
   addRoom: () => void
   removeRoom: (id: number) => void
   updateRoom: (id: number, field: "bedType" | "adults", value: any) => void
@@ -402,6 +416,11 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                   <option value="queen">1 Cama Queen Casal</option>
                   <option value="twin">2 Camas Solteiro (+R$ {formatBrl(twinFeeUnit)})</option>
                 </select>
+                {r.bedType === "twin" && otaTwinFeeUnit && otaTwinFeeUnit > twinFeeUnit && (
+                  <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                    Nas plataformas: <span className="line-through text-slate-400">R$ {formatBrl(otaTwinFeeUnit)}</span> • Direto: R$ {formatBrl(twinFeeUnit)}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -423,6 +442,11 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                       : `3 Hósp. (Colchonete +R$ ${formatBrl(extraBedFeeUnit)})`}
                   </option>
                 </select>
+                {r.adults === 3 && otaExtraBedFeeUnit && otaExtraBedFeeUnit > extraBedFeeUnit && (
+                  <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                    Colchonete nas plataformas: <span className="line-through text-slate-400">R$ {formatBrl(otaExtraBedFeeUnit)}</span> • Direto: R$ {formatBrl(extraBedFeeUnit)}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -438,15 +462,22 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
   ratePlan,
   subtotal,
   cleaningFee,
+  otaCleaningFee,
   extraBedFee,
+  otaExtraBedFee,
   lateCheckout,
   lateCheckoutTime,
   lateCheckoutFee,
+  otaLateCheckoutFee,
   petFee,
+  otaPetFee,
   twinFee,
+  otaTwinFee,
   paymentMethod,
   pixDiscountAmount,
   totalAmount,
+  otaReferenceTotal,
+  otaSavingsAmount,
   policyType,
   policyExplanation,
 }: {
@@ -455,15 +486,22 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
   ratePlan: "with_breakfast" | "room_only"
   subtotal: number
   cleaningFee: number
+  otaCleaningFee?: number
   extraBedFee: number
+  otaExtraBedFee?: number
   lateCheckout: boolean
   lateCheckoutTime: string
   lateCheckoutFee: number
+  otaLateCheckoutFee?: number
   petFee: number
+  otaPetFee?: number
   twinFee: number
+  otaTwinFee?: number
   paymentMethod: "pix" | "card"
   pixDiscountAmount: number
   totalAmount: number
+  otaReferenceTotal?: number
+  otaSavingsAmount?: number
   policyType: string
   policyExplanation: string
 }) {
@@ -478,14 +516,28 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
         {cleaningFee > 0 && (
           <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
             <span>Taxa de Limpeza:</span>
-            <span className="shrink-0">+ R$ {formatBrl(cleaningFee)}</span>
+            <span className="shrink-0">
+              {otaCleaningFee && otaCleaningFee > cleaningFee && (
+                <span className="line-through text-slate-400 mr-1.5" title="Valor no Booking e Airbnb">
+                  R$ {formatBrl(otaCleaningFee)}
+                </span>
+              )}
+              + R$ {formatBrl(cleaningFee)}
+            </span>
           </div>
         )}
 
         {extraBedFee > 0 && (
           <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
             <span>Colchonete Extra (3º Hóspede):</span>
-            <span className="shrink-0">+ R$ {formatBrl(extraBedFee)}</span>
+            <span className="shrink-0">
+              {otaExtraBedFee && otaExtraBedFee > extraBedFee && (
+                <span className="line-through text-slate-400 mr-1.5" title="Valor no Booking e Airbnb">
+                  R$ {formatBrl(otaExtraBedFee)}
+                </span>
+              )}
+              + R$ {formatBrl(extraBedFee)}
+            </span>
           </div>
         )}
 
@@ -495,7 +547,14 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
             {lateCheckoutFee === 0 ? (
               <span className="text-[#0F3D4C] font-semibold shrink-0">Cortesia (R$ 0)</span>
             ) : (
-              <span className="shrink-0">+ R$ {formatBrl(lateCheckoutFee)}</span>
+              <span className="shrink-0">
+                {otaLateCheckoutFee && otaLateCheckoutFee > lateCheckoutFee && (
+                  <span className="line-through text-slate-400 mr-1.5" title="Valor no Booking e Airbnb">
+                    R$ {formatBrl(otaLateCheckoutFee)}
+                  </span>
+                )}
+                + R$ {formatBrl(lateCheckoutFee)}
+              </span>
             )}
           </div>
         )}
@@ -503,14 +562,28 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
         {petFee > 0 && (
           <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
             <span>Taxa de Higienização Pet:</span>
-            <span className="shrink-0">+ R$ {formatBrl(petFee)}</span>
+            <span className="shrink-0">
+              {otaPetFee && otaPetFee > petFee && (
+                <span className="line-through text-slate-400 mr-1.5" title="Valor no Booking e Airbnb">
+                  R$ {formatBrl(otaPetFee)}
+                </span>
+              )}
+              + R$ {formatBrl(petFee)}
+            </span>
           </div>
         )}
 
         {twinFee > 0 && (
           <div className="flex justify-between gap-2 text-slate-600 dark:text-slate-400">
             <span>Configuração 2 Camas Solteiro:</span>
-            <span className="shrink-0">+ R$ {formatBrl(twinFee)}</span>
+            <span className="shrink-0">
+              {otaTwinFee && otaTwinFee > twinFee && (
+                <span className="line-through text-slate-400 mr-1.5" title="Valor no Booking e Airbnb">
+                  R$ {formatBrl(otaTwinFee)}
+                </span>
+              )}
+              + R$ {formatBrl(twinFee)}
+            </span>
           </div>
         )}
 
@@ -518,6 +591,19 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
           <div className="flex justify-between gap-2 text-[#0F3D4C] dark:text-[#E5C98B] font-semibold pt-1 border-t border-slate-200 dark:border-slate-700">
             <span>Desconto no PIX:</span>
             <span className="shrink-0">- R$ {formatBrl(pixDiscountAmount)}</span>
+          </div>
+        )}
+
+        {otaReferenceTotal && otaSavingsAmount && otaSavingsAmount > 0 && (
+          <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/80 space-y-1">
+            <div className="flex justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <span>Mesma estadia no Booking / Airbnb (c/ taxas):</span>
+              <span className="line-through shrink-0">R$ {formatBrl(otaReferenceTotal)}</span>
+            </div>
+            <div className="flex justify-between gap-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+              <span>Economia reservando direto no site:</span>
+              <span className="shrink-0">- R$ {formatBrl(otaSavingsAmount)}</span>
+            </div>
           </div>
         )}
 
@@ -1043,7 +1129,7 @@ export function BookingFunnelModal({
   const fallbackBaseSemCafe = Number(
     dynPricing?.avgRoomOnlyRate ??
     siteConfig?.ratePlans?.room_only?.dailyRate ??
-    276.63
+    216.49
   )
   const perNightBaseSemCafe: number[] =
     Array.isArray(dynPricing?.discountedSemCafeRates) && dynPricing.discountedSemCafeRates.length === nights
@@ -1167,6 +1253,25 @@ export function BookingFunnelModal({
   // Valor Ativo
   const totalAmount = paymentMethod === "pix" ? pixTotalAmount : baseTotalAmount
   const currentTotalDiscount = paymentMethod === "pix" ? pixDiscountAmount : 0
+
+  // Referência comparativa contra plataformas (Booking / Airbnb = Preço Base + Comissão da Plataforma em diárias e taxas)
+  const otaReferenceMarkupPercent = Number(
+    dynPricing?.otaComparison?.referenceMarkupPercent ??
+    siteConfig?.pricing?.otaComparison?.referenceMarkupPercent ??
+    15
+  )
+  const otaFactor = 1 + Math.max(0, otaReferenceMarkupPercent) / 100
+  const otaSelectedDailyRate = Math.round(selectedDailyRate * otaFactor * 100) / 100
+  const otaCleaningFee = Math.round(cleaningFee * otaFactor * 100) / 100
+  const otaTwinFeeUnit = Math.round(twinFeeUnit * otaFactor * 100) / 100
+  const otaTwinFee = Math.round(twinFee * otaFactor * 100) / 100
+  const otaExtraBedFeeUnit = Math.round(extraBedFeeUnit * otaFactor * 100) / 100
+  const otaExtraBedFee = Math.round(extraBedFee * otaFactor * 100) / 100
+  const otaPetFeePerUnit = Math.round(petFeePerUnit * otaFactor * 100) / 100
+  const otaPetFee = Math.round(petFee * otaFactor * 100) / 100
+  const otaLateCheckoutFee = Math.round(lateCheckoutFee * otaFactor * 100) / 100
+  const otaReferenceTotal = Math.round(pixTotalAmount * otaFactor * 100) / 100
+  const otaSavingsAmount = Math.max(0, Math.round((otaReferenceTotal - totalAmount) * 100) / 100)
 
   // Política de Cancelamento (memoizada para evitar instanciar Date e recalcular a cada tecla)
   const cancellationPolicy = useMemo(
@@ -1650,6 +1755,7 @@ export function BookingFunnelModal({
               nights={nights}
               ratePlan={ratePlan}
               selectedDailyRate={selectedDailyRate}
+              otaSelectedDailyRate={otaSelectedDailyRate}
               onToggleRatePlan={handleToggleRatePlan}
             />
 
@@ -1659,7 +1765,9 @@ export function BookingFunnelModal({
               ratePlan={ratePlan}
               occupancySecondGuestDiff={breakfastSurchargePerGuest}
               twinFeeUnit={twinFeeUnit}
+              otaTwinFeeUnit={otaTwinFeeUnit}
               extraBedFeeUnit={extraBedFeeUnit}
+              otaExtraBedFeeUnit={otaExtraBedFeeUnit}
               addRoom={stableAddRoom}
               removeRoom={stableRemoveRoom}
               updateRoom={stableUpdateRoom}
@@ -1774,7 +1882,15 @@ export function BookingFunnelModal({
                   <Heart className="w-4 h-4 text-[#0F3D4C] shrink-0" />
                   <div className="min-w-0">
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Vai viajar com animal de estimação?</span>
-                    <span className="text-[10px] text-slate-500">Taxa de higienização: R$ {petFeePerUnit}/pet ({siteConfig?.petPolicy?.feeType === "per_night" ? "por diária" : "por estadia"})</span>
+                    <span className="text-[10px] text-slate-500">
+                      Taxa de higienização:{" "}
+                      {otaPetFeePerUnit > petFeePerUnit && (
+                        <span className="line-through text-slate-400 mr-1" title="Valor no Booking e Airbnb">
+                          R$ {formatBrl(otaPetFeePerUnit)}
+                        </span>
+                      )}
+                      <strong className="text-slate-700 dark:text-slate-300">R$ {formatBrl(petFeePerUnit)}/pet</strong> ({siteConfig?.petPolicy?.feeType === "per_night" ? "por diária" : "por estadia"})
+                    </span>
                   </div>
                 </div>
 
@@ -2420,15 +2536,22 @@ export function BookingFunnelModal({
               ratePlan={ratePlan}
               subtotal={subtotal}
               cleaningFee={cleaningFee}
+              otaCleaningFee={otaCleaningFee}
               extraBedFee={extraBedFee}
+              otaExtraBedFee={otaExtraBedFee}
               lateCheckout={lateCheckout}
               lateCheckoutTime={lateCheckoutTime}
               lateCheckoutFee={lateCheckoutFee}
+              otaLateCheckoutFee={otaLateCheckoutFee}
               petFee={petFee}
+              otaPetFee={otaPetFee}
               twinFee={twinFee}
+              otaTwinFee={otaTwinFee}
               paymentMethod={paymentMethod}
               pixDiscountAmount={pixDiscountAmount}
               totalAmount={totalAmount}
+              otaReferenceTotal={otaReferenceTotal}
+              otaSavingsAmount={otaSavingsAmount}
               policyType={cancellationPolicy.policyType}
               policyExplanation={cancellationPolicy.explanation}
             />

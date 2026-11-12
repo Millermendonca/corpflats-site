@@ -2108,12 +2108,15 @@ export function computeDailyRate(db, flatId, dateStr, channel = "direct") {
 
   const rateBeforeChan = baseRate + weekendMarkup;
 
-  // 4. Channel markup
-  const chanCfg = tSettings.channelMarkups?.[normChan] ||
-    (normChan === "direct" ? { markupPct: 0.0 } :
-     normChan === "booking" ? { markupPct: 0.18 } :
-     normChan === "airbnb" ? { markupPct: 0.15 } : { markupPct: 0.0 });
-  const chanPct = Number(chanCfg.markupPct || 0);
+  // 4. Channel markup (Preço Base + Comissão da plataforma para OTAs; 0% na Venda Direta)
+  const chanCfg = tSettings.channelMarkups?.[normChan];
+  const chanPct = chanCfg
+    ? (normChan === "direct"
+        ? Number(chanCfg.markupPct ?? 0)
+        : chanCfg.extraMarkupPct !== undefined
+          ? Number(chanCfg.commissionPct ?? 0) + Number(chanCfg.extraMarkupPct ?? 0)
+          : Math.max(Number(chanCfg.markupPct ?? 0), Number(chanCfg.commissionPct ?? 0)))
+    : (normChan === "booking" ? 0.15 : normChan === "airbnb" ? 0.15 : normChan === "expedia" ? 0.18 : 0.0);
   const finalRate = rateBeforeChan * (1 + chanPct);
 
   return Math.round(finalRate * 100) / 100;

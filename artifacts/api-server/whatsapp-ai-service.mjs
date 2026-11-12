@@ -2108,12 +2108,15 @@ export function computeDailyRate(db, flatId, dateStr, channel = "direct") {
 
   const rateBeforeChan = baseRate + weekendMarkup;
 
-  // 4. Channel markup
-  const chanCfg = tSettings.channelMarkups?.[normChan] ||
-    (normChan === "direct" ? { markupPct: 0.0 } :
-     normChan === "booking" ? { markupPct: 0.18 } :
-     normChan === "airbnb" ? { markupPct: 0.15 } : { markupPct: 0.0 });
-  const chanPct = Number(chanCfg.markupPct || 0);
+  // 4. Channel markup (Preço Base + Comissão da plataforma para OTAs; 0% na Venda Direta)
+  const chanCfg = tSettings.channelMarkups?.[normChan];
+  const chanPct = chanCfg
+    ? (normChan === "direct"
+        ? Number(chanCfg.markupPct ?? 0)
+        : chanCfg.extraMarkupPct !== undefined
+          ? Number(chanCfg.commissionPct ?? 0) + Number(chanCfg.extraMarkupPct ?? 0)
+          : Math.max(Number(chanCfg.markupPct ?? 0), Number(chanCfg.commissionPct ?? 0)))
+    : (normChan === "booking" ? 0.15 : normChan === "airbnb" ? 0.15 : normChan === "expedia" ? 0.18 : 0.0);
   const finalRate = rateBeforeChan * (1 + chanPct);
 
   return Math.round(finalRate * 100) / 100;
@@ -18884,6 +18887,139 @@ export async function handleManagerExtensionReply({
     return { txid: resolvedTxId, pixCopiaECola, paymentUrl };
   };
 
+  const applyManagerStayExtensionHold = (resObj, chargeInfo, extraSwpFlatNum = null) => {
+    if (!resObj) return { expiraEmHoraBr: "", expiraEmIso: "" };
+    const nowDt = new Date(now);
+    const priorExt =
+      resObj.pendingStayExtension?.isPreReservationHold &&
+      resObj.pendingStayExtension?.status === "pending_payment"
+        ? resObj.pendingStayExtension
+        : null;
+    const origCheckin = String(priorExt?.oldCheckinDate || resObj.checkinDate || "").slice(0, 10);
+    const origCheckout = String(priorExt?.oldCheckoutDate || resObj.checkoutDate || "").slice(0, 10);
+    const origDailyRates = priorExt?.oldDailyRates
+      ? priorExt.oldDailyRates.map((d) => ({ ...d }))
+      : Array.isArray(resObj.dailyRates)
+        ? resObj.dailyRates.map((d) => ({ ...d }))
+        : [];
+    const origCharges = priorExt?.oldCharges
+      ? priorExt.oldCharges.map((c) => ({ ...c }))
+      : Array.isArray(resObj.charges)
+        ? resObj.charges.map((c) => ({ ...c }))
+        : [];
+    const origCleaningFee =
+      priorExt?.oldCleaningFee !== undefined ? Number(priorExt.oldCleaningFee) || 0 : Number(resObj.cleaningFee) || 0;
+    const origTotal =
+      priorExt?.oldTotalAmount !== undefined ? Number(priorExt.oldTotalAmount) || 0 : Number(resObj.totalAmount) || 0;
+    const origPaid =
+      priorExt?.oldPaidAmount !== undefined ? Number(priorExt.oldPaidAmount) || 0 : Number(resObj.paidAmount) || 0;
+    const origPaymentStatus = priorExt?.oldPaymentStatus || resObj.paymentStatus || "pago_total";
+
+    const addedDates = [];
+    if (origCheckout && reqCheckout && reqCheckout > origCheckout) {
+      const startMs = new Date(`${origCheckout}T12:00:00Z`).getTime();
+      const endMs = new Date(`${reqCheckout}T12:00:00Z`).getTime();
+      const nExt = Math.max(1, Math.round((endMs - startMs) / 86400000));
+      for (let i = 0; i < nExt; i++) {
+        addedDates.push(new Date(startMs + i * 86400000).toISOString().slice(0, 10));
+      }
+    }
+    const unitExtraRate = Number((extraAmt / Math.max(1, targetProposal.extraNights || addedDates.length || 1)).toFixed(2));
+    const addedDailyRates = addedDates.map((dt) => ({
+      date: dt,
+      rate: unitExtraRate,
+      channel: "whatsapp"
+    }));
+
+    const resolveHoldFn = globalThis.resolveStayExtensionHold;
+    const holdInfo =
+      typeof resolveHoldFn === "function"
+        ? resolveHoldFn({ source: "whatsapp_ai" }, addedDates[0] || origCheckout, { nowOverride: nowDt })
+        : {
+            expiresAt: new Date(nowDt.getTime() + 30 * 60 * 1000).toISOString(),
+            reminderAt: new Date(nowDt.getTime() + 20 * 60 * 1000).toISOString(),
+            reminderLeadMinutes: 10,
+            reminderLeadLabel: "10 minutos",
+            sendExpirationReminder: true,
+            holdPreset: "30m",
+            holdDurationMinutes: 30,
+            holdDurationLabel: "30 minutos"
+          };
+    const expiraEmHoraBr = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(new Date(holdInfo.expiresAt));
+    const hadSignedFnrh = Boolean(
+      resObj.preCheckinCompleted ||
+        resObj.fnrhSignedAt ||
+        resObj.signatureDataUrl ||
+        resObj.fnrhSignature ||
+        resObj.checkinDone ||
+        resObj.actualCheckinAt
+    );
+
+    if (!extraSwpFlatNum) {
+      resObj.oldCheckoutDateBeforeExtension = origCheckout;
+      if (reqCheckout) resObj.checkoutDate = reqCheckout;
+      if (origCheckin && reqCheckout) {
+        resObj.nights = Math.max(
+          1,
+          Math.round((new Date(`${reqCheckout}T12:00:00Z`).getTime() - new Date(`${origCheckin}T12:00:00Z`).getTime()) / 86400000)
+        );
+      }
+      if (origDailyRates.length > 0 && addedDailyRates.length > 0) {
+        resObj.dailyRates = [...origDailyRates, ...addedDailyRates].sort((a, b) =>
+          String(a.date).localeCompare(String(b.date))
+        );
+      }
+      resObj.totalAmount = Number(((Number(resObj.totalAmount) || 0) + extraAmt).toFixed(2));
+      resObj.cardTotalAmount = Number((resObj.totalAmount / 0.95).toFixed(2));
+      if (origPaid > 0 && origPaid < resObj.totalAmount) {
+        resObj.paymentStatus = "parcial";
+      }
+    }
+
+    resObj.pixCopiaECola = chargeInfo.pixCopiaECola;
+    resObj.pixTxId = chargeInfo.txid;
+    resObj.pixChargedAmount = extraAmt;
+    resObj.pendingStayExtension = {
+      isPreReservationHold: !extraSwpFlatNum,
+      source: "whatsapp_ai",
+      txid: chargeInfo.txid,
+      pixCopiaECola: chargeInfo.pixCopiaECola,
+      paymentUrl: chargeInfo.paymentUrl,
+      status: "pending_payment",
+      amount: extraAmt,
+      extraNights: targetProposal.extraNights,
+      oldCheckinDate: origCheckin,
+      oldCheckoutDate: origCheckout,
+      newCheckoutDate: reqCheckout,
+      ...(extraSwpFlatNum ? { newFlatNumber: extraSwpFlatNum } : {}),
+      addedDates,
+      addedDailyRates,
+      oldDailyRates: origDailyRates,
+      oldCharges: origCharges,
+      oldCleaningFee: origCleaningFee,
+      oldTotalAmount: origTotal,
+      oldPaidAmount: origPaid,
+      oldPaymentStatus: origPaymentStatus,
+      requiresDeferredReSignature: hadSignedFnrh,
+      expiresAt: holdInfo.expiresAt,
+      reminderAt: holdInfo.reminderAt,
+      reminderLeadMinutes: holdInfo.reminderLeadMinutes,
+      reminderLeadLabel: holdInfo.reminderLeadLabel,
+      sendExpirationReminder: holdInfo.sendExpirationReminder !== false,
+      holdPreset: holdInfo.holdPreset || "30m",
+      holdDurationMinutes: holdInfo.holdDurationMinutes || 30,
+      holdDurationLabel: holdInfo.holdDurationLabel || "30 minutos",
+      createdAt: now
+    };
+    resObj.updatedAt = now;
+    return { expiraEmHoraBr, expiraEmIso: holdInfo.expiresAt };
+  };
+
   if (chosenOption === 1) {
     if (incomingRes && altFlatObj) {
       incomingRes.flatId = altFlatObj.id;
@@ -18891,29 +19027,7 @@ export async function handleManagerExtensionReply({
       incomingRes.updatedAt = now;
     }
     const chargeInfo = await buildIntegratedExtensionCharge(currentRes, "EXT");
-    if (currentRes) {
-      currentRes.oldCheckoutDateBeforeExtension = currentRes.checkoutDate;
-      if (reqCheckout) currentRes.checkoutDate = reqCheckout;
-      currentRes.totalAmount = Number(((Number(currentRes.totalAmount) || 0) + extraAmt).toFixed(2));
-      currentRes.cardTotalAmount = Number((currentRes.totalAmount / 0.95).toFixed(2));
-      currentRes.pixCopiaECola = chargeInfo.pixCopiaECola;
-      currentRes.pixTxId = chargeInfo.txid;
-      currentRes.pixChargedAmount = extraAmt;
-      if (Number(currentRes.paidAmount || 0) > 0 && Number(currentRes.paidAmount || 0) < currentRes.totalAmount) {
-        currentRes.paymentStatus = "parcial";
-      }
-      currentRes.pendingStayExtension = {
-        txid: chargeInfo.txid,
-        pixCopiaECola: chargeInfo.pixCopiaECola,
-        paymentUrl: chargeInfo.paymentUrl,
-        status: "pending_payment",
-        amount: extraAmt,
-        extraNights: targetProposal.extraNights,
-        newCheckoutDate: reqCheckout,
-        createdAt: now
-      };
-      currentRes.updatedAt = now;
-    }
+    const holdMeta = applyManagerStayExtensionHold(currentRes, chargeInfo, null);
     targetProposal.status = "approved_option_1";
     targetProposal.resolvedAt = now;
     if (typeof saveDatabase === "function") saveDatabase("extension_option_1");
@@ -18927,33 +19041,17 @@ export async function handleManagerExtensionReply({
       }
     }
 
-    const guestMsg = `Ótima notícia, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Nossa gerência aprovou a prorrogação da sua estadia no mesmo *Flat ${targetProposal.flatNumber}* até *${String(reqCheckout).split("-").reverse().join("/")}* (+${targetProposal.extraNights} diária(s)).\n\nO valor adicional é de *R$ ${extraAmt.toFixed(2).replace(".", ",")}*.\n\n📋 *PIX Copia e Cola (reconhecimento e baixa automática):*\n\`${chargeInfo.pixCopiaECola}\`\n\n💳 *Ou pague com Cartão de Crédito / PIX pelo Portal da Reserva:*\n👉 ${chargeInfo.paymentUrl}`;
+    const guestMsg = `Ótima notícia, *${String(targetProposal.guestName || "Hóspede").split(" ")[0]}*! Nossa gerência aprovou a prorrogação da sua estadia no mesmo *Flat ${targetProposal.flatNumber}* até *${String(reqCheckout).split("-").reverse().join("/")}* (+${targetProposal.extraNights} diária(s)).\n\n⏳ Deixamos o período adicional reservado em *Pré-Reserva por 30 minutos*${holdMeta.expiraEmHoraBr ? ` (até as *${holdMeta.expiraEmHoraBr}*)` : ""} aguardando o pagamento adicional de *R$ ${extraAmt.toFixed(2).replace(".", ",")}*.\n\n📋 *PIX Copia e Cola (reconhecimento e baixa automática):*\n\`${chargeInfo.pixCopiaECola}\`\n\n💳 *Ou pague com Cartão de Crédito / PIX pelo Portal da Reserva:*\n👉 ${chargeInfo.paymentUrl}`;
     await sendMsg(cleanWhatsAppPhone(targetProposal.guestPhone), guestMsg, "guest", "sofia_ext_guest_opt1");
 
-    const mgrMsg = `✅ *Opção 1 Executada (#${targetProposal.id})*\n• Reserva futura (${incGuestName}) remanejada para o *Flat ${swapFlatNum || "da Vez"}*.\n• Hóspede atual (*${targetProposal.guestName}*) mantido no *Flat ${targetProposal.flatNumber}* e cobrança integrada (PIX Copia e Cola + Link Cartão) de R$ ${extraAmt.toFixed(2)} enviada!`;
+    const mgrMsg = `✅ *Opção 1 Executada (#${targetProposal.id})*\n• Reserva futura (${incGuestName}) remanejada para o *Flat ${swapFlatNum || "da Vez"}*.\n• Hóspede atual (*${targetProposal.guestName}*) mantido no *Flat ${targetProposal.flatNumber}* em Pré-Reserva de Diária Extra (30m) e cobrança integrada (PIX Copia e Cola + Link Cartão) de R$ ${extraAmt.toFixed(2)} enviada!`;
     await sendMsg(managerPhone, mgrMsg, "developer", "sofia_ext_mgr_opt1");
     return { handled: true, processed: true, option: 1, proposal: targetProposal, replyText: mgrMsg };
   }
 
   if (chosenOption === 2) {
     const chargeInfo = await buildIntegratedExtensionCharge(currentRes, "EXTSWP");
-    if (currentRes) {
-      currentRes.pixCopiaECola = chargeInfo.pixCopiaECola;
-      currentRes.pixTxId = chargeInfo.txid;
-      currentRes.pixChargedAmount = extraAmt;
-      currentRes.pendingStayExtension = {
-        txid: chargeInfo.txid,
-        pixCopiaECola: chargeInfo.pixCopiaECola,
-        paymentUrl: chargeInfo.paymentUrl,
-        status: "pending_payment",
-        amount: extraAmt,
-        extraNights: targetProposal.extraNights,
-        newCheckoutDate: reqCheckout,
-        newFlatNumber: swapFlatNum,
-        createdAt: now
-      };
-      currentRes.updatedAt = now;
-    }
+    applyManagerStayExtensionHold(currentRes, chargeInfo, swapFlatNum);
     targetProposal.status = "approved_option_2";
     targetProposal.resolvedAt = now;
     if (typeof saveDatabase === "function") saveDatabase("extension_option_2");
