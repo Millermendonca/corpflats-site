@@ -712,17 +712,65 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   }
   const [reactivationFlatSwitchedInfo, setReactivationFlatSwitchedInfo] = useState<string | null>(null)
   const [expiredModalOpen, setExpiredModalOpen] = useState(false)
+  const [formExtensionHoldMode, setFormExtensionHoldMode] = useState<"pre_reserva" | "confirmada_sem_prazo">("pre_reserva")
+  const [isReactivatingExt, setIsReactivatingExt] = useState(false)
+  const [cancellingPendingExt, setCancellingPendingExt] = useState(false)
 
   const getDefaultHoldPresetForCheckin = (cinStr: string): "2h" | "until_2359" => {
     const todayS = format(new Date(), "yyyy-MM-dd")
     return cinStr && cinStr > todayS ? "until_2359" : "2h"
   }
 
+  const getDefaultHoldPresetForExtension = (extStartStr: string): "30m" | "2h" | "until_2359" => {
+    const now = new Date()
+    const todayS = format(now, "yyyy-MM-dd")
+    if (extStartStr && extStartStr > todayS) return "until_2359"
+    return now.getHours() >= 10 ? "30m" : "2h"
+  }
+
+  const computeHoldExpirationInfoForPreset = (preset: "10m" | "30m" | "2h" | "until_2359") => {
+    const now = new Date()
+    const nowMs = now.getTime()
+    if (preset === "10m") {
+      const exp = new Date(nowMs + 10 * 60 * 1000)
+      return { holdPreset: "10m" as const, holdDurationMinutes: 10, holdDurationLabel: "10 minutos", expiresAt: exp.toISOString(), formattedTime: format(exp, "HH:mm") }
+    }
+    if (preset === "30m") {
+      const exp = new Date(nowMs + 30 * 60 * 1000)
+      return { holdPreset: "30m" as const, holdDurationMinutes: 30, holdDurationLabel: "30 minutos", expiresAt: exp.toISOString(), formattedTime: format(exp, "HH:mm") }
+    }
+    if (preset === "until_2359") {
+      const endOfToday = new Date(now)
+      endOfToday.setHours(23, 59, 59, 999)
+      if (endOfToday.getTime() <= nowMs + 5 * 60 * 1000) {
+        const exp = new Date(nowMs + 30 * 60 * 1000)
+        return { holdPreset: "30m" as const, holdDurationMinutes: 30, holdDurationLabel: "30 minutos", expiresAt: exp.toISOString(), formattedTime: format(exp, "HH:mm") }
+      }
+      const mins = Math.max(1, Math.round((endOfToday.getTime() - nowMs) / 60000))
+      return { holdPreset: "until_2359" as const, holdDurationMinutes: mins, holdDurationLabel: "até 23:59 de hoje", expiresAt: endOfToday.toISOString(), formattedTime: "23:59" }
+    }
+    const exp = new Date(nowMs + 120 * 60 * 1000)
+    return { holdPreset: "2h" as const, holdDurationMinutes: 120, holdDurationLabel: "2 horas", expiresAt: exp.toISOString(), formattedTime: format(exp, "HH:mm") }
+  }
+
   useEffect(() => {
     if (!formHoldManuallyChosen) {
+      if (selectedRes && formStatus !== "pre_reserva") {
+        const baseCout = selectedRes.pendingStayExtension?.isPreReservationHold
+          ? (selectedRes.pendingStayExtension.oldCheckoutDate || selectedRes.checkoutDate)
+          : selectedRes.checkoutDate
+        const baseCin = selectedRes.pendingStayExtension?.isPreReservationHold
+          ? (selectedRes.pendingStayExtension.oldCheckinDate || selectedRes.checkinDate)
+          : selectedRes.checkinDate
+        const extStart = formCheckin < baseCin ? formCheckin : baseCout
+        if (formCheckout > baseCout || formCheckin < baseCin) {
+          setFormHoldPreset(getDefaultHoldPresetForExtension(extStart))
+          return
+        }
+      }
       setFormHoldPreset(getDefaultHoldPresetForCheckin(formCheckin))
     }
-  }, [formCheckin, formHoldManuallyChosen])
+  }, [formCheckin, formCheckout, formHoldManuallyChosen, selectedRes?.id, formStatus])
 
   const computeHoldExpirationInfo = () => {
     const now = new Date()
@@ -1550,6 +1598,12 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     targetTotal: number;
     payload: any;
     optimisticReservation: any;
+    isUnpaidDirectExtension?: boolean;
+    addedNightsCount?: number;
+    extraPendingAmount?: number;
+    firstAddedDate?: string;
+    extensionHoldMode?: "pre_reserva" | "confirmada_sem_prazo";
+    extensionHoldPreset?: "10m" | "30m" | "2h" | "until_2359";
   } | null>(null);
 
   const [longPressActiveResId, setLongPressActiveResId] = useState<number | string | null>(null);
@@ -2011,11 +2065,16 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
             };
           });
         } else {
+          const resChanLow = String(current.res.channel || "").toLowerCase();
+          const dragFallbackChan =
+            targetNights > originNights && (resChanLow.includes("booking") || resChanLow.includes("airbnb"))
+              ? "whatsapp"
+              : (current.res.channel || "whatsapp");
           updatedDailyRates = buildReservationDailyRates(
             current.currentCheckin,
             current.currentCheckout,
             defaultDragRate,
-            current.res.channel || "whatsapp",
+            dragFallbackChan,
             current.res.dailyRates
           );
         }
@@ -2026,12 +2085,23 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
           : (originNights > 0 && netTotalForDaily > 0
             ? Math.round((netTotalForDaily / originNights) * 100) / 100
             : 250);
+        const resChanLow = String(current.res.channel || "").toLowerCase();
+        const isOriginOta = resChanLow.includes("booking") || resChanLow.includes("airbnb");
+        const synthOriginRates = isOriginOta && targetNights > originNights
+          ? buildReservationDailyRates(
+              current.originCheckin,
+              current.originCheckout,
+              inferredRate,
+              current.res.channel || "whatsapp",
+              []
+            )
+          : [];
         updatedDailyRates = buildReservationDailyRates(
           current.currentCheckin,
           current.currentCheckout,
           inferredRate,
-          current.res.channel || "whatsapp",
-          []
+          isOriginOta && targetNights > originNights ? "whatsapp" : (current.res.channel || "whatsapp"),
+          synthOriginRates
         );
       }
 
@@ -2052,6 +2122,34 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         payload.dailyRates = updatedDailyRates;
         payload.totalAmount = calculatedTotal;
       }
+
+      const dragResChanLower = String(current.res.channel || "").toLowerCase();
+      const isDragResB2bOrFat = Boolean(
+        dragResChanLower.includes("b2b") ||
+        current.res.b2bReservationNumber ||
+        current.res.isFaturadoBoleto ||
+        current.res.paymentMethod === "boleto" ||
+        current.res.paymentMethod === "boleto_faturado" ||
+        current.res.paymentMethod === "faturado_pj" ||
+        current.res.paymentMethod === "faturado_b2b" ||
+        current.res.b2bPaymentType === "FATURADO"
+      );
+      const isDragOriginOta = dragResChanLower.includes("booking") || dragResChanLower.includes("airbnb");
+      const originEffectivePaid = (current.res.paymentStatus === "pago_total" || current.res.paymentStatus === "pago" || isDragOriginOta)
+        ? Math.max(Number(current.res.paidAmount) || 0, Number(current.res.totalAmount) || 0)
+        : (Number(current.res.paidAmount) || 0);
+      const extraPendingDragAmt = Math.max(0, Math.round((calculatedTotal - originEffectivePaid) * 100) / 100);
+      const isUnpaidDirectExtension = Boolean(
+        current.mode !== "move" &&
+        targetNights > originNights &&
+        current.res.status !== "pre_reserva" &&
+        !isDragResB2bOrFat &&
+        extraPendingDragAmt > 0.01
+      );
+      const firstAddedDragDate = current.currentCheckin < current.originCheckin
+        ? current.currentCheckin
+        : current.originCheckout;
+      const defaultDragExtPreset = getDefaultHoldPresetForExtension(firstAddedDragDate);
 
       const optimisticReservation = {
         ...current.res,
@@ -2083,7 +2181,13 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         originTotal: Number(current.res.totalAmount) || 0,
         targetTotal: calculatedTotal,
         payload,
-        optimisticReservation
+        optimisticReservation,
+        isUnpaidDirectExtension,
+        addedNightsCount: Math.max(0, targetNights - originNights),
+        extraPendingAmount: extraPendingDragAmt,
+        firstAddedDate: firstAddedDragDate,
+        extensionHoldMode: "pre_reserva",
+        extensionHoldPreset: defaultDragExtPreset
       });
 
       setResDragState(null);
@@ -3041,7 +3145,45 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
 
   const handleConfirmDragMove = async () => {
     if (!dragConfirmData) return;
-    const { res, payload, optimisticReservation } = dragConfirmData;
+    const { res, payload: rawPayload, optimisticReservation: rawOptimistic, isUnpaidDirectExtension, extensionHoldMode, extensionHoldPreset } = dragConfirmData;
+    const chosenMode = extensionHoldMode || "pre_reserva";
+    const presetCalc = isUnpaidDirectExtension && chosenMode === "pre_reserva"
+      ? computeHoldExpirationInfoForPreset(extensionHoldPreset || "30m")
+      : null;
+    const payload = isUnpaidDirectExtension
+      ? {
+          ...rawPayload,
+          extensionHoldMode: chosenMode,
+          ...(presetCalc
+            ? {
+                holdPreset: presetCalc.holdPreset,
+                holdDurationMinutes: presetCalc.holdDurationMinutes,
+                holdDurationLabel: presetCalc.holdDurationLabel,
+                expiresAt: presetCalc.expiresAt,
+                sendExpirationReminder: true
+              }
+            : {})
+        }
+      : rawPayload;
+    const optimisticReservation = presetCalc
+      ? {
+          ...rawOptimistic,
+          pendingStayExtension: {
+            ...(rawOptimistic.pendingStayExtension || {}),
+            isPreReservationHold: true,
+            status: "pending_payment",
+            amount: dragConfirmData.extraPendingAmount || 0,
+            extraNights: dragConfirmData.addedNightsCount || 1,
+            oldCheckinDate: dragConfirmData.originCheckin,
+            oldCheckoutDate: dragConfirmData.originCheckout,
+            newCheckoutDate: dragConfirmData.targetCheckout,
+            expiresAt: presetCalc.expiresAt,
+            holdPreset: presetCalc.holdPreset,
+            holdDurationMinutes: presetCalc.holdDurationMinutes,
+            holdDurationLabel: presetCalc.holdDurationLabel
+          }
+        }
+      : rawOptimistic;
     setDragConfirmData(null);
 
     try {
@@ -4308,18 +4450,37 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     const isPreOrExpiredStatus = resItem.status === "pre_reserva" || isExpiredRes
     setFormStatus((isPreOrExpiredStatus && !isResCurrentlyPaid && !isB2bRes && !isFatResEarly) ? "pre_reserva" : "confirmada")
     setIsReactivatingRes(isExpiredRes)
+    setIsReactivatingExt(false)
     setReactivationFlatSwitchedInfo(null)
-    setFormSendExpirationReminder(isExpiredRes ? true : resItem.sendExpirationReminder !== false)
-    if (resItem.holdPreset && ["10m", "30m", "2h", "until_2359", "custom"].includes(resItem.holdPreset) && !isExpiredRes) {
-      setFormHoldPreset(resItem.holdPreset)
+    const activePendingExt = resItem.pendingStayExtension?.status === "pending_payment" ? resItem.pendingStayExtension : null
+    if (activePendingExt) {
+      setFormExtensionHoldMode(activePendingExt.isPreReservationHold ? "pre_reserva" : "confirmada_sem_prazo")
+    } else {
+      setFormExtensionHoldMode("pre_reserva")
+    }
+    setFormSendExpirationReminder(
+      isExpiredRes
+        ? true
+        : (activePendingExt?.sendExpirationReminder !== undefined
+            ? activePendingExt.sendExpirationReminder !== false
+            : resItem.sendExpirationReminder !== false)
+    )
+    const resolvedPresetOnOpen = activePendingExt?.holdPreset && ["10m", "30m", "2h", "until_2359", "custom"].includes(activePendingExt.holdPreset)
+      ? activePendingExt.holdPreset
+      : (resItem.holdPreset && ["10m", "30m", "2h", "until_2359", "custom"].includes(resItem.holdPreset) && !isExpiredRes
+          ? resItem.holdPreset
+          : null)
+    if (resolvedPresetOnOpen) {
+      setFormHoldPreset(resolvedPresetOnOpen)
       setFormHoldManuallyChosen(true)
     } else {
       setFormHoldPreset(getDefaultHoldPresetForCheckin(resItem.checkinDate))
       setFormHoldManuallyChosen(false)
     }
-    if (resItem.expiresAt && !isExpiredRes) {
+    const resolvedExpiresAtOnOpen = activePendingExt?.expiresAt || (!isExpiredRes ? resItem.expiresAt : null)
+    if (resolvedExpiresAtOnOpen) {
       try {
-        setFormHoldCustomDateTime(format(new Date(resItem.expiresAt), "yyyy-MM-dd'T'HH:mm"))
+        setFormHoldCustomDateTime(format(new Date(resolvedExpiresAtOnOpen), "yyyy-MM-dd'T'HH:mm"))
       } catch {}
     } else {
       setFormHoldCustomDateTime(format(addDays(new Date(), 1), "yyyy-MM-dd'T'12:00"))
@@ -4421,14 +4582,94 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
     setResModalOpen(true)
   }
 
+  const handleCancelPendingExtension = async () => {
+    if (!selectedRes?.id || cancellingPendingExt) return
+    setCancellingPendingExt(true)
+    try {
+      const resp = await fetch(`/api/pms/reservations/${selectedRes.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ cancelPendingExtension: true })
+      })
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        throw new Error(err.error || "Falha ao reverter diária extra pendente.")
+      }
+      toast({
+        title: "↩️ Diária(s) extra(s) pendente(s) revertida(s)!",
+        description: `A reserva ${selectedRes.code} voltou ao período original confirmado e quitado.`
+      })
+      setResModalOpen(false)
+      await fetchData(false)
+      notifyCalendarUpdated()
+    } catch (err: any) {
+      toast({
+        title: "Erro ao reverter diária pendente",
+        description: err.message || "Tente novamente.",
+        variant: "destructive"
+      })
+    } finally {
+      setCancellingPendingExt(false)
+    }
+  }
+
   const handleReactivateExpiredRes = (resItem: any) => {
     setExpiredModalOpen(false)
+
+    if (resItem.isExpiredExtension) {
+      const parentId = resItem.parentReservationId || resItem.id
+      const liveParent = (data.reservations || []).find(
+        (r: any) => String(r.id) === String(parentId) || (resItem.code && r.code === resItem.code)
+      ) || resItem
+      handleOpenEditRes(liveParent)
+
+      const origCin = liveParent.checkinDate
+      const origCout = liveParent.checkoutDate
+      const targetCin = resItem.attemptedCheckinDate || origCin
+      const targetCout = resItem.attemptedCheckoutDate || resItem.extensionEndDate || origCout
+      const baseRates = Array.isArray(liveParent.dailyRates) && liveParent.dailyRates.length > 0
+        ? liveParent.dailyRates
+        : buildReservationDailyRates(origCin, origCout, Number(liveParent.dailyRate) || 250, liveParent.channel || "whatsapp", [])
+      const fallbackRate = Number(resItem.addedDailyRates?.[0]?.rate) || Number(baseRates[baseRates.length - 1]?.rate) || Number(liveParent.dailyRate) || 250
+      const mergedSeeds = [
+        ...baseRates,
+        ...(Array.isArray(resItem.addedDailyRates) ? resItem.addedDailyRates : [])
+      ]
+      const rebuiltRates = buildReservationDailyRates(
+        targetCin,
+        targetCout,
+        fallbackRate,
+        "whatsapp",
+        mergedSeeds
+      )
+      setFormCheckin(targetCin)
+      setFormCheckout(targetCout)
+      setFormDailyRates(rebuiltRates)
+      setFormStatus("confirmada")
+      syncCompositeTotalAndPaid(rebuiltRates, liveParent.charges || [], liveParent.channel || "whatsapp")
+      setIsReactivatingRes(false)
+      setIsReactivatingExt(true)
+      setFormExtensionHoldMode("pre_reserva")
+      setFormHoldManuallyChosen(false)
+      setFormSendExpirationReminder(true)
+      const extStart = resItem.extensionStartDate || origCout
+      setFormHoldPreset(getDefaultHoldPresetForExtension(extStart))
+      if (resItem.isOriginalFlatAvailable === false) {
+        setReactivationFlatSwitchedInfo(`Atenção: O Flat ${liveParent.flatNumber} já recebeu outra ocupação no período adicional (${extStart.split("-").reverse().join("/")} a ${targetCout.split("-").reverse().join("/")}). Verifique remanejamento antes de salvar.`)
+      } else {
+        setReactivationFlatSwitchedInfo(null)
+      }
+      return
+    }
+
     handleOpenEditRes(resItem)
     setFormStatus("pre_reserva")
     setFormPayments([])
     setFormPaidAmount("0")
     setFormPaymentStatus("pendente")
     setIsReactivatingRes(true)
+    setIsReactivatingExt(false)
     setFormHoldManuallyChosen(false)
     setFormSendExpirationReminder(true)
     setFormHoldPreset(getDefaultHoldPresetForCheckin(resItem.checkinDate))
@@ -5928,6 +6169,32 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
               : null)
 
       const holdInfoForSave = statusToSave === "pre_reserva" ? computeHoldExpirationInfo() : null
+      const baseExtCinForSave = selectedRes
+        ? (selectedRes.pendingStayExtension?.isPreReservationHold
+            ? (selectedRes.pendingStayExtension.oldCheckinDate || selectedRes.checkinDate)
+            : selectedRes.checkinDate)
+        : ""
+      const baseExtCoutForSave = selectedRes
+        ? (selectedRes.pendingStayExtension?.isPreReservationHold
+            ? (selectedRes.pendingStayExtension.oldCheckoutDate || selectedRes.checkoutDate)
+            : selectedRes.checkoutDate)
+        : ""
+      const hasAddedDirectNightForSave = Boolean(
+        selectedRes &&
+        statusToSave !== "pre_reserva" &&
+        !formIsFaturadoBoleto &&
+        !isB2b &&
+        paidAmount < totalAmount - 0.01 &&
+        formDailyRates.some(d => {
+          const ch = String(d.channel || "").toLowerCase()
+          const isPaidOtaOrB2bChan = ch.includes("booking") || ch.includes("airbnb") || ch.includes("b2b")
+          return !isPaidOtaOrB2bChan && (d.date < baseExtCinForSave || d.date >= baseExtCoutForSave)
+        })
+      )
+      const extHoldInfoForSave =
+        hasAddedDirectNightForSave && formExtensionHoldMode === "pre_reserva"
+          ? computeHoldExpirationInfo()
+          : null
       const isReactivatingNow = Boolean(isReactivatingRes || selectedRes?.status === "expirada")
       const hasCompanyLink = Boolean(resolvedReqType === "company" || formInvoiceRecipientType === "company" || isB2b)
       const resolvedInvRecType: "company" | "agency" | "guest" | "requester" = isB2b
@@ -6008,6 +6275,19 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
           expiresAt: holdInfoForSave.expiresAt,
           sendExpirationReminder: holdInfoForSave.sendExpirationReminder
         } : {}),
+        ...(hasAddedDirectNightForSave ? {
+          extensionHoldMode: formExtensionHoldMode,
+          ...(extHoldInfoForSave ? {
+            holdPreset: extHoldInfoForSave.holdPreset,
+            holdDurationMinutes: extHoldInfoForSave.holdDurationMinutes,
+            holdDurationLabel: extHoldInfoForSave.holdDurationLabel,
+            expiresAt: extHoldInfoForSave.expiresAt,
+            sendExpirationReminder: extHoldInfoForSave.sendExpirationReminder
+          } : {})
+        } : (selectedRes?.pendingStayExtension?.status === "pending_payment" ? {
+          extensionHoldMode: formExtensionHoldMode
+        } : {})),
+        ...(isReactivatingExt ? { reactivateExpiredExtension: true } : {}),
         ...(isReactivatingNow ? { reactivatePreReservation: true } : {}),
         channel: isB2b ? "b2b" : (formChannel || (formDailyRates.length > 0 && formDailyRates[0].channel) || "whatsapp"),
         paymentMethod: formIsFaturadoBoleto ? "boleto_faturado" : resolvedMethod,
@@ -7661,6 +7941,44 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                     </div>
                                   )}
 
+                                  {/* Overlay Segmentado para Diária(s) Extra(s) em Pré-Reserva (Aguardando Pagamento) */}
+                                  {resItem.status !== 'pre_reserva' &&
+                                    resItem.pendingStayExtension?.isPreReservationHold &&
+                                    resItem.pendingStayExtension?.status === 'pending_payment' && (() => {
+                                      const ext = resItem.pendingStayExtension;
+                                      const addedSet = new Set<string>(
+                                        Array.isArray(ext.addedDates) && ext.addedDates.length > 0
+                                          ? ext.addedDates
+                                          : []
+                                      );
+                                      const nTotal = Math.max(1, Number(nightsCount) || 1);
+                                      const startDt = safeParseDate(resItem.checkinDate);
+                                      if (!startDt) return null;
+                                      return (
+                                        <div className="absolute inset-0 flex pointer-events-none overflow-hidden rounded-xl z-[5]">
+                                          {Array.from({ length: nTotal }).map((_, idx) => {
+                                            const nightStr = format(addDays(startDt, idx), "yyyy-MM-dd");
+                                            const isHoldNight = addedSet.size > 0
+                                              ? addedSet.has(nightStr)
+                                              : Boolean(ext.oldCheckoutDate && nightStr >= ext.oldCheckoutDate);
+                                            if (!isHoldNight) {
+                                              return <div key={idx} className="flex-1 h-full" />;
+                                            }
+                                            return (
+                                              <div
+                                                key={idx}
+                                                className="flex-1 h-full border-2 border-dashed border-amber-300 bg-amber-400/35"
+                                                style={{
+                                                  backgroundImage:
+                                                    "repeating-linear-gradient(135deg, rgba(251,191,36,0.42) 0px, rgba(251,191,36,0.42) 6px, rgba(15,23,42,0.28) 6px, rgba(15,23,42,0.28) 12px)"
+                                                }}
+                                              />
+                                            );
+                                          })}
+                                        </div>
+                                      );
+                                    })()}
+
                                   {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
                                   <div
                                     style={{ touchAction: "none" }}
@@ -7707,6 +8025,23 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                                         })() : ""}
                                       </span>
                                     )}
+                                    {resItem.status !== 'pre_reserva' &&
+                                      resItem.pendingStayExtension?.isPreReservationHold &&
+                                      resItem.pendingStayExtension?.status === 'pending_payment' && (
+                                        <span
+                                          data-extension-hold-badge="true"
+                                          title={`Diária(s) extra(s) em Pré-Reserva aguardando pagamento${resItem.pendingStayExtension.expiresAt ? ` • Vence às ${format(new Date(resItem.pendingStayExtension.expiresAt), "dd/MM HH:mm")}` : ""} (Reserva principal segue confirmada)`}
+                                          className="shrink-0 text-[9px] px-1.5 py-0.2 bg-amber-400 text-slate-950 border border-amber-200 font-black rounded shadow-xs flex items-center gap-0.5"
+                                        >
+                                          ⏳ +{resItem.pendingStayExtension.extraNights || 1} diária{resItem.pendingStayExtension.expiresAt ? (() => {
+                                            try {
+                                              return ` • até ${format(new Date(resItem.pendingStayExtension.expiresAt), "HH:mm")}`
+                                            } catch {
+                                              return ""
+                                            }
+                                          })() : ""}
+                                        </span>
+                                      )}
                                     {(resItem.isFlatLocked || resItem.flatLocked) && (
                                       <span title={`Quarto Preferencial / Bloqueado${resItem.flatLockReason ? `: ${resItem.flatLockReason}` : ""}`} className="shrink-0 text-[9px] px-1.5 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
                                         🔒 Fixo
@@ -8200,6 +8535,80 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
                         <span className="text-emerald-700">R$ {dragConfirmData.targetTotal.toFixed(2)}</span>
                       </div>
+                    </div>
+                  )}
+
+                  {dragConfirmData.isUnpaidDirectExtension && (
+                    <div className="mt-2.5 pt-2.5 border-t border-amber-300/80 space-y-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-[11px] font-black text-amber-900 flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-amber-600" />
+                          +{dragConfirmData.addedNightsCount || 1} diária(s) extra(s) pendente(s) (R$ {Number(dragConfirmData.extraPendingAmount || 0).toFixed(2)})
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDragConfirmData(prev => prev ? { ...prev, extensionHoldMode: "pre_reserva" } : prev)
+                          }
+                          className={`p-2 rounded-lg border text-left text-[11px] font-bold transition-all cursor-pointer ${
+                            (dragConfirmData.extensionHoldMode || "pre_reserva") === "pre_reserva"
+                              ? "bg-amber-500 text-slate-950 border-amber-600 shadow-xs"
+                              : "bg-white border-slate-200 text-slate-700 hover:border-amber-400"
+                          }`}
+                        >
+                          ⏳ Pré-Reserva Extra
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDragConfirmData(prev => prev ? { ...prev, extensionHoldMode: "confirmada_sem_prazo" } : prev)
+                          }
+                          className={`p-2 rounded-lg border text-left text-[11px] font-bold transition-all cursor-pointer ${
+                            dragConfirmData.extensionHoldMode === "confirmada_sem_prazo"
+                              ? "bg-emerald-600 text-white border-emerald-700 shadow-xs"
+                              : "bg-white border-slate-200 text-slate-700 hover:border-emerald-400"
+                          }`}
+                        >
+                          ✅ Confirmar sem prazo
+                        </button>
+                      </div>
+
+                      {(dragConfirmData.extensionHoldMode || "pre_reserva") === "pre_reserva" && (
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap gap-1">
+                            {([
+                              { id: "10m", label: "⏱️ 10m" },
+                              { id: "30m", label: "⏱️ 30m" },
+                              { id: "2h", label: "⏳ 2h" },
+                              { id: "until_2359", label: "🌙 Até 23:59" }
+                            ] as const).map(opt => {
+                              const active = (dragConfirmData.extensionHoldPreset || "30m") === opt.id;
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() =>
+                                    setDragConfirmData(prev => prev ? { ...prev, extensionHoldPreset: opt.id } : prev)
+                                  }
+                                  className={`px-2 py-1 rounded-md text-[10.5px] font-bold border transition-all cursor-pointer ${
+                                    active
+                                      ? "bg-amber-600 text-white border-amber-700"
+                                      : "bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100"
+                                  }`}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <p className="text-[10px] text-amber-800 leading-snug">
+                            Se não houver pagamento no prazo, apenas a(s) diária(s) extra(s) expira(m) e a reserva original segue confirmada.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -11207,6 +11616,257 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                     )
                   })()}
                 </div>
+
+                {/* Painel Dedicado: Pré-Reserva da Diária Extra (Quando diária adicional está com saldo pendente em reserva já confirmada) */}
+                {selectedRes && formStatus !== "pre_reserva" && !formIsFaturadoBoleto && formChannel !== "b2b" && (() => {
+                  const baseCin = selectedRes.pendingStayExtension?.isPreReservationHold
+                    ? (selectedRes.pendingStayExtension.oldCheckinDate || selectedRes.checkinDate)
+                    : selectedRes.checkinDate
+                  const baseCout = selectedRes.pendingStayExtension?.isPreReservationHold
+                    ? (selectedRes.pendingStayExtension.oldCheckoutDate || selectedRes.checkoutDate)
+                    : selectedRes.checkoutDate
+                  const addedDirectRates = formDailyRates.filter(d => {
+                    const ch = String(d.channel || "").toLowerCase()
+                    const isPaidOtaOrB2bChan = ch.includes("booking") || ch.includes("airbnb") || ch.includes("b2b")
+                    return !isPaidOtaOrB2bChan && (d.date < baseCin || d.date >= baseCout)
+                  })
+                  const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
+                  const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+                  const isPaidFullNow = formPaymentStatus === "pago_total" || formPaymentStatus === "pago"
+                  const curPaid = isPaidFullNow ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0))
+                  const pendingExtBalance = Math.max(0, Math.round((curTot - curPaid) * 100) / 100)
+                  const hasActiveServerPendingExt = selectedRes.pendingStayExtension?.status === "pending_payment"
+
+                  if ((addedDirectRates.length === 0 || pendingExtBalance <= 0.01 || isPaidFullNow) && !hasActiveServerPendingExt) {
+                    return null
+                  }
+
+                  const holdPreview = computeHoldExpirationInfo()
+                  const firstAddedStr = addedDirectRates[0]?.date || baseCout
+                  const defaultExtPreset = getDefaultHoldPresetForExtension(firstAddedStr)
+                  const extPresetOptions: { id: "10m" | "30m" | "2h" | "until_2359" | "custom"; label: string; badge?: string }[] = [
+                    { id: "10m", label: "⏱️ 10 min" },
+                    { id: "30m", label: "⏱️ 30 min", badge: defaultExtPreset === "30m" ? "Padrão" : undefined },
+                    { id: "2h", label: "⏳ 2h", badge: defaultExtPreset === "2h" ? "Padrão" : undefined },
+                    { id: "until_2359", label: "🌙 Até 23:59 de hoje", badge: defaultExtPreset === "until_2359" ? "Padrão" : undefined },
+                    { id: "custom", label: "⚙️ Outro tempo" }
+                  ]
+
+                  return (
+                    <div className="p-3.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/35 border-2 border-dashed border-amber-400 dark:border-amber-700 space-y-3 shadow-2xs animate-in fade-in">
+                      <div className="flex items-start justify-between gap-2 flex-wrap">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 text-xs font-black text-amber-950 dark:text-amber-100">
+                            <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                            <span>
+                              ⏳ Modo da(s) +{Math.max(1, addedDirectRates.length || selectedRes.pendingStayExtension?.extraNights || 1)} Diária(s) Extra(s) sem Pagamento (R$ {pendingExtBalance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-amber-900/90 dark:text-amber-300 leading-snug">
+                            A reserva original (<strong>{baseCin?.split("-").reverse().join("/")}</strong> a <strong>{baseCout?.split("-").reverse().join("/")}</strong>) permanece 100% confirmada e quitada. Apenas o período adicional entra aguardando pagamento.
+                          </p>
+                        </div>
+
+                        {hasActiveServerPendingExt && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={cancellingPendingExt}
+                            onClick={handleCancelPendingExtension}
+                            className="h-7 px-2.5 rounded-lg border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-800 font-bold text-[10.5px] gap-1 shrink-0 cursor-pointer"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span>{cancellingPendingExt ? "Revertendo..." : "↩️ Cancelar apenas diária(s) pendente(s)"}</span>
+                          </Button>
+                        )}
+                      </div>
+
+                      {isReactivatingExt && (
+                        <div className="p-2.5 rounded-xl bg-indigo-50/95 dark:bg-indigo-950/50 border border-indigo-300 dark:border-indigo-700 text-[11px] text-indigo-950 dark:text-indigo-200 space-y-1">
+                          <div className="font-black flex items-center gap-1.5">
+                            <RotateCcw className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            <span>🔄 Reativando Diária Extra Expirada ({selectedRes.code})</span>
+                          </div>
+                          <p className="text-[10.5px] text-indigo-800 dark:text-indigo-300">
+                            Escolha o novo prazo de validade abaixo e clique em <strong>Salvar</strong> para reenviar a cobrança PIX/Cartão no WhatsApp.
+                          </p>
+                          {reactivationFlatSwitchedInfo && (
+                            <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-950/70 border border-amber-400 text-amber-950 dark:text-amber-200 font-bold">
+                              {reactivationFlatSwitchedInfo}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setFormExtensionHoldMode("pre_reserva")}
+                          className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between cursor-pointer ${
+                            formExtensionHoldMode === "pre_reserva"
+                              ? "bg-amber-500 text-slate-950 border-amber-600 shadow-xs"
+                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-amber-400"
+                          }`}
+                        >
+                          <span>⏳ Pré-Reserva da Diária Extra (Com Prazo)</span>
+                          {formExtensionHoldMode === "pre_reserva" && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormExtensionHoldMode("confirmada_sem_prazo")}
+                          className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between cursor-pointer ${
+                            formExtensionHoldMode === "confirmada_sem_prazo"
+                              ? "bg-emerald-600 text-white border-emerald-700 shadow-xs"
+                              : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-emerald-400"
+                          }`}
+                        >
+                          <span>✅ Confirmar Sem Prazo (Hóspede de Confiança)</span>
+                          {formExtensionHoldMode === "confirmada_sem_prazo" && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
+                        </button>
+                      </div>
+
+                      {formExtensionHoldMode === "pre_reserva" && (
+                        <div className="pt-2 border-t border-amber-300/60 dark:border-amber-800/60 space-y-2.5">
+                          <div className="flex flex-wrap gap-1.5">
+                            {extPresetOptions.map(opt => {
+                              const active = formHoldPreset === opt.id
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setFormHoldPreset(opt.id)
+                                    setFormHoldManuallyChosen(true)
+                                  }}
+                                  className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                                    active
+                                      ? "bg-amber-600 text-white border-amber-600 shadow-xs ring-2 ring-amber-400/40"
+                                      : "bg-background/90 border-amber-300/80 dark:border-amber-800 text-slate-800 dark:text-slate-200 hover:bg-amber-100/60"
+                                  }`}
+                                >
+                                  <span>{opt.label}</span>
+                                  {opt.badge && (
+                                    <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-black ${
+                                      active ? "bg-white/25 text-white" : "bg-amber-200/80 text-amber-900"
+                                    }`}>
+                                      {opt.badge}
+                                    </span>
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+
+                          {formHoldPreset === "custom" && (
+                            <div className="p-2.5 rounded-xl bg-background/95 border border-amber-300 dark:border-amber-800 space-y-2.5">
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setFormHoldCustomMode("duration")}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                                    formHoldCustomMode === "duration"
+                                      ? "bg-amber-600 text-white"
+                                      : "bg-muted text-muted-foreground hover:text-foreground"
+                                  }`}
+                                >
+                                  Por Duração (Minutos / Horas)
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setFormHoldCustomMode("datetime")}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                                    formHoldCustomMode === "datetime"
+                                      ? "bg-amber-600 text-white"
+                                      : "bg-muted text-muted-foreground hover:text-foreground"
+                                  }`}
+                                >
+                                  Data e Hora Exata
+                                </button>
+                              </div>
+
+                              {formHoldCustomMode === "duration" ? (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    max="10080"
+                                    value={formHoldCustomValue}
+                                    onChange={e => setFormHoldCustomValue(e.target.value)}
+                                    className="h-8 w-24 text-xs font-bold"
+                                  />
+                                  <select
+                                    value={formHoldCustomUnit}
+                                    onChange={e => setFormHoldCustomUnit(e.target.value as "minutes" | "hours")}
+                                    className="h-8 px-2.5 rounded-md border border-input bg-background text-xs font-bold"
+                                  >
+                                    <option value="minutes">Minutos</option>
+                                    <option value="hours">Horas</option>
+                                  </select>
+                                </div>
+                              ) : (
+                                <Input
+                                  type="datetime-local"
+                                  value={formHoldCustomDateTime}
+                                  onChange={e => setFormHoldCustomDateTime(e.target.value)}
+                                  className="h-8 text-xs font-mono"
+                                />
+                              )}
+                            </div>
+                          )}
+
+                          <div className="p-2.5 rounded-xl bg-amber-100/80 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-[11px] text-amber-950 dark:text-amber-200 space-y-2">
+                            <div className="flex items-start gap-2">
+                              <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                              <div className="space-y-0.5">
+                                <div>
+                                  <strong>Validade da Diária Extra:</strong> até <strong>{holdPreview.formattedDeadline}</strong> ({holdPreview.holdDurationLabel}).
+                                </div>
+                                <div className="text-[10.5px] text-amber-800 dark:text-amber-300/90">
+                                  Se não pagar no prazo, apenas a(s) diária(s) extra(s) expira(m) automaticamente e o hóspede é avisado de que sua reserva original segue confirmada.
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="pt-2 border-t border-amber-300/60 dark:border-amber-800/60 flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-1.5 text-[10.5px]">
+                                <Bell className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
+                                {holdPreview.reminderLeadMinutes <= 0 ? (
+                                  <span className="text-amber-800 dark:text-amber-300">
+                                    <strong>Lembrete intermediário:</strong> Não enviado em prazos de 10 min.
+                                  </span>
+                                ) : formSendExpirationReminder ? (
+                                  <span className="text-amber-950 dark:text-amber-100">
+                                    <strong>Lembrete no WhatsApp:</strong> faltando <strong>{holdPreview.reminderLeadLabel}</strong>{holdPreview.reminderFormattedTime ? ` (${holdPreview.reminderFormattedTime})` : ""} com PIX + Link.
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground line-through">
+                                    Lembrete antes de expirar desativado
+                                  </span>
+                                )}
+                              </div>
+
+                              {holdPreview.reminderLeadMinutes > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setFormSendExpirationReminder(prev => !prev)}
+                                  className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                    formSendExpirationReminder
+                                      ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                                      : "bg-background text-muted-foreground border-border hover:text-foreground"
+                                  }`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${formSendExpirationReminder ? "bg-white" : "bg-slate-400"}`} />
+                                  {formSendExpirationReminder ? "Lembrete Ativo" : "Lembrete Desativado"}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
 
                 {/* Resumo Financeiro & Atalho para a Aba de Pagamentos */}
                 <div className="p-3.5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
@@ -15848,6 +16508,10 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
               ) : (
                 data.expiredPreReservations.map((expRes: any) => {
                   const isOrigFree = expRes.isOriginalFlatAvailable !== false
+                  const isExpExt = Boolean(expRes.isExpiredExtension)
+                  const dispCheckin = isExpExt ? (expRes.extensionStartDate || expRes.checkinDate) : expRes.checkinDate
+                  const dispCheckout = isExpExt ? (expRes.extensionEndDate || expRes.attemptedCheckoutDate || expRes.checkoutDate) : expRes.checkoutDate
+                  const dispAmount = isExpExt ? Number(expRes.extraAmount || 0) : Number(expRes.totalAmount || 0)
                   return (
                     <div
                       key={expRes.id || expRes.code}
@@ -15861,22 +16525,36 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                           <Badge variant="outline" className="font-mono text-[10px] font-bold">
                             {expRes.code}
                           </Badge>
+                          {isExpExt && (
+                            <Badge className="bg-amber-500 text-slate-950 text-[10px] font-black">
+                              ➕ Diária Extra Expirada
+                            </Badge>
+                          )}
                           <Badge className={isOrigFree ? "bg-emerald-600 text-white text-[10px] font-bold" : "bg-amber-600 text-white text-[10px] font-bold"}>
-                            {isOrigFree ? `✓ Flat ${expRes.flatNumber} Livre` : `⚠️ Flat ${expRes.flatNumber} Ocupado`}
+                            {isOrigFree
+                              ? (isExpExt ? `✓ Flat ${expRes.flatNumber} Livre no Extra` : `✓ Flat ${expRes.flatNumber} Livre`)
+                              : `⚠️ Flat ${expRes.flatNumber} Ocupado`}
                           </Badge>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                           <span>
-                            📅 <strong>{expRes.checkinDate?.split("-").reverse().join("/")}</strong> a <strong>{expRes.checkoutDate?.split("-").reverse().join("/")}</strong>
+                            📅 {isExpExt ? "Extra: " : ""}<strong>{dispCheckin?.split("-").reverse().join("/")}</strong> a <strong>{dispCheckout?.split("-").reverse().join("/")}</strong>
+                            {isExpExt ? ` (+${expRes.extraNights || 1} diária)` : ""}
                           </span>
                           <span>
-                            💰 <strong>R$ {Number(expRes.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                            💰 <strong>R$ {dispAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
                           </span>
                           {expRes.guestPhone && (
                             <span>📱 {expRes.guestPhone}</span>
                           )}
                         </div>
+
+                        {isExpExt && (
+                          <div className="text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold">
+                            ✅ Reserva principal ({expRes.checkinDate?.split("-").reverse().join("/")} a {expRes.checkoutDate?.split("-").reverse().join("/")}) segue 100% confirmada
+                          </div>
+                        )}
 
                         <div className="text-[11px] text-amber-700 dark:text-amber-400 font-medium flex items-center gap-1.5 flex-wrap">
                           <span>
@@ -15901,7 +16579,7 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                           className="h-9 px-3.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs gap-1.5 shadow-xs cursor-pointer"
                         >
                           <RotateCcw className="w-3.5 h-3.5" />
-                          <span>🔄 Reativar Pré-Reserva</span>
+                          <span>{isExpExt ? "🔄 Reativar Diária Extra" : "🔄 Reativar Pré-Reserva"}</span>
                         </Button>
                       </div>
                     </div>

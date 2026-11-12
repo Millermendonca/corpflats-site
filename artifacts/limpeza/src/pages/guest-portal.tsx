@@ -1341,29 +1341,54 @@ export default function GuestPortal() {
             }) : null)
             return
           }
+          if (json.stayExtensionExpired) {
+            setData((prev: any) => prev ? ({
+              ...prev,
+              reservation: {
+                ...prev.reservation,
+                checkinDate: json.checkinDate || prev.reservation.checkinDate,
+                checkoutDate: json.checkoutDate || prev.reservation.checkoutDate,
+                dailyRates: Array.isArray(json.dailyRates) ? json.dailyRates : prev.reservation.dailyRates,
+                paymentStatus: "pago_total",
+                paidAmount: json.paidAmount ?? prev.reservation.paidAmount,
+                totalAmount: json.totalAmount ?? prev.reservation.totalAmount,
+                pendingStayExtension: null,
+                expiredStayExtension: json.expiredStayExtension || prev.reservation.expiredStayExtension || null,
+                pixCopiaECola: null,
+                mpInitPoint: null
+              }
+            }) : null)
+            return
+          }
           if (json.paid) {
             setPaymentSuccessNotice(true)
             setData((prev: any) => prev ? ({
               ...prev,
               reservation: {
                 ...prev.reservation,
+                checkinDate: json.checkinDate || prev.reservation.checkinDate,
+                checkoutDate: json.checkoutDate || prev.reservation.checkoutDate,
+                dailyRates: Array.isArray(json.dailyRates) ? json.dailyRates : prev.reservation.dailyRates,
                 paymentStatus: "pago_total",
                 paymentMethod: json.paymentMethod || (json.mpPaymentId ? "cartao_credito" : prev.reservation.paymentMethod),
                 paidAmount: json.paidAmount,
                 totalAmount: json.totalAmount || prev.reservation.totalAmount,
                 paidAt: json.paidAt || prev.reservation.paidAt || new Date().toISOString(),
+                pendingStayExtension: null,
+                expiredStayExtension: null,
                 pixTxId: (json.paymentMethod === "cartao_credito" || json.mpPaymentId) ? null : (json.pixTxId || prev.reservation.pixTxId),
                 pixEndToEndId: json.pixEndToEndId || prev.reservation.pixEndToEndId,
                 mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
               }
             }) : null)
-          } else if (json.pixCopiaECola || json.totalAmount) {
+          } else if (json.pixCopiaECola || json.totalAmount || json.pendingStayExtension) {
             setData((prev: any) => {
               if (!prev?.reservation) return prev
               if (
                 prev.reservation.pixCopiaECola === json.pixCopiaECola &&
                 Number(prev.reservation.totalAmount) === Number(json.totalAmount) &&
-                prev.reservation.mpInitPoint === json.mpInitPoint
+                prev.reservation.mpInitPoint === json.mpInitPoint &&
+                prev.reservation.pendingStayExtension?.expiresAt === json.pendingStayExtension?.expiresAt
               ) {
                 return prev
               }
@@ -1371,6 +1396,10 @@ export default function GuestPortal() {
                 ...prev,
                 reservation: {
                   ...prev.reservation,
+                  checkinDate: json.checkinDate || prev.reservation.checkinDate,
+                  checkoutDate: json.checkoutDate || prev.reservation.checkoutDate,
+                  dailyRates: Array.isArray(json.dailyRates) ? json.dailyRates : prev.reservation.dailyRates,
+                  pendingStayExtension: json.pendingStayExtension !== undefined ? json.pendingStayExtension : prev.reservation.pendingStayExtension,
                   totalAmount: json.totalAmount ?? prev.reservation.totalAmount,
                   cardTotalAmount: json.cardTotalAmount ?? prev.reservation.cardTotalAmount,
                   cardPendingAmount: json.cardPendingAmount ?? prev.reservation.cardPendingAmount,
@@ -3679,6 +3708,31 @@ export default function GuestPortal() {
             </div>
           )}
 
+          {isPaid && reservation?.expiredStayExtension && !reservation?.pendingStayExtension && !hideFinancialForGuest && (
+            <div className="p-3.5 rounded-2xl bg-amber-50/90 border border-amber-300 text-xs text-amber-950 space-y-2">
+              <div className="flex items-start gap-2.5">
+                <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <span className="font-bold block">
+                    ⏳ O prazo da diária extra adicional expirou sem confirmação de pagamento
+                  </span>
+                  <span className="text-[11px] text-amber-900 block leading-relaxed">
+                    Fique tranquilo(a): sua reserva principal de <strong>{formatDate(reservation.checkinDate)}</strong> a <strong>{formatDate(reservation.checkoutDate)}</strong> permanece <strong>100% confirmada e quitada</strong>. Caso ainda deseje prorrogar até {formatDate(reservation.expiredStayExtension.attemptedCheckoutDate)}, fale conosco pelo WhatsApp para verificarmos a disponibilidade.
+                  </span>
+                </div>
+              </div>
+              <a
+                href={`https://wa.me/${finalWaNumber}?text=${encodeURIComponent(`Olá! Gostaria de reativar a diária extra da minha reserva ${reservation.code} (saída em ${formatDate(reservation.expiredStayExtension.attemptedCheckoutDate)}).`)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition-all"
+              >
+                <WhatsAppIcon className="w-3.5 h-3.5" />
+                <span>Solicitar Reativação da Diária Extra</span>
+              </a>
+            </div>
+          )}
+
           {/* Se NÃO PAGO (exceto Boleto Faturado): Permanece com Resumo Financeiro Completo para Pagamento */}
           {!isPaid && !isFaturadoBoleto && !hideFinancialForGuest && (
             <div className={`grid grid-cols-1 ${paidAmount > 0 ? "sm:grid-cols-3" : "sm:grid-cols-2"} gap-2.5 text-xs`}>
@@ -3728,6 +3782,29 @@ export default function GuestPortal() {
                   </div>
                 </div>
               )}
+
+              {reservation.status !== "pre_reserva" &&
+                reservation.pendingStayExtension?.isPreReservationHold &&
+                reservation.pendingStayExtension?.status === "pending_payment" &&
+                reservation.pendingStayExtension?.expiresAt && (
+                  <div className="p-3.5 rounded-2xl bg-amber-50 border border-dashed border-amber-400 text-xs text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <span className="font-bold block">
+                          ⏳ Pré-Reserva de +{reservation.pendingStayExtension.extraNights || 1} Diária(s) Extra(s): até {format(new Date(reservation.pendingStayExtension.expiresAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                        </span>
+                        <span className="text-[11px] text-amber-800 block leading-relaxed">
+                          Conclua o pagamento do saldo adicional dentro deste prazo para confirmar a prorrogação. Caso o tempo expire, apenas a(s) diária(s) extra(s) será(ão) cancelada(s) e sua reserva original permanecerá 100% confirmada.
+                        </span>
+                      </div>
+                    </div>
+                    <HoldCountdownBadge
+                      expiresAt={reservation.pendingStayExtension.expiresAt}
+                      onExpire={() => fetchPortalData()}
+                    />
+                  </div>
+                )}
 
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-slate-700 block">

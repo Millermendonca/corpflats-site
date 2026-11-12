@@ -149,21 +149,170 @@ export const alterarDatasReservaTool: AgentToolDefinition<AlterarDatasReservaArg
       }
 
       // Efetiva a alteração no banco de dados quando disponível
+      let expiraEmHoraBr = '';
+      let expiraEmIso = '';
       if (Array.isArray(db?.reservations)) {
         const targetRes = db.reservations.find((r: any) => {
           const rCode = String(r?.code || r?.reservationCode || r?.id || '');
           return rCode === reserva.id;
         });
         if (targetRes) {
+          const nowDate = new Date();
+          const nowIso = nowDate.toISOString();
+          const priorExt =
+            targetRes.pendingStayExtension?.isPreReservationHold &&
+            targetRes.pendingStayExtension?.status === 'pending_payment'
+              ? targetRes.pendingStayExtension
+              : null;
+          const origCheckin = String(priorExt?.oldCheckinDate || targetRes.checkinDate || reserva.data_checkin).slice(0, 10);
+          const origCheckout = String(priorExt?.oldCheckoutDate || targetRes.checkoutDate || reserva.data_checkout).slice(0, 10);
+          const origDailyRates = priorExt?.oldDailyRates
+            ? priorExt.oldDailyRates.map((d: any) => ({ ...d }))
+            : Array.isArray(targetRes.dailyRates)
+              ? targetRes.dailyRates.map((d: any) => ({ ...d }))
+              : [];
+          const origCharges = priorExt?.oldCharges
+            ? priorExt.oldCharges.map((c: any) => ({ ...c }))
+            : Array.isArray(targetRes.charges)
+              ? targetRes.charges.map((c: any) => ({ ...c }))
+              : [];
+          const origCleaningFee =
+            priorExt?.oldCleaningFee !== undefined ? Number(priorExt.oldCleaningFee) || 0 : Number(targetRes.cleaningFee) || 0;
+          const origTotal =
+            priorExt?.oldTotalAmount !== undefined ? Number(priorExt.oldTotalAmount) || 0 : Number(targetRes.totalAmount) || 0;
+          const origPaid =
+            priorExt?.oldPaidAmount !== undefined ? Number(priorExt.oldPaidAmount) || 0 : Number(targetRes.paidAmount) || 0;
+          const origPaymentStatus = priorExt?.oldPaymentStatus || targetRes.paymentStatus || 'pago_total';
+
           targetRes.checkinDate = novaEntrada;
           targetRes.checkoutDate = novaSaida;
           targetRes.nights = novasDiarias;
-          if (diferencaValor > 0 && typeof targetRes.totalAmount === 'number') {
-            targetRes.totalAmount += diferencaValor;
+
+          if (diferencaValor > 0) {
+            const addedDates: string[] = [];
+            for (let i = 0; i < novasDiarias; i++) {
+              const dtStr = new Date(new Date(`${novaEntrada}T12:00:00Z`).getTime() + i * 86400000)
+                .toISOString()
+                .slice(0, 10);
+              if (dtStr < origCheckin || dtStr >= origCheckout) {
+                addedDates.push(dtStr);
+              }
+            }
+            const addedDailyRates = addedDates.map((dt) => ({
+              date: dt,
+              rate: tarifaBaseDiaria,
+              channel: 'whatsapp',
+            }));
+            if (origDailyRates.length > 0) {
+              const keptRates = origDailyRates.filter((d: any) => d && d.date >= novaEntrada && d.date < novaSaida);
+              targetRes.dailyRates = [...keptRates, ...addedDailyRates].sort((a, b) =>
+                String(a.date).localeCompare(String(b.date))
+              );
+            }
+
+            const newTotal = Number(((typeof targetRes.totalAmount === 'number' ? targetRes.totalAmount : origTotal) + diferencaValor).toFixed(2));
+            targetRes.totalAmount = newTotal;
+            targetRes.cardTotalAmount = Number((newTotal / 0.95).toFixed(2));
+            if (origPaid > 0 && origPaid < newTotal) {
+              targetRes.paymentStatus = 'parcial';
+            }
+
+            const resolveHoldFn = (globalThis as any).resolveStayExtensionHold;
+            const holdInfo =
+              typeof resolveHoldFn === 'function'
+                ? resolveHoldFn({ source: 'whatsapp_ai' }, addedDates[0] || origCheckout)
+                : {
+                    expiresAt: new Date(nowDate.getTime() + 30 * 60 * 1000).toISOString(),
+                    reminderAt: new Date(nowDate.getTime() + 20 * 60 * 1000).toISOString(),
+                    reminderLeadMinutes: 10,
+                    reminderLeadLabel: '10 minutos',
+                    sendExpirationReminder: true,
+                    holdPreset: '30m',
+                    holdDurationMinutes: 30,
+                    holdDurationLabel: '30 minutos',
+                  };
+            expiraEmIso = holdInfo.expiresAt;
+            expiraEmHoraBr = new Intl.DateTimeFormat('pt-BR', {
+              timeZone: 'America/Sao_Paulo',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            }).format(new Date(holdInfo.expiresAt));
+
+            const hadSignedFnrh = Boolean(
+              targetRes.preCheckinCompleted ||
+                targetRes.fnrhSignedAt ||
+                targetRes.signatureDataUrl ||
+                targetRes.fnrhSignature ||
+                targetRes.checkinDone ||
+                targetRes.actualCheckinAt
+            );
+
+            targetRes.oldCheckoutDateBeforeExtension = origCheckout;
+            targetRes.pendingStayExtension = {
+              isPreReservationHold: true,
+              source: 'whatsapp_ai',
+              status: 'pending_payment',
+              amount: Number((newTotal - origPaid).toFixed(2)),
+              extraNights: Math.max(1, addedDates.length || diferencaDiarias),
+              newTotalNights: novasDiarias,
+              oldCheckinDate: origCheckin,
+              oldCheckoutDate: origCheckout,
+              newCheckinDate: novaEntrada,
+              newCheckoutDate: novaSaida,
+              addedDates,
+              addedDailyRates,
+              oldDailyRates: origDailyRates,
+              oldCharges: origCharges,
+              oldCleaningFee: origCleaningFee,
+              oldTotalAmount: origTotal,
+              oldPaidAmount: origPaid,
+              oldPaymentStatus: origPaymentStatus,
+              requiresDeferredReSignature: hadSignedFnrh,
+              expiresAt: holdInfo.expiresAt,
+              reminderAt: holdInfo.reminderAt,
+              reminderLeadMinutes: holdInfo.reminderLeadMinutes,
+              reminderLeadLabel: holdInfo.reminderLeadLabel,
+              sendExpirationReminder: holdInfo.sendExpirationReminder !== false,
+              holdPreset: holdInfo.holdPreset || '30m',
+              holdDurationMinutes: holdInfo.holdDurationMinutes || 30,
+              holdDurationLabel: holdInfo.holdDurationLabel || '30 minutos',
+              requestedAt: nowIso,
+            };
+
+            if (Array.isArray(db?.cleaningRequests)) {
+              for (const cr of db.cleaningRequests) {
+                if (
+                  cr &&
+                  String(cr.flatNumber) === flatNumber &&
+                  cr.requestDate === origCheckout &&
+                  cr.status !== 'clean'
+                ) {
+                  if (cr.previousAdminNoteBeforeExtension === undefined) {
+                    cr.previousAdminNoteBeforeExtension = cr.adminNote || null;
+                  }
+                  cr.originalRequestDateBeforeExtension = cr.originalRequestDateBeforeExtension || origCheckout;
+                  cr.extensionHoldReservationId = targetRes.id;
+                  cr.extensionHoldExpiresAt = holdInfo.expiresAt;
+                  cr.isExtendedStay = true;
+                  cr.extendedUntil = novaSaida;
+                  cr.adminNote = `⏳ Prorrogação em Pré-Reserva aguardando pagamento até ${expiraEmHoraBr} (Não realizar limpeza de check-out por enquanto).`;
+                }
+              }
+            }
           }
-          targetRes.updatedAt = new Date().toISOString();
+
+          targetRes.updatedAt = nowIso;
           if (typeof context.runtime?.saveDatabase === 'function') {
             await context.runtime.saveDatabase();
+          }
+          if (diferencaValor > 0) {
+            const triggerFn = (context.runtime as any)?.triggerImmediateWhatsApp || (globalThis as any).triggerImmediateWhatsApp;
+            if (typeof triggerFn === 'function') {
+              try {
+                await triggerFn(db, context.runtime?.saveDatabase, 'additional_daily_pending', targetRes);
+              } catch (_) {}
+            }
           }
         }
       }
@@ -171,8 +320,11 @@ export const alterarDatasReservaTool: AgentToolDefinition<AlterarDatasReservaArg
       const qtdHospedes = Number(reserva.quantidade_hospedes || 1);
       const canalLabel = reserva.canal_reserva_nome || reserva.canal_reserva || 'Site CorpFlats';
       const msg =
-        `Confirme com cordialidade que a reserva ${reserva.id} no ${reserva.nome_imovel} já foi atualizada no sistema para o novo período de ${novaEntrada} a ${novaSaida} (${novasDiarias} diária(s)), ` +
-        `mantendo no resumo o Total de Hóspedes (*${qtdHospedes}*) e o Canal da Reserva (*${canalLabel}*).`;
+        diferencaValor > 0
+          ? `Confirme com cordialidade que o período adicional da reserva ${reserva.id} no ${reserva.nome_imovel} (${novaEntrada} a ${novaSaida}, ${novasDiarias} diária(s)) entrou como *Pré-Reserva da Diária Extra* garantida por *30 minutos*${expiraEmHoraBr ? ` (até as *${expiraEmHoraBr}*)` : ''} aguardando o pagamento de *R$ ${diferencaValor.toFixed(2)}*. ` +
+            `Tranquilize o hóspede informando que caso o pagamento não seja concluído dentro do prazo, apenas a(s) diária(s) extra(s) expira(m) e a reserva original permanece 100% confirmada, mantendo no resumo o Total de Hóspedes (*${qtdHospedes}*) e o Canal da Reserva (*${canalLabel}*).`
+          : `Confirme com cordialidade que a reserva ${reserva.id} no ${reserva.nome_imovel} já foi atualizada no sistema para o novo período de ${novaEntrada} a ${novaSaida} (${novasDiarias} diária(s)), ` +
+            `mantendo no resumo o Total de Hóspedes (*${qtdHospedes}*) e o Canal da Reserva (*${canalLabel}*).`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -184,6 +336,7 @@ export const alterarDatasReservaTool: AgentToolDefinition<AlterarDatasReservaArg
           quantidade_hospedes: qtdHospedes,
           canal_reserva: canalLabel,
           diferenca_valor: diferencaValor,
+          ...(expiraEmIso ? { pre_reserva_diaria_extra_expira_em: expiraEmIso } : {}),
         },
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,

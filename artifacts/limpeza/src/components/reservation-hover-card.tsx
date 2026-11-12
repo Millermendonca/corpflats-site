@@ -640,6 +640,26 @@ export function ReservationHoverCard({
           )}
 
           {/* Alertas de Atenção e Menores no Hover Card */}
+          {resItem.pendingStayExtension?.isPreReservationHold && resItem.pendingStayExtension?.status === "pending_payment" && (
+            <div className="mt-1.5 flex items-start gap-1.5 px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/70 border border-dashed border-amber-400 dark:border-amber-600 rounded-lg text-amber-950 dark:text-amber-100 text-[10.5px] shadow-2xs">
+              <span className="text-xs shrink-0 mt-0.5">⏳</span>
+              <div className="leading-snug space-y-0.5">
+                <span className="font-black block">
+                  Pré-Reserva de +{resItem.pendingStayExtension.extraNights || 1} Diária(s) Extra(s)
+                  {resItem.pendingStayExtension.expiresAt ? (() => {
+                    try {
+                      return ` • Vence às ${format(new Date(resItem.pendingStayExtension.expiresAt), "HH:mm")}`;
+                    } catch {
+                      return "";
+                    }
+                  })() : ""}
+                </span>
+                <span className="text-[9.5px] font-medium text-amber-800 dark:text-amber-300 block">
+                  Saldo extra: R$ {Number(resItem.pendingStayExtension.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} • Se expirar, apenas a diária extra sai e a reserva original segue confirmada.
+                </span>
+              </div>
+            </div>
+          )}
           {resItem.hasMinor && (
             <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 rounded-lg text-rose-800 dark:text-rose-200 text-[10.5px] font-bold shadow-2xs">
               <span className="text-xs">👶</span>
@@ -777,10 +797,30 @@ export function ReservationHoverCard({
                       dateFmt = format(parseISO(d.date), "dd/MM (EEE)", { locale: ptBR });
                     } catch {}
 
+                    const isExtHoldNight = Boolean(
+                      resItem.pendingStayExtension?.isPreReservationHold &&
+                      resItem.pendingStayExtension?.status === "pending_payment" &&
+                      (Array.isArray(resItem.pendingStayExtension?.addedDates) && resItem.pendingStayExtension.addedDates.length > 0
+                        ? resItem.pendingStayExtension.addedDates.includes(d.date)
+                        : (resItem.pendingStayExtension?.oldCheckoutDate && d.date >= resItem.pendingStayExtension.oldCheckoutDate))
+                    );
+
                     return (
-                      <div key={dIdx} className="flex items-center justify-between text-[10px] bg-white dark:bg-slate-900/80 px-2 py-0.5 rounded border border-slate-200/60 dark:border-slate-800">
-                        <span className="text-slate-600 dark:text-slate-300 font-medium">
-                          {dIdx + 1}ª Noite ({dateFmt})
+                      <div
+                        key={dIdx}
+                        className={`flex items-center justify-between text-[10px] px-2 py-0.5 rounded border ${
+                          isExtHoldNight
+                            ? "bg-amber-50/90 dark:bg-amber-950/40 border-dashed border-amber-400 dark:border-amber-600"
+                            : "bg-white dark:bg-slate-900/80 border-slate-200/60 dark:border-slate-800"
+                        }`}
+                      >
+                        <span className="text-slate-600 dark:text-slate-300 font-medium flex items-center gap-1">
+                          <span>{dIdx + 1}ª Noite ({dateFmt})</span>
+                          {isExtHoldNight && (
+                            <span className="text-[8.5px] font-black px-1 py-0.2 rounded bg-amber-200/90 text-amber-950 dark:bg-amber-900 dark:text-amber-100">
+                              ⏳ Pré-Reserva
+                            </span>
+                          )}
                         </span>
                         <div className="flex items-center gap-1.5">
                           <span className={`text-[8.5px] font-bold px-1 py-0.2 rounded border ${dChanColor}`}>

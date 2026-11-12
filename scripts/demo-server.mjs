@@ -85955,7 +85955,5 @@ export {
   normalizeChannexBookingRevision,
   isB2bReservation,
   computeLinenTracking,
-  getRequestsForDate,
-  resolveStayExtensionHold,
-  rollbackExpiredOrCancelledStayExtension
+  getRequestsForDate
 };

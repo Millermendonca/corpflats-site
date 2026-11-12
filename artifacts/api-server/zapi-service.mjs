@@ -1293,11 +1293,70 @@ Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_h
 {{pix_copia_e_cola}}
 
 Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX (com desconto) ou Cartão de Crédito em seu portal seguro para confirmar o acréscimo:
-👉 {{link_portal_hospede}}`,
+👉 {{link_portal_hospede}}{{aviso_validade_pre_reserva}}`,
     footer: "CorpFlats • Alteração Confirmada",
     buttons: [
       { id: "btn_pagar", type: "URL", label: "💳 Ver Detalhes & Pagar", url: "{{link_portal_hospede}}" },
       { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
+    ]
+  },
+  {
+    id: "tpl_additional_daily_expiring_soon",
+    triggerEvent: "additional_daily_expiring_soon",
+    title: "Lembrete • Pré-Reserva de Diária Extra Expira em Breve",
+    description: "Enviado automaticamente antes do prazo da diária extra pendente expirar, lembrando o hóspede/solicitante de concluir o pagamento para garantir a prorrogação.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
+    recipientTarget: "requester",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_destinatario}}*! ⏰
+
+Passando para lembrar que a *Pré-Reserva de Diária Extra ({{diarias_extras_expiradas}})* da sua reserva *{{numero_reserva}}* no *{{nome_hotel}}* (*Flat {{quarto}}* • saída solicitada em *{{data_checkout_solicitado}}*) *expira em {{tempo_restante_pre_reserva}}* (limite: *{{validade_pre_reserva}}*).
+
+💰 *Saldo pendente para confirmar a prorrogação:*
+• Com desconto no PIX (-5%): *{{quanto_falta}}*
+• No Cartão de Crédito: *{{quanto_falta_cartao}}*
+
+📋 *PIX Copia e Cola (5% de desconto):*
+{{pix_copia_e_cola}}
+
+👉 *Ou conclua pelo portal seguro da reserva:*
+{{link_portal_hospede}}
+
+⚠️ _Caso o pagamento da diária extra não seja confirmado até o horário limite, apenas o período adicional expira e sua reserva original ({{data_checkin_original}} a {{data_checkout_original}}) permanece 100% confirmada._`,
+    footer: "CorpFlats • Lembrete de Diária Extra",
+    buttons: [
+      { id: "btn_pagar", type: "URL", label: "💳 Ver Detalhes & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
+    ]
+  },
+  {
+    id: "tpl_additional_daily_expired",
+    triggerEvent: "additional_daily_expired",
+    title: "Diária Extra Expirada • Reserva Original Permanece Confirmada",
+    description: "Enviado automaticamente quando o prazo de pagamento de uma diária extra em pré-reserva expira, tranquilizando o hóspede de que sua reserva original segue 100% confirmada.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "b2b", "outros"],
+    recipientTarget: "requester",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_destinatario}}*! ⏳
+
+Informamos que o prazo de pagamento da *Pré-Reserva de Diária Extra ({{diarias_extras_expiradas}} • saída em {{data_checkout_solicitado}})* vinculada à reserva *{{numero_reserva}}* no *{{nome_hotel}}* (*Flat {{quarto}}*) *expirou*, e esse período adicional voltou a ficar disponível em nosso calendário.
+
+✅ *Fique tranquilo(a):* Sua reserva principal de *{{data_checkin_original}} a {{data_checkout_original}}* (*Flat {{quarto}}* • *{{num_hospedes}} hóspede(s)*) permanece *100% confirmada e garantida*!
+
+💬 *Ainda deseja estender sua estadia?*
+Basta responder a esta mensagem aqui no WhatsApp para verificarmos se o período continua livre e reativarmos a sua diária extra!`,
+    footer: "CorpFlats • Reserva Original Mantida",
+    buttons: [
       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
@@ -3101,6 +3160,8 @@ export const COMPANION_EXCLUDED_EVENTS = new Set([
   "pre_reservation_expired",
   "payment_pending",
   "additional_daily_pending",
+  "additional_daily_expiring_soon",
+  "additional_daily_expired",
   "payment_confirmed"
 ]);
 
@@ -3111,7 +3172,9 @@ export const PURE_BILLING_EVENTS = new Set([
   "pre_reservation_expiring_soon",
   "pre_reservation_expired",
   "payment_pending",
-  "additional_daily_pending"
+  "additional_daily_pending",
+  "additional_daily_expiring_soon",
+  "additional_daily_expired"
 ]);
 
 export const PURE_BILLING_TEMPLATE_IDS = new Set([
@@ -3121,6 +3184,8 @@ export const PURE_BILLING_TEMPLATE_IDS = new Set([
   "tpl_pre_reserva_expirada",
   "tpl_payment_pending",
   "tpl_additional_daily_pending",
+  "tpl_additional_daily_expiring_soon",
+  "tpl_additional_daily_expired",
   "qm_payment_pending",
   "qm_payment_confirmed"
 ]);
@@ -3394,6 +3459,8 @@ const EMAIL_SUBJECT_BY_EVENT = {
   payment_confirmed: "Pagamento confirmado",
   payment_pending: "Pagamento pendente da sua reserva",
   additional_daily_pending: "Diária adicional pendente",
+  additional_daily_expiring_soon: "⏰ Lembrete: sua diária adicional em pré-reserva expira em breve",
+  additional_daily_expired: "⏳ Prazo encerrado da diária adicional • Sua reserva original segue confirmada",
   sameday_reservation: "Sua reserva para hoje • Instruções de chegada",
   room_ready: "Seu flat está pronto",
   room_ready_ota: "Seu flat está pronto",
@@ -3683,14 +3750,31 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const cardTotalAmount = computeCardAmountFromPix(totalAmount);
   const cardPendingAmount = computeCardAmountFromPix(pendingAmount > 0 ? pendingAmount : totalAmount);
 
-  // Formatação clara da validade da pré-reserva (fuso horário America/Sao_Paulo)
+  // Formatação clara da validade da pré-reserva (ou pré-reserva de diária extra) em fuso horário America/Sao_Paulo
   let validadePreReserva = "";
   let avisoValidadePreReserva = "";
   let tempoRestantePreReserva = reservation._reminderLeadLabel || "poucos minutos";
-  if (reservation.expiresAt) {
-    const expDate = new Date(reservation.expiresAt);
+  const effectiveNowForHold = reservation?._nowOverride instanceof Date
+    ? reservation._nowOverride
+    : (reservation?._nowOverride ? new Date(reservation._nowOverride) : new Date());
+  const activeExtHold = (
+    reservation?.pendingStayExtension?.isPreReservationHold &&
+    reservation?.pendingStayExtension?.status === "pending_payment" &&
+    reservation?.pendingStayExtension?.expiresAt
+  )
+    ? reservation.pendingStayExtension
+    : null;
+  const effectiveExpiresAt = (resStatus === "pre_reserva" || resStatus === "pendente" || !activeExtHold)
+    ? (reservation.expiresAt || activeExtHold?.expiresAt || "")
+    : activeExtHold.expiresAt;
+  const effectiveHoldLabel = (resStatus === "pre_reserva" || resStatus === "pendente" || !activeExtHold)
+    ? String(reservation.holdDurationLabel || activeExtHold?.holdDurationLabel || "").trim()
+    : String(activeExtHold.holdDurationLabel || "").trim();
+
+  if (effectiveExpiresAt) {
+    const expDate = new Date(effectiveExpiresAt);
     if (!isNaN(expDate.getTime())) {
-      const remMins = Math.max(1, Math.round((expDate.getTime() - Date.now()) / 60000));
+      const remMins = Math.max(1, Math.round((expDate.getTime() - effectiveNowForHold.getTime()) / 60000));
       if (remMins >= 90) {
         const hrs = Math.round(remMins / 60);
         tempoRestantePreReserva = hrs === 1 ? "1 hora" : `${hrs} horas`;
@@ -3704,7 +3788,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
         year: "numeric",
         month: "2-digit",
         day: "2-digit"
-      }).format(new Date());
+      }).format(effectiveNowForHold);
       const expBrDateStr = new Intl.DateTimeFormat("en-CA", {
         timeZone: "America/Sao_Paulo",
         year: "numeric",
@@ -3730,14 +3814,32 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
       }).format(expDate);
 
       const datePart = expBrDateStr === nowBrStr ? `hoje (${expDayMonth}) às ${expTime}` : `${expFullDate} às ${expTime}`;
-      const rawHoldLabel = String(reservation.holdDurationLabel || "").trim();
-      const holdSuffix = rawHoldLabel && !rawHoldLabel.toLowerCase().includes("23:59")
-        ? ` (${rawHoldLabel})`
+      const holdSuffix = effectiveHoldLabel && !effectiveHoldLabel.toLowerCase().includes("23:59")
+        ? ` (${effectiveHoldLabel})`
         : "";
       validadePreReserva = `${datePart}${holdSuffix}`;
-      avisoValidadePreReserva = `\n\n⏰ *Validade da Pré-Reserva:* Esta pré-reserva é válida até *${validadePreReserva}*. Após esse horário sem confirmação de pagamento, a pré-reserva expira e o apartamento é liberado automaticamente no calendário.`;
+      if (activeExtHold && resStatus !== "pre_reserva" && resStatus !== "pendente") {
+        avisoValidadePreReserva = `\n\n⏰ *Validade da Pré-Reserva da Diária Extra:* Este período adicional aguarda pagamento até *${validadePreReserva}*. Caso não seja quitado até esse horário, apenas a(s) diária(s) extra(s) expira(m) e sua reserva original permanece 100% confirmada.`;
+      } else {
+        avisoValidadePreReserva = `\n\n⏰ *Validade da Pré-Reserva:* Esta pré-reserva é válida até *${validadePreReserva}*. Após esse horário sem confirmação de pagamento, a pré-reserva expira e o apartamento é liberado automaticamente no calendário.`;
+      }
     }
   }
+
+  const fmtBrDateTag = (isoStr) => {
+    const clean = String(isoStr || "").trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+    const [yy, mm, dd] = clean.split("-");
+    return `${dd}/${mm}/${yy}`;
+  };
+  const extTagMeta = reservation?._expiredExtension || reservation?.expiredStayExtension || reservation?.pendingStayExtension || null;
+  const dataCheckinOriginal = fmtBrDateTag(extTagMeta?.oldCheckinDate || reservation?.checkinDate || "");
+  const dataCheckoutOriginal = fmtBrDateTag(extTagMeta?.oldCheckoutDate || reservation?.previousCheckoutDate || reservation?.checkoutDate || "");
+  const dataCheckoutSolicitado = fmtBrDateTag(extTagMeta?.attemptedCheckoutDate || extTagMeta?.newCheckoutDate || reservation?.checkoutDate || "");
+  const extNightsCount = Number(extTagMeta?.extraNights || (Array.isArray(extTagMeta?.addedDates) ? extTagMeta.addedDates.length : 0)) || 1;
+  const diariasExtrasExpiradas = (Array.isArray(extTagMeta?.addedDates) && extTagMeta.addedDates.length > 0)
+    ? `+${extNightsCount} diária(s) (${extTagMeta.addedDates.map(d => fmtBrDateTag(d)).join(", ")})`
+    : `+${extNightsCount} diária(s)`;
 
   const tplHasExplicitValidityTag = typeof templateText === "string" && (
     templateText.includes("{{aviso_validade_pre_reserva}}") ||
@@ -4055,6 +4157,10 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{validade_pre_reserva}}": validadePreReserva,
     "{{aviso_validade_pre_reserva}}": avisoValidadePreReserva,
     "{{tempo_restante_pre_reserva}}": tempoRestantePreReserva,
+    "{{data_checkin_original}}": dataCheckinOriginal,
+    "{{data_checkout_original}}": dataCheckoutOriginal,
+    "{{data_checkout_solicitado}}": dataCheckoutSolicitado,
+    "{{diarias_extras_expiradas}}": diariasExtrasExpiradas,
     "{{instrucao_pagamento}}": hideFinancialForGuest ? "" : instrucaoPagamento,
     "{{instrucao_saldo}}": hideFinancialForGuest ? "" : instrucaoSaldo,
     "{{status_confirmacao}}": statusConfirmacao,
@@ -4536,10 +4642,14 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
       templateId === "tpl_pre_reserva" ||
       templateId === "tpl_pre_reserva_lembrete" ||
       templateId === "tpl_pre_reserva_expirada" ||
+      templateId === "tpl_additional_daily_expiring_soon" ||
+      templateId === "tpl_additional_daily_expired" ||
       templateId === "tpl_payment_pending" ||
       triggerEvent === "pre_reservation_created" ||
       triggerEvent === "pre_reservation_expiring_soon" ||
       triggerEvent === "pre_reservation_expired" ||
+      triggerEvent === "additional_daily_expiring_soon" ||
+      triggerEvent === "additional_daily_expired" ||
       triggerEvent === "payment_pending"
     )
   );
@@ -4815,7 +4925,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const pmRaw = String(reservation?.paymentMethod || "pix").toLowerCase().trim();
   const isExplicitNonPixMethod = Boolean(pmRaw && !pmRaw.includes("pix") && (pmRaw.includes("cartao") || pmRaw.includes("credit") || pmRaw.includes("debit") || pmRaw.includes("faturado") || pmRaw.includes("vcn")));
 
-  if (isFullyPaidVal || ((templateId === "tpl_pre_reserva_lembrete" || triggerEvent === "pre_reservation_expiring_soon") && isExplicitNonPixMethod)) {
+  if (isFullyPaidVal || ((templateId === "tpl_pre_reserva_lembrete" || triggerEvent === "pre_reservation_expiring_soon" || templateId === "tpl_additional_daily_expiring_soon" || triggerEvent === "additional_daily_expiring_soon") && isExplicitNonPixMethod)) {
     list = list.filter(b => {
       if (!b) return false;
       const bUrl = String(b.url || "");
@@ -8301,7 +8411,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_additional_daily_pending") {
           tpl.recipientTarget = "requester";
-          if (!tpl.message.includes("{{status_pagamento}}") || tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{resumo_alteracoes}}") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
+          if (!tpl.message.includes("{{status_pagamento}}") || !tpl.message.includes("{{aviso_validade_pre_reserva}}") || tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || !tpl.message.includes("quanto_falta_cartao") || tpl.message.includes("12x") || !tpl.message.includes("{{resumo_alteracoes}}") || !tpl.message.includes("{{num_hospedes}}") || !tpl.message.includes("{{canal_reserva}}")) {
             const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
             if (defAdd) {
               tpl.title = defAdd.title;
@@ -8310,6 +8420,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               tpl.buttons = defAdd.buttons;
             }
           }
+        }
+        if (tpl.id === "tpl_additional_daily_expiring_soon" || tpl.id === "tpl_additional_daily_expired") {
+          tpl.recipientTarget = "requester";
         }
         // Sanitização geral de botões e domínio oficial corpflats.com.br
         if (typeof tpl.message === "string" && tpl.message.includes("corpflats.onrender.com")) {
@@ -13917,6 +14030,22 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       }
     }
 
+    // Trava em tempo real para 'additional_daily_expiring_soon': nunca disparar se a diária extra já foi quitada ou revertida
+    if (eventName === "additional_daily_expiring_soon") {
+      const guardTotal = Number(reservation.totalAmount || reservation.totalPrice || 0) || 0;
+      const guardPaid = Number(reservation.paidAmount ?? reservation.amountPaid ?? 0) || 0;
+      const guardPending = Math.max(0, Math.round((guardTotal - guardPaid) * 100) / 100);
+      const extActive = Boolean(
+        reservation.pendingStayExtension &&
+        reservation.pendingStayExtension.isPreReservationHold &&
+        reservation.pendingStayExtension.status === "pending_payment"
+      );
+      if (reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago" || guardPending <= 0.01 || !extActive) {
+        console.log(`[WhatsApp Trigger] Evento 'additional_daily_expiring_soon' IGNORADO para ${reservation.code || reservation.id}: diária extra já quitada ou sem pré-reserva ativa.`);
+        return;
+      }
+    }
+
     // Trava estrita para 'checkin_cleaning_delay': nunca disparar se o hóspede já realizou check-in/entrada
     // ou se o flat já está limpo/pronto.
     if (eventName === "checkin_cleaning_delay") {
@@ -14027,6 +14156,12 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "additional_daily_pending") {
       const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending" || t.triggerEvent === "additional_daily_pending");
       if (defAdd) templates = [defAdd];
+    } else if (templates.length === 0 && eventName === "additional_daily_expiring_soon") {
+      const defAddRem = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_expiring_soon" || t.triggerEvent === "additional_daily_expiring_soon");
+      if (defAddRem) templates = [defAddRem];
+    } else if (templates.length === 0 && eventName === "additional_daily_expired") {
+      const defAddExp = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_expired" || t.triggerEvent === "additional_daily_expired");
+      if (defAddExp) templates = [defAddExp];
     } else if (templates.length === 0 && eventName === "sameday_reservation") {
       const defSameday = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions" || t.triggerEvent === "sameday_reservation");
       if (defSameday) templates = [defSameday];
