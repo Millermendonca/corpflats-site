@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import { Link, useLocation } from "wouter"
 import { useGetMe, useLogout, getGetMeQueryKey, useGetAlerts } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { showNativeNotification, markInitialHistoryAsSeen, unsubscribeWebPush } from "@/lib/push-notifications"
+import { showNativeNotification, markInitialHistoryAsSeen, unsubscribeWebPush, syncWebPushSubscription } from "@/lib/push-notifications"
 import { playHotelChime } from "@/lib/sound"
 import { cancelGoogleOneTap } from "@/lib/auth-client"
 import { 
@@ -198,6 +198,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isAuthenticated) return
+    syncWebPushSubscription({ roleHint: user?.role }).catch(() => {})
     const checkNotifs = async () => {
       if (!isInitialPollRef.current && typeof document !== "undefined" && document.hidden) return
       try {

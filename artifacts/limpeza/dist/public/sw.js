@@ -1,14 +1,120 @@
 // ══════════════════════════════════════════════════════════════════════════════
-// CorpFlats / Guest Flow Manager — Service Worker v4
+// CorpFlats / Guest Flow Manager — Service Worker v5
 // Native RFC 8291 Web Push + Android Expandable Grouping + Modo Rádio Bridge
+// + Auto-Purge de Origem Legada (*.onrender.com) p/ Zero Duplicidade com corpflats.com.br
 // ══════════════════════════════════════════════════════════════════════════════
+
+const CANONICAL_PROD_ORIGIN = "https://corpflats.com.br";
+const DEDUP_WINDOW_MS = 45000;
+const recentEventFingerprints = new Map();
+let originConfirmedThisSession = false;
+
+function isLegacyRenderHost() {
+  try {
+    const host = String((self.location && self.location.hostname) || "").toLowerCase();
+    return host === "onrender.com" || host.endsWith(".onrender.com");
+  } catch {
+    return false;
+  }
+}
+
+function isDuplicateRecentEvent(exactKeys, contentKey, source) {
+  const now = Date.now();
+  for (const [k, entry] of recentEventFingerprints.entries()) {
+    if (now - entry.ts > DEDUP_WINDOW_MS) {
+      recentEventFingerprints.delete(k);
+    }
+  }
+  const validExact = exactKeys.filter(Boolean);
+  for (const k of validExact) {
+    const prev = recentEventFingerprints.get(k);
+    if (prev && now - prev.ts <= DEDUP_WINDOW_MS) {
+      return true;
+    }
+  }
+  if (contentKey) {
+    const prevContent = recentEventFingerprints.get(contentKey);
+    // Suprime duplicata quando um veio via Web Push real ("push") e o outro via polling da aba ("local_poll")
+    if (prevContent && now - prevContent.ts <= DEDUP_WINDOW_MS && (prevContent.source !== source || validExact.length === 0)) {
+      return true;
+    }
+    recentEventFingerprints.set(contentKey, { ts: now, source });
+  }
+  for (const k of validExact) {
+    recentEventFingerprints.set(k, { ts: now, source });
+  }
+  return false;
+}
+
+/**
+ * Se este Service Worker estiver rodando no domínio legado *.onrender.com,
+ * limpa imediatamente todas as notificações abertas, remove a inscrição do servidor
+ * e revoga o token FCM no navegador para nunca mais tocar duplicado com corpflats.com.br.
+ */
+async function purgeLegacyRenderPushSubscription() {
+  try {
+    const existing = await self.registration.getNotifications();
+    for (const n of existing) {
+      try {
+        n.close();
+      } catch {}
+    }
+  } catch {}
+
+  try {
+    if (self.registration && self.registration.pushManager) {
+      const sub = await self.registration.pushManager.getSubscription();
+      if (sub && sub.endpoint) {
+        await fetch("/api/push/unsubscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: sub.endpoint, reason: "legacy_onrender_sw" })
+        }).catch(() => {});
+        await sub.unsubscribe().catch(() => {});
+      }
+    }
+  } catch {}
+}
+
+/**
+ * Confirma no backend que este endpoint pertence ao domínio canônico (ex: corpflats.com.br),
+ * permitindo ao servidor expurgar automaticamente inscrições legadas sem origem do mesmo aparelho.
+ */
+async function confirmCanonicalOriginOnce() {
+  if (originConfirmedThisSession || isLegacyRenderHost()) return;
+  originConfirmedThisSession = true;
+  try {
+    if (self.registration && self.registration.pushManager) {
+      const sub = await self.registration.pushManager.getSubscription();
+      if (sub && sub.endpoint) {
+        await fetch("/api/push/confirm-origin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            endpoint: sub.endpoint,
+            origin: self.location ? self.location.origin : CANONICAL_PROD_ORIGIN
+          })
+        }).catch(() => {});
+      }
+    }
+  } catch {}
+}
 
 self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      await self.clients.claim();
+      if (isLegacyRenderHost()) {
+        await purgeLegacyRenderPushSubscription();
+      } else {
+        await confirmCanonicalOriginOnce();
+      }
+    })()
+  );
 });
 
 /**
@@ -18,7 +124,12 @@ self.addEventListener("activate", (event) => {
  *    para o Android agrupar tudo automaticamente dentro de um único grupo recolhido do app CorpFlats
  *    que abre para baixo revelando todos os itens individualmente.
  */
-async function handleIncomingPushPayload(data) {
+async function handleIncomingPushPayload(data, source = "push") {
+  if (isLegacyRenderHost()) {
+    await purgeLegacyRenderPushSubscription();
+    return;
+  }
+
   const isWhatsApp =
     data.category === "whatsapp" ||
     data.type === "whatsapp_message" ||
@@ -38,6 +149,18 @@ async function handleIncomingPushPayload(data) {
       ? `🔔 Check-out flat ${data.flatNumber}`
       : "🔔 CorpFlats");
 
+  // Deduplicação em memória entre Web Push real (FCM) e fallback de polling da aba
+  const exactDedupKeys = [
+    data.id ? `id:${data.id}` : "",
+    data.messageKey ? `key:${data.messageKey}` : ""
+  ];
+  const contentKey = isWhatsApp && phone
+    ? `wa:${phone}:${messageText.slice(0, 120)}`
+    : `sys:${baseTitle}:${messageText.slice(0, 120)}`;
+  if (!data.isTest && isDuplicateRecentEvent(exactDedupKeys, contentKey, source)) {
+    return;
+  }
+
   const targetUrl =
     data.targetUrl ||
     data.url ||
@@ -49,6 +172,7 @@ async function handleIncomingPushPayload(data) {
   let stackedLines = [messageText];
   let msgCount = 1;
   let seenKeys = data.messageKey ? [String(data.messageKey)] : [];
+  let seenIds = data.id ? [String(data.id)] : [];
 
   if (isWhatsApp && phone) {
     tag = `wa-chat-${phone}`;
@@ -58,9 +182,13 @@ async function handleIncomingPushPayload(data) {
         const prev = existingList[0];
         const prevData = prev.data || {};
         const prevKeys = Array.isArray(prevData.seenKeys) ? prevData.seenKeys : [];
+        const prevIds = Array.isArray(prevData.seenIds) ? prevData.seenIds : [];
 
-        // Evita empilhar a mesma mensagem duas vezes
-        if (data.messageKey && prevKeys.includes(String(data.messageKey))) {
+        // Evita empilhar a mesma mensagem duas vezes (por messageKey ou por id de notificação)
+        if (
+          (data.messageKey && prevKeys.includes(String(data.messageKey))) ||
+          (data.id && prevIds.includes(String(data.id)))
+        ) {
           return;
         }
 
@@ -74,6 +202,7 @@ async function handleIncomingPushPayload(data) {
         msgCount = prevCount + 1;
         stackedLines = [...prevLines, messageText].slice(-8);
         seenKeys = [...prevKeys, ...(data.messageKey ? [String(data.messageKey)] : [])].slice(-20);
+        seenIds = [...prevIds, ...(data.id ? [String(data.id)] : [])].slice(-20);
 
         const cleanBase = String(prevData.baseTitle || baseTitle).replace(/\s*\(\d+\s*novas?\)\s*$/i, "");
         finalTitle = `${cleanBase} (${msgCount} novas)`;
@@ -113,7 +242,8 @@ async function handleIncomingPushPayload(data) {
       baseTitle: baseTitle.replace(/\s*\(\d+\s*novas?\)\s*$/i, ""),
       lines: stackedLines,
       msgCount,
-      seenKeys
+      seenKeys,
+      seenIds
     },
     actions: isWhatsApp && phone
       ? [
@@ -150,11 +280,27 @@ async function handleIncomingPushPayload(data) {
   await Promise.all([
     self.registration.showNotification(finalTitle, options),
     broadcastPromise,
-    badgePromise
+    badgePromise,
+    confirmCanonicalOriginOnce()
   ]);
 }
 
 self.addEventListener("push", (event) => {
+  if (isLegacyRenderHost()) {
+    event.waitUntil(
+      (async () => {
+        try {
+          await self.registration.showNotification(" ", {
+            tag: "gfm-legacy-cleanup",
+            silent: true
+          });
+        } catch {}
+        await purgeLegacyRenderPushSubscription();
+      })()
+    );
+    return;
+  }
+
   let data = {};
   if (event.data) {
     try {
@@ -178,7 +324,7 @@ self.addEventListener("message", (event) => {
         .catch(() => {})
     );
   } else if (msg.type === "SHOW_GROUPED_NOTIFICATION" && msg.payload) {
-    event.waitUntil(handleIncomingPushPayload(msg.payload));
+    event.waitUntil(handleIncomingPushPayload(msg.payload, "local_poll"));
   }
 });
 
@@ -190,6 +336,19 @@ self.addEventListener("notificationclick", (event) => {
     (phone ? `/whatsapp-chat?phone=${encodeURIComponent(phone)}&standalone=1` : "/notificacoes");
 
   event.notification.close();
+
+  if (isLegacyRenderHost()) {
+    const canonicalDestination = `${CANONICAL_PROD_ORIGIN}${targetUrl.startsWith("/") ? targetUrl : `/${targetUrl}`}`;
+    event.waitUntil(
+      (async () => {
+        await purgeLegacyRenderPushSubscription();
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(canonicalDestination);
+        }
+      })()
+    );
+    return;
+  }
 
   // Ação rápida: Marcar conversa como lida direto da barra do Android sem abrir o app
   if (event.action === "mark_read" && phone) {

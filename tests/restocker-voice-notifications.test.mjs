@@ -27,6 +27,7 @@ import {
   encryptWebPushPayload,
   decryptWebPushPayloadForTesting,
   upsertPushSubscription,
+  confirmOrPruneSubscriptionOrigin,
   shouldRoleReceiveNotification,
   dispatchWebPushForNotification,
   fromBase64Url
@@ -813,6 +814,149 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
       const carlosCard = activeNotifications.get("wa-chat-5522998887777");
       assert.strictEqual(carlosCard.title, "💬 Carlos • Flat 512 (3 novas)");
       assert.strictEqual(carlosCard.body, "• Bom dia\n• Tem travesseiro extra?\n• Obrigado!");
+    });
+
+    it("Bloqueia e expurga inscrições duplicadas de corpflats.onrender.com mantendo apenas corpflats.com.br", async () => {
+      const makeSub = (suffix) => {
+        const ecdh = crypto.createECDH("prime256v1");
+        ecdh.generateKeys();
+        const p256dh = ecdh.getPublicKey().toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const auth = crypto.randomBytes(16).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        return {
+          endpoint: `https://fcm.googleapis.com/fcm/send/${suffix}`,
+          keys: { p256dh, auth }
+        };
+      };
+
+      const fakeDb = { webPushSubscriptions: [], notifications: [] };
+      const androidUa = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/131.0.0.0 Mobile Safari/537.36";
+      const adminUser = { id: 1, username: "admin", role: "admin" };
+
+      // 1) Simula inscrição antiga gravada antes do rastreio de origin (origin: null, vinda do onrender.com)
+      const legacyRenderSub = makeSub("legacy_onrender_endpoint");
+      upsertPushSubscription(fakeDb, () => {}, {
+        subscription: legacyRenderSub,
+        user: adminUser,
+        userAgent: androidUa
+      });
+      assert.strictEqual(fakeDb.webPushSubscriptions.length, 1);
+      assert.strictEqual(fakeDb.webPushSubscriptions[0].origin, null);
+
+      // 2) Tentativa explícita de inscrição a partir de corpflats.onrender.com deve ser bloqueada
+      const newRenderAttempt = makeSub("explicit_onrender_endpoint");
+      const blockedRes = upsertPushSubscription(fakeDb, () => {}, {
+        subscription: newRenderAttempt,
+        user: adminUser,
+        userAgent: androidUa,
+        origin: "https://corpflats.onrender.com"
+      });
+      assert.strictEqual(blockedRes.blocked, true);
+      assert.ok(!fakeDb.webPushSubscriptions.some(s => s.endpoint === newRenderAttempt.endpoint));
+
+      // 3) Quando o PWA oficial em corpflats.com.br sincroniza, a inscrição legada sem origin do mesmo aparelho é expurgada
+      const canonicalPwaSub = makeSub("canonical_corpflats_pwa_endpoint");
+      const canonicalRes = upsertPushSubscription(fakeDb, () => {}, {
+        subscription: canonicalPwaSub,
+        user: adminUser,
+        userAgent: androidUa,
+        origin: "https://corpflats.com.br",
+        deviceId: "device_miller_android"
+      });
+      assert.ok(!canonicalRes.blocked);
+      assert.strictEqual(fakeDb.webPushSubscriptions.length, 1, "Deve restar apenas a inscrição oficial de corpflats.com.br");
+      assert.strictEqual(fakeDb.webPushSubscriptions[0].endpoint, canonicalPwaSub.endpoint);
+      assert.strictEqual(fakeDb.webPushSubscriptions[0].origin, "https://corpflats.com.br");
+
+      // 4) Disparo real envia para 1 único destino (zero duplicata)
+      const deliveredEndpoints = [];
+      const dispatchOut = await dispatchWebPushForNotification(
+        fakeDb,
+        () => {},
+        {
+          id: 950,
+          category: "whatsapp",
+          title: "WhatsApp: Recepção",
+          message: "1002",
+          metadata: { phone: "5522999990000", senderName: "Recepção", messageId: "msg_1002" }
+        },
+        {
+          fetchImpl: async (url) => {
+            deliveredEndpoints.push(url);
+            return { status: 201, text: async () => "" };
+          }
+        }
+      );
+      assert.strictEqual(dispatchOut.sent, 1);
+      assert.deepStrictEqual(deliveredEndpoints, [canonicalPwaSub.endpoint]);
+
+      // 5) confirmOrPruneSubscriptionOrigin vindo de onrender.com remove o endpoint imediatamente
+      fakeDb.webPushSubscriptions.push({
+        ...legacyRenderSub,
+        userId: 1,
+        role: "admin",
+        userAgent: androidUa,
+        origin: null
+      });
+      const pruneRes = confirmOrPruneSubscriptionOrigin(fakeDb, () => {}, {
+        endpoint: legacyRenderSub.endpoint,
+        origin: "https://corpflats.onrender.com"
+      });
+      assert.strictEqual(pruneRes.blocked, true);
+      assert.strictEqual(pruneRes.pruned, 1);
+      assert.strictEqual(fakeDb.webPushSubscriptions.length, 1);
+
+      // 6) Service Worker sw.js em corpflats.onrender.com auto-desinscreve e não exibe card duplicado
+      const swPath = path.join(rootDir, "artifacts/limpeza/public/sw.js");
+      const swCode = fs.readFileSync(swPath, "utf8");
+      const renderNotifications = new Map();
+      let unsubscribedEndpoint = null;
+      let swPushHandler = null;
+
+      const renderSwSelf = {
+        location: { hostname: "corpflats.onrender.com", origin: "https://corpflats.onrender.com" },
+        skipWaiting: () => {},
+        clients: { claim: async () => {}, matchAll: async () => [] },
+        fetch: async () => ({ ok: true }),
+        registration: {
+          pushManager: {
+            getSubscription: async () => ({
+              endpoint: legacyRenderSub.endpoint,
+              unsubscribe: async () => {
+                unsubscribedEndpoint = legacyRenderSub.endpoint;
+                return true;
+              }
+            })
+          },
+          getNotifications: async () => Array.from(renderNotifications.values()),
+          showNotification: async (title, options) => {
+            renderNotifications.set(options.tag, {
+              title,
+              close: () => renderNotifications.delete(options.tag)
+            });
+          }
+        },
+        addEventListener: (type, fn) => {
+          if (type === "push") swPushHandler = fn;
+        }
+      };
+
+      const prevFetch = globalThis.fetch;
+      globalThis.fetch = async () => ({ ok: true });
+      try {
+        const execSw = new Function("self", swCode);
+        execSw(renderSwSelf);
+        let waitP = Promise.resolve();
+        swPushHandler({
+          data: { json: () => ({ category: "whatsapp", phone: "5522999990000", title: "💬 Recepção", message: "1002" }) },
+          waitUntil: (p) => { waitP = p; }
+        });
+        await waitP;
+      } finally {
+        globalThis.fetch = prevFetch;
+      }
+
+      assert.strictEqual(renderNotifications.size, 0, "Nenhuma notificação visível deve permanecer em corpflats.onrender.com");
+      assert.strictEqual(unsubscribedEndpoint, legacyRenderSub.endpoint, "sw.js deve revogar a inscrição FCM do onrender.com");
     });
   });
 

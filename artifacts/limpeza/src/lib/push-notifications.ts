@@ -11,11 +11,123 @@ const STORAGE_WA_NOTIFIED_MSG_IDS = "gfm_wa_notified_msg_ids"
 const STORAGE_LAST_SEEN_TIME = "gfm_push_last_seen_time"
 const STORAGE_VAPID_PUB_KEY = "gfm_vapid_public_key_v1"
 const STORAGE_SUBSCRIBED_ROLE = "gfm_vapid_subscribed_role_v1"
+const STORAGE_PUSH_DEVICE_ID = "gfm_push_device_id_v1"
+const CANONICAL_PRODUCTION_ORIGIN = "https://corpflats.com.br"
 const MAX_STORED_IDS = 500
 const MAX_AGE_MS = 30 * 60 * 1000 // 30 minutos para fallback local (o Web Push real do servidor chega na hora)
+const RECENT_WA_CONTENT_WINDOW_MS = 45 * 1000
+
+const recentWaContentSeenMap = new Map<string, number>()
 
 let swMessageListenerAttached = false
 let syncInFlightPromise: Promise<boolean> | null = null
+
+/**
+ * Detecta se o app foi aberto no domínio legado do Render (*.onrender.com).
+ * Nesse domínio o Web Push é desativado e expurgado para nunca duplicar com corpflats.com.br.
+ */
+export function isLegacyRenderHostClient(): boolean {
+  if (typeof window === "undefined" || !window.location) return false
+  const host = String(window.location.hostname || "").toLowerCase()
+  return host === "onrender.com" || host.endsWith(".onrender.com")
+}
+
+function getOrCreatePushDeviceId(): string {
+  if (typeof window === "undefined") return ""
+  try {
+    let id = localStorage.getItem(STORAGE_PUSH_DEVICE_ID)
+    if (!id) {
+      const rand =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `dev_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+      id = rand
+      localStorage.setItem(STORAGE_PUSH_DEVICE_ID, id)
+    }
+    return id
+  } catch {
+    return ""
+  }
+}
+
+function markRecentWaContentSeen(phone?: string, message?: string): void {
+  const cleanPhone = String(phone || "").replace(/\D/g, "")
+  const cleanMsg = String(message || "").trim().slice(0, 120)
+  if (!cleanPhone || !cleanMsg) return
+  const now = Date.now()
+  for (const [k, ts] of recentWaContentSeenMap.entries()) {
+    if (now - ts > RECENT_WA_CONTENT_WINDOW_MS) {
+      recentWaContentSeenMap.delete(k)
+    }
+  }
+  recentWaContentSeenMap.set(`${cleanPhone}::${cleanMsg}`, now)
+}
+
+function hasRecentWaContentSeen(phone?: string, message?: string): boolean {
+  const cleanPhone = String(phone || "").replace(/\D/g, "")
+  const cleanMsg = String(message || "").trim().slice(0, 120)
+  if (!cleanPhone || !cleanMsg) return false
+  const ts = recentWaContentSeenMap.get(`${cleanPhone}::${cleanMsg}`)
+  if (!ts) return false
+  if (Date.now() - ts > RECENT_WA_CONTENT_WINDOW_MS) {
+    recentWaContentSeenMap.delete(`${cleanPhone}::${cleanMsg}`)
+    return false
+  }
+  return true
+}
+
+/**
+ * Remove inscrições Web Push e Service Workers no domínio legado (*.onrender.com)
+ * e redireciona automaticamente o navegador para o domínio oficial corpflats.com.br.
+ */
+export async function purgeLegacyRenderOriginAndRedirect(): Promise<void> {
+  if (typeof window === "undefined" || !isLegacyRenderHostClient()) return
+
+  const cleanupTask = (async () => {
+    try {
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations()
+        for (const reg of regs) {
+          try {
+            const notifications = await reg.getNotifications()
+            notifications.forEach((n) => {
+              try {
+                n.close()
+              } catch {}
+            })
+          } catch {}
+          try {
+            const sub = await reg.pushManager?.getSubscription()
+            if (sub?.endpoint) {
+              await fetch("/api/push/unsubscribe", {
+                method: "POST",
+                credentials: "include",
+                keepalive: true,
+                headers: buildPushAuthHeaders(),
+                body: JSON.stringify({ endpoint: sub.endpoint, reason: "legacy_onrender_redirect" })
+              }).catch(() => {})
+              await sub.unsubscribe().catch(() => {})
+            }
+          } catch {}
+          try {
+            await reg.unregister()
+          } catch {}
+        }
+      }
+      localStorage.removeItem(STORAGE_SUBSCRIBED_ROLE)
+      localStorage.removeItem(STORAGE_VAPID_PUB_KEY)
+    } catch {}
+  })()
+
+  if (!window.location.search.includes("keep_render_host=1")) {
+    await Promise.race([
+      cleanupTask,
+      new Promise((resolve) => setTimeout(resolve, 450))
+    ])
+    const dest = `${CANONICAL_PRODUCTION_ORIGIN}${window.location.pathname || "/"}${window.location.search || ""}${window.location.hash || ""}`
+    window.location.replace(dest)
+  }
+}
 
 export function isPushSupported(): boolean {
   return (
@@ -82,6 +194,9 @@ export function ensureServiceWorkerBridge(): void {
       if (payload.messageKey) {
         recordNotifiedWaMsgKey(String(payload.messageKey))
       }
+      if (payload.phone && payload.message) {
+        markRecentWaContentSeen(String(payload.phone), String(payload.message))
+      }
       if (typeof payload.unreadCount === "number") {
         updateAppBadge(payload.unreadCount)
       }
@@ -94,6 +209,10 @@ export function ensureServiceWorkerBridge(): void {
 
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) {
+    return null
+  }
+  if (isLegacyRenderHostClient()) {
+    await unsubscribeWebPush()
     return null
   }
   try {
@@ -118,6 +237,10 @@ export async function syncWebPushSubscription(options?: {
   if (!isPushSupported() || getPushPermissionState() !== "granted") {
     return false
   }
+  if (isLegacyRenderHostClient()) {
+    await unsubscribeWebPush()
+    return false
+  }
   if (syncInFlightPromise) {
     return syncInFlightPromise
   }
@@ -137,7 +260,12 @@ export async function syncWebPushSubscription(options?: {
       if (!keyRes.ok) {
         return false
       }
-      const { publicKey } = await keyRes.json()
+      const keyData = await keyRes.json()
+      if (keyData?.blockedLegacyOrigin) {
+        await unsubscribeWebPush()
+        return false
+      }
+      const { publicKey } = keyData
       if (!publicKey || typeof publicKey !== "string") {
         return false
       }
@@ -177,12 +305,20 @@ export async function syncWebPushSubscription(options?: {
         body: JSON.stringify({
           subscription: subJson,
           userId: anserveUserId,
-          username: anserveUsername
+          username: anserveUsername,
+          deviceId: getOrCreatePushDeviceId(),
+          clientOrigin: typeof window !== "undefined" ? window.location.origin : ""
         })
       })
 
       if (subRes.ok) {
         const data = await subRes.json().catch(() => ({}))
+        if (data?.blockedLegacyOrigin) {
+          try {
+            await subscription.unsubscribe()
+          } catch {}
+          return false
+        }
         localStorage.setItem(STORAGE_VAPID_PUB_KEY, publicKey)
         if (data?.role || options?.roleHint) {
           localStorage.setItem(STORAGE_SUBSCRIBED_ROLE, String(data?.role || options?.roleHint))
@@ -438,8 +574,9 @@ export async function showWhatsAppChatNotification(
 
   const effectiveKey = messageKey || `${phone}_${timestamp || ""}_${cleanMessage.slice(0, 40)}`
   const seen = getNotifiedWaMsgKeys()
-  if (seen.has(effectiveKey)) return false
+  if (seen.has(effectiveKey) || hasRecentWaContentSeen(phone, cleanMessage)) return false
   recordNotifiedWaMsgKey(effectiveKey)
+  markRecentWaContentSeen(phone, cleanMessage)
 
   const title = `💬 ${senderName || phone}${flatNumber ? ` • Flat ${flatNumber}` : ""}`
   const targetUrl = `/whatsapp-chat?phone=${encodeURIComponent(phone)}&standalone=1`

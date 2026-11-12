@@ -77,6 +77,8 @@ import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import {
   getOrCreateVapidKeys,
   upsertPushSubscription,
+  confirmOrPruneSubscriptionOrigin,
+  isBlockedLegacyPushOrigin,
   removePushSubscription,
   dispatchWebPushForNotification,
   sendWebPushMessage,
@@ -42596,8 +42598,40 @@ function resolvePushRequestUser(req) {
   return null;
 }
 
+function extractPushRequestOrigin(req) {
+  const fromBody = req.body?.clientOrigin || req.body?.origin;
+  if (fromBody && typeof fromBody === "string" && fromBody.trim()) {
+    return fromBody.trim();
+  }
+  if (req.headers.origin) {
+    return String(req.headers.origin).trim();
+  }
+  if (req.headers.referer) {
+    try {
+      const refUrl = new URL(String(req.headers.referer));
+      return refUrl.origin;
+    } catch {}
+  }
+  const fwdHost = req.headers["x-forwarded-host"]
+    ? String(req.headers["x-forwarded-host"]).split(",")[0].trim()
+    : "";
+  const rawHost = fwdHost || String(req.headers.host || "").trim();
+  if (rawHost) {
+    const fwdProto = req.headers["x-forwarded-proto"]
+      ? String(req.headers["x-forwarded-proto"]).split(",")[0].trim()
+      : "";
+    const proto = fwdProto || req.protocol || "https";
+    return `${proto}://${rawHost}`;
+  }
+  return "";
+}
+
 app.get("/api/push/vapid-public-key", (req, res) => {
   try {
+    const reqOrigin = extractPushRequestOrigin(req);
+    if (isBlockedLegacyPushOrigin(reqOrigin)) {
+      return res.json({ publicKey: null, blockedLegacyOrigin: true, canonicalOrigin: "https://corpflats.com.br" });
+    }
     const keys = getOrCreateVapidKeys(db, saveDatabase);
     res.json({ publicKey: keys.publicKey });
   } catch (err) {
@@ -42631,19 +42665,45 @@ app.post("/api/push/subscribe", (req, res) => {
     if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
       return res.status(400).json({ error: "Inscrição Push inválida (endpoint/keys ausentes)." });
     }
+    const reqOrigin = extractPushRequestOrigin(req);
     const record = upsertPushSubscription(db, saveDatabase, {
       subscription,
       user,
-      userAgent: req.headers["user-agent"] || ""
+      userAgent: req.headers["user-agent"] || "",
+      origin: reqOrigin,
+      deviceId: req.body?.deviceId || ""
     });
+    if (record?.blocked) {
+      return res.json({
+        success: false,
+        blockedLegacyOrigin: true,
+        canonicalOrigin: "https://corpflats.com.br",
+        reason: record.reason
+      });
+    }
     res.json({
       success: true,
       role: record.role,
       username: record.username,
-      endpoint: record.endpoint
+      endpoint: record.endpoint,
+      origin: record.origin || null
     });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Erro ao registrar inscrição Web Push." });
+  }
+});
+
+app.post("/api/push/confirm-origin", (req, res) => {
+  try {
+    const endpoint = req.body?.endpoint;
+    const reqOrigin = extractPushRequestOrigin(req);
+    const out = confirmOrPruneSubscriptionOrigin(db, saveDatabase, {
+      endpoint,
+      origin: reqOrigin
+    });
+    res.json({ success: true, ...out });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "Erro ao validar origem do Web Push." });
   }
 });
 

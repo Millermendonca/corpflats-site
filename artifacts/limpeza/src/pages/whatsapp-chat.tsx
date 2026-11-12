@@ -666,13 +666,14 @@ export default function WhatsappChat() {
 
               // If message arrived in another chat or tab is in background, fire native notification + floating banner
               if (activePhoneRef.current !== c.phone || document.hidden) {
+                const msgKey = (c.lastMessage as any)?.id || (c.lastMessage as any)?.messageId || sig
                 showWhatsAppChatNotification({
                   phone: c.phone,
                   senderName: c.name || c.formattedPhone || c.phone,
                   flatNumber: c.flatNumber,
                   reservationCode: c.reservationCode,
                   message: c.lastMessage.text || '[Mídia recebida]',
-                  messageKey: sig,
+                  messageKey: msgKey,
                   timestamp: c.lastMessage.timestamp,
                   unreadCount: totalUnread || 1
                 })

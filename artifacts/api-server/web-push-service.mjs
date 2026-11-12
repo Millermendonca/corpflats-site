@@ -451,10 +451,64 @@ export function buildPushPayloadForSubscriber(notification, subscriberRole, unre
 }
 
 /**
- * Registra ou atualiza a inscrição Push de um dispositivo vinculando-a ao usuário/perfil autenticado.
- * Se o mesmo navegador trocar de usuário (mesmo endpoint), sobrescreve userId e role com segurança.
+ * Normaliza a origem/domínio da requisição (ex: "https://corpflats.com.br").
  */
-export function upsertPushSubscription(db, saveDatabase, { subscription, user, userAgent = "" }) {
+export function normalizePushOrigin(rawOriginOrHost) {
+  const raw = String(rawOriginOrHost || "").trim();
+  if (!raw) return "";
+  try {
+    const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const parsed = new URL(withProto);
+    const host = parsed.hostname.toLowerCase();
+    if (!host) return "";
+    const proto = parsed.protocol === "http:" ? "http:" : "https:";
+    const portPart = parsed.port && parsed.port !== "80" && parsed.port !== "443" ? `:${parsed.port}` : "";
+    return `${proto}//${host}${portPart}`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Identifica domínios legados do Render (*.onrender.com) onde o Web Push deve ser
+ * bloqueado e removido automaticamente para evitar notificações duplicadas com corpflats.com.br.
+ */
+export function isBlockedLegacyPushOrigin(rawOriginOrHost) {
+  const norm = normalizePushOrigin(rawOriginOrHost);
+  if (!norm) return false;
+  try {
+    const host = new URL(norm).hostname.toLowerCase();
+    return host === "onrender.com" || host.endsWith(".onrender.com");
+  } catch {
+    return String(rawOriginOrHost || "").toLowerCase().includes(".onrender.com");
+  }
+}
+
+/**
+ * Verifica se a origem pertence ao domínio oficial de produção (corpflats.com.br).
+ */
+export function isCanonicalProductionPushOrigin(rawOriginOrHost) {
+  const norm = normalizePushOrigin(rawOriginOrHost);
+  if (!norm) return false;
+  try {
+    const host = new URL(norm).hostname.toLowerCase();
+    return host === "corpflats.com.br" || host.endsWith(".corpflats.com.br");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Registra ou atualiza a inscrição Push de um dispositivo vinculando-a ao usuário/perfil autenticado.
+ * - Bloqueia e expurga inscrições vindas de *.onrender.com (evita duplicidade com corpflats.com.br).
+ * - Deduplica automaticamente endpoints rotacionados do mesmo deviceId e inscrições legadas sem origem
+ *   do mesmo usuário + User-Agent quando o dispositivo oficial em corpflats.com.br confirma presença.
+ */
+export function upsertPushSubscription(
+  db,
+  saveDatabase,
+  { subscription, user, userAgent = "", origin = "", deviceId = "" }
+) {
   if (!db) throw new Error("Banco de dados indisponível.");
   if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
     throw new Error("Objeto PushSubscription inválido (endpoint/keys ausentes).");
@@ -468,8 +522,31 @@ export function upsertPushSubscription(db, saveDatabase, { subscription, user, u
   }
 
   const endpoint = String(subscription.endpoint).trim();
+  const normalizedOrigin = normalizePushOrigin(origin);
+  const cleanDeviceId = String(deviceId || "").trim().slice(0, 120);
+  const cleanUserAgent = String(userAgent || "").slice(0, 220);
+
+  // Bloqueia novas inscrições em *.onrender.com e remove caso já existissem no banco
+  if (isBlockedLegacyPushOrigin(normalizedOrigin)) {
+    const before = db.webPushSubscriptions.length;
+    db.webPushSubscriptions = db.webPushSubscriptions.filter(
+      s => s && s.endpoint !== endpoint && !isBlockedLegacyPushOrigin(s.origin)
+    );
+    if (db.webPushSubscriptions.length !== before && typeof saveDatabase === "function") {
+      saveDatabase();
+    }
+    return {
+      blocked: true,
+      reason: "legacy_onrender_origin",
+      endpoint,
+      role: String(user.role).toLowerCase().trim(),
+      username: String(user.username || user.name || user.role)
+    };
+  }
+
   const nowIso = new Date().toISOString();
   const existingIdx = db.webPushSubscriptions.findIndex(s => s && s.endpoint === endpoint);
+  const prevRecord = existingIdx >= 0 ? db.webPushSubscriptions[existingIdx] : null;
 
   const record = {
     endpoint,
@@ -481,8 +558,10 @@ export function upsertPushSubscription(db, saveDatabase, { subscription, user, u
     userId: user.id ?? null,
     username: String(user.username || user.name || user.role),
     role: String(user.role).toLowerCase().trim(),
-    userAgent: String(userAgent || "").slice(0, 220),
-    createdAt: existingIdx >= 0 ? db.webPushSubscriptions[existingIdx].createdAt || nowIso : nowIso,
+    userAgent: cleanUserAgent,
+    origin: normalizedOrigin || prevRecord?.origin || null,
+    deviceId: cleanDeviceId || prevRecord?.deviceId || null,
+    createdAt: prevRecord?.createdAt || nowIso,
     updatedAt: nowIso
   };
 
@@ -491,6 +570,30 @@ export function upsertPushSubscription(db, saveDatabase, { subscription, user, u
   } else {
     db.webPushSubscriptions.push(record);
   }
+
+  const isCanonicalProd = isCanonicalProductionPushOrigin(record.origin);
+  db.webPushSubscriptions = db.webPushSubscriptions.filter(s => {
+    if (!s || !s.endpoint) return false;
+    if (s.endpoint === endpoint) return true;
+    // 1) Expurga qualquer inscrição marcada com *.onrender.com
+    if (isBlockedLegacyPushOrigin(s.origin)) return false;
+    // 2) Mesmo deviceId físico que rotacionou endpoint FCM -> mantém apenas o endpoint novo
+    if (record.deviceId && s.deviceId && s.deviceId === record.deviceId) return false;
+    // 3) Limpeza retroativa: quando o app oficial (corpflats.com.br) sincroniza, remove a inscrição
+    //    antiga sem origin salva (criada no onrender.com antes do rastreio de domínio) do mesmo usuário + navegador
+    if (
+      isCanonicalProd &&
+      !s.origin &&
+      record.userId !== null &&
+      s.userId !== null &&
+      String(s.userId) === String(record.userId) &&
+      cleanUserAgent &&
+      String(s.userAgent || "") === cleanUserAgent
+    ) {
+      return false;
+    }
+    return true;
+  });
 
   if (db.webPushSubscriptions.length > MAX_PUSH_SUBSCRIPTIONS) {
     db.webPushSubscriptions.sort((a, b) => new Date(a.updatedAt || 0).getTime() - new Date(b.updatedAt || 0).getTime());
@@ -502,6 +605,71 @@ export function upsertPushSubscription(db, saveDatabase, { subscription, user, u
   }
 
   return record;
+}
+
+/**
+ * Confirma ou revoga a origem de um endpoint já inscrito (acionado inclusive em background pelo sw.js).
+ */
+export function confirmOrPruneSubscriptionOrigin(db, saveDatabase, { endpoint, origin }) {
+  if (!db || !Array.isArray(db.webPushSubscriptions) || !endpoint) {
+    return { updated: false, pruned: 0 };
+  }
+  const cleanEndpoint = String(endpoint).trim();
+  const normalizedOrigin = normalizePushOrigin(origin);
+  if (!normalizedOrigin) {
+    return { updated: false, pruned: 0 };
+  }
+
+  if (isBlockedLegacyPushOrigin(normalizedOrigin)) {
+    const before = db.webPushSubscriptions.length;
+    db.webPushSubscriptions = db.webPushSubscriptions.filter(
+      s => s && s.endpoint !== cleanEndpoint && !isBlockedLegacyPushOrigin(s.origin)
+    );
+    const pruned = before - db.webPushSubscriptions.length;
+    if (pruned > 0 && typeof saveDatabase === "function") {
+      saveDatabase();
+    }
+    return { updated: false, pruned, blocked: true };
+  }
+
+  const target = db.webPushSubscriptions.find(s => s && s.endpoint === cleanEndpoint);
+  if (!target) {
+    return { updated: false, pruned: 0 };
+  }
+
+  let changed = false;
+  if (target.origin !== normalizedOrigin) {
+    target.origin = normalizedOrigin;
+    target.updatedAt = new Date().toISOString();
+    changed = true;
+  }
+
+  let pruned = 0;
+  if (isCanonicalProductionPushOrigin(normalizedOrigin)) {
+    const before = db.webPushSubscriptions.length;
+    db.webPushSubscriptions = db.webPushSubscriptions.filter(s => {
+      if (!s || !s.endpoint) return false;
+      if (s.endpoint === cleanEndpoint) return true;
+      if (isBlockedLegacyPushOrigin(s.origin)) return false;
+      if (
+        !s.origin &&
+        target.userId !== null &&
+        s.userId !== null &&
+        String(s.userId) === String(target.userId) &&
+        target.userAgent &&
+        String(s.userAgent || "") === String(target.userAgent)
+      ) {
+        return false;
+      }
+      return true;
+    });
+    pruned = before - db.webPushSubscriptions.length;
+  }
+
+  if ((changed || pruned > 0) && typeof saveDatabase === "function") {
+    saveDatabase();
+  }
+  return { updated: changed, pruned };
 }
 
 /**
@@ -522,7 +690,8 @@ export function removePushSubscription(db, saveDatabase, endpoint) {
 
 /**
  * Dispara Web Push Real em paralelo para todos os dispositivos inscritos cujo perfil
- * tenha permissão para aquela categoria de notificação. Remove endpoints expirados (404/410).
+ * tenha permissão para aquela categoria de notificação. Remove endpoints expirados (404/410)
+ * e ignora/remove automaticamente inscrições legadas do domínio *.onrender.com.
  */
 export async function dispatchWebPushForNotification(db, saveDatabase, notification, options = {}) {
   if (!db || !notification || !Array.isArray(db.webPushSubscriptions) || db.webPushSubscriptions.length === 0) {
@@ -534,18 +703,51 @@ export async function dispatchWebPushForNotification(db, saveDatabase, notificat
     ? db.notifications.filter(n => n && !n.read).length
     : 1;
 
-  const eligibleSubs = db.webPushSubscriptions.filter(sub =>
-    sub?.endpoint &&
-    sub?.keys?.p256dh &&
-    sub?.keys?.auth &&
-    shouldRoleReceiveNotification(sub.role, notification, sub.userId)
+  const expiredEndpoints = new Set();
+  const seenEndpoints = new Set();
+  const seenDeviceIds = new Set();
+
+  // Ordena das inscrições mais recentes para as mais antigas para priorizar endpoints ativos/canônicos
+  const orderedSubs = [...db.webPushSubscriptions].sort(
+    (a, b) => new Date(b?.updatedAt || 0).getTime() - new Date(a?.updatedAt || 0).getTime()
   );
 
-  if (eligibleSubs.length === 0) {
-    return { sent: 0, failed: 0, pruned: 0, totalTargets: 0 };
+  const eligibleSubs = [];
+  for (const sub of orderedSubs) {
+    if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) continue;
+    if (isBlockedLegacyPushOrigin(sub.origin)) {
+      expiredEndpoints.add(sub.endpoint);
+      continue;
+    }
+    if (seenEndpoints.has(sub.endpoint)) continue;
+    seenEndpoints.add(sub.endpoint);
+
+    if (sub.deviceId) {
+      if (seenDeviceIds.has(sub.deviceId)) {
+        expiredEndpoints.add(sub.endpoint);
+        continue;
+      }
+      seenDeviceIds.add(sub.deviceId);
+    }
+
+    if (shouldRoleReceiveNotification(sub.role, notification, sub.userId)) {
+      eligibleSubs.push(sub);
+    }
   }
 
-  const expiredEndpoints = new Set();
+  if (eligibleSubs.length === 0) {
+    let pruned = 0;
+    if (expiredEndpoints.size > 0 && Array.isArray(db.webPushSubscriptions)) {
+      const before = db.webPushSubscriptions.length;
+      db.webPushSubscriptions = db.webPushSubscriptions.filter(s => s && !expiredEndpoints.has(s.endpoint));
+      pruned = before - db.webPushSubscriptions.length;
+      if (pruned > 0 && typeof saveDatabase === "function") {
+        try { saveDatabase(); } catch {}
+      }
+    }
+    return { sent: 0, failed: 0, pruned, totalTargets: 0 };
+  }
+
   let sent = 0;
   let failed = 0;
 
