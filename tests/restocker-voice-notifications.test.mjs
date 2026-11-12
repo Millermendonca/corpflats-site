@@ -711,10 +711,11 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
       assert.strictEqual(mockSpeechSynthesis.spokenUtterances[0].text, "Check-out flat 1004");
     });
 
-    it("sw.js deve acumular linhas por conversa de WhatsApp e manter tags distintas por alerta para agrupamento Android", async () => {
+    it("sw.js deve separar notificações estritamente por categoria (WhatsApp, Lista de Compras, Check-outs) sem misturar", async () => {
       const swCode = fs.readFileSync(path.join(rootDir, "artifacts/limpeza/public/sw.js"), "utf8");
       const activeNotifications = new Map();
       let pushHandler = null;
+      let messageHandler = null;
 
       const fakeSelf = {
         skipWaiting: () => {},
@@ -737,6 +738,7 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
               title,
               body: options.body,
               tag: options.tag,
+              icon: options.icon,
               data: options.data,
               close: () => activeNotifications.delete(options.tag)
             });
@@ -744,6 +746,7 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
         },
         addEventListener: (type, fn) => {
           if (type === "push") pushHandler = fn;
+          if (type === "message") messageHandler = fn;
         }
       };
 
@@ -762,7 +765,7 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
         await p;
       };
 
-      // 3 mensagens do mesmo hóspede devem empilhar linha por linha no mesmo card expansível
+      // 1) Mensagens de Carlos (WhatsApp) -> card único de WhatsApp
       await triggerPush({
         category: "whatsapp",
         phone: "5522998887777",
@@ -777,15 +780,13 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
         message: "Tem travesseiro extra?",
         messageKey: "m2"
       });
-      await triggerPush({
-        category: "whatsapp",
-        phone: "5522998887777",
-        title: "💬 Carlos • Flat 512",
-        message: "Obrigado!",
-        messageKey: "m3"
-      });
 
-      // Outro hóspede + 2 check-outs devem manter cards próprios (não sobrescrever!) p/ o grupo expansível do Android
+      let waCard = activeNotifications.get("gfm-cat-whatsapp");
+      assert.ok(waCard, "Deve existir o card da categoria WhatsApp");
+      assert.strictEqual(waCard.title, "💬 Carlos • Flat 512 (2 novas)");
+      assert.strictEqual(waCard.body, "• Bom dia\n• Tem travesseiro extra?");
+
+      // 2) Mensagem de Ana (WhatsApp) -> agrupa dentro da MESMA categoria WhatsApp sem espalhar cards soltos
       await triggerPush({
         category: "whatsapp",
         phone: "5521977776666",
@@ -793,6 +794,29 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
         message: "Qual a senha do Wi-Fi?",
         messageKey: "m4"
       });
+
+      waCard = activeNotifications.get("gfm-cat-whatsapp");
+      assert.strictEqual(waCard.title, "💬 WhatsApp (3 novas • 2 conversas)");
+      assert.ok(waCard.body.includes("Carlos • Flat 512: Bom dia"));
+      assert.ok(waCard.body.includes("Ana • Flat 904: Qual a senha do Wi-Fi?"));
+
+      // 3) Dois itens na Lista de Compras -> ficam agrupados exclusivamente em gfm-cat-shopping_list
+      await triggerPush({
+        id: 601,
+        category: "shopping_list",
+        title: "🛒 Lista de Compras",
+        message: 'Grazi adicionou: "Detergente Neutro"',
+        targetUrl: "/lista-compras"
+      });
+      await triggerPush({
+        id: 602,
+        category: "shopping_list",
+        title: "🛒 Lista de Compras",
+        message: 'Cris adicionou: "Papel Higiênico"',
+        targetUrl: "/lista-compras"
+      });
+
+      // 4) Dois Check-outs -> ficam agrupados exclusivamente em gfm-cat-checkout
       await triggerPush({
         id: 701,
         category: "checkout",
@@ -810,10 +834,28 @@ describe("Resilient Restocker Voice Notification System — Targeted Test Suite"
         message: "Flat liberado"
       });
 
-      assert.strictEqual(activeNotifications.size, 4, "Deve haver 4 cards independentes agrupáveis pelo Android");
-      const carlosCard = activeNotifications.get("wa-chat-5522998887777");
-      assert.strictEqual(carlosCard.title, "💬 Carlos • Flat 512 (3 novas)");
-      assert.strictEqual(carlosCard.body, "• Bom dia\n• Tem travesseiro extra?\n• Obrigado!");
+      // Exatamente 3 blocos organizados por categoria (WhatsApp, Lista de Compras, Check-out) — zero bagunça!
+      assert.strictEqual(activeNotifications.size, 3, "Deve haver exatamente 1 card organizado por categoria ativa");
+      const shopCard = activeNotifications.get("gfm-cat-shopping_list");
+      assert.strictEqual(shopCard.title, "🛒 Lista de Compras (2 novos itens)");
+      assert.ok(shopCard.body.includes('Grazi adicionou: "Detergente Neutro"'));
+      assert.ok(shopCard.body.includes('Cris adicionou: "Papel Higiênico"'));
+
+      const checkoutCard = activeNotifications.get("gfm-cat-checkout");
+      assert.strictEqual(checkoutCard.title, "🔔 Check-outs p/ Frigobar (2 flats)");
+
+      // 5) Ao abrir a conversa de Carlos, limpa apenas Carlos do card WhatsApp mantendo Ana
+      let clearPromise = Promise.resolve();
+      messageHandler({
+        data: { type: "CLEAR_CHAT_NOTIFICATIONS", phone: "5522998887777" },
+        waitUntil: (p) => { clearPromise = p; }
+      });
+      await clearPromise;
+
+      waCard = activeNotifications.get("gfm-cat-whatsapp");
+      assert.ok(waCard, "Card WhatsApp continua aberto apenas com a conversa não lida da Ana");
+      assert.strictEqual(waCard.title, "💬 Ana • Flat 904");
+      assert.strictEqual(waCard.body, "Qual a senha do Wi-Fi?");
     });
 
     it("Bloqueia e expurga inscrições duplicadas de corpflats.onrender.com mantendo apenas corpflats.com.br", async () => {

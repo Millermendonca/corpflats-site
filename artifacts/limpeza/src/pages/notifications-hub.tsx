@@ -30,7 +30,15 @@ import {
   Sparkles,
   Search,
   Smartphone,
-  CheckCircle2
+  CheckCircle2,
+  MessageSquare,
+  CalendarDays,
+  Wrench,
+  DollarSign,
+  Layers,
+  List,
+  ChevronDown,
+  ChevronRight
 } from "lucide-react"
 import { 
   getPushPermissionState, 
@@ -38,14 +46,17 @@ import {
   showNativeNotification, 
   isPushSupported,
   syncWebPushSubscription,
-  sendServerWebPushTest
+  sendServerWebPushTest,
+  resolveNotificationBucketClient,
+  clearCategoryTrayNotification,
+  type NotificationCategoryBucket
 } from "@/lib/push-notifications"
 import { format, formatDistanceToNow, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
 interface NotificationItem {
   id: number
-  category: "breakfast" | "lost_item" | "defect" | "checkout" | "system_error" | "abandoned_cart" | "cleaning_alert"
+  category: string
   title: string
   message: string
   severity: "info" | "warning" | "critical"
@@ -68,14 +79,85 @@ interface NotificationSettings {
   notifyOnOvertimeCleaning: boolean
 }
 
-const categoryIcons: Record<string, { icon: React.ElementType; color: string; label: string }> = {
-  breakfast: { icon: Coffee, color: "text-amber-600 bg-amber-100 dark:bg-amber-950/50", label: "Café da Manhã" },
-  lost_item: { icon: PackageOpen, color: "text-blue-600 bg-blue-100 dark:bg-blue-950/50", label: "Achados & Perdidos" },
-  defect: { icon: AlertTriangle, color: "text-rose-600 bg-rose-100 dark:bg-rose-950/50", label: "Defeito / Quarto" },
-  checkout: { icon: DoorOpen, color: "text-emerald-600 bg-emerald-100 dark:bg-emerald-950/50", label: "Check-out" },
-  system_error: { icon: AlertOctagon, color: "text-red-600 bg-red-100 dark:bg-red-950/50", label: "Erros & Bugs" },
-  abandoned_cart: { icon: ShoppingCart, color: "text-purple-600 bg-purple-100 dark:bg-purple-950/50", label: "Lead / Carrinho" },
-  cleaning_alert: { icon: Clock, color: "text-orange-600 bg-orange-100 dark:bg-orange-950/50", label: "Alerta Governança" }
+const BUCKET_ORDER: NotificationCategoryBucket[] = [
+  "whatsapp",
+  "shopping_list",
+  "reservations",
+  "checkout",
+  "cleaning",
+  "maintenance",
+  "breakfast",
+  "finance",
+  "system"
+]
+
+const categoryBucketConfig: Record<
+  NotificationCategoryBucket,
+  { icon: React.ElementType; color: string; headerBg: string; label: string; emoji: string }
+> = {
+  whatsapp: {
+    icon: MessageSquare,
+    emoji: "💬",
+    label: "WhatsApp",
+    color: "text-emerald-700 bg-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-300",
+    headerBg: "border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20"
+  },
+  shopping_list: {
+    icon: ShoppingCart,
+    emoji: "🛒",
+    label: "Lista de Compras",
+    color: "text-amber-700 bg-amber-100 dark:bg-amber-950/60 dark:text-amber-300",
+    headerBg: "border-amber-200 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20"
+  },
+  reservations: {
+    icon: CalendarDays,
+    emoji: "📅",
+    label: "Reservas & Check-in",
+    color: "text-blue-700 bg-blue-100 dark:bg-blue-950/60 dark:text-blue-300",
+    headerBg: "border-blue-200 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20"
+  },
+  checkout: {
+    icon: DoorOpen,
+    emoji: "🚪",
+    label: "Check-out & Frigobar",
+    color: "text-teal-700 bg-teal-100 dark:bg-teal-950/60 dark:text-teal-300",
+    headerBg: "border-teal-200 dark:border-teal-900/60 bg-teal-50/40 dark:bg-teal-950/20"
+  },
+  cleaning: {
+    icon: Sparkles,
+    emoji: "🧹",
+    label: "Governança & Limpeza",
+    color: "text-purple-700 bg-purple-100 dark:bg-purple-950/60 dark:text-purple-300",
+    headerBg: "border-purple-200 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20"
+  },
+  maintenance: {
+    icon: Wrench,
+    emoji: "🔧",
+    label: "Manutenção & Achados",
+    color: "text-rose-700 bg-rose-100 dark:bg-rose-950/60 dark:text-rose-300",
+    headerBg: "border-rose-200 dark:border-rose-900/60 bg-rose-50/40 dark:bg-rose-950/20"
+  },
+  breakfast: {
+    icon: Coffee,
+    emoji: "🥐",
+    label: "Café da Manhã",
+    color: "text-orange-700 bg-orange-100 dark:bg-orange-950/60 dark:text-orange-300",
+    headerBg: "border-orange-200 dark:border-orange-900/60 bg-orange-50/40 dark:bg-orange-950/20"
+  },
+  finance: {
+    icon: DollarSign,
+    emoji: "💰",
+    label: "Financeiro & Faturamento",
+    color: "text-green-700 bg-green-100 dark:bg-green-950/60 dark:text-green-300",
+    headerBg: "border-green-200 dark:border-green-900/60 bg-green-50/40 dark:bg-green-950/20"
+  },
+  system: {
+    icon: AlertOctagon,
+    emoji: "⚙️",
+    label: "Sistema & IA Sofia",
+    color: "text-slate-700 bg-slate-100 dark:bg-slate-800 dark:text-slate-300",
+    headerBg: "border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30"
+  }
 }
 
 const severityBadges: Record<string, { label: string; badgeClass: string }> = {
@@ -226,6 +308,7 @@ export default function NotificationsHub() {
 
   const handleMarkAllAsRead = async () => {
     try {
+      BUCKET_ORDER.forEach(b => clearCategoryTrayNotification(b))
       await fetch("/api/notifications/mark-all-read", { method: "POST" })
       setNotifications(prev => prev.map(n => ({ ...n, read: true })))
       setUnreadCount(0)
@@ -242,6 +325,7 @@ export default function NotificationsHub() {
   const handleClearAll = async () => {
     if (!confirm("Tem certeza que deseja limpar todo o histórico de notificações?")) return
     try {
+      BUCKET_ORDER.forEach(b => clearCategoryTrayNotification(b))
       await fetch("/api/notifications", { method: "DELETE" })
       setNotifications([])
       setUnreadCount(0)
@@ -284,9 +368,35 @@ export default function NotificationsHub() {
     }
   }
 
+  const [groupByCategory, setGroupByCategory] = useState<boolean>(true)
+  const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>({})
+
+  const resolveBucket = (n: NotificationItem): NotificationCategoryBucket =>
+    resolveNotificationBucketClient({
+      category: n.category,
+      targetUrl: n.targetUrl,
+      title: n.title
+    })
+
+  const toggleBucketCollapse = (bucket: NotificationCategoryBucket) => {
+    setCollapsedBuckets(prev => ({ ...prev, [bucket]: !prev[bucket] }))
+  }
+
+  const handleMarkBucketAsRead = async (bucket: NotificationCategoryBucket, items: NotificationItem[]) => {
+    const unreadItems = items.filter(i => !i.read)
+    clearCategoryTrayNotification(bucket)
+    if (unreadItems.length === 0) return
+    const unreadIds = new Set(unreadItems.map(i => i.id))
+    setNotifications(prev => prev.map(n => (unreadIds.has(n.id) ? { ...n, read: true } : n)))
+    setUnreadCount(prev => Math.max(0, prev - unreadItems.length))
+    await Promise.allSettled(
+      unreadItems.map(i => fetch(`/api/notifications/${i.id}/read`, { method: "PATCH" }))
+    )
+  }
+
   // Filtered Notifications
   const filteredNotifications = notifications.filter(n => {
-    if (selectedCategory !== "all" && n.category !== selectedCategory) return false
+    if (selectedCategory !== "all" && resolveBucket(n) !== selectedCategory) return false
     if (selectedSeverity !== "all" && n.severity !== selectedSeverity) return false
     if (unreadOnly && n.read) return false
     if (searchQuery.trim()) {
@@ -295,6 +405,119 @@ export default function NotificationsHub() {
     }
     return true
   })
+
+  const groupedBuckets = BUCKET_ORDER.map(bucket => {
+    const items = filteredNotifications.filter(n => resolveBucket(n) === bucket)
+    const unreadInBucket = items.filter(n => !n.read).length
+    return { bucket, items, unreadInBucket, meta: categoryBucketConfig[bucket] }
+  }).filter(g => g.items.length > 0)
+
+  const renderNotificationCard = (item: NotificationItem) => {
+    const bucket = resolveBucket(item)
+    const conf = categoryBucketConfig[bucket]
+    const Icon = conf.icon
+    const sev = severityBadges[item.severity] || severityBadges.info
+    const timeFormatted = format(parseISO(item.createdAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+    const timeAgo = formatDistanceToNow(parseISO(item.createdAt), { addSuffix: true, locale: ptBR })
+
+    return (
+      <Card
+        key={item.id}
+        className={`overflow-hidden transition-all duration-200 border-2 rounded-xl shadow-2xs ${
+          !item.read
+            ? "bg-sky-50/50 dark:bg-sky-950/20 border-primary/40 ring-1 ring-primary/20"
+            : "bg-card border-border/70 opacity-90"
+        }`}
+      >
+        <CardContent className="p-4">
+          <div className="flex flex-col sm:flex-row items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0 flex-1">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${conf.color}`}>
+                <Icon className="w-5 h-5" />
+              </div>
+
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className={`text-sm font-bold tracking-tight ${!item.read ? "text-slate-950 dark:text-slate-50 font-black" : "text-slate-800 dark:text-slate-200"}`}>
+                    {item.title}
+                  </h3>
+                  <Badge variant="outline" className={`text-[10px] px-1.5 py-0.5 ${sev.badgeClass}`}>
+                    {sev.label}
+                  </Badge>
+                  {!groupByCategory && (
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5">
+                      {conf.emoji} {conf.label}
+                    </Badge>
+                  )}
+                  {!item.read && (
+                    <Badge className="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 font-bold">
+                      Nova
+                    </Badge>
+                  )}
+                </div>
+
+                <p className="text-xs text-slate-700 dark:text-slate-300 font-medium leading-relaxed">
+                  {item.message}
+                </p>
+
+                {item.metadata?.photoUrl && (
+                  <div className="pt-1.5">
+                    <img
+                      src={item.metadata.photoUrl}
+                      alt="Foto Anexa"
+                      className="h-20 w-auto rounded-lg border border-amber-300 object-cover shadow-2xs hover:scale-105 transition-transform"
+                    />
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3 text-[11px] text-muted-foreground pt-1">
+                  <span title={timeFormatted}>{timeAgo}</span>
+                  <span>•</span>
+                  <span>{timeFormatted}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+              {item.targetUrl && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setLocation(item.targetUrl || "/dashboard")}
+                  className="text-xs font-semibold h-8 gap-1 shadow-2xs"
+                >
+                  <span>Ver Detalhes</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </Button>
+              )}
+
+              {!item.read && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => handleMarkAsRead(item.id)}
+                  className="text-xs h-8 text-muted-foreground hover:text-foreground"
+                  title="Marcar como lida"
+                >
+                  <Check className="w-4 h-4" />
+                </Button>
+              )}
+
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => handleDeleteNotification(item.id)}
+                className="text-xs h-8 text-muted-foreground hover:text-rose-600"
+                title="Excluir notificação"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Shell>
@@ -458,53 +681,31 @@ export default function NotificationsHub() {
                       onClick={() => setSelectedCategory("all")}
                       className="text-xs h-8 px-2.5 font-semibold"
                     >
-                      Todos
+                      Todas
                     </Button>
-                    <Button
-                      variant={selectedCategory === "breakfast" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setSelectedCategory("breakfast")}
-                      className="text-xs h-8 px-2.5 font-semibold gap-1"
-                    >
-                      <Coffee className="w-3.5 h-3.5" /> Café
-                    </Button>
-                    <Button
-                      variant={selectedCategory === "lost_item" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setSelectedCategory("lost_item")}
-                      className="text-xs h-8 px-2.5 font-semibold gap-1"
-                    >
-                      <PackageOpen className="w-3.5 h-3.5" /> Achados
-                    </Button>
-                    <Button
-                      variant={selectedCategory === "defect" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setSelectedCategory("defect")}
-                      className="text-xs h-8 px-2.5 font-semibold gap-1"
-                    >
-                      <AlertTriangle className="w-3.5 h-3.5" /> Defeitos
-                    </Button>
-                    <Button
-                      variant={selectedCategory === "checkout" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setSelectedCategory("checkout")}
-                      className="text-xs h-8 px-2.5 font-semibold gap-1"
-                    >
-                      <DoorOpen className="w-3.5 h-3.5" /> Check-out
-                    </Button>
-                    <Button
-                      variant={selectedCategory === "system_error" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setSelectedCategory("system_error")}
-                      className="text-xs h-8 px-2.5 font-semibold gap-1 text-red-600"
-                    >
-                      <AlertOctagon className="w-3.5 h-3.5" /> Bugs & Erros
-                    </Button>
+                    {BUCKET_ORDER.map(bucket => {
+                      const conf = categoryBucketConfig[bucket]
+                      const count = notifications.filter(n => resolveBucket(n) === bucket).length
+                      if (count === 0 && selectedCategory !== bucket) return null
+                      return (
+                        <Button
+                          key={bucket}
+                          variant={selectedCategory === bucket ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setSelectedCategory(bucket)}
+                          className="text-xs h-8 px-2.5 font-semibold gap-1"
+                        >
+                          <span>{conf.emoji}</span>
+                          <span>{conf.label}</span>
+                          <span className="opacity-70 text-[10px]">({count})</span>
+                        </Button>
+                      )
+                    })}
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t text-xs">
-                  <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t text-xs">
+                  <div className="flex flex-wrap items-center gap-4">
                     <label className="flex items-center gap-1.5 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
                       <input
                         type="checkbox"
@@ -514,6 +715,33 @@ export default function NotificationsHub() {
                       />
                       <span>Apenas Não Lidas</span>
                     </label>
+
+                    <div className="flex items-center rounded-lg border bg-muted/50 p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setGroupByCategory(true)}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                          groupByCategory
+                            ? "bg-background text-foreground shadow-2xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>Por Categoria</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGroupByCategory(false)}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                          !groupByCategory
+                            ? "bg-background text-foreground shadow-2xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        <List className="w-3.5 h-3.5" />
+                        <span>Cronológico</span>
+                      </button>
+                    </div>
                   </div>
                   <span className="text-muted-foreground">
                     Exibindo {filteredNotifications.length} de {notifications.length} notificações
@@ -530,111 +758,74 @@ export default function NotificationsHub() {
                 ))}
               </div>
             ) : filteredNotifications.length > 0 ? (
-              <div className="space-y-3">
-                {filteredNotifications.map(item => {
-                  const conf = categoryIcons[item.category] || categoryIcons.breakfast
-                  const Icon = conf.icon
-                  const sev = severityBadges[item.severity] || severityBadges.info
-                  const timeFormatted = format(parseISO(item.createdAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
-                  const timeAgo = formatDistanceToNow(parseISO(item.createdAt), { addSuffix: true, locale: ptBR })
-
-                  return (
-                    <Card 
-                      key={item.id}
-                      className={`overflow-hidden transition-all duration-200 border-2 rounded-xl shadow-2xs ${
-                        !item.read 
-                          ? "bg-sky-50/50 dark:bg-sky-950/20 border-primary/40 ring-1 ring-primary/20" 
-                          : "bg-card border-border/70 opacity-90"
-                      }`}
-                    >
-                      <CardContent className="p-4">
-                        <div className="flex flex-col sm:flex-row items-start justify-between gap-3">
-                          <div className="flex items-start gap-3 min-w-0 flex-1">
-                            {/* Icon */}
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${conf.color}`}>
-                              <Icon className="w-5 h-5" />
+              groupByCategory ? (
+                <div className="space-y-5">
+                  {groupedBuckets.map(({ bucket, items, unreadInBucket, meta }) => {
+                    const BucketIcon = meta.icon
+                    const isCollapsed = Boolean(collapsedBuckets[bucket])
+                    return (
+                      <Card key={bucket} className={`border-2 rounded-2xl overflow-hidden shadow-2xs ${meta.headerBg}`}>
+                        <div
+                          onClick={() => toggleBucketCollapse(bucket)}
+                          className="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer select-none hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${meta.color}`}>
+                              <BucketIcon className="w-4 h-4" />
                             </div>
-
-                            <div className="min-w-0 flex-1 space-y-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <h3 className={`text-sm font-bold tracking-tight ${!item.read ? "text-slate-950 dark:text-slate-50 font-black" : "text-slate-800 dark:text-slate-200"}`}>
-                                  {item.title}
-                                </h3>
-                                <Badge variant="outline" className={`text-[10px] px-1.5 py-0.5 ${sev.badgeClass}`}>
-                                  {sev.label}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h2 className="text-sm md:text-base font-extrabold text-slate-900 dark:text-slate-100">
+                                {meta.emoji} {meta.label}
+                              </h2>
+                              <Badge variant="outline" className="text-[11px] font-bold bg-background/80">
+                                {items.length} {items.length === 1 ? "item" : "itens"}
+                              </Badge>
+                              {unreadInBucket > 0 && (
+                                <Badge className="bg-rose-600 text-white text-[10px] font-bold">
+                                  {unreadInBucket} nova{unreadInBucket > 1 ? "s" : ""}
                                 </Badge>
-                                {!item.read && (
-                                  <Badge className="bg-primary text-primary-foreground text-[10px] px-1.5 py-0.5 font-bold">
-                                    Nova
-                                  </Badge>
-                                )}
-                              </div>
-
-                              <p className="text-xs text-slate-700 dark:text-slate-300 font-medium leading-relaxed">
-                                {item.message}
-                              </p>
-
-                              {/* Photo Attachment if available */}
-                              {item.metadata?.photoUrl && (
-                                <div className="pt-1.5">
-                                  <img 
-                                    src={item.metadata.photoUrl} 
-                                    alt="Foto Anexa" 
-                                    className="h-20 w-auto rounded-lg border border-amber-300 object-cover shadow-2xs hover:scale-105 transition-transform" 
-                                  />
-                                </div>
                               )}
-
-                              <div className="flex items-center gap-3 text-[11px] text-muted-foreground pt-1">
-                                <span title={timeFormatted}>{timeAgo}</span>
-                                <span>•</span>
-                                <span>{timeFormatted}</span>
-                              </div>
                             </div>
                           </div>
 
-                          {/* Actions */}
-                          <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
-                            {item.targetUrl && (
+                          <div className="flex items-center gap-2 shrink-0">
+                            {unreadInBucket > 0 && (
                               <Button
+                                type="button"
                                 size="sm"
                                 variant="outline"
-                                onClick={() => setLocation(item.targetUrl || "/dashboard")}
-                                className="text-xs font-semibold h-8 gap-1 shadow-2xs"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleMarkBucketAsRead(bucket, items)
+                                }}
+                                className="h-7 text-[11px] font-semibold gap-1 bg-background"
                               >
-                                <span>Ver Detalhes</span>
-                                <ExternalLink className="w-3.5 h-3.5" />
+                                <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                <span className="hidden sm:inline">Marcar categoria lida</span>
                               </Button>
                             )}
-
-                            {!item.read && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => handleMarkAsRead(item.id)}
-                                className="text-xs h-8 text-muted-foreground hover:text-foreground"
-                                title="Marcar como lida"
-                              >
-                                <Check className="w-4 h-4" />
-                              </Button>
+                            {isCollapsed ? (
+                              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4 text-muted-foreground" />
                             )}
-
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => handleDeleteNotification(item.id)}
-                              className="text-xs h-8 text-muted-foreground hover:text-rose-600"
-                              title="Excluir notificação"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
                           </div>
                         </div>
-                      </CardContent>
-                    </Card>
-                  )
-                })}
-              </div>
+
+                        {!isCollapsed && (
+                          <div className="p-3 pt-1 space-y-2.5 bg-background/70 border-t">
+                            {items.map(item => renderNotificationCard(item))}
+                          </div>
+                        )}
+                      </Card>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredNotifications.map(item => renderNotificationCard(item))}
+                </div>
+              )
             ) : (
               <div className="text-center py-16 bg-card border border-dashed rounded-2xl p-8 space-y-3">
                 <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto text-muted-foreground">

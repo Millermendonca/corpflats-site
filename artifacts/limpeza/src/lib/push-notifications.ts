@@ -416,6 +416,85 @@ export async function requestPushPermission(): Promise<boolean> {
   }
 }
 
+export type NotificationCategoryBucket =
+  | "whatsapp"
+  | "shopping_list"
+  | "reservations"
+  | "checkout"
+  | "cleaning"
+  | "maintenance"
+  | "breakfast"
+  | "finance"
+  | "system"
+
+/**
+ * Classifica qualquer notificação em um dos 9 grupos semânticos para separar
+ * WhatsApp, Lista de Compras, Reservas, Governança, etc. sem misturar categorias.
+ */
+export function resolveNotificationBucketClient(input: {
+  category?: string
+  targetUrl?: string
+  url?: string
+  title?: string
+}): NotificationCategoryBucket {
+  const cat = String(input.category || "").toLowerCase().trim()
+  const url = String(input.targetUrl || input.url || "").toLowerCase()
+  const title = String(input.title || "").toLowerCase()
+
+  if (cat === "whatsapp" || url.includes("/whatsapp-chat") || title.startsWith("whatsapp:")) {
+    return "whatsapp"
+  }
+  if (
+    cat === "shopping_list" ||
+    url.includes("/lista-compras") ||
+    title.includes("lista de compras") ||
+    title.includes("🛒")
+  ) {
+    return "shopping_list"
+  }
+  if (["checkout", "late_checkout", "minibar"].includes(cat)) {
+    return "checkout"
+  }
+  if (
+    [
+      "reservation",
+      "reserva",
+      "checkin",
+      "pre_checkin",
+      "early_checkin",
+      "stay_extension",
+      "sunday_upsell",
+      "ota",
+      "abandoned_cart",
+      "guest_alert"
+    ].includes(cat)
+  ) {
+    return "reservations"
+  }
+  if (["cleaning", "cleaning_alert", "cleaning_priority", "cleaning_info", "governanca"].includes(cat)) {
+    return "cleaning"
+  }
+  if (["defect", "manutencao", "service_order", "lost_item", "nfc_card_replacement"].includes(cat)) {
+    return "maintenance"
+  }
+  if (cat === "breakfast") {
+    return "breakfast"
+  }
+  if (
+    [
+      "finance",
+      "financial",
+      "boleto_faturado",
+      "boleto_reminder",
+      "hospedagem_faturada",
+      "consumo_faturado"
+    ].includes(cat)
+  ) {
+    return "finance"
+  }
+  return "system"
+}
+
 /**
  * Limpa a notificação agrupada da conversa do WhatsApp na bandeja do Android ao abrir o chat
  */
@@ -427,6 +506,23 @@ export function clearWhatsAppTrayNotification(phone: string): void {
         reg?.active?.postMessage({
           type: "CLEAR_CHAT_NOTIFICATIONS",
           phone: String(phone).replace(/\D/g, "")
+        })
+      })
+      .catch(() => {})
+  } catch {}
+}
+
+/**
+ * Limpa na bandeja do Android todas as notificações agrupadas de uma categoria específica
+ */
+export function clearCategoryTrayNotification(bucket: NotificationCategoryBucket): void {
+  if (typeof window === "undefined" || !bucket || !("serviceWorker" in navigator)) return
+  try {
+    navigator.serviceWorker.ready
+      .then((reg) => {
+        reg?.active?.postMessage({
+          type: "CLEAR_CATEGORY_NOTIFICATIONS",
+          bucket
         })
       })
       .catch(() => {})
@@ -647,7 +743,8 @@ export async function showNativeNotification(options: SmartNotificationOptions):
     recordNotifiedIds([id])
   }
 
-  const isWhatsApp = category === "whatsapp" || url.includes("/whatsapp-chat") || title.toLowerCase().includes("whatsapp")
+  const bucket = resolveNotificationBucketClient({ category, url, title })
+  const isWhatsApp = bucket === "whatsapp"
   const cleanTitle = title || "🔔 CorpFlats"
   const cleanBody = message || "Nova notificação no sistema."
   const phoneMatch = url.match(/phone=([0-9]+)/)
@@ -662,6 +759,7 @@ export async function showNativeNotification(options: SmartNotificationOptions):
           payload: {
             id: id || Date.now(),
             category: category || (isWhatsApp ? "whatsapp" : "general"),
+            groupBucket: bucket,
             phone,
             flatNumber,
             title: cleanTitle,
@@ -676,9 +774,9 @@ export async function showNativeNotification(options: SmartNotificationOptions):
 
     const notif = new Notification(cleanTitle, {
       body: cleanBody,
-      icon: "/api/pwa/chat-icon.png?size=192&v=3",
+      icon: `/api/pwa/category-icon.png?cat=${bucket}&size=192&v=1`,
       badge: "/api/pwa/notification-badge.png?v=3",
-      tag: phone ? `wa-chat-${phone}` : `gfm-notif-${id || Date.now()}`
+      tag: `gfm-cat-${bucket}`
     } as any)
     notif.onclick = () => {
       window.focus()

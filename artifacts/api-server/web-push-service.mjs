@@ -345,15 +345,17 @@ export function shouldRoleReceiveNotification(role, notification, subscriberUser
     return category === "checkout" || category === "minibar";
   }
 
-  // 3. Perfil Camareira: governança, check-out, defeitos e achados/perdidos
+  // 3. Perfil Camareira: governança, check-out, defeitos, lista de compras e achados/perdidos
   if (normRole === "camareira") {
     return [
       "checkout",
+      "cleaning",
       "cleaning_alert",
       "cleaning_priority",
       "cleaning_info",
       "defect",
-      "lost_item"
+      "lost_item",
+      "shopping_list"
     ].includes(category);
   }
 
@@ -371,16 +373,80 @@ export function shouldRoleReceiveNotification(role, notification, subscriberUser
 }
 
 /**
- * Monta o payload estruturado (< 3.5 KB) otimizado para agrupamento Android e Modo Rádio.
+ * Resolve o grupo semântico de categoria para separar cada tipo de notificação
+ * em seu próprio bloco expansível no Android (sem misturar WhatsApp, Lista de Compras, Reservas, etc.).
+ */
+export function resolveNotificationGroupBucket(notification) {
+  const cat = String(notification?.category || "").toLowerCase().trim();
+  const url = String(notification?.targetUrl || notification?.link || "").toLowerCase();
+  const title = String(notification?.title || "").toLowerCase();
+
+  if (cat === "whatsapp" || url.includes("/whatsapp-chat") || title.startsWith("whatsapp:")) {
+    return "whatsapp";
+  }
+  if (
+    cat === "shopping_list" ||
+    url.includes("/lista-compras") ||
+    title.includes("lista de compras") ||
+    title.includes("🛒")
+  ) {
+    return "shopping_list";
+  }
+  if (["checkout", "late_checkout", "minibar"].includes(cat)) {
+    return "checkout";
+  }
+  if (
+    [
+      "reservation",
+      "reserva",
+      "checkin",
+      "pre_checkin",
+      "early_checkin",
+      "stay_extension",
+      "sunday_upsell",
+      "ota",
+      "abandoned_cart",
+      "guest_alert"
+    ].includes(cat)
+  ) {
+    return "reservations";
+  }
+  if (["cleaning", "cleaning_alert", "cleaning_priority", "cleaning_info", "governanca"].includes(cat)) {
+    return "cleaning";
+  }
+  if (["defect", "manutencao", "service_order", "lost_item", "nfc_card_replacement"].includes(cat)) {
+    return "maintenance";
+  }
+  if (cat === "breakfast") {
+    return "breakfast";
+  }
+  if (
+    [
+      "finance",
+      "financial",
+      "boleto_faturado",
+      "boleto_reminder",
+      "hospedagem_faturada",
+      "consumo_faturado"
+    ].includes(cat)
+  ) {
+    return "finance";
+  }
+  return "system";
+}
+
+/**
+ * Monta o payload estruturado (< 3.5 KB) otimizado para agrupamento por categoria no Android e Modo Rádio.
  */
 export function buildPushPayloadForSubscriber(notification, subscriberRole, unreadCount = 1) {
   const normRole = String(subscriberRole || "").toLowerCase().trim();
   const category = String(notification?.category || "general").toLowerCase().trim();
+  const groupBucket = resolveNotificationGroupBucket(notification);
   const meta = notification?.metadata || {};
   const flatNumber = extractCleanFlatNumber(notification);
 
-  // Caso 1: Conversa do WhatsApp Corporativo (acumula mensagens por conversa no Android)
-  if (category === "whatsapp") {
+  // Caso 1: Conversa do WhatsApp Corporativo (agrupada na categoria WhatsApp)
+  if (groupBucket === "whatsapp") {
     const urlPhoneMatch = String(notification?.targetUrl || "").match(/phone=([0-9]+)/);
     const phone = String(meta.phone || (urlPhoneMatch ? urlPhoneMatch[1] : "") || "").replace(/\D/g, "");
     const rawSender =
@@ -398,6 +464,7 @@ export function buildPushPayloadForSubscriber(notification, subscriberRole, unre
       id: notification.id,
       type: "whatsapp_message",
       category: "whatsapp",
+      groupBucket: "whatsapp",
       phone,
       senderName: rawSender,
       flatNumber: flatNumber || null,
@@ -421,6 +488,7 @@ export function buildPushPayloadForSubscriber(notification, subscriberRole, unre
       id: notification.id,
       type: "restocker_checkout",
       category: "checkout",
+      groupBucket: "checkout",
       isRestockerCheckout: true,
       flatNumber: cleanFlat,
       reservationCode: meta.code || meta.reservationCode || null,
@@ -434,11 +502,12 @@ export function buildPushPayloadForSubscriber(notification, subscriberRole, unre
     };
   }
 
-  // Caso 3: Notificações operacionais gerais (reservas, check-outs recepção, limpeza, café, OS, etc.)
+  // Caso 3: Notificações operacionais separadas por categoria (lista de compras, reservas, limpeza, café, OS, etc.)
   return {
     id: notification.id,
     type: "system_notification",
-    category,
+    category: groupBucket === "shopping_list" ? "shopping_list" : category,
+    groupBucket,
     severity: notification.severity || "info",
     flatNumber: flatNumber || null,
     reservationCode: meta.code || meta.reservationCode || null,

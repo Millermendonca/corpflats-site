@@ -2,7 +2,13 @@ import { useState, useEffect, useRef } from "react"
 import { Link, useLocation } from "wouter"
 import { useGetMe, useLogout, getGetMeQueryKey, useGetAlerts } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { showNativeNotification, markInitialHistoryAsSeen, unsubscribeWebPush, syncWebPushSubscription } from "@/lib/push-notifications"
+import {
+  showNativeNotification,
+  markInitialHistoryAsSeen,
+  unsubscribeWebPush,
+  syncWebPushSubscription,
+  clearCategoryTrayNotification
+} from "@/lib/push-notifications"
 import { playHotelChime } from "@/lib/sound"
 import { cancelGoogleOneTap } from "@/lib/auth-client"
 import { 
@@ -195,6 +201,20 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [activeToastNotif, setActiveToastNotif] = useState<any | null>(null)
   const seenNotifIdsRef = useRef<Set<number>>(new Set())
   const isInitialPollRef = useRef<boolean>(true)
+
+  useEffect(() => {
+    if (!location) return
+    if (location.startsWith("/lista-compras")) clearCategoryTrayNotification("shopping_list")
+    else if (location.startsWith("/pedidos-cafe")) clearCategoryTrayNotification("breakfast")
+    else if (location.startsWith("/frigobar-reposicao")) clearCategoryTrayNotification("checkout")
+    else if (location.startsWith("/ocorrencias") || location.startsWith("/servicos") || location.startsWith("/achados-perdidos")) {
+      clearCategoryTrayNotification("maintenance")
+    } else if (location === "/dashboard" || location.startsWith("/tarefas")) {
+      clearCategoryTrayNotification("cleaning")
+    } else if (location.startsWith("/reservas") || location.startsWith("/portaria")) {
+      clearCategoryTrayNotification("reservations")
+    }
+  }, [location])
 
   useEffect(() => {
     if (!isAuthenticated) return

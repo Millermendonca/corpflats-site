@@ -17990,6 +17990,15 @@ function createNotification(arg1, arg2, arg3) {
       }
     }
 
+    const rawTarget = String(payload.targetUrl || payload.link || "");
+    const rawTitleLower = String(payload.title || "").toLowerCase();
+    if (
+      (!deducedCategory || deducedCategory === "general") &&
+      (rawTarget.includes("/lista-compras") || rawTitleLower.includes("lista de compras"))
+    ) {
+      deducedCategory = "shopping_list";
+    }
+
     const category = deducedCategory;
     const title = payload.title || "Notificação";
     const message = payload.message || "";
@@ -18005,6 +18014,8 @@ function createNotification(arg1, arg2, arg3) {
       system_error: settings.notifyOnSystemError !== false,
       abandoned_cart: settings.notifyOnAbandonedCart !== false,
       cleaning_alert: settings.notifyOnOvertimeCleaning !== false,
+      cleaning: settings.notifyOnOvertimeCleaning !== false,
+      shopping_list: true,
       whatsapp: true,
       communication: true,
       general: true,
@@ -74139,13 +74150,28 @@ function serveSpaWithMetadata(distFolder, req, res) {
   }
 }
 
-// ── Ícone PNG Nativo para Instalação do PWA CorpFlats (/api/pwa/chat-icon.png & /api/pwa/notification-badge.png) ──
+// ── Ícone PNG Nativo para Instalação do PWA CorpFlats (/api/pwa/chat-icon.png & /api/pwa/category-icon.png) ──
+const PWA_CATEGORY_PALETTES = {
+  default: { bg: [9, 30, 38], glow: [6, 31, 38], accent: [197, 160, 89] },
+  whatsapp: { bg: [6, 58, 43], glow: [10, 48, 36], accent: [52, 211, 153] },
+  shopping_list: { bg: [92, 42, 10], glow: [45, 28, 8], accent: [251, 191, 36] },
+  reservations: { bg: [20, 44, 96], glow: [18, 34, 62], accent: [96, 165, 250] },
+  checkout: { bg: [13, 66, 63], glow: [12, 44, 42], accent: [45, 212, 191] },
+  cleaning: { bg: [56, 24, 108], glow: [32, 18, 60], accent: [192, 132, 252] },
+  maintenance: { bg: [98, 18, 44], glow: [44, 12, 24], accent: [251, 113, 133] },
+  breakfast: { bg: [84, 48, 12], glow: [42, 26, 10], accent: [250, 204, 21] },
+  finance: { bg: [16, 62, 36], glow: [12, 38, 22], accent: [74, 222, 128] },
+  system: { bg: [15, 23, 42], glow: [20, 30, 48], accent: [197, 160, 89] }
+};
+
 const pwaIconCache = new Map();
 function buildPwaChatPngBuffer(size = 192, options = {}) {
   const maskable = Boolean(options.maskable);
   const monochrome = Boolean(options.monochrome);
+  const themeKey = String(options.theme || "default").toLowerCase();
+  const palette = PWA_CATEGORY_PALETTES[themeKey] || PWA_CATEGORY_PALETTES.default;
   const dim = size === 512 ? 512 : size === 96 ? 96 : 192;
-  const cacheKey = `${dim}-${maskable ? "mask" : "any"}-${monochrome ? "mono" : "color"}`;
+  const cacheKey = `${dim}-${maskable ? "mask" : "any"}-${monochrome ? "mono" : themeKey}`;
   if (pwaIconCache.has(cacheKey)) return pwaIconCache.get(cacheKey);
 
   const rawData = Buffer.alloc((dim * 4 + 1) * dim);
@@ -74224,20 +74250,20 @@ function buildPwaChatPngBuffer(size = 192, options = {}) {
         continue;
       }
 
-      // 1. Fundo Petróleo Noite (#091E26) com leve iluminação central (#0F3D4C)
+      // 1. Fundo temático da categoria com iluminação central
       const cdx = (u - 90) / 90;
       const cdy = (v - 90) / 90;
       const radial = Math.max(0, 1 - Math.sqrt(cdx * cdx + cdy * cdy));
-      let r = Math.round(9 + 6 * radial * 0.45);
-      let g = Math.round(30 + 31 * radial * 0.45);
-      let b = Math.round(38 + 38 * radial * 0.45);
+      let r = Math.round(palette.bg[0] + palette.glow[0] * radial * 0.45);
+      let g = Math.round(palette.bg[1] + palette.glow[1] * radial * 0.45);
+      let b = Math.round(palette.bg[2] + palette.glow[2] * radial * 0.45);
 
-      // 2. Moldura interna arredondada Bronze Champagne (#C5A059)
-      const aFrame = smoothAlpha(Math.abs(dBox), 1.6) * 0.5;
+      // 2. Moldura interna arredondada na cor de destaque da categoria
+      const aFrame = smoothAlpha(Math.abs(dBox), 1.8) * 0.65;
       if (aFrame > 0) {
-        r = Math.round(r * (1 - aFrame) + 197 * aFrame);
-        g = Math.round(g * (1 - aFrame) + 160 * aFrame);
-        b = Math.round(b * (1 - aFrame) + 89 * aFrame);
+        r = Math.round(r * (1 - aFrame) + palette.accent[0] * aFrame);
+        g = Math.round(g * (1 - aFrame) + palette.accent[1] * aFrame);
+        b = Math.round(b * (1 - aFrame) + palette.accent[2] * aFrame);
       }
 
       // 3. Letra "C" em Branco Executivo (#F8FAFC)
@@ -74248,12 +74274,12 @@ function buildPwaChatPngBuffer(size = 192, options = {}) {
         b = Math.round(b * (1 - aC) + 252 * aC);
       }
 
-      // 4. Letra "F" em Bronze Champagne (#C5A059)
+      // 4. Letra "F" na cor de destaque da categoria
       const aF = smoothAlpha(distF, 6.5);
       if (aF > 0) {
-        r = Math.round(r * (1 - aF) + 197 * aF);
-        g = Math.round(g * (1 - aF) + 160 * aF);
-        b = Math.round(b * (1 - aF) + 89 * aF);
+        r = Math.round(r * (1 - aF) + palette.accent[0] * aF);
+        g = Math.round(g * (1 - aF) + palette.accent[1] * aF);
+        b = Math.round(b * (1 - aF) + palette.accent[2] * aF);
       }
 
       // Recorte arredondado externo (rx=40) quando não for maskable, evitando quadrado chapado
@@ -74326,6 +74352,16 @@ app.get("/api/pwa/chat-icon.png", (req, res) => {
   const buf = buildPwaChatPngBuffer(size, { maskable, monochrome });
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", "public, max-age=300, must-revalidate");
+  res.send(buf);
+});
+
+app.get("/api/pwa/category-icon.png", (req, res) => {
+  const cat = String(req.query.cat || "default").toLowerCase();
+  const rawSize = Number(req.query.size);
+  const size = rawSize === 512 ? 512 : rawSize === 96 ? 96 : 192;
+  const buf = buildPwaChatPngBuffer(size, { theme: cat });
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "public, max-age=86400");
   res.send(buf);
 });
 
@@ -75594,11 +75630,11 @@ app.post("/api/shopping-list", async (req, res) => {
       saveDatabase("shopping_list_post");
       try {
         createNotification({
-          category: "general",
-          title: "🛒 Novo item na Lista de Compras",
-          message: `${name} adicionou: "${newItem.title}"`,
+          category: "shopping_list",
+          title: "🛒 Lista de Compras",
+          message: `${name} adicionou: "${newItem.title}"${newItem.quantity ? ` (${newItem.quantity})` : ""}`,
           severity: "info",
-          metadata: { itemId: newItem.id },
+          metadata: { itemId: newItem.id, itemTitle: newItem.title },
           targetUrl: "/lista-compras"
         });
       } catch {}
@@ -75628,6 +75664,16 @@ app.post("/api/shopping-list", async (req, res) => {
   };
   db.shoppingList.unshift(newItem);
   saveDatabase("shopping_list_post_fallback");
+  try {
+    createNotification({
+      category: "shopping_list",
+      title: "🛒 Lista de Compras",
+      message: `${name} adicionou: "${newItem.title}"${newItem.quantity ? ` (${newItem.quantity})` : ""}`,
+      severity: "info",
+      metadata: { itemId: newItem.id, itemTitle: newItem.title },
+      targetUrl: "/lista-compras"
+    });
+  } catch {}
   res.status(201).json(newItem);
 });
 
