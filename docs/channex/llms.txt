@@ -1,0 +1,226 @@
+# Channex.io
+
+## Channex.io
+
+- [Channex.io Documentation](https://docs.channex.io/readme.md)
+- [About Channex & FAQ](https://docs.channex.io/about-channex-and-faq.md): What is Channex and some Frequently asked Questions
+- [Changelog](https://docs.channex.io/changelog.md)
+- [Intro](https://docs.channex.io/for-ota/intro.md): Here we have 2 API for OTA to connect with Channex
+- [Channex Shopping API](https://docs.channex.io/for-ota/shopping-api.md): API Methods to get real time rates, availability and content from Channex.
+- [Open Channel API](https://docs.channex.io/for-ota/open-channel-api.md): Details on how to connect your OTA, booking engine or channel manager as a channel on Channex.
+- [API Reference](https://docs.channex.io/api-v.1-documentation/api-reference.md): Documentation for Channex.io HTTP JSON-based API version 1.0
+- [API Rate Limits](https://docs.channex.io/api-v.1-documentation/rate-limits.md)
+- [Property Size Limits](https://docs.channex.io/api-v.1-documentation/property-size-limits.md)
+- [Properties Collection](https://docs.channex.io/api-v.1-documentation/hotels-collection.md): API methods to work with Properties
+- [Get list of Properties API](https://docs.channex.io/api-v.1-documentation/hotels-collection/get-list-of-properties-api.md)
+- [Get list of Property Options API](https://docs.channex.io/api-v.1-documentation/hotels-collection/get-list-of-property-options-api.md)
+- [Get Property API](https://docs.channex.io/api-v.1-documentation/hotels-collection/get-property-api.md)
+- [Create Property API](https://docs.channex.io/api-v.1-documentation/hotels-collection/create-property-api.md)
+- [Update Property API](https://docs.channex.io/api-v.1-documentation/hotels-collection/update-property-api.md)
+- [Delete Property API](https://docs.channex.io/api-v.1-documentation/hotels-collection/delete-property-api.md)
+- [Property Users Collection](https://docs.channex.io/api-v.1-documentation/property-users-collection.md): API methods to work with Property Users
+- [Get List of Property Users API](https://docs.channex.io/api-v.1-documentation/property-users-collection/get-list-of-property-users-api.md)
+- [Get Property User API](https://docs.channex.io/api-v.1-documentation/property-users-collection/get-property-user-api.md)
+- [Create Property User API](https://docs.channex.io/api-v.1-documentation/property-users-collection/create-property-user-api.md)
+- [Update Property User API](https://docs.channex.io/api-v.1-documentation/property-users-collection/update-property-user-api.md)
+- [Delete Property User API](https://docs.channex.io/api-v.1-documentation/property-users-collection/delete-property-user-api.md)
+- [Groups Collection](https://docs.channex.io/api-v.1-documentation/groups-collection.md): API methods to work with Groups
+- [Get list of Groups API](https://docs.channex.io/api-v.1-documentation/groups-collection/get-list-of-groups-api.md)
+- [Get list of Group Options API](https://docs.channex.io/api-v.1-documentation/groups-collection/get-list-of-group-options-api.md)
+- [Get Group API](https://docs.channex.io/api-v.1-documentation/groups-collection/get-group-api.md)
+- [Create Group API](https://docs.channex.io/api-v.1-documentation/groups-collection/create-group-api.md)
+- [Update Group API](https://docs.channex.io/api-v.1-documentation/groups-collection/update-group-api.md)
+- [Delete Group API](https://docs.channex.io/api-v.1-documentation/groups-collection/delete-group-api.md)
+- [Group Users Collection](https://docs.channex.io/api-v.1-documentation/group-users-collection.md): API methods to work with Group Users
+- [Room Types Collection](https://docs.channex.io/api-v.1-documentation/room-types-collection.md): API methods to work with Room Types
+- [Get list of Room Types API](https://docs.channex.io/api-v.1-documentation/room-types-collection/get-list-of-room-types-api.md)
+- [Get list of Room Type Options API](https://docs.channex.io/api-v.1-documentation/room-types-collection/get-list-of-room-type-options-api.md)
+- [Get Room Type API](https://docs.channex.io/api-v.1-documentation/room-types-collection/get-room-type-api.md)
+- [Create Room Type API](https://docs.channex.io/api-v.1-documentation/room-types-collection/create-room-type-api.md)
+- [Update Room Type API](https://docs.channex.io/api-v.1-documentation/room-types-collection/update-room-type-api.md)
+- [Delete Room Type API](https://docs.channex.io/api-v.1-documentation/room-types-collection/delete-room-type-api.md)
+- [Rate Plans Collection](https://docs.channex.io/api-v.1-documentation/rate-plans-collection.md): API methods to work with Rate Plans
+- [Get list of Rate Plans API](https://docs.channex.io/api-v.1-documentation/rate-plans-collection/get-list-of-rate-plans-api.md)
+- [Get list of Rate Plan Options API](https://docs.channex.io/api-v.1-documentation/rate-plans-collection/get-list-of-rate-plan-options-api.md)
+- [Get Rate Plan API](https://docs.channex.io/api-v.1-documentation/rate-plans-collection/get-rate-plan-api.md)
+- [Create Rate Plan API](https://docs.channex.io/api-v.1-documentation/rate-plans-collection/create-rate-plan-api.md)
+- [Update Rate Plan API](https://docs.channex.io/api-v.1-documentation/rate-plans-collection/update-rate-plan-api.md)
+- [Delete Rate Plan API](https://docs.channex.io/api-v.1-documentation/rate-plans-collection/delete-rate-plan-api.md)
+- [Availability and Rates](https://docs.channex.io/api-v.1-documentation/ari.md): API methods to work with Availability and Rates information
+- [Webhook Collection](https://docs.channex.io/api-v.1-documentation/webhook-collection.md)
+- [Bookings Collection](https://docs.channex.io/api-v.1-documentation/bookings-collection.md): API methods to work with bookings
+- [Booking CRS API](https://docs.channex.io/api-v.1-documentation/booking-crs-api.md): API Methods to work with Booking CRS feature
+- [Channel API](https://docs.channex.io/api-v.1-documentation/channel-api.md): API Methods to work with Channels.
+- [Airbnb API](https://docs.channex.io/api-v.1-documentation/airbnb-api.md): API Methods to works with Airbnb connection
+- [Manage a Booking Requests](https://docs.channex.io/api-v.1-documentation/airbnb-api/manage-a-booking-requests.md)
+- [Photos Collection](https://docs.channex.io/api-v.1-documentation/photos-collection.md): API Methods to work with Photos
+- [Hotel Policy Collection](https://docs.channex.io/api-v.1-documentation/hotel-policy-collection.md): API methods to work with Property Policy Collection
+- [Facilities Collection](https://docs.channex.io/api-v.1-documentation/facilities-collection.md): API Methods to work with Facilities
+- [Taxes and Tax Sets](https://docs.channex.io/api-v.1-documentation/taxes-and-tax-sets.md)
+- [Applications API](https://docs.channex.io/api-v.1-documentation/applications-api.md): API methods to work with Applications
+- [Messages Collection](https://docs.channex.io/api-v.1-documentation/messages-collection.md): API to work with Chat
+- [Reviews Collection](https://docs.channex.io/api-v.1-documentation/reviews-collection.md): API to work with Reviews
+- [Availability Rules Collection](https://docs.channex.io/api-v.1-documentation/availability-rules-collection.md): API Methods to work with Availability Rules
+- [Stripe Tokenization App](https://docs.channex.io/api-v.1-documentation/stripe-tokenization-app.md): API related to Stripe Tokenization App
+- [Payment Application API](https://docs.channex.io/api-v.1-documentation/payment-application-api.md): Information about Channex Payment Application API
+- [Channel Codes](https://docs.channex.io/api-v.1-documentation/channel-codes.md): List of supported Channel Codes
+- [Channel IFrame](https://docs.channex.io/api-v.1-documentation/channel-iframe.md): This is the API to show an iframe for the Channex mapping screen in your application. The user will be able to create channels and map by themselves.
+- [PMS Certification Tests](https://docs.channex.io/api-v.1-documentation/pms-certification-tests.md): To complete your integration and go into our production server we would like you to complete a self certification test and we can check the results
+- [1HotelRez](https://docs.channex.io/channel-api-examples/one-hotel-rez.md)
+- [Advertising Online](https://docs.channex.io/channel-api-examples/advertising-online.md)
+- [Agoda](https://docs.channex.io/channel-api-examples/agoda.md)
+- [Airbnb](https://docs.channex.io/channel-api-examples/airbnb.md)
+- [Alaric](https://docs.channex.io/channel-api-examples/alaric.md)
+- [Atlantis ORS](https://docs.channex.io/channel-api-examples/atlantis-ors.md)
+- [B2B Global](https://docs.channex.io/channel-api-examples/b2b-global.md)
+- [Bakuun](https://docs.channex.io/channel-api-examples/bakuun.md)
+- [Bed-and-Breakfast.it](https://docs.channex.io/channel-api-examples/bed-and-breakfast.it.md)
+- [Bedshero](https://docs.channex.io/channel-api-examples/bedshero.md)
+- [BookDirectOpen](https://docs.channex.io/channel-api-examples/book-direct-open.md)
+- [Bookeasy](https://docs.channex.io/channel-api-examples/bookeasy.md)
+- [Booking.com](https://docs.channex.io/channel-api-examples/booking.com.md)
+- [BOOKNPAY](https://docs.channex.io/channel-api-examples/booknpay.md)
+- [Bookola](https://docs.channex.io/channel-api-examples/bookola.md)
+- [BookOutdoors](https://docs.channex.io/channel-api-examples/book-outdoors.md)
+- [Cakrahub Booking Engine](https://docs.channex.io/channel-api-examples/cakrahub-booking-engine.md)
+- [Check24](https://docs.channex.io/channel-api-examples/check24.md)
+- [Crewdogs](https://docs.channex.io/channel-api-examples/crewdogs.md)
+- [Ctoutvert](https://docs.channex.io/channel-api-examples/ctoutvert.md)
+- [CultBooking](https://docs.channex.io/channel-api-examples/cultbooking.md)
+- [DidaTravel](https://docs.channex.io/channel-api-examples/dida-travel.md)
+- [DolceBot](https://docs.channex.io/channel-api-examples/dolcebot.md)
+- [Dream Ireland](https://docs.channex.io/channel-api-examples/dream-ireland.md)
+- [eDreams](https://docs.channex.io/channel-api-examples/edreams.md)
+- [Emerging Travel Group (Ostrovok)](https://docs.channex.io/channel-api-examples/emerging-travel-group-ostrovok.md)
+- [Expedia](https://docs.channex.io/channel-api-examples/expedia.md)
+- [GlampingHub](https://docs.channex.io/channel-api-examples/glamping-hub.md)
+- [Gopaddi](https://docs.channex.io/channel-api-examples/gopaddi.md)
+- [GuestPro](https://docs.channex.io/channel-api-examples/guestaps.md)
+- [Guirez](https://docs.channex.io/channel-api-examples/guirez.md)
+- [GuruHotel](https://docs.channex.io/channel-api-examples/guru-hotel.md)
+- [Heytrip](https://docs.channex.io/channel-api-examples/heytrip.md)
+- [Hipcamp](https://docs.channex.io/channel-api-examples/hipcamp.md)
+- [HLC+](https://docs.channex.io/channel-api-examples/hlc-plus.md)
+- [Hookusbookus](https://docs.channex.io/channel-api-examples/hookusbookus.md)
+- [Hopper](https://docs.channex.io/channel-api-examples/hopper.md)
+- [Hopper Homes](https://docs.channex.io/channel-api-examples/hopper-homes.md)
+- [Hostel Hop](https://docs.channex.io/channel-api-examples/hostel-hop.md)
+- [Hotelbeds](https://docs.channex.io/channel-api-examples/hotelbeds.md)
+- [HotelREZ](https://docs.channex.io/channel-api-examples/hotel-rez.md)
+- [HotelTonight](https://docs.channex.io/channel-api-examples/hoteltonight.md)
+- [HotelTrader](https://docs.channex.io/channel-api-examples/hotel-trader.md)
+- [Hoterip](https://docs.channex.io/channel-api-examples/hoterip.md)
+- [HyperGuest](https://docs.channex.io/channel-api-examples/hyper-guest.md)
+- [JoodBooking](https://docs.channex.io/channel-api-examples/joodbooking.md)
+- [Julian Alps Booking](https://docs.channex.io/channel-api-examples/julian-alps-booking.md)
+- [JumpOn](https://docs.channex.io/channel-api-examples/jumpon.md)
+- [Keytel](https://docs.channex.io/channel-api-examples/keytel.md)
+- [Kliknbook](https://docs.channex.io/channel-api-examples/kliknbook.md)
+- [Klook](https://docs.channex.io/channel-api-examples/klook.md)
+- [Levart](https://docs.channex.io/channel-api-examples/levart.md)
+- [Lido](https://docs.channex.io/channel-api-examples/lido.md)
+- [LocalOTA](https://docs.channex.io/channel-api-examples/local-ota.md)
+- [Moverii](https://docs.channex.io/channel-api-examples/moverii.md)
+- [Mr and Mrs Smith](https://docs.channex.io/channel-api-examples/mr-and-mrs-smith.md)
+- [Nongnooch](https://docs.channex.io/channel-api-examples/nongnooch.md)
+- [Novoya](https://docs.channex.io/channel-api-examples/novoya.md)
+- [OmniHotelier](https://docs.channex.io/channel-api-examples/omni-hotelier.md)
+- [OpenGDS](https://docs.channex.io/channel-api-examples/open-gds.md)
+- [OTASync](https://docs.channex.io/channel-api-examples/ota-sync.md)
+- [OutReserve](https://docs.channex.io/channel-api-examples/out-reserve.md)
+- [Pitchup](https://docs.channex.io/channel-api-examples/pitchup.md)
+- [Reconline](https://docs.channex.io/channel-api-examples/reconline.md)
+- [RevChill](https://docs.channex.io/channel-api-examples/rev-chill.md)
+- [Revenatium](https://docs.channex.io/channel-api-examples/revenatium.md)
+- [Roibos](https://docs.channex.io/channel-api-examples/roibos.md)
+- [Room Panda](https://docs.channex.io/channel-api-examples/room-panda.md)
+- [RoomBeast](https://docs.channex.io/channel-api-examples/room-beast.md)
+- [RoomCloud](https://docs.channex.io/channel-api-examples/room-cloud.md)
+- [Rukiye Zara](https://docs.channex.io/channel-api-examples/rukiye-zara.md)
+- [RVPARKGURU](https://docs.channex.io/channel-api-examples/rvparkguru.md)
+- [SELAH COMFORT](https://docs.channex.io/channel-api-examples/selah-comfort.md)
+- [seminyak.villas](https://docs.channex.io/channel-api-examples/seminyak-villas.md)
+- [Sissae Living](https://docs.channex.io/channel-api-examples/sissae-living.md)
+- [SleepRest](https://docs.channex.io/channel-api-examples/sleep-rest.md)
+- [Spot2Nite](https://docs.channex.io/channel-api-examples/spot2nite.md)
+- [stayforRewards](https://docs.channex.io/channel-api-examples/stayfor-rewards.md)
+- [Switzerland Travel Centre](https://docs.channex.io/channel-api-examples/switzerland-travel-centre.md)
+- [Szallas.hu](https://docs.channex.io/channel-api-examples/szallas.md)
+- [Tablet Hotels](https://docs.channex.io/channel-api-examples/tablet-hotels.md)
+- [The Square](https://docs.channex.io/channel-api-examples/the-square.md)
+- [The TPM Group](https://docs.channex.io/channel-api-examples/the-tpm-group.md)
+- [Trip Affiliates](https://docs.channex.io/channel-api-examples/trip-affiliates.md)
+- [Tripnera](https://docs.channex.io/channel-api-examples/tripnera.md)
+- [VacanceSelect](https://docs.channex.io/channel-api-examples/vacanceselect.md)
+- [VibeLobby](https://docs.channex.io/channel-api-examples/vibe-lobby.md)
+- [Waverick](https://docs.channex.io/channel-api-examples/waverick.md)
+- [Webready](https://docs.channex.io/channel-api-examples/webready.md)
+- [Webrooms](https://docs.channex.io/channel-api-examples/webrooms.md)
+- [WeSpeakOpen](https://docs.channex.io/channel-api-examples/we-speak-open.md)
+- [Wigwam Holidays](https://docs.channex.io/channel-api-examples/wigwam-holidays.md)
+- [WINK](https://docs.channex.io/channel-api-examples/wink.md)
+- [World2Meet](https://docs.channex.io/channel-api-examples/world2meet.md)
+- [Xcaliber](https://docs.channex.io/channel-api-examples/xcaliber.md)
+- [Yatra](https://docs.channex.io/channel-api-examples/yatra.md)
+- [Zavia BE](https://docs.channex.io/channel-api-examples/zavia.md)
+- [Zenith Booking Engine](https://docs.channex.io/channel-api-examples/zenith-booking-engine.md)
+- [PMS Integration Guide](https://docs.channex.io/guides/pms-integration-guide.md): This guide is to help you to connect your PMS to Channex
+- [Best Practices Guide](https://docs.channex.io/guides/best-practices-guide.md)
+- [Test Account for Booking.com](https://docs.channex.io/guides/test-account-for-booking.com.md): How to test some bookings on our staging server for your integration
+- [Test Accounts for Airbnb](https://docs.channex.io/guides/test-accounts-for-airbnb.md)
+- [Channex Retention Periods](https://docs.channex.io/guides/channex-retention-periods.md): We describe our logic of how long we keep information in Channex
+- [Guide to PCI](https://docs.channex.io/guides/guide-to-pci.md)
+- [Overview of App Documentation](https://docs.channex.io/application-documentation/overview.md): Please find documentation regarding how to use the Channex platform here.
+- [Dashboard](https://docs.channex.io/application-documentation/dashboard.md): Dashboard is a place to see at a glance your property heath and performance. You can choose all properties or a  single property.
+- [Properties and Groups Management](https://docs.channex.io/application-documentation/properties-and-groups-management.md): Here you can add your properties, you can also create groups.
+- [Property Tasks](https://docs.channex.io/application-documentation/property-tasks.md): This is the logs for a property. You can see all API and user activity that modifies the availability, price or restrictions.
+- [Rooms Management](https://docs.channex.io/application-documentation/rooms-management.md): The place to manage your room type settings
+- [Inventory Management](https://docs.channex.io/application-documentation/inventory-management.md): This is where you are able to see all rate, restriction and availability information of all your properties, rooms and rate plans.
+- [Channels Management](https://docs.channex.io/application-documentation/channels-management.md): Here you can add, edit and remove channel connections
+- [Channel Log](https://docs.channex.io/application-documentation/channel-actions-log.md)
+- [Bookings Management](https://docs.channex.io/application-documentation/bookings-management.md): This page will show all your bookings from the selected property or all properties.
+- [Availability Rules](https://docs.channex.io/application-documentation/availability-rules.md): We have settings so you can control availability to certain OTA
+- [API Key Access](https://docs.channex.io/application-documentation/api-key-access.md): Persistent API Key access without refresh requirements
+- [Change Log Feature](https://docs.channex.io/application-documentation/change-log-feature.md): How to find out the history of changes to ARI (Availability, prices or restrictions) in the inventory table
+- [Connect Google Channel](https://docs.channex.io/google/google-hotel-ads.md): This guide will show you the process of getting a property online and working with Google. Connecting a property to Google will show for free under the free section.
+- [Google Vacation Rental](https://docs.channex.io/google/google-hotel-ads-1.md): This guide will show you the process of getting a vacation rental property online and working with Google.
+- [Agoda](https://docs.channex.io/channel-mapping-guides/agoda.md): How to connect and map to Agoda
+- [Airbnb](https://docs.channex.io/channel-mapping-guides/airbnb.md): Guide on the Airbnb connection and mapping
+- [Booking.com](https://docs.channex.io/channel-mapping-guides/booking.com.md): Guide to connect and map booking.com to Channex
+- [Check24](https://docs.channex.io/channel-mapping-guides/check24.md): How to connect and map to Check24
+- [Crewdogs](https://docs.channex.io/channel-mapping-guides/crewdogs.md): How to connect and map to Crewdogs
+- [Ctrip / Trip.com](https://docs.channex.io/channel-mapping-guides/ctrip-trip.com.md): How to connect with Ctrip
+- [Despegar](https://docs.channex.io/channel-mapping-guides/despegar.md): How to connect and map the Despegar channel
+- [Dida Travel](https://docs.channex.io/channel-mapping-guides/dida.md): How to connect and map to Dida Travel
+- [Emerging Travel](https://docs.channex.io/channel-mapping-guides/emerging-travel.md): How to connect with Emerging Travel
+- [Expedia](https://docs.channex.io/channel-mapping-guides/expedia.md): How to connect and map to Expedia
+- [Feratel](https://docs.channex.io/channel-mapping-guides/feratel.md): How to connect and map to Feratel
+- [Getaroom](https://docs.channex.io/channel-mapping-guides/getaroom.md)
+- [Glamping Hub](https://docs.channex.io/channel-mapping-guides/glamping-hub.md): How to connect and map to Glamping Hub
+- [Hipcamp](https://docs.channex.io/channel-mapping-guides/hipcamp.md): How to connect with Hipcamp
+- [Hostelworld](https://docs.channex.io/channel-mapping-guides/hostelworld.md): How to connect and map to Hostelworld
+- [Hopper](https://docs.channex.io/channel-mapping-guides/hopper.md): How to connect your hotel to Hopper
+- [Hopper Homes](https://docs.channex.io/channel-mapping-guides/hopper-homes.md)
+- [Hotelbeds](https://docs.channex.io/channel-mapping-guides/hotelbeds.md): Find out here how to connect and map to Hotelbeds
+- [HotelTonight](https://docs.channex.io/channel-mapping-guides/hoteltonight.md): Find out here how to connect and map to HotelTonight
+- [Hotel Trader](https://docs.channex.io/channel-mapping-guides/hoteltrader.md): How to connect and map to Hotel Trader
+- [HyperGuest](https://docs.channex.io/channel-mapping-guides/hyperguest.md): How to connect and map HyperGuest
+- [HRS](https://docs.channex.io/channel-mapping-guides/hrs.md): How to connect and map to HRS
+- [Inntopia](https://docs.channex.io/channel-mapping-guides/inntopia.md): How to connect and map to Inntopia
+- [Instant Booking Page](https://docs.channex.io/channel-mapping-guides/instant-booking-page.md): This is the Channex booking engine which is free to use and has no costs of fees.
+- [Kliknbook](https://docs.channex.io/channel-mapping-guides/kliknbook.md): Hot to connect and map
+- [Klook](https://docs.channex.io/channel-mapping-guides/klook.md): How to connect with Klook
+- [MakeMyTrip / Goibibo](https://docs.channex.io/channel-mapping-guides/mmt.md): How to connect and map to MMT
+- [Mg Bedbank](https://docs.channex.io/channel-mapping-guides/mg.md): How to connect with Mg Bedbank
+- [Mr & Mrs Smith](https://docs.channex.io/channel-mapping-guides/smith.md): How to connect and map to Mr & Mrs Smith
+- [Nuitee](https://docs.channex.io/channel-mapping-guides/nuitee.md): How to connect your hotel to Nuitee
+- [OpenGDS](https://docs.channex.io/channel-mapping-guides/opengds.md): How to connect and map to OpenGDS
+- [Pricetravel](https://docs.channex.io/channel-mapping-guides/pricetravel.md): How to connect and map to Pricetravel
+- [Roibos](https://docs.channex.io/channel-mapping-guides/roibos.md): How to connect with Roibos
+- [Traveloka](https://docs.channex.io/channel-mapping-guides/traveloka.md): How to connect and map to Traveloka
+- [Tiket.com](https://docs.channex.io/channel-mapping-guides/tiket.md): How to connect with Tiket.com
+- [Webbeds](https://docs.channex.io/channel-mapping-guides/webbeds.md): Hot to connect and map
+- [VRBO](https://docs.channex.io/channel-mapping-guides/vrbo.md): VRBO / Homeaway connection is currently stable and working well
+- [Yatra](https://docs.channex.io/channel-mapping-guides/yatra.md): How to connect and map to Yatra
+- [Apaleo](https://docs.channex.io/app-guide/apaleo.md): How to connect Channex to Apaleo PMS
+- [PCI App](https://docs.channex.io/app-guide/pci-app.md): Channex PCI application allows you or other users to view credit card information on bookings. We also store all views in the log

@@ -1,0 +1,878 @@
+{
+  "config": {
+    "argv": [
+      "C:\\Program Files\\nodejs\\node.exe",
+      "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\node_modules\\@playwright\\test\\cli.js",
+      "test",
+      "--config",
+      "e2e/playwright.config.mjs",
+      "e2e/suites/03-pairwise-matrix.spec.mjs"
+    ],
+    "configFile": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\playwright.config.mjs",
+    "rootDir": "C:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/e2e/suites",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "C:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/e2e/reports/artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "Desktop-1920",
+        "name": "Desktop-1920",
+        "testDir": "C:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/e2e/suites",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "C:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/e2e/reports/artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "Tablet-768",
+        "name": "Tablet-768",
+        "testDir": "C:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/e2e/suites",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "C:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/e2e/reports/artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "Mobile-375",
+        "name": "Mobile-375",
+        "testDir": "C:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/e2e/suites",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "Desktop-1920",
+        "testDir": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites",
+        "snapshotDir": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 60000,
+        "use": {
+          "baseURL": "http://127.0.0.1:5055",
+          "channel": "chrome",
+          "headless": true,
+          "screenshot": "only-on-failure",
+          "video": "retain-on-failure",
+          "trace": "retain-on-failure",
+          "actionTimeout": 15000,
+          "navigationTimeout": 30000,
+          "viewport": {
+            "width": 1920,
+            "height": 1080
+          },
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 CorpFlatsDesktop/1.0"
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": "Desktop-1920"
+      },
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "Tablet-768",
+        "testDir": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites",
+        "snapshotDir": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 60000,
+        "use": {
+          "baseURL": "http://127.0.0.1:5055",
+          "channel": "chrome",
+          "headless": true,
+          "screenshot": "only-on-failure",
+          "video": "retain-on-failure",
+          "trace": "retain-on-failure",
+          "actionTimeout": 15000,
+          "navigationTimeout": 30000,
+          "viewport": {
+            "width": 768,
+            "height": 1024
+          },
+          "hasTouch": true,
+          "userAgent": "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 CorpFlatsTablet/1.0"
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": "Tablet-768"
+      },
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "Mobile-375",
+        "testDir": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites",
+        "snapshotDir": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 60000,
+        "use": {
+          "baseURL": "http://127.0.0.1:5055",
+          "channel": "chrome",
+          "headless": true,
+          "screenshot": "only-on-failure",
+          "video": "retain-on-failure",
+          "trace": "retain-on-failure",
+          "actionTimeout": 15000,
+          "navigationTimeout": 30000,
+          "viewport": {
+            "width": 375,
+            "height": 812
+          },
+          "isMobile": true,
+          "hasTouch": true,
+          "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 CorpFlatsMobile/1.0"
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": "Mobile-375"
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "html",
+        {
+          "outputFolder": "./reports/html-report",
+          "open": "never"
+        }
+      ],
+      [
+        "json",
+        {
+          "outputFile": "./reports/test-results.json"
+        }
+      ],
+      [
+        "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reporters\\html-reporter.mjs",
+        {
+          "outputFile": "e2e/reports/index.html"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.64.0",
+    "workers": 1,
+    "webServer": {
+      "command": "node e2e/sandbox/cli-server.mjs",
+      "url": "http://127.0.0.1:5055/api/health",
+      "reuseExistingServer": true,
+      "timeout": 30000
+    }
+  },
+  "suites": [
+    {
+      "title": "03-pairwise-matrix.spec.mjs",
+      "file": "03-pairwise-matrix.spec.mjs",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Milestone 4 (M4) - Matriz Combinatória de Estados Pairwise (R4)",
+          "file": "03-pairwise-matrix.spec.mjs",
+          "line": 19,
+          "column": 15,
+          "specs": [
+            {
+              "title": "Cenário 1: Matriz de Composições de Reserva & Durações (Permutações Pairwise, Tarifas, PMS Calendar & Vouchers)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Desktop-1920",
+                  "projectName": "Desktop-1920",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 16083,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:53:56.342Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-232fabeaaf2fcd1f0fa9",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 28,
+              "column": 3
+            },
+            {
+              "title": "Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança no Dashboard de Limpeza",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Desktop-1920",
+                  "projectName": "Desktop-1920",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3853,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:54:13.684Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-ab490d3731ebe1d11bab",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 273,
+              "column": 3
+            },
+            {
+              "title": "Cenário 3: Ciclo Completo de Ordens de Serviço (Criação Admin, Portal Token, Cadastro Prestador, Limites, Fotos & Camareira)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Desktop-1920",
+                  "projectName": "Desktop-1920",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3223,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:54:17.592Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-1eb4f40e0b5fd71435d3",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 449,
+              "column": 3
+            },
+            {
+              "title": "Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (Portal /cafe, Produção Cozinha & Rejeição Pós-22h)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Desktop-1920",
+                  "projectName": "Desktop-1920",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 6201,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:54:20.864Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-0b22acc943a8b33f58cd",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 599,
+              "column": 3
+            },
+            {
+              "title": "Cenário 1: Matriz de Composições de Reserva & Durações (Permutações Pairwise, Tarifas, PMS Calendar & Vouchers)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Tablet-768",
+                  "projectName": "Tablet-768",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 6782,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:54:30.249Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-232f06b50897fb10f96d",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 28,
+              "column": 3
+            },
+            {
+              "title": "Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança no Dashboard de Limpeza",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Tablet-768",
+                  "projectName": "Tablet-768",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4202,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:54:37.773Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-24665c377435d0fd755b",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 273,
+              "column": 3
+            },
+            {
+              "title": "Cenário 3: Ciclo Completo de Ordens de Serviço (Criação Admin, Portal Token, Cadastro Prestador, Limites, Fotos & Camareira)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Tablet-768",
+                  "projectName": "Tablet-768",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 5242,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:54:42.026Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-a7f1e92ed845772ab7f6",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 449,
+              "column": 3
+            },
+            {
+              "title": "Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (Portal /cafe, Produção Cozinha & Rejeição Pós-22h)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Tablet-768",
+                  "projectName": "Tablet-768",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 6565,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:54:47.345Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-ba37b3c2e0fd8eeb0cb6",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 599,
+              "column": 3
+            },
+            {
+              "title": "Cenário 1: Matriz de Composições de Reserva & Durações (Permutações Pairwise, Tarifas, PMS Calendar & Vouchers)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Mobile-375",
+                  "projectName": "Mobile-375",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 7213,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:54:57.155Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-0f0eba46a2512167cdbd",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 28,
+              "column": 3
+            },
+            {
+              "title": "Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança no Dashboard de Limpeza",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Mobile-375",
+                  "projectName": "Mobile-375",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3913,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:55:05.162Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-b4ce8ed62fd50ef2469c",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 273,
+              "column": 3
+            },
+            {
+              "title": "Cenário 3: Ciclo Completo de Ordens de Serviço (Criação Admin, Portal Token, Cadastro Prestador, Limites, Fotos & Camareira)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Mobile-375",
+                  "projectName": "Mobile-375",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2854,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:55:09.123Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-678ba31d137e870eb771",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 449,
+              "column": 3
+            },
+            {
+              "title": "Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (Portal /cafe, Produção Cozinha & Rejeição Pós-22h)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Mobile-375",
+                  "projectName": "Mobile-375",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4602,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:55:12.022Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-c6c82765659a8feb0ddc",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 599,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-11T06:53:53.793Z",
+    "duration": 83788.878,
+    "expected": 12,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

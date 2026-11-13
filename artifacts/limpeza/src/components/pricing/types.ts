@@ -1,0 +1,121 @@
+export interface SebraeCalculationResult {
+  totalUHs: number;
+  daysInMonth: number;
+  availableUnits: number;
+  occupancyRate: number;
+  soldUnitsMonth: number;
+  fixedCostsMonth: number;
+  fixedCostPerAvailableUnit: number;
+  fixedCostPerSoldUnit: number;
+  varCostPerUnit: number;
+  custoUH: number;
+  totalDeductionsPct: number;
+  divisor: number;
+  tarifaMinima: number;
+  breakEvenFloor?: number;
+  decomposicao: {
+    custo: number;
+    comissao: number;
+    margem: number;
+    imposto: number;
+  };
+  somaDecomposicao: number;
+  fecha100: boolean;
+  percentuais: {
+    custoPct: number;
+    comissaoPct: number;
+    margemPct: number;
+    impostoPct: number;
+  };
+}
+
+export interface PricingSettings {
+  totalUHs: number;
+  daysInMonth: number;
+  occupancyRate: number;
+  fixedRent: number;
+  fixedOther: number;
+  fixedSalaries?: number;
+  fixedCondoIptu?: number;
+  fixedSystems?: number;
+  fixedSystemsMaintenance?: number;
+  fixedCostsMonth: number;
+  varCleaning: number;
+  varCleaningPerDay?: number;
+  varLinen: number;
+  varCardBreakfastPerDay?: number;
+  varUtilities: number;
+  varUtilitiesPerDay?: number;
+  channelCommissionPct: number;
+  targetMarginPct: number;
+  taxRatePct: number;
+  breakfastSurchargePerGuest: number;
+  extraBedFee: number;
+  variationLimitPct: number;
+  manualFloor: number;
+  weekendMarkupPct: number;
+  hasPlanCeiling?: boolean;
+  planCeilingCount?: number;
+  seasonalityOverrides?: Record<string | number, number | { factor: number; season?: "Alta" | "Média" | "Baixa" | string; occupancyRate?: number }>;
+  resetSeasonalityOverrides?: boolean;
+  autoPublish?: boolean;
+  hasStagedChanges?: boolean;
+  stagedChangesCount?: number;
+}
+
+export interface PreviewRateItem {
+  id: string;
+  date: string;
+  planId: string;
+  planName: string;
+  currentRate: number;
+  newRate: number;
+  variationPct: number;
+  isLocked: boolean;
+  lockReason?: string;
+  isBelowFloor: boolean;
+  freeUnits: number;
+  confirmed?: boolean;
+}
+
+export interface PreviewSummary {
+  affectedDatesCount: number;
+  alteredRatesCount: number;
+  retainedLockedCount: number;
+  belowFloorCount: number;
+  items: PreviewRateItem[];
+  diffList?: PreviewRateItem[];
+  retainedItems?: PreviewRateItem[];
+  kpis?: Record<string, any>;
+}
+
+export interface SeasonalityMonth {
+  month: number;
+  label: string;
+  occupancyRate: number;
+  season: "Alta" | "Média" | "Baixa";
+  factor: number;
+  isManualOverride: boolean;
+}
+
+export interface ChannelPricingConfig {
+  id: string;
+  name: string;
+  markupPct: number;
+  commissionPct: number;
+  cardFeePct: number;
+  active: boolean;
+}
+
+export interface RestrictionConfig {
+  dateStart: string;
+  dateEnd: string;
+  planId: "all" | "sem_cafe" | "com_cafe";
+  minStay: number;
+  maxStay: number;
+  stopSell: boolean;
+  closedToArrival: boolean;
+  closedToDeparture: boolean;
+  minAdvanceDays: number;
+  maxAdvanceDays: number;
+}

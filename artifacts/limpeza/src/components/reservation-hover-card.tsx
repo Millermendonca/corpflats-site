@@ -1,0 +1,1092 @@
+import React, { useState, useEffect, useRef } from "react"
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { useToast } from "@/hooks/use-toast"
+import { 
+  MessageCircle, MessageSquare, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen, FileText,
+  Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw, RotateCcw
+} from "lucide-react"
+import { format, parseISO, differenceInDays } from "date-fns"
+import { ptBR } from "date-fns/locale"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients, bindZapiClickOrHoldWaWeb, buildQuickMessageWaWebUrl, cleanWhatsAppPhone } from "@/hooks/use-quick-messages"
+import { QuickMessageConfirmDialog } from "@/components/quick-message-confirm-dialog"
+import { useGetSettings } from "@workspace/api-client-react"
+import { getCheckinUrl } from "@/lib/checkin-url"
+
+interface ReservationHoverCardProps {
+  resItem: any
+  flat: any
+  isBeingDragged?: boolean
+  onOpenDetails: (resItem: any) => void
+  onUndoEarlyCheckout?: (resItem: any) => void | Promise<void>
+  channelCfg?: { label: string; bg: string; text: string; border: string }
+  isMensalista?: boolean
+  isOpenMobile?: boolean
+  onCloseMobile?: () => void
+  children: React.ReactNode
+}
+
+const STATUS_MAP: Record<string, { label: string; className: string }> = {
+  confirmada: { 
+    label: "Confirmada", 
+    className: "bg-emerald-50 text-emerald-700 border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800" 
+  },
+  pre_reserva: { 
+    label: "⏳ Pré-Reserva", 
+    className: "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700 font-bold" 
+  },
+  checkin: { 
+    label: "Hospedado (In)", 
+    className: "bg-sky-50 text-sky-700 border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800" 
+  },
+  in_house: { 
+    label: "Hospedado (In)", 
+    className: "bg-sky-50 text-sky-700 border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800" 
+  },
+  hospedado: { 
+    label: "Hospedado (In)", 
+    className: "bg-sky-50 text-sky-700 border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800" 
+  },
+  pendente: { 
+    label: "Pendente", 
+    className: "bg-amber-50 text-amber-700 border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800" 
+  },
+  checkout: { 
+    label: "✓ Check-out Realizado", 
+    className: "bg-emerald-600 text-white border-emerald-700 dark:bg-emerald-600 dark:text-white dark:border-emerald-500 font-black shadow-2xs" 
+  },
+  completed: { 
+    label: "✓ Check-out Realizado", 
+    className: "bg-emerald-600 text-white border-emerald-700 dark:bg-emerald-600 dark:text-white dark:border-emerald-500 font-black shadow-2xs" 
+  },
+  checked_out: { 
+    label: "✓ Check-out Realizado", 
+    className: "bg-emerald-600 text-white border-emerald-700 dark:bg-emerald-600 dark:text-white dark:border-emerald-500 font-black shadow-2xs" 
+  },
+  cancelada: { 
+    label: "Cancelada", 
+    className: "bg-rose-50 text-rose-700 border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800" 
+  }
+}
+
+export function ReservationHoverCard({
+  resItem,
+  flat,
+  isBeingDragged = false,
+  onOpenDetails,
+  onUndoEarlyCheckout,
+  channelCfg,
+  isMensalista = false,
+  isOpenMobile = false,
+  onCloseMobile,
+  children
+}: ReservationHoverCardProps) {
+  const { toast } = useToast()
+  const { data: settings } = useGetSettings()
+  const [isOpen, setIsOpen] = useState(false)
+  const [undoingEarly, setUndoingEarly] = useState(false)
+  const [copiedLink, setCopiedLink] = useState(false)
+  const [copiedCheckinLink, setCopiedCheckinLink] = useState(false)
+
+  // Mensagens Rápidas (Manuais) e Janelinha Flutuante de Prévia
+  const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
+  const [hoveredQuickMsg, setHoveredQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
+  const [confirmingQuickMsg, setConfirmingQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
+  const [sendingMsgId, setSendingMsgId] = useState<string | null>(null)
+  const cardContentRef = useRef<HTMLDivElement>(null)
+  const [previewPlacement, setPreviewPlacement] = useState<"top" | "bottom" | "right" | "left">("right")
+
+  const handleQuickMsgHover = (qm: WhatsAppQuickMessage | null) => {
+    if (!qm) {
+      setHoveredQuickMsg(null)
+      return
+    }
+
+    // Desativa tooltip de prévia em dispositivos touch/mobile para não sobrepor a tela
+    if (typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches) {
+      return
+    }
+
+    if (cardContentRef.current) {
+      const rect = cardContentRef.current.getBoundingClientRect()
+      const spaceAbove = rect.top
+      const spaceBelow = window.innerHeight - rect.bottom
+      const spaceRight = window.innerWidth - rect.right
+      const spaceLeft = rect.left
+
+      // Prioriza a direita (ao lado do card, que no calendário horizontal sempre tem espaço de sobra)
+      // e garante que NUNCA seja cortado no topo da tela!
+      if (spaceRight >= 310) {
+        setPreviewPlacement("right")
+      } else if (spaceLeft >= 310) {
+        setPreviewPlacement("left")
+      } else if (spaceAbove >= 240) {
+        setPreviewPlacement("top")
+      } else if (spaceBelow >= 200) {
+        setPreviewPlacement("bottom")
+      } else {
+        setPreviewPlacement("right")
+      }
+    } else {
+      setPreviewPlacement("right")
+    }
+
+    setHoveredQuickMsg(qm)
+  }
+
+  const handleTriggerQuickMessage = (e: React.MouseEvent, qm: WhatsAppQuickMessage) => {
+    e.stopPropagation()
+    setHoveredQuickMsg(null)
+    setConfirmingQuickMsg(qm)
+  }
+
+  // O card abre se estiver em hover no desktop OU ativado via toque no celular
+  const isCardOpen = !isBeingDragged && (Boolean(isOpenMobile) || isOpen)
+
+  const handleClose = () => {
+    setIsOpen(false)
+    onCloseMobile?.()
+  }
+
+  // Fecha imediatamente se o usuário iniciar arraste da reserva
+  useEffect(() => {
+    if (isBeingDragged) {
+      handleClose()
+    }
+  }, [isBeingDragged])
+
+  const openedAtRef = useRef<number>(0)
+  useEffect(() => {
+    if (isCardOpen) {
+      openedAtRef.current = Date.now()
+    }
+  }, [isCardOpen])
+
+  // Fecha ao detectar scroll externo (grade do calendário ou página principal)
+  useEffect(() => {
+    const handleScroll = (e: Event) => {
+      // Ignora eventos de scroll nos primeiros 450ms após abrir para evitar que micro-ajustes
+      // de layout ou rolagem virtual fechem o card instantaneamente
+      if (Date.now() - openedAtRef.current < 450) return
+
+      const target = e.target as Node | null
+      // Se o scroll estiver acontecendo DENTRO do próprio card flutuante, NUNCA fecha o card!
+      if (cardContentRef.current && target && (cardContentRef.current === target || cardContentRef.current.contains(target))) {
+        return
+      }
+
+      if (isCardOpen) handleClose()
+    }
+    window.addEventListener("scroll", handleScroll, true)
+    return () => window.removeEventListener("scroll", handleScroll, true)
+  }, [isCardOpen])
+
+  // Dados sanitizados da reserva
+  const resCode = resItem.code || `RES-${resItem.flatNumber || flat?.number}-${String(resItem.id).padStart(4, "0")}`
+  const guestName = resItem.guestName || resItem.guests?.[0]?.name || "Hóspede Sem Nome"
+  const rawPhone = resItem.guestPhone || resItem.guests?.[0]?.phone || ""
+  const cleanPhone = rawPhone.replace(/\D/g, "")
+  const finalWaPhone = cleanWhatsAppPhone(rawPhone)
+  const recipients = getReservationRecipients(resItem)
+
+  const requesterDisplayName = (() => {
+    const rawAgent = String(resItem.agencyAgentName || "").trim()
+    const validAgent = rawAgent && !/^webservice$/i.test(rawAgent) ? rawAgent : ""
+    const rawReqInfoName = String(resItem.requesterInfo?.name || resItem.requesterName || "").trim()
+    const validReqInfoName = rawReqInfoName && !/^webservice$/i.test(rawReqInfoName) ? rawReqInfoName : ""
+    const fallbackOrgName = String(resItem.agencyTradeName || resItem.agencyName || resItem.companyName || "").trim()
+
+    const candidate =
+      validReqInfoName ||
+      validAgent ||
+      (recipients.requester.isDifferentFromGuest ? recipients.requester.name : "") ||
+      fallbackOrgName
+
+    if (!candidate) return null
+    if (candidate.toLowerCase() === guestName.trim().toLowerCase()) {
+      return null
+    }
+    return candidate
+  })()
+
+  const flatNumber = resItem.flatNumber || flat?.number || "Flat"
+  const isCamposCityStr = (s?: string) => {
+    if (!s) return false
+    const l = s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s*\/\s*[a-z]{2}\s*$/, "").trim()
+    if (!l) return false
+    if (
+      l.includes("sao jose dos campos") ||
+      l.includes("campos do jordao") ||
+      l.includes("campos novos") ||
+      l.includes("campos belos") ||
+      l.includes("campos altos") ||
+      l.includes("campos gerais") ||
+      l.includes("campos sales") ||
+      l.includes("campos lindos") ||
+      l.includes("siqueira campos")
+    ) {
+      return false
+    }
+    return (
+      l.includes("goytacazes") ||
+      l.includes("goitacazes") ||
+      l === "campos" ||
+      l === "campos rj" ||
+      l === "campos-rj" ||
+      /^campos\s*[-/,]\s*rj$/.test(l) ||
+      l.startsWith("campos dos goytacazes") ||
+      l.startsWith("campos dos goitacazes")
+    )
+  }
+  const isCamposAddrStr = (s?: string) => {
+    if (!s) return false
+    const l = s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
+    if (/^(av\.?\s*pelinca|avenida\s*pelinca)(\s*,\s*100)?(\s*-\s*pelinca)?$/i.test(l)) return false
+    return l.includes("goytacazes") || l.includes("goitacazes") || /campos\s*[-/,]\s*rj/.test(l)
+  }
+  const isCamposCepStr = (cepVal?: string, addrVal?: string) => {
+    const cleanCep = String(cepVal || "").replace(/\D/g, "")
+    if (cleanCep.length < 5) return false
+    if (cleanCep === "28035000" && (!addrVal || /pelinca/i.test(addrVal))) return false
+    return cleanCep.startsWith("280") || cleanCep.startsWith("281")
+  }
+  const primaryHoverCity = String(resItem.guestCity || resItem.city || resItem.originCity || "").trim()
+  const hasNonCamposPrimaryCity = Boolean(primaryHoverCity && !isCamposCityStr(primaryHoverCity) && !isCamposCityStr(resItem.originCity))
+  const isCampos = resItem.isCamposResident === false
+    ? false
+    : Boolean(
+        resItem.isCamposResident === true ||
+        (!hasNonCamposPrimaryCity && (
+          isCamposCityStr(resItem.originCity) ||
+          isCamposCityStr(resItem.guestCity) ||
+          isCamposCityStr(resItem.city) ||
+          isCamposAddrStr(resItem.guestAddress) ||
+          isCamposCityStr(resItem.riskAttentionReason) ||
+          (Array.isArray(resItem.guests) && resItem.guests.some((g: any) =>
+            g?.isCamposResident === true ||
+            isCamposCityStr(g?.originCity) ||
+            isCamposCityStr(g?.city) ||
+            isCamposAddrStr(g?.address)
+          )) ||
+          isCamposCepStr(resItem.guestCep || resItem.cep, resItem.guestAddress || resItem.address)
+        ))
+      )
+  const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1
+  const checkinStr = format(parseISO(resItem.checkinDate), "dd/MM")
+  const checkoutStr = format(parseISO(resItem.checkoutDate), "dd/MM")
+  const guestCount = resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)
+  const hasBreakfast = Boolean(resItem.includeBreakfast || resItem.hasBreakfast)
+
+  // Cálculo e formatação do Valor Total da Reserva
+  const resTotal = Number(resItem.totalAmount) > 0 
+    ? Number(resItem.totalAmount) 
+    : (Number(resItem.dailyRate || 0) * nightsCount)
+  const formattedTotal = resTotal > 0 
+    ? `R$ ${resTotal.toLocaleString("pt-BR", { minimumFractionDigits: resTotal % 1 !== 0 ? 2 : 0, maximumFractionDigits: 2 })}` 
+    : null
+
+  const isCheckoutCompleted = Boolean(
+    resItem.isCheckedOutToday ||
+    resItem.checkoutDone ||
+    resItem.status === "completed" ||
+    resItem.status === "checked_out" ||
+    resItem.actualCheckoutAt
+  )
+  const statusCfg = isCheckoutCompleted
+    ? STATUS_MAP.completed
+    : (STATUS_MAP[resItem.status] || STATUS_MAP.confirmada)
+  const originUrl = typeof window !== "undefined" ? window.location.origin : "https://corpflats.com.br"
+  const portalUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}`
+  const breakfastUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}/cafe`
+  const checkoutUrl = `${originUrl}/checkout/${resItem.code || resItem.id}`
+  const preCheckinUrl = getCheckinUrl(resItem, 1, originUrl, settings)
+
+  const waMessage = `Olá ${guestName}, tudo bem? Falamos da CorpFlats a respeito da sua estadia no Flat ${flatNumber} (${checkinStr} a ${checkoutStr}). Como podemos ajudar?`
+  const waLink = finalWaPhone ? `https://wa.me/${finalWaPhone}?text=${encodeURIComponent(waMessage)}` : null
+
+  const handleCopyLink = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(portalUrl)
+    setCopiedLink(true)
+    toast({
+      title: "Link copiado! 📋",
+      description: "Link da página do hóspede copiado para a área de transferência."
+    })
+    setTimeout(() => setCopiedLink(false), 2000)
+  }
+
+  const handleCopyCheckinLink = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(preCheckinUrl)
+    setCopiedCheckinLink(true)
+    toast({
+      title: "Link de Check-in copiado! 📋",
+      description: "Link para check-in copiado para a área de transferência."
+    })
+    setTimeout(() => setCopiedCheckinLink(false), 2000)
+  }
+
+  return (
+    <>
+    <HoverCard 
+      open={isCardOpen} 
+      onOpenChange={(open) => {
+        if (!isBeingDragged) {
+          setIsOpen(open)
+          if (!open) {
+            onCloseMobile?.()
+          }
+        }
+      }}
+      openDelay={250} 
+      closeDelay={350}
+    >
+      <HoverCardTrigger asChild>
+        {children}
+      </HoverCardTrigger>
+
+      <HoverCardContent 
+        ref={cardContentRef}
+        side="top"
+        align="center"
+        sideOffset={6}
+        collisionPadding={12}
+        avoidCollisions={true}
+        onPointerDownOutside={(e) => {
+          const target = e.target as HTMLElement | null
+          if (target?.closest(`[data-reservation-id="${resItem.id}"]`)) {
+            e.preventDefault()
+            return
+          }
+          if (cardContentRef.current && target && (cardContentRef.current === target || cardContentRef.current.contains(target))) {
+            e.preventDefault()
+            return
+          }
+          if (Date.now() - openedAtRef.current < 450) {
+            e.preventDefault()
+            return
+          }
+          handleClose()
+        }}
+        onInteractOutside={(e) => {
+          const target = e.target as HTMLElement | null
+          if (target?.closest(`[data-reservation-id="${resItem.id}"]`)) {
+            e.preventDefault()
+            return
+          }
+          if (cardContentRef.current && target && (cardContentRef.current === target || cardContentRef.current.contains(target))) {
+            e.preventDefault()
+            return
+          }
+          if (Date.now() - openedAtRef.current < 450) {
+            e.preventDefault()
+            return
+          }
+          handleClose()
+        }}
+        onWheel={(e) => e.stopPropagation()}
+        className="w-[335px] sm:w-[355px] max-w-[calc(100vw-20px)] max-h-[min(88dvh,540px)] overflow-y-auto overflow-x-hidden p-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl z-50 text-xs relative overscroll-contain [scrollbar-width:thin]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* ── Janelinha Flutuante de Prévia da Mensagem (Ao Repousar o Mouse) ──── */}
+        {hoveredQuickMsg && (
+          <div 
+            className={`absolute z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700/80 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none select-none text-left ${
+              previewPlacement === "right"
+                ? "left-[calc(100%+10px)] top-0 w-[310px] max-w-[calc(100vw-360px)]"
+                : previewPlacement === "left"
+                ? "right-[calc(100%+10px)] top-0 w-[310px] max-w-[calc(100vw-360px)]"
+                : previewPlacement === "bottom"
+                ? "left-1 right-1 top-[calc(100%+8px)]"
+                : "left-1 right-1 bottom-[calc(100%+8px)]"
+            }`}
+          >
+            <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
+              <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
+                <span className="text-sm">{hoveredQuickMsg.icon}</span>
+                <span className="truncate max-w-[150px]">{hoveredQuickMsg.title}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                {hoveredQuickMsg.recipientTarget === "both" ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                    ✨ Ambos
+                  </span>
+                ) : hoveredQuickMsg.recipientTarget === "requester" ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                    👥 Solicitante
+                  </span>
+                ) : (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                    👤 Hóspede
+                  </span>
+                )}
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                  Manual
+                </span>
+              </div>
+            </div>
+
+            <div 
+              onWheel={(e) => e.stopPropagation()} 
+              className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-52 overflow-y-auto pr-1 overscroll-contain [scrollbar-width:thin]"
+            >
+              {renderQuickMessage(
+                hoveredQuickMsg.message, 
+                resItem, 
+                originUrl, 
+                hoveredQuickMsg.recipientTarget === "requester" ? "requester" : "guest"
+              )}
+            </div>
+
+            {hoveredQuickMsg.buttons && hoveredQuickMsg.buttons.length > 0 && (
+              <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex flex-wrap gap-1">
+                {hoveredQuickMsg.buttons.map(b => (
+                  <span key={b.id} className="text-[9.5px] px-1.5 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 font-medium">
+                    {b.label}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex flex-col gap-1 text-[9.5px]">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="font-mono truncate max-w-[190px]">
+                  {hoveredQuickMsg.recipientTarget === "requester" ? (
+                    <>
+                      <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
+                      <span className="text-slate-300 ml-1">({recipients.requester.name})</span>
+                    </>
+                  ) : hoveredQuickMsg.recipientTarget === "both" ? (
+                    <>
+                      <strong className="text-purple-400">Destino: ✨ Ambos</strong>
+                      <span className="text-slate-300 ml-1">({recipients.guest.firstName} + {recipients.requester.firstName})</span>
+                    </>
+                  ) : (
+                    <>
+                      <strong className="text-sky-400">Destino: 👤 Hóspede</strong>
+                      <span className="text-slate-300 ml-1">({recipients.guest.name})</span>
+                    </>
+                  )}
+                </span>
+                <span className="text-emerald-400 font-bold flex items-center gap-1 shrink-0">
+                  ⚡ Clique: Z-API • Segure 2s: WhatsApp Web
+                </span>
+              </div>
+              {hoveredQuickMsg.recipientTarget === "both" && !recipients.requester.isDifferentFromGuest && (
+                <div className="text-[8.5px] text-slate-400 italic">
+                  ℹ️ Solicitante é o próprio hóspede (será 1 único envio).
+                </div>
+              )}
+            </div>
+
+            {/* Seta indicativa para o card */}
+            {previewPlacement === "right" && (
+              <div className="absolute top-8 -left-1.5 w-3 h-3 bg-slate-950 dark:bg-black border-l border-b border-slate-700 rotate-45" />
+            )}
+            {previewPlacement === "left" && (
+              <div className="absolute top-8 -right-1.5 w-3 h-3 bg-slate-950 dark:bg-black border-r border-t border-slate-700 rotate-45" />
+            )}
+            {previewPlacement === "top" && (
+              <div className="absolute top-full left-8 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
+            )}
+            {previewPlacement === "bottom" && (
+              <div className="absolute bottom-full left-8 w-2.5 h-2.5 -mb-1 bg-slate-950 dark:bg-black border-l border-t border-slate-700 rotate-45" />
+            )}
+          </div>
+        )}
+
+        {/* ── 1. Topo & Identificação ────────────────────────────────────── */}
+        <div className="p-3.5 pb-2.5 bg-slate-50/80 dark:bg-slate-950/40 border-b border-slate-100 dark:border-slate-800/80">
+          <div className="flex items-center justify-between gap-1.5 mb-1.5">
+            <span className="font-mono text-[11px] font-bold text-slate-500 tracking-wider">
+              #{resCode}
+            </span>
+            <div className="flex items-center gap-1.5 flex-wrap justify-end">
+              {isMensalista && (
+                <span className="text-[9px] uppercase font-black px-1.5 py-0.5 bg-amber-400 text-slate-950 rounded shadow-2xs">
+                  👑 Mensalista
+                </span>
+              )}
+              {(() => {
+                const normHoverChan = (raw?: string) => {
+                  const l = String(raw || "").trim().toLowerCase()
+                  if (l === "site" || l === "site_direto" || l === "site_proprio" || l === "website" || l === "motor") return "site"
+                  if (l === "direta" || l === "direct" || l === "whats" || l === "zapi") return "whatsapp"
+                  return l || "whatsapp"
+                }
+                if (Array.isArray(resItem.dailyRates) && resItem.dailyRates.length > 0) {
+                  const uniqueChannels = Array.from(new Set(resItem.dailyRates.map((d: any) => normHoverChan(d.channel || resItem.channel))));
+                  if (uniqueChannels.length > 1) {
+                    return uniqueChannels.map(ch => {
+                      const label = ch.includes("b2b") ? "B2B" : ch.includes("booking") ? "Booking" : ch.includes("airbnb") ? "Airbnb" : ch.includes("site") ? "Site" : "WhatsApp";
+                      const color = ch.includes("b2b") ? "text-violet-700 bg-violet-50 border-violet-300 dark:bg-violet-950/60 dark:text-violet-300 dark:border-violet-700" : ch.includes("booking") ? "text-sky-700 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-700" : ch.includes("airbnb") ? "text-rose-700 bg-rose-50 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-700" : ch.includes("site") ? "text-orange-700 bg-orange-50 border-orange-300 dark:bg-orange-950/60 dark:text-orange-300 dark:border-orange-700" : "text-emerald-700 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-700";
+                      const count = resItem.dailyRates.filter((d: any) => normHoverChan(d.channel || resItem.channel) === ch).length;
+                      return (
+                        <span key={ch} className={`text-[8.5px] font-bold px-1.5 py-0.5 rounded border shadow-2xs ${color}`}>
+                          {label} ({count}d)
+                        </span>
+                      );
+                    });
+                  }
+                }
+                return channelCfg ? (
+                  <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-2xs">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${channelCfg.bg}`} />
+                    {channelCfg.label || resItem.channel}
+                  </span>
+                ) : null;
+              })()}
+              <Badge variant="outline" className={`text-[10px] font-bold py-0.5 px-2 ${statusCfg.className}`}>
+                {statusCfg.label}
+              </Badge>
+              {/* Botão de Fechar rápido no mobile / touch */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleClose()
+                }}
+                className="w-5 h-5 ml-0.5 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors"
+                title="Fechar janela rápida"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          <h4 className="text-sm font-black text-slate-900 dark:text-slate-50 truncate leading-snug">
+            {guestName}
+          </h4>
+
+          {requesterDisplayName && (
+            <div
+              className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-300 font-medium truncate"
+              title={`Solicitante: ${requesterDisplayName}`}
+            >
+              <span className="shrink-0">👥</span>
+              <span className="text-slate-500 dark:text-slate-400 shrink-0">Solicitante:</span>
+              <span className="font-bold text-slate-800 dark:text-slate-100 truncate">
+                {requesterDisplayName}
+              </span>
+            </div>
+          )}
+
+          {(resItem.agencyName || resItem.agencyTradeName || resItem.companyName || resItem.b2bLocatorRloc || resItem.b2bReservationNumber) && (
+            <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+              {(resItem.agencyTradeName || resItem.agencyName) && (
+                <span className="px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-500/30 font-bold truncate max-w-[155px]">
+                  🟣 {resItem.agencyTradeName || resItem.agencyName}
+                </span>
+              )}
+              {resItem.companyName && (
+                <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 font-bold truncate max-w-[155px]">
+                  🏢 {resItem.companyName}
+                </span>
+              )}
+              {resItem.b2bLocatorRloc && (
+                <span className="px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono font-bold">
+                  RLOC: {resItem.b2bLocatorRloc}
+                </span>
+              )}
+            </div>
+          )}
+
+          {resItem.earlyCheckout ? (
+            <div className="mt-1.5 flex flex-col gap-1 px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/60 border border-amber-400 dark:border-amber-700 rounded-lg text-amber-950 dark:text-amber-100 text-[10.5px] font-bold shadow-2xs">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Zap className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <span className="truncate">
+                    ⚡ Check-out Antecipado em {format(parseISO(resItem.earlyCheckoutDate || resItem.checkoutDate), "dd/MM")}
+                    {resItem.earlyCheckoutTime ? ` às ${resItem.earlyCheckoutTime}` : ""}
+                  </span>
+                </div>
+                {onUndoEarlyCheckout && (
+                  <button
+                    type="button"
+                    disabled={undoingEarly}
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      setUndoingEarly(true)
+                      try {
+                        await onUndoEarlyCheckout(resItem)
+                        setIsOpen(false)
+                        onCloseMobile?.()
+                      } finally {
+                        setUndoingEarly(false)
+                      }
+                    }}
+                    className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-amber-500 text-amber-950 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-[10px] font-black transition-colors cursor-pointer disabled:opacity-60"
+                    title="Restaurar data original de saída e reativar estadia"
+                  >
+                    <RotateCcw className={`w-2.5 h-2.5 ${undoingEarly ? "animate-spin" : ""}`} />
+                    <span>{undoingEarly ? "Restaurando..." : "Desfazer"}</span>
+                  </button>
+                )}
+              </div>
+              <span className="text-[10px] font-medium text-amber-800 dark:text-amber-300 pl-5">
+                Informado por: <strong>{resItem.earlyCheckoutReportedBy || resItem.checkoutReportedBy || "Portaria / Governança"}</strong>
+                {resItem.originalCheckoutDate ? ` • Previsto até ${format(parseISO(resItem.originalCheckoutDate), "dd/MM")}` : ""}
+              </span>
+            </div>
+          ) : isCheckoutCompleted && (
+            <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 rounded-lg text-emerald-900 dark:text-emerald-200 text-[10.5px] font-bold shadow-2xs">
+              <DoorOpen className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span>
+                ✓ Check-out já realizado{resItem.actualCheckoutTime ? ` às ${resItem.actualCheckoutTime}` : ""} (Quarto desocupado)
+              </span>
+            </div>
+          )}
+
+          {/* Alertas de Atenção e Menores no Hover Card */}
+          {resItem.pendingStayExtension?.isPreReservationHold && resItem.pendingStayExtension?.status === "pending_payment" && (
+            <div className="mt-1.5 flex items-start gap-1.5 px-2.5 py-1.5 bg-amber-50 dark:bg-amber-950/70 border border-dashed border-amber-400 dark:border-amber-600 rounded-lg text-amber-950 dark:text-amber-100 text-[10.5px] shadow-2xs">
+              <span className="text-xs shrink-0 mt-0.5">⏳</span>
+              <div className="leading-snug space-y-0.5">
+                <span className="font-black block">
+                  Pré-Reserva de +{resItem.pendingStayExtension.extraNights || 1} Diária(s) Extra(s)
+                  {resItem.pendingStayExtension.expiresAt ? (() => {
+                    try {
+                      return ` • Vence às ${format(new Date(resItem.pendingStayExtension.expiresAt), "HH:mm")}`;
+                    } catch {
+                      return "";
+                    }
+                  })() : ""}
+                </span>
+                <span className="text-[9.5px] font-medium text-amber-800 dark:text-amber-300 block">
+                  Saldo extra: R$ {Number(resItem.pendingStayExtension.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} • Se expirar, apenas a diária extra sai e a reserva original segue confirmada.
+                </span>
+              </div>
+            </div>
+          )}
+          {resItem.hasMinor && (
+            <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 rounded-lg text-rose-800 dark:text-rose-200 text-[10.5px] font-bold shadow-2xs">
+              <span className="text-xs">👶</span>
+              <span>Menor de Idade Registrado (ECA Art. 82 - Conferir Autorização em Cartório)</span>
+            </div>
+          )}
+          {(resItem.isCamposResident || isCampos) && (
+            <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 rounded-lg text-purple-800 dark:text-purple-200 text-[10.5px] font-bold shadow-2xs">
+              <span className="text-xs">📍</span>
+              <span>Radar Operacional: Hóspede de Campos dos Goytacazes/RJ</span>
+            </div>
+          )}
+          {resItem.riskAttentionAlert && !resItem.isCamposResident && !isCampos && (
+            <div className="mt-1.5 flex items-start gap-1.5 px-2 py-1 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg text-amber-800 dark:text-amber-200 text-[10.5px] font-bold shadow-2xs">
+              <span className="text-xs shrink-0">⚠️</span>
+              <span className="leading-tight">{resItem.riskAttentionReason || "Atenção da Gestão: Hóspede local menor de 30 anos (Campos dos Goytacazes)"}</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── 2. Grid de Resumo da Reserva ───────────────────────────────── */}
+        <div className="p-3.5 space-y-2.5">
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
+            {/* Flat / Acomodação */}
+            <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+              <div className="w-6 h-6 rounded-lg bg-sky-100 dark:bg-sky-950 text-sky-600 dark:text-sky-400 flex items-center justify-center shrink-0">
+                <Building2 className="w-3.5 h-3.5" />
+              </div>
+              <div className="leading-tight truncate">
+                <span className="text-[10px] text-slate-400 block font-medium">Unidade</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200 truncate">Flat {flatNumber}</span>
+              </div>
+            </div>
+
+            {/* Hóspedes */}
+            <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
+              <div className="w-6 h-6 rounded-lg bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                <Users className="w-3.5 h-3.5" />
+              </div>
+              <div className="leading-tight">
+                <span className="text-[10px] text-slate-400 block font-medium">Ocupação</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">
+                  {guestCount} {guestCount === 1 ? "hóspede" : "hóspedes"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Período & Diárias */}
+          <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 text-[11px]">
+            <div className="flex items-center gap-2">
+              <Calendar className="w-3.5 h-3.5 text-slate-400" />
+              <span className="font-semibold text-slate-700 dark:text-slate-300">
+                {checkinStr} ({resItem.checkinTime || "14:00"}) até {checkoutStr} ({resItem.checkoutTime || "12:00"})
+              </span>
+            </div>
+            <span className="font-bold text-slate-900 dark:text-slate-100 px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 text-[10px]">
+              {nightsCount} {nightsCount === 1 ? "diária" : "diárias"}
+            </span>
+          </div>
+
+          {/* Valor da Reserva & Status Financeiro */}
+          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 space-y-1.5 text-[11px]">
+            <div className="flex items-center justify-between">
+              <div className="leading-tight">
+                <span className="text-[9.5px] text-slate-400 font-semibold uppercase tracking-wider block">Valor da Reserva:</span>
+                <div className="flex items-baseline gap-1.5 mt-0.5">
+                  <span className="font-black text-slate-950 dark:text-slate-50 text-[13px]">
+                    {formattedTotal || "A definir"}
+                  </span>
+                  {resItem.dailyRate > 0 && (
+                    <span className="text-[10px] text-slate-500">
+                      ({nightsCount}x R$ {resItem.dailyRate})
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                {(() => {
+                  const chan = String(resItem.channel || "").toLowerCase();
+                  const isOta = chan.includes("booking") || chan.includes("airbnb");
+                  const tot = Number(resItem.totalAmount) || 0;
+                  const paid = Number(resItem.paidAmount) || 0;
+                  const isPaid = isOta || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (paid >= tot && tot > 0);
+                  const isPartial = !isPaid && paid > 0;
+                  return (
+                    <Badge 
+                      variant="outline" 
+                      className={`text-[9.5px] font-bold px-2 py-0.5 ${
+                        isPaid 
+                          ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300" 
+                          : isPartial
+                          ? "bg-indigo-50 text-indigo-800 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300"
+                          : "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300"
+                      }`}
+                    >
+                      {isPaid ? (isOta ? (chan.includes("booking") ? "Pago (Booking)" : "Pago (Airbnb)") : "Pago ✓") : (isPartial ? `Sinal R$ ${paid}` : "Aguardando Pagto")}
+                    </Badge>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {(() => {
+              const tot = Number(resItem.totalAmount) || 0;
+              const paid = Number(resItem.paidAmount) || 0;
+              const remaining = Math.max(0, tot - paid);
+              if (tot <= 0 || paid >= tot) return null;
+              return (
+                <div className="pt-1 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[10px]">
+                  <span className="text-slate-500">Pago: <strong className="text-emerald-600 dark:text-emerald-400">R$ {paid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                  <span className="text-slate-500">Falta: <strong className="text-amber-600 dark:text-amber-400">R$ {remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                </div>
+              );
+            })()}
+
+            {/* Detalhamento por Diária Individual */}
+            {Array.isArray(resItem.dailyRates) && resItem.dailyRates.length > 0 && (
+              <div className="mt-1 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Diárias Discriminadas ({resItem.dailyRates.length}):
+                </span>
+                <div 
+                  onWheel={(e) => e.stopPropagation()} 
+                  className="space-y-1 max-h-24 overflow-y-auto pr-0.5 overscroll-contain [scrollbar-width:thin]"
+                >
+                  {resItem.dailyRates.map((d: any, dIdx: number) => {
+                    const dChan = (d.channel || resItem.channel || "whatsapp").toLowerCase();
+                    const dChanLabel = dChan.includes("b2b") ? "B2B" : dChan.includes("booking") ? "Booking" : dChan.includes("airbnb") ? "Airbnb" : dChan.includes("site") ? "Site" : "WhatsApp";
+                    const dChanColor = dChan.includes("b2b") ? "text-violet-700 bg-violet-50 dark:bg-violet-950/50 border-violet-200 dark:text-violet-300 dark:border-violet-800" : dChan.includes("booking") ? "text-sky-700 bg-sky-50 dark:bg-sky-950/50 border-sky-200" : dChan.includes("airbnb") ? "text-rose-700 bg-rose-50 dark:bg-rose-950/50 border-rose-200" : dChan.includes("site") ? "text-orange-700 bg-orange-50 dark:bg-orange-950/50 border-orange-200 dark:text-orange-300 dark:border-orange-800" : "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200";
+                    
+                    let dateFmt = d.date;
+                    try {
+                      dateFmt = format(parseISO(d.date), "dd/MM (EEE)", { locale: ptBR });
+                    } catch {}
+
+                    const isExtHoldNight = Boolean(
+                      resItem.pendingStayExtension?.isPreReservationHold &&
+                      resItem.pendingStayExtension?.status === "pending_payment" &&
+                      (Array.isArray(resItem.pendingStayExtension?.addedDates) && resItem.pendingStayExtension.addedDates.length > 0
+                        ? resItem.pendingStayExtension.addedDates.includes(d.date)
+                        : (resItem.pendingStayExtension?.oldCheckoutDate && d.date >= resItem.pendingStayExtension.oldCheckoutDate))
+                    );
+
+                    return (
+                      <div
+                        key={dIdx}
+                        className={`flex items-center justify-between text-[10px] px-2 py-0.5 rounded border ${
+                          isExtHoldNight
+                            ? "bg-amber-50/90 dark:bg-amber-950/40 border-dashed border-amber-400 dark:border-amber-600"
+                            : "bg-white dark:bg-slate-900/80 border-slate-200/60 dark:border-slate-800"
+                        }`}
+                      >
+                        <span className="text-slate-600 dark:text-slate-300 font-medium flex items-center gap-1">
+                          <span>{dIdx + 1}ª Noite ({dateFmt})</span>
+                          {isExtHoldNight && (
+                            <span className="text-[8.5px] font-black px-1 py-0.2 rounded bg-amber-200/90 text-amber-950 dark:bg-amber-900 dark:text-amber-100">
+                              ⏳ Pré-Reserva
+                            </span>
+                          )}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-[8.5px] font-bold px-1 py-0.2 rounded border ${dChanColor}`}>
+                            {dChanLabel}
+                          </span>
+                          <span className="font-bold text-slate-900 dark:text-slate-100">
+                            R$ {Number(d.rate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Café da Manhã */}
+          <div className="flex items-center justify-between text-[11px] pt-0.5 px-0.5">
+            <div className="flex items-center gap-1.5">
+              <Coffee className={`w-3.5 h-3.5 ${hasBreakfast ? "text-amber-500" : "text-slate-300"}`} />
+              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Café da Manhã:</span>
+              <Badge 
+                variant="outline" 
+                className={`text-[9.5px] font-bold px-1.5 py-0 ${
+                  hasBreakfast 
+                    ? "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300" 
+                    : "bg-slate-100 text-slate-500 border-slate-200"
+                }`}
+              >
+                {hasBreakfast ? "Incluso ✓" : "Não incluso"}
+              </Badge>
+            </div>
+          </div>
+        </div>
+
+        {/* ── 2.5 Atalhos de Mensagens Rápidas (Compact Pill Row) ────────── */}
+        {activeQuickMessages.length > 0 && (
+          <div className="px-3.5 py-2 bg-emerald-50/50 dark:bg-emerald-950/20 border-t border-slate-100 dark:border-slate-800/80">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-black text-emerald-900 dark:text-emerald-300 uppercase tracking-wider flex items-center gap-1">
+                <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
+                Mensagens Rápidas
+              </span>
+              <a 
+                href="/whatsapp?tab=quick_messages" 
+                className="text-[9.5px] text-slate-500 dark:text-slate-400 hover:text-emerald-700 dark:hover:text-emerald-300 font-medium flex items-center gap-0.5 transition-colors"
+                title="Configurar e ativar/desativar atalhos de mensagens"
+              >
+                <span>Gerenciar</span>
+                <SlidersHorizontal className="w-2.5 h-2.5" />
+              </a>
+            </div>
+
+            <div className="flex flex-wrap gap-1">
+              {activeQuickMessages.map(qm => {
+                const isSending = sendingMsgId === qm.id;
+                const target = qm.recipientTarget || "guest";
+                return (
+                  <button
+                    key={qm.id}
+                    type="button"
+                    disabled={isSending}
+                    {...bindZapiClickOrHoldWaWeb({
+                      onClickZapi: (e) => handleTriggerQuickMessage(e, qm),
+                      getWaUrl: () => buildQuickMessageWaWebUrl(qm, resItem, originUrl),
+                      toast
+                    })}
+                    onMouseEnter={() => handleQuickMsgHover(qm)}
+                    onMouseLeave={() => handleQuickMsgHover(null)}
+                    title={
+                      target === "both" 
+                        ? `${qm.title} (Envia para Hóspede e Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)` 
+                        : target === "requester" 
+                          ? `${qm.title} (Envia para o Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)` 
+                          : `${qm.title} (Envia para o Hóspede • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                    }
+                    className="h-6 px-2 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-200 active:scale-95 transition-all shadow-2xs cursor-pointer group/btn"
+                  >
+                    {isSending ? (
+                      <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
+                    ) : (
+                      <span className="text-xs">{qm.icon || "💬"}</span>
+                    )}
+                    <span className="truncate max-w-[85px]">{qm.shortLabel || qm.title}</span>
+                    {target === "both" && (
+                      <span className="text-[8px] px-1 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold border border-purple-300 dark:border-purple-800 leading-tight" title="Hóspede + Solicitante">
+                        ✨
+                      </span>
+                    )}
+                    {target === "requester" && (
+                      <span className="text-[8px] px-1 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800 leading-tight" title="Só Solicitante">
+                        👥
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── 3. Barra de Ações Rápidas (Action Bar) ──────────────────────── */}
+        <div className="p-3 bg-slate-50/90 dark:bg-slate-950/60 border-t border-slate-100 dark:border-slate-800/80 space-y-2">
+          {/* Linha 1: Ações Principais (Ver Detalhes + Chat PMS + wa.me + Telefone) */}
+          <div className="flex items-center gap-1.5">
+            {/* Botão Primário: Ver Detalhes */}
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                handleClose()
+                onOpenDetails(resItem)
+              }}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 font-bold text-xs shadow-xs transition-all"
+              title="Abrir detalhes completos da reserva, dossiê e mensagens"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>Ver Detalhes</span>
+            </Button>
+
+            {/* Chat PMS WhatsApp */}
+            {waLink ? (
+              <>
+                <a
+                  href={`/whatsapp-chat?phone=${finalWaPhone}`}
+                  className="inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-xs transition-all group shrink-0"
+                  title="Abrir WhatsApp integrado dentro do sistema"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+                  <span>Chat PMS</span>
+                </a>
+                <a
+                  href={waLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="h-8 w-8 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 flex items-center justify-center transition-colors shrink-0 shadow-2xs"
+                  title="Abrir WhatsApp Web Externo (wa.me)"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </>
+            ) : (
+              <Button
+                disabled
+                size="sm"
+                variant="outline"
+                className="h-8 px-2.5 rounded-xl text-xs font-bold text-slate-400 cursor-not-allowed shrink-0"
+              >
+                <MessageCircle className="w-3.5 h-3.5 mr-1" />
+                Sem Whats
+              </Button>
+            )}
+
+            {cleanPhone && (
+              <a
+                href={`tel:+${finalWaPhone}`}
+                className="h-8 w-8 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center transition-colors shrink-0 shadow-2xs"
+                title={`Ligar para ${rawPhone}`}
+              >
+                <Phone className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+              </a>
+            )}
+          </div>
+
+          {/* Linha 2: Links Públicos de Autoatendimento com quebra fluida (flex-wrap) */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            {/* Grupo Portal + Copiar Link */}
+            <div className="inline-flex items-center rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/80 dark:bg-sky-950/40 overflow-hidden shadow-2xs">
+              <a
+                href={portalUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 h-7 px-2 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 font-bold text-[11px] transition-colors"
+                title="Abrir Portal do Hóspede"
+              >
+                <ExternalLink className="w-3 h-3" />
+                <span>Portal</span>
+              </a>
+              <div className="w-[1px] h-4 bg-sky-200 dark:bg-sky-800" />
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="h-7 px-1.5 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 transition-colors"
+                title="Copiar Link da Reserva"
+              >
+                {copiedLink ? (
+                  <Check className="w-3 h-3 text-emerald-600" />
+                ) : (
+                  <Copy className="w-3 h-3" />
+                )}
+              </button>
+            </div>
+
+            {hasBreakfast && (
+              <a
+                href={breakfastUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="h-7 px-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/80 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0 shadow-2xs"
+                title="Abrir Gestão de Café da Manhã"
+              >
+                <Coffee className="w-3 h-3 text-amber-600" />
+                <span>Café</span>
+              </a>
+            )}
+
+            {/* Grupo Check-in + Copiar Link */}
+            <div className="inline-flex items-center rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 dark:bg-indigo-950/40 overflow-hidden shadow-2xs">
+              <a
+                href={preCheckinUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 h-7 px-2 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-800 dark:text-indigo-300 font-bold text-[11px] transition-colors"
+                title="Abrir Link de Pré-Check-in Digital"
+              >
+                <FileText className="w-3 h-3 text-indigo-600" />
+                <span>Check-in</span>
+              </a>
+              <div className="w-[1px] h-4 bg-indigo-200 dark:bg-indigo-800" />
+              <button
+                type="button"
+                onClick={handleCopyCheckinLink}
+                className="h-7 px-1.5 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 transition-colors"
+                title="Copiar Link de Check-in"
+              >
+                {copiedCheckinLink ? (
+                  <Check className="w-3 h-3 text-emerald-600" />
+                ) : (
+                  <Copy className="w-3 h-3" />
+                )}
+              </button>
+            </div>
+
+            <a
+              href={checkoutUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="h-7 px-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/80 hover:bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0 shadow-2xs"
+              title="Abrir Link de Check-out Expresso"
+            >
+              <DoorOpen className="w-3 h-3 text-emerald-600" />
+              <span>Saída</span>
+            </a>
+          </div>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+
+    <QuickMessageConfirmDialog
+      open={Boolean(confirmingQuickMsg)}
+      onOpenChange={(open) => {
+        if (!open) setConfirmingQuickMsg(null)
+      }}
+      quickMessage={confirmingQuickMsg}
+      resItem={resItem}
+      originUrl={originUrl}
+      onConfirm={async (qm, options) => {
+        setSendingMsgId(qm.id)
+        try {
+          await dispatchQuickMessage(qm, resItem, originUrl, options)
+        } finally {
+          setSendingMsgId(null)
+        }
+      }}
+    />
+    </>
+  )
+}

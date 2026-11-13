@@ -1,0 +1,418 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  DEFAULT_WHATSAPP_TEMPLATES,
+  getNpsScoreTemplate,
+  getNpsThanksTemplate,
+  rebuildNpsImprovementsSummary,
+  processInboundNpsAndSentiment,
+  checkPendingNpsManagerAlerts,
+  wasNpsSurveySentToPhone,
+  sanitizeAndDispatchTodaySub5Nps,
+  renderTemplateButtons,
+  formatMessageWithLinks
+} from "../scripts/zapi-service.mjs";
+
+test("NPS 1-5 templates, two-step comment collection, and continuous improvements summary", async () => {
+  const sentMessages = [];
+  const mockSendZapi = async (zapiConfig, payload) => {
+    sentMessages.push(payload);
+    return {
+      success: true,
+      method: "mock_zapi",
+      messageId: `MOCK-${sentMessages.length}`
+    };
+  };
+
+  // 1. Validate that all 5 score templates + thanks template exist in DEFAULT_WHATSAPP_TEMPLATES
+  for (const tplId of [
+    "tpl_post_checkout_review",
+    "tpl_nps_score_4",
+    "tpl_nps_score_3",
+    "tpl_nps_score_2",
+    "tpl_nps_score_1",
+    "tpl_nps_feedback_thanks"
+  ]) {
+    const found = DEFAULT_WHATSAPP_TEMPLATES.find((tpl) => tpl.id === tplId);
+    assert.ok(found, `Template ${tplId} must exist in DEFAULT_WHATSAPP_TEMPLATES`);
+    assert.equal(found.enabled, true, `Template ${tplId} must be enabled by default`);
+  }
+
+  const db = {
+    zapiConfig: {
+      enabled: true,
+      testModeOnly: false,
+      instanceId: "TEST_INST",
+      token: "TEST_TOK",
+      clientToken: "TEST_CLIENT",
+      npsManagerAlertPhone: "22998505276"
+    },
+    whatsappTemplates: structuredClone(DEFAULT_WHATSAPP_TEMPLATES),
+    reservations: [
+      {
+        id: "RES-501",
+        code: "RES-501",
+        guestName: "Carlos Promotor",
+        guestPhone: "5522999990005",
+        flatNumber: "101",
+        checkinDate: "2026-10-18",
+        checkoutDate: "2026-10-20",
+        status: "checked_out",
+        channel: "site"
+      },
+      {
+        id: "RES-401",
+        code: "RES-401",
+        guestName: "Mariana Nota Quatro",
+        guestPhone: "5522999990004",
+        flatNumber: "204",
+        checkinDate: "2026-10-18",
+        checkoutDate: "2026-10-20",
+        status: "checked_out",
+        channel: "booking"
+      },
+      {
+        id: "RES-201",
+        code: "RES-201",
+        guestName: "Roberto Nota Dois",
+        guestPhone: "5522999990002",
+        flatNumber: "305",
+        checkinDate: "2026-10-18",
+        checkoutDate: "2026-10-20",
+        status: "checked_out",
+        channel: "airbnb"
+      }
+    ],
+    npsResponses: [
+      {
+        id: "nps_1",
+        reservationId: "RES-501",
+        guestName: "Carlos Promotor",
+        guestPhone: "5522999990005",
+        flatNumber: "101",
+        channel: "site",
+        score: null,
+        comment: "",
+        googleLinkSent: false,
+        pendingResponse: true,
+        sentAt: new Date().toISOString(),
+        respondedAt: null
+      },
+      {
+        id: "nps_2",
+        reservationId: "RES-401",
+        guestName: "Mariana Nota Quatro",
+        guestPhone: "5522999990004",
+        flatNumber: "204",
+        channel: "booking",
+        score: null,
+        comment: "",
+        googleLinkSent: false,
+        pendingResponse: true,
+        sentAt: new Date().toISOString(),
+        respondedAt: null
+      },
+      {
+        id: "nps_3",
+        reservationId: "RES-201",
+        guestName: "Roberto Nota Dois",
+        guestPhone: "5522999990002",
+        flatNumber: "305",
+        channel: "airbnb",
+        score: null,
+        comment: "",
+        googleLinkSent: false,
+        pendingResponse: true,
+        sentAt: new Date().toISOString(),
+        respondedAt: null
+      }
+    ],
+    reviews: [],
+    observations: [],
+    whatsappQueue: [],
+    whatsappHistory: []
+  };
+
+  // Verify helper functions & Etapa 1 text
+  const stage1Tpl = DEFAULT_WHATSAPP_TEMPLATES.find((tpl) => tpl.id === "tpl_nps_satisfaction_check");
+  assert.ok(stage1Tpl, "Stage 1 template tpl_nps_satisfaction_check must exist");
+  assert.match(stage1Tpl.message, /Sua estadia conosco no CorpFlats chegou ao fim e adoraríamos saber como foi! De 1 a 5 \(sendo 5 perfeito\), que nota você daria para a sua experiência\?/);
+  assert.match(stage1Tpl.message, /Basta responder apenas com o número! 💙/);
+  assert.equal(stage1Tpl.footer, "");
+
+  assert.equal(getNpsScoreTemplate(db, 5).id, "tpl_post_checkout_review");
+  assert.equal(getNpsScoreTemplate(db, 4).id, "tpl_nps_score_4");
+  assert.equal(getNpsScoreTemplate(db, 3).id, "tpl_nps_score_3");
+  assert.equal(getNpsScoreTemplate(db, 2).id, "tpl_nps_score_2");
+  assert.equal(getNpsScoreTemplate(db, 1).id, "tpl_nps_score_1");
+  assert.equal(getNpsThanksTemplate(db).id, "tpl_nps_feedback_thanks");
+
+  // 2. Guest 1 replies "5" -> receives Google Review link as plain text with typing indicator
+  const resScore5 = await processInboundNpsAndSentiment({
+    db,
+    phone: "5522999990005",
+    senderName: "Carlos Promotor",
+    text: "5",
+    saveDatabase: () => {},
+    sendZapiFn: mockSendZapi
+  });
+  assert.equal(resScore5.npsHandled, true);
+  assert.equal(db.npsResponses[0].score, 5);
+  assert.equal(db.npsResponses[0].googleLinkSent, true);
+  assert.equal(db.npsResponses[0].awaitingFeedbackComment, false);
+  const score5Payload = sentMessages.at(-1);
+  assert.equal(score5Payload.triggerEvent, "nps_approved");
+  assert.equal(score5Payload.sendMode, "text");
+  assert.equal(score5Payload.delayTyping, 5);
+  assert.equal(score5Payload.title, "");
+  assert.equal(score5Payload.footer, "");
+  assert.deepEqual(score5Payload.buttons, []);
+  assert.match(score5Payload.message, /Que alegria ler isso, Carlos! Muito obrigado pela nota máxima\. 🌟/);
+  assert.match(score5Payload.message, /Posso te pedir um favor de 5 segundos\? É só tocar nas 5 estrelinhas neste link do Google e clicar em postar/);
+  const score5Lines = score5Payload.message.trim().split("\n");
+  assert.equal(
+    score5Lines.at(-1).trim(),
+    "https://search.google.com/local/writereview?placeid=ChIJV6u4FRTVvQARAKQO7n-p-BA",
+    "Google Review link must be isolated on the last line of the message"
+  );
+
+  // 3. Guest 2 replies "4" (only the number) -> receives tpl_nps_score_4 inviting comment & awaits reply
+  const resScore4 = await processInboundNpsAndSentiment({
+    db,
+    phone: "5522999990004",
+    senderName: "Mariana Nota Quatro",
+    text: "4",
+    saveDatabase: () => {},
+    sendZapiFn: mockSendZapi
+  });
+  assert.equal(resScore4.npsHandled, true);
+  assert.equal(resScore4.action, "score_received");
+  assert.equal(db.npsResponses[1].score, 4);
+  assert.equal(db.npsResponses[1].googleLinkSent, false);
+  assert.equal(db.npsResponses[1].awaitingFeedbackComment, true);
+  assert.equal(db.npsResponses[1].managerAlertSent, false, "Should wait for guest explanation before alerting manager");
+  assert.equal(sentMessages.at(-1).triggerEvent, "nps_score_4");
+
+  // 4. Guest 2 now types what can be improved -> saves comment, sends thanks, updates summary, alerts manager (22998505276)
+  const resComment4 = await processInboundNpsAndSentiment({
+    db,
+    phone: "5522999990004",
+    senderName: "Mariana Nota Quatro",
+    text: "Gostei muito do flat, mas o travesseiro estava muito alto e faltou filtro de café.",
+    saveDatabase: () => {},
+    sendZapiFn: mockSendZapi
+  });
+  assert.equal(resComment4.npsHandled, true);
+  assert.equal(resComment4.action, "feedback_comment_received");
+  assert.equal(db.npsResponses[1].awaitingFeedbackComment, false);
+  assert.equal(db.npsResponses[1].managerAlertSent, true);
+  assert.match(db.npsResponses[1].comment, /travesseiro estava muito alto/i);
+
+  // Check that both thanks message to guest AND manager alert to 22998505276 were sent
+  const thanksMsgSent = sentMessages.find((m) => m.triggerEvent === "nps_feedback_thanks");
+  assert.ok(thanksMsgSent, "Guest must receive tpl_nps_feedback_thanks after typing suggestion");
+  const managerAlertMsgSent = sentMessages.find((m) => m.triggerEvent === "nps_manager_improvement_alert");
+  assert.ok(managerAlertMsgSent, "Manager must receive WhatsApp alert with guest comment and improvements summary");
+  assert.match(managerAlertMsgSent.phone, /22998505276/);
+  assert.match(managerAlertMsgSent.message, /Resumo Atualizado de Melhorias a Fazer/i);
+
+  // Verify improvements summary was updated
+  assert.ok(db.npsImprovements, "db.npsImprovements must be generated");
+  assert.equal(db.npsImprovements.totalFeedbacksAnalyzed, 1);
+  assert.ok(db.npsImprovements.pendingCount >= 1);
+  assert.match(db.npsImprovements.executiveSummary, /melhoria\(s\) prioritária\(s\) a fazer/i);
+
+  // 5. Guest 3 sends score "2" AND comment in the same message
+  const resScore2WithComment = await processInboundNpsAndSentiment({
+    db,
+    phone: "5522999990002",
+    senderName: "Roberto Nota Dois",
+    text: "2 - O ar condicionado do quarto 305 estava pingando e fazendo barulho a noite toda",
+    saveDatabase: () => {},
+    sendZapiFn: mockSendZapi
+  });
+  assert.equal(resScore2WithComment.npsHandled, true);
+  assert.equal(db.npsResponses[2].score, 2);
+  assert.equal(db.npsResponses[2].awaitingFeedbackComment, false);
+  assert.equal(db.npsResponses[2].managerAlertSent, true);
+  assert.ok(db.observations.some((o) => o.generatedFromNps), "Score 2 should also create a recovery ticket");
+  assert.equal(db.npsImprovements.totalFeedbacksAnalyzed, 2);
+
+  // 6. Resolve an improvement item and verify pendingCount decreases and resolvedCount increases
+  const firstPendingItem = db.npsImprovements.items.find((i) => i.status === "pending");
+  assert.ok(firstPendingItem, "Must have at least one pending improvement item");
+  firstPendingItem.status = "resolved";
+  firstPendingItem.resolvedAt = new Date().toISOString();
+  const updatedSummary = await rebuildNpsImprovementsSummary(db);
+  assert.equal(updatedSummary.resolvedCount, 1);
+  const resolvedCheck = updatedSummary.items.find((i) => i.id === firstPendingItem.id);
+  assert.equal(resolvedCheck.status, "resolved");
+
+  // 7. Test 15-minute fallback alert when guest sends only score 3 and never writes a comment
+  db.npsResponses.push({
+    id: "nps_4",
+    reservationId: "RES-301",
+    guestName: "Fernanda Silenciosa",
+    guestPhone: "5522999990003",
+    flatNumber: "402",
+    channel: "whatsapp",
+    score: 3,
+    comment: "",
+    googleLinkSent: false,
+    pendingResponse: false,
+    surveyVerifiedSent: true,
+    scoreFollowupSent: true,
+    awaitingFeedbackComment: true,
+    awaitingFeedbackSince: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    managerAlertSent: false,
+    sentAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+    respondedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString()
+  });
+
+  const fallbackRes = await checkPendingNpsManagerAlerts(
+    db,
+    () => {},
+    () => {},
+    { sendZapiFn: mockSendZapi }
+  );
+  assert.equal(fallbackRes.triggeredCount, 1);
+  assert.equal(db.npsResponses[3].managerAlertSent, true, "Fallback alert must be sent after 15 minutes");
+  assert.equal(db.npsResponses[3].managerAlertReason, "timeout_15m_without_comment");
+
+  // 8. Strict guard: Guest who NEVER received the NPS survey sends "2" in chat (e.g., Marcos Paulo) -> must NOT be treated as NPS
+  assert.equal(wasNpsSurveySentToPhone(db, "5522998401818"), false);
+  const prevNpsCount = db.npsResponses.length;
+  const resNoSurvey = await processInboundNpsAndSentiment({
+    db,
+    phone: "5522998401818",
+    senderName: "Marcos Paulo",
+    text: "2",
+    saveDatabase: () => {},
+    sendZapiFn: mockSendZapi
+  });
+  assert.equal(resNoSurvey.npsHandled, false, "Must ignore number 1-5 when NPS survey was never sent to that phone");
+  assert.equal(db.npsResponses.length, prevNpsCount, "Must not add bogus entry to db.npsResponses");
+
+  // 9. Sanitize bogus entries & dispatch only today's < 5 evaluations
+  db.reservations.push({
+    id: 467,
+    code: "RES-211-0467",
+    guestName: "Anderson Prates",
+    guestPhone: "557192753737",
+    flatNumber: "907",
+    status: "completed"
+  });
+  db.whatsappQueue.push({
+    id: "q_anderson",
+    reservationCode: "RES-211-0467",
+    guestPhone: "557192753737",
+    triggerEvent: "post_checkout_review",
+    status: "sent",
+    sentAt: "2026-10-21T15:00:50.863Z"
+  });
+  // Add bogus Marcos Paulo entry, old historical < 5 entry (from 2026-10-18), and today's Anderson Prates entry (2026-10-21)
+  db.npsResponses.push(
+    {
+      id: "nps_bogus_marcos",
+      guestName: "Marcos Paulo",
+      guestPhone: "5522998401818",
+      score: 2,
+      pendingResponse: false,
+      sentAt: "2026-10-17T01:39:40.622Z",
+      respondedAt: "2026-10-17T01:39:40.622Z"
+    },
+    {
+      id: "nps_old_day",
+      guestName: "Hóspede Antigo",
+      guestPhone: "5521991112222",
+      score: 3,
+      pendingResponse: false,
+      surveyVerifiedSent: true,
+      sentAt: "2026-10-18T15:00:00.000Z",
+      respondedAt: "2026-10-18T16:00:00.000Z"
+    },
+    {
+      id: "nps_today_anderson",
+      guestName: "??",
+      guestPhone: "557192753737",
+      flatNumber: "907",
+      score: 4,
+      pendingResponse: false,
+      sentAt: "2026-10-21T16:08:19.586Z",
+      respondedAt: "2026-10-21T16:08:19.586Z"
+    }
+  );
+
+  const retroRes = await sanitizeAndDispatchTodaySub5Nps(db, () => {}, {
+    sendZapiFn: mockSendZapi,
+    onlyDateStr: "2026-10-21",
+    dispatchTodayFollowups: true
+  });
+  assert.equal(retroRes.removedBogusCount, 1, "Must remove bogus Marcos Paulo entry");
+  assert.ok(!db.npsResponses.some((n) => n.id === "nps_bogus_marcos"));
+  assert.equal(retroRes.dispatchedCount, 1, "Must dispatch follow-up ONLY for today's < 5 evaluation (Anderson Prates)");
+  assert.equal(retroRes.dispatched[0].guestName, "Anderson Prates", "Must resolve '??' to official guest name 'Anderson Prates'");
+  assert.equal(retroRes.dispatched[0].score, 4);
+  assert.match(retroRes.dispatched[0].message, /Anderson/i);
+
+  // 10. Check-out completed & check-out reminder must NEVER include "📍 Já Cheguei no Flat" (btn_cheguei)
+  const checkoutTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === "tpl_checkout_completed");
+  const checkoutReminderTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === "tpl_checkout_reminder");
+  const lucianaRes = {
+    id: 480,
+    code: "RES-215-0480",
+    guestName: "Luciana",
+    flatNumber: "215",
+    status: "completed",
+    fnhrCompleted: true,
+    preCheckinCompleted: true,
+    guestSelfCheckin: false
+  };
+  const checkoutBtns = renderTemplateButtons(checkoutTpl.buttons, lucianaRes, db, "https://corpflats.com.br", "guest", checkoutTpl);
+  assert.ok(!checkoutBtns.some((b) => b.id === "btn_cheguei" || /cheguei/i.test(b.label || "")), "Check-out Concluído must never include 'Já Cheguei no Flat'");
+  assert.equal(checkoutBtns.length, 2);
+  assert.equal(checkoutBtns[0].id, "btn_portal");
+  assert.equal(checkoutBtns[1].id, "btn_site");
+
+  const reminderBtns = renderTemplateButtons(checkoutReminderTpl.buttons, { ...lucianaRes, status: "confirmada" }, db, "https://corpflats.com.br", "guest", checkoutReminderTpl);
+  assert.ok(!reminderBtns.some((b) => b.id === "btn_cheguei" || /cheguei/i.test(b.label || "")), "Check-out Reminder must never include 'Já Cheguei no Flat'");
+
+  // 11. PDF Manual attachment: must NOT be on tpl_checkin_completed (when guest clicks "Já cheguei"),
+  // and MUST be enabled on all reservation confirmation templates
+  const checkinCompletedTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === "tpl_checkin_completed");
+  assert.equal(checkinCompletedTpl.hasAttachment, false, "tpl_checkin_completed must have hasAttachment = false");
+  assert.equal(checkinCompletedTpl.documentUrl, "", "tpl_checkin_completed must not have documentUrl populated");
+
+  for (const confirmId of [
+    "tpl_new_reservation_direct",
+    "tpl_new_reservation_ota",
+    "tpl_payment_confirmed",
+    "tpl_sameday_reservation_instructions"
+  ]) {
+    const confirmTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === confirmId);
+    assert.ok(confirmTpl, `Template ${confirmId} must exist`);
+    assert.equal(confirmTpl.hasAttachment, true, `${confirmId} must have hasAttachment = true`);
+    assert.equal(confirmTpl.documentUrl, "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf", `${confirmId} must attach the PDF manual`);
+  }
+
+  // 12. Same-day reservation & confirmation messages mentioning "• Saída (Check-out):" must KEEP "📝 Fazer Check-in Online" (btn_chk)
+  const samedayTpl = DEFAULT_WHATSAPP_TEMPLATES.find((t) => t.id === "tpl_sameday_reservation_instructions");
+  const angeloRes = {
+    id: 499,
+    code: "RES-715-0499",
+    guestName: "Angelo",
+    flatNumber: "715",
+    status: "confirmada",
+    fnhrCompleted: false,
+    preCheckinCompleted: false,
+    guestSelfCheckin: false
+  };
+  const samedayBtns = renderTemplateButtons(samedayTpl.buttons, angeloRes, db, "https://corpflats.com.br", "guest", samedayTpl);
+  assert.ok(samedayBtns.some((b) => b.id === "btn_chk" && /check-in online/i.test(b.label || "")), "Same-day reservation must include '📝 Fazer Check-in Online' when pre-check-in is pending");
+  const formattedSamedayText = formatMessageWithLinks(
+    "• Entrada (Check-in): Hoje a partir das 14:00\n• Saída (Check-out): 23/10/2026 até às 12:00",
+    samedayTpl.footer,
+    samedayBtns
+  );
+  assert.match(formattedSamedayText, /Fazer Check-in Online/i, "formatMessageWithLinks must not strip btn_chk when message body mentions '• Saída (Check-out):'");
+});

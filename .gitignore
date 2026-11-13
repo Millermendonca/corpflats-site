@@ -1,0 +1,106 @@
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+
+# compiled output
+# dist mantido no git para deploy imediato no Render
+tmp
+out-tsc
+*.tsbuildinfo
+.expo
+.expo-shared
+
+# dependencies
+node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/coverage
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+
+# System Files
+.DS_Store
+Thumbs.db
+
+.cursor/rules/nx-rules.mdc
+.github/instructions/nx.instructions.md
+
+# Replit
+.cache/
+.local/
+
+# Uploads and secure documents
+artifacts/api-server/secure_uploads/*
+!artifacts/api-server/secure_uploads/**/.gitkeep
+artifacts/api-server/uploads/fnrh_documents/*
+!artifacts/api-server/uploads/fnrh_documents/**/.gitkeep
+artifacts/api-server/uploads/invoices/*
+!artifacts/api-server/uploads/invoices/**/.gitkeep
+storage/invoices_vault/
+
+# Temporary scratch
+scratch/
+RELATORIO_MELHORIAS_SISTEMA_24_48H.pdf
+data/backups/database_backup_post_recovery_*.json
+
+# Banco de dados local — PostgreSQL na nuvem é a fonte de verdade.
+# Este arquivo NÃO deve ser commitado para evitar sobrescrita de dados em produção.
+data/database.json
+
+# Isolated test databases
+data/test-database.json
+test-database.json
+data/*.test.json
+data/*test*.json
+data/*challenge*.json
+data/*isolated*.json
+data/e2e-final-test-database.json
+data/test-*.json
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Certificates & Private Keys
+*.pfx
+*.p12
+*.pem
+*.crt
+*.key
+artifacts/api-server/certs/
+storage/certs/
+
+# Database Backups & Audit Logs (contain PII/tokens)
+.demo-db.json
+*.demo-db.json*
+*.bak
+backups/
+data/*.json
+data/backups/
+data/backups/*.json
+artifacts/api-server/audit_logs.jsonl
+**/audit_logs.jsonl
+AUDITORIA_360_PLANO_DIRETOR.md
+
+# Agent scratch/teamwork reports
+.agents/teamwork/

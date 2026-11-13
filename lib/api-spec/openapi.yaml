@@ -1,0 +1,1265 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification for Controle de Limpeza
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: auth
+    description: Authentication
+  - name: flats
+    description: Flat management
+  - name: reservations
+    description: Reservation sync from OneDrive/Excel
+  - name: cleaning
+    description: Cleaning assignments and status
+  - name: settings
+    description: App settings
+  - name: dashboard
+    description: Dashboard summary data
+  - name: periodic-tasks
+    description: Recurring maintenance tasks per flat
+  - name: observations
+    description: Flat observations and maintenance notes
+  - name: analytics
+    description: Admin analytics and reports
+  - name: notifications
+    description: In-app alert notifications
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  # ─── Auth ───────────────────────────────────────────────────────────────────
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with username and numeric password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current authenticated user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─── Flats ──────────────────────────────────────────────────────────────────
+  /flats:
+    get:
+      operationId: listFlats
+      tags: [flats]
+      summary: List all flats
+      responses:
+        "200":
+          description: List of flats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Flat"
+
+  /flats/{id}:
+    get:
+      operationId: getFlat
+      tags: [flats]
+      summary: Get a flat by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Flat details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Flat"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      operationId: updateFlat
+      tags: [flats]
+      summary: Update flat occupancy status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FlatUpdate"
+      responses:
+        "200":
+          description: Updated flat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Flat"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ─── Reservations ────────────────────────────────────────────────────────────
+  /reservations/sync:
+    post:
+      operationId: syncReservations
+      tags: [reservations]
+      summary: Sync reservations from OneDrive Excel (admin only)
+      responses:
+        "200":
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncResult"
+
+  /reservations/checkouts:
+    get:
+      operationId: listCheckouts
+      tags: [reservations]
+      summary: List flats with checkouts from a given date forward
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "YYYY-MM-DD date to start from (defaults to today)"
+      responses:
+        "200":
+          description: Flats with checkouts on or after the given date
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CheckoutFlat"
+
+  /reservations/checkins:
+    get:
+      operationId: listCheckins
+      tags: [reservations]
+      summary: List flats with check-ins on a given date
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "YYYY-MM-DD date (defaults to today)"
+      responses:
+        "200":
+          description: Flat IDs with check-in on given date
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CheckinFlat"
+
+  # ─── Cleaning ─────────────────────────────────────────────────────────────────
+  /cleaning/requests:
+    get:
+      operationId: listCleaningRequests
+      tags: [cleaning]
+      summary: List cleaning requests for a date
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "YYYY-MM-DD date (defaults to today)"
+      responses:
+        "200":
+          description: List of cleaning requests with current assignment status
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CleaningRequest"
+
+    post:
+      operationId: createCleaningRequest
+      tags: [cleaning]
+      summary: Create a manual cleaning request (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CleaningRequestInput"
+      responses:
+        "201":
+          description: Created cleaning request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CleaningRequest"
+
+  /cleaning/assignments/{requestId}/status:
+    patch:
+      operationId: updateCleaningStatus
+      tags: [cleaning]
+      summary: Update cleaning status for a flat (5 states)
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CleaningStatusUpdate"
+      responses:
+        "200":
+          description: Updated cleaning assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CleaningRequest"
+        "400":
+          description: Observation required for pending_issue status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /cleaning/assignments/{requestId}/vacant:
+    patch:
+      operationId: markVacant
+      tags: [cleaning]
+      summary: Mark or unmark a flat as already vacant (room is empty early)
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [isVacant]
+              properties:
+                isVacant:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated cleaning request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CleaningRequest"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /cleaning/assignments/batch-claim:
+    post:
+      operationId: batchClaimFlats
+      tags: [cleaning]
+      summary: Claim multiple flats at once (will_clean status)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchClaimInput"
+      responses:
+        "200":
+          description: Batch claim result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchClaimResult"
+
+  /cleaning/history:
+    get:
+      operationId: listCleaningHistory
+      tags: [cleaning]
+      summary: List cleaning history with optional period filter
+      parameters:
+        - name: startDate
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "YYYY-MM-DD start date (defaults to first day of current month)"
+        - name: endDate
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "YYYY-MM-DD end date (defaults to last day of current month)"
+        - name: userId
+          in: query
+          required: false
+          schema:
+            type: number
+            description: "Filter by user ID (admin only; camareiras see only their own)"
+      responses:
+        "200":
+          description: Cleaning history entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CleaningHistoryEntry"
+
+  # ─── Dashboard ───────────────────────────────────────────────────────────────
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get summary stats for a given date
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "YYYY-MM-DD date (defaults to today)"
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  # ─── Settings ────────────────────────────────────────────────────────────────
+  /settings:
+    get:
+      operationId: getSettings
+      tags: [settings]
+      summary: Get app settings (admin only)
+      responses:
+        "200":
+          description: App settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppSettings"
+
+    patch:
+      operationId: updateSettings
+      tags: [settings]
+      summary: Update app settings (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppSettingsUpdate"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppSettings"
+
+  # ─── Periodic Tasks ──────────────────────────────────────────────────────────
+  /periodic-tasks:
+    get:
+      operationId: listPeriodicTasks
+      tags: [periodic-tasks]
+      summary: List all periodic tasks (admin only)
+      responses:
+        "200":
+          description: List of periodic tasks with flat assignments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PeriodicTask"
+
+    post:
+      operationId: createPeriodicTask
+      tags: [periodic-tasks]
+      summary: Create a periodic task (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeriodicTaskInput"
+      responses:
+        "201":
+          description: Created periodic task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeriodicTask"
+
+  /periodic-tasks/{id}:
+    patch:
+      operationId: updatePeriodicTask
+      tags: [periodic-tasks]
+      summary: Update a periodic task (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeriodicTaskUpdate"
+      responses:
+        "200":
+          description: Updated periodic task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeriodicTask"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      operationId: deletePeriodicTask
+      tags: [periodic-tasks]
+      summary: Delete a periodic task (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /periodic-tasks/pending:
+    get:
+      operationId: listPendingPeriodicTasks
+      tags: [periodic-tasks]
+      summary: List pending (due or overdue) periodic tasks, optionally filtered by flat
+      parameters:
+        - name: flatId
+          in: query
+          required: false
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Pending periodic tasks per flat
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PendingPeriodicTask"
+
+  /periodic-tasks/{id}/execute:
+    post:
+      operationId: executePeriodicTask
+      tags: [periodic-tasks]
+      summary: Mark a periodic task as done for a specific flat
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PeriodicTaskExecutionInput"
+      responses:
+        "200":
+          description: Execution recorded and next due date calculated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeriodicTaskExecution"
+
+  # ─── Observations ─────────────────────────────────────────────────────────────
+  /observations:
+    get:
+      operationId: listObservations
+      tags: [observations]
+      summary: List observations (admin sees all; camareira sees own flat observations)
+      parameters:
+        - name: flatId
+          in: query
+          required: false
+          schema:
+            type: number
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "defeito | manutencao | outro"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "aberta | resolvida"
+        - name: startDate
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: endDate
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of observations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Observation"
+
+    post:
+      operationId: createObservation
+      tags: [observations]
+      summary: Create a flat observation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ObservationInput"
+      responses:
+        "201":
+          description: Created observation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Observation"
+
+  /observations/{id}/resolve:
+    patch:
+      operationId: resolveObservation
+      tags: [observations]
+      summary: Mark an observation as resolved (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ObservationResolveInput"
+      responses:
+        "200":
+          description: Resolved observation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Observation"
+
+  # ─── Analytics ────────────────────────────────────────────────────────────────
+  /analytics/report:
+    get:
+      operationId: getAnalyticsReport
+      tags: [analytics]
+      summary: Get analytics report for admin (admin only)
+      parameters:
+        - name: startDate
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "YYYY-MM-DD (defaults to 30 days ago)"
+        - name: endDate
+          in: query
+          required: false
+          schema:
+            type: string
+            description: "YYYY-MM-DD (defaults to today)"
+      responses:
+        "200":
+          description: Analytics report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsReport"
+
+  # ─── Notifications ────────────────────────────────────────────────────────────
+  /notifications/alerts:
+    get:
+      operationId: getAlerts
+      tags: [notifications]
+      summary: Get in-app alerts for the current user
+      responses:
+        "200":
+          description: List of active alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alert"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required:
+        - success
+
+    # Auth
+    LoginInput:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+
+    AuthUser:
+      type: object
+      required: [id, username, role]
+      properties:
+        id:
+          type: number
+        username:
+          type: string
+        role:
+          type: string
+          description: "admin or camareira"
+
+    # Flat
+    Flat:
+      type: object
+      required: [id, number, isOccupied]
+      properties:
+        id:
+          type: number
+        number:
+          type: string
+          description: "Flat number/identifier"
+        isOccupied:
+          type: boolean
+          description: "Manually controlled occupancy flag"
+        updatedAt:
+          type: string
+
+    FlatUpdate:
+      type: object
+      properties:
+        isOccupied:
+          type: boolean
+
+    # Reservations
+    SyncResult:
+      type: object
+      required: [flatsFound, reservationsUpserted, checkoutsDetected]
+      properties:
+        flatsFound:
+          type: number
+        reservationsUpserted:
+          type: number
+        checkoutsDetected:
+          type: number
+        message:
+          type: string
+
+    CheckoutFlat:
+      type: object
+      required: [flatId, flatNumber, checkoutDate, hasCheckinToday]
+      properties:
+        flatId:
+          type: number
+        flatNumber:
+          type: string
+        checkoutDate:
+          type: string
+          description: "YYYY-MM-DD"
+        hasCheckinToday:
+          type: boolean
+          description: "Whether there's a new check-in on the checkout date (priority flag)"
+        isOccupied:
+          type: boolean
+        cleaningRequest:
+          $ref: "#/components/schemas/CleaningRequest"
+
+    CheckinFlat:
+      type: object
+      required: [flatId, flatNumber, checkinDate]
+      properties:
+        flatId:
+          type: number
+        flatNumber:
+          type: string
+        checkinDate:
+          type: string
+
+    # Cleaning
+    CleaningRequest:
+      type: object
+      required: [id, flatId, flatNumber, requestDate, source, status]
+      properties:
+        id:
+          type: number
+        flatId:
+          type: number
+        flatNumber:
+          type: string
+        requestDate:
+          type: string
+          description: "YYYY-MM-DD"
+        source:
+          type: string
+          description: "checkout or manual"
+        status:
+          type: string
+          description: "dirty | will_clean | cleaning_now | pending_issue | clean"
+        assignedUserId:
+          type: ["number", "null"]
+        assignedUsername:
+          type: ["string", "null"]
+        pendingObservation:
+          type: ["string", "null"]
+          description: "Required observation when status is pending_issue"
+        willCleanAt:
+          type: ["string", "null"]
+        cleaningStartedAt:
+          type: ["string", "null"]
+        completedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        hasCheckinToday:
+          type: boolean
+          description: "True if a new guest is checking in the same day as this checkout (priority flag)"
+        isVacant:
+          type: boolean
+          description: "True if the room has been manually marked as already empty/vacant"
+
+    CleaningRequestInput:
+      type: object
+      required: [flatId, requestDate]
+      properties:
+        flatId:
+          type: number
+        requestDate:
+          type: string
+          description: "YYYY-MM-DD"
+
+    CleaningStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: "dirty | will_clean | cleaning_now | pending_issue | clean"
+        observation:
+          type: ["string", "null"]
+          description: "Required when status is pending_issue"
+
+    BatchClaimInput:
+      type: object
+      required: [requestIds]
+      properties:
+        requestIds:
+          type: array
+          items:
+            type: number
+
+    BatchClaimResult:
+      type: object
+      required: [claimed, total]
+      properties:
+        claimed:
+          type: number
+        total:
+          type: number
+
+    CleaningHistoryEntry:
+      type: object
+      required: [id, flatId, flatNumber, requestDate, status, assignedUserId, assignedUsername]
+      properties:
+        id:
+          type: number
+        flatId:
+          type: number
+        flatNumber:
+          type: string
+        requestDate:
+          type: string
+        status:
+          type: string
+        assignedUserId:
+          type: ["number", "null"]
+        assignedUsername:
+          type: ["string", "null"]
+        pendingObservation:
+          type: ["string", "null"]
+        completedAt:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    # Dashboard
+    DashboardSummary:
+      type: object
+      required: [date, totalCheckouts, totalClean, totalPending, totalCleaning, totalWillClean, totalDirty]
+      properties:
+        date:
+          type: string
+        totalCheckouts:
+          type: number
+        totalClean:
+          type: number
+        totalPending:
+          type: number
+        totalCleaning:
+          type: number
+        totalWillClean:
+          type: number
+        totalDirty:
+          type: number
+        byUser:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserCleaningStats"
+
+    UserCleaningStats:
+      type: object
+      required: [userId, username, count]
+      properties:
+        userId:
+          type: number
+        username:
+          type: string
+        count:
+          type: number
+
+    # Settings
+    AppSettings:
+      type: object
+      required: [onedriveLinkConfigured, syncIntervalMinutes]
+      properties:
+        onedriveLinkConfigured:
+          type: boolean
+        onedriveLinkPreview:
+          type: ["string", "null"]
+          description: "Masked version of the link for display"
+        syncIntervalMinutes:
+          type: number
+        lastSyncedAt:
+          type: ["string", "null"]
+        sheetName:
+          type: ["string", "null"]
+        alertHour:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 23
+          description: "Hour (0-23) after which unfinished flats trigger an alert"
+
+    AppSettingsUpdate:
+      type: object
+      properties:
+        onedriveShareUrl:
+          type: ["string", "null"]
+        syncIntervalMinutes:
+          type: number
+        sheetName:
+          type: ["string", "null"]
+        alertHour:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 23
+          description: "Hour (0-23) after which unfinished flats trigger an alert"
+
+    # Periodic Tasks
+    PeriodicTask:
+      type: object
+      required: [id, name, periodDays, isActive, flatIds]
+      properties:
+        id:
+          type: number
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        periodDays:
+          type: number
+        isActive:
+          type: boolean
+        flatIds:
+          type: array
+          items:
+            type: number
+          description: "Flat IDs this task applies to"
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    PeriodicTaskInput:
+      type: object
+      required: [name, periodDays, flatIds]
+      properties:
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        periodDays:
+          type: number
+        isActive:
+          type: boolean
+        flatIds:
+          type: array
+          items:
+            type: number
+
+    PeriodicTaskUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        periodDays:
+          type: number
+        isActive:
+          type: boolean
+        flatIds:
+          type: array
+          items:
+            type: number
+
+    PendingPeriodicTask:
+      type: object
+      required: [taskId, taskName, flatId, flatNumber, periodDays, daysOverdue]
+      properties:
+        taskId:
+          type: number
+        taskName:
+          type: string
+        taskDescription:
+          type: ["string", "null"]
+        flatId:
+          type: number
+        flatNumber:
+          type: string
+        periodDays:
+          type: number
+        lastExecutedAt:
+          type: ["string", "null"]
+        nextDueAt:
+          type: ["string", "null"]
+        daysOverdue:
+          type: number
+          description: "Positive = overdue by N days; 0 = due today; negative = not yet due"
+
+    PeriodicTaskExecutionInput:
+      type: object
+      required: [flatId]
+      properties:
+        flatId:
+          type: number
+        notes:
+          type: ["string", "null"]
+
+    PeriodicTaskExecution:
+      type: object
+      required: [id, periodicTaskId, flatId, executedAt]
+      properties:
+        id:
+          type: number
+        periodicTaskId:
+          type: number
+        flatId:
+          type: number
+        executedByUserId:
+          type: number
+        executedAt:
+          type: string
+        notes:
+          type: ["string", "null"]
+        nextDueAt:
+          type: string
+          description: "ISO date when the task is next due for this flat"
+
+    # Observations
+    Observation:
+      type: object
+      required: [id, flatId, flatNumber, authorUserId, authorUsername, category, text, status, createdAt]
+      properties:
+        id:
+          type: number
+        flatId:
+          type: number
+        flatNumber:
+          type: string
+        authorUserId:
+          type: number
+        authorUsername:
+          type: string
+        category:
+          type: string
+          description: "defeito | manutencao | outro"
+        text:
+          type: string
+        status:
+          type: string
+          description: "aberta | resolvida"
+        resolvedAt:
+          type: ["string", "null"]
+        resolvedByUserId:
+          type: ["number", "null"]
+        resolvedByUsername:
+          type: ["string", "null"]
+        resolvedNote:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    ObservationInput:
+      type: object
+      required: [flatId, category, text]
+      properties:
+        flatId:
+          type: number
+        category:
+          type: string
+          description: "defeito | manutencao | outro"
+        text:
+          type: string
+
+    ObservationResolveInput:
+      type: object
+      properties:
+        resolvedNote:
+          type: ["string", "null"]
+
+    # Analytics
+    AnalyticsReport:
+      type: object
+      required: [startDate, endDate, topFlatsByCleanings, topFlatsByObservations, observationsByCategory, cleaningsByDayOfWeek, cleaningsByUser]
+      properties:
+        startDate:
+          type: string
+        endDate:
+          type: string
+        topFlatsByCleanings:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlatCleaningCount"
+        topFlatsByObservations:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlatObservationCount"
+        observationsByCategory:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObservationCategoryCount"
+        cleaningsByDayOfWeek:
+          type: array
+          items:
+            $ref: "#/components/schemas/DayOfWeekCount"
+        cleaningsByUser:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserCleaningStats"
+
+    FlatCleaningCount:
+      type: object
+      required: [flatId, flatNumber, count]
+      properties:
+        flatId:
+          type: number
+        flatNumber:
+          type: string
+        count:
+          type: number
+
+    FlatObservationCount:
+      type: object
+      required: [flatId, flatNumber, count]
+      properties:
+        flatId:
+          type: number
+        flatNumber:
+          type: string
+        count:
+          type: number
+
+    ObservationCategoryCount:
+      type: object
+      required: [category, count]
+      properties:
+        category:
+          type: string
+        count:
+          type: number
+
+    DayOfWeekCount:
+      type: object
+      required: [dayOfWeek, dayName, count]
+      properties:
+        dayOfWeek:
+          type: number
+          description: "0=Sunday, 1=Monday, ..., 6=Saturday"
+        dayName:
+          type: string
+        count:
+          type: number
+
+    # Notifications
+    Alert:
+      type: object
+      required: [id, type, message, flatId, flatNumber, severity]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          description: "uncleaned_checkout"
+        message:
+          type: string
+        flatId:
+          type: number
+        flatNumber:
+          type: string
+        severity:
+          type: string
+          description: "warning | critical"
+        requestId:
+          type: ["number", "null"]

@@ -1,0 +1,4179 @@
+import { useState, useEffect, useRef } from "react"
+import { useQueryClient } from "@tanstack/react-query"
+import { format, addDays, parseISO, differenceInDays, isValid } from "date-fns"
+import { useToast } from "@/hooks/use-toast"
+import { 
+  useUpdateFlat,
+  useGetMe,
+  getListCheckoutsQueryKey,
+  getGetDashboardSummaryQueryKey,
+  getListPendingPeriodicTasksQueryKey,
+  getListPeriodicTasksQueryKey,
+} from "@workspace/api-client-react"
+import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { 
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
+} from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { 
+  User, CheckCircle2, AlertCircle, Clock, PlayCircle, Sparkles, 
+  Flame, Wrench, ClipboardCheck, DoorOpen, RotateCcw, AlertTriangle, Check, CalendarX,
+  PackageOpen, Camera, BedDouble, Image as ImageIcon, UserX, Calendar, CloudOff, Loader2,
+  DollarSign, CalendarDays, Trash2, Coins, Bell, BellOff, RefreshCw, X, Star
+} from "lucide-react"
+import { compressImage } from "@/lib/image-compression"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
+
+export type FlatStatus = "dirty" | "will_clean" | "cleaning_now" | "pending_issue" | "clean" | "extended" | "no_show"
+
+const statusStyles: Record<FlatStatus, { label: string; cardBg: string; badgeClass: string; icon: React.ElementType }> = {
+  dirty: { 
+    label: "Sujo", 
+    cardBg: "bg-rose-50/75 border-rose-200/90 text-rose-950 dark:bg-rose-950/20 dark:border-rose-900/40", 
+    badgeClass: "bg-rose-100 text-rose-800 border-rose-300", 
+    icon: AlertCircle 
+  },
+  will_clean: { 
+    label: "Vou Limpar", 
+    cardBg: "bg-sky-50/80 border-sky-200/90 text-sky-950 dark:bg-sky-950/20 dark:border-sky-900/40", 
+    badgeClass: "bg-sky-100 text-sky-800 border-sky-300", 
+    icon: Clock 
+  },
+  cleaning_now: { 
+    label: "Limpando", 
+    cardBg: "bg-blue-50/90 border-blue-300 text-blue-950 dark:bg-blue-950/30 dark:border-blue-800/50", 
+    badgeClass: "bg-blue-100 text-blue-800 border-blue-300 font-bold", 
+    icon: PlayCircle 
+  },
+  pending_issue: { 
+    label: "Com Pendência", 
+    cardBg: "bg-amber-50/85 border-amber-200/90 text-amber-950 dark:bg-amber-950/20 dark:border-amber-900/40", 
+    badgeClass: "bg-amber-100 text-amber-900 border-amber-300", 
+    icon: AlertCircle 
+  },
+  clean: { 
+    label: "Limpo", 
+    cardBg: "bg-emerald-50/75 border-emerald-200/90 text-emerald-950 dark:bg-emerald-950/20 dark:border-emerald-900/40", 
+    badgeClass: "bg-emerald-100 text-emerald-800 border-emerald-300", 
+    icon: CheckCircle2 
+  },
+  extended: {
+    label: "Estendeu",
+    cardBg: "bg-purple-50/95 border-purple-300 text-purple-950 dark:bg-purple-950/30 dark:border-purple-800",
+    badgeClass: "bg-purple-100 text-purple-900 border-purple-300 font-bold",
+    icon: CalendarX,
+  },
+  no_show: {
+    label: "No Show",
+    cardBg: "bg-slate-50/90 border-slate-300 text-slate-900 dark:bg-slate-900/40 dark:border-slate-800",
+    badgeClass: "bg-slate-200 text-slate-800 border-slate-400 font-bold",
+    icon: UserX,
+  }
+}
+
+interface FlatCardProps {
+  flat: any
+  request?: any
+  checkin?: any
+  date: string
+  isSelected: boolean
+  onToggleSelect: (id: number) => void
+  selectable: boolean
+  onSelectDate?: (date: string) => void
+  userRole?: string
+  currentUserId?: number
+  currentUsername?: string
+}
+
+export function FlatCard({
+  flat,
+  request,
+  checkin,
+  date,
+  isSelected,
+  onToggleSelect,
+  selectable,
+  onSelectDate,
+  userRole,
+  currentUserId = 1,
+}: FlatCardProps) {
+  const { data: currentUser } = useGetMe()
+  const isAdmin = userRole === "admin" || userRole === "dev" || currentUser?.role === "admin" || currentUser?.role === "dev"
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+
+  const [issueDialogOpen, setIssueDialogOpen] = useState(false)
+  const [issueText, setIssueText] = useState("")
+  const [finishModalOpen, setFinishModalOpen] = useState(false)
+  const [minTimeAlertOpen, setMinTimeAlertOpen] = useState(false)
+  const [futureCheckoutAlertOpen, setFutureCheckoutAlertOpen] = useState(false)
+  const [futureCheckoutInfo, setFutureCheckoutInfo] = useState<{ guestName?: string; checkoutDate?: string } | null>(null)
+  const [surveyAnswer, setSurveyAnswer] = useState<string>("Não")
+  const [surveyNotes, setSurveyNotes] = useState<string>("")
+  const [attestedTaskIds, setAttestedTaskIds] = useState<number[]>([])
+  const [isProcessing, setIsProcessing] = useState(false)
+
+  // Vistorias de Saída Reformuladas (Multi-Perguntas Dinâmicas)
+  const [surveyResponsesState, setSurveyResponsesState] = useState<Record<string, any>>({})
+  const [surveyPhotosState, setSurveyPhotosState] = useState<Record<string, { base64: string; sizeKb: number; origKb: number }>>({})
+  const [compressingSurveyPhotoKey, setCompressingSurveyPhotoKey] = useState<string | null>(null)
+
+  // Live elapsed time for cleaning_now
+  const [elapsedMinutes, setElapsedMinutes] = useState<number>(0)
+  const [revertDirtyModalOpen, setRevertDirtyModalOpen] = useState(false)
+
+  // Lost & Found (Item Encontrado no Quarto)
+  const [lostItemModalOpen, setLostItemModalOpen] = useState(false)
+  const [lostDescription, setLostDescription] = useState("")
+  const [lostLocation, setLostLocation] = useState("")
+  const [lostPhotoBase64, setLostPhotoBase64] = useState<string | null>(null)
+  const [lostNotes, setLostNotes] = useState("")
+  const [savingLostItem, setSavingLostItem] = useState(false)
+  const [lostItemSuccess, setLostItemSuccess] = useState(false)
+  const [compressingPhoto, setCompressingPhoto] = useState(false)
+  const [photoCompressionStats, setPhotoCompressionStats] = useState<{ origKb: number; compKb: number; saved: number } | null>(null)
+  const [offlineQueued, setOfflineQueued] = useState(false)
+  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null)
+
+  // Quick Maintenance / Defect Report (Camareira & Admin)
+  const [maintModalOpen, setMaintModalOpen] = useState(false)
+  const [maintSpecialty, setMaintSpecialty] = useState("hidraulica")
+  const [maintText, setMaintText] = useState("")
+  const [maintPhotos, setMaintPhotos] = useState<string[]>([])
+  const [compressingMaintPhoto, setCompressingMaintPhoto] = useState(false)
+  const [savingMaint, setSavingMaint] = useState(false)
+
+  const handleMaintPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+    setCompressingMaintPhoto(true)
+    try {
+      for (const file of files.slice(0, 3 - maintPhotos.length)) {
+        const res = await compressImage(file, {
+          maxWidth: 1280,
+          maxHeight: 1280,
+          quality: 0.8,
+          preferredFormat: "image/webp"
+        })
+        setMaintPhotos(prev => [...prev, res.base64])
+      }
+    } catch {
+      toast({ title: "Erro ao processar foto", description: "Tente novamente.", variant: "destructive" })
+    } finally {
+      setCompressingMaintPhoto(false)
+      e.target.value = ""
+    }
+  }
+
+  const handleSaveMaintReport = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!maintText.trim()) return
+    setSavingMaint(true)
+    try {
+      const res = await fetch("/api/observations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          flatId: flat.flatId || flat.id,
+          flatNumber: flat.flatNumber || flat.number,
+          category: "manutencao",
+          specialty: maintSpecialty,
+          text: maintText.trim(),
+          photos: maintPhotos
+        })
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || "Não foi possível salvar a manutenção.")
+      }
+      toast({
+        title: "🔧 Defeito / Manutenção Registrada!",
+        description: `Alerta enviado para o WhatsApp da gerência referente ao Flat ${flat.flatNumber || flat.number}.`
+      })
+      setMaintModalOpen(false)
+      setMaintText("")
+      setMaintPhotos([])
+      setMaintSpecialty("hidraulica")
+      queryClient.invalidateQueries({ queryKey: ["/api/observations"] })
+    } catch (err: any) {
+      toast({ title: "Erro ao registrar", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingMaint(false)
+    }
+  }
+
+  // No Show (Admin only)
+  const [noShowModalOpen, setNoShowModalOpen] = useState(false)
+  const [isSubmittingNoShow, setIsSubmittingNoShow] = useState(false)
+
+  // Extend Stay (Hóspede Estendeu)
+  const [extendStayModalOpen, setExtendStayModalOpen] = useState(false)
+  const [extendNewCheckoutDate, setExtendNewCheckoutDate] = useState("")
+  const [extendAdditionalAmount, setExtendAdditionalAmount] = useState<string>("")
+  const [extendNotes, setExtendNotes] = useState("")
+  const [isSubmittingExtend, setIsSubmittingExtend] = useState(false)
+  const [extendErrorMessage, setExtendErrorMessage] = useState<string | null>(null)
+  const [amountManuallyEdited, setAmountManuallyEdited] = useState(false)
+  const [isTogglingBeds, setIsTogglingBeds] = useState(false)
+  const [isTogglingPriority, setIsTogglingPriority] = useState(false)
+
+  // ── Stayover B2B & Troca de Enxoval States (M4) ────────────────────
+  const isStayover = Boolean(request?.source === "stayover" || request?.cleaningType === "stayover")
+  const linenTracking = request?.linenTracking
+  const isDnd = Boolean(request?.doNotDisturb || linenTracking?.doNotDisturb)
+  const [stayoverModalOpen, setStayoverModalOpen] = useState(false)
+  const [towelsChanged, setTowelsChanged] = useState<boolean>(true)
+  const [beddingChanged, setBeddingChanged] = useState<boolean>(false)
+
+  useEffect(() => {
+    if (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding) {
+      setBeddingChanged(true)
+    }
+  }, [request?.guestRequestedBedding, linenTracking?.guestRequestedBedding])
+
+  const currentCheckoutStr = flat.reservation?.checkoutDate || flat.checkoutDate || date
+  const currentTotalAmount = Number(flat.reservation?.totalAmount || 0)
+  const dailyRate = Number(flat.reservation?.dailyRate || 0)
+
+  const handleOpenExtendStayModal = () => {
+    if (!isAdmin) return
+    let nextDateStr = ""
+    try {
+      if (currentCheckoutStr && isValid(parseISO(currentCheckoutStr))) {
+        nextDateStr = format(addDays(parseISO(currentCheckoutStr), 1), "yyyy-MM-dd")
+      } else {
+        nextDateStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
+      }
+    } catch {
+      nextDateStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
+    }
+
+    setExtendNewCheckoutDate(nextDateStr)
+    setExtendAdditionalAmount(dailyRate > 0 ? String(dailyRate) : "")
+    setExtendNotes("")
+    setExtendErrorMessage(null)
+    setAmountManuallyEdited(false)
+    setExtendStayModalOpen(true)
+  }
+
+  const handleNewCheckoutDateChange = (newDate: string) => {
+    setExtendNewCheckoutDate(newDate)
+    setExtendErrorMessage(null)
+    if (!amountManuallyEdited && dailyRate > 0 && newDate && currentCheckoutStr) {
+      try {
+        const extraNights = Math.max(0, differenceInDays(parseISO(newDate), parseISO(currentCheckoutStr)))
+        setExtendAdditionalAmount(extraNights > 0 ? String(extraNights * dailyRate) : "0")
+      } catch {}
+    }
+  }
+
+  const handleConfirmExtendStay = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!extendNewCheckoutDate) {
+      setExtendErrorMessage("Por favor, selecione a nova data de check-out.")
+      return
+    }
+    setIsSubmittingExtend(true)
+    setExtendErrorMessage(null)
+    try {
+      const res = await fetch(`/api/cleaning/assignments/${request?.id || 0}/mark-extended`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          reservationId: flat.reservation?.id || flat.activeReservation?.id,
+          requestDate: date,
+          newCheckoutDate: extendNewCheckoutDate,
+          additionalAmount: Number(extendAdditionalAmount) || 0,
+          notes: extendNotes.trim()
+        }),
+        credentials: "include"
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setExtendErrorMessage(data.error || "Não foi possível estender a estadia.")
+        toast({
+          title: "Erro ao estender",
+          description: data.error || "Verifique as informações e tente novamente.",
+          variant: "destructive"
+        })
+        return
+      }
+
+      toast({
+        title: "Estadia Estendida!",
+        description: data.message || `Flat ${flat.flatNumber} estendido com sucesso.`,
+      })
+      setExtendStayModalOpen(false)
+      setExtendNotes("")
+      refreshData()
+    } catch (err) {
+      console.error("Erro ao registrar extensão de estadia:", err)
+      setExtendErrorMessage("Erro de conexão ao salvar extensão.")
+    } finally {
+      setIsSubmittingExtend(false)
+    }
+  }
+
+  // Admin Clean on behalf of Maid Modal
+  const [adminCleanModalOpen, setAdminCleanModalOpen] = useState(false)
+  const [staffList, setStaffList] = useState<Array<{ id: number; username: string; name: string; role: string }>>([])
+  const [selectedMaidId, setSelectedMaidId] = useState<string>("")
+  const [adminCleanSubmitting, setAdminCleanSubmitting] = useState(false)
+  const [adminSmokedInRoom, setAdminSmokedInRoom] = useState(false)
+  const [stayoverSmokedInRoom, setStayoverSmokedInRoom] = useState(false)
+
+  // Pergunta em destaque sobre fumo na finalização da limpeza (card da camareira)
+  const [showSmokingPrompt, setShowSmokingPrompt] = useState(false)
+  const serverHasSmoked = Boolean(request?.smokedInRoom || flat?.smokedInRoom || request?.guestSmoked || flat?.guestSmoked)
+  const [optimisticSmoked, setOptimisticSmoked] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    if (optimisticSmoked !== null && serverHasSmoked === optimisticSmoked) {
+      setOptimisticSmoked(null)
+    }
+  }, [serverHasSmoked, optimisticSmoked])
+
+  useEffect(() => {
+    setOptimisticSmoked(null)
+  }, [request?.id])
+
+  const hasSmoked = optimisticSmoked !== null ? optimisticSmoked : serverHasSmoked
+
+  const handleFinishCleaningWithSmoking = async (smoked: boolean) => {
+    setIsProcessing(true)
+    setOptimisticSmoked(smoked)
+    try {
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+      const payload: Record<string, any> = {
+        status: "clean",
+        flatNumber: flat.flatNumber,
+        flatId: flat.flatId,
+        date: date,
+        markedByAdmin: isAdmin ? true : undefined,
+        smokedInRoom: smoked,
+        guestSmoked: smoked,
+        executedPeriodicTaskIds: pendingPeriodicTasks.map((t: any) => t.id)
+      }
+      if (isAdmin && selectedMaidId) {
+        payload.assignedUserId = parseInt(selectedMaidId)
+      } else if (request?.assignedUserId) {
+        payload.assignedUserId = Number(request.assignedUserId)
+      }
+
+      const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include"
+      })
+      if (!res.ok) {
+        setOptimisticSmoked(null)
+        const err = await res.json().catch(() => ({}))
+        toast({
+          title: "Não foi possível concluir",
+          description: err.error || "Erro ao atualizar status da limpeza.",
+          variant: "destructive"
+        })
+        return
+      }
+      setShowSmokingPrompt(false)
+      toast({
+        title: "✓ Limpeza Concluída",
+        description: smoked 
+          ? "Limpeza finalizada com registro de fumo no quarto. Hóspede sinalizado como fumante." 
+          : "Limpeza finalizada com sucesso.",
+      })
+      refreshData()
+    } catch (err: any) {
+      setOptimisticSmoked(null)
+      console.error("Erro ao concluir limpeza:", err)
+      toast({
+        title: "Erro",
+        description: err.message || "Erro ao concluir limpeza.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const handleToggleSmoking = async () => {
+    const newSmokedValue = !hasSmoked
+    setIsProcessing(true)
+    setOptimisticSmoked(newSmokedValue)
+    try {
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+      const res = await fetch(`/api/cleaning/assignments/${activeReqId}/smoking`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          smokedInRoom: newSmokedValue,
+          guestSmoked: newSmokedValue,
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date
+        }),
+        credentials: "include"
+      })
+
+      if (!res.ok) {
+        setOptimisticSmoked(null)
+        const err = await res.json().catch(() => ({}))
+        toast({
+          title: "Erro ao atualizar indicação",
+          description: err.error || "Não foi possível alterar a indicação de fumo.",
+          variant: "destructive"
+        })
+        return
+      }
+
+      toast({
+        title: newSmokedValue ? "🚬 Fumo Registrado" : "✓ Indicação Removida",
+        description: newSmokedValue 
+          ? "Apontamento de fumante adicionado ao hóspede e reservas futuras."
+          : "Apontamento de fumante removido do cadastro e reservas futuras.",
+      })
+      refreshData()
+    } catch (err: any) {
+      setOptimisticSmoked(null)
+      console.error("Erro ao alternar fumo:", err)
+      toast({
+        title: "Erro",
+        description: err.message || "Erro ao alternar indicação de fumo.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  useEffect(() => {
+    if (isAdmin) {
+      fetch("/api/staff")
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setStaffList(data.filter(u => u.role === "camareira" || u.role === "admin"))
+          }
+        })
+        .catch(() => {})
+    }
+  }, [isAdmin])
+
+  useEffect(() => {
+    if (request?.assignedUserId) {
+      setSelectedMaidId(String(request.assignedUserId))
+    } else if (staffList.length > 0 && !selectedMaidId) {
+      const firstMaid = staffList.find(s => s.role === "camareira") || staffList[0]
+      if (firstMaid) setSelectedMaidId(String(firstMaid.id))
+    }
+  }, [request?.assignedUserId, staffList])
+
+  const handleAdminConfirmClean = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedMaidId) return
+
+    // Se o quarto ainda não está limpo e é uma limpeza normal (não instrução nem conferência/limpeza pós-serviço),
+    // fecha o seletor de camareira e abre a pergunta gigante de fumo ocupando todo o card!
+    if (!isInstruction && !isServiceCleaning && currentStatus !== "clean") {
+      setAdminCleanModalOpen(false)
+      setShowSmokingPrompt(true)
+      return
+    }
+
+    setAdminCleanSubmitting(true)
+    try {
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+      const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "clean",
+          assignedUserId: parseInt(selectedMaidId),
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date,
+          markedByAdmin: isAdmin ? true : undefined,
+          smokedInRoom: hasSmoked,
+          guestSmoked: hasSmoked,
+          executedPeriodicTaskIds: pendingPeriodicTasks.map((t: any) => t.id)
+        }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        setAdminCleanModalOpen(false)
+        refreshData()
+      } else {
+        const err = await res.json().catch(() => ({}))
+        toast({
+          title: "Não foi possível concluir",
+          description: err.error || "Erro ao confirmar limpeza.",
+          variant: "destructive"
+        })
+      }
+    } catch (err) {
+      console.error("Erro ao confirmar limpeza pelo admin:", err)
+    } finally {
+      setAdminCleanSubmitting(false)
+    }
+  }
+
+  // Confirmar Limpeza Stayover B2B com checklist de enxoval (M4)
+  const handleConfirmStayoverClean = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsProcessing(true)
+    try {
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+      const payload: any = {
+        status: "clean",
+        towelsChanged,
+        beddingChanged,
+        flatNumber: flat.flatNumber,
+        flatId: flat.flatId,
+        date: date,
+        markedByAdmin: isAdmin ? true : undefined,
+        smokedInRoom: stayoverSmokedInRoom,
+        guestSmoked: stayoverSmokedInRoom
+      }
+      if (isAdmin && selectedMaidId) {
+        payload.assignedUserId = parseInt(selectedMaidId)
+        payload.maidId = parseInt(selectedMaidId)
+      } else if (request?.assignedUserId) {
+        payload.assignedUserId = request.assignedUserId
+        payload.maidId = request.assignedUserId
+      }
+
+      const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include"
+      })
+
+      if (res.ok) {
+        toast({
+          title: "Limpeza Stayover Concluída",
+          description: `Flat ${flat.flatNumber} higienizado e trocas de enxoval registradas.`
+        })
+        setStayoverModalOpen(false)
+        refreshData()
+      } else {
+        const err = await res.json()
+        toast({
+          title: "Não foi possível concluir",
+          description: err.error || "Erro ao salvar conclusão de stayover.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de conexão",
+        description: err.message || "Falha ao comunicar com o servidor.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // Admin Custom Instructions Modal (Twin Beds & Maid Notes)
+  const [instructionsModalOpen, setInstructionsModalOpen] = useState(false)
+  // REGRA: estado inicial do modal vem do request (dia-específico).
+  // Não usa setupInfo para twin beds / colchão — instrução deve ser atrelada à data.
+  const [twinBedsSetting, setTwinBedsSetting] = useState<boolean>(
+    Boolean(request?.twinBeds)
+  )
+  const [extraMattressSetting, setExtraMattressSetting] = useState<boolean>(
+    Boolean(request?.extraMattress)
+  )
+  const extractServerCardNote = () => {
+    const raw = (typeof request?.adminNote === "string"
+      ? request.adminNote
+      : (typeof flat?.setupInfo?.specialRequests === "string"
+          ? flat.setupInfo.specialRequests
+          : (request?.status === "pending_issue" && typeof request?.pendingObservation === "string" ? request.pendingObservation : ""))
+    ).trim()
+    if (!raw) return ""
+    return raw
+      .replace(/(?:•\s*)?Check-out\s+confirmado[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Check-out\s+expresso[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Confirmado\s+na\s+Portaria[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Limpeza\s+de\s+check-out\s+gerada\s+automaticamente[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Quarto\s+desocupado[^\n•]*/gi, "")
+      .replace(/^[•\s\-,|]+|[•\s\-,|]+$/g, "")
+      .trim()
+  }
+
+  const serverCardNote = extractServerCardNote()
+  const [adminNoteText, setAdminNoteText] = useState<string>(serverCardNote)
+  const [isSavingInstructions, setIsSavingInstructions] = useState(false)
+  const [isInlineNoteFocused, setIsInlineNoteFocused] = useState(false)
+  const [inlineNoteSavedFlash, setInlineNoteSavedFlash] = useState(false)
+  const lastSyncedServerNoteRef = useRef<string>(serverCardNote)
+
+  useEffect(() => {
+    const twin = Boolean(request?.twinBeds)
+    const mattress = Boolean(request?.extraMattress)
+
+    setTwinBedsSetting(twin)
+    setExtraMattressSetting(mattress)
+
+    if (serverCardNote !== lastSyncedServerNoteRef.current && !isInlineNoteFocused) {
+      setAdminNoteText(serverCardNote)
+      lastSyncedServerNoteRef.current = serverCardNote
+    }
+  }, [request?.twinBeds, request?.extraMattress, serverCardNote, isInlineNoteFocused])
+
+  const saveCardObservation = async (noteToSave: string, closeModal = false) => {
+    setIsSavingInstructions(true)
+    try {
+      const cleanNote = noteToSave.trim()
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+      const res = await fetch(`/api/cleaning/requests/${activeReqId}/admin-instructions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatId: flat.flatId || flat.id,
+          flatNumber: flat.flatNumber || flat.number,
+          requestDate: date,
+          twinBeds: twinBedsSetting,
+          extraMattress: extraMattressSetting,
+          adminNote: cleanNote ? cleanNote : null,
+        })
+      })
+      if (!res.ok) {
+        throw new Error("Erro ao salvar instruções no servidor.")
+      }
+      setAdminNoteText(cleanNote)
+      lastSyncedServerNoteRef.current = cleanNote
+      if (closeModal) {
+        setInstructionsModalOpen(false)
+      }
+      setInlineNoteSavedFlash(true)
+      setTimeout(() => setInlineNoteSavedFlash(false), 2200)
+      toast({
+        title: cleanNote ? "Observação salva no card" : "Observação removida",
+        description: cleanNote
+          ? `Ação registrada para as camareiras no Flat ${flat.flatNumber || flat.number} (descartável após a limpeza).`
+          : `A observação do Flat ${flat.flatNumber || flat.number} foi limpa deste card.`
+      })
+      queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date }) })
+      queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date }) })
+    } catch (err: any) {
+      toast({
+        title: "Erro ao salvar",
+        description: err.message || "Não foi possível salvar as instruções.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSavingInstructions(false)
+    }
+  }
+
+  const handleSaveInstructions = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await saveCardObservation(adminNoteText, true)
+  }
+
+  useEffect(() => {
+    if (request?.status === "cleaning_now" && request?.cleaningStartedAt) {
+      const calculate = () => {
+        const started = new Date(request.cleaningStartedAt).getTime()
+        const mins = Math.max(0, Math.floor((Date.now() - started) / 60000))
+        setElapsedMinutes(mins)
+      }
+      calculate()
+      const interval = setInterval(calculate, 15000)
+      return () => clearInterval(interval)
+    }
+    return undefined
+  }, [request?.status, request?.cleaningStartedAt])
+
+  const updateOccupancy = useUpdateFlat({
+    mutation: {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date }) })
+      }
+    }
+  })
+
+  const currentStatus: FlatStatus = (request?.status as FlatStatus) || "dirty"
+  const isExtended = currentStatus === "extended" || Boolean(request?.isExtended)
+  const isAssignedToMe = Boolean(request?.assignedUserId && currentUserId) && Number(request.assignedUserId) === Number(currentUserId)
+  const isAssignedToOther = Boolean(request?.assignedUserId) && Number(request.assignedUserId) !== Number(currentUserId) && !isAdmin
+
+  // If the flat was extended and the maid is not the assigned one, hide it completely
+  if (isExtended && !isAssignedToMe && !isAdmin) {
+    return null
+  }
+
+  const isInstruction = Boolean(
+    flat?.isInstructionOnly ||
+    request?.isInstructionOnly ||
+    request?.type === "instruction" ||
+    request?.source === "manual_instruction" ||
+    flat?.isBedAdjustmentOnly ||
+    request?.isBedAdjustmentOnly ||
+    request?.type === "bed_adjustment_only"
+  )
+
+  const isServiceCleaning = Boolean(
+    flat?.source === "service_order" ||
+    flat?.cleaningType === "service_order" ||
+    request?.source === "service_order" ||
+    request?.cleaningType === "service_order" ||
+    request?.type === "service_cleaning"
+  )
+
+  const serviceTitle = (request as any)?.serviceTitle || (flat as any)?.serviceTitle || "Serviço Externo / Manutenção"
+  const serviceWorkerName = (request as any)?.serviceWorkerName || (flat as any)?.serviceWorkerName || "Prestador Técnico"
+  const serviceOrigin: "return" | "finish" = ((request as any)?.serviceOrigin || (flat as any)?.serviceOrigin) === "return" ? "return" : "finish"
+  const serviceReason = ((request as any)?.serviceReason || (flat as any)?.serviceReason || "").trim()
+
+  const rawConf = statusStyles[currentStatus] || statusStyles.dirty
+  const conf = isInstruction ? {
+    label: "Instrução",
+    cardBg: "bg-purple-50/50 border-purple-200/90 text-purple-950 dark:bg-purple-950/20 dark:border-purple-900/40",
+    badgeClass: "bg-purple-100 text-purple-900 border-purple-300 font-bold dark:bg-purple-950/50 dark:text-purple-200",
+    icon: Wrench
+  } : isServiceCleaning && currentStatus !== "clean" ? {
+    ...rawConf,
+    cardBg: "bg-cyan-50/60 border-cyan-300/90 text-slate-900 dark:bg-cyan-950/20 dark:border-cyan-800/60 dark:text-slate-100",
+  } : rawConf
+
+  const Icon = conf.icon
+  const isPriority = currentStatus === "clean"
+    ? false
+    : (typeof request?.isPriority === "boolean" ? request.isPriority : (typeof flat?.isPriority === "boolean" ? flat.isPriority : false))
+  const serviceBlocksCleaning = Boolean(flat.serviceInProgress && !(flat.serviceInProgress as any).allowSimultaneousCleaning)
+  const isCleaningBlockedByService = serviceBlocksCleaning && !isAdmin
+  // REGRA: isTwinBeds só vem do request (atrelado ao dia específico).
+  // Não usa flat.setupInfo.twinBeds como fallback — setupInfo é informação de setup da próxima
+  // reserva e não deve acionar o indicador de instrução de camas para a camareira.
+  const isTwinBeds = Boolean(request?.twinBeds)
+  const hasExtraMattress = Boolean(request?.extraMattress)
+  const maidNoteText = serverCardNote
+  const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
+  const pendingSurveys = flat?.pendingSurveys || []
+
+  // Validação de Perguntas Obrigatórias de Vistoria
+  const getMissingRequiredSurveyQuestions = () => {
+    if (!pendingSurveys || pendingSurveys.length === 0) return []
+    const missing: string[] = []
+
+    for (const s of pendingSurveys) {
+      const qs = Array.isArray(s.questions) && s.questions.length > 0
+        ? s.questions
+        : [{ id: `q_${s.id}`, question: s.question || s.title, type: s.type || "yes_no", isRequired: true }]
+
+      for (const q of qs) {
+        if (!q.isRequired) continue
+        const key = `${s.id}_${q.id}`
+        const val = surveyResponsesState[key]
+        const photo = surveyPhotosState[key]
+
+        if (q.type === "photo") {
+          if (!photo?.base64) {
+            missing.push(`Foto: ${q.question}`)
+          }
+        } else if (q.type === "multi_choice") {
+          if (!Array.isArray(val) || val.length === 0) {
+            missing.push(q.question)
+          }
+        } else if (q.type === "scale") {
+          if (!val || Number(val) < 1) {
+            missing.push(q.question)
+          }
+        } else if (q.type === "text") {
+          if (!val || String(val).trim().length === 0) {
+            missing.push(q.question)
+          }
+        } else {
+          // yes_no e single_choice
+          if (val === undefined || val === null || String(val).trim() === "") {
+            missing.push(q.question)
+          }
+        }
+
+        // Validação da Foto acoplada à pergunta (hasPhoto)
+        if (q.hasPhoto && q.type !== "photo") {
+          const condition = q.requirePhotoCondition || (q.type === "yes_no" ? "if_yes" : "always")
+          if (condition === "if_yes" && val === "Sim" && !photo?.base64) {
+            missing.push(`Foto obrigatória ao marcar 'Sim' em: "${q.question}"`)
+          } else if (condition === "always" && !photo?.base64) {
+            missing.push(`Foto obrigatória para: "${q.question}"`)
+          }
+        }
+      }
+    }
+    return missing
+  }
+
+  const missingSurveyQuestions = getMissingRequiredSurveyQuestions()
+  const isSurveyValid = missingSurveyQuestions.length === 0
+
+  const handleSurveyPhotoUpload = async (surveyId: number, questionId: string, file: File) => {
+    const key = `${surveyId}_${questionId}`
+    setCompressingSurveyPhotoKey(key)
+    try {
+      const res = await compressImage(file, { maxWidth: 1280, maxHeight: 1280, quality: 0.8, preferredFormat: "image/webp" })
+      const origKb = Math.round(res.originalSizeBytes / 1024)
+      const compKb = Math.round(res.compressedSizeBytes / 1024)
+      setSurveyPhotosState(prev => ({
+        ...prev,
+        [key]: { base64: res.base64, sizeKb: compKb, origKb }
+      }))
+      setSurveyResponsesState(prev => ({
+        ...prev,
+        [key]: "[Foto Anexada]"
+      }))
+    } catch (e) {
+      toast({ title: "Erro ao processar foto", description: "Tente novamente.", variant: "destructive" })
+    } finally {
+      setCompressingSurveyPhotoKey(null)
+    }
+  }
+
+  const handleRemoveSurveyPhoto = (surveyId: number, questionId: string) => {
+    const key = `${surveyId}_${questionId}`
+    setSurveyPhotosState(prev => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+    setSurveyResponsesState(prev => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  const isPaidCleaning = typeof request?.isPaidCleaning === "boolean"
+    ? request.isPaidCleaning
+    : (typeof flat?.isPaidCleaning === "boolean" ? flat.isPaidCleaning : (!isInstruction && !isServiceCleaning))
+
+  const [isTogglingPaid, setIsTogglingPaid] = useState(false)
+  const handleTogglePaidCleaning = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!isAdmin || isTogglingPaid) return
+    const nextPaid = !isPaidCleaning
+    const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+    setIsTogglingPaid(true)
+    try {
+      const res = await fetch(`/api/cleaning/requests/${activeReqId}/admin-instructions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatId: flat.flatId || flat.id,
+          flatNumber: flat.flatNumber || flat.number,
+          requestDate: date,
+          isPaidCleaning: nextPaid
+        }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        toast({
+          title: nextPaid ? "💰 Marcado como Remunerado" : "📋 Marcado como Não Remunerado (Conferência)",
+          description: nextPaid
+            ? `O atendimento do Flat ${flat.flatNumber} será contabilizado como faxina remunerada no extrato da camareira.`
+            : `O atendimento do Flat ${flat.flatNumber} foi configurado como conferência/apoio sem remuneração extra.`
+        })
+        refreshData()
+      }
+    } catch (err) {
+      console.error("Erro ao alternar remuneração:", err)
+    } finally {
+      setIsTogglingPaid(false)
+    }
+  }
+
+  const instructionText = flat?.instructionText || request?.instructionText || maidNoteText || (isTwinBeds ? "Separar as camas, colocar como 2 solteiras" : "")
+
+  const handleDeleteInstruction = async () => {
+    if (!confirm("Deseja realmente excluir esta instrução avulsa do flat?")) return
+    setIsProcessing(true)
+    try {
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || flat?.id
+      const res = await fetch(`/api/cleaning/requests/${activeReqId}`, {
+        method: "DELETE"
+      })
+      if (!res.ok) {
+        throw new Error("Erro ao excluir solicitação.")
+      }
+      toast({
+        title: "Instrução excluída",
+        description: "A instrução avulsa foi removida com sucesso."
+      })
+      queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date }) })
+      queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date }) })
+    } catch (err: any) {
+      toast({
+        title: "Erro ao excluir",
+        description: err.message || "Não foi possível excluir a instrução.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setCompressingPhoto(true)
+    setSaveErrorMessage(null)
+    try {
+      // Compressão Inteligente Client-Side: Reduz de 5-10MB para ~80KB sem perda de nitidez
+      const res = await compressImage(file, {
+        maxWidth: 1280,
+        maxHeight: 1280,
+        quality: 0.8,
+        preferredFormat: "image/webp"
+      })
+      setLostPhotoBase64(res.base64)
+      setPhotoCompressionStats({
+        origKb: Math.round(res.originalSizeBytes / 1024),
+        compKb: Math.round(res.compressedSizeBytes / 1024),
+        saved: res.savedPercentage
+      })
+    } catch (err: any) {
+      console.warn("Falha no canvas de compressão, usando fallback direto:", err)
+      const reader = new FileReader()
+      reader.onload = () => setLostPhotoBase64(reader.result as string)
+      reader.readAsDataURL(file)
+    } finally {
+      setCompressingPhoto(false)
+    }
+  }
+
+  const handleSaveLostItem = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!lostDescription.trim()) return
+    setSavingLostItem(true)
+    setSaveErrorMessage(null)
+    setOfflineQueued(false)
+
+    const resolvedMaidName = (currentUser?.role === "camareira" || currentUser?.role === "cleaner")
+      ? (currentUser.name || currentUser.username)
+      : (request?.assignedTo || request?.cleanerName || flat?.cleanerName || currentUser?.name || currentUser?.username || "");
+    const resolvedMaidPhone = (currentUser?.role === "camareira" || currentUser?.role === "cleaner")
+      ? (currentUser.whatsapp || currentUser.phone || "")
+      : "";
+    const resolvedMaidId = (currentUser?.role === "camareira" || currentUser?.role === "cleaner")
+      ? currentUser.id
+      : (request?.assignedUserId || undefined);
+
+    const payload = {
+      flatId: flat.flatId,
+      flatNumber: flat.flatNumber,
+      description: lostDescription.trim(),
+      locationInRoom: lostLocation.trim(),
+      photoBase64: lostPhotoBase64,
+      notes: lostNotes.trim(),
+      date: date || flat.requestDate,
+      guestName: flat.leavingGuest || "",
+      guestPhone: flat.activeReservation?.guestPhone || flat.leavingGuestPhone || flat.guestPhone || "",
+      maidId: resolvedMaidId,
+      maidName: resolvedMaidName || undefined,
+      foundBy: resolvedMaidName || undefined,
+      maidPhone: resolvedMaidPhone || undefined,
+      timestamp: new Date().toISOString()
+    }
+
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 12000)
+
+      const res = await fetch("/api/lost-and-found", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include",
+        signal: controller.signal
+      })
+      clearTimeout(timeoutId)
+
+      if (res.ok) {
+        setLostItemSuccess(true)
+        queryClient.invalidateQueries({ queryKey: ["/api/lost-and-found"] })
+        queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date }) })
+        setTimeout(() => {
+          setLostItemSuccess(false)
+          setLostItemModalOpen(false)
+          setLostDescription("")
+          setLostLocation("")
+          setLostPhotoBase64(null)
+          setLostNotes("")
+          setPhotoCompressionStats(null)
+        }, 1600)
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || `Erro HTTP ${res.status}`)
+      }
+    } catch (err: any) {
+      console.warn("[Lost Item Save] Falha na rede, salvando em fila offline local:", err.message)
+      try {
+        const queue = JSON.parse(localStorage.getItem("corpflats_offline_lost_items") || "[]")
+        queue.push(payload)
+        localStorage.setItem("corpflats_offline_lost_items", JSON.stringify(queue))
+        setOfflineQueued(true)
+        setLostItemSuccess(true)
+        setTimeout(() => {
+          setLostItemSuccess(false)
+          setLostItemModalOpen(false)
+          setLostDescription("")
+          setLostLocation("")
+          setLostPhotoBase64(null)
+          setLostNotes("")
+          setPhotoCompressionStats(null)
+        }, 2000)
+      } catch (storageErr) {
+        setSaveErrorMessage("Falha de conexão. Verifique o sinal da internet e tente novamente.")
+      }
+    } finally {
+      setSavingLostItem(false)
+    }
+  }
+
+  const refreshData = () => {
+    queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date }) })
+    queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date }) })
+    queryClient.invalidateQueries({ queryKey: getListPendingPeriodicTasksQueryKey() })
+    queryClient.invalidateQueries({ queryKey: getListPeriodicTasksQueryKey() })
+    try {
+      localStorage.setItem("pms_calendar_sync_trigger", String(Date.now()))
+      window.dispatchEvent(new Event("pms_calendar_updated"))
+    } catch {}
+  }
+
+  // Acknowledge Extended Stay ("Ciente")
+  const handleAcknowledgeExtended = async () => {
+    if (!request?.id) return
+    setIsProcessing(true)
+    try {
+      await fetch(`/api/cleaning/assignments/${request.id}/acknowledge-extended`, { method: "POST" })
+      refreshData()
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // Delete Cleaning Card (Admin only)
+  const [deleteCardModalOpen, setDeleteCardModalOpen] = useState(false)
+  const [isDeletingCard, setIsDeletingCard] = useState(false)
+
+  const handleConfirmDeleteCard = async () => {
+    const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+    const targetReqDate = request?.requestDate || flat?.cleaningRequest?.requestDate || flat?.checkoutDate || date
+    setIsDeletingCard(true)
+    try {
+      const qs = new URLSearchParams({
+        flatId: String(flat.flatId || ""),
+        flatNumber: String(flat.flatNumber || flat.number || ""),
+        date: String(targetReqDate || date),
+        viewDate: String(date || "")
+      })
+      const res = await fetch(`/api/cleaning/requests/${activeReqId}?${qs.toString()}`, {
+        method: "DELETE",
+        credentials: "include"
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || "Não foi possível excluir o card.")
+      }
+      toast({
+        title: "🗑️ Card Excluído",
+        description: `O card de limpeza do Flat ${flat.flatNumber || flat.number} foi excluído e não voltará automaticamente.`
+      })
+      setDeleteCardModalOpen(false)
+      refreshData()
+    } catch (err: any) {
+      toast({
+        title: "Erro ao excluir card",
+        description: err.message || "Falha ao excluir o card de limpeza.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsDeletingCard(false)
+    }
+  }
+
+  // Confirm No Show (Admin only)
+  const handleConfirmNoShow = async () => {
+    let activeReqId = request?.id
+    setIsSubmittingNoShow(true)
+    try {
+      if (!activeReqId) {
+        const createRes = await fetch("/api/cleaning/requests/manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ flatId: flat.flatId, requestDate: date }),
+          credentials: "include"
+        })
+        const created = await createRes.json()
+        activeReqId = created.id
+      }
+      if (activeReqId) {
+        const res = await fetch(`/api/cleaning/assignments/${activeReqId}/no-show`, {
+          method: "POST",
+          credentials: "include"
+        })
+        if (res.ok) {
+          toast({
+            title: "🚫 No Show Confirmado",
+            description: `Flat ${flat.flatNumber || flat.number} marcado como No Show. Quarto liberado e mantido limpo.`
+          })
+        } else {
+          const errData = await res.json().catch(() => ({}))
+          toast({
+            title: "Erro ao registrar No Show",
+            description: errData.error || "Não foi possível registrar o No Show.",
+            variant: "destructive"
+          })
+        }
+      }
+      setNoShowModalOpen(false)
+      refreshData()
+    } catch (err) {
+      console.error("Erro ao registrar No Show:", err)
+      toast({
+        title: "Erro de conexão",
+        description: "Falha ao registrar No Show. Verifique sua conexão.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSubmittingNoShow(false)
+    }
+  }
+
+  // Toggle Bed Setup (Admin only: Alterna entre 1 Cama Casal e 2 Camas Solteiro no mesmo botão)
+  const toggleBedSetup = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const nextTwinValue = !isTwinBeds
+    let activeReqId = request?.id
+    try {
+      setIsTogglingBeds(true)
+      await fetch(`/api/cleaning/assignments/${activeReqId || 0}/twin-beds`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatId: flat.flatId,
+          flatNumber: flat.flatNumber,
+          requestDate: date,
+          twinBeds: nextTwinValue
+        })
+      })
+      refreshData()
+    } catch (err) {
+      console.error("Erro ao alternar configuração de camas:", err)
+    } finally {
+      setIsTogglingBeds(false)
+    }
+  }
+
+  // Toggle Priority (Admin only: Desativado como padrão, clique no ícone para alternar)
+  const togglePriority = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const nextPriorityValue = !isPriority
+    let activeReqId = request?.id
+    try {
+      setIsTogglingPriority(true)
+      await fetch(`/api/cleaning/assignments/${activeReqId || 0}/priority`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatId: flat.flatId,
+          flatNumber: flat.flatNumber,
+          requestDate: date,
+          isPriority: nextPriorityValue
+        }),
+      })
+      refreshData()
+    } catch (err) {
+      console.error("Erro ao alterar prioridade:", err)
+    } finally {
+      setIsTogglingPriority(false)
+    }
+  }
+
+  // Release / Devolver flat
+  const handleRelease = async () => {
+    if (!request?.id) return
+    setIsProcessing(true)
+    try {
+      await fetch(`/api/cleaning/assignments/${request.id}/release`, { 
+        method: "POST",
+        credentials: "include"
+      })
+      refreshData()
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // Resolve pending issue (Baixa de pendência)
+  const handleResolveIssue = async () => {
+    if (!request?.id) return
+    if (isCleaningBlockedByService) {
+      toast({
+        title: "🔧 Serviço em Andamento",
+        description: `Limpeza bloqueada pelo serviço: ${flat.serviceInProgress?.serviceTitle || "Manutenção"}. Aguarde a conclusão do prestador.`,
+        variant: "destructive"
+      })
+      return
+    }
+    setIsProcessing(true)
+    try {
+      const res = await fetch(`/api/cleaning/assignments/${request.id}/resolve-issue`, { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ markedByAdmin: isAdmin ? true : undefined }),
+        credentials: "include"
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        toast({
+          title: "Não foi possível dar baixa",
+          description: err.error || "Erro ao finalizar pendência.",
+          variant: "destructive"
+        })
+        return
+      }
+      refreshData()
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // Status transition handler
+  const handleStatusChange = async (newStatus: FlatStatus) => {
+    if (isDnd) {
+      toast({
+        title: "🔕 Não Perturbe Ativo",
+        description: "O hóspede ativou o modo Não Perturbe no portal. Esta limpeza não pode ser iniciada nem concluída.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (isCleaningBlockedByService && (newStatus === "will_clean" || newStatus === "cleaning_now" || newStatus === "clean")) {
+      toast({
+        title: "🔧 Serviço em Andamento",
+        description: `Limpeza bloqueada pelo serviço: ${flat.serviceInProgress?.serviceTitle || "Manutenção"}. Aguarde a conclusão do prestador.`,
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (newStatus === "pending_issue") {
+      setIssueDialogOpen(true)
+      return
+    }
+
+    if (newStatus === "clean") {
+      if (request?.cleaningStartedAt && !isServiceCleaning && !isInstruction) {
+        const started = new Date(request.cleaningStartedAt).getTime()
+        const mins = (Date.now() - started) / 60000
+        if (mins < 10 && !isAdmin) {
+          setMinTimeAlertOpen(true)
+          return
+        }
+      }
+
+      if (isAdmin && (isInstruction || isServiceCleaning)) {
+        setAdminCleanModalOpen(true)
+        return
+      }
+
+      if (!isServiceCleaning) {
+        // Exibe a pergunta em destaque tomando toda a área do card
+        setShowSmokingPrompt(true)
+        return
+      }
+    }
+
+    setIsProcessing(true)
+    try {
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+
+      const res = await fetch(`/api/cleaning/assignments/${activeReqId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          status: newStatus,
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date,
+          markedByAdmin: isAdmin ? true : undefined
+        }),
+        credentials: "include"
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        if (err.error?.includes("Tempo insuficiente")) {
+          setMinTimeAlertOpen(true)
+          return
+        }
+        if (err.targetCheckoutDate || err.error?.includes("check-out deste")) {
+          setFutureCheckoutInfo({
+            guestName: flat.activeReservation?.guestName,
+            checkoutDate: err.targetCheckoutDate || flat.activeReservation?.checkoutDate
+          })
+          setFutureCheckoutAlertOpen(true)
+          return
+        }
+        toast({
+          title: "Não foi possível alterar status",
+          description: err.error || "Erro ao atualizar status da limpeza.",
+          variant: "destructive"
+        })
+        return
+      }
+      refreshData()
+      if (pendingPeriodicTasks.length > 0 && (newStatus === "will_clean" || newStatus === "cleaning_now")) {
+        toast({
+          title: `🛠️ Preventiva Agendada no Apt ${flat.flatNumber}!`,
+          description: `Lembre-se de realizar: ${pendingPeriodicTasks.map((t: any) => t.name).join(", ")}. Você atestará a execução ao finalizar a limpeza.`,
+          duration: 7000,
+        })
+      }
+    } catch (e) {
+      console.error("Erro ao alterar status:", e)
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // Complete cleaning
+  const submitCompletion = async () => {
+    if (!request?.id) return
+    setIsProcessing(true)
+    try {
+      const taskIds = attestedTaskIds.length > 0 ? attestedTaskIds : pendingPeriodicTasks.map((t: any) => t.id)
+      const surveyAnswers = pendingSurveys.map((s: any) => {
+        const qs = Array.isArray(s.questions) && s.questions.length > 0
+          ? s.questions
+          : [{ id: `q_${s.id}`, question: s.question || s.title, type: s.type || "yes_no" }]
+
+        const answers = qs.map((q: any) => {
+          const key = `${s.id}_${q.id}`
+          const val = surveyResponsesState[key]
+          const photo = surveyPhotosState[key]
+
+          return {
+            questionId: q.id,
+            questionText: q.question,
+            type: q.type,
+            answer: val !== undefined ? val : (q.type === "yes_no" ? "Sim" : ""),
+            photoBase64: photo?.base64 || null
+          }
+        })
+
+        return {
+          surveyId: s.id,
+          answers
+        }
+      })
+
+      const res = await fetch(`/api/cleaning/assignments/${request.id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "clean",
+          executedPeriodicTaskIds: taskIds,
+          surveyAnswers,
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date,
+          markedByAdmin: isAdmin ? true : undefined,
+          smokedInRoom: hasSmoked,
+          guestSmoked: hasSmoked,
+        }),
+        credentials: "include"
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        toast({
+          title: "Não foi possível concluir",
+          description: err.error || "Erro ao concluir limpeza.",
+          variant: "destructive"
+        })
+        return
+      }
+      setFinishModalOpen(false)
+      setAttestedTaskIds([])
+      refreshData()
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const submitIssue = async () => {
+    if (!request?.id || !issueText.trim()) return
+    setIsProcessing(true)
+    try {
+      await fetch(`/api/cleaning/assignments/${request.id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          status: "pending_issue", 
+          observation: issueText.trim(),
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date,
+        }),
+        credentials: "include"
+      })
+      setIssueDialogOpen(false)
+      setIssueText("")
+      refreshData()
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const todayStr = format(new Date(), "yyyy-MM-dd")
+  const tomorrowStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
+  const isViewingToday = date === todayStr
+  const isViewingTomorrow = date === tomorrowStr
+  const isViewingFuture = date > todayStr
+  const isViewingPast = date < todayStr
+
+  // Occupancy precedence: cleaning_now or clean automatically means the guest has checked out (Desocupado).
+  // Otherwise prioritize flat.isOccupied over request.isVacant so future checkouts for occupied rooms don't falsely show "Desocupado"
+  const isOccupied = (!isInstruction && (currentStatus === "cleaning_now" || currentStatus === "clean"))
+    ? false
+    : (typeof flat.isOccupied === "boolean"
+        ? flat.isOccupied
+        : (typeof request?.isVacant === "boolean" ? !request.isVacant : true))
+
+  const toggleOccupancy = () => {
+    updateOccupancy.mutate({
+      id: flat.flatId,
+      data: { isOccupied: !isOccupied }
+    })
+    fetch(`/api/cleaning/assignments/${request?.id || 0}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        isVacant: isOccupied,
+        flatNumber: flat.flatNumber,
+        flatId: flat.flatId,
+        date: date,
+      }),
+      credentials: "include"
+    }).then(() => refreshData()).catch(() => {})
+  }
+
+  const hasCheckin = flat.hasCheckinToday || !!checkin
+
+  // ── SPECIAL RENDERING: EXTENDED STAY ("ESTENDEU") ────────────────────────
+  if (isExtended) {
+    return (
+      <Card className="overflow-hidden border-2 border-purple-300 rounded-xl bg-purple-50/95 dark:bg-purple-950/40 text-purple-950 dark:text-purple-100 shadow-sm transition-all animate-in fade-in">
+        <CardContent className="p-5 flex flex-col justify-between items-center text-center space-y-4">
+          <div className="space-y-2 pt-2">
+            <div className="w-12 h-12 rounded-full bg-purple-100 text-purple-700 mx-auto flex items-center justify-center">
+              <CalendarX className="w-6 h-6" />
+            </div>
+            <h3 className="text-2xl font-black tracking-tight">Apt {flat.flatNumber}</h3>
+            <div className="inline-block px-3 py-1 bg-purple-200 text-purple-900 rounded-full font-black text-sm uppercase tracking-wider">
+              Estendeu
+            </div>
+            <p className="text-xs text-purple-900 dark:text-purple-300 font-medium max-w-xs pt-1">
+              {isViewingTomorrow 
+                ? "O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para amanhã."
+                : isViewingFuture
+                  ? "O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para esta data."
+                  : "O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para hoje."}
+            </p>
+          </div>
+
+          <Button 
+            className="w-full bg-purple-700 hover:bg-purple-800 text-white font-bold py-2 shadow-sm flex items-center justify-center gap-1.5"
+            onClick={handleAcknowledgeExtended}
+            disabled={isProcessing}
+          >
+            <Check className="w-4 h-4" />
+            <span>Ciente</span>
+          </Button>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <>
+      <Card className={cn(
+        "overflow-hidden transition-all duration-200 border rounded-2xl shadow-xs hover:shadow-md flex flex-col justify-between h-full bg-card relative",
+        conf.cardBg,
+        isSelected && "ring-2 ring-primary ring-offset-1 shadow-md",
+        isPriority && !isInstruction && "border-rose-400 dark:border-rose-800 shadow-rose-100/50 dark:shadow-none",
+        Boolean(flat.serviceInProgress) && "border-amber-500/90 dark:border-amber-600 shadow-amber-100/50"
+      )}>
+        {/* Pergunta em Destaque sobre Fumo (Toma 100% da área do card no momento da conclusão) */}
+        {showSmokingPrompt && (
+          <div 
+            data-smoking-prompt="true"
+            className="absolute inset-0 z-30 bg-card rounded-2xl p-4 flex flex-col justify-between border-2 border-rose-500 dark:border-rose-600 shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-rose-200 dark:border-rose-900/60 pb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-lg">🚭</span>
+                <span className="font-black text-xs sm:text-sm uppercase tracking-wide text-foreground">
+                  Apt {flat.flatNumber} • Finalizar Limpeza
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setShowSmokingPrompt(false)}
+                title="Fechar e voltar ao card"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            <div className="py-2 text-center space-y-1">
+              <h4 className="text-lg sm:text-xl font-black text-foreground uppercase tracking-tight leading-tight">
+                O hóspede fumou no quarto?
+              </h4>
+              <p className="text-xs font-medium text-muted-foreground leading-tight">
+                Toque em uma das opções abaixo para concluir:
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 flex-1 my-1 min-h-[120px]">
+              <Button
+                type="button"
+                size="lg"
+                className="bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black h-full min-h-[115px] rounded-2xl text-sm sm:text-base px-2 shadow-lg flex flex-col items-center justify-center gap-2 transition-all whitespace-nowrap flex-nowrap shrink-0 min-w-0 border-2 border-rose-700"
+                onClick={() => handleFinishCleaningWithSmoking(true)}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <Loader2 className="w-7 h-7 animate-spin" />
+                ) : (
+                  <>
+                    <span className="text-3xl leading-none">🚬</span>
+                    <span>Sim, fumou</span>
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                size="lg"
+                className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black h-full min-h-[115px] rounded-2xl text-sm sm:text-base px-2 shadow-lg flex flex-col items-center justify-center gap-2 transition-all whitespace-nowrap flex-nowrap shrink-0 min-w-0 border-2 border-emerald-700"
+                onClick={() => handleFinishCleaningWithSmoking(false)}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <Loader2 className="w-7 h-7 animate-spin" />
+                ) : (
+                  <>
+                    <span className="text-3xl leading-none">✓</span>
+                    <span>Não fumou</span>
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="w-full text-xs font-semibold text-muted-foreground hover:text-foreground h-7 mt-1"
+              onClick={() => setShowSmokingPrompt(false)}
+              disabled={isProcessing}
+            >
+              ← Voltar ao card sem finalizar
+            </Button>
+          </div>
+        )}
+
+        <CardContent className={cn("p-4 flex flex-col justify-between h-full space-y-3", showSmokingPrompt && "invisible pointer-events-none")}>
+          <div className="space-y-2.5">
+            {/* Top Bar - Linha 1: Identificação do Flat (Sem corte) e Ocupação */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 shrink-0">
+                {selectable && currentStatus === "dirty" && !isAssignedToOther && !isInstruction && !isCleaningBlockedByService && (
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={(e) => {
+                      e.stopPropagation()
+                      const cardId = request?.id || flat?.cleaningRequest?.id || flat?.flatId || flat?.id
+                      if (cardId) {
+                        onToggleSelect?.(Number(cardId))
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer shrink-0"
+                    title="Selecionar para limpeza em lote"
+                  />
+                )}
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                  <h3 className="text-lg font-black tracking-tight text-foreground whitespace-nowrap shrink-0">
+                    Apt {flat.flatNumber}
+                  </h3>
+                  {/* Camareira (não-admin): Exibe badge ao lado do número do apto */}
+                  {isPriority && !isInstruction && !isAdmin && currentStatus !== "clean" && (
+                    <Badge 
+                      variant="destructive" 
+                      title="Prioridade Alta"
+                      className="animate-pulse bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 flex items-center gap-0.5 shrink-0 select-none"
+                    >
+                      <Flame className="w-3 h-3 fill-current" />
+                      <span>Prioridade</span>
+                    </Badge>
+                  )}
+                  {hasSmoked && !isServiceCleaning && (
+                    <Badge 
+                      variant="destructive" 
+                      data-smoking-badge="true"
+                      title="Fumo registrado no quarto. Clique para alternar ou desmarcar."
+                      className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black px-1.5 py-0.5 flex items-center gap-1 shrink-0 select-none cursor-pointer transition-all shadow-xs"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleToggleSmoking()
+                      }}
+                    >
+                      <span>🚬 Fumou</span>
+                      <span className="text-[9px] opacity-80 hover:opacity-100 underline ml-0.5">(Desmarcar)</span>
+                    </Badge>
+                  )}
+                </div>
+              </div>
+
+              {/* Botão de Ocupação (Ocupado / Desocupado) */}
+              <button 
+                onClick={toggleOccupancy}
+                className={cn(
+                  "px-2.5 py-1 rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-colors border shadow-2xs shrink-0 whitespace-nowrap", 
+                  isOccupied 
+                    ? "bg-amber-100/90 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200 hover:bg-amber-200" 
+                    : "bg-emerald-100/90 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-950 dark:text-emerald-200 hover:bg-emerald-200"
+                )}
+                title="Clique para alternar ocupação"
+                disabled={updateOccupancy.isPending}
+              >
+                {isOccupied ? (
+                  <>
+                    <User className="w-3 h-3 text-amber-700 dark:text-amber-400 shrink-0" />
+                    <span>Ocupado</span>
+                  </>
+                ) : (
+                  <>
+                    <DoorOpen className="w-3 h-3 text-emerald-700 dark:text-emerald-400 shrink-0" />
+                    <span>Desocupado</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Top Bar - Linha 2 (Exclusiva para Administrador: Ação Rápida de Prioridade em Limpezas Normais, oculta quando Limpo) */}
+            {isAdmin && !isInstruction && currentStatus !== "clean" && (
+              <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
+                {/* Botão / Ícone de Prioridade: Desativado por padrão, 1 clique para ativar */}
+                <button
+                  type="button"
+                  onClick={togglePriority}
+                  disabled={isTogglingPriority}
+                  title={isPriority ? "Prioridade Alta Ativada (Clique para desativar)" : "Prioridade Desativada (Clique para ativar)"}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg border transition-all text-[11px] flex items-center gap-1 font-bold shadow-2xs cursor-pointer select-none",
+                    isPriority 
+                      ? "bg-red-600 text-white border-red-600 hover:bg-red-700 shadow-xs animate-pulse" 
+                      : "bg-background border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  <Flame className={cn("w-3.5 h-3.5 shrink-0", isPriority ? "fill-current text-white" : "text-muted-foreground")} />
+                  <span>Prioridade</span>
+                </button>
+              </div>
+            )}
+
+            {/* Top Bar - Linha 3 DEDICADA: Identificação Completa de Quem Limpou / Responsável (Linha Inteira sem cortes) */}
+            <div className="w-full pt-1 pb-0.5">
+              {(request?.assignedUserName || request?.assignedUsername) ? (
+                <div 
+                  title={`${currentStatus === "clean" ? (isInstruction ? "Executado por:" : "Limpo por:") : (isInstruction ? "Responsável:" : "Camareira:")} ${request.assignedUserName || request.assignedUsername}`}
+                  className={cn(
+                    "w-full text-xs font-bold px-2.5 py-1.5 rounded-xl shadow-2xs flex items-center gap-1.5 border whitespace-normal break-words leading-relaxed cursor-help",
+                    currentStatus === "clean" 
+                      ? "bg-emerald-50 text-emerald-950 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-200 dark:border-emerald-700"
+                      : isInstruction
+                        ? "bg-purple-50 text-purple-950 border-purple-300 dark:bg-purple-950/50 dark:text-purple-200 dark:border-purple-700"
+                        : "bg-sky-50 text-sky-950 border-sky-300 dark:bg-sky-950/50 dark:text-sky-200 dark:border-sky-700"
+                  )}
+                >
+                  <User className="w-3.5 h-3.5 text-current shrink-0" />
+                  <div className="flex-1 min-w-0 break-words">
+                    <span className="font-semibold text-muted-foreground mr-1 text-[11px]">
+                      {currentStatus === "clean" ? (isInstruction ? "Executado por:" : "Limpo por:") : (isInstruction ? "Responsável:" : "Camareira:")}
+                    </span>
+                    <strong className="capitalize font-black text-foreground text-xs">
+                      {request.assignedUserName || request.assignedUsername}
+                    </strong>
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full text-[11px] text-muted-foreground italic font-medium py-0.5 flex items-center gap-1">
+                  <User className="w-3 h-3 opacity-50 shrink-0" />
+                  <span>Disponível para assumir</span>
+                </div>
+              )}
+            </div>
+
+            {/* Badges de Status, Check-in e Duração */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className={cn("font-bold text-[11px] px-2.5 py-0.5 rounded-lg", conf.badgeClass)}>
+                <Icon className="w-3 h-3 mr-1" />
+                {conf.label}
+              </Badge>
+
+              {/* Badge Stayover B2B vs Limpeza/Conferência Pós-Serviço vs Check-out */}
+              {isStayover ? (
+                <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10.5px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                  <BedDouble className="w-3 h-3 shrink-0" />
+                  <span>Stayover B2B (Diária)</span>
+                </Badge>
+              ) : isServiceCleaning ? (
+                <Badge className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-[10.5px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                  <Wrench className="w-3 h-3 shrink-0" />
+                  <span>{serviceOrigin === "return" ? "Conferência Pós-Devolução" : "Limpeza / Conferência Pós-Serviço"}</span>
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[10.5px] px-2 py-0.5 rounded-lg">
+                  <span>Check-out</span>
+                </Badge>
+              )}
+
+              {/* Tag de Dia da Estadia B2B */}
+              {isStayover && (
+                <Badge variant="outline" className="bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-indigo-900 dark:text-indigo-200 font-bold text-[10px] px-2 py-0.5 rounded-lg">
+                  <Calendar className="w-3 h-3 text-indigo-600 mr-1" />
+                  <span>Dia {request?.stayDayNumber || linenTracking?.stayDayNumber || 1} de {request?.totalStayNights || linenTracking?.totalStayNights || 1}</span>
+                </Badge>
+              )}
+
+              {/* Tag de Alerta de 3 Dias Sem Troca de Cama */}
+              {isStayover && (request?.needsBeddingChangeAlert || (linenTracking?.daysSinceBeddingChange !== undefined && linenTracking.daysSinceBeddingChange >= 3)) && (
+                <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg animate-pulse">
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
+                  <span>⚠️ Troca de Cama ({linenTracking?.daysSinceBeddingChange || 3}d)</span>
+                </Badge>
+              )}
+
+              {/* Tag de Pedido de Enxoval do Hóspede */}
+              {isStayover && (request?.guestRequestedBedding || request?.guestRequestedTowels || linenTracking?.guestRequestedBedding || linenTracking?.guestRequestedTowels) && (
+                <Badge className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                  <Sparkles className="w-3 h-3 shrink-0" />
+                  <span>🔔 Troca Solicitada</span>
+                </Badge>
+              )}
+
+              {/* Tag de Não Perturbe (DND) */}
+              {isDnd && (
+                <Badge className="bg-rose-600 hover:bg-rose-700 text-white font-black text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                  <BellOff className="w-3 h-3 shrink-0" />
+                  <span>🔕 Não Perturbe</span>
+                </Badge>
+              )}
+
+              {flat.serviceInProgress && (
+                <Badge 
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10.5px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg border border-amber-600 animate-pulse shrink-0"
+                  title={flat.serviceInProgress.workerName 
+                    ? `Prestador: ${flat.serviceInProgress.workerName} • Serviço: ${flat.serviceInProgress.serviceTitle || "Em andamento"}`
+                    : "Serviço externo em andamento no flat"}
+                >
+                  <Wrench className="w-3 h-3 shrink-0" />
+                  <span>🔧 Serviço em andamento</span>
+                </Badge>
+              )}
+
+              {/* Tag de Remuneração: Exibida SOMENTE para Administradores (em Instruções e Pós-Serviço) */}
+              {isAdmin && (isInstruction || isServiceCleaning) && (
+                <button
+                  type="button"
+                  onClick={handleTogglePaidCleaning}
+                  disabled={isTogglingPaid}
+                  title="Clique para alternar entre Não Remunerado (conferência/favor) e Remunerado (faxina contabilizada no extrato)"
+                  className={cn(
+                    "font-bold text-[10px] px-2 py-0.5 rounded-lg border flex items-center gap-1 transition-all cursor-pointer",
+                    isPaidCleaning 
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-200" 
+                      : "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                  )}
+                >
+                  <Coins className="w-3 h-3" />
+                  <span>{isPaidCleaning ? "Remunerado (Extrato)" : "Conferência / Não Remunerado"}</span>
+                </button>
+              )}
+
+              {/* Badge de Pendência (Carryover): Exibido SOMENTE em quartos que ficaram pendentes de um dia para o outro */}
+              {(() => {
+                if (isInstruction) return null
+                const isPending = Boolean(flat.isPendingFromPreviousDay || request?.isPendingFromPreviousDay)
+                if (!isPending) return null
+
+                const origDate = flat.originalRequestDate || request?.originalRequestDate
+                // Regra do Usuário: Quartos de hoje NÃO devem exibir o badge "Pendente".
+                // O badge "Pendente" é EXCLUSIVO para quartos que ficaram pendentes de um dia para o outro (origDate anterior à data visualizada e anterior a hoje).
+                if (!origDate || origDate >= date || origDate === todayStr) {
+                  return null
+                }
+
+                let dateSuffix = ""
+                try {
+                  dateSuffix = ` (${format(new Date(origDate + "T12:00:00"), "dd/MM")})`
+                } catch {
+                  dateSuffix = ""
+                }
+
+                return (
+                  <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    <span>{`Pendente${dateSuffix}`}</span>
+                  </Badge>
+                )
+              })()}
+
+              {hasCheckin && !isInstruction && (
+                <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                  <span>
+                    {isViewingTomorrow
+                      ? "🟢 Entra Amanhã"
+                      : isViewingFuture
+                        ? `🟢 Entra em ${(() => { try { return format(parseISO(date), "dd/MM") } catch { return date } })()}`
+                        : "🟢 Entra Hoje"}
+                  </span>
+                </Badge>
+              )}
+
+              {/* Badge de Tarefas Preventivas Agendadas */}
+              {pendingPeriodicTasks.length > 0 && currentStatus !== "clean" && (
+                <Badge 
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg border border-amber-600 animate-pulse shrink-0"
+                  title={`Este quarto possui ${pendingPeriodicTasks.length} tarefa(s) preventiva(s) obrigatória(s) agendada(s)`}
+                >
+                  <Wrench className="w-3 h-3 shrink-0" />
+                  <span>
+                    {pendingPeriodicTasks.length === 1 
+                      ? "1 Preventiva Agendada" 
+                      : `${pendingPeriodicTasks.length} Preventivas Agendadas`}
+                  </span>
+                </Badge>
+              )}
+
+              {currentStatus === "cleaning_now" && (
+                <Badge variant="outline" className={cn(
+                  "text-[10px] px-2 py-0.5 font-bold border rounded-lg",
+                  elapsedMinutes >= 30 
+                    ? "bg-rose-100 border-rose-300 text-rose-800 animate-pulse" 
+                    : "bg-blue-100/80 border-blue-300 text-blue-800"
+                )}>
+                  <Clock className="w-3 h-3 mr-1 inline" />
+                  {elapsedMinutes >= 30 ? `Atenção: ${elapsedMinutes} min` : `${elapsedMinutes} min`}
+                </Badge>
+              )}
+            </div>
+
+            {/* Guest Info - Admin View (Nomes dos hóspedes em box limpo) */}
+            {isAdmin && !isInstruction && (flat?.leavingGuest || flat?.arrivingGuest || flat?.activeReservation?.guestName) && (
+              <div className="text-[11px] bg-muted/40 rounded-xl p-2.5 border border-border/70 space-y-1">
+                {isStayover ? (
+                  <div className="flex items-start gap-1.5 text-indigo-700 dark:text-indigo-400">
+                    <span className="font-bold text-indigo-600 dark:text-indigo-500 shrink-0">Hóspede em Estadia B2B:</span>
+                    <span className="font-semibold break-words">{request?.guestName || flat.activeReservation?.guestName || flat.leavingGuest}</span>
+                  </div>
+                ) : (
+                  flat.leavingGuest && (
+                    <div className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
+                      <span className="font-bold text-slate-500 shrink-0">
+                        {isViewingTomorrow
+                          ? "Check-out amanhã:"
+                          : isViewingFuture
+                            ? "Saída Prevista:"
+                            : currentStatus === "clean"
+                              ? "Saiu:"
+                              : "Check-out hoje:"}
+                      </span>
+                      <span className="font-semibold break-words">{flat.leavingGuest}</span>
+                    </div>
+                  )
+                )}
+                {flat.arrivingGuest && (
+                  <div className="flex items-start gap-1.5 text-blue-700 dark:text-blue-400">
+                    <span className="font-bold text-blue-600 dark:text-blue-500 shrink-0">
+                      {isViewingTomorrow
+                        ? "Entra amanhã:"
+                        : isViewingFuture
+                          ? "Entrada Prevista:"
+                          : "Entra:"}
+                    </span>
+                    <span className="font-semibold break-words">{flat.arrivingGuest}</span>
+                  </div>
+                )}
+                {!isStayover && flat.activeReservation?.guestName && flat.activeReservation.guestName !== flat.leavingGuest && flat.activeReservation.guestName !== flat.arrivingGuest && (
+                  <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+                    <span className="font-bold text-amber-600 dark:text-amber-500 shrink-0">Hóspede no quarto:</span>
+                    <span className="font-semibold break-words">{flat.activeReservation.guestName}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Box Informativo de Não Perturbe (DND) */}
+            {isDnd && (
+              <div className="bg-rose-100/90 dark:bg-rose-950/40 border-2 border-rose-400 dark:border-rose-700/80 rounded-xl p-3 text-xs text-rose-950 dark:text-rose-200 shadow-2xs space-y-1">
+                <div className="flex items-center gap-1.5 font-black text-rose-900 dark:text-rose-300">
+                  <BellOff className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                  <span>🔕 Não Perturbe — Hóspede dispensou limpeza</span>
+                </div>
+                <p className="text-[11px] font-semibold text-rose-900/90 dark:text-rose-200">
+                  O hóspede ativou o modo Não Perturbe no portal. O apartamento não deve ser limpo hoje.
+                </p>
+              </div>
+            )}
+
+            {/* Box Informativo de Governança Stayover B2B e Enxoval */}
+            {isStayover && !isDnd && (
+              <div className="bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl p-2.5 text-xs text-indigo-950 dark:text-indigo-200 space-y-1">
+                <div className="flex items-center justify-between font-bold text-[11px]">
+                  <span className="flex items-center gap-1">
+                    <BedDouble className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Controle de Enxoval:</span>
+                  </span>
+                  <span className="text-slate-600 dark:text-slate-400">
+                    Cama: {linenTracking?.daysSinceBeddingChange !== undefined ? `${linenTracking.daysSinceBeddingChange}d sem troca` : "Estadia recente"}
+                    {" • "}
+                    Toalhas: {linenTracking?.daysSinceTowelsChange !== undefined ? `${linenTracking.daysSinceTowelsChange}d sem troca` : "Estadia recente"}
+                  </span>
+                </div>
+                {(request?.guestRequestedBedding || request?.guestRequestedTowels || linenTracking?.guestRequestedBedding || linenTracking?.guestRequestedTowels) && (
+                  <p className="text-[11px] font-bold text-purple-700 dark:text-purple-300">
+                    🔔 Pedido do hóspede para hoje: {
+                      (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding) && (request?.guestRequestedTowels || linenTracking?.guestRequestedTowels)
+                        ? "Trocar Roupa de Cama e Toalhas"
+                        : (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding)
+                          ? "Trocar Roupa de Cama"
+                          : "Trocar Toalhas de Banho"
+                    }
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Aviso Anônimo para a Camareira */}
+            {!isAdmin && hasCheckin && !isInstruction && (
+              <div className="text-[11px] text-emerald-900 dark:text-emerald-200 bg-emerald-50/90 dark:bg-emerald-950/40 rounded-xl px-2.5 py-1.5 border border-emerald-200 dark:border-emerald-800/50 font-semibold flex items-center gap-1.5">
+                <span>
+                  {isViewingTomorrow
+                    ? "🟢 Há novo check-in previsto para este flat amanhã."
+                    : isViewingFuture
+                      ? "🟢 Há novo check-in previsto para este flat nesta data."
+                      : "🟢 Há novo check-in previsto para este flat hoje."}
+                </span>
+              </div>
+            )}
+            {!isAdmin && flat?.activeReservation?.guestName && !isInstruction && (
+              <div className="text-[11px] text-amber-900 dark:text-amber-200 bg-amber-50/90 dark:bg-amber-950/40 rounded-xl px-2.5 py-1.5 border border-amber-200 dark:border-amber-800/50 font-semibold flex items-center gap-1.5">
+                <span>⚠️ Quarto atualmente ocupado por hóspede em estadia.</span>
+              </div>
+            )}
+
+            {/* Box Informativo de Bloqueio por Serviço Externo */}
+            {flat.serviceInProgress && (
+              <div className="bg-amber-100/90 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-700/80 rounded-xl p-2.5 text-xs text-amber-950 dark:text-amber-200 shadow-2xs space-y-1">
+                <div className="flex items-center gap-1.5 font-black text-amber-900 dark:text-amber-300">
+                  <Wrench className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400 shrink-0 animate-pulse" />
+                  <span>Serviço Externo em Andamento:</span>
+                </div>
+                <p className="text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                  {flat.serviceInProgress.serviceTitle || "Manutenção"}
+                  {flat.serviceInProgress.workerName && ` • Prestador: ${flat.serviceInProgress.workerName}`}
+                </p>
+                <p className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">
+                  {(flat.serviceInProgress as any).allowSimultaneousCleaning
+                    ? "Limpeza simultânea liberada nesta Ordem de Serviço."
+                    : isAdmin
+                      ? "Limpeza bloqueada para camareiras durante o serviço (liberada para Admin)."
+                      : "Aguardando conclusão do serviço externo para liberar a higienização do apartamento."}
+                </p>
+              </div>
+            )}
+
+            {/* Box Exclusivo de Limpeza / Conferência Pós-Serviço Técnico */}
+            {isServiceCleaning && (
+              <div className="bg-cyan-500/10 dark:bg-cyan-950/35 border-2 border-cyan-400/80 dark:border-cyan-700 rounded-xl p-3 text-xs space-y-2 shadow-2xs">
+                <div className="flex items-center justify-between gap-1.5 bg-cyan-600/15 dark:bg-cyan-900/50 border border-cyan-300 dark:border-cyan-700 text-cyan-950 dark:text-cyan-100 px-2.5 py-1.5 rounded-lg font-black text-[11px]">
+                  <div className="flex items-center gap-1.5">
+                    <Wrench className="w-4 h-4 text-cyan-700 dark:text-cyan-300 shrink-0" />
+                    <span>
+                      {serviceOrigin === "return"
+                        ? "CONFERÊNCIA / LIMPEZA PÓS-ACESSO TÉCNICO"
+                        : "CONFERÊNCIA / LIMPEZA PÓS-SERVIÇO"}
+                    </span>
+                  </div>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setInstructionsModalOpen(true)}
+                      className="text-[10px] text-cyan-800 dark:text-cyan-300 font-semibold underline flex items-center gap-0.5"
+                    >
+                      ✏️ Nota
+                    </button>
+                  )}
+                </div>
+
+                <div className="bg-background/95 p-2.5 rounded-lg border border-cyan-200 dark:border-cyan-800/70 space-y-1.5 text-[11.5px] leading-relaxed">
+                  <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      🔧 Serviço: <strong className="text-foreground">{serviceTitle}</strong>
+                    </span>
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      👷 Técnico: <strong className="text-foreground">{serviceWorkerName}</strong>
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
+                    {serviceOrigin === "return"
+                      ? `O técnico ${serviceWorkerName} acessou o apartamento (referente a "${serviceTitle}"), devolveu o flat sem executar o serviço e informou que o quarto precisa de conferência/limpeza da camareira.`
+                      : `O técnico ${serviceWorkerName} concluiu o serviço "${serviceTitle}" neste apartamento e solicitou conferência/limpeza pós-intervenção.`}
+                  </p>
+                  {(serviceReason || maidNoteText) && (
+                    <div className="pt-1.5 border-t border-cyan-100 dark:border-cyan-900/60 text-[11px] text-cyan-950 dark:text-cyan-200">
+                      <span className="font-bold block text-[10px] uppercase tracking-wide text-cyan-700 dark:text-cyan-400">
+                        📝 Observação / Motivo Informado:
+                      </span>
+                      <p className="italic font-semibold mt-0.5">
+                        "{serviceReason || maidNoteText}"
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Box de Instrução no Flat (Sem Limpeza) */}
+            {isInstruction && (
+              <div 
+                className={cn(
+                  "bg-purple-500/10 dark:bg-purple-950/30 border-2 border-purple-300 dark:border-purple-700/60 rounded-xl p-3 text-xs space-y-2.5 shadow-2xs",
+                  isAdmin && "cursor-pointer hover:border-purple-400 hover:bg-purple-500/15 transition-all"
+                )}
+                onClick={isAdmin ? () => setInstructionsModalOpen(true) : undefined}
+                title={isAdmin ? "Clique para editar instruções deste quarto" : undefined}
+              >
+                <div className="flex items-center justify-between gap-1.5 bg-amber-500/15 dark:bg-amber-950/40 border border-amber-300/80 dark:border-amber-700/60 text-amber-950 dark:text-amber-200 px-2.5 py-1.5 rounded-lg font-black text-[11px]">
+                  <div className="flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>NÃO É LIMPEZA DE QUARTO</span>
+                  </div>
+                  {isAdmin && (
+                    <span className="text-[10px] text-purple-800 dark:text-purple-300 font-semibold underline flex items-center gap-0.5">
+                      ✏️ Editar
+                    </span>
+                  )}
+                </div>
+
+                <div className="bg-background/95 p-3 rounded-lg border border-purple-200 dark:border-purple-800/60 text-[12px] text-foreground leading-relaxed shadow-2xs">
+                  <span className="font-bold text-purple-950 dark:text-purple-300 block text-[11px] mb-1">
+                    🛠️ O que fazer no quarto:
+                  </span>
+                  <p className="whitespace-pre-wrap font-semibold text-slate-800 dark:text-slate-100">
+                    {instructionText || "Separar as camas, colocar como 2 solteiras."}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Instruções para a Camareira (Limpeza Padrão / Preparação de Check-in / Observação Descartável do Card) */}
+            {!isInstruction && (
+              (isAdmin && currentStatus !== "clean") ||
+              isTwinBeds ||
+              hasExtraMattress ||
+              flat?.setupInfo?.prefersHighFloor ||
+              maidNoteText
+            ) && (
+              <div
+                className={cn(
+                  "rounded-xl p-2.5 text-xs space-y-2 transition-all border",
+                  (isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText)
+                    ? "bg-amber-500/10 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700/60"
+                    : "bg-slate-500/5 dark:bg-slate-900/40 border-slate-200/80 dark:border-slate-800/80"
+                )}
+              >
+                <div className="font-bold text-amber-950 dark:text-amber-200 flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <BedDouble className={cn(
+                      "w-4 h-4 shrink-0",
+                      (isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText)
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-slate-500 dark:text-slate-400"
+                    )} />
+                    <span className={cn(
+                      !(isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText) &&
+                        "text-slate-700 dark:text-slate-300"
+                    )}>
+                      Observação p/ Camareira (neste card):
+                    </span>
+                  </div>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setInstructionsModalOpen(true)}
+                      className="text-[10px] text-amber-800 dark:text-amber-300 hover:text-amber-950 dark:hover:text-amber-100 font-semibold underline flex items-center gap-0.5 cursor-pointer"
+                      title="Configurar camas de solteiro ou colchão extra"
+                    >
+                      ⚙️ Camas / Colchão
+                    </button>
+                  )}
+                </div>
+
+                {(isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor) && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {isTwinBeds && (
+                      <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
+                        <span>🛏️ Montar 2 Camas de Solteiro</span>
+                      </Badge>
+                    )}
+                    {hasExtraMattress && (
+                      <Badge className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
+                        <span>➕ Colocar Colchão Extra</span>
+                      </Badge>
+                    )}
+                    {flat?.setupInfo?.prefersHighFloor && (
+                      <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
+                        <span>🏢 Prefere Andar Alto</span>
+                      </Badge>
+                    )}
+                  </div>
+                )}
+
+                {isAdmin && currentStatus !== "clean" ? (
+                  <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-start gap-1.5">
+                      <Textarea
+                        value={adminNoteText}
+                        onChange={(e) => setAdminNoteText(e.target.value)}
+                        onFocus={() => setIsInlineNoteFocused(true)}
+                        onBlur={() => setIsInlineNoteFocused(false)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault()
+                            if (!isSavingInstructions && adminNoteText.trim() !== maidNoteText) {
+                              saveCardObservation(adminNoteText, false)
+                            }
+                          }
+                        }}
+                        rows={2}
+                        placeholder="Digite uma ação/observação p/ as camareiras neste flat (descartável após limpar)..."
+                        className="min-h-[46px] text-[11px] leading-snug py-1.5 px-2 bg-background/95 border-amber-300/80 dark:border-amber-700/60 focus-visible:ring-amber-500 resize-none flex-1"
+                        data-testid={`input-inline-maid-note-${flat.flatNumber}`}
+                      />
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={isSavingInstructions || adminNoteText.trim() === maidNoteText}
+                          onClick={() => saveCardObservation(adminNoteText, false)}
+                          className={cn(
+                            "h-7 px-2.5 text-[10px] font-bold rounded-lg shadow-2xs",
+                            adminNoteText.trim() !== maidNoteText
+                              ? "bg-amber-600 hover:bg-amber-700 text-white"
+                              : "bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                          )}
+                          data-testid={`button-save-inline-maid-note-${flat.flatNumber}`}
+                        >
+                          {isSavingInstructions ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : inlineNoteSavedFlash && adminNoteText.trim() === maidNoteText ? (
+                            <span className="flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400">
+                              <Check className="w-3 h-3" /> Salvo
+                            </span>
+                          ) : (
+                            "Salvar"
+                          )}
+                        </Button>
+                        {(maidNoteText || adminNoteText.trim()) && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isSavingInstructions}
+                            onClick={() => {
+                              if (maidNoteText) {
+                                saveCardObservation("", false)
+                              } else {
+                                setAdminNoteText("")
+                              }
+                            }}
+                            title="Limpar observação deste card"
+                            className="h-6 px-2 text-[10px] font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 border-rose-200 dark:border-rose-800/60 rounded-lg"
+                            data-testid={`button-clear-inline-maid-note-${flat.flatNumber}`}
+                          >
+                            <X className="w-3 h-3 mr-0.5" /> Limpar
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  maidNoteText && (
+                    <div className="bg-background/90 p-2 rounded-lg border border-amber-300/80 dark:border-amber-700/60 text-[11px] text-foreground leading-snug">
+                      <span className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1 mb-0.5 text-[10px]">
+                        📝 Nota / Recado para a Camareira:
+                      </span>
+                      <p className="whitespace-pre-wrap font-medium">{maidNoteText}</p>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+
+            {/* Alerta de Tempo Excedido */}
+            {currentStatus === "cleaning_now" && elapsedMinutes >= 30 && (
+              <div className="bg-amber-100/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl p-2 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Limpeza em andamento há mais de 30 min.</span>
+                  <p className="text-[10px] text-amber-800 dark:text-amber-300 mt-0.5">Lembre-se de finalizar assim que terminar o quarto.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Vistoria de Saída Pendente */}
+            {pendingSurveys.length > 0 && !isServiceCleaning && currentStatus !== "clean" && (
+              <div className="bg-indigo-50/90 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl p-2.5 text-xs text-indigo-950 dark:text-indigo-200">
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <div className="flex items-center gap-1.5 font-black text-indigo-900 dark:text-indigo-300">
+                    <ClipboardCheck className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Vistoria de Saída Pendente:</span>
+                  </div>
+                  <Badge variant="outline" className="text-[9px] font-black border-indigo-400 text-indigo-700 dark:text-indigo-300 bg-indigo-100/50 dark:bg-indigo-900/40">
+                    {pendingSurveys[0].questions?.length || 1} pergunta(s)
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-indigo-900 dark:text-indigo-200 font-bold line-clamp-1">
+                  {pendingSurveys[0].title || pendingSurveys[0].question}
+                </p>
+                {pendingSurveys[0].description && (
+                  <p className="text-[10px] text-indigo-700/80 dark:text-indigo-400 font-medium line-clamp-1 mt-0.5">
+                    {pendingSurveys[0].description}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* ── TAREFAS PREVENTIVAS AGENDADAS (Executar antes de concluir) ── */}
+            {pendingPeriodicTasks.length > 0 && currentStatus !== "clean" && (
+              <div className="bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/15 dark:from-amber-950/50 dark:to-orange-950/40 border-2 border-amber-400 dark:border-amber-600 rounded-xl p-3 text-xs space-y-2.5 shadow-xs">
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 font-black text-amber-950 dark:text-amber-200">
+                    <Wrench className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span className="text-[11.5px] uppercase tracking-wide">
+                      {pendingPeriodicTasks.length === 1 
+                        ? "1 Tarefa Preventiva Agendada" 
+                        : `${pendingPeriodicTasks.length} Tarefas Preventivas Agendadas`}
+                    </span>
+                  </div>
+                  <Badge className="bg-amber-600 text-white font-black text-[9.5px] px-2 py-0.5 rounded-md shadow-2xs">
+                    Executar no Quarto
+                  </Badge>
+                </div>
+
+                <div className="space-y-1.5">
+                  {pendingPeriodicTasks.map((task: any, idx: number) => (
+                    <div 
+                      key={task.id || idx} 
+                      className="bg-background/95 dark:bg-slate-900/90 rounded-lg p-2.5 border border-amber-300 dark:border-amber-700/80 shadow-2xs space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-extrabold text-[12px] text-amber-950 dark:text-amber-100 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>{task.name}</span>
+                        </span>
+                        {task.periodDays && (
+                          <span className="text-[9.5px] text-amber-800 dark:text-amber-300 font-semibold bg-amber-100/80 dark:bg-amber-900/60 px-1.5 py-0.5 rounded shrink-0">
+                            A cada {task.periodDays}d {task.periodType === "occupied_days" ? "de locação" : "corridos"}
+                            {task.periodType === "occupied_days" && task.currentOccupiedDays !== undefined && (
+                              <span className="ml-1 opacity-90 font-bold">({task.currentOccupiedDays}d ocupados)</span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      {task.description && (
+                        <p className="text-[11px] text-muted-foreground font-medium pl-5 leading-snug">
+                          {task.description}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-amber-100/90 dark:bg-amber-950/70 rounded-lg p-2 border border-amber-300/80 flex items-start gap-2 text-[11px] text-amber-950 dark:text-amber-200 font-semibold leading-relaxed">
+                  <AlertCircle className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Atenção Camareira:</strong> Este serviço preventivo deve ser feito durante o atendimento deste flat. O atestado formal será exigido ao marcar como limpo.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Pendência Registrada */}
+            {currentStatus === "pending_issue" && request?.pendingObservation && (
+              <div className="bg-amber-100/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl p-2.5 text-xs text-amber-950 dark:text-amber-200">
+                <span className="font-bold block mb-1 text-amber-900 dark:text-amber-300 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-700" /> Pendência Registrada:
+                </span>
+                <p className="text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed font-medium">{request.pendingObservation}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Action Buttons */}
+          <div className="pt-3 border-t border-slate-200/70 mt-2">
+            {isDnd ? (
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl text-center space-y-1">
+                <p className="text-xs font-bold text-rose-800 dark:text-rose-300 flex items-center justify-center gap-1.5">
+                  <BellOff className="w-4 h-4 text-rose-600" />
+                  <span>🔕 Não Perturbe Ativo</span>
+                </p>
+                <p className="text-[11px] text-rose-700 dark:text-rose-400">
+                  Hóspede dispensou limpeza hoje no portal. Ações bloqueadas.
+                </p>
+              </div>
+            ) : isAssignedToOther ? (
+              <div 
+                title={`Assumido por: ${request.assignedUserName || request.assignedUsername}`}
+                className="text-center py-2 px-2.5 bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 whitespace-normal break-words"
+              >
+                🔒 Assumido por <strong className="capitalize font-black">{request.assignedUserName || request.assignedUsername}</strong>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {(currentStatus === "dirty" || (currentStatus as string) === "pending") && (
+                  isCleaningBlockedByService && flat.serviceInProgress ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="w-full cursor-not-allowed">
+                          <Button 
+                            size="sm" 
+                            disabled 
+                            className="w-full bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-semibold cursor-not-allowed shadow-none border border-slate-300 dark:border-slate-700"
+                          >
+                            <Wrench className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                            <span>Iniciar Limpeza (Serviço em Andamento)</span>
+                          </Button>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="bg-slate-900 text-white text-xs max-w-xs p-2.5 rounded-xl shadow-lg border border-slate-700">
+                        <p className="font-bold text-amber-400 mb-0.5">⚠️ Limpeza Bloqueada</p>
+                        <p>⚠️ Limpeza Bloqueada: Aguardando finalização do serviço: {flat.serviceInProgress.serviceTitle || "Serviço"}{flat.serviceInProgress.workerName ? ` (Prestador: ${flat.serviceInProgress.workerName})` : ""}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : isAdmin ? (
+                    <div className="flex gap-1.5">
+                      <Button 
+                        size="sm" 
+                        className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-semibold shadow-2xs text-xs" 
+                        onClick={() => handleStatusChange("will_clean")}
+                        disabled={isProcessing}
+                      >
+                        {isInstruction ? (
+                          <>
+                            <BedDouble className="w-3.5 h-3.5 mr-1" />
+                            <span>Vou Fazer</span>
+                          </>
+                        ) : (
+                          "Vou Limpar"
+                        )}
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-2xs text-xs gap-1" 
+                        onClick={() => isStayover ? setStayoverModalOpen(true) : setAdminCleanModalOpen(true)}
+                        disabled={isProcessing}
+                        title={isInstruction ? "Marcar instrução como concluída" : "Marcar como limpo escolhendo a camareira responsável"}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{isInstruction ? "Concluir" : "Marcar Limpo"}</span>
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button 
+                      size="sm" 
+                      className="w-full bg-sky-600 hover:bg-sky-700 text-white font-semibold shadow-2xs" 
+                      onClick={() => handleStatusChange("will_clean")}
+                      disabled={isProcessing}
+                    >
+                      {isInstruction ? (
+                        <>
+                          <BedDouble className="w-3.5 h-3.5 mr-1" />
+                          <span>Vou Fazer</span>
+                        </>
+                      ) : (
+                        "Vou Limpar"
+                      )}
+                    </Button>
+                  )
+                )}
+
+                {currentStatus === "will_clean" && (
+                  isCleaningBlockedByService && flat.serviceInProgress ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="w-full cursor-not-allowed">
+                          <Button 
+                            size="sm" 
+                            disabled 
+                            className="w-full bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-semibold cursor-not-allowed shadow-none border border-slate-300 dark:border-slate-700"
+                          >
+                            <Wrench className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                            <span>Iniciar Limpeza (Serviço em Andamento)</span>
+                          </Button>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="bg-slate-900 text-white text-xs max-w-xs p-2.5 rounded-xl shadow-lg border border-slate-700">
+                        <p className="font-bold text-amber-400 mb-0.5">⚠️ Limpeza Bloqueada</p>
+                        <p>⚠️ Limpeza Bloqueada: Aguardando finalização do serviço: {flat.serviceInProgress.serviceTitle || "Serviço"}{flat.serviceInProgress.workerName ? ` (Prestador: ${flat.serviceInProgress.workerName})` : ""}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm" 
+                        className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-semibold shadow-2xs" 
+                        onClick={() => handleStatusChange("cleaning_now")}
+                        disabled={isProcessing}
+                      >
+                        <Sparkles className="w-4 h-4 mr-1" /> {isInstruction ? "Iniciar Tarefa" : "Iniciar"}
+                      </Button>
+                      {isAdmin && (
+                        <Button 
+                          size="sm" 
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-2xs text-xs" 
+                          onClick={() => isStayover ? setStayoverModalOpen(true) : setAdminCleanModalOpen(true)}
+                          disabled={isProcessing}
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> {isInstruction ? "Concluir" : "Limpo"}
+                        </Button>
+                      )}
+                      {(isAssignedToMe || isAdmin) && (
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="text-xs text-slate-600 border-slate-300 hover:bg-slate-100" 
+                          onClick={handleRelease}
+                          title="Devolver quarto para que outra camareira possa pegar"
+                          disabled={isProcessing}
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 mr-1" /> Devolver
+                        </Button>
+                      )}
+                    </div>
+                  )
+                )}
+
+                {currentStatus === "cleaning_now" && (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="flex-1 text-amber-700 border-amber-300 hover:bg-amber-100 font-medium" 
+                        onClick={() => handleStatusChange("pending_issue")}
+                        disabled={isProcessing}
+                      >
+                        Pendência
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-2xs" 
+                        onClick={() => handleStatusChange("clean")}
+                        disabled={isProcessing || Boolean(isCleaningBlockedByService)}
+                        title={isCleaningBlockedByService && flat.serviceInProgress ? `Serviço em andamento (${flat.serviceInProgress.serviceTitle})` : undefined}
+                      >
+                        <CheckCircle2 className="w-4 h-4 mr-1" /> {isInstruction ? "Concluir Tarefa" : "Concluir"}
+                      </Button>
+                    </div>
+                    {(isAssignedToMe || isAdmin) && (
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        className="w-full text-xs text-slate-500 hover:text-slate-700 py-1 h-7" 
+                        onClick={handleRelease}
+                        disabled={isProcessing}
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 mr-1" /> Devolver quarto à lista
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Opção para Administrador Excluir Instrução Avulsa */}
+                {isAdmin && isInstruction && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full text-xs text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 h-7"
+                    onClick={handleDeleteInstruction}
+                    disabled={isProcessing}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1" /> Excluir Instrução
+                  </Button>
+                )}
+
+                {currentStatus === "pending_issue" && (
+                  <div className="space-y-1.5">
+                    <Button 
+                      size="sm" 
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-2xs" 
+                      onClick={handleResolveIssue}
+                      disabled={isProcessing || Boolean(isCleaningBlockedByService)}
+                      title={isCleaningBlockedByService && flat.serviceInProgress ? `Serviço em andamento (${flat.serviceInProgress.serviceTitle})` : undefined}
+                    >
+                      <Check className="w-4 h-4 mr-1.5" /> Dar Baixa e Finalizar
+                    </Button>
+                    {isAdmin && (
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        className="w-full text-xs text-slate-500 h-7" 
+                        onClick={() => handleStatusChange("dirty")}
+                        disabled={isProcessing}
+                      >
+                        Reabrir como Sujo
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {currentStatus === "clean" && (
+                  <div className="space-y-1.5">
+                    {!isServiceCleaning && !isInstruction && (
+                      hasSmoked ? (
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-rose-600 text-white text-xs shadow-sm">
+                          <div className="flex items-center gap-1.5 font-black">
+                            <span className="text-base">🚬</span>
+                            <span>Fumou no quarto</span>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-6 px-2.5 text-[10px] font-black bg-white text-rose-700 hover:bg-rose-50"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleToggleSmoking()
+                            }}
+                            disabled={isProcessing}
+                            title="Desmarcar se foi registrado por engano"
+                          >
+                            Desmarcar
+                          </Button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="w-full text-center text-[11px] text-rose-700 dark:text-rose-300 bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-900/60 rounded-xl font-bold py-1.5 px-2.5 transition-colors flex items-center justify-center gap-1.5"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleToggleSmoking()
+                          }}
+                          disabled={isProcessing}
+                          title="Marcar que o hóspede fumou no quarto"
+                        >
+                          <span>🚬</span>
+                          <span>Hóspede fumou? Toque para marcar</span>
+                        </button>
+                      )
+                    )}
+                    <div className="flex gap-1.5">
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="flex-1 text-xs text-slate-600 border-slate-300 hover:bg-slate-100" 
+                        onClick={() => setRevertDirtyModalOpen(true)}
+                        disabled={isProcessing}
+                        title="Devolver quarto para o estado sujo e desfazer o registro de limpeza"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 mr-1" /> Devolver Quarto
+                      </Button>
+                      {isAdmin && (
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="flex-1 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 font-bold" 
+                          onClick={() => setAdminCleanModalOpen(true)}
+                          disabled={isProcessing}
+                        >
+                          Trocar Camareira
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {currentStatus === "no_show" && (
+                  <div className="space-y-1.5">
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      className="w-full text-xs text-rose-700 border-rose-300 hover:bg-rose-50 font-bold" 
+                      onClick={() => handleStatusChange("dirty")}
+                      disabled={isProcessing}
+                      title="Reabrir apartamento para a lista de limpeza como Sujo"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" /> Reabrir como Sujo (Limpar Quarto)
+                    </Button>
+                  </div>
+                )}
+
+                {/* Lost Item & Maintenance Report buttons for maids & admin */}
+                {!isInstruction && !isServiceCleaning && (
+                  <div className="grid grid-cols-1 gap-1.5 pt-0.5">
+                    <Button 
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setLostItemModalOpen(true)}
+                      className="w-full text-[11px] font-semibold h-8 gap-1.5 border-dashed border-amber-400/90 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-900 dark:text-amber-200 shadow-2xs"
+                    >
+                      <PackageOpen className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Item Encontrado no Quarto</span>
+                    </Button>
+                    <Button 
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setMaintModalOpen(true)}
+                      className="w-full text-[11px] font-semibold h-8 gap-1.5 border-dashed border-sky-400/90 dark:border-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/40 text-sky-900 dark:text-sky-200 shadow-2xs"
+                    >
+                      <Wrench className="w-3.5 h-3.5 text-sky-600" />
+                      <span>Relatar Defeito / Manutenção</span>
+                    </Button>
+                  </div>
+                )}
+
+                {/* Extend Stay Button (Admin Only, when not clean) */}
+                {isAdmin && !isInstruction && !isServiceCleaning && currentStatus !== "clean" && currentStatus !== "no_show" && (
+                  <Button 
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleOpenExtendStayModal}
+                    disabled={isProcessing || isSubmittingExtend}
+                    title="Hóspede estendeu: o hóspede renovou a estadia e continua no apartamento (não deve ser limpo hoje)."
+                    className="w-full text-[11px] font-semibold h-7 gap-1 text-slate-500 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 mt-0.5"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Hóspede Estendeu (Não Limpar)</span>
+                  </Button>
+                )}
+
+                {/* No Show Button (Admin Only, available when room not clean) */}
+                {isAdmin && !isInstruction && !isServiceCleaning && currentStatus !== "clean" && currentStatus !== "no_show" && (
+                  <Button 
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setNoShowModalOpen(true)}
+                    disabled={isProcessing || isSubmittingNoShow}
+                    title="Marcar No Show: o hóspede não compareceu e o quarto não foi utilizado (permanece limpo)."
+                    className="w-full text-[11px] font-semibold h-7 gap-1 text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 mt-0.5"
+                  >
+                    <UserX className="w-3.5 h-3.5" />
+                    <span>Marcar No Show</span>
+                  </Button>
+                )}
+
+                {/* Excluir Card Button (Admin Only, available when room not clean, including no_show) */}
+                {isAdmin && !isInstruction && currentStatus !== "clean" && (
+                  <Button 
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleteCardModalOpen(true)}
+                    disabled={isProcessing || isDeletingCard}
+                    title="Excluir card do painel de limpeza (some do dashboard e só reaparece se houver novo check-out ou lançamento manual)."
+                    className="w-full text-[11px] font-semibold h-7 gap-1 text-slate-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 mt-0.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Excluir Card</span>
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Reverter Quarto Limpo para Sujo / Reabrir Tarefa Confirmation Dialog */}
+      <Dialog open={revertDirtyModalOpen} onOpenChange={setRevertDirtyModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600">
+              <RotateCcw className="w-5 h-5" />
+              {isInstruction 
+                ? `Reabrir Instrução no Apt ${flat.flatNumber}?` 
+                : `Devolver Quarto ${flat.flatNumber} para Sujo?`}
+            </DialogTitle>
+            <DialogDescription>
+              {isInstruction 
+                ? "Deseja reabrir esta instrução como pendente na lista de tarefas operacionais?" 
+                : <>Tem certeza que deseja devolver este apartamento para o estado <strong>Sujo</strong>? Isso cancelará a conclusão da limpeza registrada e recolocará o quarto na lista de pendências para ser limpo novamente.</>}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button variant="outline" onClick={() => setRevertDirtyModalOpen(false)} disabled={isProcessing}>
+              Cancelar
+            </Button>
+            <Button 
+              className="bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs"
+              onClick={async () => {
+                setRevertDirtyModalOpen(false)
+                await handleStatusChange("dirty")
+              }}
+              disabled={isProcessing}
+            >
+              {isInstruction ? "Sim, Reabrir Tarefa" : "Sim, Devolver Quarto"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Card Confirmation Dialog */}
+      <Dialog open={deleteCardModalOpen} onOpenChange={setDeleteCardModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-rose-600">
+              <Trash2 className="w-5 h-5" />
+              Excluir Card de Limpeza - Flat {flat.flatNumber}
+            </DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja excluir este card de limpeza? Ele será removido do painel e <strong>não voltará sozinho</strong> nos próximos dias (só reaparecerá se for inserido manualmente ou houver um novo check-out do dia / check-out informado).
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button variant="outline" onClick={() => setDeleteCardModalOpen(false)} disabled={isDeletingCard}>
+              Cancelar
+            </Button>
+            <Button 
+              className="bg-rose-600 hover:bg-rose-700 text-white font-semibold shadow-xs"
+              onClick={handleConfirmDeleteCard}
+              disabled={isDeletingCard}
+            >
+              {isDeletingCard ? "Excluindo..." : "Excluir Card"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* No Show Confirmation Dialog */}
+      <Dialog open={noShowModalOpen} onOpenChange={setNoShowModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-rose-600">
+              <UserX className="w-5 h-5" />
+              Confirmar No Show - Flat {flat.flatNumber}
+            </DialogTitle>
+            <DialogDescription>
+              O hóspede não compareceu (No Show). O quarto não foi utilizado e será liberado como limpo, saindo da lista de limpeza de hoje.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button variant="outline" onClick={() => setNoShowModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              className="bg-rose-600 hover:bg-rose-700 text-white font-semibold shadow-xs"
+              onClick={handleConfirmNoShow}
+              disabled={isSubmittingNoShow}
+            >
+              {isSubmittingNoShow ? "Registrando..." : "Confirmar No Show"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Lost & Found Item Registration Dialog */}
+      <Dialog open={lostItemModalOpen} onOpenChange={setLostItemModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <form onSubmit={handleSaveLostItem}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <PackageOpen className="w-5 h-5 text-amber-600" />
+                Registrar Item Encontrado - Apt {flat.flatNumber}
+              </DialogTitle>
+              <DialogDescription>
+                Cadastre qualquer objeto esquecido pelo hóspede para controle da governança.
+              </DialogDescription>
+            </DialogHeader>
+
+            {lostItemSuccess ? (
+              <div className="py-8 text-center space-y-2.5 animate-in fade-in zoom-in-95">
+                <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-xs">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+                <h4 className="font-black text-sm text-slate-900 dark:text-slate-100">
+                  {offlineQueued ? "Salvo no Dispositivo com Sucesso!" : "Item e Foto Registrados com Sucesso!"}
+                </h4>
+                <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+                  {offlineQueued 
+                    ? "Salvo na memória local do celular. Será enviado para o servidor automaticamente assim que o sinal retornar."
+                    : "Objeto catalogado com foto nítida e vinculado aos dados do hóspede anterior."}
+                </p>
+                {offlineQueued && (
+                  <Badge className="bg-amber-100 text-amber-800 text-[10px] font-bold">
+                    <CloudOff className="w-3 h-3 mr-1" />
+                    Sincronização Offline Ativa
+                  </Badge>
+                )}
+              </div>
+            ) : (
+              <div className="py-3 space-y-3 text-xs">
+                {saveErrorMessage && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{saveErrorMessage}</span>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Descrição do Objeto Encontrado *</Label>
+                  <Input 
+                    value={lostDescription}
+                    onChange={e => setLostDescription(e.target.value)}
+                    required
+                    placeholder="Ex: Relógio de pulso prata, Carregador Samsung, Óculos de sol..."
+                    className="text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Local Onde Estava no Quarto</Label>
+                  <Input 
+                    value={lostLocation}
+                    onChange={e => setLostLocation(e.target.value)}
+                    placeholder="Ex: Em cima da mesa de cabeceira, dentro do guarda-roupa..."
+                    className="text-xs"
+                  />
+                </div>
+
+                {/* Photo Upload & Compressed Preview */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold">Foto do Item Encontrado</Label>
+                    {photoCompressionStats && (
+                      <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                        ⚡ Otimizada: {photoCompressionStats.compKb} KB (-{photoCompressionStats.saved}%)
+                      </span>
+                    )}
+                  </div>
+
+                  {compressingPhoto ? (
+                    <div className="p-6 border-2 border-dashed border-sky-300 dark:border-sky-800 rounded-xl flex flex-col items-center justify-center gap-2 bg-sky-50/50 dark:bg-sky-950/20 text-sky-700 dark:text-sky-300">
+                      <Sparkles className="w-6 h-6 animate-spin text-sky-600" />
+                      <span className="text-xs font-bold">Otimizando foto em alta qualidade...</span>
+                    </div>
+                  ) : lostPhotoBase64 ? (
+                    <div className="relative rounded-xl overflow-hidden border border-amber-300 max-h-48 flex items-center justify-center bg-slate-950/5">
+                      <img src={lostPhotoBase64} alt="Item Encontrado" className="max-h-48 w-auto object-contain rounded-lg" />
+                      <button
+                        type="button"
+                        onClick={() => { setLostPhotoBase64(null); setPhotoCompressionStats(null); }}
+                        className="absolute top-2 right-2 bg-rose-600 text-white p-1 rounded-full text-xs shadow-md hover:bg-rose-700"
+                        title="Remover foto"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-amber-300 dark:border-amber-800 rounded-xl cursor-pointer hover:bg-amber-50/50 dark:hover:bg-amber-950/20 transition-all">
+                      <Camera className="w-6 h-6 text-amber-600 mb-1" />
+                      <span className="font-semibold text-xs text-amber-900 dark:text-amber-200">Tirar Foto com a Câmera ou Galeria</span>
+                      <span className="text-[10px] text-muted-foreground">Compressão automática para envio ultrarrápido</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        capture="environment"
+                        onChange={handlePhotoUpload} 
+                        className="hidden" 
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Observações Extras</Label>
+                  <Textarea 
+                    value={lostNotes}
+                    onChange={e => setLostNotes(e.target.value)}
+                    placeholder="Ex: Entregue na recepção, guardado no armário de governança..."
+                    className="text-xs h-16 resize-none"
+                  />
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/40 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                  <div>
+                    <span className="font-semibold block">Notificação via WhatsApp</span>
+                    <span className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                      O hóspede anterior receberá uma mensagem automática no WhatsApp com a foto do item e o contato da camareira para combinar a retirada.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!lostItemSuccess && (
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => setLostItemModalOpen(false)} disabled={savingLostItem}>
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit" 
+                  size="sm" 
+                  disabled={savingLostItem || compressingPhoto || !lostDescription.trim()} 
+                  className="font-semibold text-xs bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
+                >
+                  {savingLostItem ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Gravando e Enviando...</span>
+                    </>
+                  ) : (
+                    <span>Salvar Item Encontrado</span>
+                  )}
+                </Button>
+              </DialogFooter>
+            )}
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Minimum Time Alert Modal */}
+      <Dialog open={minTimeAlertOpen} onOpenChange={setMinTimeAlertOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="mx-auto w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mb-2">
+              <Clock className="w-6 h-6" />
+            </div>
+            <DialogTitle className="text-center text-lg">Tempo Mínimo Insuficiente</DialogTitle>
+            <DialogDescription className="text-center text-sm pt-1 text-slate-700 font-medium">
+              Não é possível finalizar a limpeza ainda. O tempo de higienização registrado é insuficiente (mínimo exigido de 10 minutos).
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-center pt-2">
+            <Button className="w-full sm:w-auto" onClick={() => setMinTimeAlertOpen(false)}>
+              Entendido, continuarei a limpeza
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── MODAL: DECLARAÇÃO & ATESTADO OBRIGATÓRIO DE TAREFAS PREVENTIVAS ── */}
+      <Dialog open={finishModalOpen} onOpenChange={setFinishModalOpen}>
+        <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black text-foreground flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              <span>Finalizar Higienização • Flat {flat.flatNumber}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Para liberar o apartamento, ateste a realização dos serviços preventivos agendados.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2 space-y-4 text-xs">
+            {/* Lista de Tarefas Preventivas Agendadas com Checkbox de Atestado Obrigatório */}
+            {pendingPeriodicTasks.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-1.5 font-black text-xs text-foreground uppercase tracking-wider">
+                  <Wrench className="w-4 h-4 text-amber-500" />
+                  <span>Tarefas Preventivas Agendadas ({pendingPeriodicTasks.length}):</span>
+                </div>
+
+                {pendingPeriodicTasks.map((t: any) => {
+                  const isChecked = attestedTaskIds.includes(t.id)
+                  const maidName = userRole === "admin" ? "Administração" : (request?.assignedUsername || "Camareira")
+
+                  return (
+                    <div 
+                      key={t.id} 
+                      className={cn(
+                        "p-3.5 rounded-2xl border transition-all cursor-pointer space-y-2",
+                        isChecked 
+                          ? "bg-emerald-500/10 border-emerald-500/40" 
+                          : "bg-amber-500/5 border-amber-500/30 hover:border-amber-500/60"
+                      )}
+                      onClick={() => {
+                        setAttestedTaskIds(prev => 
+                          prev.includes(t.id) ? prev.filter(x => x !== t.id) : [...prev, t.id]
+                        )
+                      }}
+                    >
+                      <div className="flex items-start gap-3">
+                        <Checkbox 
+                          checked={isChecked}
+                          onCheckedChange={(c) => {
+                            setAttestedTaskIds(prev => 
+                              c ? [...prev, t.id] : prev.filter(x => x !== t.id)
+                            )
+                          }}
+                          className="mt-0.5 rounded-md"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <h4 className="font-black text-xs text-foreground">{t.name}</h4>
+                            <Badge variant="outline" className="text-[10px] font-bold text-amber-600 border-amber-500/30 shrink-0">
+                              {t.periodDays ? `A cada ${t.periodDays}d ${t.periodType === "occupied_days" ? "locação" : "corridos"}` : "Obrigatória"}
+                            </Badge>
+                          </div>
+                          {t.description && (
+                            <p className="text-[11px] text-muted-foreground mt-0.5">{t.description}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Termo de Atestado Formal */}
+                      <div className={cn(
+                        "p-2.5 rounded-xl text-[11px] leading-relaxed border transition-colors",
+                        isChecked 
+                          ? "bg-emerald-500/20 text-emerald-950 dark:text-emerald-200 border-emerald-500/30 font-medium" 
+                          : "bg-amber-500/10 text-amber-900 dark:text-amber-200 border-amber-500/20"
+                      )}>
+                        ✍️ <strong>Declaração de Execução:</strong> "Eu, <u>{maidName}</u>, atesto sob minha responsabilidade que executei a tarefa <strong>{t.name}</strong> de forma completa neste apartamento."
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Vistorias de Saída Reformuladas (Multi-Perguntas) */}
+            {pendingSurveys.length > 0 && (
+              <div className="space-y-4 pt-1">
+                {pendingSurveys.map((survey: any) => {
+                  const questions = Array.isArray(survey.questions) && survey.questions.length > 0
+                    ? survey.questions
+                    : [{ id: `q_${survey.id}`, question: survey.question || survey.title, type: survey.type || "yes_no", isRequired: true }]
+
+                  return (
+                    <div key={survey.id} className="bg-indigo-50/60 dark:bg-indigo-950/20 border-2 border-indigo-200 dark:border-indigo-800 rounded-2xl p-4 space-y-3.5">
+                      <div className="flex items-center justify-between gap-2 border-b border-indigo-200/60 dark:border-indigo-800/60 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <ClipboardCheck className="w-4 h-4 text-indigo-600" />
+                          <span className="font-black text-xs text-indigo-950 dark:text-indigo-200 uppercase tracking-wide">
+                            {survey.title || "Vistoria de Saída"}
+                          </span>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 border-indigo-300 bg-indigo-100/50 dark:bg-indigo-900/40">
+                          {questions.length} pergunta{questions.length !== 1 ? "s" : ""}
+                        </Badge>
+                      </div>
+
+                      {survey.description && (
+                        <p className="text-[11px] text-indigo-900/80 dark:text-indigo-300 font-medium">
+                          {survey.description}
+                        </p>
+                      )}
+
+                      {/* Lista de Perguntas */}
+                      <div className="space-y-3">
+                        {questions.map((q: any, qIdx: number) => {
+                          const key = `${survey.id}_${q.id}`
+                          const currentVal = surveyResponsesState[key]
+                          const currentPhoto = surveyPhotosState[key]
+                          const isCompressingThis = compressingSurveyPhotoKey === key
+
+                          return (
+                            <div key={q.id || qIdx} className="p-3 bg-background border rounded-xl space-y-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-bold text-xs text-foreground">
+                                  {qIdx + 1}. {q.question}
+                                </span>
+                                {q.isRequired ? (
+                                  <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[9px] font-bold shrink-0 border-0">
+                                    Obrigatória
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="secondary" className="text-[9px] shrink-0">
+                                    Opcional
+                                  </Badge>
+                                )}
+                              </div>
+
+                              {/* 1. SIM / NÃO */}
+                              {q.type === "yes_no" && (
+                                <div className="grid grid-cols-2 gap-2 pt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSurveyResponsesState(prev => ({ ...prev, [key]: "Sim" }))}
+                                    className={cn(
+                                      "p-2 rounded-xl text-xs font-bold border transition-all text-center",
+                                      currentVal === "Sim"
+                                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                                        : "bg-muted/40 hover:bg-muted text-foreground border-border"
+                                    )}
+                                  >
+                                    ✓ Sim
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSurveyResponsesState(prev => ({ ...prev, [key]: "Não" }))}
+                                    className={cn(
+                                      "p-2 rounded-xl text-xs font-bold border transition-all text-center",
+                                      currentVal === "Não"
+                                        ? "bg-rose-600 text-white border-rose-600 shadow-xs"
+                                        : "bg-muted/40 hover:bg-muted text-foreground border-border"
+                                    )}
+                                  >
+                                    ✕ Não
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* 2. ESCOLHA ÚNICA (SINGLE CHOICE) */}
+                              {q.type === "single_choice" && (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5">
+                                  {(q.options || []).map((opt: string, oIdx: number) => {
+                                    const isSelected = currentVal === opt
+                                    return (
+                                      <button
+                                        key={oIdx}
+                                        type="button"
+                                        onClick={() => setSurveyResponsesState(prev => ({ ...prev, [key]: opt }))}
+                                        className={cn(
+                                          "p-2 rounded-xl text-xs font-bold border transition-all text-left flex items-center gap-2",
+                                          isSelected
+                                            ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                                            : "bg-muted/40 hover:bg-muted text-foreground border-border"
+                                        )}
+                                      >
+                                        <div className={cn(
+                                          "w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0",
+                                          isSelected ? "border-white bg-white/20" : "border-muted-foreground"
+                                        )}>
+                                          {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                        </div>
+                                        <span className="truncate">{opt}</span>
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              )}
+
+                              {/* 3. MÚLTIPLA ESCOLHA (MULTI CHOICE) */}
+                              {q.type === "multi_choice" && (
+                                <div className="space-y-1.5 pt-0.5">
+                                  {(q.options || []).map((opt: string, oIdx: number) => {
+                                    const selectedArr: string[] = Array.isArray(currentVal) ? currentVal : []
+                                    const isChecked = selectedArr.includes(opt)
+                                    return (
+                                      <div
+                                        key={oIdx}
+                                        onClick={() => {
+                                          const next = isChecked
+                                            ? selectedArr.filter(x => x !== opt)
+                                            : [...selectedArr, opt]
+                                          setSurveyResponsesState(prev => ({ ...prev, [key]: next }))
+                                        }}
+                                        className={cn(
+                                          "p-2 rounded-xl text-xs font-semibold border cursor-pointer transition-all flex items-center gap-2",
+                                          isChecked
+                                            ? "bg-primary/10 border-primary text-primary font-bold shadow-2xs"
+                                            : "bg-muted/30 hover:bg-muted/60 text-foreground border-border"
+                                        )}
+                                      >
+                                        <Checkbox checked={isChecked} className="rounded-md" />
+                                        <span>{opt}</span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )}
+
+                              {/* 4. ESCALA NUMÉRICA (SCALE 1 A 5) */}
+                              {q.type === "scale" && (
+                                <div className="flex items-center gap-1.5 pt-0.5">
+                                  {[1, 2, 3, 4, 5].map((num) => {
+                                    const isSelected = Number(currentVal) === num
+                                    return (
+                                      <button
+                                        key={num}
+                                        type="button"
+                                        onClick={() => setSurveyResponsesState(prev => ({ ...prev, [key]: num }))}
+                                        className={cn(
+                                          "flex-1 p-2 rounded-xl text-xs font-black border transition-all flex flex-col items-center gap-0.5",
+                                          isSelected
+                                            ? "bg-amber-500 text-white border-amber-500 shadow-xs"
+                                            : "bg-muted/40 hover:bg-muted text-foreground border-border"
+                                        )}
+                                      >
+                                        <span>{num}</span>
+                                        <Star className={cn("w-3 h-3", isSelected ? "fill-white text-white" : "text-amber-500")} />
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              )}
+
+                              {/* 5. TEXTO LIVRE */}
+                              {q.type === "text" && (
+                                <Textarea 
+                                  value={currentVal || ""}
+                                  onChange={e => setSurveyResponsesState(prev => ({ ...prev, [key]: e.target.value }))}
+                                  placeholder="Digite sua resposta ou detalhes observados..."
+                                  rows={2}
+                                  className="text-xs resize-none rounded-xl"
+                                />
+                              )}
+
+                              {/* 6. FOTO COM COMPRESSÃO AUTOMÁTICA (Tipo 'photo' puro) */}
+                              {q.type === "photo" && (
+                                <div className="space-y-2 pt-0.5">
+                                  {currentPhoto ? (
+                                    <div className="flex items-center gap-3 p-2 bg-muted/40 border rounded-xl">
+                                      <img 
+                                        src={currentPhoto.base64} 
+                                        alt="Preview" 
+                                        className="w-16 h-16 rounded-lg object-cover border"
+                                      />
+                                      <div className="flex-1 min-w-0 text-[11px]">
+                                        <span className="font-bold text-emerald-600 dark:text-emerald-400 block flex items-center gap-1">
+                                          <Check className="w-3.5 h-3.5" /> Foto capturada!
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground block mt-0.5">
+                                          Comprimida: {currentPhoto.sizeKb} KB (era {currentPhoto.origKb} KB)
+                                        </span>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={() => handleRemoveSurveyPhoto(survey.id, q.id)}
+                                          className="text-[10px] h-6 px-1.5 text-destructive hover:bg-destructive/10 mt-1"
+                                        >
+                                          <Trash2 className="w-3 h-3 mr-1" /> Remover / Trocar Foto
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <label className="cursor-pointer">
+                                        <input 
+                                          type="file" 
+                                          accept="image/*" 
+                                          capture="environment"
+                                          className="hidden"
+                                          disabled={isCompressingThis}
+                                          onChange={(e) => {
+                                            const file = e.target.files?.[0]
+                                            if (file) handleSurveyPhotoUpload(survey.id, q.id, file)
+                                          }}
+                                        />
+                                        <div className="p-3 border-2 border-dashed border-indigo-300 dark:border-indigo-700 hover:border-indigo-500 rounded-xl text-center transition-all bg-indigo-50/30 dark:bg-indigo-950/10 text-indigo-950 dark:text-indigo-200">
+                                          {isCompressingThis ? (
+                                            <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-primary">
+                                              <Loader2 className="w-4 h-4 animate-spin" />
+                                              <span>Compactando foto...</span>
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-center justify-center gap-2 text-xs font-bold">
+                                              <Camera className="w-4 h-4 text-indigo-600" />
+                                              <span>Tirar Foto / Anexar da Galeria</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </label>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* FOTO ACOPLADA À PERGUNTA (hasPhoto ativado pelo admin) */}
+                              {q.hasPhoto && q.type !== "photo" && (
+                                <div className="mt-2.5 pt-2 border-t border-border/60 space-y-2">
+                                  {/* Título explicativo da foto conforme a condição */}
+                                  <div className="flex items-center justify-between text-[11px] font-bold">
+                                    <div className="flex items-center gap-1.5 text-indigo-950 dark:text-indigo-200">
+                                      <Camera className="w-3.5 h-3.5 text-indigo-600" />
+                                      <span>
+                                        {q.type === "yes_no" && q.requirePhotoCondition === "if_yes"
+                                          ? "Foto Comprobatória (Exigida ao marcar 'Sim'):"
+                                          : q.requirePhotoCondition === "always"
+                                            ? "Foto Comprobatória (Obrigatória):"
+                                            : "Anexar Foto de Evidência (Opcional):"}
+                                      </span>
+                                    </div>
+
+                                    {(q.requirePhotoCondition === "always" || (q.requirePhotoCondition === "if_yes" && currentVal === "Sim")) ? (
+                                      <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[9px] font-bold border-0">
+                                        Foto Exigida
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="secondary" className="text-[9px]">
+                                        Opcional
+                                      </Badge>
+                                    )}
+                                  </div>
+
+                                  {/* Exibição da foto já anexada */}
+                                  {currentPhoto ? (
+                                    <div className="flex items-center gap-3 p-2 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-300 dark:border-emerald-800 rounded-xl">
+                                      <img 
+                                        src={currentPhoto.base64} 
+                                        alt="Evidência" 
+                                        className="w-16 h-16 rounded-lg object-cover border"
+                                      />
+                                      <div className="flex-1 min-w-0 text-[11px]">
+                                        <span className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                                          <Check className="w-3.5 h-3.5 text-emerald-600" /> Foto anexada com sucesso!
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground block mt-0.5">
+                                          Comprimida: {currentPhoto.sizeKb} KB (era {currentPhoto.origKb} KB)
+                                        </span>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={() => handleRemoveSurveyPhoto(survey.id, q.id)}
+                                          className="text-[10px] h-6 px-1.5 text-destructive hover:bg-destructive/10 mt-1"
+                                        >
+                                          <Trash2 className="w-3 h-3 mr-1" /> Remover / Trocar Foto
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    /* Botão de captura quando ainda não anexou */
+                                    <div>
+                                      <label className="cursor-pointer block">
+                                        <input 
+                                          type="file" 
+                                          accept="image/*" 
+                                          capture="environment"
+                                          className="hidden"
+                                          disabled={isCompressingThis}
+                                          onChange={(e) => {
+                                            const file = e.target.files?.[0]
+                                            if (file) handleSurveyPhotoUpload(survey.id, q.id, file)
+                                          }}
+                                        />
+                                        <div className={cn(
+                                          "p-2.5 border-2 border-dashed rounded-xl text-center transition-all",
+                                          (q.requirePhotoCondition === "always" || (q.requirePhotoCondition === "if_yes" && currentVal === "Sim"))
+                                            ? "border-amber-400 bg-amber-50/40 dark:bg-amber-950/20 text-amber-900 dark:text-amber-200 hover:border-amber-500"
+                                            : "border-indigo-300 dark:border-indigo-700 bg-indigo-50/30 dark:bg-indigo-950/10 text-indigo-950 dark:text-indigo-200 hover:border-indigo-500"
+                                        )}>
+                                          {isCompressingThis ? (
+                                            <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-primary">
+                                              <Loader2 className="w-4 h-4 animate-spin" />
+                                              <span>Compactando foto...</span>
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-center justify-center gap-2 text-xs font-bold">
+                                              <Camera className="w-4 h-4 text-indigo-600" />
+                                              <span>Tirar Foto / Anexar da Galeria</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </label>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 pt-2 border-t border-border">
+            <Button 
+              variant="outline" 
+              onClick={() => setFinishModalOpen(false)}
+              className="rounded-xl h-9.5 text-xs font-bold"
+            >
+              Voltar
+            </Button>
+            <Button 
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl h-9.5 text-xs shadow-xs"
+              onClick={submitCompletion}
+              disabled={
+                isProcessing || 
+                (pendingPeriodicTasks.length > 0 && attestedTaskIds.length < pendingPeriodicTasks.length) ||
+                !isSurveyValid
+              }
+            >
+              {isProcessing ? "Gravando..." : (
+                pendingPeriodicTasks.length > 0 && attestedTaskIds.length < pendingPeriodicTasks.length
+                  ? `Marque o atestado das ${pendingPeriodicTasks.length} tarefas`
+                  : !isSurveyValid
+                    ? `Responda à vistoria (${missingSurveyQuestions.length} obrigatória(s))`
+                    : "Confirmar Atestado & Concluir Limpeza"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Register Issue Dialog */}
+      <Dialog open={issueDialogOpen} onOpenChange={setIssueDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Registrar Pendência</DialogTitle>
+            <DialogDescription>
+              Apt {flat.flatNumber} - Descreva o item faltante ou defeito que impede a liberação imediata do quarto.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="issue" className="mb-2 block">Observação (obrigatório)</Label>
+            <Textarea 
+              id="issue"
+              value={issueText}
+              onChange={(e) => setIssueText(e.target.value)}
+              placeholder="Ex: Faltando fronhas, aguardando lavanderia, controle de TV sem pilha..."
+              className="resize-none"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIssueDialogOpen(false)}>Cancelar</Button>
+            <Button onClick={submitIssue} disabled={!issueText.trim() || isProcessing}>
+              Salvar Pendência
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Alerta de Check-out em Data Futura */}
+      <Dialog open={futureCheckoutAlertOpen} onOpenChange={setFutureCheckoutAlertOpen}>
+        <DialogContent className="sm:max-w-md bg-card text-foreground border-border">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              <span>Check-out em Data Posterior</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Este apartamento ainda está ocupado pelo hóspede.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-xs py-2">
+            <div className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-amber-900 dark:text-amber-200 text-sm">
+                  Apt {flat.flatNumber} • {futureCheckoutInfo?.guestName || flat.activeReservation?.guestName || "Hóspede"}
+                </span>
+                <Badge className="bg-amber-600 text-white font-bold text-[10px]">Ocupado</Badge>
+              </div>
+              <p className="text-slate-700 dark:text-slate-300 leading-relaxed text-xs">
+                O check-out deste hóspede está agendado apenas para <strong>{futureCheckoutInfo?.checkoutDate ? futureCheckoutInfo.checkoutDate.split('-').reverse().join('/') : (flat.activeReservation?.checkoutDate ? flat.activeReservation.checkoutDate.split('-').reverse().join('/') : "o dia seguinte")}</strong>. Não é permitido iniciar a higienização de saída antes da desocupação do quarto.
+              </p>
+            </div>
+
+            <p className="text-muted-foreground text-[11px] leading-relaxed">
+              💡 Para programar a escala de limpeza ou visualizar o fluxo no dia da saída, por favor altere a data selecionada no topo da tela para a data do check-out.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-between flex-col-reverse sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setFutureCheckoutAlertOpen(false)}
+              className="text-xs"
+            >
+              Entendido / Fechar
+            </Button>
+
+            {(futureCheckoutInfo?.checkoutDate || flat.activeReservation?.checkoutDate) && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  const targetDate = futureCheckoutInfo?.checkoutDate || flat.activeReservation?.checkoutDate
+                  setFutureCheckoutAlertOpen(false)
+                  if (targetDate) {
+                    if (onSelectDate) {
+                      onSelectDate(targetDate)
+                    } else {
+                      window.location.href = `/dashboard?date=${targetDate}`
+                    }
+                  }
+                }}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs gap-1.5 shadow-xs"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Alterar Data para {futureCheckoutInfo?.checkoutDate ? futureCheckoutInfo.checkoutDate.split('-').reverse().join('/') : (flat.activeReservation?.checkoutDate ? flat.activeReservation.checkoutDate.split('-').reverse().join('/') : "")}</span>
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Admin Custom Instructions Modal (Twin Beds & Custom Maid Note) */}
+      {isAdmin && (
+        <Dialog open={instructionsModalOpen} onOpenChange={setInstructionsModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border shadow-2xl rounded-2xl">
+            <form onSubmit={handleSaveInstructions}>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-base font-black text-foreground">
+                  <BedDouble className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  Instruções para a Camareira • Flat {flat.flatNumber}
+                </DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground">
+                  Defina a configuração de camas e deixe um recado ou nota para a camareira ver ao limpar este apartamento.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="py-4 space-y-4 text-xs">
+                {/* Opção 2 Camas de Solteiro */}
+                <div className={`p-3.5 rounded-xl border transition-all ${
+                  twinBedsSetting
+                    ? "bg-indigo-50/80 dark:bg-indigo-950/30 border-indigo-300 dark:border-indigo-800"
+                    : "bg-muted/40 border-border/80"
+                }`}>
+                  <div className="flex items-start gap-2.5">
+                    <Checkbox
+                      id={`twinBeds-${flat.flatId}`}
+                      checked={twinBedsSetting}
+                      onCheckedChange={(checked) => setTwinBedsSetting(Boolean(checked))}
+                      className="mt-0.5 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                    />
+                    <div className="space-y-0.5">
+                      <Label htmlFor={`twinBeds-${flat.flatId}`} className="font-bold text-xs text-foreground cursor-pointer flex items-center gap-1.5">
+                        <BedDouble className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                        Montar 2 Camas de Solteiro (Separadas)
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        A camareira verá um aviso destacado informando que as camas devem ser preparadas separadas como solteiro.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Opção Colchão Extra */}
+                <div className={`p-3.5 rounded-xl border transition-all ${
+                  extraMattressSetting
+                    ? "bg-purple-50/80 dark:bg-purple-950/30 border-purple-300 dark:border-purple-800"
+                    : "bg-muted/40 border-border/80"
+                }`}>
+                  <div className="flex items-start gap-2.5">
+                    <Checkbox
+                      id={`extraMattress-${flat.flatId}`}
+                      checked={extraMattressSetting}
+                      onCheckedChange={(checked) => setExtraMattressSetting(Boolean(checked))}
+                      className="mt-0.5 data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600"
+                    />
+                    <div className="space-y-0.5">
+                      <Label htmlFor={`extraMattress-${flat.flatId}`} className="font-bold text-xs text-foreground cursor-pointer flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                        Colocar Colchão Extra
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        A camareira verá um aviso destacado informando para providenciar e colocar colchão extra no apartamento.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Nota / Recado Digitado para a Camareira */}
+                <div className="space-y-1.5">
+                  <Label htmlFor={`adminNote-${flat.flatId}`} className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                    <span>📝 Nota / Recado para a Camareira:</span>
+                  </Label>
+                  <Textarea
+                    id={`adminNote-${flat.flatId}`}
+                    value={adminNoteText}
+                    onChange={e => setAdminNoteText(e.target.value)}
+                    placeholder="Digite qualquer instrução para a camareira (ex: Deixar toalhas extras, colocar manta nova, conferir ar condicionado, montar berço...)"
+                    rows={3}
+                    className="w-full text-xs rounded-xl bg-background leading-relaxed"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Esta nota aparecerá em destaque no card do quarto para a camareira ler antes de iniciar a limpeza.
+                  </p>
+                </div>
+              </div>
+
+              <DialogFooter className="gap-2 pt-2 border-t border-border">
+                <Button type="button" variant="outline" onClick={() => setInstructionsModalOpen(false)} className="text-xs font-bold rounded-xl h-9">
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={isSavingInstructions} 
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl h-9 gap-1.5 shadow-sm"
+                >
+                  {isSavingInstructions ? "Salvando..." : "Salvar Instruções"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Modal: Admin Marcar como Limpo em nome de uma Camareira */}
+      {isAdmin && (
+        <Dialog open={adminCleanModalOpen} onOpenChange={setAdminCleanModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border shadow-2xl rounded-3xl">
+            <form onSubmit={handleAdminConfirmClean}>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-base font-black text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="w-5 h-5" />
+                  {isInstruction 
+                    ? `Concluir Instrução • Apt ${flat.flatNumber}` 
+                    : `Marcar Quarto como Limpo • Flat ${flat.flatNumber}`}
+                </DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground">
+                  {isInstruction 
+                    ? "Selecione quem executou esta tarefa/instrução no apartamento para registrar a conclusão." 
+                    : "Selecione a camareira responsável por esta higienização para registrar a produtividade e remuneração corretamente no sistema."}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="py-4 space-y-4 text-xs">
+                {/* Seletor de Colaborador */}
+                <div className="space-y-2">
+                  <Label className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                    <User className="w-4 h-4 text-emerald-600" />
+                    {isInstruction ? "Quem executou a tarefa no flat? *" : "Quem realizou a limpeza deste quarto? *"}
+                  </Label>
+                  <Select value={selectedMaidId} onValueChange={setSelectedMaidId}>
+                    <SelectTrigger className="w-full h-10 text-xs rounded-xl bg-background font-semibold">
+                      <SelectValue placeholder={isInstruction ? "Selecione o responsável" : "Selecione a camareira"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {staffList.map(s => (
+                        <SelectItem key={s.id} value={String(s.id)}>
+                          <span className="font-bold capitalize">{s.name || s.username}</span>
+                          <span className="text-[10px] text-muted-foreground ml-1.5 font-normal">
+                            ({s.role === "admin" ? "Administrador / Gestor" : "Camareira"})
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className={cn(
+                  "p-3.5 rounded-2xl border space-y-1 text-xs",
+                  (isInstruction || isServiceCleaning)
+                    ? "bg-purple-50/80 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800/60"
+                    : "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60"
+                )}>
+                  <span className={cn(
+                    "font-bold flex items-center gap-1",
+                    (isInstruction || isServiceCleaning) ? "text-purple-900 dark:text-purple-200" : "text-emerald-900 dark:text-emerald-200"
+                  )}>
+                    {(isInstruction || isServiceCleaning) ? <Wrench className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {isServiceCleaning
+                      ? "Conferência / Limpeza Pós-Serviço"
+                      : isInstruction
+                        ? "Serviço Operacional / Instrução"
+                        : "Contabilização Automática"}
+                  </span>
+                  <p className={cn(
+                    "text-[11px] leading-relaxed",
+                    (isInstruction || isServiceCleaning) ? "text-purple-800 dark:text-purple-300" : "text-emerald-800 dark:text-emerald-300"
+                  )}>
+                    {(isInstruction || isServiceCleaning)
+                      ? (isPaidCleaning 
+                          ? "Este atendimento foi configurado como remunerado e será creditado na produtividade da colaboradora." 
+                          : "Este atendimento está configurado como conferência/apoio operacional (não remunerado) e não gera crédito financeiro de faxina.")
+                      : "Esta limpeza será creditada integralmente na contagem e nos relatórios de produtividade da colaboradora selecionada."}
+                  </p>
+                </div>
+
+                {pendingPeriodicTasks.length > 0 && !isInstruction && (
+                  <div className="p-3.5 rounded-2xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 space-y-1 text-xs">
+                    <span className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1">
+                      <ClipboardCheck className="w-3.5 h-3.5 text-amber-600" />
+                      {pendingPeriodicTasks.length} tarefa(s) preventiva(s) vinculada(s)
+                    </span>
+                    <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                      {pendingPeriodicTasks.map((t: any) => t.name).join(", ")} — serão concluídas e a contagem de dias será zerada automaticamente.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="gap-2 pt-2 border-t border-border">
+                <Button type="button" variant="outline" onClick={() => setAdminCleanModalOpen(false)} className="text-xs font-bold rounded-xl h-9">
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={adminCleanSubmitting || !selectedMaidId} 
+                  className={cn(
+                    "text-white text-xs font-bold rounded-xl h-9 gap-1.5 shadow-sm",
+                    isInstruction ? "bg-purple-700 hover:bg-purple-800" : "bg-emerald-600 hover:bg-emerald-700"
+                  )}
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  {adminCleanSubmitting ? "Salvando..." : (isInstruction ? "Confirmar Conclusão" : "Confirmar Limpeza")}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* ── Modal de Conclusão de Limpeza Stayover B2B (Checklist de Enxoval) ── */}
+      <Dialog open={stayoverModalOpen} onOpenChange={setStayoverModalOpen}>
+        <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black text-foreground flex items-center gap-2">
+              <BedDouble className="w-5 h-5 text-indigo-600" />
+              <span>Concluir Limpeza Stayover — Flat {flat.flatNumber}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Limpeza diária de manutenção do flat ocupado (Reserva B2B). Confirme as trocas de enxoval realizadas:
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleConfirmStayoverClean} className="space-y-4 pt-2">
+            {/* Contexto da Estadia */}
+            <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-2xl border border-indigo-200/80 text-xs space-y-1.5">
+              <div className="flex items-center justify-between font-bold text-indigo-950 dark:text-indigo-200">
+                <span>Hóspede: {request?.guestName || flat.activeReservation?.guestName || "Hóspede B2B"}</span>
+                <span>Dia {request?.stayDayNumber || linenTracking?.stayDayNumber || 1} de {request?.totalStayNights || linenTracking?.totalStayNights || 1}</span>
+              </div>
+              {(request?.guestRequestedBedding || request?.guestRequestedTowels || linenTracking?.guestRequestedBedding || linenTracking?.guestRequestedTowels) && (
+                <div className="text-purple-800 dark:text-purple-300 font-bold bg-white/80 dark:bg-card/80 p-1.5 rounded-lg border border-purple-200 text-[11px] flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                  <span>
+                    Pedido do hóspede: {
+                      (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding) && (request?.guestRequestedTowels || linenTracking?.guestRequestedTowels)
+                        ? "Trocar Roupa de Cama e Toalhas"
+                        : (request?.guestRequestedBedding || linenTracking?.guestRequestedBedding)
+                          ? "Trocar Roupa de Cama"
+                          : "Trocar Toalhas de Banho"
+                    }
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Pergunta 1: Toalhas */}
+            <div className="p-3.5 bg-muted/30 border border-border rounded-2xl flex items-center justify-between gap-3">
+              <div>
+                <Label className="text-xs font-bold text-foreground block">
+                  1. As toalhas de banho foram trocadas?
+                </Label>
+                <span className="text-[11px] text-muted-foreground">
+                  Substituição por toalhas limpas e higienizadas
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={towelsChanged ? "default" : "outline"}
+                  onClick={() => setTowelsChanged(true)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${towelsChanged ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+                >
+                  Sim
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!towelsChanged ? "default" : "outline"}
+                  onClick={() => setTowelsChanged(false)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${!towelsChanged ? "bg-slate-700 text-white" : ""}`}
+                >
+                  Não
+                </Button>
+              </div>
+            </div>
+
+            {/* Pergunta 2: Cama */}
+            <div className="p-3.5 bg-muted/30 border border-border rounded-2xl flex items-center justify-between gap-3">
+              <div>
+                <Label className="text-xs font-bold text-foreground block">
+                  2. A roupa de cama foi trocada?
+                </Label>
+                <span className="text-[11px] text-muted-foreground">
+                  Lençóis, fronhas e protetores substituídos
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={beddingChanged ? "default" : "outline"}
+                  onClick={() => setBeddingChanged(true)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${beddingChanged ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+                >
+                  Sim
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!beddingChanged ? "default" : "outline"}
+                  onClick={() => setBeddingChanged(false)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${!beddingChanged ? "bg-slate-700 text-white" : ""}`}
+                >
+                  Não
+                </Button>
+              </div>
+            </div>
+
+            {/* Pergunta 3: Fumo no quarto */}
+            <div className="p-3.5 bg-muted/30 border border-border rounded-2xl flex items-center justify-between gap-3">
+              <div>
+                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <span>🚬</span>
+                  <span>3. O hóspede fumou no quarto?</span>
+                </Label>
+                <span className="text-[11px] text-muted-foreground">
+                  Registra no cadastro e alerta a equipe em futuras estadias
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={stayoverSmokedInRoom ? "destructive" : "outline"}
+                  onClick={() => setStayoverSmokedInRoom(true)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${stayoverSmokedInRoom ? "bg-rose-600 hover:bg-rose-700 text-white" : ""}`}
+                >
+                  🚬 Sim
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!stayoverSmokedInRoom ? "default" : "outline"}
+                  onClick={() => setStayoverSmokedInRoom(false)}
+                  className={`h-8 px-3 text-xs font-bold rounded-xl ${!stayoverSmokedInRoom ? "bg-emerald-600 text-white" : ""}`}
+                >
+                  ✓ Não
+                </Button>
+              </div>
+            </div>
+
+            {/* Se Admin: seleção de camareira responsável */}
+            {isAdmin && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-foreground">Camareira Responsável *</Label>
+                <Select value={selectedMaidId} onValueChange={setSelectedMaidId}>
+                  <SelectTrigger className="h-9 rounded-xl text-xs font-bold">
+                    <SelectValue placeholder="Selecione a camareira..." />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-2xl">
+                    {staffList.map(s => (
+                      <SelectItem key={s.id} value={String(s.id)} className="text-xs font-semibold">
+                        {s.name || s.username} ({s.role === "admin" ? "Admin" : "Camareira"})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <DialogFooter className="gap-2 pt-2 border-t border-border">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setStayoverModalOpen(false)}
+                className="rounded-xl h-9 text-xs font-bold"
+              >
+                Voltar
+              </Button>
+              <Button
+                type="submit"
+                disabled={isProcessing || (isAdmin && !selectedMaidId && !request?.assignedUserId)}
+                className="rounded-xl h-9 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+              >
+                {isProcessing ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+                <span>Confirmar Limpeza Stayover</span>
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Confirmar Estadia Estendida (Hóspede Estendeu - Admin Only) */}
+      {isAdmin && (
+        <Dialog open={extendStayModalOpen} onOpenChange={setExtendStayModalOpen}>
+        <DialogContent className="sm:max-w-md bg-card border border-border shadow-2xl rounded-3xl">
+          <form onSubmit={handleConfirmExtendStay}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-black text-amber-600 dark:text-amber-400">
+                <Clock className="w-5 h-5" />
+                Confirmar Estadia Estendida • Flat {flat.flatNumber}
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                O hóspede renovou a estadia. A data de check-out e o valor da reserva serão atualizados automaticamente no PMS.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="py-3 space-y-3.5 text-xs">
+              {/* Card Resumo do Hóspede e Reserva */}
+              <div className="p-3.5 bg-amber-50/80 dark:bg-amber-950/40 rounded-2xl border border-amber-200 dark:border-amber-800/60 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 dark:text-slate-100 text-xs">
+                    {flat.reservation?.guestName || flat.leavingGuest || flat.activeReservation?.guestName || "Hóspede em estadia"}
+                  </span>
+                  {flat.reservation?.code && (
+                    <Badge variant="outline" className="text-[10px] font-mono bg-white dark:bg-slate-900">
+                      #{flat.reservation.code}
+                    </Badge>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-amber-200/60 dark:border-amber-800/40 text-[11px] text-slate-600 dark:text-slate-400">
+                  <div>
+                    <span className="text-muted-foreground block text-[10px]">Saída Atual:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {(() => {
+                        if (!currentCheckoutStr) return "--"
+                        try {
+                          const p = parseISO(currentCheckoutStr)
+                          return isValid(p) ? format(p, "dd/MM/yyyy") : currentCheckoutStr
+                        } catch {
+                          return currentCheckoutStr
+                        }
+                      })()}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[10px]">Total Atual:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {currentTotalAmount > 0 ? `R$ ${currentTotalAmount.toFixed(2)}` : "Não informado"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Mensagem de Erro / Alerta */}
+              {extendErrorMessage && (
+                <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl flex items-center gap-2 text-xs text-rose-700 dark:text-rose-300 font-medium">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                  <span>{extendErrorMessage}</span>
+                </div>
+              )}
+
+              {/* Campo 1: Nova data do check-out */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <CalendarDays className="w-3.5 h-3.5 text-amber-600" />
+                    Nova data do check-out <span className="text-rose-500">*</span>
+                  </span>
+                  {(() => {
+                    if (!extendNewCheckoutDate || !currentCheckoutStr) return null
+                    try {
+                      const diff = differenceInDays(parseISO(extendNewCheckoutDate), parseISO(currentCheckoutStr))
+                      return diff > 0 ? (
+                        <span className="text-[10.5px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded-full">
+                          +{diff} {diff === 1 ? "diária" : "diárias"}
+                        </span>
+                      ) : null
+                    } catch {
+                      return null
+                    }
+                  })()}
+                </Label>
+                <Input
+                  type="date"
+                  required
+                  min={currentCheckoutStr || date}
+                  value={extendNewCheckoutDate}
+                  onChange={e => handleNewCheckoutDateChange(e.target.value)}
+                  className="text-xs font-medium"
+                />
+              </div>
+
+              {/* Campo 2: Valor a ser incrementado */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                    Valor a ser incrementado na reserva (R$)
+                  </span>
+                  {dailyRate > 0 && (
+                    <span className="text-[10px] text-muted-foreground">
+                      Diária base: R$ {dailyRate.toFixed(2)}
+                    </span>
+                  )}
+                </Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-xs text-muted-foreground font-semibold">R$</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={extendAdditionalAmount}
+                    onChange={e => {
+                      setAmountManuallyEdited(true)
+                      setExtendAdditionalAmount(e.target.value)
+                    }}
+                    placeholder="0,00"
+                    className="pl-9 text-xs font-medium"
+                  />
+                </div>
+                {/* Resumo do novo valor total previsto */}
+                <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900/50 rounded-lg text-[11px] text-slate-500 border border-slate-200/60 dark:border-slate-800">
+                  <span>Novo valor total previsto:</span>
+                  <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                    R$ {(currentTotalAmount + (parseFloat(extendAdditionalAmount) || 0)).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Campo 3: Observações / Anotação */}
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Observações adicionais (opcional)</Label>
+                <Input
+                  value={extendNotes}
+                  onChange={e => setExtendNotes(e.target.value)}
+                  placeholder="Ex: Hóspede solicitou pelo WhatsApp, pagamento na saída..."
+                  className="text-xs"
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 pt-2 border-t border-border">
+              <Button type="button" variant="outline" size="sm" onClick={() => setExtendStayModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSubmittingExtend || !extendNewCheckoutDate}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl gap-1.5 shadow-sm"
+              >
+                {isSubmittingExtend ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Salvando...
+                  </>
+                ) : (
+                  "Confirmar e Atualizar Reserva"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      )}
+
+      {/* Modal: Relatar Defeito / Manutenção Rápida (Camareira & Admin) */}
+      <Dialog open={maintModalOpen} onOpenChange={setMaintModalOpen}>
+        <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+          <form onSubmit={handleSaveMaintReport}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-black text-foreground">
+                <Wrench className="w-5 h-5 text-sky-600" />
+                <span>Relatar Defeito / Manutenção — Flat {flat.flatNumber || flat.number}</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Viu algo quebrado, vazando ou precisando de reparo? Descreva abaixo e tire foto se necessário. A gerência receberá aviso imediato no WhatsApp.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="py-3 space-y-3 text-xs">
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Tipo de Reparo *</Label>
+                <Select value={maintSpecialty} onValueChange={setMaintSpecialty}>
+                  <SelectTrigger className="h-9 text-xs rounded-xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hidraulica">💧 Hidráulica / Vazamento / Torneira</SelectItem>
+                    <SelectItem value="eletrica">⚡ Elétrica / Tomada / Lâmpada</SelectItem>
+                    <SelectItem value="marcenaria">🪚 Marcenaria / Armário / Porta</SelectItem>
+                    <SelectItem value="ar_condicionado">❄️ Ar-Condicionado</SelectItem>
+                    <SelectItem value="fechadura">🔐 Fechadura Eletrônica</SelectItem>
+                    <SelectItem value="eletrodomesticos">📺 TV / Frigobar / Micro-ondas</SelectItem>
+                    <SelectItem value="pintura_alvenaria">🧱 Pintura / Parede / Piso</SelectItem>
+                    <SelectItem value="geral">🔧 Outro Reparo Geral</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">O que aconteceu? *</Label>
+                <Textarea
+                  value={maintText}
+                  onChange={e => setMaintText(e.target.value)}
+                  required
+                  rows={3}
+                  placeholder="Ex: Torneira da pia está pingando água, controle da TV sem funcionar..."
+                  className="text-xs rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-bold">Foto do Problema (Opcional)</Label>
+                  {compressingMaintPhoto && (
+                    <span className="text-[10px] text-sky-600 font-bold animate-pulse">Comprimindo foto...</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {maintPhotos.map((p, idx) => (
+                    <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden border border-border">
+                      <img src={p} alt="Foto defeito" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setMaintPhotos(prev => prev.filter((_, i) => i !== idx))}
+                        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {maintPhotos.length < 3 && (
+                    <label className="w-16 h-16 rounded-xl border-2 border-dashed border-sky-400/60 hover:border-sky-500 bg-sky-500/5 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-sky-700 dark:text-sky-300 text-[10px] font-bold">
+                      <Camera className="w-4 h-4" />
+                      <span>Foto</span>
+                      <input type="file" accept="image/*" multiple onChange={handleMaintPhotoUpload} className="hidden" />
+                    </label>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 pt-2 border-t border-border">
+              <Button type="button" variant="outline" size="sm" onClick={() => setMaintModalOpen(false)} className="rounded-xl text-xs font-bold">
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={savingMaint || compressingMaintPhoto || !maintText.trim()}
+                className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl gap-1.5"
+              >
+                {savingMaint ? "Enviando..." : "Enviar Alerta de Manutenção"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
