@@ -413,7 +413,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
         }
       })
 
-      // Sincroniza também com tariffSettings em tela
+      // Sincroniza também com tariffSettings e siteConfig em tela
       setTariffSettings((ts: any) => ts ? ({
         ...ts,
         baseDailyRate: ts.mode === "manual" ? ts.baseDailyRate : roundedTarifa,
@@ -423,6 +423,18 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
           booking: { ...(ts.channelMarkups?.booking || {}), commissionPct: partial.channelCommissionPct },
         } : ts.channelMarkups,
       }) : ts)
+
+      if (partial.extraBedFee !== undefined || partial.breakfastSurchargePerGuest !== undefined) {
+        setSiteConfig((sc: any) => sc ? ({
+          ...sc,
+          ...(partial.extraBedFee !== undefined
+            ? { extraBedConfig: { ...(sc.extraBedConfig || {}), feeAmount: Number(partial.extraBedFee) } }
+            : {}),
+          ...(partial.breakfastSurchargePerGuest !== undefined
+            ? { pricing: { ...(sc.pricing || {}), breakfastSurchargePerGuest: Number(partial.breakfastSurchargePerGuest) } }
+            : {}),
+        }) : sc)
+      }
 
       return merged
     })
@@ -774,6 +786,10 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
 
       const normalizedSiteConfig = {
         ...siteConfig,
+        extraBedConfig: {
+          ...(siteConfig?.extraBedConfig || {}),
+          feeAmount: extraBedVal,
+        },
         pricing: {
           ...(siteConfig?.pricing || {}),
           directDiscountPercent: 0,
@@ -783,7 +799,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
         },
       }
 
-      const [tRes, sRes] = await Promise.all([
+      const [tRes] = await Promise.all([
         fetch("/api/tariffs/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -796,11 +812,6 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
             pixDiscountPercent: cardMarkupVal,
           })
         }),
-        fetch("/api/site-content", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(normalizedSiteConfig)
-        }),
         fetch("/api/wbp/pricing/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -811,20 +822,27 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
             autoPublish: true,
           })
         }).catch(() => null),
-        fetch("/api/settings", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            petPolicy: normalizedSiteConfig.petPolicy,
-            childPolicy: normalizedSiteConfig.childPolicy,
-            cancellationPolicy: normalizedSiteConfig.cancellationPolicy,
-            pricing: normalizedSiteConfig.pricing,
-            ratePlans: normalizedSiteConfig.ratePlans,
-            bedConfig: normalizedSiteConfig.bedConfig,
-            extraBedConfig: normalizedSiteConfig.extraBedConfig,
-          })
-        }).catch(() => null)
       ])
+
+      const sRes = await fetch("/api/site-content", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(normalizedSiteConfig)
+      })
+
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          petPolicy: normalizedSiteConfig.petPolicy,
+          childPolicy: normalizedSiteConfig.childPolicy,
+          cancellationPolicy: normalizedSiteConfig.cancellationPolicy,
+          pricing: normalizedSiteConfig.pricing,
+          ratePlans: normalizedSiteConfig.ratePlans,
+          bedConfig: normalizedSiteConfig.bedConfig,
+          extraBedConfig: normalizedSiteConfig.extraBedConfig,
+        })
+      }).catch(() => null)
 
       if (tRes.ok && sRes.ok) {
         setSiteConfig(normalizedSiteConfig)
@@ -874,24 +892,28 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
         }
       },
       bedConfig: {
+        allowTwinBeds: true,
         twinFeeAmount: 30,
         twinFeeType: "per_stay",
+        twinSameDayCutoffTime: "12:00",
+        twinAllowedFlats: siteConfig?.bedConfig?.twinAllowedFlats || [113, 114, 115, 202, 905],
         cutoffHour: 12
       },
       extraBedConfig: {
-        enabled: true,
+        enabled: false,
         feeAmount: 60,
         feeType: "per_stay",
         cutoffHour: 12,
-        maxGuests: 3,
-        warningMessage: "Nossos flats são projetados para até 2 pessoas (lotação ideal). Para acomodar com carinho um 3º hóspede, disponibilizamos a montagem de 1 colchonete extra com enxoval completo e higienizado."
+        maxGuests: 2,
+        warningMessage: "Nossos flats são projetados para até 2 pessoas. Quando ativado pela administração, acomodamos um 3º hóspede em colchonete extra com enxoval completo."
       },
       petPolicy: {
         enabled: true,
         feeAmount: 40,
         feeType: "per_stay",
-        allowedSpecies: "Cachorros (Cães) de pequeno e médio porte (até 15kg)",
-        rules: "• Uso obrigatório de guia/coleira nas áreas sociais do condomínio.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O hóspede tutor é responsável pela conservação e integridade do apartamento."
+        maxPets: 2,
+        allowedSpecies: "Apenas cachorros de porte pequeno (até 10kg)",
+        rules: "• Exclusivo para cachorros de pequeno porte (até 10 kg), máximo de 2 por flat. Outros animais não são permitidos.\n• Taxa de higienização de R$ 40 por cachorro por estadia.\n• Nas áreas comuns do Edifício Soho, transporte obrigatório no colo ou caixa/bolsa e uso exclusivo do elevador de serviço.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O titular responde integralmente por eventuais danos ou higienização extraordinária."
       },
       childPolicy: {
         freeUpToAge: 5,
@@ -899,9 +921,11 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
         rules: "1 criança de até 5 anos tem cortesia dormindo na mesma cama dos pais/responsáveis."
       },
       cancellationPolicy: {
-        freeCancellationDays: 7,
+        type: "free_24h_before_checkin",
+        freeCancellationHours: 24,
+        checkinHour: 14,
         noShowPenaltyPercent: 100,
-        rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
+        rules: "Cancelamento gratuito com 100% de reembolso até 24 horas antes das 14:00 do dia do check-in. Faltando menos de 24h para o check-in, é cobrado 100% (sem reembolso)."
       },
       pricing: {
         directDiscountPercent: 0,
@@ -948,22 +972,27 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     description: "Tarifa econômica sem café da manhã"
   }
   const extraBedConfig = siteConfig?.extraBedConfig || {
-    enabled: true,
+    enabled: false,
     feeAmount: 60,
     feeType: "per_stay",
-    cutoffHour: 12
+    cutoffHour: 12,
+    maxGuests: 2
   }
   const bedConfig = siteConfig?.bedConfig || {
+    allowTwinBeds: true,
     twinFeeAmount: 30,
     twinFeeType: "per_stay",
+    twinSameDayCutoffTime: "12:00",
+    twinAllowedFlats: [113, 114, 115, 202, 905],
     cutoffHour: 12
   }
   const petPolicy = siteConfig?.petPolicy || {
     enabled: true,
     feeAmount: 40,
     feeType: "per_stay",
-    allowedSpecies: "Cachorros (Cães) de pequeno e médio porte (até 15kg)",
-    rules: "• Uso obrigatório de guia/coleira nas áreas sociais do condomínio.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O hóspede tutor é responsável pela conservação e integridade do apartamento."
+    maxPets: 2,
+    allowedSpecies: "Apenas cachorros de porte pequeno (até 10kg)",
+    rules: "• Exclusivo para cachorros de pequeno porte (até 10 kg), máximo de 2 por flat. Outros animais não são permitidos.\n• Taxa de higienização de R$ 40 por cachorro por estadia.\n• Nas áreas comuns do Edifício Soho, transporte obrigatório no colo ou caixa/bolsa e uso exclusivo do elevador de serviço.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O titular responde integralmente por eventuais danos ou higienização extraordinária."
   }
   const childPolicy = siteConfig?.childPolicy || {
     freeUpToAge: 5,
@@ -971,9 +1000,11 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
     rules: "1 criança de até 5 anos tem cortesia dormindo na mesma cama dos pais/responsáveis."
   }
   const cancellationPolicy = siteConfig?.cancellationPolicy || {
-    freeCancellationDays: 7,
+    type: "free_24h_before_checkin",
+    freeCancellationHours: 24,
+    checkinHour: 14,
     noShowPenaltyPercent: 100,
-    rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
+    rules: "Cancelamento gratuito com 100% de reembolso até 24 horas antes das 14:00 do dia do check-in. Faltando menos de 24h para o check-in, é cobrado 100% (sem reembolso)."
   }
   const pricing = siteConfig?.pricing || {
     directDiscountPercent: 0,
@@ -2606,63 +2637,130 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* Colchonete Extra */}
+                  {/* Colchonete Extra / 3º Hóspede */}
                   <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs flex items-center gap-1.5"><Layers className="w-3.5 h-3.5 text-sky-600" /> Colchonete 3º Hóspede</span>
-                      <Badge variant="outline" className="text-[10px]">R$ {extraBedConfig.feeAmount || 60}</Badge>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-xs flex items-center gap-1.5"><Layers className="w-3.5 h-3.5 text-sky-600" /> 3º Hóspede (Colchonete)</span>
+                      <Badge className={extraBedConfig.enabled ? "bg-emerald-100 text-emerald-800 text-[10px]" : "bg-slate-100 text-slate-600 text-[10px]"}>
+                        {extraBedConfig.enabled ? `Ativo (Até 3 hósp.) • R$ ${extraBedConfig.feeAmount || 60}` : "Desativado (Máx. 2 hósp.)"}
+                      </Badge>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Valor da Taxa (R$)</Label>
-                      <Input
-                        type="number"
-                        value={extraBedConfig.feeAmount ?? 60}
-                        onChange={e => setSiteConfig({ ...siteConfig, extraBedConfig: { ...siteConfig.extraBedConfig, feeAmount: Number(e.target.value) } })}
-                        className="h-8 font-black text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Frequência</Label>
+                      <Label className="text-[11px] font-bold">Permitir Selecionar 3º Hóspede no Site?</Label>
                       <select
-                        value={extraBedConfig.feeType || "per_stay"}
-                        onChange={e => setSiteConfig({ ...siteConfig, extraBedConfig: { ...siteConfig.extraBedConfig, feeType: e.target.value } })}
+                        value={extraBedConfig.enabled ? "yes" : "no"}
+                        onChange={e => {
+                          const enabled = e.target.value === "yes"
+                          setSiteConfig({
+                            ...siteConfig,
+                            extraBedConfig: {
+                              ...extraBedConfig,
+                              enabled,
+                              maxGuests: enabled ? 3 : 2
+                            }
+                          })
+                        }}
                         className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
                       >
-                        <option value="per_stay">Por Estadia (1x)</option>
-                        <option value="per_night">Por Noite / Diária</option>
+                        <option value="no">Não — Limitar a até 2 hóspedes (Padrão)</option>
+                        <option value="yes">Sim — Liberar até 3 hóspedes (+Colchonete)</option>
                       </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Valor da Taxa (R$)</Label>
+                        <Input
+                          type="number"
+                          value={extraBedConfig.feeAmount ?? 60}
+                          onChange={e => {
+                            const val = Number(e.target.value)
+                            setSiteConfig({ ...siteConfig, extraBedConfig: { ...extraBedConfig, feeAmount: val } })
+                            handleUpdateSebraeSettings({ extraBedFee: val })
+                          }}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Frequência</Label>
+                        <select
+                          value={extraBedConfig.feeType || "per_stay"}
+                          onChange={e => setSiteConfig({ ...siteConfig, extraBedConfig: { ...extraBedConfig, feeType: e.target.value } })}
+                          className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
+                        >
+                          <option value="per_stay">Por Estadia (1x)</option>
+                          <option value="per_night">Por Diária</option>
+                        </select>
+                      </div>
                     </div>
                     <div className="text-[10.5px] text-slate-500 space-y-0.5">
                       <div>🏨 Booking (+{bookingMarkupPct}%): <strong>R$ {(baseExtraBedFeeVal * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong> • 🏠 Airbnb (+{airbnbMarkupPct}%): <strong>R$ {(baseExtraBedFeeVal * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong></div>
-                      <div>⏰ Corte automático às 12:00 para hoje.</div>
+                      <div>⏰ Quando ativo, corte automático às 12:00 para check-in no mesmo dia.</div>
                     </div>
                   </div>
 
                   {/* Camas Twin */}
                   <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2.5">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="font-bold text-xs">🛏️ 2 Camas Solteiro (Twin)</span>
-                      <Badge variant="outline" className="text-[10px]">R$ {bedConfig.twinFeeAmount || 30}</Badge>
+                      <Badge className={bedConfig.allowTwinBeds !== false ? "bg-emerald-100 text-emerald-800 text-[10px]" : "bg-slate-100 text-slate-600 text-[10px]"}>
+                        {bedConfig.allowTwinBeds !== false ? `Ativo • +R$ ${bedConfig.twinFeeAmount ?? 30}` : "Oculto"}
+                      </Badge>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Valor Base da Montagem (R$)</Label>
-                      <Input
-                        type="number"
-                        value={bedConfig.twinFeeAmount ?? 30}
-                        onChange={e => setSiteConfig({ ...siteConfig, bedConfig: { ...siteConfig.bedConfig, twinFeeAmount: Number(e.target.value) } })}
-                        className="h-8 font-black text-xs"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Frequência</Label>
+                      <Label className="text-[11px] font-bold">Disponibilizar no Site?</Label>
                       <select
-                        value={bedConfig.twinFeeType || "per_stay"}
-                        onChange={e => setSiteConfig({ ...siteConfig, bedConfig: { ...siteConfig.bedConfig, twinFeeType: e.target.value } })}
+                        value={bedConfig.allowTwinBeds !== false ? "yes" : "no"}
+                        onChange={e => setSiteConfig({ ...siteConfig, bedConfig: { ...bedConfig, allowTwinBeds: e.target.value === "yes" } })}
                         className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
                       >
-                        <option value="per_stay">Por Estadia (1x)</option>
-                        <option value="per_night">Por Noite / Diária</option>
+                        <option value="yes">Sim — Com adicional de montagem</option>
+                        <option value="no">Não — Somente 1 Cama Queen</option>
                       </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Adicional (R$)</Label>
+                        <Input
+                          type="number"
+                          value={bedConfig.twinFeeAmount ?? 30}
+                          onChange={e => setSiteConfig({ ...siteConfig, bedConfig: { ...bedConfig, twinFeeAmount: Number(e.target.value) } })}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Frequência</Label>
+                        <select
+                          value={bedConfig.twinFeeType || "per_stay"}
+                          onChange={e => setSiteConfig({ ...siteConfig, bedConfig: { ...bedConfig, twinFeeType: e.target.value } })}
+                          className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
+                        >
+                          <option value="per_stay">Por Estadia (1x)</option>
+                          <option value="per_night">Por Diária</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Trava Mesmo Dia</Label>
+                        <Input
+                          type="time"
+                          value={bedConfig.twinSameDayCutoffTime || "12:00"}
+                          onChange={e => setSiteConfig({ ...siteConfig, bedConfig: { ...bedConfig, twinSameDayCutoffTime: e.target.value } })}
+                          className="h-8 font-mono text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Flats Twin</Label>
+                        <Input
+                          type="text"
+                          value={Array.isArray(bedConfig.twinAllowedFlats) ? bedConfig.twinAllowedFlats.join(", ") : "113, 114, 115, 202, 905"}
+                          onChange={e => {
+                            const arr = e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean)
+                            setSiteConfig({ ...siteConfig, bedConfig: { ...bedConfig, twinAllowedFlats: arr } })
+                          }}
+                          className="h-8 font-mono text-xs"
+                        />
+                      </div>
                     </div>
                     <div className="text-[10.5px] text-slate-500">
                       🏨 Booking (+{bookingMarkupPct}%): <strong>R$ {(baseTwinFeeVal * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong> • 🏠 Airbnb (+{airbnbMarkupPct}%): <strong>R$ {(baseTwinFeeVal * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong>
@@ -2671,29 +2769,57 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
 
                   {/* Pet Friendly */}
                   <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2.5">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="font-bold text-xs flex items-center gap-1.5"><Heart className="w-3.5 h-3.5 text-rose-600" /> Política Pet Friendly</span>
-                      <Badge variant="outline" className="text-[10px]">R$ {petPolicy.feeAmount || 40}</Badge>
+                      <Badge className={petPolicy.enabled !== false ? "bg-emerald-100 text-emerald-800 text-[10px]" : "bg-slate-100 text-slate-600 text-[10px]"}>
+                        {petPolicy.enabled !== false ? `R$ ${petPolicy.feeAmount ?? 40}/cão` : "Desativado"}
+                      </Badge>
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Taxa Base por Pet (R$)</Label>
-                      <Input
-                        type="number"
-                        value={petPolicy.feeAmount ?? 40}
-                        onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, feeAmount: Number(e.target.value) } })}
-                        className="h-8 font-black text-xs"
-                      />
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Aceita Pets?</Label>
+                        <select
+                          value={petPolicy.enabled !== false ? "yes" : "no"}
+                          onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, enabled: e.target.value === "yes" } })}
+                          className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
+                        >
+                          <option value="yes">Sim (Ativo)</option>
+                          <option value="no">Não</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Máx. por Flat</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={4}
+                          value={petPolicy.maxPets ?? 2}
+                          onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, maxPets: Math.max(1, Number(e.target.value) || 2) } })}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Frequência</Label>
-                      <select
-                        value={petPolicy.feeType || "per_stay"}
-                        onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, feeType: e.target.value } })}
-                        className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
-                      >
-                        <option value="per_stay">Por Estadia (1x)</option>
-                        <option value="per_night">Por Noite / Diária</option>
-                      </select>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Taxa por Cão (R$)</Label>
+                        <Input
+                          type="number"
+                          value={petPolicy.feeAmount ?? 40}
+                          onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, feeAmount: Number(e.target.value) } })}
+                          className="h-8 font-black text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Frequência</Label>
+                        <select
+                          value={petPolicy.feeType || "per_stay"}
+                          onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, feeType: e.target.value } })}
+                          className="w-full h-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 text-xs font-bold"
+                        >
+                          <option value="per_stay">Por Estadia (1x)</option>
+                          <option value="per_night">Por Diária</option>
+                        </select>
+                      </div>
                     </div>
                     <div className="text-[10.5px] text-slate-500">
                       🏨 Booking (+{bookingMarkupPct}%): <strong>R$ {(basePetFeeVal * (1 + bookingMarkupPct / 100)).toFixed(2)}</strong> • 🏠 Airbnb (+{airbnbMarkupPct}%): <strong>R$ {(basePetFeeVal * (1 + airbnbMarkupPct / 100)).toFixed(2)}</strong>
@@ -2702,7 +2828,7 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                       <Label className="text-[11px] font-bold">Espécies / Porte Permitido</Label>
                       <Input
                         type="text"
-                        value={petPolicy.allowedSpecies || "Cachorros (Cães) de pequeno e médio porte (até 15kg)"}
+                        value={petPolicy.allowedSpecies || "Apenas cachorros de porte pequeno (até 10kg)"}
                         onChange={e => setSiteConfig({ ...siteConfig, petPolicy: { ...petPolicy, allowedSpecies: e.target.value } })}
                         className="h-8 text-xs"
                       />
@@ -2753,20 +2879,20 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                   <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2.5 bg-slate-50/40 dark:bg-slate-900/30">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-xs">📅 Política de Cancelamento & No-Show</span>
-                      <Badge variant="outline" className="text-[10px]">{cancellationPolicy.freeCancellationDays ?? 7} dias sem multa</Badge>
+                      <Badge variant="outline" className="text-[10px]">Grátis até {cancellationPolicy.freeCancellationHours ?? 24}h antes das 14:00</Badge>
                     </div>
                     <div className="grid grid-cols-2 gap-2.5">
                       <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Prazo Cancel. Grátis (dias)</Label>
+                        <Label className="text-[11px] font-bold">Prazo Grátis (horas antes das 14h)</Label>
                         <Input
                           type="number"
-                          value={cancellationPolicy.freeCancellationDays ?? 7}
-                          onChange={e => setSiteConfig({ ...siteConfig, cancellationPolicy: { ...cancellationPolicy, freeCancellationDays: Number(e.target.value) } })}
+                          value={cancellationPolicy.freeCancellationHours ?? 24}
+                          onChange={e => setSiteConfig({ ...siteConfig, cancellationPolicy: { ...cancellationPolicy, type: "free_24h_before_checkin", freeCancellationHours: Number(e.target.value) } })}
                           className="h-8 font-black text-xs"
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-[11px] font-bold">Multa No-Show (%)</Label>
+                        <Label className="text-[11px] font-bold">Cobrança &lt; 24h / No-Show (%)</Label>
                         <Input
                           type="number"
                           value={cancellationPolicy.noShowPenaltyPercent ?? 100}
@@ -2776,10 +2902,10 @@ export default function TarifasEditor({ initialTab }: TarifasEditorProps = {}) {
                       </div>
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] font-bold">Texto da Política de Cancelamento</Label>
+                      <Label className="text-[11px] font-bold">Texto Oficial da Política de Cancelamento</Label>
                       <Input
                         type="text"
-                        value={cancellationPolicy.rules || "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."}
+                        value={cancellationPolicy.rules || "Cancelamento gratuito com 100% de reembolso até 24 horas antes das 14:00 do dia do check-in. Faltando menos de 24h para o check-in, é cobrado 100% (sem reembolso)."}
                         onChange={e => setSiteConfig({ ...siteConfig, cancellationPolicy: { ...cancellationPolicy, rules: e.target.value } })}
                         className="h-8 text-xs"
                       />

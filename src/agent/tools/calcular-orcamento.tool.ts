@@ -43,7 +43,7 @@ export const calcularOrcamentoTool: AgentToolDefinition<CalcularOrcamentoArgs> =
       },
       incluir_cafe: {
         type: 'boolean',
-        description: 'Se deve priorizar o plano com café da manhã servido no quarto (isento de taxa de limpeza).',
+        description: 'Se deve priorizar o plano com café da manhã servido no quarto.',
       },
     },
     required: ['data_checkin', 'data_checkout'],
@@ -70,30 +70,51 @@ export const calcularOrcamentoTool: AgentToolDefinition<CalcularOrcamentoArgs> =
         };
       }
 
-      if (hospedes > 3) {
+      const db = context.runtime?.db;
+      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
+      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
+
+      if (hospedes > maxGuestsPerFlat) {
         const msg =
-          'Explique ao cliente que nossos flats comportam no máximo 3 hóspedes por unidade e sugira cotar 2 apartamentos para o grupo.';
+          hospedes === 3 && !extraBedEnabled
+            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats é para até 2 hóspedes. Pergunte se ele prefere cotar 2 apartamentos ou se deseja que você acione a gerência para avaliar uma exceção com adicional para 3ª pessoa.'
+            : `Explique ao cliente que nossos flats comportam no máximo ${maxGuestsPerFlat} hóspedes por unidade e sugira cotar 2 apartamentos para o grupo.`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
-          codigo_regra_bloqueio: 'CAPACIDADE_POR_FLAT_EXCEDIDA',
+          codigo_regra_bloqueio: hospedes === 3 && !extraBedEnabled ? 'TERCEIRO_HOSPEDE_REQUER_EXCECAO' : 'CAPACIDADE_POR_FLAT_EXCEDIDA',
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
       }
 
-      const diariaBase = 216.49;
-      const adicionalTerceiroHospede = hospedes === 3 ? 60.0 : 0.0;
-      const valorCafeInternoPorPessoaDia = 20.0;
-      const taxaLimpezaSemCafe = 50.0;
+      const siteCfg = db?.siteConfig || {};
+      const tarSettings = db?.tariffSettings || {};
+      const diariaBase = Number(
+        (tarSettings.mode === 'manual' && tarSettings.baseDailyRate != null ? tarSettings.baseDailyRate : siteCfg.ratePlans?.room_only?.dailyRate) ??
+        216.49
+      );
+      const extraBedUnit = Number(siteCfg.extraBedConfig?.feeAmount ?? tarSettings.extraBedFee ?? 60.0);
+      const extraBedType = siteCfg.extraBedConfig?.feeType || 'per_stay';
+      const adicionalTerceiroHospedeTotal = hospedes >= 3
+        ? (extraBedType === 'per_night' ? Number((extraBedUnit * diarias).toFixed(2)) : extraBedUnit)
+        : 0.0;
+      const valorCafeInternoPorPessoaDia = Number(
+        tarSettings.breakfastSurchargePerGuest ?? siteCfg.pricing?.breakfastSurchargePerGuest ?? 20.0
+      );
+      const taxaLimpezaSemCafe = siteCfg.ratePlans?.room_only?.cleaningFeeEnabled === false
+        ? 0.0
+        : Number(siteCfg.ratePlans?.room_only?.cleaningFeeAmount ?? tarSettings.cleaningFeeSemCafe ?? 50.0);
+      const cardMarkupPct = Number(siteCfg.pricing?.cardMarkupPercent ?? tarSettings.cardMarkupPercent ?? 5.0);
       const percentualComissaoPlataformas = 15.0;
 
-      const diariaAcomodacao = Number((diariaBase + adicionalTerceiroHospede).toFixed(2));
+      const diariaAcomodacao = Number(diariaBase.toFixed(2));
       const diariaComCafe = Number((diariaAcomodacao + hospedes * valorCafeInternoPorPessoaDia).toFixed(2));
 
-      const totalComCafe = Number((diarias * diariaComCafe).toFixed(2));
-      const totalSemCafe = Number((diarias * diariaAcomodacao + taxaLimpezaSemCafe).toFixed(2));
-      const totalCartaoComCafe = Number((totalComCafe * 1.05).toFixed(2));
-      const totalCartaoSemCafe = Number((totalSemCafe * 1.05).toFixed(2));
+      const totalComCafe = Number((diarias * diariaComCafe + adicionalTerceiroHospedeTotal).toFixed(2));
+      const totalSemCafe = Number((diarias * diariaAcomodacao + adicionalTerceiroHospedeTotal + taxaLimpezaSemCafe).toFixed(2));
+      const cardFactor = 1 + cardMarkupPct / 100;
+      const totalCartaoComCafe = Number((totalComCafe * cardFactor).toFixed(2));
+      const totalCartaoSemCafe = Number((totalSemCafe * cardFactor).toFixed(2));
       const totalPlataformasComCafe = Number((totalComCafe * (1 + percentualComissaoPlataformas / 100)).toFixed(2));
       const totalPlataformasSemCafe = Number((totalSemCafe * (1 + percentualComissaoPlataformas / 100)).toFixed(2));
 

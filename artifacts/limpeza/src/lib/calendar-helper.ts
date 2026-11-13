@@ -17,7 +17,7 @@ export interface ReservationCalendarData {
   checkoutTime?: string // default "12:00"
   numGuests?: number
   totalAmount?: number
-  accessCode?: string // Senha da fechadura eletrônica
+  accessCode?: string // Código da reserva / liberação na portaria 24h
   wifiNetwork?: string
   wifiPassword?: string
   address?: string
@@ -106,9 +106,9 @@ export function generateIcsContent(
       `Check-in: ${data.checkinDate} a partir das ${data.checkinTime || prop.checkinTime}`,
       `Check-out: ${data.checkoutDate} até as ${data.checkoutTime || prop.checkoutTime}`,
       ``,
-      data.accessCode ? `🔑 SENHA DA FECHADURA DIGITAL: ${data.accessCode}` : `🔑 ACESSO: As instruções e senha serão liberadas no dia do check-in.`,
+      `🔑 ACESSO: Retirada do cartão NFC na recepção 24h (mediante pré-check-in digital concluído).`,
       `📶 WI-FI: Rede "${data.flatNumber ? `apto${data.flatNumber}` : (data.wifiNetwork || prop.wifiNetwork)}" | Senha "${data.wifiPassword || prop.wifiPassword}"`,
-      `🚗 ESTACIONAMENTO: Garagem rotativa inclusa com portaria 24h`,
+      `🚗 ESTACIONAMENTO: 1 vaga de garagem coberta inclusa com portaria 24h`,
       ``,
       `📲 GERENCIAR SUA RESERVA:`,
       `${manageUrl}`,
@@ -156,7 +156,7 @@ export function generateIcsContent(
       "BEGIN:VALARM",
       "TRIGGER:-PT2H",
       "ACTION:DISPLAY",
-      `DESCRIPTION:Check-in CorpFlats hoje às 14:00 - Flat ${data.flatNumber}. Tenha seu código de acesso em mãos.`,
+      `DESCRIPTION:Check-in CorpFlats hoje a partir das 14:00 - Flat ${data.flatNumber}. Retire seu cartão NFC na recepção 24h.`,
       "END:VALARM"
     )
   }
@@ -204,7 +204,7 @@ export function getGoogleCalendarUrl(data: ReservationCalendarData): string {
     `Hóspede: ${data.guestName}`,
     `Check-in: ${data.checkinDate} a partir das ${data.checkinTime || prop.checkinTime}`,
     `Check-out: ${data.checkoutDate} até as ${data.checkoutTime || prop.checkoutTime}`,
-    data.accessCode ? `🔑 Senha da Porta: ${data.accessCode}` : `🔑 Chave digital liberada no check-in`,
+    `🔑 Acesso: Retirada do cartão NFC na recepção 24h`,
     `Wi-Fi: ${data.flatNumber ? `apto${data.flatNumber}` : (data.wifiNetwork || prop.wifiNetwork)} (Senha: ${data.wifiPassword || prop.wifiPassword})`,
     `Acessar Portal da Reserva: ${manageUrl}`,
     `WhatsApp Suporte: ${prop.hostPhone}`

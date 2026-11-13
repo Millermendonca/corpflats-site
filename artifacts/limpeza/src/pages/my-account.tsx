@@ -1041,7 +1041,7 @@ export default function MyAccount() {
                   <span>Histórico de Estadias & Reservas</span>
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Acompanhe seus flats reservados, códigos de fechadura digital e comprovantes.
+                  Acompanhe seus flats reservados, pré-check-in digital para retirada do cartão NFC na recepção 24h e comprovantes.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">

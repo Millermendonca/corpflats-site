@@ -8090,9 +8090,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           },
           {
             id: "ft_condominio_lazer",
-            titulo: "Regras da Piscina, Academia e Visitas (Soho Residence)",
+            titulo: "Regras da Cobertura (Jacuzzi Aquecida, Saunas, Academia, Sala de Jogos) e Visitas (Soho Residence)",
             topico: "condominio",
-            conteudo: "Piscina e academia funcionam das 06:00h às 22:00h e são de uso exclusivo dos hóspedes cadastrados na reserva. Visitantes temporários devem ser autorizados por e-mail na portaria (Nome completo + CPF), não podem pernoitar e não podem utilizar piscina ou academia."
+            conteudo: "O Edifício Soho não possui piscina; a cobertura conta com jacuzzi de água aquecida, terraço panorâmico, saunas seca e a vapor, academia climatizada e sala de jogos funcionando das 06:00h às 22:00h para uso exclusivo dos hóspedes cadastrados na reserva. Visitantes temporários devem ser autorizados na portaria com documento oficial com foto, não podem pernoitar e não podem acessar a cobertura/área de lazer."
           }
         ],
         blocoB_fatosOperacionais: [

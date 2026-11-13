@@ -162,14 +162,14 @@ export const solicitarLateCheckoutTool: AgentToolDefinition<SolicitarLateCheckou
 
       const msg =
         `Confirme com entusiasmo que o late check-out para as ${horarioFormatado} já foi efetivado no sistema para o ${reserva.nome_imovel} ` +
-        `e que a programação da governança e da fechadura eletrônica já foi atualizada automaticamente para esse novo horário.`;
+        `e que a programação da governança e da recepção 24h (cartão NFC) já foi atualizada automaticamente para esse novo horário.`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
         dados: {
           reserva_id: reserva.id,
           novo_horario_checkout: horarioFormatado,
-          fechadura_sincronizada: true,
+          portaria_sincronizada: true,
         },
         instrucao_para_ia: msg,
         instrucao_resposta_ia: msg,

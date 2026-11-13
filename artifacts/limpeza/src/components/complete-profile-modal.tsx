@@ -183,7 +183,7 @@ export function CompleteProfileModal({ open, onOpenChange, user, onSuccess }: Co
                 autoFocus
                 required
               />
-              <p className="text-[10px] text-slate-400">Para envio do voucher e código da fechadura.</p>
+              <p className="text-[10px] text-slate-400">Para envio do voucher e liberação do cartão NFC na recepção 24h.</p>
             </div>
 
             <div className="space-y-1">

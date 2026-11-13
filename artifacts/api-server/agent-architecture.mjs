@@ -833,30 +833,106 @@ export const consultarDisponibilidadeTool = {
         };
       }
 
-      if (hospedes > 3) {
+      const db = context.runtime?.db;
+      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
+      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
+
+      if (hospedes > maxGuestsPerFlat) {
         const msg =
-          `Explique ao cliente que cada flat comporta até 3 hóspedes com conforto. ` +
-          `Para ${hospedes} pessoas, sugira reservar 2 apartamentos próximos e pergunte se ele gostaria de cotar dessa forma.`;
+          hospedes === 3 && !extraBedEnabled
+            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes. Pergunte se ele prefere cotar 2 apartamentos ou se deseja que você consulte diretamente a gerência para verificar a possibilidade de exceção com adicional para 3ª pessoa.'
+            : `Explique ao cliente que cada flat comporta até ${maxGuestsPerFlat} hóspedes com conforto. ` +
+              `Para ${hospedes} pessoas, sugira reservar 2 apartamentos próximos e pergunte se ele gostaria de cotar dessa forma.`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
-          codigo_regra_bloqueio: 'CAPACIDADE_MAXIMA_EXCEDIDA',
-          dados: { quantidade_solicitada: hospedes, capacidade_maxima_por_flat: 3 },
+          codigo_regra_bloqueio: hospedes === 3 && !extraBedEnabled ? 'TERCEIRO_HOSPEDE_REQUER_EXCECAO' : 'CAPACIDADE_MAXIMA_EXCEDIDA',
+          dados: { quantidade_solicitada: hospedes, capacidade_maxima_por_flat: maxGuestsPerFlat },
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
       }
+      const nowEffective = new Date(Date.now() + Number(globalThis.__simulatedTimeOffsetMs || 0));
+      const nowMs = nowEffective.getTime();
+      const brtDateStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(nowEffective);
+      const brtTimeParts = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).formatToParts(nowEffective);
+      const brtHhMm = `${String(brtTimeParts.find((p) => p.type === 'hour')?.value || '00').padStart(2, '0')}:${String(brtTimeParts.find((p) => p.type === 'minute')?.value || '00').padStart(2, '0')}`;
 
-      const db = context.runtime?.db;
+      if (extraBedEnabled && hospedes >= 3 && checkin === brtDateStr) {
+        const extraCutoffTime = `${String(Number(db?.siteConfig?.extraBedConfig?.cutoffHour) || 12).padStart(2, '0')}:00`;
+        if (brtHhMm >= extraCutoffTime) {
+          const msg = `Explique educadamente ao cliente que para reservas com check-in hoje após as ${extraCutoffTime}, a lotação é limitada a até 2 hóspedes por flat.`;
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: 'CORTE_TERCEIRO_HOSPEDE_MESMO_DIA',
+            dados: { data_checkin: checkin, horario_corte: extraCutoffTime },
+            instrucao_para_ia: msg,
+            instrucao_resposta_ia: msg,
+          };
+        }
+      }
+
+      const prefLower = String(args.preferencia_cama || '').trim().toLowerCase();
+      const wantsTwin = prefLower.includes('solteiro') || prefLower.includes('twin') || prefLower.includes('duas') || prefLower.includes('separad');
+      const bedCfg = db?.siteConfig?.bedConfig || {};
+      const twinCutoffTime = String(bedCfg.twinSameDayCutoffTime || '12:00');
+      const twinAllowedFlats = (Array.isArray(bedCfg.twinAllowedFlats) && bedCfg.twinAllowedFlats.length > 0
+        ? bedCfg.twinAllowedFlats
+        : ['113', '114', '115', '202', '905']
+      ).map((n) => String(n));
+      const twinFeeAmount = Number(bedCfg.twinFeeAmount ?? 30);
+      const twinFeeType = bedCfg.twinFeeType || 'per_stay';
+
+      if (wantsTwin) {
+        if (bedCfg.allowTwinBeds === false) {
+          const msg =
+            'Informe ao cliente que no momento todos os flats estão configurados com cama Queen de casal (a montagem com 2 camas de solteiro está indisponível). Pergunte se a cama Queen atende.';
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: 'CAMAS_SOLTEIRO_INDISPONIVEIS',
+            dados: { data_checkin: checkin, data_checkout: checkout },
+            instrucao_para_ia: msg,
+            instrucao_resposta_ia: msg,
+          };
+        }
+        if (checkin === brtDateStr && brtHhMm >= twinCutoffTime) {
+          const msg =
+            `Explique educadamente ao cliente que, para reservas com check-in no mesmo dia, a montagem com 2 camas de solteiro precisa ser solicitada até as ${twinCutoffTime} por conta do preparo da governança. ` +
+            `Informe que temos disponibilidade imediata com cama Queen de casal para hoje e pergunte se podemos seguir assim.`;
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: 'CORTE_CAMAS_SOLTEIRO_MESMO_DIA',
+            dados: { data_checkin: checkin, horario_corte: twinCutoffTime },
+            instrucao_para_ia: msg,
+            instrucao_resposta_ia: msg,
+          };
+        }
+      }
+
       const allFlats = Array.isArray(db?.flats) && db.flats.length > 0
-        ? db.flats.filter((f) => f && f.isActive !== false && f.status !== 'maintenance')
-        : [{ number: '101' }, { number: '202' }, { number: '212' }, { number: '304' }];
+        ? db.flats.filter((f) => f && f.isActive !== false && f.status !== 'maintenance' && f.status !== 'manutencao_bloqueada')
+        : [{ number: '113' }, { number: '114' }, { number: '212' }, { number: '905' }];
       const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
 
-      const availableFlats = allFlats.filter((flat) => {
+      const availableAllFlats = allFlats.filter((flat) => {
         const flatNum = String(flat.number || flat.id || '');
         const hasConflict = reservations.some((r) => {
-          if (!r || r.status === 'cancelada' || r.status === 'cancelled') return false;
-          if (String(r.flatNumber || '') !== flatNum) return false;
+          if (!r) return false;
+          const st = String(r.status || '').toLowerCase();
+          if (['cancelada', 'cancelled', 'expirada', 'no_show'].includes(st)) return false;
+          if ((st === 'pre_reserva' || st === 'pendente') && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== 'pago_total') {
+            return false;
+          }
+          if (String(r.flatNumber || r.flatId || '') !== flatNum) return false;
           const rIn = String(r.checkinDate || '').slice(0, 10);
           const rOut = String(r.checkoutDate || '').slice(0, 10);
           return checkin < rOut && checkout > rIn;
@@ -864,7 +940,23 @@ export const consultarDisponibilidadeTool = {
         return !hasConflict;
       });
 
+      const availableFlats = wantsTwin
+        ? availableAllFlats.filter((f) => twinAllowedFlats.includes(String(f.number || f.id || '')))
+        : availableAllFlats;
+
       if (availableFlats.length === 0) {
+        if (wantsTwin && availableAllFlats.length > 0) {
+          const msgTwinEsgotado =
+            `Informe ao cliente que para o período de ${checkin} a ${checkout} as unidades que comportam 2 camas de solteiro já estão ocupadas, ` +
+            `mas temos flats disponíveis com cama Queen de casal. Pergunte se ele deseja cotar na configuração Queen.`;
+          return {
+            status: 'BLOQUEADO_PELA_REGRA',
+            codigo_regra_bloqueio: 'SEM_DISPONIBILIDADE_CAMAS_SOLTEIRO',
+            dados: { data_checkin: checkin, data_checkout: checkout, unidades_queen_disponiveis: availableAllFlats.length },
+            instrucao_para_ia: msgTwinEsgotado,
+            instrucao_resposta_ia: msgTwinEsgotado,
+          };
+        }
         const msg =
           `Informe ao cliente com empatia que estamos com 100% de ocupação para o período de ${checkin} a ${checkout}. ` +
           `Pergunte se ele possui flexibilidade nas datas ou se deseja deixar o contato na lista de prioridade caso surja desistência.`;
@@ -878,9 +970,12 @@ export const consultarDisponibilidadeTool = {
       }
 
       const listaFlats = availableFlats.slice(0, 5).map((f) => String(f.number || f.id));
+      const notaTwin = wantsTwin && twinFeeAmount > 0
+        ? ` Informe que a montagem com 2 camas de solteiro está disponível nessas unidades mediante adicional de R$ ${twinFeeAmount.toFixed(2)} (${twinFeeType === 'per_night' ? 'por diária' : 'por estadia'}).`
+        : '';
       const msg =
         `Confirme com entusiasmo que temos disponibilidade para o período de ${checkin} a ${checkout} (${diarias} diária(s)) para ${hospedes} pessoa(s) ` +
-        `(Flats disponíveis: ${listaFlats.join(', ')}). Pergunte se o cliente prefere a opção com café da manhã servido no flat (isenta de taxa de limpeza) ou apenas hospedagem para calcular o orçamento exato.`;
+        `(Flats disponíveis: ${listaFlats.join(', ')}).${notaTwin} Pergunte se o cliente prefere o plano com café da manhã servido no flat ou o plano somente hospedagem para calcular o orçamento exato (nunca mencione isenção de taxa de limpeza).`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -1088,18 +1183,22 @@ export const calcularOrcamentoTool = {
         };
       }
 
-      if (hospedes > 3) {
+      const db = context.runtime?.db;
+      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
+      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
+
+      if (hospedes > maxGuestsPerFlat) {
         const msg =
-          'Explique ao cliente que nossos flats comportam no máximo 3 hóspedes por unidade e sugira cotar 2 apartamentos para o grupo.';
+          hospedes === 3 && !extraBedEnabled
+            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes. Pergunte se ele prefere cotar 2 apartamentos ou se deseja que você acione a gerência para avaliar uma exceção com adicional para 3ª pessoa.'
+            : `Explique ao cliente que nossos flats comportam no máximo ${maxGuestsPerFlat} hóspedes por unidade e sugira cotar 2 apartamentos para o grupo.`;
         return {
           status: 'BLOQUEADO_PELA_REGRA',
-          codigo_regra_bloqueio: 'CAPACIDADE_POR_FLAT_EXCEDIDA',
+          codigo_regra_bloqueio: hospedes === 3 && !extraBedEnabled ? 'TERCEIRO_HOSPEDE_REQUER_EXCECAO' : 'CAPACIDADE_POR_FLAT_EXCEDIDA',
           instrucao_para_ia: msg,
           instrucao_resposta_ia: msg,
         };
       }
-
-      const db = context.runtime?.db;
       const q = resolveAgentLivePricingQuote(db, checkin, checkout, hospedes);
 
       const textoDesconto =
@@ -1238,6 +1337,20 @@ export const gerarLinkReservaTool = {
       }
 
       const db = context.runtime?.db;
+      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
+      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
+      if (hospedes > maxGuestsPerFlat) {
+        const msg =
+          hospedes === 3 && !extraBedEnabled
+            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes, e pergunte se deseja cotar 2 apartamentos ou consultar a gerência para exceção.'
+            : `Explique ao cliente que cada flat comporta até ${maxGuestsPerFlat} hóspedes e sugira reservar 2 apartamentos.`;
+        return {
+          status: 'BLOQUEADO_PELA_REGRA',
+          codigo_regra_bloqueio: hospedes === 3 && !extraBedEnabled ? 'TERCEIRO_HOSPEDE_REQUER_EXCECAO' : 'CAPACIDADE_POR_FLAT_EXCEDIDA',
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
       const q = resolveAgentLivePricingQuote(db, checkin, checkout, hospedes);
       const valorTotal = comCafe ? q.totalComCafePix : q.totalSemCafePix;
       const valorCartaoSimulado = comCafe ? q.totalComCafeCartao : q.totalSemCafeCartao;
@@ -1309,8 +1422,8 @@ export const gerarLinkReservaTool = {
 
       if (db) {
         const allFlats = Array.isArray(db.flats) && db.flats.length > 0
-          ? db.flats.filter((f) => f && f.isActive !== false && f.status !== 'maintenance')
-          : [{ id: 1, number: '101' }];
+          ? db.flats.filter((f) => f && f.isActive !== false && f.status !== 'maintenance' && f.status !== 'manutencao_bloqueada')
+          : [{ id: 1, number: '113' }];
         const reservations = Array.isArray(db.reservations) ? db.reservations : [];
         const availableFlats = allFlats.filter((flat) => {
           const flatNum = String(flat.number || flat.id || '');
@@ -4433,7 +4546,7 @@ export const autorizarVisitaTemporariaTool = {
   description:
     'Valida e autoriza a entrada de visita temporária no flat do hóspede: ' +
     '1) Respeita o limite máximo de ocupação do flat; ' +
-    '2) Alerta obrigatoriamente que visitas NÃO podem pernoitar e NÃO podem utilizar a área de lazer (piscina/academia); ' +
+    '2) Alerta obrigatoriamente que visitas NÃO podem pernoitar e NÃO podem utilizar a área de lazer (jacuzzi/saunas/academia); ' +
     '3) Coleta Nome Completo e CPF do visitante e dispara e-mail para a recepção (soho@promenade.com.br) autorizando a subida.',
   allowedStates: ['IN_STAY_CONCIERGE', 'PRE_CHECKIN'],
   parametersSchema: {
@@ -4507,7 +4620,7 @@ export const autorizarVisitaTemporariaTool = {
         const msgPedirDados =
           `Informe ao hóspede que é permitido receber a visita no *${reserva.nome_imovel}*, ressaltando expressamente as duas regras do condomínio:\n` +
           `• *Visitas não podem pernoitar no apartamento;*\n` +
-          `• *Visitas não podem utilizar a área de lazer da cobertura (piscina e academia).*\n` +
+          `• *Visitas não podem utilizar a área de lazer da cobertura (jacuzzi, saunas, academia e sala de jogos).*\n` +
           `Peça para ele enviar o *Nome Completo e o CPF* do visitante para você já disparar o e-mail de autorização para a recepção!`;
         return {
           status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
@@ -4516,7 +4629,7 @@ export const autorizarVisitaTemporariaTool = {
             flat_number: flatNumber,
             capacidade_maxima_flat: capacidadeMaxima,
             hospedes_na_reserva: hospedesAtuais,
-            regras_visita: ['Proibido pernoite de visitantes', 'Proibido uso da área de lazer (piscina/academia)'],
+            regras_visita: ['Proibido pernoite de visitantes', 'Proibido uso da área de lazer (jacuzzi/saunas/academia)'],
           },
           instrucao_para_ia: msgPedirDados,
           instrucao_resposta_ia: msgPedirDados,
@@ -4559,7 +4672,7 @@ export const autorizarVisitaTemporariaTool = {
 
       const msgOk =
         `Confirme com simpatia que o e-mail de autorização para o(a) visitante *${nomeVisitante}* (CPF: ${cpfVisitante}) subir ao *Flat ${flatNumber}* já foi enviado para a recepção (${emailRec.recipient}). ` +
-        `Lembre gentilmente que a visita não pode pernoitar no flat e não tem acesso à área de lazer (piscina/academia).`;
+        `Lembre gentilmente que a visita não pode pernoitar no flat e não tem acesso à área de lazer (jacuzzi/saunas/academia).`;
 
       return {
         status: 'SUCESSO_EXECUTADO',
@@ -4643,16 +4756,20 @@ export const processarCancelamentoTool = {
         ? db.reservations.find((r) => matchesSessionReservation(r, reserva))
         : null;
 
+      const freeCancelHours = Math.max(
+        0,
+        Number(db?.siteConfig?.cancellationPolicy?.freeCancellationHours ?? db?.settings?.cancellationPolicy?.freeCancellationHours ?? 24)
+      );
       const nowMs = new Date(context.data_hora_atual || Date.now()).getTime();
       const checkinMs = new Date(`${reserva.data_checkin}T14:00:00-03:00`).getTime();
       const hoursUntilCheckin = (checkinMs - nowMs) / (1000 * 60 * 60);
-      const dentroDoPrazoGratuito = !Number.isNaN(hoursUntilCheckin) && hoursUntilCheckin >= 24;
+      const dentroDoPrazoGratuito = !Number.isNaN(hoursUntilCheckin) && hoursUntilCheckin >= freeCancelHours;
 
-      // CASO 1: Mais de 24h antes do check-in -> Cancelamento Gratuito
+      // CASO 1: Dentro do prazo gratuito antes do check-in -> Cancelamento Gratuito
       if (dentroDoPrazoGratuito) {
         if (!args.confirmacao_hospede) {
           const msgSim =
-            `Informe ao hóspede que, como faltam mais de 24 horas para o check-in (${reserva.data_checkin} às 14:00h), o cancelamento da reserva *${reserva.id}* no *${reserva.nome_imovel}* é *gratuito e sem multa*. ` +
+            `Informe ao hóspede que, como faltam mais de ${freeCancelHours} horas para o check-in (${reserva.data_checkin} às 14:00h), o cancelamento da reserva *${reserva.id}* no *${reserva.nome_imovel}* é *gratuito e sem multa*. ` +
             `Pergunte se ele confirma o cancelamento definitivo ou se prefere apenas remarcar as datas.`;
           return {
             status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
@@ -4835,39 +4952,42 @@ export const enviarMidiaUnidadeTool = {
           : [
               {
                 id: 1,
-                title: 'Suíte Climatizada & Cama Confortável - CorpFlats Soho Residence',
-                category: 'Quartos',
-                imageUrl: `${baseUrl}/flat-preview.jpg`,
+                title: 'Quarto climatizado e bancada de trabalho - CorpFlats Soho Residence',
+                category: 'O Flat',
+                imageUrl: `${baseUrl}/photos/soho/01-quarto-bancada.jpg`,
               },
               {
                 id: 2,
-                title: 'Ambiente Integrado com Smart TV, Wi-Fi Individual e Cozinha Equipada',
-                category: 'Living',
-                imageUrl: 'https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=1200&q=80',
+                title: 'Ambiente integrado com mesa, sofá e Smart TV 32"',
+                category: 'O Flat',
+                imageUrl: `${baseUrl}/photos/soho/02-flat-integrado.jpg`,
               },
               {
                 id: 3,
-                title: 'Cozinha Prática com Micro-ondas, Frigobar Anserve e Utensílios',
+                title: 'Cozinha com cooktop 2 bocas, frigobar e cafeteira',
                 category: 'Cozinha',
-                imageUrl: 'https://images.unsplash.com/photo-1556912172-45b7abe8b7e1?auto=format&fit=crop&w=1200&q=80',
+                imageUrl: `${baseUrl}/photos/soho/04-cozinha-equipada.jpg`,
               },
               {
                 id: 4,
-                title: 'Cobertura com Piscina Aquecida e Academia no Soho Residence',
-                category: 'Lazer',
-                imageUrl: 'https://images.unsplash.com/photo-1576013551627-0cc20b96c2a7?auto=format&fit=crop&w=1200&q=80',
+                title: 'Cobertura com jacuzzi aquecida, saunas e academia no Soho Residence',
+                category: 'Cobertura & Lazer',
+                imageUrl: `${baseUrl}/photos/soho/06-cobertura-jacuzzi.jpg`,
               },
             ];
 
-      const selectedPhotos = defaultGallery.slice(0, 4).map((item) => ({
-        titulo: item.title || 'Flat CorpFlats - Soho Residence',
-        categoria: item.category || 'Flat',
-        url: item.imageUrl || `${baseUrl}/flat-preview.jpg`,
-      }));
+      const selectedPhotos = defaultGallery.slice(0, 4).map((item) => {
+        const rawUrl = String(item.imageUrl || '/photos/soho/01-quarto-bancada.jpg');
+        return {
+          titulo: item.title || 'Flat CorpFlats - Soho Residence',
+          categoria: item.category || 'Flat',
+          url: rawUrl.startsWith('http') ? rawUrl : `${baseUrl}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`,
+        };
+      });
 
       const msg =
-        `Apresente com entusiasmo o pacote de fotos padrão dos nossos flats no Edifício Soho Residence (incluindo o link do nosso catálogo completo em ${baseUrl}/reservar) ` +
-        `destacando que todos os apartamentos são climatizados, contam com Wi-Fi exclusivo, Smart TV, bancada de trabalho, micro-ondas, frigobar abastecido e acesso à cobertura com piscina e academia!`;
+        `Apresente com entusiasmo o pacote de fotos reais dos nossos flats no Edifício Soho Residence (incluindo o link do catálogo completo em ${baseUrl}/reservar) ` +
+        `destacando que todos os apartamentos são climatizados, contam com Wi-Fi exclusivo, Smart TV 32", bancada de trabalho, cozinha com cooktop 2 bocas, cafeteira, sanduicheira, frigobar abastecido e acesso à cobertura com jacuzzi aquecida, vista panorâmica, saunas, sala de jogos e academia (observação: caso o cliente tenha perguntado por piscina ou micro-ondas, esclareça com naturalidade que não temos piscina nem micro-ondas, mas temos jacuzzi com água aquecida na cobertura).`;
 
       return {
         status: 'SUCESSO_EXECUTADO',

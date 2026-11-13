@@ -4071,7 +4071,7 @@ export default function GuestPortal() {
                 <div className="p-3 bg-white rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
-                      Senha Fechadura / Portaria
+                      Código de Liberação / Recepção 24h
                     </span>
                     <span className="font-mono text-base font-black text-slate-900">
                       {accessCode}
@@ -4946,10 +4946,15 @@ export default function GuestPortal() {
 
         {/* ── 10. Card: Política de Cancelamento & Estorno ────────────────── */}
         {(() => {
+          const isPaidConfirmedCard = Number(reservation.paidAmount) > 0 || reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago"
+          const effectivePaidCard = Number(reservation.paidAmount) > 0
+            ? Number(reservation.paidAmount)
+            : (isPaidConfirmedCard ? Number(reservation.totalAmount || 0) : 0)
           const cancelPol = calculateCancellationPolicy(
             reservation.createdAt || reservation.checkinDate,
             reservation.checkinDate,
-            Number(reservation.paidAmount || reservation.totalAmount || 0)
+            effectivePaidCard,
+            reservation.checkinTime || "14:00"
           )
           const isCancelledRes = isCancelled || reservation.status === "cancelada" || reservation.status === "CANCELLED" || reservation.isCancelled
 
@@ -4985,7 +4990,9 @@ export default function GuestPortal() {
                       </p>
                       {cancelPol.isEligibleForRefund && (
                         <p className="text-emerald-600 font-bold text-[11px]">
-                          ✓ Elegível a 100% de estorno integral (R$ {Number(reservation.paidAmount || reservation.totalAmount || 0).toFixed(2)})
+                          {effectivePaidCard > 0
+                            ? `✓ Elegível a 100% de estorno integral (R$ ${effectivePaidCard.toFixed(2)})`
+                            : "✓ Cancelamento gratuito sem cobrança dentro do prazo oficial"}
                         </p>
                       )}
                     </div>
@@ -5644,24 +5651,31 @@ export default function GuestPortal() {
           </DialogHeader>
 
           {(() => {
+            const isPaidConfirmedModal = Number(reservation.paidAmount) > 0 || reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago"
+            const effectivePaidModal = Number(reservation.paidAmount) > 0
+              ? Number(reservation.paidAmount)
+              : (isPaidConfirmedModal ? Number(reservation.totalAmount || 0) : 0)
             const cancelPol = calculateCancellationPolicy(
               reservation.createdAt || reservation.checkinDate,
               reservation.checkinDate,
-              Number(reservation.paidAmount || reservation.totalAmount || 0)
+              effectivePaidModal,
+              reservation.checkinTime || "14:00"
             )
 
             return (
               <div className="space-y-4 py-2">
                 <div className={`p-4 rounded-2xl border text-xs space-y-2 ${
-                  cancelPol.isEligibleForRefund 
+                  cancelPol.policyType === "flexivel"
                     ? "bg-emerald-50 border-emerald-200 text-emerald-900" 
                     : "bg-rose-50 border-rose-200 text-rose-900"
                 }`}>
                   <div className="flex flex-wrap items-center justify-between gap-1 font-bold text-sm">
                     <span>Reembolso Estimado:</span>
                     <span className="text-base font-black">
-                      {cancelPol.isEligibleForRefund 
-                        ? `R$ ${Number(reservation.paidAmount || reservation.totalAmount || 0).toFixed(2)} (100%)` 
+                      {cancelPol.policyType === "flexivel"
+                        ? (effectivePaidModal > 0
+                            ? `R$ ${effectivePaidModal.toFixed(2)} (100%)`
+                            : "Sem Cobrança (R$ 0,00 pago)")
                         : "R$ 0,00 (Sem Reembolso)"}
                     </span>
                   </div>

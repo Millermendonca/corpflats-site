@@ -111,10 +111,44 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
         };
       }
 
-      const diariaBase = 237.0 + (hospedes === 3 ? 60.0 : 0.0);
+      const db = context.runtime?.db;
+      const extraBedEnabled = Boolean(db?.siteConfig?.extraBedConfig?.enabled);
+      const maxGuestsPerFlat = extraBedEnabled ? 3 : 2;
+      if (hospedes > maxGuestsPerFlat) {
+        const msg =
+          hospedes === 3 && !extraBedEnabled
+            ? 'Explique educadamente ao cliente que o padrão oficial dos nossos flats comporta até 2 hóspedes, e pergunte se deseja cotar 2 apartamentos ou consultar a gerência para exceção.'
+            : `Explique ao cliente que cada flat comporta até ${maxGuestsPerFlat} hóspedes e sugira reservar 2 apartamentos.`;
+        return {
+          status: 'BLOQUEADO_PELA_REGRA',
+          codigo_regra_bloqueio: hospedes === 3 && !extraBedEnabled ? 'TERCEIRO_HOSPEDE_REQUER_EXCECAO' : 'CAPACIDADE_POR_FLAT_EXCEDIDA',
+          instrucao_para_ia: msg,
+          instrucao_resposta_ia: msg,
+        };
+      }
+
+      const siteCfg = db?.siteConfig || {};
+      const tarSettings = db?.tariffSettings || {};
+      const diariaBase = Number(
+        (tarSettings.mode === 'manual' && tarSettings.baseDailyRate != null ? tarSettings.baseDailyRate : siteCfg.ratePlans?.room_only?.dailyRate) ??
+        216.49
+      );
+      const extraBedUnit = Number(siteCfg.extraBedConfig?.feeAmount ?? tarSettings.extraBedFee ?? 60.0);
+      const extraBedType = siteCfg.extraBedConfig?.feeType || 'per_stay';
+      const adicionalTerceiroHospedeTotal = hospedes >= 3
+        ? (extraBedType === 'per_night' ? Number((extraBedUnit * diarias).toFixed(2)) : extraBedUnit)
+        : 0.0;
+      const valorCafePorPessoa = Number(
+        tarSettings.breakfastSurchargePerGuest ?? siteCfg.pricing?.breakfastSurchargePerGuest ?? 20.0
+      );
+      const taxaLimpezaSemCafe = siteCfg.ratePlans?.room_only?.cleaningFeeEnabled === false
+        ? 0.0
+        : Number(siteCfg.ratePlans?.room_only?.cleaningFeeAmount ?? tarSettings.cleaningFeeSemCafe ?? 50.0);
+      const cardMarkupPct = Number(siteCfg.pricing?.cardMarkupPercent ?? tarSettings.cardMarkupPercent ?? 5.0);
       const valorTotal = comCafe
-        ? Number((diarias * (diariaBase + hospedes * 35.0)).toFixed(2))
-        : Number((diarias * diariaBase + 70.0).toFixed(2));
+        ? Number((diarias * (diariaBase + hospedes * valorCafePorPessoa) + adicionalTerceiroHospedeTotal).toFixed(2))
+        : Number((diarias * diariaBase + adicionalTerceiroHospedeTotal + taxaLimpezaSemCafe).toFixed(2));
+      const valorCartaoSimulado = Number((valorTotal * (1 + cardMarkupPct / 100)).toFixed(2));
 
       const faltaIdentificacaoObrigatoria = paraTerceiro ? !nomeSolicitante : !rawNomeHospede;
       if (!args.confirmacao_hospede || faltaIdentificacaoObrigatoria) {
@@ -134,8 +168,8 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
         const msg =
           `Informe ao cliente o resumo para bloqueio da pré-reserva: período de ${checkin} a ${checkout} (${diarias} diária(s)), ` +
           `total de hóspedes: *${hospedes}* (${hospedes === 1 ? '1 pessoa' : `${hospedes} pessoas`}), canal da reserva: *WhatsApp*, ` +
-          `plano ${comCafe ? 'COM café da manhã (isento de taxa de limpeza)' : 'Somente Hospedagem'}, ` +
-          `no valor total de *R$ ${valorTotal.toFixed(2)}*. ${orientacaoIdentificacao}`;
+          `plano ${comCafe ? 'COM café da manhã incluso no flat' : 'Somente Hospedagem'}, ` +
+          `no valor de *R$ ${valorTotal.toFixed(2)} no PIX (com desconto)* (ou R$ ${valorCartaoSimulado.toFixed(2)} no Cartão). ${orientacaoIdentificacao}`;
         return {
           status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
           dados: {
@@ -155,14 +189,13 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
         };
       }
 
-      const db = context.runtime?.db;
       const codigoPreReserva = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
       const baseUrl =
         db?.settings?.baseUrl ||
         (typeof process !== 'undefined' && (process.env?.APP_BASE_URL || process.env?.SERVER_BASE_URL)) ||
         'https://corpflats.com.br';
       const linkPagamento = `${baseUrl}/minha-reserva/${encodeURIComponent(codigoPreReserva)}`;
-      const cardTotalAmount = Number((valorTotal * 1.05).toFixed(2));
+      const cardTotalAmount = valorCartaoSimulado;
       const cleanTxId = codigoPreReserva.replace(/[^a-zA-Z0-9]/g, '').substring(0, 25);
 
       let chavePix =
@@ -207,8 +240,8 @@ export const gerarLinkReservaTool: AgentToolDefinition<GerarLinkReservaArgs> = {
         if (!Array.isArray(db.preReservations)) db.preReservations = [];
 
         const allFlats = Array.isArray(db.flats) && db.flats.length > 0
-          ? db.flats.filter((f: any) => f && f.isActive !== false && f.status !== 'maintenance')
-          : [{ id: 1, number: '101' }];
+          ? db.flats.filter((f: any) => f && f.isActive !== false && f.status !== 'maintenance' && f.status !== 'manutencao_bloqueada')
+          : [{ id: 1, number: '113' }];
         const selectedFlat = allFlats[0] || { id: 1, number: '101' };
         const nextResId = db.reservations.length > 0
           ? Math.max(...db.reservations.map((r: any) => Number(r.id) || 0)) + 1

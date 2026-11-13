@@ -29,14 +29,14 @@ export const autorizarVisitaTemporariaTool: AgentToolDefinition<AutorizarVisitaT
         status: 'BLOQUEADO_PELA_REGRA',
         codigo_regra_bloqueio: 'VISITA_NAO_PODE_PERNOITAR',
         instrucao_para_ia:
-          'Explique que visitantes temporários não podem pernoitar nem usar piscina/academia. Para pernoite, cadastre como hóspede acompanhante.',
+          'Explique que visitantes temporários não podem pernoitar nem acessar a cobertura/área de lazer (jacuzzi aquecida, saunas, academia e sala de jogos). Para pernoite, cadastre como hóspede acompanhante.',
       };
     }
     if (!args.nome_visitante || !args.cpf_visitante) {
       return {
         status: 'SIMULACAO_AGUARDANDO_CONFIRMACAO',
         instrucao_para_ia:
-          'Solicite o Nome Completo e o CPF do visitante e avise que visitas não podem pernoitar nem utilizar piscina ou academia.',
+          'Solicite o Nome Completo e o CPF do visitante e avise que visitas não podem pernoitar nem acessar a cobertura/área de lazer (jacuzzi aquecida, saunas, academia e sala de jogos).',
       };
     }
     return {

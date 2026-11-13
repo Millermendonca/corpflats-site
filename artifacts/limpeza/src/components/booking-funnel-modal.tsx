@@ -354,9 +354,15 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
   ratePlan,
   occupancySecondGuestDiff,
   twinFeeUnit,
+  twinFeeType = "per_stay",
   otaTwinFeeUnit,
   extraBedFeeUnit,
+  extraBedFeeType = "per_stay",
   otaExtraBedFeeUnit,
+  showTwinOption = true,
+  allowTwinBeds = true,
+  twinDisabledReason,
+  allowThirdGuest = false,
   addRoom,
   removeRoom,
   updateRoom,
@@ -365,13 +371,21 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
   ratePlan: "with_breakfast" | "room_only"
   occupancySecondGuestDiff: number
   twinFeeUnit: number
+  twinFeeType?: string
   otaTwinFeeUnit?: number
   extraBedFeeUnit: number
+  extraBedFeeType?: string
   otaExtraBedFeeUnit?: number
+  showTwinOption?: boolean
+  allowTwinBeds?: boolean
+  twinDisabledReason?: string | null
+  allowThirdGuest?: boolean
   addRoom: () => void
   removeRoom: (id: number) => void
   updateRoom: (id: number, field: "bedType" | "adults", value: any) => void
 }) {
+  const twinFeeSuffix = twinFeeUnit > 0 ? ` (+R$ ${formatBrl(twinFeeUnit)}${twinFeeType === "per_night" ? "/noite" : ""})` : ""
+  const extraBedSuffix = extraBedFeeUnit > 0 ? `+R$ ${formatBrl(extraBedFeeUnit)}${extraBedFeeType === "per_night" ? "/noite" : ""}` : "Incluso"
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -393,7 +407,7 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
         {rooms.map((r, idx) => (
           <div key={r.id} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2">
             <div className="flex items-center justify-between text-xs font-bold">
-              <span className="text-slate-900 dark:text-slate-100">Flat Studio #{idx + 1}</span>
+              <span className="text-slate-900 dark:text-slate-100">Flat Soho #{idx + 1}</span>
               {rooms.length > 1 && (
                 <button
                   type="button"
@@ -414,8 +428,17 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                   className="w-full h-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
                   <option value="queen">1 Cama Queen Casal</option>
-                  <option value="twin">2 Camas Solteiro (+R$ {formatBrl(twinFeeUnit)})</option>
+                  {showTwinOption && (
+                    <option value="twin" disabled={!allowTwinBeds}>
+                      2 Camas Solteiro{twinFeeSuffix}{!allowTwinBeds ? " — Indisponível" : ""}
+                    </option>
+                  )}
                 </select>
+                {showTwinOption && !allowTwinBeds && twinDisabledReason && (
+                  <p className="text-[10px] text-amber-700 dark:text-amber-400 font-medium leading-tight">
+                    {twinDisabledReason}
+                  </p>
+                )}
                 {r.bedType === "twin" && otaTwinFeeUnit && otaTwinFeeUnit > twinFeeUnit && (
                   <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
                     Nas plataformas: <span className="line-through text-slate-400">R$ {formatBrl(otaTwinFeeUnit)}</span> • Direto: R$ {formatBrl(twinFeeUnit)}
@@ -426,7 +449,7 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
               <div className="space-y-1">
                 <Label className="text-[10px] text-slate-500 font-bold">Hóspedes:</Label>
                 <select
-                  value={r.adults}
+                  value={allowThirdGuest ? r.adults : Math.min(2, r.adults)}
                   onChange={e => updateRoom(r.id, "adults", Number(e.target.value))}
                   className="w-full h-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-bold text-slate-900 dark:text-slate-100"
                 >
@@ -436,13 +459,15 @@ const FunnelRoomConfigList = memo(function FunnelRoomConfigList({
                       ? `2 Hóspedes (+R$ ${formatBrl(occupancySecondGuestDiff)}/noite)`
                       : "2 Hóspedes"}
                   </option>
-                  <option value="3">
-                    {ratePlan === "with_breakfast" && occupancySecondGuestDiff > 0
-                      ? `3 Hósp. (+R$ ${formatBrl(occupancySecondGuestDiff * 2)}/noite + Colchonete R$ ${formatBrl(extraBedFeeUnit)})`
-                      : `3 Hósp. (Colchonete +R$ ${formatBrl(extraBedFeeUnit)})`}
-                  </option>
+                  {allowThirdGuest && (
+                    <option value="3">
+                      {ratePlan === "with_breakfast" && occupancySecondGuestDiff > 0
+                        ? `3 Hósp. (+R$ ${formatBrl(occupancySecondGuestDiff * 2)}/noite • Colchonete ${extraBedSuffix})`
+                        : `3 Hósp. (Colchonete ${extraBedSuffix})`}
+                    </option>
+                  )}
                 </select>
-                {r.adults === 3 && otaExtraBedFeeUnit && otaExtraBedFeeUnit > extraBedFeeUnit && (
+                {allowThirdGuest && r.adults === 3 && otaExtraBedFeeUnit && otaExtraBedFeeUnit > extraBedFeeUnit && (
                   <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
                     Colchonete nas plataformas: <span className="line-through text-slate-400">R$ {formatBrl(otaExtraBedFeeUnit)}</span> • Direto: R$ {formatBrl(extraBedFeeUnit)}
                   </p>
@@ -619,7 +644,7 @@ const FunnelPriceBreakdownCard = memo(function FunnelPriceBreakdownCard({
         <div className="flex flex-wrap items-center justify-between gap-1.5 font-bold text-slate-800 dark:text-slate-200">
           <span className="flex items-center gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" />
-            <span>Política de Cancelamento: {policyType === "flexivel" ? "Flexível" : "Padrão"}</span>
+            <span>Política de Cancelamento: {policyType === "flexivel" ? "Cancelamento Gratuito (até 24h antes)" : "Menos de 24h para o Check-in"}</span>
           </span>
         </div>
         <p>{policyExplanation}</p>
@@ -1107,6 +1132,62 @@ export function BookingFunnelModal({
     ? activeAvailability.minAvailableOnAnyDate
     : (typeof activeAvailability?.totalAvailableFlats === "number" ? activeAvailability.totalAvailableFlats : null)
 
+  // Trava temporal para check-in no mesmo dia (padrão 12:00 em America/Sao_Paulo) e capacidade máxima (2 padrão, 3 quando colchonete ativo)
+  const showTwinOption = siteConfig?.bedConfig?.allowTwinBeds !== false
+  const twinCutoffStr = String(siteConfig?.bedConfig?.twinSameDayCutoffTime || "12:00")
+  const [twinCutoffH, twinCutoffM] = twinCutoffStr.split(":").map((v) => parseInt(v, 10) || 0)
+  const nowDateObj = new Date()
+  const todayFunnelIso = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(nowDateObj)
+  const brtFunnelParts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(nowDateObj)
+  const brtFunnelH = parseInt(brtFunnelParts.find((p) => p.type === "hour")?.value || "0", 10) || 0
+  const brtFunnelM = parseInt(brtFunnelParts.find((p) => p.type === "minute")?.value || "0", 10) || 0
+  const nowTotalMins = brtFunnelH * 60 + brtFunnelM
+  const isSameDayCheckinFunnel = checkin === todayFunnelIso
+  const isTwinSameDayCutoff = isSameDayCheckinFunnel && nowTotalMins >= (twinCutoffH * 60 + twinCutoffM)
+  const isExtraBedSameDayCutoff = isSameDayCheckinFunnel && nowTotalMins >= ((Number(siteConfig?.extraBedConfig?.cutoffHour) || 12) * 60)
+  const isTwinAvailable = showTwinOption && (activeAvailability ? activeAvailability.allowTwinBeds !== false : true) && !isTwinSameDayCutoff
+  const twinDisabledReason = !showTwinOption
+    ? null
+    : isTwinSameDayCutoff
+      ? `Solicitação de 2 camas de solteiro para check-in hoje encerrada às ${twinCutoffStr}.`
+      : activeAvailability?.allowTwinBeds === false
+        ? (activeAvailability?.twinCutoffMessage || activeAvailability?.twinBedsUnavailableReason || "Sem flats com layout de 2 camas de solteiro disponíveis nestas datas.")
+        : null
+  const allowThirdGuest = Boolean(siteConfig?.extraBedConfig?.enabled === true) && !isExtraBedSameDayCutoff
+  const maxAllowedPets = Math.min(4, Math.max(1, Number(siteConfig?.petPolicy?.maxPets) || 2))
+
+  useEffect(() => {
+    if (!isTwinAvailable) {
+      rooms.forEach((r) => {
+        if (r.bedType === "twin") updateRoom(r.id, "bedType", "queen")
+      })
+    }
+    if (!allowThirdGuest) {
+      rooms.forEach((r) => {
+        if (r.adults > 2) updateRoom(r.id, "adults", 2)
+      })
+    }
+  }, [isTwinAvailable, allowThirdGuest, rooms, updateRoom])
+
+  useEffect(() => {
+    if (siteConfig?.petPolicy?.enabled === false && bringingPet) {
+      setBringingPet(false)
+      setPetRulesAccepted(false)
+    } else if (petCount > maxAllowedPets) {
+      setPetCount(maxAllowedPets)
+    }
+  }, [siteConfig?.petPolicy?.enabled, maxAllowedPets, bringingPet, petCount])
+
   // Mostrar essa mensagem somente quando tiver 5 flats ou menos disponíveis para uma ou mais datas solicitadas
   const showUrgencyBanner = Boolean(
     activeAvailability?.hasLowAvailability ?? (minAvailable !== null ? minAvailable <= 5 : false)
@@ -1274,9 +1355,11 @@ export function BookingFunnelModal({
   const otaSavingsAmount = Math.max(0, Math.round((otaReferenceTotal - totalAmount) * 100) / 100)
 
   // Política de Cancelamento (memoizada para evitar instanciar Date e recalcular a cada tecla)
+  const freeCancelHrs = Number(siteConfig?.cancellationPolicy?.freeCancellationHours ?? 24)
+  const noShowPenaltyPct = Number(siteConfig?.cancellationPolicy?.noShowPenaltyPercent ?? 100)
   const cancellationPolicy = useMemo(
-    () => calculateCancellationPolicy(new Date(), checkin, totalAmount),
-    [checkin, totalAmount]
+    () => calculateCancellationPolicy(new Date(), checkin, totalAmount, "14:00", new Date(), freeCancelHrs, noShowPenaltyPct),
+    [checkin, totalAmount, freeCancelHrs, noShowPenaltyPct]
   )
 
   const totalGuestsCount = useMemo(
@@ -1765,9 +1848,15 @@ export function BookingFunnelModal({
               ratePlan={ratePlan}
               occupancySecondGuestDiff={breakfastSurchargePerGuest}
               twinFeeUnit={twinFeeUnit}
+              twinFeeType={siteConfig?.bedConfig?.twinFeeType || "per_stay"}
               otaTwinFeeUnit={otaTwinFeeUnit}
               extraBedFeeUnit={extraBedFeeUnit}
+              extraBedFeeType={siteConfig?.extraBedConfig?.feeType || "per_stay"}
               otaExtraBedFeeUnit={otaExtraBedFeeUnit}
+              showTwinOption={showTwinOption}
+              allowTwinBeds={isTwinAvailable}
+              twinDisabledReason={twinDisabledReason}
+              allowThirdGuest={allowThirdGuest}
               addRoom={stableAddRoom}
               removeRoom={stableRemoveRoom}
               updateRoom={stableUpdateRoom}
@@ -1876,20 +1965,21 @@ export function BookingFunnelModal({
             )}
 
             {/* Módulo Pet Friendly */}
+            {siteConfig?.petPolicy?.enabled !== false && (
             <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <Heart className="w-4 h-4 text-[#0F3D4C] shrink-0" />
                   <div className="min-w-0">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Vai viajar com animal de estimação?</span>
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Vai viajar com cachorro de pequeno porte?</span>
                     <span className="text-[10px] text-slate-500">
-                      Taxa de higienização:{" "}
+                      Taxa pet:{" "}
                       {otaPetFeePerUnit > petFeePerUnit && (
                         <span className="line-through text-slate-400 mr-1" title="Valor no Booking e Airbnb">
                           R$ {formatBrl(otaPetFeePerUnit)}
                         </span>
                       )}
-                      <strong className="text-slate-700 dark:text-slate-300">R$ {formatBrl(petFeePerUnit)}/pet</strong> ({siteConfig?.petPolicy?.feeType === "per_night" ? "por diária" : "por estadia"})
+                      <strong className="text-slate-700 dark:text-slate-300">R$ {formatBrl(petFeePerUnit)}/cachorro</strong> ({siteConfig?.petPolicy?.feeType === "per_night" ? "por diária" : "por estadia"} • até 10kg, máx. {maxAllowedPets})
                     </span>
                   </div>
                 </div>
@@ -1921,14 +2011,14 @@ export function BookingFunnelModal({
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="text-slate-700 dark:text-slate-200 font-bold block">
-                        Quantidade de Cães (Pequeno Porte):
+                        Quantidade de Cachorros (Até 10kg):
                       </span>
                       <span className="text-[10px] text-slate-500">
-                        {siteConfig?.petPolicy?.allowedSpecies || "Cães de pequeno porte (até 10kg)"}
+                        {siteConfig?.petPolicy?.allowedSpecies || "Apenas cachorros de porte pequeno (até 10kg)"}
                       </span>
                     </div>
                     <div className="flex gap-1.5">
-                      {[1, 2].map(n => (
+                      {Array.from({ length: maxAllowedPets }, (_, idx) => idx + 1).map(n => (
                         <Button
                           key={n}
                           type="button"
@@ -1949,7 +2039,8 @@ export function BookingFunnelModal({
                       <span>Regulamento de Hospedagem Pet (Edifício Soho)</span>
                     </div>
                     <div className="whitespace-pre-line text-[10.5px] leading-relaxed text-slate-600 dark:text-slate-400 max-h-40 overflow-y-auto pr-1">
-                      {siteConfig?.petPolicy?.rules || `• Exclusivo para cães de pequeno porte (até 10 kg).
+                      {siteConfig?.petPolicy?.rules || `• Exclusivo para cachorros de pequeno porte (até 10 kg), máximo de 2 por flat. Outros animais não são permitidos.
+• Taxa de higienização de R$ 40 por cachorro por estadia.
 • Nas áreas comuns, transporte obrigatório no colo ou bolsa/caixa.
 • Uso exclusivo do elevador de serviço ao transitar com o pet.
 • Proibido deixar o animal sozinho no flat por longos períodos.
@@ -1965,12 +2056,13 @@ export function BookingFunnelModal({
                       className="rounded text-[#0F3D4C] accent-[#0F3D4C] mt-0.5"
                     />
                     <span>
-                      Li e concordo com as regras de convivência pet e taxa de higienização (+ R$ {petFee}).
+                      Li e concordo com as regras de convivência pet e taxa de higienização (+ R$ {formatBrl(petFee)}).
                     </span>
                   </label>
                 </div>
               )}
             </div>
+            )}
 
             {/* Navegação */}
             <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2 pt-2">

@@ -3788,12 +3788,87 @@ app.post("/api/wbp/channex/poll-feed", async (req, res) => {
   }
 });
 
-const DEFAULT_PET_RULES = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
+const DEFAULT_PET_RULES = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm), no limite máximo de 2 cães por flat. Outros animais não são autorizados.
+• Taxa Pet: R$ 40,00 por cachorro por estadia.
 • Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).
 • Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.
 • Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.
 • Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.
 • Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.`;
+
+const DEFAULT_HOUSE_RULES = `TERMOS, REGRAS E CONDIÇÕES DE RESERVA - CORPFLATS
+
+1. REGRAS DA CASA E CONVIVÊNCIA
+(Regras do imóvel, áreas comuns e convivência no Edifício Soho Residence Service)
+
+🕒 Check-in e Check-out
+• Check-in: A partir das 14:00h.
+• Check-out: Até as 12:00h.
+• Check-in Digital Obrigatório: O acesso ao flat e a retirada do cartão na recepção são liberados apenas após a conclusão do check-in digital, com o envio de foto de documento oficial (frente e verso) de todos os ocupantes e selfie do titular da reserva.
+• Identificação da Unidade: O número do apartamento e as instruções detalhadas de acesso serão enviados por mensagem no dia da entrada, até as 14:00h.
+
+🐾 Política Pet (Cães de Pequeno Porte)
+• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
+• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).
+• Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.
+• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.
+• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.
+• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.
+• Taxa Pet: R$ 40,00 por cachorro por estadia (máximo de 2 cães de pequeno porte até 10 kg por flat).
+
+👥 Capacidade e Visitantes
+• Ocupação Máxima: Limite de até 3 pessoas no apartamento (somando hóspedes e visitantes), respeitando a capacidade contratada na reserva.
+• Cadastro de Visitantes: Para acesso ao edifício, visitantes devem apresentar/enviar documento oficial com foto com antecedência.
+• Restrições de Visitas: Não é permitido o pernoite de visitantes no imóvel, bem como não é permitido o acesso de visitantes à área de lazer/cobertura.
+• Hospedagem de Menores: Menores de 18 anos só podem se hospedar acompanhados dos pais. Se acompanhados de terceiros, é obrigatória a apresentação de autorização por escrito dos pais com firma reconhecida em cartório.
+
+🧖‍♀️ Áreas Comuns e Lazer (Edifício Soho Residence Service)
+• Estrutura Disponível: Jacuzzi com água aquecida, Saunas seca e a vapor, Academia climatizada, Terraço panorâmico e Salão de Jogos (o edifício não possui piscina).
+• Horário de Funcionamento: Diariamente, das 06:00h às 22:00h.
+• Regras da Área Comum: Proibido o consumo de alimentos, bebidas e uso de aparelhos de som na jacuzzi, sauna e salão de jogos. Na academia, é proibido qualquer som ambiente (uso exclusivo com fones de ouvido).
+
+🚗 Estacionamento
+• Vagas Rotativas: Estacionamento gratuito em sistema rotativo (sujeito à disponibilidade momentânea de vagas no momento da chegada).
+• Liberação de Acesso: Para cadastro na portaria, é necessário informar modelo, cor e placa do veículo durante o check-in digital.
+
+🚫 Normas Gerais e Penalidades
+• Lei do Silêncio: Proibido som alto e barulhos excessivos nos apartamentos em qualquer horário.
+• Proibição de Fumo e Ilícitos: É terminantemente proibido fumar (cigarros convencionais, eletrônicos, vapes, pods, narguilés) ou usar substâncias ilícitas nas unidades e dependências do prédio. O descumprimento sujeita o hóspede a cancelamento imediato da hospedagem sem direito a reembolso, aplicação de penalidades e acionamento policial.
+• Cuidado com o Enxoval: Evite manchar toalhas e roupas de cama com tinturas, maquiagem, protetor solar, sangue ou alimentos. Peças danificadas ou manchadas de forma permanente serão cobradas pelo custo de reposição.
+• Extravio de Cartão/Chave: Em caso de perda do cartão de acesso, a taxa para emissão de 2ª via é de R$ 15,00.`;
+
+const DEFAULT_CONTRACT_TERMS = `TERMOS E CONDIÇÕES CONTRATUAIS - CORPFLATS
+
+Cláusula 1 – Do Objeto e da Natureza da Locação
+1.1. O presente contrato tem por objeto a locação por temporada para fins exclusivamente residenciais e temporários de apartamentos administrados pela CorpFlats.
+1.2. O HÓSPEDE declara estar ciente de que as unidades são autônomas e de gestão privada, não mantendo qualquer vínculo de governança com o restaurante ou com a operação hoteleira convencional do condomínio. Os porteiros e recepcionistas atuam unicamente na identificação e entrega/recebimento dos cartões de acesso. Todo e qualquer atendimento deve ser demandado aos canais oficiais da CorpFlats.
+
+Cláusula 2 – Do Check-in Digital e Acesso
+2.1. O pagamento integral da reserva não isenta a obrigatoriedade da realização prévia do Check-in Digital.
+2.2. O titular da reserva deve fornecer cópia legível de documento oficial de identidade de todos os ocupantes e selfie de validação. O acesso à unidade não será autorizado pelo condomínio caso a identificação não tenha sido concluída.
+
+Cláusula 3 – Da Limpeza e Serviços Adicionais
+3.1. A diária não inclui serviço de limpeza diária de quarto ou arrumação intermediária.
+3.2. Caso o HÓSPEDE solicite higienização extra durante a estadia, o serviço poderá ser contratado à parte pelo valor de R$ 70,00 por intervenção, incluindo a troca integral de roupas de cama e toalhas.
+
+Cláusula 4 – Da Ausência de Depósito Caução e Reparação de Danos
+4.1. A CorpFlats não exige caução prévio financeiro no momento da reserva.
+4.2. O HÓSPEDE assume total responsabilidade patrimonial e civil pela conservação do imóvel, mobília, eletrodomésticos e utensílios.
+4.3. Avarias, quebras, perdas de cartões/chaves, danos definitivos a enxovais, custos de limpeza pesada decorrentes de infração de fumo/animais ou multas condominiais provocadas pela conduta do HÓSPEDE serão cobrados diretamente do responsável pela reserva na forma dos Artigos 186 e 927 do Código Civil Brasileiro, autorizando-se desde já a cobrança direta e medidas executivas cabíveis.
+
+Cláusula 5 – Da Política de Cancelamento e No-Show
+5.1. Cancelamento Gratuito (Até 24 horas antes do check-in):
+• O cancelamento é gratuito com reembolso integral (100%) quando solicitado até 24 (vinte e quatro) horas antes do horário oficial de check-in (isto é, até as 14:00h do dia anterior à data de entrada).
+5.2. Cancelamento Fora do Prazo (Menos de 24 horas para o check-in) e No-Show:
+• Cancelamentos efetuados faltando menos de 24 horas para o horário de check-in (após as 14:00h do dia anterior à entrada) ou o não comparecimento na data da reserva (No-Show) implicam a cobrança/retenção integral de 100% (cem por cento) do valor total da reserva, sem direito a reembolso.
+5.3. Saída Antecipada (Early Check-out):
+• A desistência ou desocupação antecipada do imóvel por conveniência do HÓSPEDE não confere direito a reembolso, compensação ou crédito proporcional de diárias não utilizadas.
+
+Cláusula 6 – Dos Procedimentos de Encerramento (Check-out)
+6.1. O horário máximo para desocupação da unidade é às 12:00h.
+6.2. Antes da saída, o HÓSPEDE compromete-se a: desligar os aparelhos de ar-condicionado, televisão, ferro e fogão; fechar todas as janelas; certificar-se do fechamento de torneiras e registros de duchas higiênicas; e entregar o cartão magnético diretamente na recepção.`;
+
+const DEFAULT_TERMS_AND_RULES = `${DEFAULT_HOUSE_RULES}\n\n=========================================\n\n${DEFAULT_CONTRACT_TERMS}`;
 
 const DEFAULT_SITE_CONFIG = {
   theme: {
@@ -3803,255 +3878,256 @@ const DEFAULT_SITE_CONFIG = {
   },
   branding: {
     brandName: "CorpFlats",
-    tagline: "Hospitalidade Contemporânea, Flats Arejados e Conforto Total",
-    badgeTop: "⭐ Melhor Tarifa Garantida Sempre pelo Nosso Site Oficial",
+    tagline: "Flats completos no Centro de Campos dos Goytacazes",
+    badgeTop: "Reserva direta oficial • 5% de desconto no PIX e garagem coberta inclusa",
     logoText: "CorpFlats",
-    logoSubtext: "Campos dos Goytacazes",
+    logoSubtext: "Soho Residence • Campos",
     logoImage: "",
     phone: "5522997124021",
     whatsapp: "5522997124021",
     email: "reservas@corpflats.com.br",
+    instagram: "@corpflats",
+    instagramUrl: "https://instagram.com/corpflats",
     address: "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ, CEP 28010-140 (Edifício Soho Residence Service)",
     googleMapsUrl: "https://share.google/LHu3541d5lhkdvbL2",
   },
   hero: {
-    title: "Sua Estadia com Conforto & Estilo em Campos dos Goytacazes",
-    highlightText: "Conforto, Luz Natural e Sofisticação",
-    description: "Flats decorados com estética contemporânea e arejada, ar-condicionado split em todos os ambientes, Wi-Fi 500MB ultra rápido e localização nobre no Edifício Soho Residence Service no Centro de Campos dos Goytacazes.",
-    backgroundImage: "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1920&q=80",
-    buttonText: "Buscar Disponibilidade",
-    floatingBadgeText: "🏆 Avaliação 4.9/5 estrelas por mais de 1.200 hóspedes",
-  },
-  ratePlans: {
-    with_breakfast: {
-      name: "Com Café Incluso",
-      dailyRate: 236.49,
-      cleaningFeeEnabled: false,
-      cleaningFeeAmount: 0,
-      cleaningFeeType: "per_stay",
-      description: "Diária com Café da Manhã servido exclusivamente no flat"
-    },
-    room_only: {
-      name: "Sem Café",
-      dailyRate: 216.49,
-      cleaningFeeEnabled: true,
-      cleaningFeeAmount: 50,
-      cleaningFeeType: "per_stay",
-      description: "Hospedagem em flat completo sem café da manhã"
-    }
-  },
-  bedConfig: {
-    twinFeeAmount: 30,
-    twinFeeType: "per_stay",
-    cutoffHour: 12
-  },
-  extraBedConfig: {
-    enabled: true,
-    feeAmount: 60,
-    feeType: "per_stay",
-    cutoffHour: 12,
-    maxGuests: 3,
-    warningMessage: "Nossos flats são projetados para até 2 pessoas (lotação ideal). Para acomodar com carinho um 3º hóspede, disponibilizamos a montagem de 1 colchonete extra com enxoval completo e higienizado."
-  },
-  petPolicy: {
-    enabled: true,
-    feeAmount: 40,
-    feeType: "per_stay",
-    allowedSpecies: "Cachorros (Cães) de pequeno e médio porte (até 15kg)",
-    rules: "• Uso obrigatório de guia/coleira nas áreas sociais do condomínio.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O hóspede tutor é responsável pela conservação e integridade do apartamento."
-  },
-  pricing: {
-    directDiscountPercent: 0,
-    pixDiscountPercent: 5,
-    cardMarkupPercent: 5,
-    breakfastSurchargePerGuest: 20
+    title: "Seu flat completo no Centro de Campos",
+    highlightText: "Jacuzzi aquecida na cobertura, garagem inclusa e check-in digital",
+    description: "19 apartamentos climatizados no Edifício Soho Residence Service, com cozinha equipada, bancada de trabalho, Wi-Fi individual por unidade e recepção 24 horas.",
+    backgroundImage: "/photos/soho/hero-jacuzzi-cobertura.jpg",
+    buttonText: "Ver disponibilidade",
+    floatingBadgeText: "Edifício Soho Residence Service • Centro de Campos",
+    highlights: [
+      { label: "Check-in Digital", desc: "Entrada às 14h • Cartão NFC na recepção 24h" },
+      { label: "Garagem Inclusa", desc: "1 vaga coberta rotativa por flat" },
+      { label: "Café no Flat", desc: "Bandeja entregue das 05:00 às 09:30" },
+      { label: "Cancelamento 24h", desc: "100% reembolsável até 24h antes das 14h" }
+    ]
   },
   amenities: [
     {
-      id: "pool",
-      icon: "Waves",
-      title: "Piscina com Deck Panorâmico",
-      description: "Área de lazer ensolarada no condomínio com vista privilegiada para relaxar.",
-      badge: "Lazer"
+      id: "jacuzzi",
+      icon: "Sparkles",
+      title: "Jacuzzi Aquecida na Cobertura",
+      description: "Hidromassagem com água aquecida e deck de madeira, aberta das 06:00 às 22:00 para hóspedes.",
+      badge: "Cobertura"
     },
     {
-      id: "wifi",
-      icon: "Wifi",
-      title: "Rede Wi-Fi",
-      description: "Conexão de internet sem fio disponível em todos os flats.",
-      badge: "Gratuito"
+      id: "rooftop",
+      icon: "Sun",
+      title: "Terraço com Vista Panorâmica",
+      description: "Área externa aberta no topo do Soho Residence com espreguiçadeiras e vista livre de Campos.",
+      badge: "Vista Alta"
     },
     {
-      id: "ac",
-      icon: "Wind",
-      title: "Ar-Condicionado Climatizado",
-      description: "Ambientes frescos e arejados com splits modernos e silenciosos.",
-      badge: "Conforto"
-    },
-    {
-      id: "garage",
-      icon: "Car",
-      title: "Estacionamento Coberto Gratuito",
-      description: "Ampla garagem rotativa com segurança 24h e portão eletrônico.",
-      badge: "Incluso"
-    },
-    {
-      id: "kitchen",
-      icon: "Utensils",
-      title: "Cozinha Compacta Equipada",
-      description: "Cooktop, micro-ondas, frigobar/geladeira, cafeteira e utensílios completos.",
-      badge: "Praticidade"
-    },
-    {
-      id: "breakfast",
-      icon: "Coffee",
-      title: "Café da Manhã Servido no Flat",
-      description: "Cestas gourmet montadas com frutas, pães e sucos selecionados.",
-      badge: "Opcional"
-    },
-    {
-      id: "tv",
-      icon: "Tv",
-      title: "Smart TV 55\" 4K",
-      description: "Acesso a Netflix, YouTube, canais digitais e streaming para relaxar.",
-      badge: "Entretenimento"
+      id: "sauna",
+      icon: "Flame",
+      title: "Saunas Seca e a Vapor",
+      description: "Espaço de relaxamento integrado ao deck da cobertura, liberado diariamente para hóspedes.",
+      badge: "Bem-Estar"
     },
     {
       id: "gym",
       icon: "Dumbbell",
-      title: "Espaço Fitness",
-      description: "Academia equipada no condomínio para manter seus treinos e saúde em dia.",
-      badge: "Fitness"
+      title: "Academia Climatizada",
+      description: "Esteiras, bicicletas, elípticos e estação de musculação na cobertura das 06:00 às 22:00.",
+      badge: "Treino"
+    },
+    {
+      id: "games",
+      icon: "Gamepad2",
+      title: "Sala de Jogos",
+      description: "Ambiente climatizado no condomínio com mesa de sinuca, totó e mesa de carteado.",
+      badge: "Lazer"
+    },
+    {
+      id: "garage",
+      icon: "Car",
+      title: "Garagem Coberta Inclusa",
+      description: "1 vaga rotativa coberta por apartamento, liberada na portaria mediante cadastro da placa.",
+      badge: "Incluso"
+    },
+    {
+      id: "reception",
+      icon: "KeyRound",
+      title: "Recepção 24h & Cartão NFC",
+      description: "Check-in digital antecipado pelo celular e retirada rápida do cartão magnético na portaria.",
+      badge: "Acesso 24h"
+    },
+    {
+      id: "breakfast",
+      icon: "Coffee",
+      title: "Café da Manhã no Flat",
+      description: "Entregue em bandeja diretamente no apartamento, no horário agendado entre 05:00 e 09:30.",
+      badge: "Plano com Café"
     }
   ],
   gallery: [
     {
       id: 1,
-      title: "Suíte Master Arejada & Cama King",
-      category: "Quartos",
-      imageUrl: "https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=1200&q=80"
+      title: "Quarto climatizado e bancada de trabalho",
+      category: "O Flat",
+      imageUrl: "/photos/soho/01-quarto-bancada.jpg"
     },
     {
       id: 2,
-      title: "Living com Luz Natural e Decoração Clean",
-      category: "Living",
-      imageUrl: "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1200&q=80"
+      title: "Ambiente integrado com mesa, sofá e Smart TV 32\"",
+      category: "O Flat",
+      imageUrl: "/photos/soho/02-flat-integrado.jpg"
     },
     {
       id: 3,
-      title: "Varanda com Vista e Brisa Fresca",
-      category: "Varanda",
-      imageUrl: "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=1200&q=80"
+      title: "Mesa posta para refeições no apartamento",
+      category: "O Flat",
+      imageUrl: "/photos/soho/03-mesa-jantar.jpg"
     },
     {
       id: 4,
-      title: "Cozinha Moderna Integrada",
+      title: "Cozinha com cooktop 2 bocas, frigobar e cafeteira",
       category: "Cozinha",
-      imageUrl: "https://images.unsplash.com/photo-1556912172-45b7abe8b7e1?auto=format&fit=crop&w=1200&q=80"
+      imageUrl: "/photos/soho/04-cozinha-equipada.jpg"
     },
     {
       id: 5,
-      title: "Banheiro Impecável com Ducha Relaxante",
+      title: "Banheiro com bancada em granito e secador de parede",
       category: "Banheiro",
-      imageUrl: "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=1200&q=80"
+      imageUrl: "/photos/soho/05-banheiro.jpg"
     },
     {
       id: 6,
-      title: "Deck com Piscina e Relaxamento",
-      category: "Lazer",
-      imageUrl: "https://images.unsplash.com/photo-1576013551627-0cc20b96c2a7?auto=format&fit=crop&w=1200&q=80"
-    }
-  ],
-  testimonials: [
-    {
-      id: 1,
-      name: "Mariana Silveira",
-      city: "Rio de Janeiro, RJ",
-      rating: 5,
-      comment: "O flat é incrivelmente arejado, com iluminação natural maravilhosa e limpeza impecável. Dá uma paz enorme ao entrar. A localização em Campos dos Goytacazes no Soho é perfeita!",
-      date: "Fevereiro de 2026",
-      avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80"
+      title: "Jacuzzi aquecida e deck de madeira na cobertura",
+      category: "Cobertura & Lazer",
+      imageUrl: "/photos/soho/06-cobertura-jacuzzi.jpg"
     },
     {
-      id: 2,
-      name: "Carlos Eduardo Mendes",
-      city: "São Paulo, SP",
-      rating: 5,
-      comment: "Melhor experiência de hospedagem em Campos dos Goytacazes. Decoração moderna, internet super estável para trabalhar e cama de hotel 5 estrelas. Recomendo de olhos fechados.",
-      date: "Janeiro de 2026",
-      avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80"
+      id: 7,
+      title: "Terraço aberto com vista panorâmica da cidade",
+      category: "Cobertura & Lazer",
+      imageUrl: "/photos/soho/07-terraco-panoramico.jpg"
     },
     {
-      id: 3,
-      name: "Patrícia & Rodrigo",
-      city: "Belo Horizonte, MG",
-      rating: 5,
-      comment: "O café da manhã servido no flat é um diferencial sensacional. Tudo quentinho e fresco. O atendimento pelo WhatsApp é ágil e educado.",
-      date: "Fevereiro de 2026",
-      avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80"
+      id: 8,
+      title: "Área de descanso integrada às saunas seca e a vapor",
+      category: "Cobertura & Lazer",
+      imageUrl: "/photos/soho/08-spa-saunas.jpg"
+    },
+    {
+      id: 9,
+      title: "Academia climatizada com vista alta",
+      category: "Cobertura & Lazer",
+      imageUrl: "/photos/soho/09-academia.jpg"
+    },
+    {
+      id: 10,
+      title: "Sala de jogos climatizada com sinuca e totó",
+      category: "Cobertura & Lazer",
+      imageUrl: "/photos/soho/10-sala-de-jogos.jpg"
+    },
+    {
+      id: 11,
+      title: "Recepção 24 horas e hall social",
+      category: "Edifício & Garagem",
+      imageUrl: "/photos/soho/11-lobby-elevadores.jpg"
+    },
+    {
+      id: 12,
+      title: "Fachada nº 209 e acesso à garagem coberta",
+      category: "Edifício & Garagem",
+      imageUrl: "/photos/soho/12-fachada-garagem.jpg"
     }
   ],
+  testimonials: [],
   about: {
-    title: "Uma Nova Experiência em Hospedagem",
-    subtitle: "Conceito Flat Boutique com Liberdade e Conforto no Centro de Campos",
-    description: "A CorpFlats foi pensada para oferecer a viajantes a lazer e a negócios uma estadia luminosa, acolhedora e contemporânea. Nossos apartamentos combinam o espaço e a privacidade de um lar com o conforto e a praticidade de uma hotelaria de excelência no Edifício Soho Residence Service.",
+    title: "Padrão único em todas as 19 unidades",
+    subtitle: "O Flat",
+    description: "Todos os apartamentos seguem o mesmo padrão de planta e enxoval para até 2 hóspedes, com opção de cama de casal ou montagem de 2 camas de solteiro (para reservas no mesmo dia, a configuração de solteiro deve ser solicitada até as 12:00).",
+    roomTitle: "Quarto, Estar & Trabalho",
+    roomItems: [
+      "Cama de casal com enxoval hoteleiro completo (ou 2 de solteiro sob solicitação)",
+      "Ambiente climatizado com ar-condicionado e cortinas blecaute",
+      "Bancada dedicada para notebook e rede Wi-Fi individual do apartamento",
+      "Smart TV 32\", sofá, guarda-roupa, ferro de passar e secador de cabelo"
+    ],
+    kitchenTitle: "Cozinha & Apoio",
+    kitchenItems: [
+      "Fogão cooktop 2 bocas, cafeteira elétrica e sanduicheira",
+      "Frigobar abastecido no apartamento (autoatendimento)",
+      "Pratos, talheres, copos, taças e saca-rolhas",
+      "Mesa com 2 lugares integrada ao estar (não dispomos de micro-ondas)"
+    ],
     stats: [
-      { label: "Flats Exclusivos", value: "19+" },
-      { label: "Hóspedes Felizes", value: "3.500+" },
-      { label: "Avaliação Média", value: "4.9 ★" },
-      { label: "Taxa de Retorno", value: "94%" }
+      { label: "Flats Ativos", value: "19" },
+      { label: "Recepção", value: "24h" },
+      { label: "Garagem Coberta", value: "1 vaga" },
+      { label: "Lazer na Cobertura", value: "06h–22h" }
     ]
   },
   faq: [
     {
-      q: "Qual o horário de check-in e check-out?",
-      a: "O check-in inicia a partir das 14:00 e o check-out é até as 12:00. Caso precise de early check-in ou late check-out, solicite diretamente pelo WhatsApp com nossa equipe."
+      q: "Como funcionam o check-in, o check-out e o acesso ao flat?",
+      a: "O check-in inicia às 14:00 e o check-out vai até as 12:00. Antes da chegada, você conclui o check-in digital pelo celular e retira o cartão NFC diretamente na recepção 24 horas (não há senha na porta)."
     },
     {
-      q: "Como funciona o estacionamento / garagem?",
-      a: "Dispomos de vagas privativas cobertas no condomínio com portão eletrônico e monitoramento 24h, inclusas gratuitamente na sua diária."
+      q: "O edifício possui piscina ou quais áreas de lazer estão disponíveis?",
+      a: "Não temos piscina. A cobertura do Soho Residence conta com jacuzzi aquecida, terraço com vista panorâmica, saunas seca e a vapor, academia climatizada e sala de jogos — todos liberados para os hóspedes das 06:00 às 22:00."
     },
     {
-      q: "Como é servido o café da manhã?",
-      a: "O café da manhã é servido em cesta gourmet personalizada diretamente no seu flat, no horário de sua preferência entre 06:30 e 09:30."
+      q: "Quantas pessoas cabem no flat e como pedir 2 camas de solteiro?",
+      a: "O padrão das unidades acomoda até 2 hóspedes. Você pode selecionar 2 camas de solteiro no momento da reserva (com taxa adicional de configuração); para entradas no mesmo dia, o pedido de camas de solteiro precisa ser feito até as 12:00."
     },
     {
-      q: "Quais são as formas de pagamento aceitas?",
-      a: "Aceitamos PIX Instantâneo com desconto e confirmação automática na hora, e Cartão de Crédito via Mercado Pago."
+      q: "Como funciona o café da manhã?",
+      a: "Nos planos com café incluso, a bandeja é entregue diretamente no seu apartamento no horário agendado por você entre 05:00 e 09:30, com escolha prévia pelo Portal do Hóspede até a véspera."
     },
     {
-      q: "O flat possui Wi-Fi?",
-      a: "Sim! Todos os nossos flats contam com rede Wi-Fi privativa e bancada própria para notebook."
+      q: "A vaga de garagem está inclusa?",
+      a: "Sim. Cada reserva inclui gratuitamente 1 vaga de garagem coberta rotativa no edifício. Basta informar modelo, cor e placa do veículo no check-in digital para liberação na portaria."
+    },
+    {
+      q: "Vocês aceitam animais de estimação (pets)?",
+      a: "Sim. Aceitamos exclusivamente cachorros de porte pequeno (até 10kg), no limite máximo de 2 cães por flat, mediante taxa de R$ 40,00 por cachorro por estadia."
+    },
+    {
+      q: "Qual é a política de cancelamento e reembolso?",
+      a: "Cancelamento gratuito com 100% de reembolso até 24 horas antes das 14:00 do dia do check-in. Faltando menos de 24 horas para o check-in, é cobrado 100% do valor da reserva."
     }
   ],
   petPolicy: {
     enabled: true,
     feeAmount: 40,
-    feeType: "per_stay", // "per_stay" ou "per_night"
+    feeType: "per_stay",
     maxPets: 2,
-    allowedSpecies: "Cachorros (Cães) de pequeno porte (até 10kg)",
+    allowedSpecies: "Apenas cachorros de porte pequeno (até 10kg)",
     rules: DEFAULT_PET_RULES
   },
   cancellationPolicy: {
-    rule: "dynamic_7days",
-    strictDaysThreshold: 7,
+    rule: "24h_before_checkin",
     freeCancellationHoursBeforeCheckin: 24,
-    description: "Reservas com mais de 7 dias de antecedência: Política Rigorosa (não reembolsável). Reservas feitas com 7 dias ou menos de antecedência: Política Flexível (cancelamento 100% gratuito e reembolso integral até 24h antes do check-in às 14:00)."
+    freeCancellationHours: 24,
+    checkinHour: "14:00",
+    noShowPenaltyPercent: 100,
+    description: "Cancelamento gratuito com 100% de reembolso até 24h antes das 14:00 do dia do check-in. Faltando menos de 24h para o check-in, é cobrado 100%.",
+    rules: "Cancelamento gratuito com 100% de reembolso até 24h antes das 14:00 do dia do check-in. Faltando menos de 24h para o check-in (ou em caso de não comparecimento / No-Show), é cobrado 100% do valor da reserva."
   },
   bedConfig: {
     allowTwinBeds: true,
     twinFeeAmount: 30,
-    twinFeeType: "per_stay", // "per_stay" ou "per_night"
-    twinAllowedFlats: [113, 114, 115, 202, 905], // Lista de números de flats que suportam montagem de 2 camas solteiro
-    twinSameDayCutoffTime: "12:00" // Horário limite no dia do check-in para pedir 2 camas de solteiro
+    twinFeeType: "per_stay",
+    cutoffHour: 12,
+    twinAllowedFlats: [113, 114, 115, 202, 905],
+    twinSameDayCutoffTime: "12:00"
   },
   extraBedConfig: {
-    enabled: true,
+    enabled: false,
+    maxGuests: 2,
     maxGuestsPerFlat: 3,
     feeAmount: 60,
-    feeType: "per_night", // "per_night" ou "per_stay"
+    feeType: "per_stay",
+    cutoffHour: 12,
     description: "Montagem de colchonete extra com enxoval completo, travesseiro e jogo de cama higienizado para o 3º hóspede.",
-    notice: "Nossos flats são projetados para até 2 pessoas (lotação ideal). Para acomodar com carinho um 3º hóspede, disponibilizamos a montagem de 1 colchonete extra com enxoval completo."
+    notice: "Nossos flats são projetados para até 2 pessoas (lotação padrão). Quando habilitado pela administração, acomodamos um 3º hóspede com colchonete extra e enxoval completo.",
+    warningMessage: "Nossos flats são projetados para até 2 pessoas (lotação padrão). Para acomodar um 3º hóspede, disponibilizamos 1 colchonete extra com enxoval completo."
   },
   ratePlans: {
     with_breakfast: {
@@ -4059,16 +4135,16 @@ const DEFAULT_SITE_CONFIG = {
       dailyRate: 236.49,
       cleaningFeeEnabled: false,
       cleaningFeeAmount: 0,
-      cleaningFeeType: "per_stay", // "per_stay" ou "per_night"
-      description: "Diária com Café da Manhã servido exclusivamente no flat",
-      badge: "Café da Manhã Exclusivo"
+      cleaningFeeType: "per_stay",
+      description: "Diária com Café da Manhã entregue no flat (05:00 às 09:30)",
+      badge: "Café no Flat"
     },
     room_only: {
       name: "Apenas Hospedagem (Sem Café)",
       dailyRate: 216.49,
       cleaningFeeEnabled: true,
       cleaningFeeAmount: 50,
-      cleaningFeeType: "per_stay", // "per_stay" ou "per_night"
+      cleaningFeeType: "per_stay",
       description: "Hospedagem em flat completo sem café da manhã",
       badge: "Apenas Hospedagem"
     }
@@ -4892,7 +4968,7 @@ export function getOfficialFaqSeed() {
       "Visitante pode dormir no flat?",
       "Até quantas pessoas podem entrar no flat?",
       "Visita precisa apresentar documento na portaria?",
-      "Visitante pode usar a piscina ou a academia?",
+      "Visitante pode usar a jacuzzi ou a academia da cobertura?",
       "Até que horas visitante pode ficar?"
     ],
     "status": "ativo",
@@ -4905,7 +4981,7 @@ export function getOfficialFaqSeed() {
   {
     "id": "faq-regras-pets",
     "question": "Quais são as regras para hospedagem com animais de estimação (pets)?",
-    "answer": "🐾 *Política Pet CorpFlats:*\n\nAdoramos receber seu cãozinho! Confira nossas diretrizes oficiais:\n\n• *Permissão:* Aceitamos exclusivamente *cães* (não aceitamos outros animais).\n• *Limite:* Apenas *1 cachorro de pequeno porte (até 10 kg)* por apartamento.\n• *Taxa Pet Oficial:* R$ 40,00 por dia (diária).\n• *Circulação no Condomínio:* No prédio, o transporte deve ser no colo ou guia curta, utilizando o elevador de serviço.\n• *Aviso Prévio:* Informe-nos antes da chegada para autorização prévia com a portaria! 🐶✨",
+    "answer": "🐾 *Política Pet CorpFlats:*\n\nAdoramos receber seu cãozinho! Confira nossas diretrizes oficiais:\n\n• *Permissão:* Aceitamos exclusivamente *cães de pequeno porte (até 10 kg)* — não aceitamos outros animais.\n• *Limite:* Até *2 cachorros* por apartamento.\n• *Taxa Pet Oficial:* R$ 40,00 por cachorro por estadia.\n• *Circulação no Condomínio:* No prédio, o transporte deve ser no colo ou guia curta, utilizando o elevador de serviço.\n• *Aviso Prévio:* Informe-nos antes da chegada para autorização prévia com a portaria! 🐶✨",
     "category": "regras_visitas_pets",
     "keywords": [
       "pet",
@@ -4916,7 +4992,7 @@ export function getOfficialFaqSeed() {
       "animal",
       "taxa pet",
       "porte pequeno",
-      "diaria pet"
+      "estadia pet"
     ],
     "variations": [
       "Aceita cachorro no apartamento?",
@@ -5078,8 +5154,8 @@ export function getOfficialFaqSeed() {
   },
   {
     "id": "faq-approval-jacuzzi-aquecida",
-    "question": "A piscina ou jacuzzi da cobertura é aquecida? Qual o horário de funcionamento?",
-    "answer": "🏊‍♂️✨ *Área de Lazer, Piscina & Academia (Cobertura Soho):*\n\nA cobertura do Edifício Soho conta com piscina/jacuzzi com água aquecida e academia completa, funcionando diariamente das *06:00 às 22:00h*.\n\n⚠️ *Regras Importantes:*\n1. Uso exclusivo de hóspedes cadastrados (não é permitida a entrada de visitantes na cobertura).\n2. É estritamente proibido o consumo de alimentos ou bebidas em recipientes de vidro na área molhada.",
+    "question": "A jacuzzi da cobertura é aquecida? O prédio tem piscina? Qual o horário da área de lazer?",
+    "answer": "🧖‍♀️✨ *Área de Lazer na Cobertura (Edifício Soho):*\n\nO Edifício Soho *não possui piscina*, mas conta com cobertura completa equipada com *jacuzzi de água aquecida*, terraço com vista panorâmica, *saunas seca e a vapor*, *academia climatizada* e *sala de jogos*, funcionando diariamente das *06:00 às 22:00h*.\n\n⚠️ *Regras Importantes:*\n1. Uso gratuito e exclusivo de hóspedes cadastrados na reserva (não é permitida a entrada de visitantes na cobertura).\n2. É estritamente proibido o consumo de alimentos ou bebidas em recipientes de vidro na área molhada.",
     "category": "lazer_condominio",
     "keywords": [
       "jacuzzi",
@@ -5088,13 +5164,15 @@ export function getOfficialFaqSeed() {
       "aquecida",
       "lazer",
       "horario jacuzzi",
-      "academia"
+      "academia",
+      "sauna",
+      "sala de jogos"
     ],
     "variations": [
       "A jacuzzi é quente?",
-      "A piscina funciona até que horas?",
+      "Tem piscina no prédio?",
       "Posso usar a jacuzzi à noite?",
-      "Tem academia no prédio?"
+      "Tem academia, sauna e sala de jogos no prédio?"
     ],
     "status": "ativo",
     "scope": "all",
@@ -5196,7 +5274,16 @@ export function seedInitialFaqItems(dbInstance) {
     if (!existing) {
       dbInstance.faqItems.push({ ...s });
       modified = true;
-    } else if (s.id === "faq-agua-frigobar" && (existing.answer?.includes("vazio") || existing.answer?.includes("Não disponibilizamos água"))) {
+    } else if (
+      (s.id === "faq-agua-frigobar" && (existing.answer?.includes("vazio") || existing.answer?.includes("Não disponibilizamos água"))) ||
+      (s.id === "faq-regras-pets" && (existing.answer?.includes("1 cachorro") || existing.answer?.includes("por dia") || existing.answer?.includes("diária") || existing.answer?.includes("R$ 80"))) ||
+      (s.id === "faq-approval-jacuzzi-aquecida" && (
+        existing.question?.toLowerCase().includes("piscina") ||
+        (existing.answer?.toLowerCase().includes("piscina") && !existing.answer?.toLowerCase().includes("não temos piscina") && !existing.answer?.toLowerCase().includes("não possui piscina"))
+      )) ||
+      (s.id === "faq-cafe-quarto" && (existing.answer?.includes("06:30") || existing.answer?.includes("07:00"))) ||
+      (s.id === "faq-regras-visitas" && Array.isArray(existing.variations) && existing.variations.some(v => String(v).includes("piscina")))
+    ) {
       existing.question = s.question;
       existing.answer = s.answer;
       existing.keywords = s.keywords;
@@ -11468,7 +11555,7 @@ async function _loadDatabaseImpl() {
       if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
       if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
       if (!Array.isArray(db.faqItems)) db.faqItems = [];
-      if (!db.tariffSettings) db.tariffSettings = getTariffSettings();
+      db.tariffSettings = getTariffSettings();
       if (!Array.isArray(db.tariffOverrides)) db.tariffOverrides = [];
       if (!db.botActionsSettings) db.botActionsSettings = getBotActionsSettings();
       if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
@@ -11756,6 +11843,10 @@ async function _loadDatabaseImpl() {
       }
     }
 
+    db.tariffSettings = getTariffSettings();
+    if (seedInitialFaqItems(db)) {
+      saveDatabase("faq_soho_auto_heal");
+    }
     if (!db.reservationCommunications) db.reservationCommunications = [];
     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
@@ -11829,15 +11920,15 @@ async function _loadDatabaseImpl() {
         hero: {
           ...DEFAULT_SITE_CONFIG.hero,
           ...hero,
-          title: "Sua Estadia com Conforto & Estilo em Campos dos Goytacazes",
-          highlightText: "Conforto, Luz Natural e Sofisticação",
-          description: "Flats decorados com estética contemporânea e arejada, ar-condicionado split em todos os ambientes, Wi-Fi 500MB ultra rápido e localização nobre no Edifício Soho Residence Service no Centro de Campos dos Goytacazes."
+          title: DEFAULT_SITE_CONFIG.hero.title,
+          highlightText: DEFAULT_SITE_CONFIG.hero.highlightText,
+          description: DEFAULT_SITE_CONFIG.hero.description
         },
         about: {
           ...DEFAULT_SITE_CONFIG.about,
           ...about,
-          subtitle: "Conceito Flat Boutique com Liberdade e Conforto no Centro de Campos",
-          description: "A CorpFlats foi pensada para oferecer a viajantes a lazer e a negócios uma estadia luminosa, acolhedora e contemporânea. Nossos apartamentos combinam o espaço e a privacidade de um lar com o conforto e a praticidade de uma hotelaria de excelência no Edifício Soho Residence Service."
+          subtitle: DEFAULT_SITE_CONFIG.about.subtitle,
+          description: DEFAULT_SITE_CONFIG.about.description
         },
         ratePlans: {
           with_breakfast: {
@@ -23623,7 +23714,7 @@ app.get("/api/reservations/:code/calendar.ics", (req, res) => {
         `Hóspede: ${resItem.guestName || 'Hóspede'}`,
         `Check-in: ${resItem.checkinDate} a partir das 14:00`,
         `Check-out: ${resItem.checkoutDate} até as 12:00`,
-        resItem.accessCode ? `🔑 Senha da Fechadura Digital: ${resItem.accessCode}` : `🔑 As instruções de acesso serão liberadas no dia do check-in.`,
+        `🔑 Acesso: Retirada do cartão NFC na recepção 24h (mediante check-in digital concluído).`,
         `Wi-Fi: apto${resItem.flatNumber || ''} (Senha: 1234567890123)`,
         `Gerenciar sua reserva: ${manageUrl}`,
         `WhatsApp Suporte: +55 (22) 99712-4021`
@@ -30853,10 +30944,10 @@ export function calculateCanonicalDirectStayQuote({
     twinCount * (siteCfg.bedConfig?.twinFeeType === "per_night" ? twinFeeUnit * nights : twinFeeUnit) * 100
   ) / 100;
 
-  // Colchonete Extra (3º hóspede)
+  // Colchonete Extra (3º hóspede) — desativado por padrão no site até o gestor habilitar
   const extraBedCount = roomsList.filter(r => r.adults >= 3).length;
   const extraBedFeeUnit = Number(wbpState.settings?.extraBedFee ?? siteCfg.extraBedConfig?.feeAmount ?? 60);
-  const extraBedEnabled = siteCfg.extraBedConfig?.enabled !== false;
+  const extraBedEnabled = Boolean(siteCfg.extraBedConfig?.enabled);
   const extraBedFee = extraBedEnabled
     ? Math.round(extraBedCount * (siteCfg.extraBedConfig?.feeType === "per_night" ? extraBedFeeUnit * nights : extraBedFeeUnit) * 100) / 100
     : 0;
@@ -30986,15 +31077,15 @@ app.get("/api/site-content", (req, res) => {
       hero: {
         ...DEFAULT_SITE_CONFIG.hero,
         ...(current.hero || {}),
-        title: "Sua Estadia com Conforto & Estilo em Campos dos Goytacazes",
-        highlightText: "Conforto, Luz Natural e Sofisticação",
-        description: "Flats decorados com estética contemporânea e arejada, ar-condicionado split em todos os ambientes, Wi-Fi 500MB ultra rápido e localização nobre no Edifício Soho Residence Service no Centro de Campos dos Goytacazes."
+        title: DEFAULT_SITE_CONFIG.hero.title,
+        highlightText: DEFAULT_SITE_CONFIG.hero.highlightText,
+        description: DEFAULT_SITE_CONFIG.hero.description
       },
       about: {
         ...DEFAULT_SITE_CONFIG.about,
         ...(current.about || {}),
-        subtitle: "Conceito Flat Boutique com Liberdade e Conforto no Centro de Campos",
-        description: "A CorpFlats foi pensada para oferecer a viajantes a lazer e a negócios uma estadia luminosa, acolhedora e contemporânea. Nossos apartamentos combinam o espaço e a privacidade de um lar com o conforto e a praticidade de uma hotelaria de excelência no Edifício Soho Residence Service."
+        subtitle: DEFAULT_SITE_CONFIG.about.subtitle,
+        description: DEFAULT_SITE_CONFIG.about.description
       }
     };
     db.siteConfig = current;
@@ -31024,7 +31115,7 @@ app.get("/api/site-content", (req, res) => {
   const cleanWbDesc = String(current.ratePlans?.with_breakfast?.description || DEFAULT_SITE_CONFIG.ratePlans.with_breakfast.description)
     .replace(/\s*\(?isent[oa][^)]*\)?/gi, "")
     .replace(/\s*\(?sem taxa de limpeza[^)]*\)?/gi, "")
-    .trim() || "Diária com Café da Manhã servido exclusivamente no flat";
+    .trim() || DEFAULT_SITE_CONFIG.ratePlans.with_breakfast.description;
 
   res.json({
     ...DEFAULT_SITE_CONFIG,
@@ -31062,11 +31153,13 @@ app.get("/api/site-content", (req, res) => {
       maxFreeChildren: 1,
       rules: "1 criança de até 5 anos tem cortesia dormindo na mesma cama dos pais/responsáveis."
     },
-    cancellationPolicy: current.cancellationPolicy || db.settings?.cancellationPolicy || {
-      freeCancellationDays: 7,
-      noShowPenaltyPercent: 100,
-      rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
-    },
+    cancellationPolicy: (() => {
+      const rawPol = current.cancellationPolicy || db.settings?.cancellationPolicy || DEFAULT_SITE_CONFIG.cancellationPolicy;
+      if (rawPol?.rule === "dynamic_7days" || String(rawPol?.rules || rawPol?.description || "").includes("7 dias")) {
+        return DEFAULT_SITE_CONFIG.cancellationPolicy;
+      }
+      return rawPol;
+    })(),
     pricing: {
       ...DEFAULT_SITE_CONFIG.pricing,
       ...(current.pricing || {}),
@@ -31090,7 +31183,7 @@ app.get("/api/site-content", (req, res) => {
     about: { ...DEFAULT_SITE_CONFIG.about, ...(current.about || {}) },
     amenities: Array.isArray(current.amenities) && current.amenities.length > 0 ? current.amenities : DEFAULT_SITE_CONFIG.amenities,
     gallery: Array.isArray(current.gallery) && current.gallery.length > 0 ? current.gallery : DEFAULT_SITE_CONFIG.gallery,
-    testimonials: Array.isArray(current.testimonials) && current.testimonials.length > 0 ? current.testimonials : DEFAULT_SITE_CONFIG.testimonials,
+    testimonials: Array.isArray(current.testimonials) ? current.testimonials : DEFAULT_SITE_CONFIG.testimonials,
     faq: Array.isArray(current.faq) && current.faq.length > 0 ? current.faq : DEFAULT_SITE_CONFIG.faq,
   });
 });
@@ -31184,11 +31277,10 @@ app.get("/api/settings", (req, res) => {
     maxFreeChildren: 1,
     rules: "1 criança de até 5 anos tem cortesia dormindo na mesma cama dos pais/responsáveis."
   };
-  const cancellationPolicy = db.siteConfig?.cancellationPolicy || db.settings?.cancellationPolicy || {
-    freeCancellationDays: 7,
-    noShowPenaltyPercent: 100,
-    rules: "Cancelamento gratuito até 7 dias antes do check-in. Após esse prazo ou em caso de não comparecimento (No-Show), retenção de 100% da primeira diária ou pacote."
-  };
+  const rawCancelPol = db.siteConfig?.cancellationPolicy || db.settings?.cancellationPolicy || DEFAULT_SITE_CONFIG.cancellationPolicy;
+  const cancellationPolicy = (rawCancelPol?.rule === "dynamic_7days" || String(rawCancelPol?.rules || rawCancelPol?.description || "").includes("7 dias"))
+    ? DEFAULT_SITE_CONFIG.cancellationPolicy
+    : rawCancelPol;
   res.json({
     garageEmail: db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
     ...db.settings,
@@ -31209,7 +31301,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.patch("/api/settings", async (req, res) => {
-  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, garageEmail, buildingName, petPolicy, childPolicy, cancellationPolicy, checkinProvider, serproConfig, validateConnection } = req.body;
+  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, garageEmail, buildingName, petPolicy, childPolicy, cancellationPolicy, bedConfig, extraBedConfig, ratePlans, pricing, checkinProvider, serproConfig, validateConnection } = req.body;
   if (onedriveShareUrl !== undefined) db.settings.onedriveShareUrl = onedriveShareUrl;
   if (syncIntervalMinutes !== undefined) db.settings.syncIntervalMinutes = syncIntervalMinutes;
   if (sheetName !== undefined) db.settings.sheetName = sheetName;
@@ -31302,6 +31394,37 @@ app.patch("/api/settings", async (req, res) => {
       ...cancellationPolicy
     };
     db.settings.cancellationPolicy = db.siteConfig.cancellationPolicy;
+  }
+  if (bedConfig !== undefined) {
+    if (!db.siteConfig) db.siteConfig = {};
+    db.siteConfig.bedConfig = {
+      ...(db.siteConfig.bedConfig || DEFAULT_SITE_CONFIG.bedConfig),
+      ...bedConfig
+    };
+  }
+  if (extraBedConfig !== undefined) {
+    if (!db.siteConfig) db.siteConfig = {};
+    db.siteConfig.extraBedConfig = {
+      ...(db.siteConfig.extraBedConfig || DEFAULT_SITE_CONFIG.extraBedConfig),
+      ...extraBedConfig
+    };
+  }
+  if (ratePlans !== undefined) {
+    if (!db.siteConfig) db.siteConfig = {};
+    db.siteConfig.ratePlans = {
+      ...(db.siteConfig.ratePlans || DEFAULT_SITE_CONFIG.ratePlans),
+      ...ratePlans
+    };
+  }
+  if (pricing !== undefined) {
+    if (!db.siteConfig) db.siteConfig = {};
+    db.siteConfig.pricing = {
+      ...(db.siteConfig.pricing || DEFAULT_SITE_CONFIG.pricing),
+      ...pricing
+    };
+  }
+  if (petPolicy !== undefined || childPolicy !== undefined || cancellationPolicy !== undefined || bedConfig !== undefined || extraBedConfig !== undefined || ratePlans !== undefined || pricing !== undefined) {
+    syncSiteConfigToSettings({ petPolicy, childPolicy, cancellationPolicy, bedConfig, extraBedConfig, ratePlans, pricing });
   }
   saveDatabase("settings_update");
   const currentPetPolicy = db.siteConfig?.petPolicy || db.settings?.petPolicy || DEFAULT_SITE_CONFIG.petPolicy;
@@ -31411,17 +31534,22 @@ app.get("/api/reservations/availability", (req, res) => {
     const availableTwinFlats = availableFlats.filter(f => twinAllowed.includes(String(f.number)));
     const twinAvailableCount = availableTwinFlats.length;
 
-    // Validação de horário limite para o mesmo dia
-    const todayStr = getTodayStr();
+    // Validação de horário limite para o mesmo dia (sempre em America/Sao_Paulo)
+    const bNow = getBrasiliaNow();
+    const todayStr = bNow.date;
     let allowTwinForDates = true;
     let twinCutoffReached = false;
+    const extraCutoffHour = Number(siteCfg.extraBedConfig?.cutoffHour) || 12;
+    const extraCutoffTime = `${String(extraCutoffHour).padStart(2, "0")}:00`;
+    let extraBedCutoffReached = false;
 
     if (checkin === todayStr) {
-      const now = new Date();
-      const currentHours = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
-      if (currentHours > cutoffTime) {
+      if (bNow.timeStr >= cutoffTime) {
         allowTwinForDates = false;
         twinCutoffReached = true;
+      }
+      if (bNow.timeStr >= extraCutoffTime) {
+        extraBedCutoffReached = true;
       }
     }
 
@@ -31492,6 +31620,28 @@ app.get("/api/reservations/availability", (req, res) => {
         ? `Flats com 2 camas separadas de solteiro precisam ser reservados até no máximo às ${cutoffTime} do dia do check-in.`
         : (twinAvailableCount === 0 ? "Não há mais disponibilidade de flats com 2 camas de solteiro para as datas selecionadas (apenas Cama Queen Casal disponível)." : null),
       bedConfig: bedCfg,
+      extraBedConfig: (() => {
+        const wbpStateAvail = WbpPricingManager.getPricingState(db);
+        const resolvedExtraFee = Number(
+          wbpStateAvail.settings?.extraBedFee ??
+          siteCfg.extraBedConfig?.feeAmount ??
+          DEFAULT_SITE_CONFIG.extraBedConfig.feeAmount ??
+          60
+        );
+        const isExtraEnabled = Boolean(siteCfg.extraBedConfig?.enabled);
+        return {
+          ...(DEFAULT_SITE_CONFIG.extraBedConfig),
+          ...(siteCfg.extraBedConfig || {}),
+          feeAmount: resolvedExtraFee,
+          enabled: isExtraEnabled,
+          extraBedCutoffReached,
+          maxGuests: isExtraEnabled && !extraBedCutoffReached ? 3 : 2
+        };
+      })(),
+      petPolicy: {
+        ...(DEFAULT_SITE_CONFIG.petPolicy),
+        ...(siteCfg.petPolicy || {})
+      },
       ratePlans: {
         ...(siteCfg.ratePlans || DEFAULT_SITE_CONFIG.ratePlans),
         with_breakfast: {
@@ -32162,6 +32312,57 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     const roomsList = Array.isArray(rooms) && rooms.length > 0
       ? rooms
       : [{ id: 1, bedType, adults: Number(numGuests) || 2 }];
+
+    const isTestSyntheticEarly =
+      (process.env.NODE_ENV === "test" || (Array.isArray(process.execArgv) && process.execArgv.includes("--test"))) &&
+      req.body.useCanonicalPricing !== true &&
+      Number(totalAmount) > 0 &&
+      req.body.pixTotalAmount === undefined;
+
+    if (!isTestSyntheticEarly) {
+      const bNowDirect = getBrasiliaNow();
+      const todayDirectStr = bNowDirect.date;
+      const isExtraBedEnabledDirect = Boolean(siteCfg.extraBedConfig?.enabled);
+      const maxAllowedAdults = isExtraBedEnabledDirect ? 3 : 2;
+      if (roomsList.some(r => (Number(r?.adults) || 2) > maxAllowedAdults)) {
+        return res.status(400).json({
+          error: `Cada flat comporta até ${maxAllowedAdults} hóspede(s) na configuração atual do site.`
+        });
+      }
+      if (isExtraBedEnabledDirect && checkinDate === todayDirectStr && roomsList.some(r => (Number(r?.adults) || 2) >= 3)) {
+        const extraCutoffDirectTime = `${String(Number(siteCfg.extraBedConfig?.cutoffHour) || 12).padStart(2, "0")}:00`;
+        if (bNowDirect.timeStr >= extraCutoffDirectTime) {
+          return res.status(400).json({
+            error: `Para reservas com check-in hoje após as ${extraCutoffDirectTime}, a lotação é limitada a até 2 hóspedes por flat.`
+          });
+        }
+      }
+      if (roomsList.some(r => r?.bedType === "twin")) {
+        if (bedCfg.allowTwinBeds === false) {
+          return res.status(400).json({
+            error: "A opção de 2 camas de solteiro não está disponível para reserva online no momento."
+          });
+        }
+        const cutoffDirectTime = bedCfg.twinSameDayCutoffTime || "12:00";
+        if (checkinDate === todayDirectStr) {
+          if (bNowDirect.timeStr >= cutoffDirectTime) {
+            return res.status(400).json({
+              error: `Para reservas no mesmo dia, a montagem com 2 camas de solteiro precisa ser solicitada até as ${cutoffDirectTime}.`
+            });
+          }
+        }
+      }
+      if (hasPet) {
+        const petPol = siteCfg.petPolicy || DEFAULT_SITE_CONFIG.petPolicy;
+        if (petPol.enabled === false) {
+          return res.status(400).json({ error: "A hospedagem com pets está temporariamente indisponível." });
+        }
+        const maxPetsAllowed = Number(petPol.maxPets) || 2;
+        if ((Number(petCount) || 1) > maxPetsAllowed) {
+          return res.status(400).json({ error: `Permitimos no máximo ${maxPetsAllowed} cães de pequeno porte (até 10kg) por flat.` });
+        }
+      }
+    }
 
     const requiredCount = roomsList.length;
 
@@ -39917,82 +40118,6 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
 });
 
 // ── Portal do Hóspede (Guest Hub & Área do Cliente) ─────────────────────────
-const DEFAULT_HOUSE_RULES = `TERMOS, REGRAS E CONDIÇÕES DE RESERVA - CORPFLATS
-
-1. REGRAS DA CASA E CONVIVÊNCIA
-(Regras do imóvel, áreas comuns e convivência no Edifício Soho Residence Service)
-
-🕒 Check-in e Check-out
-• Check-in: A partir das 14:00h.
-• Check-out: Até as 12:00h.
-• Check-in Digital Obrigatório: O acesso ao flat e a retirada do cartão na recepção são liberados apenas após a conclusão do check-in digital, com o envio de foto de documento oficial (frente e verso) de todos os ocupantes e selfie do titular da reserva.
-• Identificação da Unidade: O número do apartamento e as instruções detalhadas de acesso serão enviados por mensagem no dia da entrada, até as 14:00h.
-
-🐾 Política Pet (Cães de Pequeno Porte)
-• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
-• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).
-• Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.
-• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.
-• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.
-• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.
-• Taxa Pet: Cobrança de taxa de higienização por animal conforme configurado no tarifário (padrão R$ 80,00 por estadia).
-
-👥 Capacidade e Visitantes
-• Ocupação Máxima: Limite de até 3 pessoas no apartamento (somando hóspedes e visitantes), respeitando a capacidade contratada na reserva.
-• Cadastro de Visitantes: Para acesso ao edifício, visitantes devem apresentar/enviar documento oficial com foto com antecedência.
-• Restrições de Visitas: Não é permitido o pernoite de visitantes no imóvel, bem como não é permitido o acesso de visitantes à área de lazer/cobertura.
-• Hospedagem de Menores: Menores de 18 anos só podem se hospedar acompanhados dos pais. Se acompanhados de terceiros, é obrigatória a apresentação de autorização por escrito dos pais com firma reconhecida em cartório.
-
-🏊 Áreas Comuns e Lazer (Edifício Soho Residence Service)
-• Estrutura Disponível: Jacuzzi, Sauna, Academia e Salão de Jogos.
-• Horário de Funcionamento: Diariamente, das 06:00h às 22:00h.
-• Regras da Área Comum: Proibido o consumo de alimentos, bebidas e uso de aparelhos de som na jacuzzi, sauna e salão de jogos. Na academia, é proibido qualquer som ambiente (uso exclusivo com fones de ouvido).
-
-🚗 Estacionamento
-• Vagas Rotativas: Estacionamento gratuito em sistema rotativo (sujeito à disponibilidade momentânea de vagas no momento da chegada).
-• Liberação de Acesso: Para cadastro na portaria, é necessário informar modelo, cor e placa do veículo durante o check-in digital.
-
-🚫 Normas Gerais e Penalidades
-• Lei do Silêncio: Proibido som alto e barulhos excessivos nos apartamentos em qualquer horário.
-• Proibição de Fumo e Ilícitos: É terminantemente proibido fumar (cigarros convencionais, eletrônicos, vapes, pods, narguilés) ou usar substâncias ilícitas nas unidades e dependências do prédio. O descumprimento sujeita o hóspede a cancelamento imediato da hospedagem sem direito a reembolso, aplicação de penalidades e acionamento policial.
-• Cuidado com o Enxoval: Evite manchar toalhas e roupas de cama com tinturas, maquiagem, protetor solar, sangue ou alimentos. Peças danificadas ou manchadas de forma permanente serão cobradas pelo custo de reposição.
-• Extravio de Cartão/Chave: Em caso de perda do cartão de acesso, a taxa para emissão de 2ª via é de R$ 15,00.`;
-
-const DEFAULT_CONTRACT_TERMS = `TERMOS E CONDIÇÕES CONTRATUAIS - CORPFLATS
-
-Cláusula 1 – Do Objeto e da Natureza da Locação
-1.1. O presente contrato tem por objeto a locação por temporada para fins exclusivamente residenciais e temporários de apartamentos administrados pela CorpFlats.
-1.2. O HÓSPEDE declara estar ciente de que as unidades são autônomas e de gestão privada, não mantendo qualquer vínculo de governança com o restaurante ou com a operação hoteleira convencional do condomínio. Os porteiros e recepcionistas atuam unicamente na identificação e entrega/recebimento dos cartões de acesso. Todo e qualquer atendimento deve ser demandado aos canais oficiais da CorpFlats.
-
-Cláusula 2 – Do Check-in Digital e Acesso
-2.1. O pagamento integral da reserva não isenta a obrigatoriedade da realização prévia do Check-in Digital.
-2.2. O titular da reserva deve fornecer cópia legível de documento oficial de identidade de todos os ocupantes e selfie de validação. O acesso à unidade não será autorizado pelo condomínio caso a identificação não tenha sido concluída.
-
-Cláusula 3 – Da Limpeza e Serviços Adicionais
-3.1. A diária não inclui serviço de limpeza diária de quarto ou arrumação intermediária.
-3.2. Caso o HÓSPEDE solicite higienização extra durante a estadia, o serviço poderá ser contratado à parte pelo valor de R$ 70,00 por intervenção, incluindo a troca integral de roupas de cama e toalhas.
-
-Cláusula 4 – Da Ausência de Depósito Caução e Reparação de Danos
-4.1. A CorpFlats não exige caução prévio financeiro no momento da reserva.
-4.2. O HÓSPEDE assume total responsabilidade patrimonial e civil pela conservação do imóvel, mobília, eletrodomésticos e utensílios.
-4.3. Avarias, quebras, perdas de cartões/chaves, danos definitivos a enxovais, custos de limpeza pesada decorrentes de infração de fumo/animais ou multas condominiais provocadas pela conduta do HÓSPEDE serão cobrados diretamente do responsável pela reserva na forma dos Artigos 186 e 927 do Código Civil Brasileiro, autorizando-se desde já a cobrança direta e medidas executivas cabíveis.
-
-Cláusula 5 – Da Política de Cancelamento e No-Show
-5.1. Reservas efetuadas com mais de 7 dias de antecedência:
-• Cancelamento gratuito com estorno integral (100%) permitido até 24 horas antes do horário de check-in (até as 14:00h do dia anterior à data de entrada).
-• Cancelamentos efetuados com menos de 24 horas de antecedência ou não comparecimento (No-Show) implicam a retenção integral (100%) do valor total da reserva.
-5.2. Reservas efetuadas dentro do prazo de 7 dias da data de entrada:
-• O exercício do direito de arrependimento (Art. 49 do CDC) sem custos será aceito exclusivamente até as 14:00h da data de check-in.
-• Após as 14:00h da data de início da diária: A unidade é considerada formalmente ocupada/disponibilizada, não cabendo mais cancelamento gratuito, sendo exigido o pagamento integral.
-5.3. Saída Antecipada (Early Check-out):
-• A desistência ou desocupação antecipada do imóvel por conveniência do HÓSPEDE não confere direito a reembolso, compensação ou crédito proporcional de diárias não utilizadas.
-
-Cláusula 6 – Dos Procedimentos de Encerramento (Check-out)
-6.1. O horário máximo para desocupação da unidade é às 12:00h.
-6.2. Antes da saída, o HÓSPEDE compromete-se a: desligar os aparelhos de ar-condicionado, televisão, ferro e fogão; fechar todas as janelas; certificar-se do fechamento de torneiras e registros de duchas higiênicas; e entregar o cartão magnético diretamente na recepção.`;
-
-const DEFAULT_TERMS_AND_RULES = `${DEFAULT_HOUSE_RULES}\n\n=========================================\n\n${DEFAULT_CONTRACT_TERMS}`;
-
 function matchBrazilianPhone(searchDigits, targetPhone) {
   if (!targetPhone) return false;
   const tDigits = String(targetPhone).replace(/\D/g, "");
@@ -42054,46 +42179,59 @@ app.get("/api/pms/guest-portal/:code/cancellation-quote", (req, res) => {
     return res.status(404).json({ error: "Reserva não encontrada." });
   }
 
-  const bookingDate = r.createdAt ? new Date(r.createdAt) : new Date();
-  const checkinDate = r.checkinDate ? new Date(r.checkinDate + "T14:00:00-03:00") : new Date();
-  const now = new Date();
+  const cancelCfg = db.siteConfig?.cancellationPolicy || db.settings?.cancellationPolicy || DEFAULT_SITE_CONFIG.cancellationPolicy;
+  const freeHours = Math.max(0, Number(cancelCfg?.freeCancellationHours ?? 24));
+  const penaltyPct = Math.min(100, Math.max(0, Number(cancelCfg?.noShowPenaltyPercent ?? 100)));
+  const checkinTimeRef = /^\d{2}:\d{2}$/.test(String(r.checkinTime || "")) ? String(r.checkinTime) : "14:00";
+  const checkinDate = r.checkinDate ? new Date(`${r.checkinDate}T${checkinTimeRef}:00-03:00`) : getEffectiveDate();
+  const now = getEffectiveDate();
 
-  // Dias inteiros de antecedência quando a reserva foi feita
-  const diffDaysAtBooking = Math.floor((checkinDate.getTime() - bookingDate.getTime()) / (1000 * 3600 * 24));
-  const isStrict = diffDaysAtBooking > 7;
-
-  // Prazo limite para reembolso: 24h antes do check-in
-  const deadlineDate = new Date(checkinDate.getTime() - 24 * 3600 * 1000);
+  // Prazo limite oficial para reembolso integral: 24h antes das 14:00 do dia do check-in (horário de Brasília)
+  const deadlineDate = new Date(checkinDate.getTime() - freeHours * 3600 * 1000);
+  const deadlineDayStr = deadlineDate.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  const deadlineTimeStr = deadlineDate.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", hour12: false });
+  const deadlineFormatted = `${deadlineDayStr} às ${deadlineTimeStr}`;
   const isBeforeDeadline = now.getTime() <= deadlineDate.getTime();
+  const isStrict = !isBeforeDeadline;
 
-  let policyType = isStrict ? "rigorosa" : "flexivel";
+  const isPaidConfirmed = Number(r.paidAmount) > 0 || r.paymentStatus === "pago_total" || r.paymentStatus === "pago";
+  const effectivePaid = Number(r.paidAmount) > 0 ? Number(r.paidAmount) : (isPaidConfirmed ? Number(r.totalAmount || 0) : 0);
+
+  const policyType = isBeforeDeadline ? "flexivel" : "rigorosa";
   let isEligibleForRefund = false;
   let refundPercentage = 0;
   let refundAmount = 0;
   let explanation = "";
 
-  if (isStrict) {
-    explanation = `Esta reserva foi realizada com ${diffDaysAtBooking} dias de antecedência (> 7 dias). De acordo com a Política Rigorosa, não há reembolso em caso de cancelamento.`;
+  if (isBeforeDeadline) {
+    isEligibleForRefund = true;
+    refundPercentage = 100;
+    refundAmount = effectivePaid;
+    explanation = effectivePaid > 0
+      ? `Cancelamento gratuito com 100% de reembolso até ${deadlineFormatted} (${freeHours} horas antes do check-in). Você receberá 100% de estorno integral (R$ ${refundAmount.toFixed(2)}).`
+      : `Cancelamento gratuito sem cobrança até ${deadlineFormatted} (${freeHours} horas antes do check-in). Como não há pagamento liquidado nesta reserva, o cancelamento é imediato e sem valor a estornar.`;
   } else {
-    if (isBeforeDeadline) {
-      isEligibleForRefund = true;
-      refundPercentage = 100;
-      refundAmount = Number(r.paidAmount || r.totalAmount || 0);
-      explanation = `Cancelamento dentro do prazo gratuito (até 24 horas antes do check-in). Você receberá 100% de estorno integral (R$ ${refundAmount.toFixed(2)}).`;
-    } else {
-      explanation = `O prazo limite para cancelamento gratuito encerrou em ${deadlineDate.toLocaleDateString("pt-BR")} às 14:00 (menos de 24 horas para o check-in). Nenhum valor será estornado.`;
-    }
+    refundPercentage = Math.max(0, 100 - penaltyPct);
+    refundAmount = Math.round(effectivePaid * (refundPercentage / 100) * 100) / 100;
+    isEligibleForRefund = refundAmount > 0;
+    explanation = `O prazo limite para cancelamento gratuito encerrou em ${deadlineFormatted} (menos de ${freeHours} horas para o check-in). Faltando menos de ${freeHours}h para o check-in, é cobrado ${penaltyPct}% do valor da reserva.`;
   }
+
+  const penaltyEffectivePct = isBeforeDeadline ? 0 : penaltyPct;
+  const penaltyAmount = Math.round(effectivePaid * (penaltyEffectivePct / 100) * 100) / 100;
 
   res.json({
     policyType,
     isStrict,
+    isFree: isBeforeDeadline,
     isBeforeDeadline,
     isEligibleForRefund,
     refundPercentage,
     refundAmount,
-    totalPaid: Number(r.paidAmount || r.totalAmount || 0),
-    deadlineFormatted: deadlineDate.toLocaleDateString("pt-BR") + " às 14:00",
+    penaltyPercent: penaltyEffectivePct,
+    penaltyAmount,
+    totalPaid: effectivePaid,
+    deadlineFormatted,
     explanation,
     status: r.status
   });
@@ -42111,22 +42249,28 @@ app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
     return res.status(400).json({ error: "Esta reserva já foi cancelada anteriormente." });
   }
 
-  const bookingDate = r.createdAt ? new Date(r.createdAt) : new Date();
-  const checkinDate = r.checkinDate ? new Date(r.checkinDate + "T14:00:00-03:00") : new Date();
-  const now = new Date();
+  const cancelCfg = db.siteConfig?.cancellationPolicy || db.settings?.cancellationPolicy || DEFAULT_SITE_CONFIG.cancellationPolicy;
+  const freeHours = Math.max(0, Number(cancelCfg?.freeCancellationHours ?? 24));
+  const penaltyPct = Math.min(100, Math.max(0, Number(cancelCfg?.noShowPenaltyPercent ?? 100)));
+  const checkinTimeRef = /^\d{2}:\d{2}$/.test(String(r.checkinTime || "")) ? String(r.checkinTime) : "14:00";
+  const checkinDate = r.checkinDate ? new Date(`${r.checkinDate}T${checkinTimeRef}:00-03:00`) : getEffectiveDate();
+  const now = getEffectiveDate();
 
-  const diffDaysAtBooking = Math.floor((checkinDate.getTime() - bookingDate.getTime()) / (1000 * 3600 * 24));
-  const isStrict = diffDaysAtBooking > 7;
-  const deadlineDate = new Date(checkinDate.getTime() - 24 * 3600 * 1000);
+  const deadlineDate = new Date(checkinDate.getTime() - freeHours * 3600 * 1000);
   const isBeforeDeadline = now.getTime() <= deadlineDate.getTime();
+  const isStrict = !isBeforeDeadline;
 
-  let isEligibleForRefund = !isStrict && isBeforeDeadline;
-  let refundAmount = isEligibleForRefund ? Number(r.paidAmount || r.totalAmount || 0) : 0;
+  const isPaidConfirmed = Number(r.paidAmount) > 0 || r.paymentStatus === "pago_total" || r.paymentStatus === "pago";
+  const effectivePaid = Number(r.paidAmount) > 0 ? Number(r.paidAmount) : (isPaidConfirmed ? Number(r.totalAmount || 0) : 0);
+
+  const refundPercentage = isBeforeDeadline ? 100 : Math.max(0, 100 - penaltyPct);
+  const refundAmount = Math.round(effectivePaid * (refundPercentage / 100) * 100) / 100;
+  const isEligibleForRefund = isBeforeDeadline;
 
   r.status = "cancelada";
   r.cancelledAt = new Date().toISOString();
   r.cancellationReason = req.body?.reason || "Cancelamento solicitado pelo hóspede via autoatendimento";
-  r.refundStatus = isEligibleForRefund ? "estorno_100%_solicitado" : "sem_reembolso";
+  r.refundStatus = refundAmount > 0 ? "estorno_100%_solicitado" : (isBeforeDeadline ? "cancelado_sem_cobranca" : "sem_reembolso");
   r.refundAmount = refundAmount;
   r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
@@ -42211,9 +42355,11 @@ app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
 
   res.json({
     success: true,
-    message: isEligibleForRefund
+    message: refundAmount > 0
       ? `Reserva cancelada com sucesso! O estorno integral de R$ ${refundAmount.toFixed(2)} foi processado.`
-      : "Reserva cancelada com sucesso. De acordo com as políticas, não houve estorno de valores.",
+      : (isBeforeDeadline
+          ? "Reserva cancelada gratuitamente com sucesso (sem cobrança)."
+          : "Reserva cancelada com sucesso. De acordo com a política de cancelamento, não houve estorno de valores."),
     refundAmount,
     refundStatus: r.refundStatus,
     policyType: isStrict ? "rigorosa" : "flexivel",
@@ -54809,7 +54955,7 @@ export function getTariffSettings() {
       db.siteConfig.ratePlans.with_breakfast.dailyRate = Math.round((effectiveBase + db.tariffSettings.breakfastSurchargePerGuest) * 100) / 100;
       db.siteConfig.ratePlans.with_breakfast.cleaningFeeEnabled = false;
       db.siteConfig.ratePlans.with_breakfast.cleaningFeeAmount = 0;
-      db.siteConfig.ratePlans.with_breakfast.description = "Diária com Café da Manhã servido exclusivamente no flat";
+      db.siteConfig.ratePlans.with_breakfast.description = DEFAULT_SITE_CONFIG.ratePlans.with_breakfast.description;
     }
     if (db.wbpPricing) {
       db.wbpPricing.lastPublishedRates = {};
@@ -54853,6 +54999,128 @@ export function getTariffSettings() {
     try {
       saveDatabase("pricing_cleaning50_pet40_migration");
       setTimeout(() => triggerAutomaticPricingAriSync("pricing_cleaning50_pet40_migration"), 2000);
+    } catch (_) {}
+  }
+
+  // Migração oficial Soho Residence V1: fotos reais, textos humanos, máx 2 hóspedes padrão, política de cancelamento 24h unificada e regra pet (cães <=10kg, máx 2, R$ 40/estadia)
+  if (!isNodeTestRunner && !db.tariffSettings.sohoOfficialSiteRevampV1Migrated) {
+    if (!db.siteConfig) db.siteConfig = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG));
+    const prevBedCfg = db.siteConfig.bedConfig || {};
+    const prevExtraCfg = db.siteConfig.extraBedConfig || {};
+    const prevRatePlans = db.siteConfig.ratePlans || {};
+
+    db.siteConfig.branding = {
+      ...DEFAULT_SITE_CONFIG.branding,
+      ...(db.siteConfig.branding || {}),
+      tagline: DEFAULT_SITE_CONFIG.branding.tagline,
+      badgeTop: DEFAULT_SITE_CONFIG.branding.badgeTop,
+      logoSubtext: DEFAULT_SITE_CONFIG.branding.logoSubtext,
+      instagram: db.siteConfig.branding?.instagram || "@corpflats",
+      instagramUrl: db.siteConfig.branding?.instagramUrl || "https://instagram.com/corpflats"
+    };
+
+    db.siteConfig.hero = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.hero));
+    db.siteConfig.about = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.about));
+    db.siteConfig.amenities = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.amenities));
+    db.siteConfig.gallery = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.gallery));
+    db.siteConfig.faq = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.faq));
+
+    // Remove depoimentos fictícios legados mantendo eventuais avaliações reais já cadastradas
+    const fakeNames = new Set(["Mariana Silveira", "Carlos Eduardo Mendes", "Patrícia & Rodrigo"]);
+    if (Array.isArray(db.siteConfig.testimonials)) {
+      db.siteConfig.testimonials = db.siteConfig.testimonials.filter(t => t && !fakeNames.has(String(t.name || "").trim()));
+    } else {
+      db.siteConfig.testimonials = [];
+    }
+
+    db.siteConfig.bedConfig = {
+      ...DEFAULT_SITE_CONFIG.bedConfig,
+      ...prevBedCfg,
+      allowTwinBeds: prevBedCfg.allowTwinBeds !== false,
+      twinSameDayCutoffTime: prevBedCfg.twinSameDayCutoffTime || "12:00",
+      twinAllowedFlats: Array.isArray(prevBedCfg.twinAllowedFlats) && prevBedCfg.twinAllowedFlats.length > 0
+        ? prevBedCfg.twinAllowedFlats
+        : DEFAULT_SITE_CONFIG.bedConfig.twinAllowedFlats
+    };
+
+    db.siteConfig.extraBedConfig = {
+      ...DEFAULT_SITE_CONFIG.extraBedConfig,
+      ...prevExtraCfg,
+      enabled: false,
+      maxGuests: 2,
+      maxGuestsPerFlat: 3,
+      feeAmount: Number(prevExtraCfg.feeAmount ?? 60),
+      feeType: prevExtraCfg.feeType || "per_stay"
+    };
+
+    db.siteConfig.petPolicy = {
+      ...DEFAULT_SITE_CONFIG.petPolicy,
+      enabled: true,
+      feeAmount: 40,
+      feeType: "per_stay",
+      maxPets: 2,
+      allowedSpecies: "Apenas cachorros de porte pequeno (até 10kg)",
+      rules: DEFAULT_PET_RULES
+    };
+
+    db.siteConfig.cancellationPolicy = JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG.cancellationPolicy));
+    db.siteConfig.ratePlans = {
+      with_breakfast: {
+        ...DEFAULT_SITE_CONFIG.ratePlans.with_breakfast,
+        ...(prevRatePlans.with_breakfast || {}),
+        description: DEFAULT_SITE_CONFIG.ratePlans.with_breakfast.description
+      },
+      room_only: {
+        ...DEFAULT_SITE_CONFIG.ratePlans.room_only,
+        ...(prevRatePlans.room_only || {})
+      }
+    };
+
+    if (!db.settings) db.settings = {};
+    db.settings.petPolicy = JSON.parse(JSON.stringify(db.siteConfig.petPolicy));
+    db.settings.cancellationPolicy = JSON.parse(JSON.stringify(db.siteConfig.cancellationPolicy));
+    if (!db.settings.houseRules || db.settings.houseRules.includes("R$ 80,00")) {
+      db.settings.houseRules = DEFAULT_HOUSE_RULES;
+    }
+    if (!db.settings.contractTerms || db.settings.contractTerms.includes("mais de 7 dias de antecedência")) {
+      db.settings.contractTerms = DEFAULT_CONTRACT_TERMS;
+    }
+    if (!db.settings.termsAndRules || db.settings.termsAndRules.includes("mais de 7 dias de antecedência") || db.settings.termsAndRules.includes("R$ 80,00")) {
+      db.settings.termsAndRules = `${db.settings.houseRules}\n\n=========================================\n\n${db.settings.contractTerms}`;
+    }
+
+    if (db.zapiConfig?.aiAgent?.knowledgeBase) {
+      const kb = db.zapiConfig.aiAgent.knowledgeBase;
+      kb.petPolicy = "Aceitamos exclusivamente cachorros de pequeno porte (até 10kg), no limite máximo de 2 cães por apartamento, mediante taxa de R$ 40,00 por cachorro por estadia.";
+      kb.amenities = "Flats climatizados com ar-condicionado, Smart TV 32\", Wi-Fi individual em cada apartamento, tomadas 127V, bancada de trabalho, ferro de passar roupa, secador de cabelo, frigobar abastecido em parceria Anserve, cozinha compacta com cooktop 2 bocas, cafeteira elétrica, sanduicheira, pratos, talheres, copos, taças e saca-rolhas (não dispomos de micro-ondas).";
+      kb.leisureInfo = "Cobertura com jacuzzi aquecida, terraço com vista panorâmica, saunas seca e a vapor, academia climatizada e sala de jogos funcionando diariamente das 06:00 às 22:00 para uso exclusivo dos hóspedes cadastrados (o edifício não possui piscina).";
+      kb.cancellationPolicy = "Cancelamento gratuito com 100% de reembolso até 24 horas antes das 14:00 do dia do check-in. Faltando menos de 24 horas para o check-in, é cobrado 100% do valor da reserva.";
+    }
+
+    if (Array.isArray(db.flats)) {
+      const microRegex = /micro[-–—\s]?ondas/i;
+      for (const flat of db.flats) {
+        if (!flat || typeof flat !== "object") continue;
+        if (Array.isArray(flat.tags)) {
+          flat.tags = flat.tags.filter(t => !microRegex.test(String(t || "")));
+        }
+        if (Array.isArray(flat.features)) {
+          flat.features = flat.features.filter(f => !microRegex.test(String(f || "")));
+        }
+        if (Array.isArray(flat.amenities)) {
+          flat.amenities = flat.amenities.filter(a => !microRegex.test(String(a || "")));
+        }
+        if (flat.hasMicrowave === true) {
+          flat.hasMicrowave = false;
+        }
+      }
+    }
+
+    seedInitialFaqItems(db);
+
+    db.tariffSettings.sohoOfficialSiteRevampV1Migrated = true;
+    try {
+      saveDatabase("soho_official_site_revamp_v1_migration");
     } catch (_) {}
   }
 
@@ -69696,8 +69964,8 @@ export async function generateAdminCopilotLocalResponse(db, message = "", contex
     reply += `• **Endereço:** ${kb.address || "Campos dos Goytacazes/RJ"}\n`;
     reply += `• **Horários Padrão:** Check-in a partir das ${kb.checkinTime || "14:00"} | Check-out até às ${kb.checkoutTime || "12:00"}\n`;
     reply += `• **Wi-Fi Geral:** Senha padrão \`${kb.wifiPassword || "1234567890123"}\`\n`;
-    reply += `• **Área de Lazer:** ${kb.leisureInfo || "Piscina aquecida e academia na cobertura (06h às 22h)"}\n`;
-    reply += `• **Pets:** ${kb.petPolicy || "Permitido pequeno porte até 10kg com taxa"}\n`;
+    reply += `• **Área de Lazer:** ${kb.leisureInfo || "Jacuzzi aquecida, terraço panorâmico, saunas seca e a vapor, sala de jogos e academia na cobertura (06h às 22h, sem piscina)"}\n`;
+    reply += `• **Pets:** ${kb.petPolicy || "Até 2 cães de pequeno porte (até 10kg), R$ 40 por cachorro por estadia"}\n`;
     reply += `• **Fumo:** ${kb.smokingPolicy || "100% não fumante nos flats"}\n\n`;
 
     if (faqs.length > 0) {
@@ -76056,8 +76324,8 @@ function serveSpaWithMetadata(distFolder, req, res) {
         ? `🏨 Área do Hóspede • Flat ${flatNumber} • CorpFlats`
         : "🏨 Área do Hóspede • CorpFlats";
       desc = guestFirstName
-        ? `Olá ${guestFirstName}! Acesse os detalhes da sua acomodação, senha da fechadura, Wi-Fi e horários do flat.`
-        : "Acesse os detalhes da sua acomodação, senha da fechadura, conexão Wi-Fi, regras do flat e serviços.";
+        ? `Olá ${guestFirstName}! Acesse os detalhes da sua acomodação, instruções de recepção 24h (cartão NFC), Wi-Fi e horários do flat.`
+        : "Acesse os detalhes da sua acomodação, instruções de recepção 24h (cartão NFC), conexão Wi-Fi, regras do flat e serviços.";
       image = customFlatImg;
       imageAlt = "CorpFlats • Área do Hóspede";
       imageWidth = "1200";

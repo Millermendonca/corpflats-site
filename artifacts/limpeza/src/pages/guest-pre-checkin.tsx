@@ -3968,7 +3968,7 @@ export default function GuestPreCheckin() {
                       const waRes = await fetch(`/api/whatsapp/phone-exists/${encodeURIComponent(queryPhone)}`)
                       const waData = await waRes.json()
                       if (waData && waData.checked && waData.exists === false) {
-                        alert("O telefone informado não possui conta ativa no WhatsApp. Por favor, informe um número que tenha WhatsApp para receber o código e a senha da porta.")
+                        alert("O telefone informado não possui conta ativa no WhatsApp. Por favor, informe um número que tenha WhatsApp para receber o voucher e a confirmação da recepção 24h.")
                         return
                       }
                     } catch {}

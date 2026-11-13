@@ -9772,7 +9772,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                             🟣 Arquitetura Corporativa 4-Pontas (B2B + Agência + Empresa + Hóspede)
                           </span>
                           <span className="text-[10.5px] text-purple-700/80 dark:text-purple-300/80 block">
-                            Pré-check-in e senha da fechadura liberados imediatamente • Valores ocultos do hóspede por padrão
+                            Pré-check-in digital e liberação na recepção 24h imediatos • Valores ocultos do hóspede por padrão
                           </span>
                         </div>
 
@@ -15135,7 +15135,7 @@ Ressaltamos gentilmente que esses dados não podem ser informados apenas na hora
                   id: "portal",
                   title: "Minha Reserva (Portal do Hóspede)",
                   url: `${origin}/minha-reserva/${resCode}`,
-                  desc: "Acesso completo à reserva: senhas da fechadura eletrônica, Wi-Fi, regras, pedidos de café e serviços.",
+                  desc: "Acesso completo à reserva: instruções de recepção 24h (cartão NFC), Wi-Fi, regras, pedidos de café e serviços.",
                   icon: User,
                   badge: "Completo",
                   badgeColor: "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-300",

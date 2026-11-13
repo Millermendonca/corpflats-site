@@ -19,24 +19,28 @@ import { useToast } from "@/hooks/use-toast"
 
 const CURATED_AIRY_PHOTOS = [
   {
-    title: "Living & Sala Arejada com Luz Natural",
-    url: "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1920&q=80"
+    title: "Cobertura com Jacuzzi Aquecida & Deck (Opção A - Oficial)",
+    url: "/photos/soho/hero-jacuzzi-cobertura.jpg"
   },
   {
-    title: "Suíte Master com Cama King & Decoração Clean",
-    url: "https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=1920&q=80"
+    title: "Quarto Integrado & Bancada de Trabalho",
+    url: "/photos/soho/01-quarto-bancada.jpg"
   },
   {
-    title: "Varanda Arejada com Vista Mar",
-    url: "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=1920&q=80"
+    title: "Flat Soho Integrado (Quarto, Estar & Cozinha)",
+    url: "/photos/soho/02-flat-integrado.jpg"
   },
   {
-    title: "Flat Contemporâneo com Tons Naturais",
-    url: "https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=1920&q=80"
+    title: "Terraço Panorâmico na Cobertura do Soho",
+    url: "/photos/soho/07-terraco-panoramico.jpg"
   },
   {
-    title: "Piscina e Deck Solar com Vista",
-    url: "https://images.unsplash.com/photo-1576013551627-0cc20b96c2a7?auto=format&fit=crop&w=1920&q=80"
+    title: "Spa com Saunas Seca e a Vapor",
+    url: "/photos/soho/08-spa-saunas.jpg"
+  },
+  {
+    title: "Academia Climatizada do Soho Residence",
+    url: "/photos/soho/09-academia.jpg"
   }
 ]
 
@@ -474,7 +478,7 @@ export default function SiteEditor() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
                   <div className="space-y-2">
                     <Label className="text-xs font-bold flex items-center gap-1.5">
                       <MapPin className="w-3.5 h-3.5 text-rose-600" />
@@ -483,7 +487,7 @@ export default function SiteEditor() {
                     <Input
                       value={config.branding?.address || ""}
                       onChange={e => setConfig({ ...config, branding: { ...config.branding, address: e.target.value } })}
-                      placeholder="Ex: Av. Pelinca, 100 - Pelinca, Campos dos Goytacazes - RJ"
+                      placeholder="Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ"
                       className="text-xs"
                     />
                   </div>
@@ -494,6 +498,28 @@ export default function SiteEditor() {
                       value={config.branding?.googleMapsUrl || ""}
                       onChange={e => setConfig({ ...config, branding: { ...config.branding, googleMapsUrl: e.target.value } })}
                       placeholder="https://share.google/LHu3541d5lhkdvbL2"
+                      className="text-xs font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold">Instagram (@usuario)</Label>
+                    <Input
+                      value={config.branding?.instagram || "@corpflats"}
+                      onChange={e => {
+                        const raw = e.target.value.trim()
+                        const handle = raw.startsWith("http")
+                          ? `@${raw.replace(/\/+$/, "").split("/").pop() || "corpflats"}`
+                          : (raw.startsWith("@") || !raw ? raw : `@${raw}`)
+                        const url = raw.startsWith("http")
+                          ? raw
+                          : `https://instagram.com/${handle.replace(/^@/, "") || "corpflats"}`
+                        setConfig({
+                          ...config,
+                          branding: { ...config.branding, instagram: raw, instagramUrl: url }
+                        })
+                      }}
+                      placeholder="@corpflats"
                       className="text-xs font-mono"
                     />
                   </div>
@@ -589,7 +615,7 @@ export default function SiteEditor() {
                               updated[idx].title = e.target.value
                               setConfig({ ...config, amenities: updated })
                             }}
-                            placeholder="Ex: Piscina com Deck"
+                            placeholder="Ex: Jacuzzi Aquecida na Cobertura"
                             className="font-bold text-xs h-8"
                           />
                         </div>
@@ -650,9 +676,9 @@ export default function SiteEditor() {
                     const newGallery = [...(config.gallery || [])]
                     newGallery.push({
                       id: Date.now(),
-                      title: "Novo Ambiente Arejado",
-                      category: "Quartos",
-                      imageUrl: "https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=1200&q=80"
+                      title: "Ambiente do Soho Residence",
+                      category: "O Flat",
+                      imageUrl: "/photos/soho/01-quarto-bancada.jpg"
                     })
                     setConfig({ ...config, gallery: newGallery })
                   }}
@@ -756,9 +782,9 @@ export default function SiteEditor() {
                       name: "Nome do Hóspede",
                       city: "Cidade, UF",
                       rating: 5,
-                      comment: "Excelente estadia! Flat arejado, limpo e com vista linda.",
-                      date: "Mês de 2026",
-                      avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80"
+                      comment: "Depoimento real do hóspede...",
+                      date: "2026",
+                      avatar: ""
                     })
                     setConfig({ ...config, testimonials: newTestimonials })
                   }}
@@ -768,6 +794,16 @@ export default function SiteEditor() {
                 </Button>
               </CardHeader>
               <CardContent className="space-y-4">
+                {(!config.testimonials || config.testimonials.length === 0) && (
+                  <div className="p-6 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 text-center space-y-1.5">
+                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Nenhuma avaliação publicada no momento (seção oculta no site público)
+                    </p>
+                    <p className="text-[11px] text-slate-500 max-w-lg mx-auto">
+                      Depoimentos genéricos foram removidos. Clique em &quot;Adicionar Avaliação&quot; acima para publicar avaliações reais de hóspedes do Google, Booking ou Airbnb.
+                    </p>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {(config.testimonials || []).map((t: any, idx: number) => (
                     <div
@@ -786,11 +822,17 @@ export default function SiteEditor() {
                       </button>
 
                       <div className="flex items-center gap-2.5">
-                        <img
-                          src={t.avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80"}
-                          alt={t.name}
-                          className="w-10 h-10 rounded-full object-cover border border-slate-200 shrink-0"
-                        />
+                        {t.avatar ? (
+                          <img
+                            src={t.avatar}
+                            alt={t.name}
+                            className="w-10 h-10 rounded-full object-cover border border-slate-200 shrink-0"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-[#0F3D4C] text-[#E5C98B] flex items-center justify-center font-bold text-xs shrink-0">
+                            {(t.name || "H").trim().charAt(0).toUpperCase()}
+                          </div>
+                        )}
                         <div className="min-w-0 flex-1 space-y-1">
                           <Input
                             value={t.name || ""}
@@ -903,6 +945,36 @@ export default function SiteEditor() {
                     placeholder="Conte como os flats unem conforto residencial com hospitalidade de excelência..."
                     className="text-xs leading-relaxed"
                   />
+                </div>
+
+                {/* Listas de Itens da Seção "O Flat" */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Quarto, Estar & Trabalho (1 item por linha)</Label>
+                    <Textarea
+                      rows={5}
+                      value={(config.about?.roomItems || []).join("\n")}
+                      onChange={e => {
+                        const items = e.target.value.split("\n").map(s => s.replace(/^[•\-]\s*/, ""))
+                        setConfig({ ...config, about: { ...config.about, roomItems: items } })
+                      }}
+                      placeholder="Cama Queen Casal (ou 2 camas de solteiro mediante solicitação até 12h)..."
+                      className="text-xs leading-relaxed"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Cozinha & Apoio (1 item por linha)</Label>
+                    <Textarea
+                      rows={5}
+                      value={(config.about?.kitchenItems || []).join("\n")}
+                      onChange={e => {
+                        const items = e.target.value.split("\n").map(s => s.replace(/^[•\-]\s*/, ""))
+                        setConfig({ ...config, about: { ...config.about, kitchenItems: items } })
+                      }}
+                      placeholder="Cooktop 2 bocas, frigobar, cafeteira elétrica e sanduicheira..."
+                      className="text-xs leading-relaxed"
+                    />
+                  </div>
                 </div>
 
                 {/* Métricas / Stats */}
@@ -1068,28 +1140,28 @@ export default function SiteEditor() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-5">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-bold">Aceitar Animais de Estimação?</Label>
+                    <Label className="text-xs font-bold">Aceitar Pets?</Label>
                     <div className="flex gap-2">
                       <Button
                         type="button"
                         size="sm"
                         variant={config?.petPolicy?.enabled ? "default" : "outline"}
                         onClick={() => {
-                          const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay" }
+                          const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay", maxPets: 2 }
                           setConfig({ ...config, petPolicy: { ...current, enabled: true } })
                         }}
                         className="flex-1 text-xs font-bold rounded-xl h-8"
                       >
-                        Sim (Aceita Pets)
+                        Sim
                       </Button>
                       <Button
                         type="button"
                         size="sm"
                         variant={!config?.petPolicy?.enabled ? "default" : "outline"}
                         onClick={() => {
-                          const current = config.petPolicy || { enabled: false, feeAmount: 40, feeType: "per_stay" }
+                          const current = config.petPolicy || { enabled: false, feeAmount: 40, feeType: "per_stay", maxPets: 2 }
                           setConfig({ ...config, petPolicy: { ...current, enabled: false } })
                         }}
                         className="flex-1 text-xs font-bold rounded-xl h-8"
@@ -1100,15 +1172,31 @@ export default function SiteEditor() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-bold">Valor da Taxa Pet (R$)</Label>
+                    <Label className="text-xs font-bold">Taxa por Cachorro (R$)</Label>
                     <Input
                       type="number"
                       value={config?.petPolicy?.feeAmount ?? 40}
                       onChange={e => {
-                        const current = config.petPolicy || { enabled: true, feeType: "per_stay" }
+                        const current = config.petPolicy || { enabled: true, feeType: "per_stay", maxPets: 2 }
                         setConfig({ ...config, petPolicy: { ...current, feeAmount: Number(e.target.value) } })
                       }}
                       placeholder="40"
+                      className="text-xs h-8 rounded-xl"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Máx. Cães por Flat</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={4}
+                      value={config?.petPolicy?.maxPets ?? 2}
+                      onChange={e => {
+                        const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay" }
+                        setConfig({ ...config, petPolicy: { ...current, maxPets: Math.max(1, Number(e.target.value) || 2) } })
+                      }}
+                      placeholder="2"
                       className="text-xs h-8 rounded-xl"
                     />
                   </div>
@@ -1118,13 +1206,13 @@ export default function SiteEditor() {
                     <select
                       value={config?.petPolicy?.feeType || "per_stay"}
                       onChange={e => {
-                        const current = config.petPolicy || { enabled: true, feeAmount: 40 }
+                        const current = config.petPolicy || { enabled: true, feeAmount: 40, maxPets: 2 }
                         setConfig({ ...config, petPolicy: { ...current, feeType: e.target.value } })
                       }}
                       className="w-full h-8 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-medium"
                     >
-                      <option value="per_stay">Taxa Única por Estadia (Recomendado)</option>
-                      <option value="per_night">Taxa por Diária</option>
+                      <option value="per_stay">Por Estadia (Recomendado)</option>
+                      <option value="per_night">Por Diária</option>
                     </select>
                   </div>
                 </div>
@@ -1133,10 +1221,10 @@ export default function SiteEditor() {
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
                       <Label className="text-xs font-bold text-amber-950 dark:text-amber-200">
-                        Espécies de Animais Permitidas
+                        Espécies e Porte Permitidos
                       </Label>
                       <span className="text-[11px] text-amber-800/80 dark:text-amber-400 block">
-                        Todos os outros animais não listados serão expressamente proibidos nas regras.
+                        Apenas animais descritos abaixo são permitidos nas unidades.
                       </span>
                     </div>
                     <Button
@@ -1144,10 +1232,19 @@ export default function SiteEditor() {
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        const species = config?.petPolicy?.allowedSpecies || "Cachorros (Cães) de pequeno porte (até 10kg)"
-                        const defaultRule = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.\n• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).\n• Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.\n• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.\n• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.\n• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.`
-                        const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay" }
-                        setConfig({ ...config, petPolicy: { ...current, rules: defaultRule } })
+                        const defaultRule = `• Exclusivo para cachorros de pequeno porte (até 10 kg), máximo de 2 por flat. Outros animais não são permitidos.\n• Taxa de higienização de R$ 40 por cachorro por estadia.\n• Nas áreas comuns do Edifício Soho, transporte obrigatório no colo ou caixa/bolsa e uso exclusivo do elevador de serviço.\n• Proibido deixar o animal sozinho no flat por longos períodos.\n• O titular responde integralmente por eventuais danos a móveis, colchões, enxoval ou higienização extraordinária.`
+                        const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay", maxPets: 2 }
+                        setConfig({
+                          ...config,
+                          petPolicy: {
+                            ...current,
+                            maxPets: 2,
+                            feeAmount: 40,
+                            feeType: "per_stay",
+                            allowedSpecies: "Apenas cachorros de porte pequeno (até 10kg)",
+                            rules: defaultRule
+                          }
+                        })
                       }}
                       className="text-[11px] h-7 px-2.5 rounded-lg border-amber-300 bg-white dark:bg-slate-900 text-amber-900 dark:text-amber-200 font-bold hover:bg-amber-100"
                     >
@@ -1156,12 +1253,12 @@ export default function SiteEditor() {
                   </div>
 
                   <Input
-                    value={config?.petPolicy?.allowedSpecies || "Cachorros (Cães)"}
+                    value={config?.petPolicy?.allowedSpecies || "Apenas cachorros de porte pequeno (até 10kg)"}
                     onChange={e => {
-                      const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay" }
+                      const current = config.petPolicy || { enabled: true, feeAmount: 40, feeType: "per_stay", maxPets: 2 }
                       setConfig({ ...config, petPolicy: { ...current, allowedSpecies: e.target.value } })
                     }}
-                    placeholder="Ex: Cachorros (Cães), Gatos"
+                    placeholder="Apenas cachorros de porte pequeno (até 10kg)"
                     className="text-xs h-8 rounded-xl bg-white dark:bg-slate-900"
                   />
                 </div>
@@ -1299,38 +1396,128 @@ export default function SiteEditor() {
               </CardContent>
             </Card>
 
-            {/* Política de Cancelamento Dinâmica */}
+            {/* Lotação Máxima & 3º Hóspede (Sincronizado com Central de Tarifas) */}
+            <Card className="rounded-2xl border-slate-200 dark:border-slate-800 shadow-xs">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <CardTitle className="text-lg font-black flex items-center gap-2">
+                      <Layers className="w-5 h-5 text-sky-600" />
+                      Lotação Máxima por Flat (2 Hóspedes Padrão vs 3º Hóspede)
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Por padrão o site permite selecionar até 2 hóspedes por flat. Ative abaixo quando desejar liberar o 3º hóspede com adicional de colchonete.
+                    </CardDescription>
+                  </div>
+                  <Badge className={config?.extraBedConfig?.enabled ? "bg-emerald-100 text-emerald-800 font-bold" : "bg-slate-100 text-slate-600 font-bold"}>
+                    {config?.extraBedConfig?.enabled ? "Até 3 Hóspedes Ativo" : "Padrão: Máx. 2 Hóspedes"}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Permitir 3º Hóspede no Site?</Label>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={!config?.extraBedConfig?.enabled ? "default" : "outline"}
+                        onClick={() => {
+                          const current = config.extraBedConfig || { feeAmount: 60, feeType: "per_stay", cutoffHour: 12 }
+                          setConfig({ ...config, extraBedConfig: { ...current, enabled: false, maxGuests: 2 } })
+                        }}
+                        className="flex-1 text-xs font-bold rounded-xl h-8"
+                      >
+                        Até 2 (Padrão)
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={Boolean(config?.extraBedConfig?.enabled) ? "default" : "outline"}
+                        onClick={() => {
+                          const current = config.extraBedConfig || { feeAmount: 60, feeType: "per_stay", cutoffHour: 12 }
+                          setConfig({ ...config, extraBedConfig: { ...current, enabled: true, maxGuests: 3 } })
+                        }}
+                        className="flex-1 text-xs font-bold rounded-xl h-8"
+                      >
+                        Liberar 3º Hósp.
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Adicional Colchonete 3º Hósp. (R$)</Label>
+                    <Input
+                      type="number"
+                      value={config?.extraBedConfig?.feeAmount ?? 60}
+                      onChange={e => {
+                        const current = config.extraBedConfig || { enabled: false, feeType: "per_stay", cutoffHour: 12 }
+                        setConfig({ ...config, extraBedConfig: { ...current, feeAmount: Number(e.target.value) } })
+                      }}
+                      className="text-xs h-8 rounded-xl"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold">Tipo da Cobrança</Label>
+                    <select
+                      value={config?.extraBedConfig?.feeType || "per_stay"}
+                      onChange={e => {
+                        const current = config.extraBedConfig || { enabled: false, feeAmount: 60, cutoffHour: 12 }
+                        setConfig({ ...config, extraBedConfig: { ...current, feeType: e.target.value } })
+                      }}
+                      className="w-full h-8 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-medium"
+                    >
+                      <option value="per_stay">Taxa Única por Estadia</option>
+                      <option value="per_night">Taxa por Diária</option>
+                    </select>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Política Oficial de Cancelamento (24h antes das 14:00 do check-in) */}
             <Card className="rounded-2xl border-slate-200 dark:border-slate-800 shadow-xs">
               <CardHeader>
                 <CardTitle className="text-lg font-black flex items-center gap-2">
                   <ShieldAlert className="w-5 h-5 text-sky-600" />
-                  Política de Cancelamento Automatizada
+                  Política Oficial de Cancelamento (Unificada)
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Regra automatizada baseada na antecedência da reserva para maximizar ocupação e transparência.
+                  Regra oficial aplicada igualmente no site, funil de pagamento, portal Minha Reserva, contrato digital e IA do WhatsApp.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="p-4 rounded-2xl bg-sky-50/60 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 space-y-3">
-                  <h4 className="font-bold text-xs text-sky-900 dark:text-sky-200 uppercase tracking-wider">
-                    Lógica Ativa de Aplicação Automática:
-                  </h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
-                      <Badge className="bg-rose-100 text-rose-800 text-[10px] font-bold">Mais de 7 Dias de Antecedência</Badge>
-                      <h5 className="font-bold text-slate-900 dark:text-slate-100">🔒 Política Rigorosa</h5>
+                      <Badge className="bg-emerald-100 text-emerald-800 text-[10px] font-bold">Até 24h antes das 14:00 do Check-in</Badge>
+                      <h5 className="font-bold text-slate-900 dark:text-slate-100">✓ Cancelamento Gratuito (100% de Reembolso)</h5>
                       <p className="text-[11px] text-slate-500">
-                        Como a unidade fica bloqueada por muito tempo, a reserva é não-reembolsável após a confirmação.
+                        Cancelamentos solicitados até 24 horas antes das 14:00 do dia do check-in recebem reembolso integral de 100%.
                       </p>
                     </div>
 
                     <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1">
-                      <Badge className="bg-emerald-100 text-emerald-800 text-[10px] font-bold">7 Dias ou Menos de Antecedência</Badge>
-                      <h5 className="font-bold text-slate-900 dark:text-slate-100">✓ Política Flexível</h5>
+                      <Badge className="bg-rose-100 text-rose-800 text-[10px] font-bold">Menos de 24h para o Check-in ou No-Show</Badge>
+                      <h5 className="font-bold text-slate-900 dark:text-slate-100">🔒 Cobrança de 100% (Sem Reembolso)</h5>
                       <p className="text-[11px] text-slate-500">
-                        Reembolso integral (100%) permitido se cancelado até 24 horas antes do check-in às 14:00.
+                        Faltando menos de 24 horas para as 14:00 do dia do check-in (ou em caso de não comparecimento), é cobrado 100% da reserva.
                       </p>
                     </div>
+                  </div>
+
+                  <div className="space-y-1 pt-2">
+                    <Label className="text-xs font-bold">Texto Resumo da Política (Exibido nas Regras)</Label>
+                    <Input
+                      value={config?.cancellationPolicy?.rules || "Cancelamento gratuito com 100% de reembolso até 24 horas antes das 14:00 do dia do check-in. Faltando menos de 24h para o check-in, é cobrado 100% (sem reembolso)."}
+                      onChange={e => {
+                        const current = config.cancellationPolicy || { type: "free_24h_before_checkin", freeCancellationHours: 24, checkinHour: 14, noShowPenaltyPercent: 100 }
+                        setConfig({ ...config, cancellationPolicy: { ...current, type: "free_24h_before_checkin", rules: e.target.value } })
+                      }}
+                      className="text-xs bg-white dark:bg-slate-900"
+                    />
                   </div>
                 </div>
               </CardContent>

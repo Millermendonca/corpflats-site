@@ -244,11 +244,12 @@ RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
     wifiPassword: "1234567890123",
     breakfastInfo: "O café da manhã é servido exclusivamente via bandeja diretamente no quarto das 05:00 às 09:30, com escolha de itens e agendamento pelo portal /cafe até a véspera. Não há buffet presencial nem restaurante no condomínio. A recepção do condomínio não vende nem gerencia café. Reservas sem café incluso podem solicitar inclusão avulsa com antecedência via WhatsApp da administração CorpFlats.",
     garageInfo: "Garagem rotativa gratuita no condomínio Soho (qualquer vaga livre). É obrigatório cadastrar a placa no Pré-Check-in Digital com antecedência para autorização de entrada na portaria 24h. Comporta veículos normais, SUVs e caminhonetes (altura do portão ~2,10m a 2,20m).",
-    petPolicy: "Aceitamos exclusivamente cães (apenas cachorros), máximo de 1 pet até 10kg por apartamento. Custo adicional de R$ 40,00 por dia (diária).",
+    petPolicy: "Aceitamos exclusivamente cachorros de pequeno porte (até 10kg), no limite máximo de 2 cães por apartamento, mediante taxa de R$ 40,00 por cachorro por estadia.",
     smokingPolicy: "Ambiente 100% livre de fumo! É estritamente proibido fumar dentro dos apartamentos e nas áreas fechadas do edifício.",
-    amenities: "Flats climatizados (Split), Smart TV, Wi-Fi veloz individual em cada flat, tomadas 127V, ferro de passar disponível (sem tábua), frigobar abastecido com bebidas e snacks em parceria com a Anserve (autoatendimento via PIX/Cartão e 1 kit cortesia com Nespresso e doces por estadia), cozinha com micro-ondas e utensílios, enxoval completo de hotelaria e ducha aquecida.",
+    amenities: "Flats climatizados com ar-condicionado, Smart TV 32\", Wi-Fi veloz individual em cada flat, tomadas 127V, bancada de trabalho, ferro de passar roupa (sem tábua), secador de cabelo, frigobar abastecido em parceria com a Anserve (autoatendimento via PIX/Cartão e 1 kit cortesia com Nespresso e doces por estadia), cozinha compacta com cooktop 2 bocas, cafeteira elétrica, sanduicheira, pratos, talheres, copos, taças e saca-rolhas (não dispomos de micro-ondas), enxoval completo de hotelaria e ducha aquecida.",
     minibarInfo: "Os flats do Soho Residence contam com frigobar abastecido em parceria com a Anserve. O hóspede tem 1 kit de cortesia por estadia (cápsulas Nespresso e doces) e pode consumir bebidas geladas (cervejas, refrigerantes, águas) e snacks com autoatendimento e pagamento via PIX ou Cartão pelo link exclusivo da reserva.",
-    leisureInfo: "Piscina/jacuzzi aquecida e academia na cobertura funcionando diariamente das 06:00 às 22:00, exclusivo para hóspedes cadastrados (não é permitida a entrada de visitantes na cobertura e proibido vidro na área molhada).",
+    leisureInfo: "Cobertura com jacuzzi aquecida, terraço com vista panorâmica, saunas seca e a vapor, academia climatizada e sala de jogos funcionando diariamente das 06:00 às 22:00, exclusivo para hóspedes cadastrados (o edifício não possui piscina; não é permitida a entrada de visitantes na cobertura e é proibido vidro na área molhada).",
+    cancellationPolicy: "Cancelamento gratuito com 100% de reembolso até 24 horas antes das 14:00 do dia do check-in. Faltando menos de 24 horas para o check-in, é cobrado 100% do valor da reserva.",
     directBookingBenefits: "Melhor tarifa garantida sem taxas de intermediários, prioridade de early check-in a partir das 10h (quando disponível) e suporte direto com a nossa administração.",
     receptionPhone: "5522998505276",
     siteUrl: "https://corpflats.com.br"
@@ -4897,8 +4898,8 @@ export function distillGuidelineFromOperatorResponse({ question = "", response =
   else if (/micro[- ]?ondas/i.test(qLower)) {
     finalCategory = "estrutura_flat";
     if (!isNegative) {
-      synthesizedGuideline = "Todos os nossos flats dispõem de forno micro-ondas e frigobar para total comodidade dos hóspedes.";
-      sampleResponse = "Olá! Sim, todos os nossos flats dispõem de micro-ondas, frigobar e cozinha compacta equipada! 🍽️⚡";
+      synthesizedGuideline = "Os flats contam com cozinha compacta equipada (cooktop 2 bocas, frigobar, cafeteira e sanduicheira), mas não dispõem de micro-ondas.";
+      sampleResponse = "Olá! Nossos flats possuem cozinha equipada com cooktop 2 bocas, frigobar, cafeteira e sanduicheira, mas não dispomos de micro-ondas. 🍳☕";
     } else {
       synthesizedGuideline = "Os flats não dispõem de micro-ondas.";
       sampleResponse = "Olá! Informamos que os flats não dispõem de micro-ondas.";
@@ -4931,8 +4932,8 @@ export function distillGuidelineFromOperatorResponse({ question = "", response =
   else if (/pet|cachorro|animal|gato/i.test(qLower)) {
     finalCategory = "pet";
     if (!isNegative) {
-      synthesizedGuideline = "Aceitamos pets de pequeno porte mediante taxa única e cumprimento das normas condominiais.";
-      sampleResponse = "Olá! Sim, aceitamos pets de pequeno porte com todo carinho (máximo 1 pet por flat, mediante taxa única)! 🐾✨";
+      synthesizedGuideline = "Aceitamos exclusivamente cachorros de pequeno porte (até 10kg), máximo de 2 cães por flat, mediante taxa de R$ 40,00 por cão por estadia.";
+      sampleResponse = "Olá! Sim, aceitamos cachorros de pequeno porte até 10kg (máximo de 2 cães por flat, com taxa de R$ 40,00 por cão por estadia)! 🐾✨";
     } else {
       synthesizedGuideline = "Não é permitida a estadia de animais de estimação nos flats.";
       sampleResponse = "Olá! Informamos que não é permitida a estadia de animais de estimação nas acomodações. 🛑🐾";
@@ -4967,10 +4968,10 @@ export function distillGuidelineFromOperatorResponse({ question = "", response =
   else if (/piscina|academia|jacuzzi|cobertura|lazer|hidro/i.test(qLower)) {
     finalCategory = "lazer";
     if (!isNegative) {
-      synthesizedGuideline = "A piscina aquecida/jacuzzi e academia na cobertura funcionam diariamente das 06:00 às 22:00 para os hóspedes.";
-      sampleResponse = "Olá! Sim, dispomos de piscina/jacuzzi aquecida e academia na cobertura, abertas diariamente das 06:00 às 22:00 para os hóspedes! 🏊‍♂️✨";
+      synthesizedGuideline = "A cobertura conta com jacuzzi aquecida, terraço panorâmico, saunas seca e a vapor, academia climatizada e sala de jogos das 06:00 às 22:00 para os hóspedes (não há piscina).";
+      sampleResponse = "Olá! Não temos piscina, mas nossa cobertura dispõe de jacuzzi aquecida, terraço panorâmico, saunas seca e a vapor, academia climatizada e sala de jogos, abertos das 06:00 às 22:00 para os hóspedes! ✨";
     } else {
-      synthesizedGuideline = "A área de lazer e piscina encontra-se temporariamente em manutenção.";
+      synthesizedGuideline = "A área de lazer encontra-se temporariamente em manutenção.";
       sampleResponse = "Olá! Informamos que a área de lazer está temporariamente indisponível para manutenção.";
     }
   }
@@ -5075,7 +5076,7 @@ export function generateSampleGuestResponse({ category = "geral", ruleText = "",
     return "Olá! Dispomos de garagem rotativa gratuita no condomínio. Lembre-se de cadastrar a placa do seu veículo no portal para liberação na portaria! 🚗✨";
   }
   if (category === "pet" || (category === "geral" && lowerRule.includes("pet"))) {
-    return "Olá! Aceitamos com carinho cães de até 10kg com taxa adicional por diária. Se precisar de orientações para a hospedagem do seu pet, estou à disposição! 🐾✨";
+    return "Olá! Aceitamos com carinho cachorros de pequeno porte (até 10kg), máximo de 2 por flat, com taxa de R$ 40,00 por cão por estadia. Se precisar de orientações para a hospedagem do seu pet, estou à disposição! 🐾✨";
   }
   if (targetFlat) {
     return `Olá! Sobre o Flat ${targetFlat}: informamos que dispõe de todas as comodidades para sua estadia. Se precisar de algo, conte conosco! 🔑✨`;
@@ -7850,7 +7851,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       if (petGuide) {
         parts.push(`Sobre animais: ${petGuide.text}`);
       } else {
-        parts.push("Sobre animais: aceitamos cães de pequeno porte (até 10kg) com todo carinho, mediante taxa adicional de diária e normas condominiais.");
+        parts.push("Sobre animais: aceitamos exclusivamente cachorros de pequeno porte (até 10kg), máximo de 2 por flat, mediante taxa de R$ 40,00 por cão por estadia e normas condominiais.");
       }
     }
     // Lazer
@@ -7859,7 +7860,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       if (leisureGuide) {
         parts.push(`Sobre o lazer: ${leisureGuide.text}`);
       } else {
-        parts.push("Sobre o lazer: nossa piscina/jacuzzi aquecida e academia na cobertura funcionam diariamente das 06:00 às 22:00 exclusivamente para hóspedes.");
+        parts.push("Sobre o lazer: não temos piscina, mas a cobertura dispõe de jacuzzi aquecida, terraço com vista panorâmica, saunas seca e a vapor, academia climatizada e sala de jogos das 06:00 às 22:00 exclusivamente para hóspedes.");
       }
     }
     // Fumo
@@ -8399,10 +8400,10 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
 
     if (/(?:visitas?|receber\s+visita|visitante|amigo|familiar)/i.test(text)) {
-      return ret(`${greetingSalutation} 👥 Para a segurança de todos os moradores e hóspedes do condomínio Soho:\n\n• Todas as visitas devem ser informadas com antecedência à recepção/portaria com documento com foto (RG/CPF).\n• A permanência de visitantes para pernoite é restrita à capacidade máxima do flat e sujeita a taxa adicional.\n• As áreas de lazer da cobertura (piscina e academia) são de uso *exclusivo dos hóspedes cadastrados* na reserva (não permitida entrada de visitantes externos).\n\nQualquer dúvida, nossa recepção está à disposição! 🛎️`);
+      return ret(`${greetingSalutation} 👥 Para a segurança de todos os moradores e hóspedes do condomínio Soho:\n\n• Todas as visitas devem ser informadas com antecedência à recepção/portaria com documento com foto (RG/CPF).\n• Não é permitido pernoite de visitantes externos.\n• As áreas de lazer da cobertura (jacuzzi aquecida, saunas, academia e sala de jogos) são de uso *exclusivo dos hóspedes cadastrados* na reserva (não permitida entrada de visitantes externos).\n\nQualquer dúvida, nossa recepção está à disposição! 🛎️`);
     }
 
-    return ret(`${greetingSalutation} 📋 Conheça as principais regras e normas de convivência do condomínio Soho Residence:\n\n• *Check-in/Check-out:* Entrada a partir das 14h e saída até as 12h.\n• *Silêncio:* Das 22h às 08h em todos os apartamentos e áreas comuns.\n• *Lazer:* Piscina aquecida e academia na cobertura funcionam diariamente das 06:00 às 22:00 exclusivamente para hóspedes.\n• *Garagem:* 1 vaga rotativa coberta e gratuita por flat (necessário cadastrar placa no Pré-Check-in Digital).\n• *Fumo:* Proibido fumar no interior dos apartamentos (área 100% não fumante).\n• *Pets:* Permitido cães de pequeno porte (até 10kg) mediante prévia autorização e taxa.\n\nEstamos sempre à disposição para tornar sua estadia maravilhosa! 🏨✨`);
+    return ret(`${greetingSalutation} 📋 Conheça as principais regras e normas de convivência do condomínio Soho Residence:\n\n• *Check-in/Check-out:* Entrada a partir das 14h e saída até as 12h (cartão NFC retirado na recepção 24h).\n• *Silêncio:* Das 22h às 08h em todos os apartamentos e áreas comuns.\n• *Lazer:* Jacuzzi aquecida, terraço panorâmico, saunas seca e a vapor, academia climatizada e sala de jogos funcionam diariamente das 06:00 às 22:00 exclusivamente para hóspedes.\n• *Garagem:* 1 vaga rotativa coberta e gratuita por flat (necessário cadastrar placa no Pré-Check-in Digital).\n• *Fumo:* Proibido fumar no interior dos apartamentos (área 100% não fumante).\n• *Pets:* Permitido cachorros de pequeno porte (até 10kg), máximo 2 por flat, mediante taxa de R$ 40,00 por cão por estadia.\n\nEstamos sempre à disposição para tornar sua estadia excelente! 🏨✨`);
   }
 
   // 4. Localização / Endereço / Onde fica
@@ -8467,9 +8468,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   }
 
   if (/(?:micro[- ]?ondas)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
-    const microFlats = searchFlatsByAmenities(activeDb, { hasMicrowave: true });
-    const numbers = microFlats.map(f => f.number).join(", ");
-    return ret(`${greetingSalutation} Sim! Nossos flats dispõem de cozinha compacta equipada com micro-ondas e frigobar para sua total praticidade 🍽️⚡ (especialmente os flats: ${numbers || "113, 408, 511, 712"}).`);
+    return ret(`${greetingSalutation} Nossos flats contam com cozinha compacta equipada com fogão cooktop 2 bocas, frigobar Anserve, cafeteira elétrica, sanduicheira e utensílios completos, mas *não dispomos de micro-ondas* 🍳☕.`);
   }
 
   if (/(?:cama\s+de\s+casal|cama\s+casal|cama\s+inteira|cama_inteira)\b/i.test(text) && /(?:qual|quais|tem|existe|queria|temos|dispon[ií]vel|quarto|flat)/i.test(text)) {
@@ -8502,7 +8501,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 
   // 7.11 Lazer, Cobertura, Piscina e Academia
   if (/piscina|jacuzzi|academia|cobertura|lazer|hidro/i.test(text)) {
-    return ret(`${greetingSalutation} 🏊‍♂️ ${kb.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura das 06:00 às 22:00 para uso exclusivo dos hóspedes."}`);
+    return ret(`${greetingSalutation} ✨ ${kb.leisureInfo || "Cobertura com jacuzzi aquecida, terraço panorâmico, saunas seca e a vapor, academia climatizada e sala de jogos das 06:00 às 22:00 para uso exclusivo dos hóspedes (o edifício não possui piscina)."}`);
   }
 
   // 7.12 Fumo e Cigarro
@@ -9254,7 +9253,8 @@ ${conversationStateSection}
 - Frigobar & Consumo no Quarto: ${aiConfig.knowledgeBase.minibarInfo || "Os flats contam com frigobar abastecido pela Anserve. O hóspede tem cortesia de 1 kit boas-vindas por estadia (cápsulas Nespresso e doces) e pode consumir bebidas geladas e snacks com autoatendimento e pagamento via PIX/Cartão pelo link do frigobar."}
 - Garagem e Estacionamento: ${aiConfig.knowledgeBase.garageInfo}
 - Animais / Pets: ${aiConfig.knowledgeBase.petPolicy}
-- Lazer e Cobertura: ${aiConfig.knowledgeBase.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura das 06:00 às 22:00 exclusivo hóspedes."}
+- Lazer e Cobertura: ${aiConfig.knowledgeBase.leisureInfo || "Cobertura com jacuzzi aquecida, terraço panorâmico, saunas seca e a vapor, academia climatizada e sala de jogos das 06:00 às 22:00 exclusivo hóspedes (não há piscina)."}
+- Política de Cancelamento: ${aiConfig.knowledgeBase.cancellationPolicy || "Cancelamento gratuito com 100% de reembolso até 24h antes das 14:00 do dia do check-in; menos de 24h antes do check-in, cobrança de 100%."}
 - Fumo: ${aiConfig.knowledgeBase.smokingPolicy}
 - Comodidades dos Flats: ${aiConfig.knowledgeBase.amenities}
 - Benefícios Reserva Direta: ${aiConfig.knowledgeBase.directBookingBenefits}
@@ -9590,16 +9590,16 @@ export function generateIntelligentFaqDraft(questionText, db = null, category = 
 
   // Micro-ondas / Cozinha / Eletrodomésticos
   if (/micro[- ]?ondas/i.test(lower)) {
-    return "Sim! Todos os nossos flats dispõem de cozinha compacta equipada com micro-ondas, frigobar e utensílios completos para sua total comodidade. 🍽️⚡";
+    return "Nossos flats possuem cozinha compacta equipada com cooktop 2 bocas, frigobar Anserve, cafeteira elétrica, sanduicheira e utensílios, mas não dispomos de micro-ondas. 🍳☕";
   }
   if (/frigobar|geladeira|congelador/i.test(lower)) {
     return "Sim! Os flats contam com frigobar abastecido em parceria com a Anserve. Você conta com 1 kit cortesia por estadia (cápsulas Nespresso e doces) e pode consumir bebidas e snacks via autoatendimento com pagamento por PIX ou Cartão. 🧊🍫";
   }
   if (/cafeteira|cafezinh/i.test(lower)) {
-    return "Sim! Nossos flats dispõem de cozinha compacta equipada com cafeteira para seu conforto. ☕";
+    return "Sim! Nossos flats dispõem de cozinha compacta equipada com cafeteira elétrica e sanduicheira para seu conforto. ☕";
   }
   if (/cooktop|fog[aã]o|panela|cozinha|lou[cç]a|talher|prato|copo/i.test(lower)) {
-    return "Sim! Nossos flats possuem cozinha compacta equipada com cooktop, micro-ondas, frigobar e utensílios essenciais para refeições práticas. 🍳";
+    return "Sim! Nossos flats possuem cozinha compacta equipada com cooktop 2 bocas, cafeteira, sanduicheira, frigobar, pratos, talheres, copos, taças e saca-rolhas. 🍳";
   }
   if (/ferro|passar|t[aá]bua/i.test(lower)) {
     return "Sim! Disponibilizamos ferro de passar roupa nos flats para seu uso (sem tábua de passar). 👔✨";
@@ -9611,22 +9611,22 @@ export function generateIntelligentFaqDraft(questionText, db = null, category = 
     return "Sim! Os banheiros dos flats contam com secador de cabelo e ducha higiênica para seu conforto. 🚿";
   }
   if (/ar[- ]?condicionado|split|climatiza|calor|frio/i.test(lower)) {
-    return "Sim! Todos os flats possuem ar-condicionado Split potente e controle individual. ❄️";
+    return "Sim! Todos os nossos flats são climatizados com ar-condicionado e controle individual. ❄️";
   }
   if (/cafe(?:\s+da\s+manha)?|desjejum/i.test(lower)) {
-    return "Nosso delicioso café da manhã é servido em bandeja diretamente no seu quarto das 05:00 às 09:30, agendado previamente pelo portal do hóspede. ☕🥐";
+    return "Nosso café da manhã é servido em bandeja diretamente no seu quarto das 05:00 às 09:30, agendado previamente pelo portal do hóspede. ☕🥐";
   }
   if (/wi[- ]?fi|internet|senha(?:\s+do\s+wi-?fi)?|conex[aã]o/i.test(lower)) {
     return "O Wi-Fi é individual e de alta velocidade em cada flat! O nome da rede é o número do seu apartamento e a senha padrão é 1234567890123. 📶";
   }
   if (/piscina|jacuzzi|cobertura|lazer|hidro/i.test(lower)) {
-    return "A área de lazer na cobertura (com piscina/jacuzzi aquecida e academia) funciona diariamente das 06:00 às 22:00 exclusivamente para hóspedes. 🏊‍♂️✨";
+    return "Não temos piscina; a cobertura do Soho Residence conta com jacuzzi aquecida, terraço panorâmico, saunas seca e a vapor, academia climatizada e sala de jogos, abertos diariamente das 06:00 às 22:00 para os hóspedes. ✨";
   }
   if (/academia|muscula[cç][aã]o|fitness|treino/i.test(lower)) {
-    return "Sim! Nossa academia fica na cobertura do edifício e funciona diariamente das 06:00 às 22:00 com equipamentos completos para seu treino. 🏋️‍♂️✨";
+    return "Sim! Nossa academia climatizada fica na cobertura do edifício e funciona diariamente das 06:00 às 22:00 para os hóspedes. 🏋️‍♂️✨";
   }
   if (/pet|cachorro|animal|gato/i.test(lower)) {
-    return "Sim! Aceitamos pets de pequeno porte com todo carinho (máximo 1 pet por flat, mediante taxa única). 🐾✨";
+    return "Sim! Aceitamos exclusivamente cachorros de pequeno porte (até 10kg), máximo de 2 cães por flat, mediante taxa de R$ 40,00 por cão por estadia. 🐾✨";
   }
   if (/garagem|estacionamento|vaga|ve[ií]culo|carro|moto|caminhonete/i.test(lower)) {
     return "Dispomos de vaga de garagem coberta gratuita (rotativa) para 1 veículo de passeio por flat no condomínio Soho! 🚗";
@@ -15370,7 +15370,7 @@ Seu objetivo é gerar opções de respostas profissionais, corretas e acolhedora
 - Café da manhã: ${kb.breakfastInfo}
 - Garagem: ${kb.garageInfo}
 - Pets: ${kb.petPolicy}
-- Lazer: ${kb.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura 06h às 22h"}
+- Lazer: ${kb.leisureInfo || "Jacuzzi aquecida, saunas, sala de jogos e academia na cobertura 06h às 22h (sem piscina)"}
 
 [REGRAS DE FORMATAÇÃO WHATSAPP]:
 - Use *negrito* para termos-chave e horários.
@@ -15899,7 +15899,7 @@ export async function generateSofiaRealtimeAssistance({
       mediaType: "document",
       mediaUrl: manualPdfUrl,
       fileName: "Manual_do_Hospede_CorpFlats.pdf",
-      messageText: `Olá, *${firstName}*! 📖✨ Segue o *Guia e Manual Completo do Flat ${flatNumber || ""}* com instruções de Wi-Fi, ar-condicionado, piscina aquecida (06h às 22h) e comodidades:\n\n📄 ${manualPdfUrl}\n🏨 Portal da Reserva: ${portalLink}`
+      messageText: `Olá, *${firstName}*! 📖✨ Segue o *Guia e Manual Completo do Flat ${flatNumber || ""}* com instruções de Wi-Fi, ar-condicionado, jacuzzi aquecida, saunas e academia na cobertura (06h às 22h) e comodidades:\n\n📄 ${manualPdfUrl}\n🏨 Portal da Reserva: ${portalLink}`
     },
     (() => {
       const crmNfseTomador = resolveCrmFiscalTomador(db, {

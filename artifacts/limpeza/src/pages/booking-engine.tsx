@@ -10,8 +10,8 @@ import {
   Sparkles, CheckCircle2, ArrowRight, CreditCard, QrCode, Copy, Check, Star, Car, Utensils,
   Ban, MessageCircle, Clock, KeyRound, FileText, MapPin, Navigation, ExternalLink, Mail,
   Dumbbell, Waves, Flame, Award, Heart, HelpCircle, ChevronDown, PhoneCall, Shield, Home,
-  Pencil, UserCheck, LogOut, User, Settings, Key, Briefcase, Lock, ChevronRight, Layers, Image as ImageIcon,
-  CheckSquare, X, Fingerprint, Save
+  Pencil, UserCheck, LogOut, User, Settings, Key, Briefcase, Lock, ChevronRight, ChevronLeft, Layers, Image as ImageIcon,
+  CheckSquare, X, Fingerprint, Save, Sun, Gamepad2, Instagram
 } from "lucide-react"
 import { format, addDays, differenceInDays, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -577,23 +577,39 @@ export default function BookingEngine() {
   const nights = Math.max(1, differenceInDays(parseISO(checkout || checkin), parseISO(checkin)))
   const flatsCount = rooms.length
   
-  // Regra de corte temporal: Reservas para HOJE efetuadas após as 12:00
-  // Bloqueia 3 hóspedes (colchonete extra) e 2 camas de solteiro
-  const todayStr = format(new Date(), "yyyy-MM-dd")
-  const currentHour = new Date().getHours()
+  // Regra de corte temporal (padrão 12:00 em America/Sao_Paulo) para reservas com check-in hoje + controle de 3º hóspede
+  const nowObj = new Date()
+  const todayStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(nowObj)
+  const brtParts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(nowObj)
+  const brtHour = parseInt(brtParts.find((p) => p.type === "hour")?.value || "0", 10) || 0
+  const brtMinute = parseInt(brtParts.find((p) => p.type === "minute")?.value || "0", 10) || 0
+  const nowMinutes = brtHour * 60 + brtMinute
+  const twinCutoffTimeStr = String(siteConfig?.bedConfig?.twinSameDayCutoffTime || "12:00")
+  const [cutoffH, cutoffM] = twinCutoffTimeStr.split(":").map((n) => parseInt(n, 10) || 0)
   const isCheckinToday = checkin === todayStr
-  const isCutoffActive = isCheckinToday && currentHour >= 12
+  const isCutoffActive = isCheckinToday && nowMinutes >= (cutoffH * 60 + cutoffM)
+  const isThirdGuestEnabled = Boolean(siteConfig?.extraBedConfig?.enabled === true) && !(isCheckinToday && nowMinutes >= ((Number(siteConfig?.extraBedConfig?.cutoffHour) || 12) * 60))
 
-  // Sanitização automática caso a regra de corte esteja ativa
+  // Sanitização automática caso a regra de corte esteja ativa ou 3º hóspede esteja desativado
   useEffect(() => {
-    if (isCutoffActive) {
-      setRooms(prev => prev.map(r => ({
+    setRooms((prev) =>
+      prev.map((r) => ({
         ...r,
-        bedType: "queen",
-        adults: r.adults > 2 ? 2 : r.adults
-      })))
-    }
-  }, [checkin, isCutoffActive])
+        bedType: isCutoffActive || siteConfig?.bedConfig?.allowTwinBeds === false ? "queen" : r.bedType,
+        adults: !isThirdGuestEnabled && r.adults > 2 ? 2 : r.adults,
+      }))
+    )
+  }, [checkin, isCutoffActive, isThirdGuestEnabled, siteConfig?.bedConfig?.allowTwinBeds])
 
   // Handlers para adicionar/remover e atualizar flats na reserva
   const addRoom = () => {
@@ -612,13 +628,18 @@ export default function BookingEngine() {
   }
 
   const updateRoom = (id: number, field: "bedType" | "adults", value: any) => {
-    if (isCutoffActive && field === "adults" && Number(value) > 2) {
-      alert("Para reservas com check-in hoje após as 12:00, a lotação é limitada a até 2 hóspedes por flat.")
+    if (field === "adults" && Number(value) > 2 && !isThirdGuestEnabled) {
+      if (siteConfig?.extraBedConfig?.enabled === true && isCheckinToday) {
+        alert("Para reservas com check-in hoje após as 12:00, a lotação é limitada a até 2 hóspedes por flat.")
+      }
       return
     }
-    if (isCutoffActive && field === "bedType" && value === "twin") {
-      alert("Para reservas com check-in hoje após as 12:00, apenas a configuração de Cama Queen Casal está disponível.")
-      return
+    if (field === "bedType" && value === "twin") {
+      if (siteConfig?.bedConfig?.allowTwinBeds === false) return
+      if (isCutoffActive) {
+        alert(`Para reservas com check-in no mesmo dia, a montagem de 2 camas de solteiro só pode ser solicitada até as ${twinCutoffTimeStr}.`)
+        return
+      }
     }
     setRooms(rooms.map(r => r.id === id ? { ...r, [field]: value } : r))
   }
@@ -749,8 +770,16 @@ export default function BookingEngine() {
   const otaTotalAmount = Math.round(pixTotalAmount * otaFactor * 100) / 100
   const otaSavingsAmount = Math.max(0, Math.round((otaTotalAmount - pixTotalAmount) * 100) / 100)
 
-  // Política de cancelamento ativa baseada em antecedência
-  const cancellationPolicy = calculateCancellationPolicy(new Date(), checkin, totalAmount)
+  // Política de cancelamento ativa baseada em antecedência (configurável em /tarifas)
+  const cancellationPolicy = calculateCancellationPolicy(
+    new Date(),
+    checkin,
+    totalAmount,
+    "14:00",
+    new Date(),
+    Number(siteConfig?.cancellationPolicy?.freeCancellationHours ?? 24),
+    Number(siteConfig?.cancellationPolicy?.noShowPenaltyPercent ?? 100)
+  )
 
   const handleStartBooking = (overridePlan?: "with_breakfast" | "room_only") => {
     if (overridePlan) setRatePlan(overridePlan)
@@ -857,66 +886,100 @@ export default function BookingEngine() {
   const whatsappNumber = siteConfig?.branding?.whatsapp || settings?.adminWhatsApp || "5522997124021"
   const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/[^0-9]/g, "")}?text=${encodeURIComponent("Olá! Gostaria de informações sobre disponibilidade e reservas nos flats da CorpFlats.")}`
 
-  // Hero Data com fallbacks
-  const heroTitle = siteConfig?.hero?.title && !siteConfig.hero.title.includes("Macaé") 
-    ? siteConfig.hero.title 
-    : "Sua Estadia com Conforto & Estilo em Campos dos Goytacazes"
-  const heroHighlight = siteConfig?.hero?.highlightText || "Conforto, Luz Natural e Sofisticação"
-  const heroDesc = siteConfig?.hero?.description && !siteConfig.hero.description.includes("Cavaleiros") && !siteConfig.hero.description.includes("Macaé")
-    ? siteConfig.hero.description 
-    : "Flats decorados com estética contemporânea e arejada, ar-condicionado split em todos os ambientes, Wi-Fi nos flats e localização nobre no Edifício Soho Residence Service no Centro de Campos dos Goytacazes."
-  const heroBg = siteConfig?.hero?.backgroundImage || "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1920&q=80"
+  // Hero Data & Conteúdo Real do Edifício Soho Residence Service
+  const heroTitle = siteConfig?.hero?.title && !siteConfig.hero.title.includes("Macaé") && !siteConfig.hero.title.includes("Sua Estadia com Conforto")
+    ? siteConfig.hero.title
+    : "Seu flat pronto no Centro de Campos dos Goytacazes"
+  const heroHighlight = siteConfig?.hero?.highlightText && !siteConfig.hero.highlightText.includes("Luz Natural e Sofisticação")
+    ? siteConfig.hero.highlightText
+    : "Edifício Soho Residence Service • Recepção 24h, Garagem Inclusa e Jacuzzi na Cobertura"
+  const heroBg = siteConfig?.hero?.backgroundImage && !siteConfig.hero.backgroundImage.includes("images.unsplash.com")
+    ? siteConfig.hero.backgroundImage
+    : "/photos/soho/hero-jacuzzi-cobertura.jpg"
   const brandName = siteConfig?.branding?.brandName && !siteConfig.branding.brandName.includes("Macaé") ? siteConfig.branding.brandName : "CorpFlats"
-  const badgeTop = siteConfig?.branding?.badgeTop && !siteConfig.branding.badgeTop.includes("15% OFF")
-    ? siteConfig.branding.badgeTop 
-    : "⭐ Melhor Tarifa Garantida Sempre pelo Nosso Site Oficial"
+  const instagramHandle = siteConfig?.branding?.instagram || "@corpflats"
+  const instagramUrl = siteConfig?.branding?.instagramUrl || `https://instagram.com/${instagramHandle.replace(/^@/, "") || "corpflats"}`
 
-  const amenitiesList = siteConfig?.amenities || [
-    { icon: "Waves", title: "Piscina com Deck Panorâmico", description: "Área de lazer ensolarada no condomínio com vista privilegiada para relaxar.", badge: "Lazer" },
-    { icon: "Wifi", title: "Rede Wi-Fi", description: "Conexão de internet sem fio disponível em todos os flats.", badge: "Gratuito" },
-    { icon: "Wind", title: "Ar-Condicionado Climatizado", description: "Ambientes frescos e arejados com splits modernos e silenciosos.", badge: "Conforto" },
-    { icon: "Car", title: "Garagem Coberta Privativa", description: "Vaga demarcada e portão eletrônico automático com segurança 24h.", badge: "Incluso" },
-    { icon: "Utensils", title: "Cozinha Compacta Equipada", description: "Cooktop, micro-ondas, frigobar/geladeira, cafeteira e utensílios completos.", badge: "Praticidade" },
-    { icon: "Coffee", title: "Café da Manhã Servido no Flat", description: "Bandejas montadas com frutas, pães e sucos selecionados.", badge: "Opcional" },
-    { icon: "Tv", title: "Smart TV 55\" 4K", description: "Acesso a Netflix, YouTube, canais digitais e streaming para relaxar.", badge: "Entretenimento" },
-    { icon: "Dumbbell", title: "Espaço Fitness", description: "Academia equipada no condomínio para manter seus treinos e saúde em dia.", badge: "Fitness" }
-  ]
+  const amenitiesList = (Array.isArray(siteConfig?.amenities) && siteConfig.amenities.length > 0 && !siteConfig.amenities.some((a: any) => String(a?.title || "").includes("Piscina com Deck") || String(a?.title || "").includes("55\"")))
+    ? siteConfig.amenities
+    : [
+        { id: "jacuzzi", icon: "Sparkles", title: "Jacuzzi Aquecida na Cobertura", description: "Hidromassagem com água aquecida e deck de madeira no rooftop, liberada para todos os hóspedes.", badge: "Cobertura" },
+        { id: "terraco", icon: "Sun", title: "Terraço com Vista Panorâmica", description: "Área aberta no topo do Edifício Soho com vista panorâmica para toda Campos dos Goytacazes.", badge: "Vista" },
+        { id: "saunas", icon: "Flame", title: "Saunas Seca e a Vapor", description: "Espaço de spa no condomínio com sauna seca, sauna úmida e área de descanso.", badge: "Spa" },
+        { id: "academia", icon: "Dumbbell", title: "Academia Climatizada", description: "Sala de musculação e cardio equipada no próprio edifício, de livre acesso na estadia.", badge: "Fitness" },
+        { id: "jogos", icon: "Gamepad2", title: "Sala de Jogos", description: "Salão climatizado com sinuca, tênis de mesa e pebolim disponível aos hóspedes.", badge: "Lazer" },
+        { id: "garagem", icon: "Car", title: "1 Vaga de Garagem Coberta", description: "Estacionamento privativo no edifício para 1 veículo de passeio já incluso na diária.", badge: "Incluso" },
+        { id: "recepcao", icon: "KeyRound", title: "Recepção 24h & Cartão NFC", description: "Pré-check-in digital rápido e retirada do cartão magnético NFC direto na recepção 24h.", badge: "24 Horas" },
+        { id: "cafe", icon: "Coffee", title: "Café da Manhã no Flat", description: "Na tarifa com café, a bandeja é entregue no seu apartamento entre 05:00 e 09:30.", badge: "05h às 09h30" }
+      ]
 
-  const galleryList = siteConfig?.gallery || [
-    { id: 1, title: "Suíte Master Arejada & Cama King", category: "Quartos", imageUrl: "https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=800&q=80" },
-    { id: 2, title: "Living com Luz Natural e Decoração Clean", category: "Living", imageUrl: "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=800&q=80" },
-    { id: 3, title: "Varanda com Vista e Brisa Fresca", category: "Varanda", imageUrl: "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=800&q=80" },
-    { id: 4, title: "Cozinha Moderna Integrada", category: "Cozinha", imageUrl: "https://images.unsplash.com/photo-1556912172-45b7abe8b7e1?auto=format&fit=crop&w=800&q=80" },
-    { id: 5, title: "Banheiro Impecável com Ducha Relaxante", category: "Banheiro", imageUrl: "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80" },
-    { id: 6, title: "Deck com Piscina e Relaxamento", category: "Lazer", imageUrl: "https://images.unsplash.com/photo-1576013551627-0cc20b96c2a7?auto=format&fit=crop&w=800&q=80" }
-  ]
+  const galleryList = (Array.isArray(siteConfig?.gallery) && siteConfig.gallery.length > 0 && !siteConfig.gallery.some((g: any) => String(g?.imageUrl || "").includes("images.unsplash.com")))
+    ? siteConfig.gallery
+    : [
+        { id: 1, title: "Quarto Integrado & Bancada de Trabalho", category: "O Flat", imageUrl: "/photos/soho/01-quarto-bancada.jpg" },
+        { id: 2, title: "Visão Geral do Flat (Quarto, Estar & Cozinha)", category: "O Flat", imageUrl: "/photos/soho/02-flat-integrado.jpg" },
+        { id: 3, title: "Mesa de Refeições & Apoio", category: "O Flat", imageUrl: "/photos/soho/03-mesa-jantar.jpg" },
+        { id: 4, title: "Cozinha Compacta Equipada", category: "Cozinha", imageUrl: "/photos/soho/04-cozinha-equipada.jpg" },
+        { id: 5, title: "Banheiro Privativo com Secador de Parede", category: "Banheiro", imageUrl: "/photos/soho/05-banheiro.jpg" },
+        { id: 6, title: "Cobertura com Jacuzzi Aquecida & Deck", category: "Lazer & Cobertura", imageUrl: "/photos/soho/06-cobertura-jacuzzi.jpg" },
+        { id: 7, title: "Terraço Panorâmico no Topo do Soho", category: "Lazer & Cobertura", imageUrl: "/photos/soho/07-terraco-panoramico.jpg" },
+        { id: 8, title: "Spa com Saunas Seca e a Vapor", category: "Lazer & Cobertura", imageUrl: "/photos/soho/08-spa-saunas.jpg" },
+        { id: 9, title: "Academia Climatizada do Condomínio", category: "Lazer & Cobertura", imageUrl: "/photos/soho/09-academia.jpg" },
+        { id: 10, title: "Sala de Jogos Climatizada", category: "Lazer & Cobertura", imageUrl: "/photos/soho/10-sala-de-jogos.jpg" },
+        { id: 11, title: "Lobby & Elevadores do Edifício Soho", category: "Recepção & Acesso", imageUrl: "/photos/soho/11-lobby-elevadores.jpg" },
+        { id: 12, title: "Fachada & Entrada da Garagem Coberta (nº 209)", category: "Recepção & Acesso", imageUrl: "/photos/soho/12-fachada-garagem.jpg" }
+      ]
 
-  const testimonialsList = siteConfig?.testimonials || [
-    { id: 1, name: "Mariana Silveira", city: "Rio de Janeiro, RJ", rating: 5, comment: "O flat é incrivelmente arejado, com iluminação natural maravilhosa e limpeza impecável. Dá uma paz enorme ao entrar. A localização em Campos dos Goytacazes no Soho é perfeita!", date: "Fevereiro de 2026", avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80" },
-    { id: 2, name: "Carlos Eduardo Mendes", city: "São Paulo, SP", rating: 5, comment: "Melhor experiência de hospedagem em Campos dos Goytacazes. Decoração moderna, internet super estável para trabalhar e cama de hotel 5 estrelas. Recomendo de olhos fechados.", date: "Janeiro de 2026", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80" },
-    { id: 3, name: "Patrícia & Rodrigo", city: "Belo Horizonte, MG", rating: 5, comment: "O café da manhã servido no flat é um diferencial sensacional. Tudo quentinho e fresco. O atendimento pelo WhatsApp é ágil e educado.", date: "Fevereiro de 2026", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80" }
-  ]
+  const FAKE_DEFAULT_NAMES = new Set(["Mariana Silveira", "Carlos Eduardo Mendes", "Patrícia & Rodrigo"])
+  const testimonialsList = Array.isArray(siteConfig?.testimonials)
+    ? siteConfig.testimonials.filter((t: any) => t?.comment && !FAKE_DEFAULT_NAMES.has(String(t?.name || "").trim()))
+    : []
 
-  const faqList = siteConfig?.faq || [
-    { q: "Qual a diferença entre a Tarifa com Café e a Tarifa sem Café?", a: "A Tarifa com Café da Manhã já embute na diária o seu pedido servido exclusivamente no seu flat no horário de sua escolha. A Tarifa sem Café contempla exclusivamente a hospedagem e a estrutura completa do flat." },
-    { q: "Qual o horário de check-in e check-out?", a: "O check-in inicia a partir das 14:00 e o check-out é até as 12:00. Caso precise de early check-in ou late check-out, solicite diretamente pelo WhatsApp com nossa equipe." },
-    { q: "Como funciona o estacionamento / garagem?", a: "Dispomos de vagas privativas cobertas no condomínio com portão eletrônico e monitoramento 24h, inclusas gratuitamente na sua diária em qualquer tarifa." },
-    { q: "Como é servido o café da manhã?", a: "O café da manhã é servido sob pedido personalizado diretamente no seu flat, no horário de sua preferência entre 05:00 e 09:30." },
-    { q: "Quais são as formas de pagamento aceitas?", a: "Aceitamos PIX Instantâneo com desconto e confirmação automática na hora, e Cartão de Crédito via Mercado Pago." },
-    { q: "O flat possui Wi-Fi veloz para trabalhar?", a: "Sim! Todos os nossos flats contam com fibra óptica dedicada de 500 Mega de alta estabilidade e bancada própria para notebook." }
-  ]
+  const aboutRoomItems: string[] = Array.isArray(siteConfig?.about?.roomItems) && siteConfig.about.roomItems.filter(Boolean).length > 0
+    ? siteConfig.about.roomItems.filter(Boolean)
+    : [
+        "Cama Queen Casal com enxoval completo (ou 2 camas de solteiro mediante solicitação até 12h e taxa adicional)",
+        "Bancada dedicada para notebook com tomadas ao alcance e Wi-Fi individual",
+        "Smart TV 32\" e ar-condicionado",
+        "Guarda-roupa, ferro de passar roupa e secador de cabelo no banheiro"
+      ]
+
+  const aboutKitchenItems: string[] = Array.isArray(siteConfig?.about?.kitchenItems) && siteConfig.about.kitchenItems.filter(Boolean).length > 0
+    ? siteConfig.about.kitchenItems.filter(Boolean)
+    : [
+        "Fogão cooktop 2 bocas, frigobar, cafeteira elétrica e sanduicheira",
+        "Pratos, talheres, copos, taças e saca-rolhas prontos para uso",
+        "Mesa para refeições rápidas no próprio apartamento",
+        "Opção de tarifa com café da manhã entregue no flat das 05:00 às 09:30"
+      ]
+
+  const faqList = (Array.isArray(siteConfig?.faq) && siteConfig.faq.length > 0 && !siteConfig.faq.some((f: any) => String(f?.a || "").includes("06:30")))
+    ? siteConfig.faq
+    : [
+        { q: "Como funcionam o check-in, o check-out e a entrega da chave?", a: "O check-in começa às 14:00 e o check-out vai até as 12:00. Você preenche o pré-check-in digital rapidinho pelo celular antes de chegar e retira o cartão de acesso NFC diretamente na recepção 24h do Edifício Soho (não utilizamos senha em fechadura)." },
+        { q: "Qual o horário e como é servido o café da manhã?", a: "Na tarifa Com Café, sua bandeja é entregue diretamente no flat no horário escolhido por você entre 05:00 e 09:30 — ideal inclusive para quem sai cedo a trabalho." },
+        { q: "Tem vaga de garagem inclusa?", a: "Sim. Cada flat dá direito a 1 vaga de garagem coberta no próprio Edifício Soho Residence Service, sem custo adicional." },
+        { q: "O que tem na cozinha do flat? Tem micro-ondas?", a: "A cozinha conta com cooktop de 2 bocas, frigobar, cafeteira elétrica, sanduicheira, pratos, talheres, copos, taças e saca-rolhas. Não dispomos de micro-ondas nos apartamentos." },
+        { q: "Posso pedir 2 camas de solteiro no lugar da cama de casal?", a: "Sim, em unidades compatíveis mediante taxa adicional de configuração. Para reservas com entrada no mesmo dia, o pedido de 2 camas de solteiro precisa ser feito até as 12:00." },
+        { q: "Vocês aceitam animais de estimação (Pet Friendly)?", a: "Sim! Aceitamos exclusivamente cachorros de porte pequeno (até 10 kg), com limite de até 2 cães por flat e taxa de R$ 40 por cachorro por estadia." },
+        { q: "Qual é a política de cancelamento?", a: "Cancelamento gratuito com 100% de reembolso até 24 horas antes das 14:00 do dia do check-in. Faltando menos de 24 horas para o check-in, é cobrado 100% do valor da reserva." }
+      ]
 
   const renderAmenityIcon = (iconName: string) => {
     switch (iconName) {
-      case "Wifi": return <Wifi className="w-5 h-5" />
-      case "Wind": return <Wind className="w-5 h-5" />
-      case "Waves": return <Waves className="w-5 h-5" />
-      case "Coffee": return <Coffee className="w-5 h-5" />
-      case "Car": return <Car className="w-5 h-5" />
-      case "Utensils": return <Utensils className="w-5 h-5" />
-      case "Tv": return <Tv className="w-5 h-5" />
-      case "Dumbbell": return <Dumbbell className="w-5 h-5" />
-      default: return <Sparkles className="w-5 h-5" />
+      case "Wifi": return <Wifi className="w-5 h-5" aria-hidden="true" />
+      case "Wind": return <Wind className="w-5 h-5" aria-hidden="true" />
+      case "Waves": return <Waves className="w-5 h-5" aria-hidden="true" />
+      case "Coffee": return <Coffee className="w-5 h-5" aria-hidden="true" />
+      case "Car": return <Car className="w-5 h-5" aria-hidden="true" />
+      case "Utensils": return <Utensils className="w-5 h-5" aria-hidden="true" />
+      case "Tv": return <Tv className="w-5 h-5" aria-hidden="true" />
+      case "Dumbbell": return <Dumbbell className="w-5 h-5" aria-hidden="true" />
+      case "Sun": return <Sun className="w-5 h-5" aria-hidden="true" />
+      case "Flame": return <Flame className="w-5 h-5" aria-hidden="true" />
+      case "Gamepad2": return <Gamepad2 className="w-5 h-5" aria-hidden="true" />
+      case "KeyRound": return <KeyRound className="w-5 h-5" aria-hidden="true" />
+      default: return <Sparkles className="w-5 h-5" aria-hidden="true" />
     }
   }
 
@@ -1052,10 +1115,13 @@ export default function BookingEngine() {
           {/* Links desktop discretos */}
           <div className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-600">
             <a href="#tarifas" className="hover:text-[#0F3D4C] transition-colors">Tarifas</a>
-            <a href="#beneficios" className="hover:text-[#0F3D4C] transition-colors">Comodidades</a>
             <a href="#galeria" className="hover:text-[#0F3D4C] transition-colors">Fotos</a>
             <a href="#detalhes" className="hover:text-[#0F3D4C] transition-colors">O Flat</a>
+            <a href="#comodidades" className="hover:text-[#0F3D4C] transition-colors">Estrutura Soho</a>
             <a href="#localizacao" className="hover:text-[#0F3D4C] transition-colors">Localização</a>
+            {testimonialsList.length > 0 && (
+              <a href="#avaliacoes" className="hover:text-[#0F3D4C] transition-colors">Avaliações</a>
+            )}
             <a href="#faq" className="hover:text-[#0F3D4C] transition-colors">Dúvidas</a>
           </div>
 
@@ -1111,17 +1177,20 @@ export default function BookingEngine() {
         </div>
       </nav>
 
-      {/* ── Hero Section (Protagonista Absoluta: A Imagem e a Experiência) ─ */}
-      {/* ── Hero Section (Protagonista Absoluta: A Imagem e o Card de Reserva Integrado) ─ */}
+      {/* ── Hero Section (Opção A: Cobertura com Jacuzzi Aquecida & Card de Reserva Integrado) ─ */}
       <header className="relative min-h-[490px] sm:min-h-[530px] lg:min-h-[560px] flex flex-col items-center justify-start px-3 sm:px-6 pt-3 sm:pt-6 pb-8 text-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img
             src={heroBg}
-            alt="CorpFlats Soho Residence"
+            alt="Cobertura com jacuzzi aquecida e deck de madeira no Edifício Soho Residence Service"
+            width={1920}
+            height={1280}
+            fetchPriority="high"
+            decoding="async"
             className="w-full h-full object-cover object-center"
           />
           {/* Overlay sutil apenas para contraste da tipografia */}
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/40 to-slate-950/20" />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/40 to-slate-950/25" />
         </div>
 
         {isVisualEditMode && (
@@ -1143,7 +1212,7 @@ export default function BookingEngine() {
           </div>
         )}
 
-        {/* Título & Subtítulo Elegantes no Topo do Hero */}
+        {/* Título & Subtítulo no Topo do Hero */}
         <div className="relative z-10 max-w-xl mx-auto space-y-0.5 sm:space-y-1 text-white mb-2.5 sm:mb-3.5">
           <h1
             contentEditable={isVisualEditMode}
@@ -1153,7 +1222,7 @@ export default function BookingEngine() {
               isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
             }`}
           >
-            {siteConfig?.hero?.title && !siteConfig.hero.title.includes("Sua Estadia com Conforto") ? siteConfig.hero.title : "Conforto e estilo em\nCampos dos Goytacazes"}
+            {heroTitle}
           </h1>
 
           <p
@@ -1164,21 +1233,22 @@ export default function BookingEngine() {
               isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
             }`}
           >
-            {siteConfig?.hero?.highlightText && !siteConfig.hero.highlightText.includes("Luz Natural e Sofisticação") ? siteConfig.hero.highlightText : "Flats sofisticados no Soho Residence"}
+            {heroHighlight}
           </p>
         </div>
 
         {/* ── Card de Reserva Flutuante e Centralizado (100% visível na 1ª dobra sem rolagem) ── */}
-        <main id="reserva-rapida" className="relative z-20 w-full max-w-md sm:max-w-lg mx-auto text-left">
+        <div id="reserva-rapida" className="relative z-20 w-full max-w-md sm:max-w-lg mx-auto text-left">
           <div className="bg-white/95 backdrop-blur-md rounded-2xl sm:rounded-3xl shadow-2xl shadow-slate-950/25 border border-white/60 p-3.5 sm:p-5 space-y-2.5 sm:space-y-3">
             {/* Seletor Compacto de Datas */}
             <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-100">
               <div className="space-y-1">
-                <label className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-[#0F3D4C]" />
-                  <span>Entrada</span>
+                <label htmlFor="hero-checkin-input" className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-[#0F3D4C]" aria-hidden="true" />
+                  <span>Entrada (a partir das 14h)</span>
                 </label>
                 <Input 
+                  id="hero-checkin-input"
                   type="date" 
                   value={checkin} 
                   min={format(new Date(), "yyyy-MM-dd")}
@@ -1188,11 +1258,12 @@ export default function BookingEngine() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-[#0F3D4C]" />
-                  <span>Saída</span>
+                <label htmlFor="hero-checkout-input" className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-[#0F3D4C]" aria-hidden="true" />
+                  <span>Saída (até as 12h)</span>
                 </label>
                 <Input 
+                  id="hero-checkout-input"
                   type="date" 
                   value={checkout} 
                   min={checkin || format(new Date(), "yyyy-MM-dd")}
@@ -1209,7 +1280,7 @@ export default function BookingEngine() {
                   Escolha sua tarifa
                 </h2>
                 <div className="flex items-center gap-1.5">
-                  <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 border border-slate-200/80">
+                  <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 border border-slate-200/80" role="group" aria-label="Quantidade de hóspedes">
                     <button
                       type="button"
                       onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 1)}
@@ -1232,6 +1303,19 @@ export default function BookingEngine() {
                     >
                       2 hósp.
                     </button>
+                    {isThirdGuestEnabled && (
+                      <button
+                        type="button"
+                        onClick={() => updateRoom(rooms[0]?.id ?? 1, "adults", 3)}
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-all ${
+                          (rooms[0]?.adults ?? 1) === 3
+                            ? "bg-white text-[#091E26] shadow-2xs"
+                            : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        3 hósp.
+                      </button>
+                    )}
                   </div>
                   <span className="text-[10.5px] text-slate-500 font-medium">
                     • {nights} {nights === 1 ? "noite" : "noites"}
@@ -1253,7 +1337,7 @@ export default function BookingEngine() {
                     <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                       ratePlan === "with_breakfast" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-600"
                     }`}>
-                      <Coffee className="w-3.5 h-3.5" />
+                      <Coffee className="w-3.5 h-3.5" aria-hidden="true" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 leading-none">
@@ -1262,7 +1346,7 @@ export default function BookingEngine() {
                           <span className="text-[8.5px] font-bold text-[#091E26] bg-[#C5A059]/25 border border-[#C5A059]/50 px-1.5 py-0.5 rounded leading-none">Ativa</span>
                         )}
                       </div>
-                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Café da manhã servido no flat</p>
+                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Entregue no flat das 05:00 às 09:30</p>
                     </div>
                   </div>
                   <div className="text-right shrink-0 pl-2">
@@ -1291,7 +1375,7 @@ export default function BookingEngine() {
                     <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                       ratePlan === "room_only" ? "bg-[#091E26] text-[#C5A059] border border-[#C5A059]/40" : "bg-slate-100 text-slate-600"
                     }`}>
-                      <Building2 className="w-3.5 h-3.5" />
+                      <Building2 className="w-3.5 h-3.5" aria-hidden="true" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 leading-none">
@@ -1333,133 +1417,173 @@ export default function BookingEngine() {
                 className="w-full bg-gradient-to-r from-[#091E26] via-[#0F3D4C] to-[#091E26] hover:brightness-110 text-white border border-[#C5A059]/50 font-bold text-xs sm:text-sm h-10.5 sm:h-11 rounded-xl shadow-md shadow-[#091E26]/20 transition-all flex items-center justify-center gap-2"
               >
                 <span>Reservar agora</span>
-                <ArrowRight className="w-4 h-4 text-[#E5C98B]" />
+                <ArrowRight className="w-4 h-4 text-[#E5C98B]" aria-hidden="true" />
               </Button>
 
               <div className="flex items-center justify-center gap-1.5 text-[10.5px] text-slate-500 font-medium">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>Confirmação imediata • Cancelamento gratuito</span>
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden="true" />
+                <span>Cancelamento grátis até 24h antes do check-in</span>
               </div>
             </div>
           </div>
-        </main>
+        </div>
       </header>
 
-      {/* ── Benefícios (Apresentados após a reserva, discretos & naturais) ── */}
-      <section id="beneficios" className="w-full min-w-0 max-w-md sm:max-w-lg mx-auto px-4 py-8 sm:py-10">
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 text-slate-700">
+      <main className="flex-1 w-full min-w-0">
+      {/* ── Diferenciais Reais do Edifício Soho (Diretos e sem redundância) ── */}
+      <section id="beneficios" className="w-full min-w-0 max-w-2xl mx-auto px-4 py-8 sm:py-10">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 text-slate-700">
           <div className="flex items-center gap-2.5">
-            <Wifi className="w-4 h-4 text-[#0F3D4C] shrink-0" />
-            <span className="text-xs sm:text-sm font-medium">Wi-Fi 500 MB</span>
+            <KeyRound className="w-4 h-4 text-[#0F3D4C] shrink-0" aria-hidden="true" />
+            <span className="text-xs sm:text-sm font-medium">Recepção 24h (NFC)</span>
           </div>
           <div className="flex items-center gap-2.5">
-            <KeyRound className="w-4 h-4 text-[#0F3D4C] shrink-0" />
-            <span className="text-xs sm:text-sm font-medium">Check-in digital</span>
+            <Car className="w-4 h-4 text-[#0F3D4C] shrink-0" aria-hidden="true" />
+            <span className="text-xs sm:text-sm font-medium">1 vaga coberta</span>
           </div>
           <div className="flex items-center gap-2.5">
-            <Wind className="w-4 h-4 text-[#0F3D4C] shrink-0" />
-            <span className="text-xs sm:text-sm font-medium">Ar-condicionado</span>
+            <Sparkles className="w-4 h-4 text-[#0F3D4C] shrink-0" aria-hidden="true" />
+            <span className="text-xs sm:text-sm font-medium">Jacuzzi aquecida</span>
           </div>
           <div className="flex items-center gap-2.5">
-            <Car className="w-4 h-4 text-[#0F3D4C] shrink-0" />
-            <span className="text-xs sm:text-sm font-medium">Garagem privativa</span>
+            <Wifi className="w-4 h-4 text-[#0F3D4C] shrink-0" aria-hidden="true" />
+            <span className="text-xs sm:text-sm font-medium">Wi-Fi & bancada</span>
           </div>
         </div>
       </section>
 
-      {/* ── Galeria de Fotos dos Ambientes ───────────────────────────────── */}
+      {/* ── Galeria de Fotos Reais (12 fotos horizontais do Soho Residence) ── */}
       <section id="galeria" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 space-y-6">
         <div className="text-center space-y-1">
-          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
-            O Flat Soho Residence
-          </h3>
-          <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-            Apartamentos arejados, decorados com sofisticação, conforto e muita luz natural.
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            Fotos Reais do Flat & Área de Lazer
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-500 max-w-lg mx-auto">
+            Conheça por dentro o padrão dos apartamentos e a cobertura completa do Edifício Soho Residence Service.
           </p>
         </div>
 
         <div className="space-y-3 min-w-0">
-          <div className="relative h-64 sm:h-96 rounded-2xl overflow-hidden bg-slate-200 shadow-sm">
+          <div className="relative aspect-[3/2] max-h-[440px] w-full rounded-2xl overflow-hidden bg-slate-200 shadow-sm group">
             <img
               src={galleryList[activePhotoIdx]?.imageUrl || galleryList[0]?.imageUrl}
-              alt={galleryList[activePhotoIdx]?.title || "Flat CorpFlats"}
-              className="w-full h-full object-cover transition-all duration-500"
+              alt={galleryList[activePhotoIdx]?.title || "Flat CorpFlats Soho Residence"}
+              width={1600}
+              height={1067}
+              decoding="async"
+              className="w-full h-full object-cover transition-all duration-300"
             />
+            {galleryList.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  aria-label="Foto anterior"
+                  onClick={() => setActivePhotoIdx((prev) => (prev - 1 + galleryList.length) % galleryList.length)}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-slate-900/65 hover:bg-slate-900/85 text-white flex items-center justify-center backdrop-blur-xs transition-all"
+                >
+                  <ChevronLeft className="w-5 h-5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Próxima foto"
+                  onClick={() => setActivePhotoIdx((prev) => (prev + 1) % galleryList.length)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-slate-900/65 hover:bg-slate-900/85 text-white flex items-center justify-center backdrop-blur-xs transition-all"
+                >
+                  <ChevronRight className="w-5 h-5" aria-hidden="true" />
+                </button>
+              </>
+            )}
             <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2 text-white text-xs font-semibold">
-              <span className="bg-slate-900/75 backdrop-blur-md px-3 py-1 rounded-lg min-w-0 truncate">
-                {galleryList[activePhotoIdx]?.title || "Ambiente Arejado"}
-              </span>
-              <span className="bg-slate-900/75 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px] shrink-0">
+              <div className="bg-slate-900/75 backdrop-blur-md px-3 py-1.5 rounded-lg min-w-0 flex items-center gap-2">
+                {galleryList[activePhotoIdx]?.category && (
+                  <span className="text-[10px] uppercase tracking-wider text-[#E5C98B] font-bold shrink-0">
+                    {galleryList[activePhotoIdx].category}
+                  </span>
+                )}
+                <span className="truncate">{galleryList[activePhotoIdx]?.title || "Flat Soho Residence"}</span>
+              </div>
+              <span className="bg-slate-900/75 backdrop-blur-md px-2.5 py-1.5 rounded-lg text-[11px] shrink-0">
                 {activePhotoIdx + 1} / {galleryList.length}
               </span>
             </div>
           </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar sm:grid sm:grid-cols-6">
+          <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-12 gap-1.5 sm:gap-2">
             {galleryList.map((photo: any, idx: number) => (
               <button
                 key={photo.id || idx}
                 type="button"
+                aria-label={`Ver foto ${idx + 1}: ${photo.title}`}
                 onClick={() => setActivePhotoIdx(idx)}
-                className={`h-14 flex-1 min-w-[64px] sm:min-w-0 rounded-xl overflow-hidden border-2 transition-all shrink-0 ${
-                  activePhotoIdx === idx ? "border-[#C5A059] ring-2 ring-[#C5A059]/30" : "border-transparent opacity-60 hover:opacity-100"
+                className={`h-12 sm:h-14 rounded-xl overflow-hidden border-2 transition-all ${
+                  activePhotoIdx === idx ? "border-[#C5A059] ring-2 ring-[#C5A059]/30 opacity-100" : "border-transparent opacity-65 hover:opacity-100"
                 }`}
               >
-                <img src={photo.imageUrl} alt={photo.title} className="w-full h-full object-cover" />
+                <img
+                  src={photo.imageUrl}
+                  alt={photo.title}
+                  width={320}
+                  height={213}
+                  loading="lazy"
+                  decoding="async"
+                  className="w-full h-full object-cover"
+                />
               </button>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ── Detalhes do Flat & Estrutura ─────────────────────────────────── */}
+      {/* ── O Flat: Padrão Único & Itens Reais ───────────────────────────── */}
       <section id="detalhes" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
-        <div className="space-y-1">
-          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
-            Flats Sofisticados no Soho Residence
-          </h3>
-          <p className="text-xs sm:text-sm text-slate-500 max-w-xl">
-            Flats sofisticados no Soho Residence, no coração de Campos dos Goytacazes. Projetados para unir o conforto de casa à praticidade de um hotel moderno.
+        <div className="space-y-1.5">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            {siteConfig?.about?.title && !siteConfig.about.title.includes("Boutique")
+              ? siteConfig.about.title
+              : "O Flat: padrão único, equipado para morar ou trabalhar"}
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-600 max-w-2xl leading-relaxed">
+            {siteConfig?.about?.description && !siteConfig.about.description.includes("Macaé") && !siteConfig.about.description.includes("hóspedes exigentes")
+              ? siteConfig.about.description
+              : "Operamos 19 flats de mesmo padrão no Edifício Soho Residence Service, dimensionados para até 2 pessoas. Todos entregam enxoval de cama e banho higienizado, ar-condicionado, mesa de trabalho, Wi-Fi individual e cozinha equipada para preparar refeições rápidas."}
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2">
-            <h4 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#C5A059]"></span>
-              Acomodação & Conforto
-            </h4>
-            <ul className="text-xs text-slate-600 space-y-1.5 font-normal">
-              <li>• Cama Queen Casal com colchão ortopédico de alta densidade</li>
-              <li>• Enxoval completo em percal e toalhas felpudas higienizadas</li>
-              <li>• Ar-condicionado split silencioso com controle térmico</li>
-              <li>• Armários planejados e espaço de apoio para malas</li>
+          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/70 space-y-2.5">
+            <h3 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#C5A059]" aria-hidden="true"></span>
+              Quarto, Estar & Trabalho
+            </h3>
+            <ul className="text-xs text-slate-600 space-y-1.5 font-normal leading-relaxed">
+              {aboutRoomItems.map((item, i) => (
+                <li key={i}>• {item}</li>
+              ))}
             </ul>
           </div>
 
-          <div className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2">
-            <h4 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#C5A059]"></span>
-              Praticidade & Home Office
-            </h4>
-            <ul className="text-xs text-slate-600 space-y-1.5 font-normal">
-              <li>• Cozinha compacta com frigobar, micro-ondas, cooktop e cafeteira</li>
-              <li>• Bancada dedicada de trabalho com tomadas acessíveis</li>
-              <li>• Fibra óptica dedicada de 500 MB com alta estabilidade</li>
-              <li>• Smart TV com canais digitais e aplicativos de streaming</li>
+          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/70 space-y-2.5">
+            <h3 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#C5A059]" aria-hidden="true"></span>
+              Cozinha & Apoio
+            </h3>
+            <ul className="text-xs text-slate-600 space-y-1.5 font-normal leading-relaxed">
+              {aboutKitchenItems.map((item, i) => (
+                <li key={i}>• {item}</li>
+              ))}
             </ul>
           </div>
         </div>
       </section>
 
-      {/* ── Comodidades do Condomínio ─────────────────────────────────────── */}
+      {/* ── Estrutura do Edifício Soho Residence ─────────────────────────── */}
       <section id="comodidades" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
         <div className="space-y-1">
-          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
-            Comodidades da Hospedagem
-          </h3>
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            Estrutura do Soho Residence
+          </h2>
           <p className="text-xs sm:text-sm text-slate-500">
-            Tudo o que você precisa para uma estadia impecável em Campos dos Goytacazes.
+            Todas as áreas comuns do edifício estão liberadas para uso durante sua hospedagem.
           </p>
         </div>
 
@@ -1469,11 +1593,18 @@ export default function BookingEngine() {
               key={amenity.id || idx}
               className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2 hover:border-[#C5A059]/60 transition-colors"
             >
-              <div className="w-8 h-8 rounded-lg bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center">
-                {renderAmenityIcon(amenity.icon)}
+              <div className="flex items-center justify-between gap-2">
+                <div className="w-8 h-8 rounded-lg bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center">
+                  {renderAmenityIcon(amenity.icon)}
+                </div>
+                {amenity.badge && (
+                  <span className="text-[10px] font-semibold text-[#0F3D4C] bg-[#0F3D4C]/[0.06] px-2 py-0.5 rounded-md">
+                    {amenity.badge}
+                  </span>
+                )}
               </div>
               <div>
-                <h4 className="font-bold text-xs sm:text-sm text-slate-900">{amenity.title}</h4>
+                <h3 className="font-bold text-xs sm:text-sm text-slate-900">{amenity.title}</h3>
                 <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{amenity.description}</p>
               </div>
             </div>
@@ -1481,21 +1612,21 @@ export default function BookingEngine() {
         </div>
       </section>
 
-      {/* ── Localização Privilegiada ─────────────────────────────────────── */}
+      {/* ── Localização no Centro de Campos ──────────────────────────────── */}
       <section id="localizacao" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-4">
         <div className="space-y-1">
-          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
-            Localização Privilegiada
-          </h3>
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            Localização Central
+          </h2>
           <p className="text-xs sm:text-sm text-slate-500">
-            Flats no Edifício Soho Residence Service, no coração de Campos dos Goytacazes.
+            Fácil acesso a fóruns, bancos, clínicas, restaurantes e vias de saída da cidade.
           </p>
         </div>
 
         <div className="p-5 rounded-2xl bg-white border border-slate-200/70 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-xl bg-[#0F3D4C]/8 text-[#0F3D4C] border border-[#C5A059]/25 flex items-center justify-center shrink-0 mt-0.5">
-              <MapPin className="w-5 h-5" />
+              <MapPin className="w-5 h-5" aria-hidden="true" />
             </div>
             <div className="space-y-0.5">
               <p className="font-bold text-xs sm:text-sm text-slate-900">
@@ -1514,62 +1645,74 @@ export default function BookingEngine() {
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#0F3D4C] hover:text-[#091E26] bg-[#0F3D4C]/8 hover:bg-[#0F3D4C]/15 border border-[#C5A059]/30 px-3.5 py-2 rounded-xl transition-colors shrink-0"
           >
             <span>Abrir no Google Maps</span>
-            <ExternalLink className="w-3.5 h-3.5" />
+            <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
           </a>
         </div>
       </section>
 
-      {/* ── Avaliações dos Hóspedes ───────────────────────────────────────── */}
-      <section id="avaliacoes" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
-              Experiências dos Hóspedes
-            </h3>
-            <p className="text-xs sm:text-sm text-slate-500">
-              Avaliação média 4.9 ★ com conforto e excelência.
-            </p>
-          </div>
-          <div className="flex items-center gap-1 text-amber-400 shrink-0">
-            {[...Array(5)].map((_, i) => (
-              <Star key={i} className="w-4 h-4 fill-amber-400" />
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {testimonialsList.map((t: any, idx: number) => (
-            <div
-              key={t.id || idx}
-              className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/70 space-y-3 flex flex-col justify-between"
-            >
-              <p className="text-xs text-slate-600 leading-relaxed italic">
-                "{t.comment}"
+      {/* ── Avaliações Reais dos Hóspedes (Exibida apenas quando houver avaliações reais cadastradas) ── */}
+      {testimonialsList.length > 0 && (
+        <section id="avaliacoes" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+                Avaliações de Hóspedes
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-500">
+                Relatos reais de quem já se hospedou conosco no Soho Residence.
               </p>
-              <div className="flex items-center gap-2.5 pt-2 border-t border-slate-100">
-                <img
-                  src={t.avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80"}
-                  alt={t.name}
-                  className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
-                />
-                <div>
-                  <span className="font-bold text-xs text-slate-900 block">{t.name}</span>
-                  <span className="text-[10px] text-slate-400 block">{t.city}</span>
+            </div>
+            <div className="flex items-center gap-1 text-amber-400 shrink-0" aria-label="Avaliação 5 estrelas">
+              {[...Array(5)].map((_, i) => (
+                <Star key={i} className="w-4 h-4 fill-amber-400" aria-hidden="true" />
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {testimonialsList.map((t: any, idx: number) => (
+              <div
+                key={t.id || idx}
+                className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/70 space-y-3 flex flex-col justify-between"
+              >
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  &ldquo;{t.comment}&rdquo;
+                </p>
+                <div className="flex items-center gap-2.5 pt-2 border-t border-slate-100">
+                  {t.avatar && !String(t.avatar).includes("images.unsplash.com") ? (
+                    <img
+                      src={t.avatar}
+                      alt={t.name}
+                      width={32}
+                      height={32}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-[#0F3D4C] text-[#E5C98B] flex items-center justify-center font-bold text-xs shrink-0" aria-hidden="true">
+                      {(t.name || "H").trim().charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div>
+                    <span className="font-bold text-xs text-slate-900 block">{t.name}</span>
+                    {t.city && <span className="text-[10px] text-slate-400 block">{t.city}</span>}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ── Perguntas Frequentes (FAQ) ───────────────────────────────────── */}
       <section id="faq" className="w-full min-w-0 max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
         <div className="space-y-1">
-          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
             Dúvidas Frequentes
-          </h3>
+          </h2>
           <p className="text-xs sm:text-sm text-slate-500">
-            Respostas sobre sua reserva e estadia.
+            Informações diretas sobre horários, acesso, pets, garagem e cancelamento.
           </p>
         </div>
 
@@ -1582,14 +1725,16 @@ export default function BookingEngine() {
                 className="bg-white rounded-xl border border-slate-200/70 overflow-hidden"
               >
                 <button
+                  type="button"
+                  aria-expanded={isOpen}
                   onClick={() => setFaqOpen(isOpen ? null : idx)}
                   className="w-full p-4 text-left flex items-center justify-between gap-3 font-semibold text-xs sm:text-sm text-slate-900 hover:text-[#0F3D4C] transition-colors"
                 >
                   <span>{item.q}</span>
-                  <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isOpen ? "rotate-180 text-[#0F3D4C]" : ""}`} />
+                  <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isOpen ? "rotate-180 text-[#0F3D4C]" : ""}`} aria-hidden="true" />
                 </button>
                 {isOpen && (
-                  <div className="px-4 pb-4 text-xs text-slate-600 leading-relaxed font-normal border-t border-slate-50">
+                  <div className="px-4 pb-4 text-xs text-slate-600 leading-relaxed font-normal border-t border-slate-50 pt-3">
                     {item.a}
                   </div>
                 )}
@@ -1598,8 +1743,9 @@ export default function BookingEngine() {
           })}
         </div>
       </section>
+      </main>
 
-      {/* ── Rodapé Clean ─────────────────────────────────────────────────── */}
+      {/* ── Rodapé Oficial CorpFlats ─────────────────────────────────────── */}
       <footer className="w-full min-w-0 bg-white border-t border-slate-200/80 py-10 px-4 sm:px-8 text-xs text-slate-600 mt-12 pb-24 sm:pb-10">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
           <div className="space-y-1">
@@ -1608,7 +1754,7 @@ export default function BookingEngine() {
               <CorpFlatsWordmark className="text-sm text-[#0F3D4C]" />
             </div>
             <p className="text-[11px] text-slate-500">
-              Edifício Soho Residence Service • Centro, Campos dos Goytacazes - RJ
+              Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ (Edifício Soho Residence Service)
             </p>
           </div>
 
@@ -1619,14 +1765,24 @@ export default function BookingEngine() {
               rel="noreferrer"
               className="text-emerald-700 font-semibold hover:underline flex items-center gap-1"
             >
-              <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span>WhatsApp ({formatPhoneNumber(whatsappNumber)})</span>
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden="true" />
+              <span>WhatsApp {formatPhoneNumber(whatsappNumber)}</span>
+            </a>
+            <a
+              href={instagramUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-slate-700 hover:text-[#0F3D4C] font-semibold flex items-center gap-1"
+            >
+              <Instagram className="w-3.5 h-3.5 text-[#0F3D4C] shrink-0" aria-hidden="true" />
+              <span>{instagramHandle.startsWith("@") ? instagramHandle : `@${instagramHandle}`}</span>
             </a>
             <a
               href={`mailto:${siteConfig?.branding?.email || "reservas@corpflats.com.br"}`}
-              className="text-slate-600 hover:text-[#0F3D4C] break-all"
+              className="text-slate-600 hover:text-[#0F3D4C] break-all flex items-center gap-1"
             >
-              {siteConfig?.branding?.email || "reservas@corpflats.com.br"}
+              <Mail className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden="true" />
+              <span>{siteConfig?.branding?.email || "reservas@corpflats.com.br"}</span>
             </a>
           </div>
         </div>
