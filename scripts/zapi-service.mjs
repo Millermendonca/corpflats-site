@@ -3365,6 +3365,9 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
   const guestTarget = () => ({ type: "guest", guestIndex: 1, name: guest.name, phone: guest.phone, email: guest.email });
 
   if (onlyGuestIdx > 1 && !(requester?.isDifferentFromGuest && isPureBilling)) {
+    const allowFallbackToPrimary = options.allowFallbackToPrimary !== undefined
+      ? Boolean(options.allowFallbackToPrimary)
+      : (tpl?.triggerEvent === "pre_checkin_completed");
     const matchedComp = (recipients.companions || []).find(c => Number(c.index) === onlyGuestIdx);
     if (matchedComp && (matchedComp.phone || matchedComp.email)) {
       raw.push({
@@ -3375,7 +3378,7 @@ export function buildTemplateTargets(tpl, recipients, options = {}) {
         email: matchedComp.email,
         hasCompletedCheckin: matchedComp.hasCompletedCheckin
       });
-    } else if (guest.phone || guest.email) {
+    } else if (allowFallbackToPrimary && (guest.phone || guest.email)) {
       raw.push({
         type: `guest_${onlyGuestIdx}`,
         guestIndex: onlyGuestIdx,
@@ -4174,6 +4177,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{telefone_hotel}}": adminWhatsApp,
     "{{link_checkin_digital}}": linkCheckinDigital,
     "{{link_checkin}}": linkCheckinDigital,
+    "{{link_precheckin}}": linkCheckinDigital,
     "{{link_portal_hospede}}": linkPortalHospede,
     "{{link_credenciamento_agencia}}": `${appOrigin}/credenciamento/${encodeURIComponent(String(resCode))}`,
     "{{nome_agencia}}": reservation.agencyTradeName || reservation.agencyName || requester.company || requester.name || "Agência Parceira",
@@ -13806,10 +13810,9 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
 
       // 2. Filtro de Pré-Check-in: só agenda para quem ainda não concluiu o check-in digital
       if (tpl.triggerEvent === "pre_checkin_reminder") {
-        const isCheckinDone = Boolean(
-          resv.checkedInAt || 
-          (Array.isArray(resv.guests) && resv.guests.length > 0 && resv.guests.every(g => g.hasCompletedCheckin))
-        );
+        const isCheckinDone = Array.isArray(resv.guests) && resv.guests.length > 0
+          ? resv.guests.every(g => (g.hasCompletedCheckin || g.status === "CHECKED_IN") && !g.needsReSignature)
+          : Boolean((resv.checkedInAt || resv.fnhrCompleted) && !resv.needsReSignature);
         if (isCheckinDone) {
           continue;
         }
@@ -13846,9 +13849,17 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase, op
           continue;
         }
 
-        // Acompanhante que já preencheu a própria ficha não recebe lembrete de pré-check-in
-        if (tpl.triggerEvent === "pre_checkin_reminder" && targetItem.guestIndex > 1 && targetItem.hasCompletedCheckin) {
-          continue;
+        // Hóspede titular ou acompanhante que já preencheu a própria ficha não recebe lembrete de pré-check-in
+        if (tpl.triggerEvent === "pre_checkin_reminder") {
+          const titularDone = Boolean(
+            targetItem.guestIndex === 1 &&
+            !resv.needsReSignature &&
+            !resv.guests?.[0]?.needsReSignature &&
+            (resv.guests?.[0]?.hasCompletedCheckin || resv.guests?.[0]?.status === "CHECKED_IN" || resv.fnhrCompleted)
+          );
+          if (titularDone || (targetItem.guestIndex > 1 && targetItem.hasCompletedCheckin)) {
+            continue;
+          }
         }
 
         // Trava de Segurança: Modo de Teste / Sandbox (bloqueia só o WhatsApp; sem e-mail, não agenda)
@@ -14055,7 +14066,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         db,
         saveDatabase,
         "corpflats_intro",
-        { ...reservation, _skipAutoIntro: true },
+        { ...reservation, _skipAutoIntro: true, _bypassSingleFireDedup: false },
         baseUrl
       );
       const historyAfterIntro = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
@@ -14318,7 +14329,8 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     if (eventName === "sameday_reservation" && reservation.checkinDate === todayStr) {
       const releaseState = getSameDayFlatReleaseState(db, reservation, now);
       const nowIso = now.toISOString();
-      if (releaseState.isFlatReadyNow) {
+      const targetOnlyGuestIdx = Number(reservation._onlyGuestIndex) || 0;
+      if (releaseState.isFlatReadyNow && targetOnlyGuestIdx <= 1) {
         markReservationRoomReadySent(db, reservation, todayStr, nowIso, "sameday_reservation");
       }
       if (Array.isArray(db?.whatsappQueue)) {
@@ -14327,6 +14339,8 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
           const isSameRes = (reservation.code && qItem.reservationCode === reservation.code) ||
                             (reservation.id && qItem.reservationId === reservation.id);
           if (!isSameRes) continue;
+          if (targetOnlyGuestIdx > 1 && (qItem.recipientType || "guest") !== `guest_${targetOnlyGuestIdx}`) continue;
+          if (targetOnlyGuestIdx === 1 && (qItem.recipientType || "guest") !== "guest") continue;
           if (
             qItem.triggerEvent === "checkin_day_instructions" ||
             qItem.triggerEvent === "pre_checkin_reminder" ||
@@ -14354,10 +14368,11 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";
-      const onlyGuestIndex = eventName === "pre_checkin_completed" ? (Number(reservation._checkinGuestIndex) || 0) : 0;
+      const onlyGuestIndex = Number(reservation._onlyGuestIndex) || (eventName === "pre_checkin_completed" ? (Number(reservation._checkinGuestIndex) || 0) : 0);
       const dispatches = buildTemplateTargets(tpl, recipients, {
         targetMode,
         onlyGuestIndex,
+        allowFallbackToPrimary: eventName === "pre_checkin_completed",
         onlyRequester: Boolean(reservation._onlyRequesterTarget),
         excludeRequester: Boolean(reservation._excludeRequesterTarget),
         onlyCompanions: Boolean(reservation._onlyCompanionsTarget)
@@ -14382,6 +14397,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         if (reservation._excludeCompanionsTarget && isCompanionTarget) {
           continue;
         }
+        if (Array.isArray(reservation._excludeGuestIndices) && reservation._excludeGuestIndices.includes(Number(target.guestIndex))) {
+          continue;
+        }
         if (isUpdatedEvent && ((recipients.requester?.isDifferentFromGuest && target.type !== "requester") || isCompanionTarget)) {
           const changes = reservation._changesContext || [];
           if (Array.isArray(changes) && changes.length > 0 && !hasNonFinancialChanges(changes)) {
@@ -14401,7 +14419,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
             const isInFlight = Boolean(lockKey && inFlightDispatches.has(lockKey));
 
             const isRoomReadyEvent = ROOM_READY_GROUP_EVENTS.has(eventName);
-            const alreadySentWa = isPreResUpdate ? false : (
+            const alreadySentWa = (isPreResUpdate || reservation._bypassSingleFireDedup) ? false : (
               (db.whatsappHistory || []).some(h => {
                 if (!isWhatsappHistorySuccessStatus(h.status)) return false;
                 const hCode = String(h.reservationCode || "").trim().toUpperCase();
@@ -14466,7 +14484,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
           if (target.email) {
             const normTargetEmail = String(target.email).trim().toLowerCase();
-            const alreadySentEmail = isPreResUpdate ? false : (db.reservationCommunications || []).some(c => {
+            const alreadySentEmail = (isPreResUpdate || reservation._bypassSingleFireDedup) ? false : (db.reservationCommunications || []).some(c => {
               if (c.status === "failed") return false;
               const cResId = String(c.reservation_id || "").trim().toUpperCase();
               const isSameRes = (rCode && cResId === rCode) || (rId && cResId === rId);
@@ -16105,141 +16123,345 @@ export async function dispatchCatchUpGuestRulerMessages(dbOrGetter, saveDatabase
       await new Promise(r => setTimeout(r, ms));
     };
 
-    // 1. APRESENTAÇÃO CORPFLATS (tpl_corpflats_intro) + CONFIRMAÇÃO DE RESERVA (ou SAMEDAY CONSOLIDADA se check-in for hoje após 07:01)
+    const onlyIndicesRaw = Array.isArray(options.onlyGuestIndices)
+      ? options.onlyGuestIndices
+      : (options.onlyGuestIndex ? [options.onlyGuestIndex] : null);
+    const onlyIndices = onlyIndicesRaw
+      ? onlyIndicesRaw.map(n => Number(n)).filter(n => n >= 1)
+      : null;
+    const isCompanionOnlyRun = Boolean(onlyIndices && onlyIndices.length > 0 && onlyIndices.every(idx => idx > 1));
+    const forceResendInstructions = Boolean(options.forceResendInstructions);
+
     const isSameDayAfter0701 = todayStr === reservation.checkinDate && (brHour > 7 || (brHour === 7 && brMinute >= 1));
-    if (!hasGuestReceivedEvent(["reservation_created", "payment_confirmed", "sameday_reservation"])) {
-      const initialEvent = isSameDayAfter0701 ? "sameday_reservation" : "reservation_created";
-      const historyBefore = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
-      await triggerImmediateWhatsApp(db, saveDatabase, initialEvent, guestOnlyRes, baseUrl);
-      const sentIntroNow = (db.whatsappHistory || []).slice(historyBefore).some(h => h && h.triggerEvent === "corpflats_intro" && isWhatsappHistorySuccessStatus(h.status));
-      if (sentIntroNow) {
-        dispatchedStages.push("corpflats_intro");
-      }
-      dispatchedStages.push(initialEvent);
-      await pauseBetweenStages();
-    }
-
-    // 2. LEMBRETE DE PRÉ-CHECK-IN 24H (se faltar <= 24h antes do check-in, antes do dia do check-in, e pré-check-in pendente)
-    const isPreCheckinDone = Boolean(
-      reservation.fnhrCompleted ||
-      reservation.preCheckinCompleted ||
-      reservation.checkedInAt ||
-      (Array.isArray(reservation.guests) && reservation.guests.length > 0 && reservation.guests[0]?.hasCompletedCheckin)
-    );
-    if (!isPreCheckinDone && reservation.checkinDate && todayStr < reservation.checkinDate) {
-      const preChkTpl = (db.whatsappTemplates || []).find(t => t.triggerEvent === "pre_checkin_reminder") ||
-                        DEFAULT_WHATSAPP_TEMPLATES.find(t => t.triggerEvent === "pre_checkin_reminder");
-      if (preChkTpl) {
-        const schedIso = calculateScheduledTime(preChkTpl, reservation, db);
-        if (schedIso && new Date(schedIso) <= now && !hasGuestReceivedEvent(["pre_checkin_reminder"])) {
-          await triggerImmediateWhatsApp(
-            db,
-            saveDatabase,
-            "pre_checkin_reminder",
-            { ...guestOnlyRes, _skipAutoIntro: true },
-            baseUrl
-          );
-          markQueuedStageCancelledForGuest(["pre_checkin_reminder"], "Enviado via recuperação imediata (Catch-Up)");
-          dispatchedStages.push("pre_checkin_reminder");
-          await pauseBetweenStages();
-        }
-      }
-    }
-
-    // 3. INSTRUÇÕES DO DIA DO CHECK-IN (07:00) — se hoje já for o dia do check-in (e >= 07:00) ou estadia em andamento
     const isCheckinDayOrAfter = Boolean(
       reservation.checkinDate &&
       todayStr >= reservation.checkinDate &&
       (!reservation.checkoutDate || todayStr <= reservation.checkoutDate)
     );
     const isPast0700OnCheckin = todayStr > reservation.checkinDate || (todayStr === reservation.checkinDate && brHour >= 7);
-    if (isCheckinDayOrAfter && isPast0700OnCheckin && !hasGuestReceivedEvent(["checkin_day_instructions", "sameday_reservation"])) {
-      await triggerImmediateWhatsApp(
-        db,
-        saveDatabase,
-        "checkin_day_instructions",
-        { ...guestOnlyRes, _skipAutoIntro: true },
-        baseUrl
-      );
-      markQueuedStageCancelledForGuest(["checkin_day_instructions"], "Enviado via recuperação imediata (Catch-Up)");
-      dispatchedStages.push("checkin_day_instructions");
-      await pauseBetweenStages();
-    }
+    const hasBreakfast = hasReservationBreakfast(reservation);
 
-    // 4. QUARTO LIBERADO / PRONTO — se hoje === checkinDate, ainda não tiver sido consolidado no sameday_reservation (roomReadySentDate !== todayStr) e o flat já estiver limpo (ou >= 14:00)
-    if (
-      todayStr === reservation.checkinDate &&
-      reservation.roomReadySentDate !== todayStr &&
-      guestOnlyRes.roomReadySentDate !== todayStr &&
-      !hasGuestReceivedEvent(["room_ready", "room_ready_ota", "room_ready_regular"])
-    ) {
-      const resvChannel = normalizeReservationChannel(reservation.channel || reservation.source || "site");
-      const isOtaOrB2b = resvChannel === "booking" || resvChannel === "airbnb" || resvChannel === "b2b";
-      const earliestReleaseHour = isOtaOrB2b ? 12 : 10;
-      const checkinTime = db.settings?.checkinTime || "14:00";
-      const [checkHour, checkMin] = checkinTime.split(":").map(Number);
-      const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
-      const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr) || reservation.roomReadySentDate === todayStr;
-
-      if (isFlatClean && brHour >= earliestReleaseHour) {
-        let roomReadyEvent = isOtaOrB2b ? "room_ready_ota" : "room_ready";
-        if (isAtOrAfterCheckin && !isOtaOrB2b) {
-          roomReadyEvent = "room_ready_regular";
+    if (!isCompanionOnlyRun) {
+      // 1. APRESENTAÇÃO CORPFLATS (tpl_corpflats_intro) + CONFIRMAÇÃO DE RESERVA (ou SAMEDAY CONSOLIDADA se check-in for hoje após 07:01)
+      if (!hasGuestReceivedEvent(["reservation_created", "payment_confirmed", "sameday_reservation"])) {
+        const initialEvent = isSameDayAfter0701 ? "sameday_reservation" : "reservation_created";
+        const historyBefore = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
+        await triggerImmediateWhatsApp(db, saveDatabase, initialEvent, guestOnlyRes, baseUrl);
+        const sentIntroNow = (db.whatsappHistory || []).slice(historyBefore).some(h => h && h.triggerEvent === "corpflats_intro" && isWhatsappHistorySuccessStatus(h.status));
+        if (sentIntroNow) {
+          dispatchedStages.push("corpflats_intro");
         }
-        markReservationRoomReadySent(db, reservation, todayStr, now.toISOString(), roomReadyEvent);
+        dispatchedStages.push(initialEvent);
+        await pauseBetweenStages();
+      }
+
+      // 2. LEMBRETE DE PRÉ-CHECK-IN 24H (se faltar <= 24h antes do check-in, antes do dia do check-in, e pré-check-in pendente)
+      const isPreCheckinDone = Boolean(
+        reservation.fnhrCompleted ||
+        reservation.preCheckinCompleted ||
+        reservation.checkedInAt ||
+        (Array.isArray(reservation.guests) && reservation.guests.length > 0 && reservation.guests[0]?.hasCompletedCheckin)
+      );
+      if (!isPreCheckinDone && reservation.checkinDate && todayStr < reservation.checkinDate) {
+        const preChkTpl = (db.whatsappTemplates || []).find(t => t.triggerEvent === "pre_checkin_reminder") ||
+                          DEFAULT_WHATSAPP_TEMPLATES.find(t => t.triggerEvent === "pre_checkin_reminder");
+        if (preChkTpl) {
+          const schedIso = calculateScheduledTime(preChkTpl, reservation, db);
+          if (schedIso && new Date(schedIso) <= now && !hasGuestReceivedEvent(["pre_checkin_reminder"])) {
+            await triggerImmediateWhatsApp(
+              db,
+              saveDatabase,
+              "pre_checkin_reminder",
+              { ...guestOnlyRes, _skipAutoIntro: true },
+              baseUrl
+            );
+            markQueuedStageCancelledForGuest(["pre_checkin_reminder"], "Enviado via recuperação imediata (Catch-Up)");
+            dispatchedStages.push("pre_checkin_reminder");
+            await pauseBetweenStages();
+          }
+        }
+      }
+
+      // 3. INSTRUÇÕES DO DIA DO CHECK-IN (07:00) — se hoje já for o dia do check-in (e >= 07:00) ou estadia em andamento
+      if (isCheckinDayOrAfter && isPast0700OnCheckin && !hasGuestReceivedEvent(["checkin_day_instructions", "sameday_reservation"])) {
         await triggerImmediateWhatsApp(
           db,
           saveDatabase,
-          roomReadyEvent,
+          "checkin_day_instructions",
           { ...guestOnlyRes, _skipAutoIntro: true },
           baseUrl
         );
-        markQueuedStageCancelledForGuest(["room_ready", "room_ready_ota", "room_ready_regular"], "Enviado via recuperação imediata (Catch-Up)");
-        dispatchedStages.push(roomReadyEvent);
+        markQueuedStageCancelledForGuest(["checkin_day_instructions"], "Enviado via recuperação imediata (Catch-Up)");
+        dispatchedStages.push("checkin_day_instructions");
         await pauseBetweenStages();
-      } else if (isFlatClean && brHour < earliestReleaseHour) {
-        await triggerRoomReadyWhatsApp(db, saveDatabase, reservation.flatId, reservation.flatNumber, baseUrl);
+      }
+
+      // 4. QUARTO LIBERADO / PRONTO — se hoje === checkinDate, ainda não tiver sido consolidado no sameday_reservation (roomReadySentDate !== todayStr) e o flat já estiver limpo (ou >= 14:00)
+      if (
+        todayStr === reservation.checkinDate &&
+        reservation.roomReadySentDate !== todayStr &&
+        guestOnlyRes.roomReadySentDate !== todayStr &&
+        !hasGuestReceivedEvent(["room_ready", "room_ready_ota", "room_ready_regular"])
+      ) {
+        const resvChannel = normalizeReservationChannel(reservation.channel || reservation.source || "site");
+        const isOtaOrB2b = resvChannel === "booking" || resvChannel === "airbnb" || resvChannel === "b2b";
+        const earliestReleaseHour = isOtaOrB2b ? 12 : 10;
+        const checkinTime = db.settings?.checkinTime || "14:00";
+        const [checkHour, checkMin] = checkinTime.split(":").map(Number);
+        const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
+        const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr) || reservation.roomReadySentDate === todayStr;
+
+        if (isFlatClean && brHour >= earliestReleaseHour) {
+          let roomReadyEvent = isOtaOrB2b ? "room_ready_ota" : "room_ready";
+          if (isAtOrAfterCheckin && !isOtaOrB2b) {
+            roomReadyEvent = "room_ready_regular";
+          }
+          markReservationRoomReadySent(db, reservation, todayStr, now.toISOString(), roomReadyEvent);
+          await triggerImmediateWhatsApp(
+            db,
+            saveDatabase,
+            roomReadyEvent,
+            { ...guestOnlyRes, _skipAutoIntro: true },
+            baseUrl
+          );
+          markQueuedStageCancelledForGuest(["room_ready", "room_ready_ota", "room_ready_regular"], "Enviado via recuperação imediata (Catch-Up)");
+          dispatchedStages.push(roomReadyEvent);
+          await pauseBetweenStages();
+        } else if (isFlatClean && brHour < earliestReleaseHour) {
+          await triggerRoomReadyWhatsApp(db, saveDatabase, reservation.flatId, reservation.flatNumber, baseUrl);
+        }
+      }
+
+      // 5. LEMBRETE DE CAFÉ DA MANHÃ (18:00–20:00) — se tiver café incluso, estadia ativa para amanhã e estiver dentro da janela 18:00–20:00
+      if (hasBreakfast && reservation.checkinDate && reservation.checkoutDate && todayStr >= reservation.checkinDate && todayStr < reservation.checkoutDate && brHour >= 18 && brHour < 20) {
+        const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const brDateObj = new Date(nowUtc - (3 * 3600000));
+        const tomorrowDate = new Date(brDateObj);
+        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+        const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
+
+        const alreadyOrderedTomorrow = hasActiveBreakfastOrderForDate(db, reservation, tomorrowStr);
+        const alreadySentBreakfastToday = (db.whatsappHistory || []).some(h => {
+          if (!h || !isWhatsappHistorySuccessStatus(h.status)) return false;
+          const hCode = String(h.reservationCode || "").trim().toUpperCase();
+          const hId = h.reservationId ? String(h.reservationId) : "";
+          const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+          const isHBreakfast = h.triggerEvent === "breakfast_reminder" || h.templateId === "tpl_breakfast_reminder";
+          if (!isHBreakfast) return false;
+          if (normGuestPhone && normalizePhoneForDedup(h.guestPhone) !== normGuestPhone) return false;
+          return getBrasiliaDateStrFromIso(h.sentAt || h.timestamp || h.createdAt) === todayStr;
+        });
+
+        if (!alreadyOrderedTomorrow && !alreadySentBreakfastToday) {
+          await triggerImmediateWhatsApp(
+            db,
+            saveDatabase,
+            "breakfast_reminder",
+            {
+              ...reservation,
+              _forceInitialWelcome: true,
+              _allowScheduledTemplateImmediate: true,
+              _skipAutoIntro: true,
+              _fastIntroDelay: Boolean(options.fastDelay),
+              _nowOverride: now
+            },
+            baseUrl
+          );
+          markQueuedStageCancelledForGuest(["breakfast_reminder"], "Enviado via recuperação imediata (Catch-Up)", true);
+          dispatchedStages.push("breakfast_reminder");
+        }
       }
     }
 
-    // 5. LEMBRETE DE CAFÉ DA MANHÃ (18:00–20:00) — se tiver café incluso, estadia ativa para amanhã e estiver dentro da janela 18:00–20:00
-    const hasBreakfast = hasReservationBreakfast(reservation);
-    if (hasBreakfast && reservation.checkinDate && reservation.checkoutDate && todayStr >= reservation.checkinDate && todayStr < reservation.checkoutDate && brHour >= 18 && brHour < 20) {
-      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-      const brDateObj = new Date(nowUtc - (3 * 3600000));
-      const tomorrowDate = new Date(brDateObj);
-      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-      const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
+    // 5B. RECUPERAÇÃO INDIVIDUAL DE ACOMPANHANTES (2º / 3º HÓSPEDE) — garante envio quando o acompanhante é cadastrado depois do titular
+    const mainNormDigits = normalizePhoneForDedup(cleanGuestPhone);
+    for (const comp of (recips.companions || [])) {
+      if (!comp || !(Number(comp.index) > 1)) continue;
+      if (onlyIndices && !onlyIndices.includes(Number(comp.index))) continue;
 
-      const alreadyOrderedTomorrow = hasActiveBreakfastOrderForDate(db, reservation, tomorrowStr);
-      const alreadySentBreakfastToday = (db.whatsappHistory || []).some(h => {
-        if (!h || !isWhatsappHistorySuccessStatus(h.status)) return false;
-        const hCode = String(h.reservationCode || "").trim().toUpperCase();
-        const hId = h.reservationId ? String(h.reservationId) : "";
-        const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
-        const isHBreakfast = h.triggerEvent === "breakfast_reminder" || h.templateId === "tpl_breakfast_reminder";
-        if (!isHBreakfast) return false;
-        if (normGuestPhone && normalizePhoneForDedup(h.guestPhone) !== normGuestPhone) return false;
-        return getBrasiliaDateStrFromIso(h.sentAt || h.timestamp || h.createdAt) === todayStr;
-      });
+      const compDigits = String(comp.cleanDigits || comp.phone || "").replace(/\D/g, "");
+      const normCompPhone = normalizePhoneForDedup(compDigits);
+      const hasValidCompContact = Boolean(
+        (compDigits && compDigits.length >= 10 && (!mainNormDigits || normCompPhone !== mainNormDigits)) ||
+        (comp.email && comp.email !== (recips.guest?.email || ""))
+      );
+      if (!hasValidCompContact) continue;
 
-      if (!alreadyOrderedTomorrow && !alreadySentBreakfastToday) {
+      const compRecipientType = comp.type || `guest_${comp.index}`;
+      const hasCompanionReceivedEvent = (eventsList) => {
+        const evSet = new Set(Array.isArray(eventsList) ? eventsList : [eventsList]);
+        return (db.whatsappHistory || []).some(h => {
+          if (!h || !isWhatsappHistorySuccessStatus(h.status)) return false;
+          const hCode = String(h.reservationCode || "").trim().toUpperCase();
+          const hId = h.reservationId ? String(h.reservationId) : "";
+          const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+          if (!isSameRes) return false;
+          if (normCompPhone) {
+            if (normalizePhoneForDedup(h.guestPhone || h.phone) !== normCompPhone) return false;
+          } else if ((h.recipientType || "") !== compRecipientType) {
+            return false;
+          }
+          return evSet.has(h.triggerEvent);
+        });
+      };
+
+      const markQueuedStageCancelledForCompanion = (eventsList, reason) => {
+        if (!Array.isArray(db.whatsappQueue)) return;
+        const evSet = new Set(Array.isArray(eventsList) ? eventsList : [eventsList]);
+        const nowIso = new Date().toISOString();
+        for (const q of db.whatsappQueue) {
+          if (!q || (q.status !== "scheduled" && q.status !== "pending")) continue;
+          const qCode = String(q.reservationCode || "").trim().toUpperCase();
+          const qId = q.reservationId ? String(q.reservationId) : "";
+          const isSameRes = (rCodeUpper && qCode === rCodeUpper) || (rIdStr && (qId === rIdStr || qCode === rIdStr));
+          if (!isSameRes) continue;
+          if ((q.recipientType || "guest") !== compRecipientType) continue;
+          if (evSet.has(q.triggerEvent)) {
+            q.status = "cancelled";
+            q.error = reason;
+            q.updatedAt = nowIso;
+          }
+        }
+      };
+
+      const compRes = {
+        ...reservation,
+        _onlyGuestIndex: Number(comp.index),
+        _excludeRequesterTarget: true,
+        _forceInitialWelcome: true,
+        _allowScheduledTemplateImmediate: true,
+        _bypassSingleFireDedup: forceResendInstructions,
+        _fastIntroDelay: Boolean(options.fastDelay)
+      };
+
+      let sentSamedayReadyForComp = false;
+
+      // C1. Apresentação CorpFlats + Confirmação com Link Individual (?guest=2) ou Sameday Consolidada
+      if (forceResendInstructions || !hasCompanionReceivedEvent(["reservation_created", "payment_confirmed", "sameday_reservation"])) {
+        const initialEvent = isSameDayAfter0701 ? "sameday_reservation" : "reservation_created";
+        const historyBeforeComp = Array.isArray(db.whatsappHistory) ? db.whatsappHistory.length : 0;
+        await triggerImmediateWhatsApp(db, saveDatabase, initialEvent, compRes, baseUrl);
+        const sentIntroComp = (db.whatsappHistory || []).slice(historyBeforeComp).some(
+          h => h && h.triggerEvent === "corpflats_intro" && isWhatsappHistorySuccessStatus(h.status)
+        );
+        if (sentIntroComp) {
+          dispatchedStages.push(`${compRecipientType}:corpflats_intro`);
+        }
+        dispatchedStages.push(`${compRecipientType}:${initialEvent}`);
+        if (initialEvent === "sameday_reservation" && getSameDayFlatReleaseState(db, reservation, now).isFlatReadyNow) {
+          sentSamedayReadyForComp = true;
+        }
+        await pauseBetweenStages();
+      }
+
+      // C2. Lembrete 24h de Pré-Check-in (somente se o acompanhante ainda não concluiu sua própria ficha)
+      if (!comp.hasCompletedCheckin && reservation.checkinDate && todayStr < reservation.checkinDate) {
+        const preChkTpl = (db.whatsappTemplates || []).find(t => t.triggerEvent === "pre_checkin_reminder") ||
+                          DEFAULT_WHATSAPP_TEMPLATES.find(t => t.triggerEvent === "pre_checkin_reminder");
+        if (preChkTpl) {
+          const schedIso = calculateScheduledTime(preChkTpl, reservation, db);
+          if (schedIso && new Date(schedIso) <= now && !hasCompanionReceivedEvent(["pre_checkin_reminder"])) {
+            await triggerImmediateWhatsApp(
+              db,
+              saveDatabase,
+              "pre_checkin_reminder",
+              { ...compRes, _skipAutoIntro: true, _bypassSingleFireDedup: false },
+              baseUrl
+            );
+            markQueuedStageCancelledForCompanion(["pre_checkin_reminder"], "Enviado via recuperação imediata do acompanhante");
+            dispatchedStages.push(`${compRecipientType}:pre_checkin_reminder`);
+            await pauseBetweenStages();
+          }
+        }
+      }
+
+      // C3. Instruções do Dia do Check-in (07:00) ou Estadia em Andamento
+      if (
+        isCheckinDayOrAfter &&
+        isPast0700OnCheckin &&
+        ((forceResendInstructions && todayStr > reservation.checkinDate) || !hasCompanionReceivedEvent(["checkin_day_instructions", "sameday_reservation"]))
+      ) {
         await triggerImmediateWhatsApp(
           db,
           saveDatabase,
-          "breakfast_reminder",
-          {
-            ...reservation,
-            _forceInitialWelcome: true,
-            _allowScheduledTemplateImmediate: true,
-            _skipAutoIntro: true,
-            _fastIntroDelay: Boolean(options.fastDelay),
-            _nowOverride: now
-          },
+          "checkin_day_instructions",
+          { ...compRes, _skipAutoIntro: true },
           baseUrl
         );
-        markQueuedStageCancelledForGuest(["breakfast_reminder"], "Enviado via recuperação imediata (Catch-Up)", true);
-        dispatchedStages.push("breakfast_reminder");
+        markQueuedStageCancelledForCompanion(["checkin_day_instructions"], "Enviado via recuperação imediata do acompanhante");
+        dispatchedStages.push(`${compRecipientType}:checkin_day_instructions`);
+        await pauseBetweenStages();
+      }
+
+      // C4. Quarto Liberado / Pronto (mesmo que o titular já tenha recebido mais cedo hoje)
+      if (
+        todayStr === reservation.checkinDate &&
+        !sentSamedayReadyForComp &&
+        !hasCompanionReceivedEvent(["sameday_reservation", "room_ready", "room_ready_ota", "room_ready_regular"])
+      ) {
+        const resvChannel = normalizeReservationChannel(reservation.channel || reservation.source || "site");
+        const isOtaOrB2b = resvChannel === "booking" || resvChannel === "airbnb" || resvChannel === "b2b";
+        const earliestReleaseHour = isOtaOrB2b ? 12 : 10;
+        const checkinTime = db.settings?.checkinTime || "14:00";
+        const [checkHour, checkMin] = checkinTime.split(":").map(Number);
+        const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
+        const isFlatClean = !isFlatStillBeingCleanedOnCheckinDay(db, reservation, todayStr) || reservation.roomReadySentDate === todayStr;
+
+        if (isFlatClean && brHour >= earliestReleaseHour) {
+          let roomReadyEvent = isOtaOrB2b ? "room_ready_ota" : "room_ready";
+          if (isAtOrAfterCheckin && !isOtaOrB2b) {
+            roomReadyEvent = "room_ready_regular";
+          }
+          await triggerImmediateWhatsApp(
+            db,
+            saveDatabase,
+            roomReadyEvent,
+            { ...compRes, _skipAutoIntro: true, _bypassSingleFireDedup: false },
+            baseUrl
+          );
+          markQueuedStageCancelledForCompanion(["room_ready", "room_ready_ota", "room_ready_regular"], "Enviado via recuperação imediata do acompanhante");
+          dispatchedStages.push(`${compRecipientType}:${roomReadyEvent}`);
+          await pauseBetweenStages();
+        }
+      }
+
+      // C5. Lembrete de Café da Manhã (18:00–20:00) se estadia ativa e pedido de amanhã pendente
+      if (hasBreakfast && reservation.checkinDate && reservation.checkoutDate && todayStr >= reservation.checkinDate && todayStr < reservation.checkoutDate && brHour >= 18 && brHour < 20) {
+        const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+        const brDateObj = new Date(nowUtc - (3 * 3600000));
+        const tomorrowDate = new Date(brDateObj);
+        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+        const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
+
+        const alreadyOrderedTomorrow = hasActiveBreakfastOrderForDate(db, reservation, tomorrowStr);
+        const alreadySentBreakfastToday = (db.whatsappHistory || []).some(h => {
+          if (!h || !isWhatsappHistorySuccessStatus(h.status)) return false;
+          const hCode = String(h.reservationCode || "").trim().toUpperCase();
+          const hId = h.reservationId ? String(h.reservationId) : "";
+          const isSameRes = (rCodeUpper && hCode === rCodeUpper) || (rIdStr && (hId === rIdStr || hCode === rIdStr));
+          if (!isSameRes) return false;
+          const isHBreakfast = h.triggerEvent === "breakfast_reminder" || h.templateId === "tpl_breakfast_reminder";
+          if (!isHBreakfast) return false;
+          if (normCompPhone && normalizePhoneForDedup(h.guestPhone || h.phone) !== normCompPhone) return false;
+          return getBrasiliaDateStrFromIso(h.sentAt || h.timestamp || h.createdAt) === todayStr;
+        });
+
+        if (!alreadyOrderedTomorrow && !alreadySentBreakfastToday) {
+          await triggerImmediateWhatsApp(
+            db,
+            saveDatabase,
+            "breakfast_reminder",
+            {
+              ...compRes,
+              _skipAutoIntro: true,
+              _bypassSingleFireDedup: false,
+              _nowOverride: now
+            },
+            baseUrl
+          );
+          markQueuedStageCancelledForCompanion(["breakfast_reminder"], "Enviado via recuperação imediata do acompanhante");
+          dispatchedStages.push(`${compRecipientType}:breakfast_reminder`);
+        }
       }
     }
 

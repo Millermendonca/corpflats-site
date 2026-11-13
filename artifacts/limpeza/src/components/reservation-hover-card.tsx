@@ -93,9 +93,14 @@ export function ReservationHoverCard({
   const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
   const [hoveredQuickMsg, setHoveredQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
   const [confirmingQuickMsg, setConfirmingQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
+  const [quickMsgTargetKey, setQuickMsgTargetKey] = useState<string>("guest")
   const [sendingMsgId, setSendingMsgId] = useState<string | null>(null)
   const cardContentRef = useRef<HTMLDivElement>(null)
   const [previewPlacement, setPreviewPlacement] = useState<"top" | "bottom" | "right" | "left">("right")
+
+  useEffect(() => {
+    setQuickMsgTargetKey("guest")
+  }, [resItem?.id, resItem?.code])
 
   const handleQuickMsgHover = (qm: WhatsAppQuickMessage | null) => {
     if (!qm) {
@@ -189,6 +194,10 @@ export function ReservationHoverCard({
   const cleanPhone = rawPhone.replace(/\D/g, "")
   const finalWaPhone = cleanWhatsAppPhone(rawPhone)
   const recipients = getReservationRecipients(resItem)
+  const hoverCompanionsWithPhone = (recipients.companions || []).filter(
+    (c) => c.cleanDigits && c.cleanDigits.length >= 8 && c.cleanDigits !== recipients.guest.cleanDigits && c.cleanDigits !== recipients.requester.cleanDigits
+  )
+  const selectedHoverCompanion = hoverCompanionsWithPhone.find((c) => c.key === quickMsgTargetKey) || null
 
   const requesterDisplayName = (() => {
     const rawAgent = String(resItem.agencyAgentName || "").trim()
@@ -408,17 +417,25 @@ export function ReservationHoverCard({
                 <span className="truncate max-w-[150px]">{hoveredQuickMsg.title}</span>
               </div>
               <div className="flex items-center gap-1">
-                {hoveredQuickMsg.recipientTarget === "both" ? (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
-                    ✨ Ambos
-                  </span>
-                ) : hoveredQuickMsg.recipientTarget === "requester" ? (
+                {hoveredQuickMsg.recipientTarget === "requester" ? (
                   <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
                     👥 Solicitante
                   </span>
+                ) : selectedHoverCompanion ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                    👥 Só {selectedHoverCompanion.index}º Hóspede
+                  </span>
+                ) : quickMsgTargetKey === "all_guests" && hoverCompanionsWithPhone.length > 0 ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                    ✨ Todos Hóspedes
+                  </span>
+                ) : hoveredQuickMsg.recipientTarget === "both" ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                    ✨ Ambos
+                  </span>
                 ) : (
                   <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
-                    👤 Hóspede
+                    👤 {hoverCompanionsWithPhone.length > 0 ? "Só 1º Hóspede" : "Hóspede"}
                   </span>
                 )}
                 <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
@@ -435,7 +452,11 @@ export function ReservationHoverCard({
                 hoveredQuickMsg.message, 
                 resItem, 
                 originUrl, 
-                hoveredQuickMsg.recipientTarget === "requester" ? "requester" : "guest"
+                hoveredQuickMsg.recipientTarget === "requester"
+                  ? "requester"
+                  : selectedHoverCompanion
+                  ? selectedHoverCompanion.key
+                  : "guest"
               )}
             </div>
 
@@ -457,6 +478,16 @@ export function ReservationHoverCard({
                       <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
                       <span className="text-slate-300 ml-1">({recipients.requester.name})</span>
                     </>
+                  ) : selectedHoverCompanion ? (
+                    <>
+                      <strong className="text-sky-400">Destino: 👥 Só {selectedHoverCompanion.index}º</strong>
+                      <span className="text-slate-300 ml-1">({selectedHoverCompanion.name})</span>
+                    </>
+                  ) : quickMsgTargetKey === "all_guests" && hoverCompanionsWithPhone.length > 0 ? (
+                    <>
+                      <strong className="text-purple-400">Destino: ✨ Hóspedes</strong>
+                      <span className="text-slate-300 ml-1">({[recipients.guest.firstName, ...hoverCompanionsWithPhone.map(c => c.firstName)].join(" + ")})</span>
+                    </>
                   ) : hoveredQuickMsg.recipientTarget === "both" ? (
                     <>
                       <strong className="text-purple-400">Destino: ✨ Ambos</strong>
@@ -464,7 +495,7 @@ export function ReservationHoverCard({
                     </>
                   ) : (
                     <>
-                      <strong className="text-sky-400">Destino: 👤 Hóspede</strong>
+                      <strong className="text-sky-400">Destino: 👤 {hoverCompanionsWithPhone.length > 0 ? "Só 1º" : "Hóspede"}</strong>
                       <span className="text-slate-300 ml-1">({recipients.guest.name})</span>
                     </>
                   )}
@@ -875,6 +906,60 @@ export function ReservationHoverCard({
               </a>
             </div>
 
+            {hoverCompanionsWithPhone.length > 0 && (
+              <div className="flex items-center flex-wrap gap-1 mb-1.5 pb-1.5 border-b border-emerald-200/60 dark:border-slate-800">
+                <span className="text-[9.5px] font-bold text-slate-500 dark:text-slate-400 mr-0.5">Enviar p/:</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setQuickMsgTargetKey("guest")
+                  }}
+                  className={`h-5 px-1.5 rounded-md text-[9.5px] font-bold transition-all cursor-pointer border ${
+                    quickMsgTargetKey === "guest"
+                      ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                      : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-emerald-400"
+                  }`}
+                  title={`Enviar somente para o 1º Hóspede (${recipients.guest.name})`}
+                >
+                  👤 Só 1º ({recipients.guest.firstName})
+                </button>
+                {hoverCompanionsWithPhone.map((comp) => (
+                  <button
+                    key={comp.key}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setQuickMsgTargetKey(comp.key)
+                    }}
+                    className={`h-5 px-1.5 rounded-md text-[9.5px] font-bold transition-all cursor-pointer border ${
+                      quickMsgTargetKey === comp.key
+                        ? "bg-sky-600 text-white border-sky-600 shadow-2xs"
+                        : "bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:border-sky-500"
+                    }`}
+                    title={`Enviar SOMENTE para o ${comp.index}º Hóspede (${comp.name} • ${comp.phone}) sem reenviar ao 1º`}
+                  >
+                    👥 Só {comp.index}º ({comp.firstName})
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setQuickMsgTargetKey("all_guests")
+                  }}
+                  className={`h-5 px-1.5 rounded-md text-[9.5px] font-bold transition-all cursor-pointer border ${
+                    quickMsgTargetKey === "all_guests"
+                      ? "bg-purple-600 text-white border-purple-600 shadow-2xs"
+                      : "bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:border-purple-500"
+                  }`}
+                  title="Enviar individualmente para todos os hóspedes da reserva"
+                >
+                  ✨ Ambos
+                </button>
+              </div>
+            )}
+
             <div className="flex flex-wrap gap-1">
               {activeQuickMessages.map(qm => {
                 const isSending = sendingMsgId === qm.id;
@@ -886,7 +971,15 @@ export function ReservationHoverCard({
                     disabled={isSending}
                     {...bindZapiClickOrHoldWaWeb({
                       onClickZapi: (e) => handleTriggerQuickMessage(e, qm),
-                      getWaUrl: () => buildQuickMessageWaWebUrl(qm, resItem, originUrl),
+                      getWaUrl: () =>
+                        selectedHoverCompanion && target !== "requester"
+                          ? buildQuickMessageWaWebUrl(qm, resItem, originUrl, {
+                              overrideTarget: selectedHoverCompanion.key,
+                              guestIndex: selectedHoverCompanion.index,
+                              customPhone: selectedHoverCompanion.phone,
+                              customName: selectedHoverCompanion.name,
+                            })
+                          : buildQuickMessageWaWebUrl(qm, resItem, originUrl),
                       toast
                     })}
                     onMouseEnter={() => handleQuickMsgHover(qm)}
@@ -1078,6 +1171,7 @@ export function ReservationHoverCard({
       quickMessage={confirmingQuickMsg}
       resItem={resItem}
       originUrl={originUrl}
+      initialTargetKey={quickMsgTargetKey}
       onConfirm={async (qm, options) => {
         setSendingMsgId(qm.id)
         try {

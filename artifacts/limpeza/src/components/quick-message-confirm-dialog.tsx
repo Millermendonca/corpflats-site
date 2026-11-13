@@ -37,6 +37,7 @@ interface QuickMessageConfirmDialogProps {
   quickMessage: WhatsAppQuickMessage | null
   resItem: any
   originUrl?: string
+  initialTargetKey?: string
   onConfirm: (
     qm: WhatsAppQuickMessage,
     options: {
@@ -55,6 +56,7 @@ export function QuickMessageConfirmDialog({
   quickMessage,
   resItem,
   originUrl,
+  initialTargetKey,
   onConfirm,
 }: QuickMessageConfirmDialogProps) {
   const { toast } = useToast()
@@ -124,7 +126,7 @@ export function QuickMessageConfirmDialog({
       return
     }
     if (open && quickMessage && recipients) {
-      const sessionKey = `${quickMessage.id}::${resItem?.id || resItem?.code || "res"}`
+      const sessionKey = `${quickMessage.id}::${resItem?.id || resItem?.code || "res"}::${initialTargetKey || ""}`
       if (initializedSessionRef.current === sessionKey) {
         return
       }
@@ -136,6 +138,17 @@ export function QuickMessageConfirmDialog({
       const defaultTarget = isBillingRestricted ? "requester" : (quickMessage.recipientTarget || "guest")
       if (isBillingRestricted) {
         setSelectedTargetKey("requester")
+      } else if (
+        initialTargetKey &&
+        (
+          initialTargetKey === "guest" ||
+          (initialTargetKey === "all_guests" && companionOptions.length > 0) ||
+          companionOptions.some((c) => c.key === initialTargetKey) ||
+          (initialTargetKey === "requester" && recipients?.requester?.phone && recipients?.requester?.isDifferentFromGuest) ||
+          (initialTargetKey === "both" && recipients?.requester?.phone && recipients?.requester?.isDifferentFromGuest)
+        )
+      ) {
+        setSelectedTargetKey(initialTargetKey)
       } else if (
         defaultTarget === "requester" &&
         (!recipients?.requester?.phone || !recipients?.requester?.isDifferentFromGuest)
@@ -151,7 +164,7 @@ export function QuickMessageConfirmDialog({
       }
       setIsEditingText(false)
     }
-  }, [open, quickMessage, recipients, resItem?.id, resItem?.code])
+  }, [open, quickMessage, recipients, companionOptions, initialTargetKey, resItem?.id, resItem?.code])
 
   useEffect(() => {
     if (!isEditingText) {
@@ -284,7 +297,9 @@ export function QuickMessageConfirmDialog({
                     <User className="w-4 h-4 text-emerald-600 shrink-0" />
                     <div className="truncate">
                       <div className="text-xs font-bold truncate">
-                        Hóspede: {recipients.guest.name}
+                        {companionOptions.length > 0
+                          ? `Enviar SÓ p/ 1º Hóspede (Titular): ${recipients.guest.name}`
+                          : `Hóspede: ${recipients.guest.name}`}
                       </div>
                       <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1">
                         <Phone className="w-2.5 h-2.5" />
@@ -321,11 +336,12 @@ export function QuickMessageConfirmDialog({
                     <User className="w-4 h-4 text-sky-600 shrink-0" />
                     <div className="truncate">
                       <div className="text-xs font-bold truncate">
-                        Acompanhante: {comp.name}
+                        Enviar SÓ p/ {comp.guestIndex}º Hóspede: {comp.name}
                       </div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1">
-                        <Phone className="w-2.5 h-2.5" />
-                        {comp.phone}
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1 truncate">
+                        <Phone className="w-2.5 h-2.5 shrink-0" />
+                        <span>{comp.phone}</span>
+                        <span className="font-sans text-[10px] text-sky-700 dark:text-sky-400 font-semibold">• Link individual (não reenvia ao 1º)</span>
                       </div>
                     </div>
                   </div>

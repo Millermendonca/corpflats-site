@@ -37534,6 +37534,15 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   const oldGuestObj = oldGuestId ? (db.guests || []).find(g => g && Number(g.id) === Number(oldGuestId)) : null;
   const oldGuestName = r.guestName;
   const oldGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
+  const oldCompanionPhonesByIndex = new Map();
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach((g, idx) => {
+      if (!g || idx === 0) return;
+      const gIdx = Number(g.index) > 1 ? Number(g.index) : idx + 1;
+      const pDigits = String(g.phone || g.whatsapp || "").replace(/\D/g, "").replace(/^55/, "");
+      oldCompanionPhonesByIndex.set(gIdx, pDigits);
+    });
+  }
   const oldTotalAmount = Number(r.totalAmount) || 0;
   const oldChanLowerInit = String(r.channel || "").toLowerCase();
   const oldIsOtaInit = oldChanLowerInit.includes("booking") || oldChanLowerInit.includes("airbnb");
@@ -39435,7 +39444,39 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
 
   const newGuestPhone = String(r.guestPhone || "").replace(/\D/g, "");
   const wasGuestPhoneJustAdded = newGuestPhone.length >= 10 && newGuestPhone !== oldGuestPhone;
-  if (wasGuestPhoneJustAdded) {
+  const normPrimaryPhoneAfterPut = newGuestPhone.replace(/^55/, "");
+  const newlyAddedCompanionIndices = [];
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach((g, idx) => {
+      if (!g || idx === 0) return;
+      const gIdx = Number(g.index) > 1 ? Number(g.index) : idx + 1;
+      const compDigits = String(g.phone || g.whatsapp || "").replace(/\D/g, "").replace(/^55/, "");
+      const oldCompDigits = oldCompanionPhonesByIndex.get(gIdx) || "";
+      if (
+        compDigits.length >= 10 &&
+        compDigits !== oldCompDigits &&
+        compDigits !== normPrimaryPhoneAfterPut
+      ) {
+        const alreadyReceivedConf = (db.whatsappHistory || []).some(h => {
+          if (!h || (h.reservationCode !== r.code && h.reservationId !== r.id)) return false;
+          if (h.status !== "sent" && h.status !== "delivered") return false;
+          if (
+            h.triggerEvent !== "reservation_created" &&
+            h.triggerEvent !== "payment_confirmed" &&
+            h.triggerEvent !== "sameday_reservation"
+          ) {
+            return false;
+          }
+          const hDigits = String(h.guestPhone || h.phone || "").replace(/\D/g, "").replace(/^55/, "");
+          return hDigits === compDigits || h.recipientType === `guest_${gIdx}`;
+        });
+        if (!alreadyReceivedConf) {
+          newlyAddedCompanionIndices.push(gIdx);
+        }
+      }
+    });
+  }
+  if (wasGuestPhoneJustAdded || newlyAddedCompanionIndices.length > 0) {
     r.guestPhoneUpdatedAt = new Date().toISOString();
   }
 
@@ -40013,7 +40054,8 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
             ...r,
             _changesContext: guestFacingDiffs,
             _excludeRequesterTarget: true,
-            _onlyCompanionsTarget: !hasSeparateReq && hasCompanions
+            _onlyCompanionsTarget: !hasSeparateReq && hasCompanions,
+            ...(newlyAddedCompanionIndices.length > 0 ? { _excludeGuestIndices: newlyAddedCompanionIndices } : {})
           };
           triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForGuests).catch(err => {
             console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated para hóspedes após additional_daily_pending:", err.message);
@@ -40061,6 +40103,12 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           (db.whatsappHistory || []).some(h => (h.reservationCode === r.code || h.reservationId === r.id) && h.triggerEvent === "additional_daily_pending")
         )
       );
+      const isOnlyCompanionRegistrationDiff = Boolean(
+        newlyAddedCompanionIndices.length > 0 &&
+        !isDatesOrFlatChanged &&
+        guestFacingDiffs.length > 0 &&
+        guestFacingDiffs.every(d => d.field === "guestCount" || d.field === "adults" || d.field === "children")
+      );
       if (wasPendingExtensionJustPaidOnPut) {
         clearCleaningExtensionHoldMeta();
         ensureExtensionPaymentConfirmationDispatched(r, {
@@ -40072,7 +40120,7 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         }).catch(err => {
           console.warn("[WhatsApp Trigger] Erro ao disparar confirmação de pagamento de extensão na edição:", err.message);
         });
-      } else if (!wasUnpaidExtensionManuallyRemovedOnPut && (guestFacingDiffs.length > 0 || isDatesOrFlatChanged)) {
+      } else if (!wasUnpaidExtensionManuallyRemovedOnPut && !isOnlyCompanionRegistrationDiff && (guestFacingDiffs.length > 0 || isDatesOrFlatChanged)) {
         if (isDatesOrFlatChanged && r.needsReSignature) {
           const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.com.br");
           dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
@@ -40082,7 +40130,11 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           });
         } else if (guestFacingDiffs.length > 0 || isDatesOrFlatChanged) {
           console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
-          const resvForTrigger = { ...r, _changesContext: guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs };
+          const resvForTrigger = {
+            ...r,
+            _changesContext: guestFacingDiffs.length > 0 ? guestFacingDiffs : diffs,
+            ...(newlyAddedCompanionIndices.length > 0 ? { _excludeGuestIndices: newlyAddedCompanionIndices } : {})
+          };
           triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
             console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
           });
@@ -40095,6 +40147,23 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       } else {
         console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
       }
+    }
+
+    if (
+      newlyAddedCompanionIndices.length > 0 &&
+      !(wasGuestPhoneJustAdded && !hasGuestPhoneReceivedConfirmation) &&
+      !isPreReservationBlocked(r) &&
+      r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      r.status !== "cancelado"
+    ) {
+      console.log(`[WhatsApp Companion Catch-Up] Telefone de acompanhante(s) [${newlyAddedCompanionIndices.map(i => `guest_${i}`).join(", ")}] inserido/atualizado na reserva ${r.code}. Disparando instruções individuais exclusivamente para o(s) acompanhante(s).`);
+      dispatchCatchUpGuestRulerMessages(db, saveDatabase, r, {
+        baseUrl: editBaseUrl,
+        onlyGuestIndices: newlyAddedCompanionIndices
+      }).catch(err => {
+        console.warn(`[WhatsApp Companion Catch-Up] Erro ao disparar régua para acompanhante(s) em ${r.code}:`, err.message);
+      });
     }
   }
 
@@ -41453,6 +41522,196 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint: Enviar Instruções Completas + Manual PDF + Link Individual FNRH EXCLUSIVAMENTE para Acompanhante (2º / 3º Hóspede)
+app.post(["/api/pms/reservations/:id/send-companion-instructions", "/api/reservations/:id/send-companion-instructions"], async (req, res) => {
+  try {
+    const idOrCode = String(req.params.id || "").trim();
+    const {
+      guestIndex = 2,
+      phone: overridePhone,
+      guestName: overrideGuestName,
+      email: overrideEmail,
+      cpf: overrideCpf,
+      forceResend = true
+    } = req.body || {};
+
+    if (!db.reservations) db.reservations = [];
+    const reservation = (typeof findReservationByLocatorOrContact === "function" ? findReservationByLocatorOrContact(idOrCode) : null) ||
+      (db.reservations || []).find(r => String(r.id) === idOrCode || r.code === idOrCode || r.reservationCode === idOrCode);
+
+    if (!reservation || reservation.status === "cancelada" || reservation.status === "cancelado" || reservation.status === "cancelled") {
+      return res.status(404).json({ error: "Reserva não encontrada ou cancelada." });
+    }
+    if (isPreReservationBlocked(reservation)) {
+      return res.status(403).json({
+        error: "Esta é uma pré-reserva aguardando pagamento. As instruções de check-in e estadia só são liberadas após a confirmação do pagamento.",
+        preCheckinBlocked: true
+      });
+    }
+
+    const safeGuestIndex = Math.min(Math.max(Number(guestIndex) || 2, 2), 4);
+    const expectedCount = Math.min(Math.max(Number(reservation.guestCount) || Number(reservation.adults) || safeGuestIndex, safeGuestIndex), 4);
+    if ((Number(reservation.guestCount) || 1) < safeGuestIndex) {
+      reservation.guestCount = safeGuestIndex;
+    }
+
+    if (!Array.isArray(reservation.guests) || reservation.guests.length === 0) {
+      reservation.guests = [{
+        index: 1,
+        name: reservation.guestName || "Hóspede 1",
+        cpf: reservation.guestDocument || "",
+        phone: reservation.guestPhone || "",
+        email: reservation.guestEmail || "",
+        hasCompletedCheckin: Boolean(!reservation.needsReSignature && (reservation.fnhrCompleted || reservation.fnrhDocumentUuid)),
+        needsReSignature: Boolean(reservation.needsReSignature),
+        entryAuthorized: reservation.status === "in_house"
+      }];
+    }
+    for (let i = 1; i <= expectedCount; i++) {
+      if (!reservation.guests.some(g => Number(g?.index || 0) === i)) {
+        reservation.guests.push({
+          index: i,
+          name: i === 1 ? (reservation.guestName || "Hóspede 1") : `Hóspede ${i}`,
+          cpf: "",
+          phone: i === 1 ? (reservation.guestPhone || "") : "",
+          email: i === 1 ? (reservation.guestEmail || "") : "",
+          hasCompletedCheckin: false,
+          needsReSignature: Boolean(reservation.needsReSignature),
+          entryAuthorized: false
+        });
+      }
+    }
+
+    const targetGuest = reservation.guests.find(g => Number(g?.index || 0) === safeGuestIndex);
+    if (!targetGuest) {
+      return res.status(400).json({ error: `Slot do ${safeGuestIndex}º hóspede não localizado na reserva.` });
+    }
+
+    const cleanOverrideName = overrideGuestName ? String(overrideGuestName).trim() : "";
+    if (cleanOverrideName && !/^H[oó]spede\s*\d+$/i.test(cleanOverrideName)) {
+      targetGuest.name = cleanOverrideName;
+    }
+    if (overridePhone && String(overridePhone).replace(/\D/g, "").length >= 10) {
+      targetGuest.phone = String(overridePhone).trim();
+    }
+    if (overrideEmail && String(overrideEmail).trim()) {
+      targetGuest.email = String(overrideEmail).trim();
+    }
+    if (overrideCpf && String(overrideCpf).trim()) {
+      targetGuest.cpf = String(overrideCpf).trim();
+    }
+
+    const resolvedName = String(targetGuest.name || `Hóspede ${safeGuestIndex}`).trim();
+    const rawPhone = String(targetGuest.phone || targetGuest.whatsapp || "").trim();
+    const cleanPhone = typeof cleanWhatsAppPhone === "function" ? cleanWhatsAppPhone(rawPhone) : rawPhone.replace(/\D/g, "");
+    const primaryCleanDigits = String(reservation.guestPhone || "").replace(/\D/g, "").replace(/^55/, "");
+    const compCleanDigits = cleanPhone.replace(/\D/g, "").replace(/^55/, "");
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`.replace(/https?:\/\/corpflats\.onrender\.com/gi, "https://corpflats.com.br");
+    const preCheckinUrl = await getCheckinUrl(reservation, safeGuestIndex, baseUrl, db);
+
+    if (!compCleanDigits || compCleanDigits.length < 10) {
+      return res.status(400).json({
+        error: `Informe um número de WhatsApp válido com DDD para o ${safeGuestIndex}º hóspede (${resolvedName}).`,
+        needsPhone: true,
+        guestIndex: safeGuestIndex,
+        guestName: resolvedName,
+        checkinUrl: preCheckinUrl
+      });
+    }
+
+    if (primaryCleanDigits && compCleanDigits === primaryCleanDigits) {
+      return res.status(400).json({
+        error: `O telefone do ${safeGuestIndex}º hóspede é igual ao do 1º hóspede titular. Cadastre o WhatsApp próprio de ${resolvedName} para enviar separado.`
+      });
+    }
+
+    reservation.guestPhoneUpdatedAt = new Date().toISOString();
+    saveDatabase();
+
+    // Monta URL de redundância para WhatsApp Web já personalizada para guest_<safeGuestIndex>
+    const firstName = resolvedName.split(" ")[0] || resolvedName;
+    const flatNum = reservation.flatNumber || (db.flats?.find(f => f.id === reservation.flatId)?.number || "");
+    const portalUrl = `${baseUrl}/minha-reserva/${reservation.code || reservation.id}`;
+    const fallbackTemplate = (db.whatsappTemplates || []).find(t => t.id === "tpl_sameday_reservation" || t.id === "tpl_checkin_day_instructions");
+    let waWebText = "";
+    if (fallbackTemplate?.message && typeof resolveWhatsAppTags === "function") {
+      waWebText = resolveWhatsAppTags(fallbackTemplate.message, reservation, db, baseUrl, `guest_${safeGuestIndex}`);
+      if (!waWebText.includes(preCheckinUrl)) {
+        waWebText += `\n\n📝 *Seu Check-in Digital Individual:*\n${preCheckinUrl}`;
+      }
+    } else {
+      waWebText =
+        `Olá, *${firstName}*! Seja muito bem-vindo(a) ao *CorpFlats*! ✨\n\n` +
+        `Você foi cadastrado(a) na reserva *${reservation.code || ""}* (*Flat ${flatNum}*).\n\n` +
+        `📝 *Preencha seu Check-in Digital individual (liberação na portaria):*\n${preCheckinUrl}\n\n` +
+        `🏨 *Portal da Reserva, Wi-Fi e Guia do Hóspede:*\n${portalUrl}`;
+    }
+    const normalizedWaPhone = cleanPhone.startsWith("55") ? cleanPhone : `55${cleanPhone}`;
+    const waWebUrl = `https://wa.me/${normalizedWaPhone}?text=${encodeURIComponent(waWebText)}`;
+
+    const startedAtMs = Date.now();
+    const catchUpResult = await dispatchCatchUpGuestRulerMessages(db, saveDatabase, reservation, {
+      baseUrl,
+      onlyGuestIndices: [safeGuestIndex],
+      forceResendInstructions: Boolean(forceResend)
+    });
+
+    const dispatchedStages = Array.isArray(catchUpResult?.dispatchedStages) ? catchUpResult.dispatchedStages : [];
+    const recentSentCount = (db.whatsappHistory || []).filter(h => {
+      if (!h) return false;
+      const hTime = h.sentAt ? new Date(h.sentAt).getTime() : 0;
+      if (hTime < startedAtMs - 2000) return false;
+      const hDigits = String(h.guestPhone || h.phone || "").replace(/\D/g, "").replace(/^55/, "");
+      return hDigits === compCleanDigits && (h.status === "sent" || h.status === "delivered");
+    }).length;
+
+    const hasRealZapiCreds = Boolean(
+      db.zapiConfig?.instanceId?.trim() &&
+      db.zapiConfig?.token?.trim() &&
+      db.zapiConfig?.enabled !== false
+    );
+    const realZapiSent = hasRealZapiCreds && recentSentCount > 0;
+
+    if (typeof logAuditEvent === "function") {
+      await logAuditEvent({
+        level: "info",
+        category: "whatsapp",
+        action: "PMS_SEND_COMPANION_INSTRUCTIONS",
+        actor: typeof getAuthUser === "function" ? (getAuthUser(req) || { name: "Operador PMS", role: "admin" }) : { name: "Operador PMS", role: "admin" },
+        details: {
+          reservationId: reservation.id,
+          reservationCode: reservation.code,
+          flatNumber: reservation.flatNumber,
+          guestIndex: safeGuestIndex,
+          guestName: resolvedName,
+          phone: cleanPhone,
+          dispatchedStages,
+          sentViaZapi: realZapiSent
+        }
+      });
+    }
+
+    return res.json({
+      success: realZapiSent,
+      sentViaZapi: realZapiSent,
+      dispatchedStages,
+      sentCount: recentSentCount,
+      guestIndex: safeGuestIndex,
+      guestName: resolvedName,
+      phone: cleanPhone,
+      checkinUrl: preCheckinUrl,
+      waWebUrl,
+      message: realZapiSent
+        ? `Instruções completas, Manual PDF e link individual enviados exclusivamente para ${resolvedName} (${safeGuestIndex}º hóspede)!`
+        : `Z-API offline ou em modo simulado no momento. Abrindo WhatsApp Web direto para ${resolvedName}.`
+    });
+  } catch (err) {
+    console.error("[Send Companion Instructions Error]:", err);
+    return res.status(500).json({ error: err?.message || "Erro ao enviar instruções ao acompanhante." });
   }
 });
 

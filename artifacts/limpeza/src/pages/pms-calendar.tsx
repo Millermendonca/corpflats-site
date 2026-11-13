@@ -491,8 +491,14 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   // Mensagens Rápidas (Manuais) do WhatsApp
   const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
   const [hoveredModalQuickMsg, setHoveredModalQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
-  const [confirmingModalQuickMsg, setConfirmingModalQuickMsg] = useState<{ qm: WhatsAppQuickMessage; effectiveRes: any } | null>(null)
+  const [confirmingModalQuickMsg, setConfirmingModalQuickMsg] = useState<{ qm: WhatsAppQuickMessage; effectiveRes: any; initialTargetKey?: string } | null>(null)
   const [modalSendingMsgId, setModalSendingMsgId] = useState<string | null>(null)
+  const [quickMsgTargetKey, setQuickMsgTargetKey] = useState<string>("guest")
+  const [sendingCompanionInstrIdx, setSendingCompanionInstrIdx] = useState<number | null>(null)
+
+  useEffect(() => {
+    setQuickMsgTargetKey("guest")
+  }, [selectedRes?.id, selectedRes?.code])
 
   // Form fields
   const [formFlatId, setFormFlatId] = useState("")
@@ -5140,6 +5146,72 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         description: e.message || "Não foi possível cadastrar o hóspede no CRM.",
         variant: "destructive"
       })
+    }
+  }
+
+  const handleSendCompanionInstructions = async (guestNumber: 2 | 3) => {
+    if (!selectedRes) return
+    const isG2 = guestNumber === 2
+    const rawName = (isG2 ? formGuest2Name : formGuest3Name).trim() || selectedRes?.guests?.[guestNumber - 1]?.name || `Hóspede ${guestNumber}`
+    const rawPhone = (isG2 ? formGuest2Phone : formGuest3Phone).trim() || selectedRes?.guests?.[guestNumber - 1]?.phone || ""
+    const rawEmail = (isG2 ? formGuest2Email : formGuest3Email).trim() || selectedRes?.guests?.[guestNumber - 1]?.email || ""
+    const rawCpf = (isG2 ? formGuest2Cpf : formGuest3Cpf).trim() || selectedRes?.guests?.[guestNumber - 1]?.cpf || ""
+    const digits = rawPhone.replace(/\D/g, "")
+
+    if (digits.length < 10) {
+      toast({
+        title: "WhatsApp obrigatório",
+        description: `Preencha o WhatsApp com DDD do ${guestNumber}º hóspede para enviar as instruções individualmente.`,
+        variant: "destructive"
+      })
+      return
+    }
+
+    setSendingCompanionInstrIdx(guestNumber)
+    try {
+      const locator = encodeURIComponent(selectedRes.code || selectedRes.id)
+      const res = await fetch(`/api/pms/reservations/${locator}/send-companion-instructions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          guestIndex: guestNumber,
+          guestName: rawName,
+          phone: rawPhone,
+          email: rawEmail,
+          cpf: rawCpf,
+          forceResend: true
+        })
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(json.error || `Erro ao enviar instruções para o ${guestNumber}º hóspede.`)
+      }
+
+      if (json.sentViaZapi) {
+        toast({
+          title: `✅ Enviado só para o ${guestNumber}º Hóspede!`,
+          description: json.message || `Instruções, Manual PDF e link individual enviados exclusivamente para ${rawName} (sem reenviar ao 1º titular).`
+        })
+        fetchData(false)
+        fetchCommunications(selectedRes.code || selectedRes.id)
+      } else if (json.waWebUrl) {
+        toast({
+          title: `↪ Redirecionado para WhatsApp Web (${rawName})`,
+          description: json.message || `Z-API offline/simulada — abrindo conversa direta com o link individual do ${guestNumber}º hóspede.`
+        })
+        if (typeof window !== "undefined") {
+          window.open(json.waWebUrl, "_blank")
+        }
+      }
+    } catch (e: any) {
+      toast({
+        title: "Falha no envio ao acompanhante",
+        description: e.message || "Não foi possível enviar as instruções.",
+        variant: "destructive"
+      })
+    } finally {
+      setSendingCompanionInstrIdx(null)
     }
   }
 
@@ -11288,6 +11360,38 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         <Input type="tel" inputMode="tel" value={formGuest2Phone} onChange={e => setFormGuest2Phone(formatBrazilPhone(e.target.value))} placeholder="WhatsApp do 2º Hóspede" className="text-xs h-8" />
                         <Input type="email" value={formGuest2Email} onChange={e => setFormGuest2Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
                       </div>
+                      {selectedRes && selectedRes.status !== "pre_reserva" && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 px-2.5 py-2 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/70">
+                          <div className="text-[10.5px] text-emerald-900 dark:text-emerald-200 leading-tight">
+                            <span className="font-bold">📲 Envio exclusivo p/ 2º Hóspede:</span>{" "}
+                            <span className="text-emerald-800/80 dark:text-emerald-300/80">Manual PDF + instruções + link individual (sem reenviar ao 1º)</span>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={sendingCompanionInstrIdx === 2 || formGuest2Phone.replace(/\D/g, "").length < 10}
+                            onClick={() => handleSendCompanionInstructions(2)}
+                            title={
+                              formGuest2Phone.replace(/\D/g, "").length < 10
+                                ? "Informe o WhatsApp com DDD do 2º hóspede para liberar o envio"
+                                : "Envia instruções completas, Manual PDF e link de Check-in Digital exclusivamente para o 2º Hóspede"
+                            }
+                            className="h-7 px-2.5 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 shadow-2xs cursor-pointer shrink-0"
+                          >
+                            {sendingCompanionInstrIdx === 2 ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                <span>Enviando...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Send className="w-3 h-3" />
+                                <span>Enviar Instruções só p/ 2º Hóspede</span>
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -11500,6 +11604,38 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                         <Input type="tel" inputMode="tel" value={formGuest3Phone} onChange={e => setFormGuest3Phone(formatBrazilPhone(e.target.value))} placeholder="WhatsApp do 3º Hóspede" className="text-xs h-8" />
                         <Input type="email" value={formGuest3Email} onChange={e => setFormGuest3Email(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
                       </div>
+                      {selectedRes && selectedRes.status !== "pre_reserva" && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 px-2.5 py-2 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/70">
+                          <div className="text-[10.5px] text-emerald-900 dark:text-emerald-200 leading-tight">
+                            <span className="font-bold">📲 Envio exclusivo p/ 3º Hóspede:</span>{" "}
+                            <span className="text-emerald-800/80 dark:text-emerald-300/80">Manual PDF + instruções + link individual (sem reenviar ao 1º)</span>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={sendingCompanionInstrIdx === 3 || formGuest3Phone.replace(/\D/g, "").length < 10}
+                            onClick={() => handleSendCompanionInstructions(3)}
+                            title={
+                              formGuest3Phone.replace(/\D/g, "").length < 10
+                                ? "Informe o WhatsApp com DDD do 3º hóspede para liberar o envio"
+                                : "Envia instruções completas, Manual PDF e link de Check-in Digital exclusivamente para o 3º Hóspede"
+                            }
+                            className="h-7 px-2.5 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 shadow-2xs cursor-pointer shrink-0"
+                          >
+                            {sendingCompanionInstrIdx === 3 ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                <span>Enviando...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Send className="w-3 h-3" />
+                                <span>Enviar Instruções só p/ 3º Hóspede</span>
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -12692,184 +12828,318 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                 {selectedRes && (
                   <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2 relative">
                     {/* Janelinha Flutuante de Prévia no Modal (Ao passar o cursor sobre qualquer atalho) */}
-                    {hoveredModalQuickMsg && (() => {
-                      const modalRecipients = getReservationRecipients(selectedRes);
-                      const target = hoveredModalQuickMsg.recipientTarget || "guest";
-                      const isTargetRequester = target === "requester";
+                    {(() => {
+                      const buildModalEffectiveRes = () => {
+                        const liveTot = calculateTotal() || Number(formTotalAmount) || Number(selectedRes?.totalAmount) || 0;
+                        const livePaid = formPayments.length > 0
+                          ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+                          : (Number(formPaidAmount) || Number(selectedRes?.paidAmount) || 0);
+                        return {
+                          ...selectedRes,
+                          flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
+                          flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
+                          guestName: formGuestName.trim() || selectedRes?.guestName,
+                          guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
+                          guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
+                          guests: (() => {
+                            const base = Array.isArray(selectedRes?.guests) ? [...selectedRes.guests] : [];
+                            const gList: any[] = [{
+                              ...(base[0] || {}),
+                              index: 1,
+                              name: formGuestName.trim() || base[0]?.name || selectedRes?.guestName || "Hóspede",
+                              phone: formGuestPhone.trim() || base[0]?.phone || selectedRes?.guestPhone || "",
+                              email: formGuestEmail.trim() || base[0]?.email || selectedRes?.guestEmail || ""
+                            }];
+                            if ((Number(formGuestCount) || 1) >= 2 || formGuest2Name.trim() || formGuest2Phone.trim() || base[1]) {
+                              gList.push({
+                                ...(base[1] || {}),
+                                index: 2,
+                                name: formGuest2Name.trim() || base[1]?.name || "Hóspede 2",
+                                phone: formGuest2Phone.trim() || base[1]?.phone || base[1]?.whatsapp || "",
+                                email: formGuest2Email.trim() || base[1]?.email || ""
+                              });
+                            }
+                            if ((Number(formGuestCount) || 1) >= 3 || formGuest3Name.trim() || formGuest3Phone.trim() || base[2]) {
+                              gList.push({
+                                ...(base[2] || {}),
+                                index: 3,
+                                name: formGuest3Name.trim() || base[2]?.name || "Hóspede 3",
+                                phone: formGuest3Phone.trim() || base[2]?.phone || base[2]?.whatsapp || "",
+                                email: formGuest3Email.trim() || base[2]?.email || ""
+                              });
+                            }
+                            return gList;
+                          })(),
+                          checkinDate: formCheckin || selectedRes?.checkinDate,
+                          checkoutDate: formCheckout || selectedRes?.checkoutDate,
+                          checkinTime: formCheckinTime || selectedRes?.checkinTime,
+                          checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
+                          includeBreakfast: formIncludeBreakfast,
+                          hasBreakfast: formIncludeBreakfast,
+                          totalAmount: liveTot > 0 ? liveTot : selectedRes?.totalAmount,
+                          paidAmount: livePaid,
+                          dailyRates: formDailyRates.length > 0 ? formDailyRates : selectedRes?.dailyRates,
+                          charges: formCharges,
+                          cleaningFee: formCharges
+                            .filter(c => c.type === "cleaning")
+                            .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+                        };
+                      };
+
+                      const modalEffectiveRes = buildModalEffectiveRes();
+                      const modalRecipients = getReservationRecipients(modalEffectiveRes);
+                      const modalCompanionsWithPhone = (modalRecipients.companions || []).filter(
+                        c => c.cleanDigits && c.cleanDigits.length >= 8 && c.cleanDigits !== modalRecipients.guest.cleanDigits && c.cleanDigits !== modalRecipients.requester.cleanDigits
+                      );
+                      const selectedModalCompanion = modalCompanionsWithPhone.find(c => c.key === quickMsgTargetKey) || null;
+                      const activeTargetPhoneDisplay = selectedModalCompanion
+                        ? selectedModalCompanion.phone
+                        : (formGuestPhone || selectedRes.guestPhone || "");
+
                       return (
-                        <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none text-left">
-                          <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
-                            <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
-                              <span className="text-sm">{hoveredModalQuickMsg.icon}</span>
-                              <span className="truncate max-w-[200px]">{hoveredModalQuickMsg.title}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              {target === "both" ? (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
-                                  ✨ Ambos
-                                </span>
-                              ) : target === "requester" ? (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                                  👥 Solicitante
-                                </span>
-                              ) : (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
-                                  👤 Hóspede
-                                </span>
-                              )}
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                                Manual
-                              </span>
-                            </div>
-                          </div>
-                          <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
-                            {renderQuickMessage(
-                              hoveredModalQuickMsg.message, 
-                              selectedRes, 
-                              typeof window !== "undefined" ? window.location.origin : undefined,
-                              isTargetRequester ? "requester" : "guest"
-                            )}
-                          </div>
-                          <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
-                            <span className="font-mono truncate max-w-[260px]">
-                              {target === "requester" ? (
-                                <>
-                                  <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
-                                  <span className="text-slate-300 ml-1">({modalRecipients.requester.name})</span>
-                                </>
-                              ) : target === "both" ? (
-                                <>
-                                  <strong className="text-purple-400">Destino: ✨ Ambos</strong>
-                                  <span className="text-slate-300 ml-1">({modalRecipients.guest.firstName} + {modalRecipients.requester.firstName})</span>
-                                </>
-                              ) : (
-                                <>
-                                  <strong className="text-sky-400">Destino: 👤 Hóspede</strong>
-                                  <span className="text-slate-300 ml-1">({modalRecipients.guest.name})</span>
-                                </>
-                              )}
+                        <>
+                          {hoveredModalQuickMsg && (() => {
+                            const target = hoveredModalQuickMsg.recipientTarget || "guest";
+                            const isTargetRequester = target === "requester";
+                            const renderTarget = isTargetRequester
+                              ? "requester"
+                              : selectedModalCompanion
+                              ? selectedModalCompanion.key
+                              : "guest";
+                            return (
+                              <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none text-left">
+                                <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
+                                    <span className="text-sm">{hoveredModalQuickMsg.icon}</span>
+                                    <span className="truncate max-w-[200px]">{hoveredModalQuickMsg.title}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    {isTargetRequester ? (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                                        👥 Solicitante
+                                      </span>
+                                    ) : selectedModalCompanion ? (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                                        👥 Só {selectedModalCompanion.index}º Hóspede
+                                      </span>
+                                    ) : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0 ? (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                                        ✨ Todos os Hóspedes
+                                      </span>
+                                    ) : target === "both" ? (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                                        ✨ Ambos
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                                        👤 {modalCompanionsWithPhone.length > 0 ? "Só 1º Hóspede" : "Hóspede"}
+                                      </span>
+                                    )}
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                                      Manual
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
+                                  {renderQuickMessage(
+                                    hoveredModalQuickMsg.message,
+                                    modalEffectiveRes,
+                                    typeof window !== "undefined" ? window.location.origin : undefined,
+                                    renderTarget
+                                  )}
+                                </div>
+                                <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
+                                  <span className="font-mono truncate max-w-[260px]">
+                                    {isTargetRequester ? (
+                                      <>
+                                        <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
+                                        <span className="text-slate-300 ml-1">({modalRecipients.requester.name})</span>
+                                      </>
+                                    ) : selectedModalCompanion ? (
+                                      <>
+                                        <strong className="text-sky-400">Destino: 👥 Só {selectedModalCompanion.index}º Hóspede</strong>
+                                        <span className="text-slate-300 ml-1">({selectedModalCompanion.name})</span>
+                                      </>
+                                    ) : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0 ? (
+                                      <>
+                                        <strong className="text-purple-400">Destino: ✨ Todos os Hóspedes</strong>
+                                        <span className="text-slate-300 ml-1">({[modalRecipients.guest.firstName, ...modalCompanionsWithPhone.map(c => c.firstName)].join(" + ")})</span>
+                                      </>
+                                    ) : target === "both" ? (
+                                      <>
+                                        <strong className="text-purple-400">Destino: ✨ Ambos</strong>
+                                        <span className="text-slate-300 ml-1">({modalRecipients.guest.firstName} + {modalRecipients.requester.firstName})</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <strong className="text-sky-400">Destino: 👤 {modalCompanionsWithPhone.length > 0 ? "Só 1º Hóspede" : "Hóspede"}</strong>
+                                        <span className="text-slate-300 ml-1">({modalRecipients.guest.name})</span>
+                                      </>
+                                    )}
+                                  </span>
+                                  <span className="text-emerald-400 font-bold shrink-0">⚡ Clique: Z-API • Segure 2s: WhatsApp Web</span>
+                                </div>
+                                <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
+                              </div>
+                            );
+                          })()}
+
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
+                              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              Disparar WhatsApp (Clique: Z-API • Segure 2s: Web)
                             </span>
-                            <span className="text-emerald-400 font-bold shrink-0">⚡ Clique: Z-API • Segure 2s: WhatsApp Web</span>
+                            <div className="flex items-center gap-2">
+                              {activeTargetPhoneDisplay && (
+                                <a
+                                  href={`https://wa.me/${cleanWhatsAppPhone(activeTargetPhoneDisplay)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[10px] text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 font-mono hover:underline flex items-center gap-0.5"
+                                  title="Abrir WhatsApp Web manualmente para este número"
+                                >
+                                  <span>
+                                    Destino:{" "}
+                                    {selectedModalCompanion
+                                      ? `${selectedModalCompanion.firstName} (${activeTargetPhoneDisplay})`
+                                      : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0
+                                      ? "Todos os hóspedes"
+                                      : activeTargetPhoneDisplay}
+                                  </span>
+                                  <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                                </a>
+                              )}
+                              <a 
+                                href="/whatsapp?tab=quick_messages" 
+                                target="_blank" 
+                                rel="noreferrer" 
+                                className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-0.5"
+                                title="Gerenciar modelos e ativar/desativar mensagens"
+                              >
+                                <SlidersHorizontal className="w-3 h-3" />
+                                <span>Gerenciar</span>
+                              </a>
+                            </div>
                           </div>
-                          <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
-                        </div>
+
+                          {modalCompanionsWithPhone.length > 0 && (
+                            <div className="flex items-center flex-wrap gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-emerald-200/80 dark:border-emerald-900/60">
+                              <span className="text-[10.5px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1 mr-0.5">
+                                <Users className="w-3 h-3 text-emerald-600" />
+                                <span>Enviar para:</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setQuickMsgTargetKey("guest")}
+                                className={`h-6 px-2 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer border ${
+                                  quickMsgTargetKey === "guest"
+                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-2xs"
+                                    : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 hover:border-emerald-400"
+                                }`}
+                                title={`Enviar SOMENTE para o 1º Hóspede Titular (${modalRecipients.guest.name})`}
+                              >
+                                👤 Só 1º ({modalRecipients.guest.firstName})
+                              </button>
+                              {modalCompanionsWithPhone.map(comp => (
+                                <button
+                                  key={comp.key}
+                                  type="button"
+                                  onClick={() => setQuickMsgTargetKey(comp.key)}
+                                  className={`h-6 px-2 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer border ${
+                                    quickMsgTargetKey === comp.key
+                                      ? "bg-sky-600 text-white border-sky-600 shadow-2xs"
+                                      : "bg-white dark:bg-slate-800 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:border-sky-500"
+                                  }`}
+                                  title={`Enviar SOMENTE para o ${comp.index}º Hóspede (${comp.name} • ${comp.phone}) sem reenviar ao 1º titular`}
+                                >
+                                  👥 Só {comp.index}º ({comp.firstName})
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() => setQuickMsgTargetKey("all_guests")}
+                                className={`h-6 px-2 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer border ${
+                                  quickMsgTargetKey === "all_guests"
+                                    ? "bg-purple-600 text-white border-purple-600 shadow-2xs"
+                                    : "bg-white dark:bg-slate-800 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:border-purple-500"
+                                }`}
+                                title="Enviar individualmente para todos os hóspedes cadastrados na reserva"
+                              >
+                                ✨ Ambos / Todos
+                              </button>
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap gap-1.5">
+                            {activeQuickMessages.map(qm => {
+                              const isSending = modalSendingMsgId === qm.id;
+                              const target = qm.recipientTarget || "guest";
+                              return (
+                                <Button
+                                  key={qm.id}
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={isSending}
+                                  onMouseEnter={() => setHoveredModalQuickMsg(qm)}
+                                  onMouseLeave={() => setHoveredModalQuickMsg(null)}
+                                  title={
+                                    target === "requester"
+                                      ? `${qm.title} (Envia para o Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                      : selectedModalCompanion
+                                      ? `${qm.title} (Envia SÓ para ${selectedModalCompanion.index}º Hóspede: ${selectedModalCompanion.name} • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                      : quickMsgTargetKey === "all_guests" && modalCompanionsWithPhone.length > 0
+                                      ? `${qm.title} (Envia para Todos os Hóspedes • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                      : target === "both"
+                                      ? `${qm.title} (Envia para Hóspede e Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                      : `${qm.title} (Envia para o Hóspede • Clique: Z-API | Segure 2s: WhatsApp Web)`
+                                  }
+                                  {...bindZapiClickOrHoldWaWeb({
+                                    onClickZapi: () => {
+                                      setHoveredModalQuickMsg(null);
+                                      const effectiveRes = buildModalEffectiveRes();
+                                      setConfirmingModalQuickMsg({ qm, effectiveRes, initialTargetKey: quickMsgTargetKey });
+                                    },
+                                    getWaUrl: () => {
+                                      setHoveredModalQuickMsg(null);
+                                      const effectiveRes = buildModalEffectiveRes();
+                                      if (selectedModalCompanion && target !== "requester") {
+                                        return buildQuickMessageWaWebUrl(qm, effectiveRes, undefined, {
+                                          overrideTarget: selectedModalCompanion.key,
+                                          guestIndex: selectedModalCompanion.index,
+                                          customPhone: selectedModalCompanion.phone,
+                                          customName: selectedModalCompanion.name
+                                        });
+                                      }
+                                      return buildQuickMessageWaWebUrl(qm, effectiveRes);
+                                    },
+                                    toast
+                                  })}
+                                  className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
+                                >
+                                  {isSending ? (
+                                    <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
+                                  ) : (
+                                    <span>{qm.icon || "💬"}</span>
+                                  )}
+                                  <span>{qm.title}</span>
+                                  {target === "both" && (
+                                    <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold border border-purple-300 dark:border-purple-800 leading-tight" title="Hóspede + Solicitante">
+                                      ✨ Ambos
+                                    </span>
+                                  )}
+                                  {target === "requester" && (
+                                    <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800 leading-tight" title="Só Solicitante">
+                                      👥 Solicitante
+                                    </span>
+                                  )}
+                                </Button>
+                              );
+                            })}
+                          </div>
+                        </>
                       );
                     })()}
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
-                        <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                        Disparar WhatsApp (Clique: Z-API • Segure 2s: Web)
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {(formGuestPhone || selectedRes.guestPhone) && (
-                          <a
-                            href={`https://wa.me/${cleanWhatsAppPhone(formGuestPhone || selectedRes.guestPhone)}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[10px] text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 font-mono hover:underline flex items-center gap-0.5"
-                            title="Abrir WhatsApp Web manualmente para este número"
-                          >
-                            <span>Destino: {formGuestPhone || selectedRes.guestPhone}</span>
-                            <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                          </a>
-                        )}
-                        <a 
-                          href="/whatsapp?tab=quick_messages" 
-                          target="_blank" 
-                          rel="noreferrer" 
-                          className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-0.5"
-                          title="Gerenciar modelos e ativar/desativar mensagens"
-                        >
-                          <SlidersHorizontal className="w-3 h-3" />
-                          <span>Gerenciar</span>
-                        </a>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5">
-                      {activeQuickMessages.map(qm => {
-                        const isSending = modalSendingMsgId === qm.id;
-                        const target = qm.recipientTarget || "guest";
-                        const buildEffectiveRes = () => {
-                          const liveTot = calculateTotal() || Number(formTotalAmount) || Number(selectedRes?.totalAmount) || 0;
-                          const livePaid = formPayments.length > 0
-                            ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
-                            : (Number(formPaidAmount) || Number(selectedRes?.paidAmount) || 0);
-                          return {
-                            ...selectedRes,
-                            flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
-                            flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
-                            guestName: formGuestName.trim() || selectedRes?.guestName,
-                            guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
-                            guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
-                            guests: (() => { const base = Array.isArray(selectedRes?.guests) ? [...selectedRes.guests] : []; const gList: any[] = [{ ...(base[0] || {}), index: 1, name: formGuestName.trim() || base[0]?.name || selectedRes?.guestName || 'Hóspede', phone: formGuestPhone.trim() || base[0]?.phone || selectedRes?.guestPhone || '', email: formGuestEmail.trim() || base[0]?.email || selectedRes?.guestEmail || '' }]; if ((Number(formGuestCount) || 1) >= 2 || formGuest2Name.trim() || formGuest2Phone.trim() || base[1]) { gList.push({ ...(base[1] || {}), index: 2, name: formGuest2Name.trim() || base[1]?.name || 'Hóspede 2', phone: formGuest2Phone.trim() || base[1]?.phone || base[1]?.whatsapp || '', email: formGuest2Email.trim() || base[1]?.email || '' }); } if ((Number(formGuestCount) || 1) >= 3 || formGuest3Name.trim() || formGuest3Phone.trim() || base[2]) { gList.push({ ...(base[2] || {}), index: 3, name: formGuest3Name.trim() || base[2]?.name || 'Hóspede 3', phone: formGuest3Phone.trim() || base[2]?.phone || base[2]?.whatsapp || '', email: formGuest3Email.trim() || base[2]?.email || '' }); } return gList; })(),
-                            checkinDate: formCheckin || selectedRes?.checkinDate,
-                            checkoutDate: formCheckout || selectedRes?.checkoutDate,
-                            checkinTime: formCheckinTime || selectedRes?.checkinTime,
-                            checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
-                            includeBreakfast: formIncludeBreakfast,
-                            hasBreakfast: formIncludeBreakfast,
-                            totalAmount: liveTot > 0 ? liveTot : selectedRes?.totalAmount,
-                            paidAmount: livePaid,
-                            dailyRates: formDailyRates.length > 0 ? formDailyRates : selectedRes?.dailyRates,
-                            charges: formCharges,
-                            cleaningFee: formCharges
-                              .filter(c => c.type === "cleaning")
-                              .reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
-                          };
-                        };
-                        return (
-                          <Button
-                            key={qm.id}
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={isSending}
-                            onMouseEnter={() => setHoveredModalQuickMsg(qm)}
-                            onMouseLeave={() => setHoveredModalQuickMsg(null)}
-                            title={
-                              target === "both" 
-                                ? `${qm.title} (Envia para Hóspede e Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)` 
-                                : target === "requester" 
-                                  ? `${qm.title} (Envia para o Solicitante • Clique: Z-API | Segure 2s: WhatsApp Web)` 
-                                  : `${qm.title} (Envia para o Hóspede • Clique: Z-API | Segure 2s: WhatsApp Web)`
-                            }
-                            {...bindZapiClickOrHoldWaWeb({
-                              onClickZapi: () => {
-                                setHoveredModalQuickMsg(null);
-                                const effectiveRes = buildEffectiveRes();
-                                setConfirmingModalQuickMsg({ qm, effectiveRes });
-                              },
-                              getWaUrl: () => {
-                                setHoveredModalQuickMsg(null);
-                                const effectiveRes = buildEffectiveRes();
-                                return buildQuickMessageWaWebUrl(qm, effectiveRes);
-                              },
-                              toast
-                            })}
-                            className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
-                          >
-                            {isSending ? (
-                              <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
-                            ) : (
-                              <span>{qm.icon || "💬"}</span>
-                            )}
-                            <span>{qm.title}</span>
-                            {target === "both" && (
-                              <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold border border-purple-300 dark:border-purple-800 leading-tight" title="Hóspede + Solicitante">
-                                ✨ Ambos
-                              </span>
-                            )}
-                            {target === "requester" && (
-                              <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800 leading-tight" title="Só Solicitante">
-                                👥 Solicitante
-                              </span>
-                            )}
-                          </Button>
-                        );
-                      })}
-                    </div>
 
                     <QuickMessageConfirmDialog
                       open={Boolean(confirmingModalQuickMsg)}
@@ -12878,6 +13148,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                       }}
                       quickMessage={confirmingModalQuickMsg?.qm || null}
                       resItem={confirmingModalQuickMsg?.effectiveRes || selectedRes}
+                      initialTargetKey={confirmingModalQuickMsg?.initialTargetKey || quickMsgTargetKey}
                       onConfirm={async (qm, options) => {
                         setModalSendingMsgId(qm.id);
                         try {
