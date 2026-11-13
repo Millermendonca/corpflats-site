@@ -51538,9 +51538,15 @@ app.post("/api/emails/reception-fallback/sync-today", async (req, res) => {
 });
 
 // 16. Servir Anexo do Fallback da Recepção para Visualização/Download na Conversa do WhatsApp Chat
-app.get("/api/emails/reception-fallback/attachment/:commId/:attIndex/:fileName?", async (req, res) => {
-  return serveReceptionFallbackAttachment(db, req, res);
-});
+app.get(
+  [
+    "/api/emails/reception-fallback/attachment/:commId/:attIndex",
+    "/api/emails/reception-fallback/attachment/:commId/:attIndex/:fileName"
+  ],
+  async (req, res) => {
+    return serveReceptionFallbackAttachment(db, req, res);
+  }
+);
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ENTERPRISE WEBMAIL CLIENT REST API + ZOHO MAIL OAUTH2 INTEGRATION

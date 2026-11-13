@@ -101,5 +101,10 @@ loadEnvFiles();
 
 // Import API and static server
 const apiServerPath = path.resolve(__dirname, "./artifacts/api-server/demo-server.mjs");
-await import(pathToFileURL(apiServerPath).href);
+try {
+  await import(pathToFileURL(apiServerPath).href);
+} catch (bootErr) {
+  console.error("[Fatal Boot Error] Falha crítica ao inicializar demo-server.mjs:", bootErr?.stack || bootErr?.message || bootErr);
+  process.exit(1);
+}
 
