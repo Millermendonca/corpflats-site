@@ -649,6 +649,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
   const [maintModalFlat, setMaintModalFlat] = useState<any | null>(null)
   const [maintActionBusyId, setMaintActionBusyId] = useState<number | null>(null)
   const [undoingEarlyCheckoutId, setUndoingEarlyCheckoutId] = useState<number | string | null>(null)
+  const [clearingFalseEarlyCheckoutId, setClearingFalseEarlyCheckoutId] = useState<number | string | null>(null)
 
   const handleToggleMaintenanceBlocker = async (issue: any) => {
     setMaintActionBusyId(issue.id)
@@ -6466,6 +6467,7 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
         setSelectedRes(restored)
         setFormCheckout(restored.checkoutDate)
         setFormNotes(restored.notes || "")
+        setFormSpecialRequests(restored.specialRequests || restored.notes || "")
         setFormStatus("confirmada")
         const unitRate = Number(formDailyRate) || Number(restored.dailyRate) || 250
         const rebuiltRates = buildReservationDailyRates(
@@ -6499,6 +6501,44 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
       })
     } finally {
       setUndoingEarlyCheckoutId(null)
+    }
+  }
+
+  const handleClearFalseEarlyCheckout = async (targetRes: any, options?: { closeModal?: boolean }) => {
+    if (!targetRes?.id) return
+    setClearingFalseEarlyCheckoutId(targetRes.id)
+    try {
+      const resp = await fetch(`/api/pms/reservations/${targetRes.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ clearFalseEarlyCheckout: true, source: "PMS Calendário" })
+      })
+      const json = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(json.error || "Falha ao converter para check-out normal.")
+      if (selectedRes && String(selectedRes.id) === String(targetRes.id)) {
+        setSelectedRes(json)
+        setFormCheckout(json.checkoutDate || selectedRes.checkoutDate)
+        setFormNotes(json.notes || "")
+        setFormSpecialRequests(json.specialRequests || json.notes || "")
+      }
+      toast({
+        title: "Convertido para Check-out Normal! ✓",
+        description: `O aviso de check-out antecipado foi removido do Flat ${targetRes.flatNumber} mantendo o check-out realizado em ${format(parseISO(json.checkoutDate || targetRes.checkoutDate), "dd/MM/yyyy")}.`
+      })
+      await fetchData(false)
+      notifyCalendarUpdated()
+      if (options?.closeModal) {
+        setResModalOpen(false)
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro ao remover check-out antecipado",
+        description: err?.message || "Tente novamente.",
+        variant: "destructive"
+      })
+    } finally {
+      setClearingFalseEarlyCheckoutId(null)
     }
   }
 
@@ -12440,12 +12480,24 @@ export default function PmsCalendar(props?: { modalOnly?: boolean; autoOpenNewRe
                           O valor integral contratado foi preservado, os pedidos futuros de café foram suspensos e os dias restantes ficaram abertos no calendário (com rastro tracejado).
                         </p>
                       </div>
-                      <div className="pt-1 flex justify-end">
+                      <div className="pt-1 flex flex-wrap justify-end gap-2">
                         <Button
                           type="button"
                           size="sm"
                           variant="outline"
-                          disabled={undoingEarlyCheckoutId === selectedRes.id}
+                          disabled={clearingFalseEarlyCheckoutId === selectedRes.id || undoingEarlyCheckoutId === selectedRes.id}
+                          onClick={() => handleClearFalseEarlyCheckout(selectedRes, { closeModal: false })}
+                          title="Mantém o check-out realizado na data atual, mas remove o status de Check-out Antecipado (útil quando uma diária extra expirou ou foi excluída)"
+                          className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-emerald-400 text-emerald-900 dark:text-emerald-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/40"
+                        >
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>{clearingFalseEarlyCheckoutId === selectedRes.id ? "Ajustando..." : "Não foi antecipado (Check-out Normal)"}</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={undoingEarlyCheckoutId === selectedRes.id || clearingFalseEarlyCheckoutId === selectedRes.id}
                           onClick={() => handleUndoEarlyCheckout(selectedRes, { closeModal: true })}
                           className="h-7 text-xs font-bold gap-1.5 bg-white dark:bg-slate-900 border-amber-400 text-amber-950 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50"
                         >

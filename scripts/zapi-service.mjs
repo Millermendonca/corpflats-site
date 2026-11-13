@@ -14543,9 +14543,23 @@ export function findCheckoutTargetReservationsForFlat(db, flatId, flatNumber, to
     return st !== "cancelada" && st !== "cancelado" && st !== "cancelled" && st !== "expirada" && st !== "no_show" && st !== "pre_reserva" && st !== "pendente";
   };
 
-  // 1. Prioriza reservas com checkoutDate === todayStr (mesmo que já concluídas, evita atingir reserva que entra hoje)
+  const getEffectivePaidCheckout = (r) => {
+    if (r?.pendingStayExtension && r.pendingStayExtension.status === "pending_payment" && r.pendingStayExtension.oldCheckoutDate) {
+      return String(r.pendingStayExtension.oldCheckoutDate).slice(0, 10);
+    }
+    if (
+      r?.pendingSundayUpsell &&
+      ["pending_payment", "awaiting_payment", "pending"].includes(String(r.pendingSundayUpsell.status || "")) &&
+      r.pendingSundayUpsell.originalCheckoutDate
+    ) {
+      return String(r.pendingSundayUpsell.originalCheckoutDate).slice(0, 10);
+    }
+    return r?.checkoutDate;
+  };
+
+  // 1. Prioriza reservas com checkoutDate === todayStr (ou saída paga === todayStr quando há diária extra não paga)
   const regularToday = db.reservations.filter(r =>
-    matchesFlat(r) && isActiveRes(r) && r.checkoutDate === todayStr
+    matchesFlat(r) && isActiveRes(r) && (r.checkoutDate === todayStr || getEffectivePaidCheckout(r) === todayStr)
   );
   if (regularToday.length > 0) {
     const uncompletedRegular = regularToday.filter(r => !r.checkoutDone && r.status !== "completed" && r.status !== "checked_out");
@@ -14718,8 +14732,64 @@ export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, 
   const source = options.source || "manual";
   const reportedBy = formatCheckoutReporterLabel(source, options.reportedBy || options.senderName || options.actorName);
 
+  // Se havia diária(s) extra(s) aguardando pagamento (pendingStayExtension) e o hóspede está fazendo check-out sem pagá-la(s),
+  // reverte primeiro a extensão não paga para o período realmente contratado/quitado (evitando falso Check-out Antecipado).
+  if (reservation.pendingStayExtension && reservation.pendingStayExtension.status === "pending_payment") {
+    if (typeof globalThis.rollbackExpiredOrCancelledStayExtension === "function") {
+      globalThis.rollbackExpiredOrCancelledStayExtension(db, reservation, {
+        reason: "cancelled_by_checkout",
+        nowOverride: nowIso
+      });
+    } else {
+      const ext = reservation.pendingStayExtension;
+      const origIn = ext.oldCheckinDate || reservation.checkinDate;
+      const origOut = ext.oldCheckoutDate || reservation.previousCheckoutDate || reservation.checkoutDate;
+      reservation.checkinDate = origIn;
+      reservation.checkoutDate = origOut;
+      if (Array.isArray(ext.oldDailyRates) && ext.oldDailyRates.length > 0) {
+        reservation.dailyRates = ext.oldDailyRates.map(d => ({ ...d }));
+      } else if (Array.isArray(reservation.dailyRates) && reservation.dailyRates.length > 0) {
+        reservation.dailyRates = reservation.dailyRates.filter(d => d && d.date && d.date >= origIn && d.date < origOut);
+      }
+      if (Array.isArray(ext.oldCharges)) {
+        reservation.charges = ext.oldCharges.map(c => ({ ...c }));
+      }
+      if (ext.oldTotalAmount !== undefined && Number(ext.oldTotalAmount) > 0) {
+        reservation.totalAmount = Number(ext.oldTotalAmount);
+        reservation.totalPrice = Number(ext.oldTotalAmount);
+      }
+      if (ext.oldPaidAmount !== undefined) {
+        reservation.paidAmount = Number(ext.oldPaidAmount) || 0;
+        reservation.amountPaid = Number(ext.oldPaidAmount) || 0;
+      }
+      reservation.paymentStatus = (Number(reservation.totalAmount) > 0 && Number(reservation.paidAmount) >= Number(reservation.totalAmount) - 0.01)
+        ? "pago_total"
+        : (ext.oldPaymentStatus || "pago_total");
+      delete reservation.pendingStayExtension;
+      delete reservation.oldCheckoutDateBeforeExtension;
+    }
+  }
+  if (
+    reservation.pendingSundayUpsell &&
+    ["pending_payment", "awaiting_payment", "pending"].includes(String(reservation.pendingSundayUpsell.status || ""))
+  ) {
+    reservation.pendingSundayUpsell.status = "expired";
+    reservation.pendingSundayUpsell.expiredAt = nowIso;
+    if (reservation.pendingSundayUpsell.originalCheckoutDate) {
+      reservation.checkoutDate = reservation.pendingSundayUpsell.originalCheckoutDate;
+    }
+    if (reservation.pendingModification?.isSilentUpsellHold) {
+      delete reservation.pendingModification;
+    }
+  }
+  if (reservation.expiredStayExtension) {
+    delete reservation.expiredStayExtension;
+  }
+
   const previousStatus = reservation.status;
-  const plannedCheckout = reservation.originalCheckoutDate || reservation.checkoutDate;
+  const plannedCheckout = (reservation.earlyCheckout && reservation.originalCheckoutDate)
+    ? reservation.originalCheckoutDate
+    : reservation.checkoutDate;
   const isEarlyCheckout = Boolean(plannedCheckout && plannedCheckout > todayStr);
 
   if (!reservation.actualCheckoutAt) {
@@ -14742,7 +14812,9 @@ export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, 
   reservation.updatedAt = nowIso;
 
   if (isEarlyCheckout) {
-    const oldCheckout = reservation.originalCheckoutDate || reservation.checkoutDate;
+    const oldCheckout = (reservation.earlyCheckout && reservation.originalCheckoutDate)
+      ? reservation.originalCheckoutDate
+      : reservation.checkoutDate;
     reservation.originalCheckoutDate = oldCheckout;
     reservation.previousCheckoutDate = oldCheckout;
 
@@ -14766,9 +14838,14 @@ export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, 
     const earlyNoteLine = `Check-out antecipado em ${actualBr} às ${timeStr} informado por ${reportedBy} (saída original prevista: ${origBr})`;
     reservation.earlyCheckoutNote = earlyNoteLine;
 
-    const currentNotes = String(reservation.notes || "").trim();
-    if (!currentNotes.includes("Check-out antecipado em")) {
-      reservation.notes = currentNotes ? `${currentNotes}\n• ${earlyNoteLine}` : `• ${earlyNoteLine}`;
+    const currentNotes = String(reservation.notes || "")
+      .replace(/(?:^|\n)\s*•?\s*Check-out antecipado em [^\n]+/g, "")
+      .trim();
+    reservation.notes = currentNotes ? `${currentNotes}\n• ${earlyNoteLine}` : `• ${earlyNoteLine}`;
+    if (reservation.specialRequests && String(reservation.specialRequests).includes("Check-out antecipado em")) {
+      reservation.specialRequests = String(reservation.specialRequests)
+        .replace(/(?:^|\n)\s*•?\s*Check-out antecipado em [^\n]+/g, "")
+        .trim();
     }
 
     if (!Array.isArray(reservation.auditLogs)) reservation.auditLogs = [];
@@ -14823,6 +14900,27 @@ export async function applyReservationCheckoutAndEarlyRelease(db, saveDatabase, 
           return !(sameFlat && c.requestDate === oldCheckout && c.status !== "clean" && !c.isInstructionOnly);
         });
       }
+    }
+  } else {
+    reservation.earlyCheckout = false;
+    reservation.originalCheckoutDate = null;
+    reservation.earlyCheckoutDate = null;
+    reservation.earlyCheckoutTime = null;
+    reservation.earlyCheckoutAt = null;
+    reservation.earlyCheckoutReleasedAt = null;
+    reservation.earlyCheckoutReportedBy = null;
+    reservation.earlyCheckoutNote = null;
+    reservation.earlyCheckoutAdminNotifiedAt = null;
+    delete reservation.originalTotalAmount;
+    if (reservation.notes && String(reservation.notes).includes("Check-out antecipado em")) {
+      reservation.notes = String(reservation.notes)
+        .replace(/(?:^|\n)\s*•?\s*Check-out antecipado em [^\n]+/g, "")
+        .trim();
+    }
+    if (reservation.specialRequests && String(reservation.specialRequests).includes("Check-out antecipado em")) {
+      reservation.specialRequests = String(reservation.specialRequests)
+        .replace(/(?:^|\n)\s*•?\s*Check-out antecipado em [^\n]+/g, "")
+        .trim();
     }
   }
 

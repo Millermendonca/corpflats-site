@@ -33822,6 +33822,82 @@ export function resolveStayExtensionHold(input = {}, extensionStartDate = "", op
   );
 }
 
+// ── Limpeza de Falso Check-out Antecipado quando a Saída Ocorreu na Data Paga Real ──
+export function clearFalseEarlyCheckoutFromCompletedStay(targetDb = db, r, options = {}) {
+  if (!r) return false;
+  const nowIso = options?.nowIso || new Date().toISOString();
+  const prevEarlyAt = r.earlyCheckoutAt || null;
+  const prevEarlyTime = r.earlyCheckoutTime || null;
+  const prevEarlyReportedBy = r.earlyCheckoutReportedBy || null;
+  const prevEarlyNote = r.earlyCheckoutNote || null;
+
+  if (options?.restoredCheckoutDate && /^\d{4}-\d{2}-\d{2}$/.test(String(options.restoredCheckoutDate).slice(0, 10))) {
+    r.checkoutDate = String(options.restoredCheckoutDate).slice(0, 10);
+  }
+  if (r.checkinDate && r.checkoutDate && r.checkoutDate > r.checkinDate) {
+    r.nights = Math.max(
+      1,
+      Math.round(
+        (new Date(`${r.checkoutDate}T12:00:00Z`).getTime() - new Date(`${r.checkinDate}T12:00:00Z`).getTime()) / 86400000
+      )
+    );
+  }
+
+  // Preserva os metadados legítimos de check-out normal caso só estivessem em earlyCheckout*
+  if (!r.actualCheckoutAt && prevEarlyAt) r.actualCheckoutAt = prevEarlyAt;
+  if (!r.actualCheckoutTime && prevEarlyTime) r.actualCheckoutTime = prevEarlyTime;
+  if (!r.checkoutReportedBy && prevEarlyReportedBy) r.checkoutReportedBy = prevEarlyReportedBy;
+
+  const stripEarlyNoteText = (txt) => {
+    if (!txt) return "";
+    let cleaned = String(txt);
+    if (prevEarlyNote) {
+      cleaned = cleaned.replace(
+        new RegExp(`(?:^|\\n)\\s*•?\\s*${String(prevEarlyNote).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "g"),
+        ""
+      );
+    }
+    return cleaned
+      .replace(/(?:^|\n)\s*•?\s*Check-out antecipado em [^\n]+/g, "")
+      .trim();
+  };
+
+  if (r.notes) r.notes = stripEarlyNoteText(r.notes);
+  if (r.specialRequests) r.specialRequests = stripEarlyNoteText(r.specialRequests);
+
+  r.earlyCheckout = false;
+  r.originalCheckoutDate = null;
+  r.earlyCheckoutDate = null;
+  r.earlyCheckoutTime = null;
+  r.earlyCheckoutAt = null;
+  r.earlyCheckoutReleasedAt = null;
+  r.earlyCheckoutReportedBy = null;
+  r.earlyCheckoutNote = null;
+  r.earlyCheckoutAdminNotifiedAt = null;
+  delete r.originalTotalAmount;
+
+  if (targetDb && Array.isArray(targetDb.breakfastOrders)) {
+    for (const o of targetDb.breakfastOrders) {
+      if (!o || !o.checkoutWarningInfo?.isEarlyCheckout) continue;
+      const matchesOrder =
+        (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+        (o.reservationId && Number(o.reservationId) === Number(r.id));
+      if (matchesOrder && (!r.checkoutDate || o.date <= r.checkoutDate)) {
+        o.checkoutWarningInfo.isEarlyCheckout = false;
+        o.checkoutWarningInfo.originalCheckoutDate = r.checkoutDate;
+        if (typeof o.cancelReason === "string" && o.cancelReason.includes("Check-out antecipado")) {
+          o.cancelReason = o.cancelReason.replace(/Check-out antecipado/g, "Check-out").replace(/\s*\(sa[íi]da prevista era [^)]+\)/i, "");
+        }
+        o.updatedAt = nowIso;
+      }
+    }
+  }
+
+  r.calendarSequence = (r.calendarSequence || 0) + 1;
+  r.updatedAt = nowIso;
+  return true;
+}
+
 // ── Rollback Parcial Atômico de Diária Extra Expirada ou Cancelada Manualmente ──
 export function rollbackExpiredOrCancelledStayExtension(targetDb = db, r, options = {}) {
   if (!r || !r.pendingStayExtension) return { rolledBack: false };
@@ -33832,15 +33908,25 @@ export function rollbackExpiredOrCancelledStayExtension(targetDb = db, r, option
     : (targetDb?._nowOverride ? new Date(targetDb._nowOverride).getTime() : Date.now());
   const nowIso = new Date(nowMs).toISOString();
 
-  const attemptedCheckin = r.checkinDate;
-  const attemptedCheckout = r.checkoutDate;
-  const attemptedTotal = Number(r.totalAmount) || 0;
+  const attemptedCheckin = ext.newCheckinDate || r.checkinDate;
+  const attemptedCheckout = ext.newCheckoutDate || r.checkoutDate;
+  const attemptedTotal = Number(ext.newTotalAmount) || Number(r.totalAmount) || 0;
 
   const origCheckin = ext.oldCheckinDate || r.checkinDate;
   const origCheckout = ext.oldCheckoutDate || r.previousCheckoutDate || r.checkoutDate;
+  const wasAlreadyCheckedOut = Boolean(
+    r.checkoutDone ||
+    r.actualCheckoutAt ||
+    r.earlyCheckout ||
+    r.status === "completed" ||
+    r.status === "checked_out"
+  );
+  const actualEarlyOrCheckoutDate = r.earlyCheckoutDate || (r.actualCheckoutAt ? getExecutionDateStr(r.actualCheckoutAt) : null);
 
   r.checkinDate = origCheckin;
-  r.checkoutDate = origCheckout;
+  r.checkoutDate = (wasAlreadyCheckedOut && actualEarlyOrCheckoutDate && actualEarlyOrCheckoutDate < origCheckout)
+    ? actualEarlyOrCheckoutDate
+    : origCheckout;
   r.nights = Math.max(
     1,
     Math.round(
@@ -33943,8 +34029,42 @@ export function rollbackExpiredOrCancelledStayExtension(targetDb = db, r, option
     }
   }
 
+  // Se um check-out (ou falso check-out antecipado) ocorreu antes/durante a expiração da diária extra não paga,
+  // reconcilia o estado para que check-out na data paga real (origCheckout) seja check-out normal e não antecipado.
+  if (r.earlyCheckout || r.originalCheckoutDate || r.earlyCheckoutDate || r.earlyCheckoutNote) {
+    if (!actualEarlyOrCheckoutDate || actualEarlyOrCheckoutDate >= origCheckout) {
+      clearFalseEarlyCheckoutFromCompletedStay(targetDb, r, {
+        restoredCheckoutDate: origCheckout,
+        nowIso
+      });
+    } else {
+      r.checkoutDate = actualEarlyOrCheckoutDate;
+      r.originalCheckoutDate = origCheckout;
+      r.originalTotalAmount = restoredTotal;
+      const fmtOrigBr = origCheckout.split("-").reverse().join("/");
+      if (r.earlyCheckoutNote) {
+        r.earlyCheckoutNote = String(r.earlyCheckoutNote).replace(
+          /\(sa[íi]da\s+original\s+prevista:\s*[^)]+\)/i,
+          `(saída original prevista: ${fmtOrigBr})`
+        );
+      }
+      if (r.notes) {
+        r.notes = String(r.notes).replace(
+          /(Check-out antecipado em [^\n]*?\(sa[íi]da\s+original\s+prevista:\s*)[^)]+(\))/gi,
+          `$1${fmtOrigBr}$2`
+        );
+      }
+      if (r.specialRequests) {
+        r.specialRequests = String(r.specialRequests).replace(
+          /(Check-out antecipado em [^\n]*?\(sa[íi]da\s+original\s+prevista:\s*)[^)]+(\))/gi,
+          `$1${fmtOrigBr}$2`
+        );
+      }
+    }
+  }
+
   let expiredMeta = null;
-  if (reason === "expired") {
+  if (reason === "expired" && !wasAlreadyCheckedOut) {
     const derivedAddedDates = Array.isArray(ext.addedDates) && ext.addedDates.length > 0
       ? [...ext.addedDates]
       : (() => {
@@ -34051,6 +34171,7 @@ export function rollbackExpiredOrCancelledStayExtension(targetDb = db, r, option
 
 globalThis.resolveStayExtensionHold = resolveStayExtensionHold;
 globalThis.rollbackExpiredOrCancelledStayExtension = rollbackExpiredOrCancelledStayExtension;
+globalThis.clearFalseEarlyCheckoutFromCompletedStay = clearFalseEarlyCheckoutFromCompletedStay;
 
 // ── Varredura Automática de Pré-Reservas Expiradas + Lembrete Antes de Expirar ──
 export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase, options = {}) {
@@ -34271,7 +34392,7 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
     });
     if (rbResult.rolledBack) {
       expiredCount++;
-      if (typeof triggerImmediateWhatsApp === "function") {
+      if (rbResult.expiredStayExtension && typeof triggerImmediateWhatsApp === "function") {
         triggerImmediateWhatsApp(
           targetDb,
           saveFn,
@@ -34285,6 +34406,85 @@ export function sweepExpiredPreReservations(targetDb = db, saveFn = saveDatabase
           console.warn(`[Stay Extension Expire] Erro ao disparar WhatsApp de expiração parcial para ${r.code || r.id}:`, err?.message || err);
         });
       }
+    }
+  }
+
+  // 0c. Auto-cura de falso Check-out Antecipado causado por diária extra não paga/expirada/excluída (ex: RES-509-0794)
+  // e limpeza de observações residuais de check-out antecipado já desfeito
+  for (const r of targetDb.reservations) {
+    if (!r) continue;
+    const stLower = String(r.status || "").toLowerCase();
+    if (stLower === "cancelada" || stLower === "cancelado" || stLower === "cancelled" || stLower === "expirada") continue;
+
+    if (!r.earlyCheckout) {
+      let cleanedStaleNotes = false;
+      if (r.notes && String(r.notes).includes("Check-out antecipado em")) {
+        const nextN = String(r.notes).replace(/(?:^|\n)\s*•?\s*Check-out antecipado em [^\n]+/g, "").trim();
+        if (nextN !== r.notes) {
+          r.notes = nextN;
+          cleanedStaleNotes = true;
+        }
+      }
+      if (r.specialRequests && String(r.specialRequests).includes("Check-out antecipado em")) {
+        const nextSr = String(r.specialRequests).replace(/(?:^|\n)\s*•?\s*Check-out antecipado em [^\n]+/g, "").trim();
+        if (nextSr !== r.specialRequests) {
+          r.specialRequests = nextSr;
+          cleanedStaleNotes = true;
+        }
+      }
+      if (cleanedStaleNotes) {
+        r.updatedAt = nowIso;
+        expiredCount++;
+      }
+      continue;
+    }
+
+    const hasActivePendingExt = Boolean(r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment");
+    if (hasActivePendingExt) continue;
+
+    const actualOut = String(r.earlyCheckoutDate || r.checkoutDate || "").slice(0, 10);
+    const origOut = String(r.originalCheckoutDate || "").slice(0, 10);
+
+    const hasExpiredExtOnSameOrEarlierOut = Boolean(
+      r.expiredStayExtension &&
+      (!r.expiredStayExtension.oldCheckoutDate || actualOut >= String(r.expiredStayExtension.oldCheckoutDate).slice(0, 10))
+    );
+    const hasRollbackLogMatchingOut = Boolean(
+      Array.isArray(r.auditLogs) &&
+      r.auditLogs.some(l => {
+        if (!l || (l.action !== "stay_extension_expired" && l.action !== "stay_extension_cancelled")) return false;
+        const outCh = Array.isArray(l.changes) ? l.changes.find(ch => ch && ch.field === "checkoutDate") : null;
+        const restoredVal = outCh?.newValue ? String(outCh.newValue).slice(0, 10) : "";
+        const attemptedVal = outCh?.oldValue ? String(outCh.oldValue).slice(0, 10) : "";
+        return Boolean(
+          restoredVal &&
+          actualOut >= restoredVal &&
+          (!origOut || !attemptedVal || origOut === attemptedVal || origOut > restoredVal)
+        );
+      }) &&
+      !r.auditLogs.some(l =>
+        l &&
+        (l.action === "stay_extension_paid" || l.action === "payment_confirmed") &&
+        Array.isArray(l.changes) &&
+        l.changes.some(ch => ch && ch.field === "checkoutDate" && String(ch.newValue || "").slice(0, 10) > actualOut)
+      )
+    );
+    const isKnownRes509_0794 = Boolean(
+      (r.code === "RES-509-0794" || (String(r.flatNumber) === "509" && Number(r.id) === 794)) &&
+      actualOut === "2026-11-13" &&
+      origOut === "2026-11-14"
+    );
+    const isOrigNotAheadOfActual = Boolean(actualOut && (!origOut || origOut <= actualOut));
+
+    if (hasExpiredExtOnSameOrEarlierOut || hasRollbackLogMatchingOut || isKnownRes509_0794 || isOrigNotAheadOfActual) {
+      clearFalseEarlyCheckoutFromCompletedStay(targetDb, r, {
+        restoredCheckoutDate: actualOut || r.checkoutDate,
+        nowIso
+      });
+      if (r.expiredStayExtension) {
+        delete r.expiredStayExtension;
+      }
+      expiredCount++;
     }
   }
 
@@ -34698,6 +34898,10 @@ app.get("/api/pms/calendar", (req, res) => {
       r.status !== "cancelada" &&
       r.status !== "cancelled" &&
       r.status !== "expirada" &&
+      r.status !== "completed" &&
+      r.status !== "checked_out" &&
+      !r.checkoutDone &&
+      !r.earlyCheckout &&
       r.expiredStayExtension &&
       !r.expiredStayExtension.reactivatedAt &&
       !r.pendingStayExtension &&
@@ -36996,6 +37200,35 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     });
   }
 
+  if (req.body.clearFalseEarlyCheckout === true) {
+    const prevOrigOut = r.originalCheckoutDate || null;
+    clearFalseEarlyCheckoutFromCompletedStay(db, r, {
+      restoredCheckoutDate: r.earlyCheckoutDate || r.checkoutDate
+    });
+    if (r.expiredStayExtension) delete r.expiredStayExtension;
+    const authUser = getAuthUser(req);
+    addReservationAuditLog(r, {
+      action: "clear_false_early_checkout",
+      actor: {
+        id: authUser?.id || null,
+        name: authUser?.username || authUser?.name || "Administrador",
+        role: authUser?.role || "admin",
+        type: "user"
+      },
+      source: req.body.source || "PMS Calendário",
+      description: `Marcação de check-out antecipado removida (convertido em check-out normal em ${r.checkoutDate}${prevOrigOut ? `; saída extra ${prevOrigOut} desconsiderada` : ""}).`,
+      changes: prevOrigOut
+        ? [{ field: "originalCheckoutDate", label: "Saída Prevista", oldValue: prevOrigOut, newValue: r.checkoutDate }]
+        : []
+    });
+    saveDatabase("clear_false_early_checkout");
+    return res.json({
+      ...r,
+      clearedFalseEarlyCheckout: true,
+      minibarOrders: getVisibleReservationMinibarOrders(r)
+    });
+  }
+
   const priorActiveExt = (r.pendingStayExtension && r.pendingStayExtension.status === "pending_payment")
     ? {
         ...r.pendingStayExtension,
@@ -37399,6 +37632,34 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
       actorUser: getAuthUser(req),
       source: req.body.source || "PMS Calendário (Edição Manual)"
     });
+  } else if (
+    r.earlyCheckout &&
+    req.body.earlyCheckout === undefined &&
+    Array.isArray(req.body.dailyRates) &&
+    req.body.dailyRates.length > 0 &&
+    oldDailyRatesBeforeEdit.length > req.body.dailyRates.length
+  ) {
+    const effectiveEarlyOut = String(r.earlyCheckoutDate || oldCheckout || r.checkoutDate || "").slice(0, 10);
+    const hadOldRatesOnOrAfterOut = oldDailyRatesBeforeEdit.some(d => d && d.date && String(d.date).slice(0, 10) >= effectiveEarlyOut);
+    if (hadOldRatesOnOrAfterOut) {
+      const sortedIncomingDates = req.body.dailyRates
+        .map(d => String(d?.date || "").slice(0, 10))
+        .filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s))
+        .sort();
+      if (sortedIncomingDates.length > 0) {
+        const lastNightDt = new Date(`${sortedIncomingDates[sortedIncomingDates.length - 1]}T12:00:00Z`);
+        lastNightDt.setUTCDate(lastNightDt.getUTCDate() + 1);
+        const derivedOutFromRates = lastNightDt.toISOString().slice(0, 10);
+        if (derivedOutFromRates <= effectiveEarlyOut) {
+          clearFalseEarlyCheckoutFromCompletedStay(db, r, {
+            restoredCheckoutDate: derivedOutFromRates
+          });
+          if (r.expiredStayExtension) delete r.expiredStayExtension;
+        } else if (r.originalCheckoutDate && derivedOutFromRates < r.originalCheckoutDate) {
+          r.originalCheckoutDate = derivedOutFromRates;
+        }
+      }
+    }
   }
 
   if (req.body.b2bReservationNumber !== undefined && !req.body.externalReservationNumber) {
@@ -49944,20 +50205,26 @@ export function undoReservationCheckoutAndRestoreStay(db, r, options = {}) {
     delete r.preReservationReminderSentAt;
   }
 
-  if (wasEarlyCheckout || r.earlyCheckout || r.earlyCheckoutNote || (r.notes && String(r.notes).includes("Check-out antecipado em"))) {
+  if (wasEarlyCheckout || r.earlyCheckout || r.earlyCheckoutNote || (r.notes && String(r.notes).includes("Check-out antecipado em")) || (r.specialRequests && String(r.specialRequests).includes("Check-out antecipado em"))) {
     r.checkoutDate = restoredCheckoutDate;
-    if (r.notes) {
-      let cleanedNotes = String(r.notes);
+    const stripUndoneEarlyNote = (rawStr) => {
+      if (!rawStr) return "";
+      let cleaned = String(rawStr);
       if (r.earlyCheckoutNote) {
-        cleanedNotes = cleanedNotes.replace(
+        cleaned = cleaned.replace(
           new RegExp(`(?:^|\\n)\\s*•?\\s*${String(r.earlyCheckoutNote).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "g"),
           ""
         );
       }
-      cleanedNotes = cleanedNotes
+      return cleaned
         .replace(/(?:^|\n)\s*•?\s*Check-out antecipado em [^\n]+/g, "")
         .trim();
-      r.notes = cleanedNotes;
+    };
+    if (r.notes) {
+      r.notes = stripUndoneEarlyNote(r.notes);
+    }
+    if (r.specialRequests) {
+      r.specialRequests = stripUndoneEarlyNote(r.specialRequests);
     }
     r.earlyCheckout = false;
     r.originalCheckoutDate = null;
